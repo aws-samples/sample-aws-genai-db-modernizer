@@ -1,12 +1,14 @@
 """Query shape facts shared by every engine's detectors (ADR-031 Decision 8, #690).
 
 A detector here reports a fact about one query -- never a score, never an
-engine name. :func:`is_single_table_crud` is the fact the Aurora anti-pattern
-``aurora-anti-05`` ("no-relational-need") is documented on ("all queries are
-single-table CRUD"). It lives next to :mod:`capability_registry` rather than
-inside the Aurora analysis module so that any other detector that needs the
-same fact (the ``aurora-anti-06`` follow-up, a key-value fit detector) reads
-the same answer instead of keeping a second copy that can disagree.
+engine name. :func:`is_single_table_crud` is the fact the Aurora anti-patterns
+``aurora-anti-05`` ("no-relational-need": "all queries are single-table
+CRUD") and ``aurora-anti-06`` ("single-access-pattern-table": "all by primary
+key or single column filter", #714) are documented on. It lives next to
+:mod:`capability_registry` rather than inside the Aurora analysis module so
+that every detector that needs the same fact (both anti-patterns, a future
+key-value fit detector) reads the same answer instead of keeping a second
+copy that can disagree.
 
 It is built from the shared query features the scorer already uses:
 ``capability_registry.detect_required_capabilities`` (the capability gate's

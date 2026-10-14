@@ -394,6 +394,178 @@ class TestSingleAccessPatternTable:
 
 
 # ==========================================================================
+# TestSingleAccessPatternRequiresSingleTableCrud (aurora-anti-06, #714)
+#
+# The catalog text: "Table accessed by at most 2 distinct query patterns, all
+# single-table, all by primary key or single column filter". Like anti-05 it
+# is a claim about the table's whole workload, so it runs per query first
+# (``query_shape.single_table_access_shape``), then the table rule as a
+# complement (ADR-031 Decision 14): a relational query on the table clears
+# it, an ordered 1:M read is neutral, admin statements are not application
+# access.
+# ==========================================================================
+
+
+def _anti06(
+    queries: list[dict],
+    tables: list[str] | None = None,
+    primary_keys: dict[str, list[str]] | None = None,
+    foreign_keys: dict[str, list[dict]] | None = None,
+):
+    schema = [
+        {
+            "table_id": t,
+            "foreign_keys": (foreign_keys or {}).get(t, []),
+            "columns": [],
+            "primary_key": (primary_keys or {}).get(t, []),
+        }
+        for t in (tables or ["t1"])
+    ]
+    _, anti_patterns = analyze_aurora_common_use_cases(_make_collector(schema, queries))
+    return next((ap for ap in anti_patterns if ap.anti_pattern_id == "aurora-anti-06"), None)
+
+
+class TestSingleAccessPatternRequiresSingleTableCrud:
+    @pytest.mark.parametrize(
+        "sql", NOT_SINGLE_TABLE_CRUD_SQL.values(), ids=NOT_SINGLE_TABLE_CRUD_SQL.keys()
+    )
+    def test_a_relational_query_alone_is_not_a_single_access_pattern(self, sql):
+        """The #714 case: a lone ``COUNT(*)`` or range scan was penalised as a key lookup."""
+        assert _anti06([_q("rel", sql)]) is None
+
+    @pytest.mark.parametrize(
+        "sql", NOT_SINGLE_TABLE_CRUD_SQL.values(), ids=NOT_SINGLE_TABLE_CRUD_SQL.keys()
+    )
+    def test_one_relational_query_clears_the_whole_table(self, sql):
+        """The point read next to it is not penalised either: the table rule fails."""
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), _q("rel", sql)]
+        assert _anti06(queries) is None
+
+    @pytest.mark.parametrize("sql", SINGLE_TABLE_CRUD_SQL)
+    def test_fires_for_one_crud_query(self, sql):
+        ap = _anti06([_q("q1", sql)])
+        assert ap is not None
+        assert ap.query_ids == ["q1"]
+        assert ap.table_ids == ["t1"]
+
+    def test_fires_for_two_crud_queries(self):
+        queries = [
+            _q("read", "SELECT * FROM t1 WHERE id = $1"),
+            _q("write", "UPDATE t1 SET v = $1 WHERE id = $2"),
+        ]
+        ap = _anti06(queries)
+        assert ap is not None
+        assert ap.query_ids == ["read", "write"]
+
+    def test_three_crud_queries_are_more_than_a_single_access_pattern(self):
+        queries = [_q(f"q{i}", f"SELECT * FROM t1 WHERE c{i} = $1") for i in range(3)]
+        assert _anti06(queries) is None
+
+    def test_a_table_with_foreign_keys_is_not_flagged(self):
+        fks = {"t1": [{"column": "u_id", "references_table": "u", "references_column": "id"}]}
+        assert _anti06([_q("q1", "SELECT * FROM t1 WHERE id = $1")], foreign_keys=fks) is None
+
+    def test_a_primary_key_first_row_read_qualifies(self):
+        """Maintainer decision on #692: ``ORDER BY <primary key> LIMIT 1`` is a key lookup."""
+        queries = [_q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."key" ASC LIMIT 1')]
+        ap = _anti06(queries, primary_keys={"t1": ["key"]})
+        assert ap is not None
+        assert ap.query_ids == ["first"]
+
+    def test_first_row_by_a_column_that_is_not_the_primary_key_clears_the_table(self):
+        queries = [_q("first", "SELECT * FROM t1 ORDER BY id ASC LIMIT 1")]
+        assert _anti06(queries, primary_keys={"t1": ["key"]}) is None
+
+    def test_an_ordered_one_to_many_read_neither_clears_nor_qualifies_the_table(self):
+        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692)."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
+        ]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "first"]
+
+    def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
+        """Neutral means neutral: no relational query, so the table rule still applies."""
+        queries = [_q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1')]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["first"]
+
+    def test_an_ordered_one_to_many_read_does_not_save_a_relational_table(self):
+        queries = [
+            _q("first", "SELECT * FROM t1 ORDER BY id LIMIT 20"),
+            _q("purge", "DELETE FROM t1 WHERE created_at < $1"),
+        ]
+        assert _anti06(queries, primary_keys={"t1": ["id"]}) is None
+
+    def test_per_query_check_runs_first_and_only_the_qualifying_table_is_flagged(self):
+        """ADR-031 Decision 14: only queries that pass the per-query check are ever listed."""
+        queries = [
+            _q("a1", "SELECT * FROM a WHERE id = $1", table="a"),
+            _q("a2", "UPDATE a SET v = $1 WHERE $2=$3", table="a"),
+            _q("b1", "SELECT * FROM b WHERE id = $1", table="b"),
+        ]
+        ap = _anti06(queries, tables=["a", "b"])
+        assert ap is not None
+        assert ap.query_ids == ["b1"]
+        assert ap.table_ids == ["b"]
+
+    def test_admin_statements_neither_count_block_nor_take_the_penalty(self):
+        """SHOW and a transaction statement are not application access patterns."""
+        queries = [
+            _q("read", "SELECT * FROM t1 WHERE id = $1"),
+            _q("write", "UPDATE t1 SET v = $1 WHERE id = $2"),
+            _q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER"),
+            _q("trunc", "TRUNCATE t1", query_type="OTHER"),
+        ]
+        ap = _anti06(queries)
+        assert ap is not None
+        assert ap.query_ids == ["read", "write"]
+
+    def test_a_with_query_typed_other_is_application_access_and_clears_the_table(self):
+        """#733: the collector types a WITH-led query OTHER; it is not an admin statement."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q(
+                "ranked",
+                "WITH r AS (SELECT id FROM t1 WHERE a = $1) SELECT COUNT(*) FROM r",
+                query_type="OTHER",
+            ),
+        ]
+        assert _anti06(queries, primary_keys={"t1": ["id"]}) is None
+
+    def test_a_table_with_only_admin_statements_is_not_flagged(self):
+        assert _anti06([_q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER")]) is None
+
+    @pytest.mark.parametrize(
+        "table, sql",
+        [
+            (
+                "unknown",
+                "SELECT [dbo].[ufn_EffectivePrice](@ProductID, SYSUTCDATETIME()) AS [Price]",
+            ),
+            ("DUAL", "SELECT 1 FROM DUAL"),
+            ("public.badges_id_seq", "SELECT last_value FROM public.badges_id_seq"),
+        ],
+    )
+    def test_a_name_the_schema_does_not_list_is_not_a_table(self, table, sql):
+        """A pseudo-table, CTE alias or sequence has no keys or FKs to hold the rule on."""
+        assert _anti06([_q("q1", sql, query_type="SELECT", table=table)]) is None
+
+    def test_a_join_on_the_table_clears_it(self):
+        join = {
+            **_q("join", "SELECT * FROM t1 JOIN u ON u.id = t1.u_id WHERE t1.id = $1"),
+            "tables_accessed": ["t1", "u"],
+            "has_joins": True,
+            "join_count": 1,
+        }
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), join]
+        assert _anti06(queries, tables=["t1", "u"]) is None
+
+
+# ==========================================================================
 # TestSingleAccessPatternTableOrderIsHashSeedIndependent (issue #320)
 # ==========================================================================
 

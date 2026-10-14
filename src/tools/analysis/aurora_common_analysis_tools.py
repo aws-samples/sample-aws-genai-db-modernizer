@@ -206,9 +206,6 @@ def analyze_aurora_common_use_cases(
     # aurora-anti-04: unbounded-time-series-ingest (per-table)
     ingest_per_table: dict[str, dict] = {}
 
-    # aurora-anti-06: single-access-pattern-table (per-table)
-    access_pattern_per_table: dict[str, dict] = {}
-
     # aurora-anti-07: high-volume-text-search (per-table)
     text_search_per_table: dict[str, dict] = {}
 
@@ -321,19 +318,6 @@ def analyze_aurora_common_use_cases(
                     ingest_per_table[tid] = {"query_ids": [], "total_cps": 0.0, "has_reads": False}
                 ingest_per_table[tid]["query_ids"].append(qid)
                 ingest_per_table[tid]["total_cps"] += cps
-
-        # aurora-anti-06: track access patterns per table
-        if not has_joins and len(tables) == 1:
-            for tid in tables:
-                if tid not in access_pattern_per_table:
-                    access_pattern_per_table[tid] = {"query_ids": [], "all_single_table": True}
-                access_pattern_per_table[tid]["query_ids"].append(qid)
-        else:
-            for tid in tables:
-                if tid in access_pattern_per_table:
-                    access_pattern_per_table[tid]["all_single_table"] = False
-                else:
-                    access_pattern_per_table[tid] = {"query_ids": [qid], "all_single_table": False}
 
         # aurora-anti-07: track text search volume per table
         if _text_contains_any(text_lower, TEXT_SEARCH_KEYWORDS):
@@ -546,20 +530,49 @@ def analyze_aurora_common_use_cases(
             _build_anti_pattern("aurora-anti-05", anti05_query_ids, anti05_table_ids)
         )
 
-    # aurora-anti-06: single-access-pattern-table
-    # <=2 queries, all single-table, no FKs
+    # aurora-anti-06: single-access-pattern-table (#714, ADR-031 Decision 14)
+    # The catalog rule: "at most 2 distinct query patterns, all single-table,
+    # all by primary key or single column filter" -- read as the shared
+    # per-query CRUD check (ADR-031 Decision 14). Like anti-05 it is a claim
+    # about the table's whole application workload, so it runs in the same
+    # two steps, in the same order:
+    # 1. The per-query check, for every application query on the table
+    #    (admin statements excluded, as for anti-05):
+    #    ``query_shape.single_table_access_shape`` with the table's own primary
+    #    key from the schema. CRUD qualifies (a point or simple-key read or
+    #    write, ``ORDER BY <primary key> LIMIT 1`` included); an ordered 1:M
+    #    read is neutral; a relational query (a join, an aggregate, a range or
+    #    unkeyed write, a table-wide order, ...) never takes the penalty.
+    # 2. The table-level complement: at most 2 application queries, none of
+    #    them relational, and 0 FKs. It then covers the table's CRUD and
+    #    ordered 1:M queries, and never overrides a per-query result.
+    # Only schema tables are checked, as for anti-05: the rule is a claim
+    # about a table's keys and foreign keys, so a name the schema does not
+    # list (a pseudo-table such as ``unknown`` or ``DUAL``, a CTE alias, a
+    # sequence) is not a table it can hold for.
+    app_queries_per_table: dict[str, list[dict]] = {}
+    for q in queries:
+        if _is_admin_statement(q):
+            continue
+        for tid in dict.fromkeys(q.get("tables_accessed") or []):
+            app_queries_per_table.setdefault(tid, []).append(q)
+
     anti06_query_ids: list[str] = []
     anti06_table_ids: list[str] = []
-    for tid, data in access_pattern_per_table.items():
-        if not data["all_single_table"]:
+    for table in tables_schema:
+        tid = table.get("table_id", "")
+        table_qs = app_queries_per_table.get(tid) or []
+        if not table_qs or len(table_qs) > 2:
             continue
-        if len(data["query_ids"]) > 2:
+        if table.get("foreign_keys"):
             continue
-        # Also check table has 0 FKs
-        table_def = next((t for t in tables_schema if t.get("table_id") == tid), None)
-        if table_def and len(table_def.get("foreign_keys") or []) > 0:
+        # Step 1: per query.
+        primary_key = table.get("primary_key") or []
+        shapes = [single_table_access_shape(q, primary_key=primary_key) for q in table_qs]
+        # Step 2: the table-level complement, only on top of step 1.
+        if RELATIONAL in shapes:
             continue
-        anti06_query_ids.extend(data["query_ids"])
+        anti06_query_ids.extend(q.get("query_id", "") for q in table_qs)
         anti06_table_ids.append(tid)
 
     if anti06_query_ids:

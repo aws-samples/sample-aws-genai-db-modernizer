@@ -342,10 +342,15 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # wp_comments, whose own COUNT(*) query is an aggregate, so its point read
     # and its INSERT lose the 20-point Aurora penalty and move back from
     # DynamoDB -- dynamodb -2, aurora_mysql +2.
+    # #714: aurora-anti-06 ("single-access-pattern table") no longer fires
+    # on the pseudo-table ``unknown``, which is not a schema table, so
+    # ``SELECT FOUND_ROWS()`` loses the 15-point Aurora penalty and its first
+    # assignment moves from DocumentDB back to Aurora MySQL -- documentdb -1,
+    # aurora_mysql +1.
     assert rc["before_distribution"] == {
         "dynamodb": 37,
-        "aurora_mysql": 62,
-        "documentdb": 8,
+        "aurora_mysql": 63,
+        "documentdb": 7,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
     assert "opensearch" not in rc["after_distribution"]  # consolidated away

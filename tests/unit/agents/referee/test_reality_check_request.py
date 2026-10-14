@@ -239,9 +239,13 @@ class TestWordpressRequestCarriesWhatTheCommandUses:
 
 class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     """#712 review repro, maintainer decision 2026-10-14: the wordpress reality
-    check removes DocumentDB and moves its 8 queries (3 to Aurora MySQL, 5 to
+    check removes DocumentDB and moves its 7 queries (2 to Aurora MySQL, 5 to
     DynamoDB). One flag on a DynamoDB move re-routes that query among the KEPT
-    engines only: DocumentDB stays removed and the other 7 moves stand."""
+    engines only: DocumentDB stays removed and the other 6 moves stand.
+
+    #714: ``SELECT FOUND_ROWS()`` (``aa03c203``, on the pseudo-table
+    ``unknown``) no longer takes aurora-anti-06's penalty, so it is on Aurora
+    MySQL from the first assignment and is no longer one of DocumentDB's moves."""
 
     FLAGGED = "d72966f8"
 
@@ -255,7 +259,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
         assert sorted(moved.values()).count("dynamodb") == 5
-        assert sorted(moved.values()).count("aurora_mysql") == 3
+        assert sorted(moved.values()).count("aurora_mysql") == 2
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 
