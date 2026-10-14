@@ -120,7 +120,7 @@ class TestAdventureWorksSynthesisContract:
     def test_executive_summary_names_the_heterogeneous_choice(self, pipeline_report) -> None:
         _, report, _ = pipeline_report
         assert (
-            "the source SQL Server database has no Aurora engine of its own dialect"
+            "The source SQL Server database has no Aurora engine of its own dialect"
             in report["summary"]
         )
 

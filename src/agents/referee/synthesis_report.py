@@ -2863,6 +2863,9 @@ def build_summary(
     # skipped, same as with no recorded choice.
     if aurora_choice and aurora_choice.get("engine") and source_engine:
         source_name = display_source_database(source_engine)
+        # display_source_database is mid-sentence phrasing ("the source ...
+        # database"); this sentence starts with it (#663).
+        source_name = source_name[:1].upper() + source_name[1:]
         chosen_name = display_name(aurora_choice["engine"])
         parts.append(
             f"{source_name} has no Aurora engine of its own dialect: Aurora MySQL and "

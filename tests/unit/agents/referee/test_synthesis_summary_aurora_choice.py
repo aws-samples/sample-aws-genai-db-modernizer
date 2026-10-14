@@ -10,6 +10,8 @@ for an unknown or missing ``source_engine``."""
 
 from __future__ import annotations
 
+import re
+
 from src.agents.referee.synthesis_data import SynthesisData
 from src.agents.referee.synthesis_report import build_summary
 
@@ -50,7 +52,8 @@ def test_heterogeneous_choice_is_named_with_display_names() -> None:
         "reason": "higher total adjusted score wins (60.0 vs 65.0)",
     }
     text = build_summary(_data(choice), RANKING, MAPPINGS, TCO, RISKS, GROUPS)
-    assert "the source SQL Server database has no Aurora engine of its own dialect" in text
+    # #663: the sentence starts with a capital letter, right after the opening one.
+    assert "target database(s). The source SQL Server database has no Aurora engine" in text
     assert "Aurora PostgreSQL was selected to serve it" in text
     assert "cross-engine" in text
 
@@ -74,7 +77,7 @@ def test_unknown_source_engine_still_renders_with_a_title_cased_fallback() -> No
         "reason": "only one Aurora engine competed",
     }
     text = build_summary(_data(choice), RANKING, MAPPINGS, TCO, RISKS, GROUPS)
-    assert "the source Informix database has no Aurora engine of its own dialect" in text
+    assert "The source Informix database has no Aurora engine of its own dialect" in text
 
 
 def test_empty_source_engine_skips_the_sentence_instead_of_naming_nothing() -> None:
@@ -105,3 +108,18 @@ def test_no_sentence_when_no_assignment_at_all() -> None:
     )
     text = build_summary(data, RANKING, MAPPINGS, TCO, RISKS, GROUPS)
     assert "has no Aurora engine of its own dialect" not in text
+
+
+def test_every_summary_sentence_starts_with_a_capital_letter() -> None:
+    """#663: the deterministic summary read "... target database(s). the source SQL
+    Server database has no Aurora engine ..." for a heterogeneous source."""
+    choice = {
+        "source_engine": "sqlserver",
+        "engine": "aurora_postgresql",
+        "totals": {},
+        "margin": None,
+        "deciding_features": [],
+        "reason": "only one Aurora engine competed",
+    }
+    text = build_summary(_data(choice), RANKING, MAPPINGS, TCO, RISKS, GROUPS)
+    assert not re.search(r"\.\s+[a-z]", text), text
