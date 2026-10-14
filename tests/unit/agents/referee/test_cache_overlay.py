@@ -175,6 +175,82 @@ class TestEligibility:
         # string literal, are not a sequence fetch.
         assert cache_pattern(_q("q", text)) == "point_lookup"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT TOP (10) r.[ReviewID] FROM [ProductReview] r WHERE r.[ProductID] = @ProductID"
+            " ORDER BY r.[CreatedDate] DESC",
+            "SELECT TOP 10 [ProductID] FROM [Product] ORDER BY [ModifiedDate] DESC",
+            "select top (@n) id from t where a = @a order by b",
+            "SELECT [ProductID] FROM [Product] WHERE [CategoryID] = @CategoryID ORDER BY [Name]"
+            " OFFSET @Skip ROWS FETCH NEXT 24 ROWS ONLY",
+            "SELECT id FROM t ORDER BY score DESC FETCH FIRST 10 ROWS ONLY",
+        ],
+    )
+    def test_tsql_and_ansi_top_n_is_top_n(self, text):
+        # #663: TOP (n) ... ORDER BY and OFFSET/FETCH are LIMIT's T-SQL/ANSI spellings.
+        assert cache_pattern(_q("q", text, rows=10)) == "top_n"
+        assert cache_pattern(_q("q", text, rows=1)) == "point_lookup"
+
+    def test_top_without_order_by_is_not_top_n(self):
+        # TOP (n) with no ORDER BY returns arbitrary rows, not the top of anything.
+        assert cache_pattern(_q("q", "SELECT TOP (5) * FROM t WHERE a > @a", rows=5)) is None
+
+    def test_column_named_top_is_not_top_n(self):
+        assert cache_pattern(_q("q", "SELECT top FROM t WHERE id = ? ORDER BY id", rows=5)) == (
+            "point_lookup"
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT [CustomerID], [CartJson] FROM [UserSession] WHERE [SessionToken] = @SessionToken",
+            "SELECT customerId FROM carts WHERE sessionId = @sessionId",
+            "SELECT [UserID] FROM [Login] WHERE [CsrfToken] = @CsrfToken",
+            "SELECT [UserID] FROM [Login] WHERE [CSRFToken] = @Token",
+            "SELECT [UserID] FROM [ApiClient] WHERE [JWTToken] = @Jwt",
+            "SELECT [ClientID] FROM [ApiClient] WHERE [APIToken] = @Key",
+            "SELECT [UserID] FROM [UserSession] WHERE [SessionID] = @Id",
+            "SELECT [UserID] FROM [Device] WHERE [RefreshToken] = @RefreshToken",
+        ],
+    )
+    def test_pascal_and_camel_case_session_names_are_session_lookups(self, text):
+        # #663: T-SQL's [SessionToken] has no word boundary before "Token". A
+        # compound session/token key name in the WHERE clause is a session lookup.
+        assert cache_pattern(_q("q", text)) == "session_lookup"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # #679 review: a Session/Token name part that is not a session key.
+            "SELECT [SessionTimeout] FROM [AppConfig] WHERE [AppID] = @AppID",
+            "SELECT [Value] FROM [AppConfig] WHERE [SessionTimeoutMinutes] = @M",
+            "SELECT [TokenCount] FROM [Document] WHERE [DocumentID] = @DocumentID",
+            "SELECT [Title] FROM [TrainingSession] WHERE [TrainingSessionID] = @ID",
+            "SELECT [Name] FROM [CourseSession] WHERE [CourseID] = @CourseID",
+            "SELECT [Kind] FROM [ExpressionToken] WHERE [ExpressionID] = @ID",
+            "SELECT [Last4] FROM [PaymentTokenVault] WHERE [CustomerID] = @CustomerID",
+            # a query on [UserSession] that is not keyed by a session key
+            "SELECT [CustomerID] FROM [UserSession] WHERE [CustomerID] = @CustomerID",
+            # the token named only in the select list, keyed by something else
+            "SELECT s.[SessionToken] FROM [UserSession] s WHERE s.[CustomerID] = @CustomerID",
+        ],
+    )
+    def test_session_or_token_name_parts_that_are_not_a_session_key(self, text):
+        assert cache_pattern(_q("q", text)) == "point_lookup"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE [Sessions] = @x",
+            "SELECT * FROM t WHERE [Tokenizer] = @x",
+            "SELECT * FROM t WHERE [OBSESSION] = @x",
+            "SELECT * FROM t WHERE possession = ?",
+        ],
+    )
+    def test_session_match_still_needs_a_whole_word_part(self, text):
+        assert cache_pattern(_q("q", text)) == "point_lookup"
+
     def test_shapes(self):
         assert cache_pattern(_q("q", "SELECT * FROM t ORDER BY score DESC LIMIT 10", rows=10)) == (
             "top_n"
@@ -942,6 +1018,41 @@ class TestTriageLeaderboard:
     def test_no_hot_top_n_no_signal(self):
         assert self._signal([_q("cold", "SELECT * FROM u ORDER BY id LIMIT 1", cps=0.5)]) is None
 
+    def test_tsql_top_n_fires_the_signal(self):
+        # #663: a SQL Server source's top-N reads are spelled TOP (n) ... ORDER BY.
+        text = "SELECT TOP (10) [ReviewID] FROM [ProductReview] ORDER BY [CreatedDate] DESC"
+        signal = self._signal([_q("hot", text, cps=2.0), _q("cold", text, cps=0.01)])
+        assert signal is not None and signal.query_ids == ["hot"]
+
+
+class TestTriageSessionStore:
+    def _signal(self, queries):
+        result = triage(_collector(queries, engine="sqlserver"))
+        return next((s for s in result.signals if s.signal == "session_store"), None)
+
+    def test_tsql_session_token_column_fires_the_signal(self):
+        # #663: triage lowercases the SQL for its other checks; the session match
+        # must see the original case to split [SessionToken].
+        text = "SELECT [CustomerID] FROM [UserSession] WHERE [SessionToken] = @SessionToken"
+        signal = self._signal(
+            [_q("s", text), _q("other", "SELECT * FROM [Brand] WHERE [ID] = @ID")]
+        )
+        assert signal is not None and signal.query_ids == ["s"]
+
+    def test_lookalike_names_do_not_fire_the_signal(self):
+        # #679 review: session_store selects analysis agents on its own, so it stays
+        # conservative: no signal for a config read or a non-session UserSession query.
+        signal = self._signal(
+            [
+                _q("cfg", "SELECT [SessionTimeout] FROM [AppConfig] WHERE [AppID] = @AppID"),
+                _q("cnt", "SELECT [TokenCount] FROM [Document] WHERE [DocumentID] = @ID"),
+                _q("trn", "SELECT [Title] FROM [TrainingSession] WHERE [ID] = @ID"),
+                _q("vlt", "SELECT [Last4] FROM [PaymentTokenVault] WHERE [CustomerID] = @C"),
+                _q("usr", "DELETE TOP (5000) FROM [UserSession] WHERE [ExpiresAt] < @Now"),
+            ]
+        )
+        assert signal is None
+
 
 class TestValidator:
     def _assignment(self, engine: str, qid: str = "q") -> Assignment:
@@ -1008,3 +1119,14 @@ class TestDroppedReason:
     def test_has_no_internal_wording(self) -> None:
         for engine in ("elasticache", "dynamodb", "documentdb", "opensearch"):
             assert scan_text(dropped_reason(engine)) == []
+
+
+def test_deck_and_triage_name_the_same_top_n_spellings():
+    """#679 review: the deck's signal label and triage's evidence text agree."""
+    from src.report import pptx_report
+
+    text = "SELECT TOP (10) [ReviewID] FROM [ProductReview] ORDER BY [CreatedDate] DESC"
+    result = triage(_collector([_q("hot", text, cps=2.0)], engine="sqlserver"))
+    signal = next(s for s in result.signals if s.signal == "leaderboard_pattern")
+    assert "ORDER BY + LIMIT, TOP or FETCH" in signal.evidence
+    assert "ORDER BY + LIMIT, TOP or FETCH" in pptx_report.SIGNAL_LABEL["leaderboard_pattern"]

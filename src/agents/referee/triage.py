@@ -43,7 +43,11 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.agents.referee.cache_overlay import HOT_READ_MIN_CALLS_PER_SECOND
+from src.agents.referee.cache_overlay import (
+    HOT_READ_MIN_CALLS_PER_SECOND,
+    TOP_N_RE,
+    has_session_keyword,
+)
 from src.agents.referee.capability_registry import (
     detect_required_capabilities,
     requires_aggregation_capability,
@@ -267,7 +271,6 @@ _TIMESTAMP_RE = re.compile(
     r"created_date|modified_date|log_time|event_date)\b",
     re.IGNORECASE,
 )
-_SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
 
 
 def _detect_query_signals(co: dict) -> list[TriageSignal]:
@@ -360,8 +363,9 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         ):
             timeseries.append(qid)
 
-        # Group 9: Session store
-        if _SESSION_RE.search(text):
+        # Group 9: Session store. Matched on the original text, not the
+        # lower-cased one, so a PascalCase [SessionToken] still splits (#663).
+        if has_session_keyword(q.get("query_text") or ""):
             session_store.append(qid)
 
         # Group 10: Metadata/config store (small result, high reads)
@@ -385,15 +389,13 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         if q.get("has_time_range_filter"):
             time_ranges.append(qid)
 
-        # Cross-cutting: Leaderboard / top-N (ORDER BY + LIMIT). Only a hot SELECT
+        # Cross-cutting: Leaderboard / top-N (ORDER BY + LIMIT, or T-SQL's
+        # TOP (n) ... ORDER BY / FETCH FIRST|NEXT, #663; one pattern shared with
+        # the cache overlay, ``cache_overlay.TOP_N_RE``). Only a hot SELECT
         # counts: a Rails ``.first`` / ``find_by`` at 0.01 calls/s has the same
         # shape and is not cache material (#296). The signal is a cache-overlay
         # hint, never an ownership override.
-        if (
-            qtype == "SELECT"
-            and cps >= HOT_READ_MIN_CALLS_PER_SECOND
-            and re.search(r"order\s+by\b.*\blimit\b", text)
-        ):
+        if qtype == "SELECT" and cps >= HOT_READ_MIN_CALLS_PER_SECOND and TOP_N_RE.search(text):
             leaderboards.append(qid)
 
         # Cross-cutting: Subqueries
@@ -538,7 +540,7 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
             _signal(
                 "leaderboard_pattern",
                 ["elasticache"],
-                f"hot leaderboard / top-N queries (ORDER BY + LIMIT, "
+                f"hot leaderboard / top-N queries (ORDER BY + LIMIT, TOP or FETCH, "
                 f"≥{HOT_READ_MIN_CALLS_PER_SECOND:g} calls/s)",
                 leaderboards,
             )

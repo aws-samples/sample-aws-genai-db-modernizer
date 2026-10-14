@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared.cache_pattern_labels import cache_pattern_label
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES as _WAVE_CACHE_ENGINES
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES as _WAVE_RELATIONAL_ENGINES
@@ -155,7 +156,7 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
         )
         patterns = overlay.get("patterns") or {}
         shapes = ", ".join(
-            f"{escaping.md_text(str(p).replace('_', ' '))} {c}"
+            f"{escaping.md_text(cache_pattern_label(str(p)))} {c}"
             for p, c in sorted(patterns.items())
             if p
         )

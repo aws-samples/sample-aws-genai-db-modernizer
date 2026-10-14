@@ -144,7 +144,7 @@ SIGNAL_LABEL = {
     "json_columns": "JSON columns",
     "junction_tables": "Junction tables",
     "key_value_lookups": "Key-value lookups (PK read, ≤5 rows)",
-    "leaderboard_pattern": "Leaderboard / top-N (ORDER BY + LIMIT)",
+    "leaderboard_pattern": "Leaderboard / top-N (ORDER BY + LIMIT, TOP or FETCH)",
     "low_frequency_reads": "Low-frequency reads (admin, reporting, health checks)",
     "low_frequency_writes": "Low-frequency writes (<5 cps)",
     "metadata_config": "Metadata / config store",

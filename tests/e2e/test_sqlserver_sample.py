@@ -235,12 +235,12 @@ def test_hot_reads_are_cached_and_hot_writes_tables_are_not(trailgear_run: Pipel
     assert final[flags]["cache_engine"] == "elasticache"
     assert final[flags]["cache_pattern"] == "reference_read"
     # UserSession takes about a quarter of its traffic as writes, under the
-    # write-heavy line, so the session lookup is cached too (as a keyed lookup:
-    # the session keyword match needs a word boundary, and T-SQL's
-    # [SessionToken] has none).
+    # write-heavy line, so the session lookup is cached too, as a session/token
+    # lookup: a PascalCase break counts as a word break, so T-SQL's
+    # [SessionToken] matches the session keywords (#663).
     session = _qid(trailgear_run, "[ExpiresAt] FROM [UserSession] WHERE [SessionToken]")
     assert final[session]["cache_engine"] == "elasticache"
-    assert final[session]["cache_pattern"] == "point_lookup"
+    assert final[session]["cache_pattern"] == "session_lookup"
     # A cold read is never cached, whatever its shape.
     supplier = _qid(trailgear_run, "FROM [Supplier] WHERE [SupplierID]")
     assert final[supplier]["cache_engine"] is None

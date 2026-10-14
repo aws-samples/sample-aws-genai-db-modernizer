@@ -173,7 +173,8 @@ class TestLeaderboardCounts:
         slide = pptx_report.slide_workload(pptx_report.open_deck(keep=1), f)
         texts = _shape_texts(slide)
         assert any("WHOLE WORKLOAD" in t for t in texts)
-        assert "Leaderboard / top-N (ORDER BY + LIMIT)" in texts
+        # #679: the T-SQL/ANSI spellings count too, as in triage's own evidence text.
+        assert "Leaderboard / top-N (ORDER BY + LIMIT, TOP or FETCH)" in texts
 
 
 def _shared_tables_report() -> dict[str, Any]:

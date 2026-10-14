@@ -23,9 +23,10 @@ A query qualifies (:func:`cache_eligibility`) when every rule holds:
   is read a few times before it expires, and the miss path is the owner anyway;
 - it returns at most :data:`CACHE_MAX_ROWS_AVG` rows on average (a bounded value);
 - it has a cacheable shape (:func:`cache_pattern`): a keyed point lookup, a top-N
-  (``ORDER BY ... LIMIT``), a session/token lookup, or a full read of a small
-  reference table. Aggregations, text search, locking reads and sequence fetches
-  (``NEXT VALUE FOR``, ``seq.NEXTVAL``, ``nextval(...)``) do not qualify;
+  (``ORDER BY ... LIMIT``, ``TOP (n) ... ORDER BY`` or ``FETCH FIRST/NEXT``), a
+  session/token lookup, or a full read of a small reference table. Aggregations,
+  text search, locking reads and sequence fetches (``NEXT VALUE FOR``,
+  ``seq.NEXTVAL``, ``nextval(...)``) do not qualify;
 - none of its tables is write-heavy: writes are less than
   :data:`WRITE_HEAVY_TABLE_MIN_WRITE_SHARE` of the table's calls, so entries are
   not invalidated faster than they are read.
@@ -43,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.utility_statements import is_sequence_fetch
+from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
 
@@ -82,24 +84,41 @@ CACHE_HINT_SIGNALS: dict[str, str] = {
     "leaderboard_pattern": "top_n",
 }
 
-PATTERN_LABELS: dict[str, str] = {
-    "point_lookup": "point lookup",
-    "top_n": "top-N lookup",
-    "session_lookup": "session/token lookup",
-    "reference_read": "small reference read",
-}
+# Shared with the deliverables (src/shared/cache_pattern_labels.py).
+PATTERN_LABELS: dict[str, str] = CACHE_PATTERN_LABELS
 
 WRITE_QUERY_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT"})
 
-_TOP_N_RE = re.compile(r"order\s+by\b.*\blimit\b", re.IGNORECASE | re.DOTALL)
+# A top-N read: ``ORDER BY ... LIMIT n``, or its T-SQL and ANSI spellings (#663),
+# ``SELECT TOP (n) ... ORDER BY`` and ``ORDER BY ... [OFFSET ...] FETCH {FIRST|NEXT}``.
+# TOP takes a number, a ``(expression)`` or a variable, so a column named ``top``
+# is not one; TOP with no ORDER BY returns arbitrary rows and is not a top-N.
+TOP_N_RE = re.compile(
+    r"order\s+by\b.*\b(?:limit|fetch\s+(?:first|next))\b|\btop\s*(?:\(|\d|@).*\border\s+by\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _WHERE_RE = re.compile(r"\bwhere\b", re.IGNORECASE)
 _KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
 _AGGREGATE_RE = re.compile(r"\bgroup\s+by\b|\b(sum|count|avg)\s*\(", re.IGNORECASE)
 _TEXT_SEARCH_RE = re.compile(
     r"\b(i?like|regexp|rlike)\b|\bmatch\s*\(|to_tsvector|to_tsquery|@@", re.IGNORECASE
 )
-# Same keywords as triage's session_store signal
+# Same keywords as triage's session_store signal (both call has_session_keyword).
 SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
+# The parts of a PascalCase / camelCase name: ``SessionToken`` -> Session, Token;
+# ``CSRFToken`` -> CSRF, Token; ``sessionId`` -> session, Id; ``SessionID`` -> Session, ID.
+_NAME_PART_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+# The two-part session-store key names a PascalCase or camelCase schema uses
+# (#663, kept narrow after review: ``session_store`` alone selects analysis
+# agents). ``<prefix>Token`` for these prefixes, or ``Session{Id,Key,Token}``.
+# Not ``SessionTimeout``, ``TokenCount``, ``TrainingSession``, ``ExpressionToken``
+# or ``PaymentTokenVault``: a name part alone is not a session key.
+_SESSION_TOKEN_PREFIXES = frozenset(
+    {"session", "csrf", "xsrf", "auth", "access", "refresh", "jwt", "api", "bearer"}
+)
+_SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
+_WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
 _LOCKING_RE = re.compile(r"\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b", re.IGNORECASE)
 
 # A leading ``--`` or ``#`` line comment, or a ``/* ... */`` block comment,
@@ -121,6 +140,39 @@ _LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE
 
 def _strip_leading_comments(text: str) -> str:
     return _LEADING_COMMENT_RE.sub("", text, count=1) if text else text
+
+
+def _is_session_key_name(name: str) -> bool:
+    """Whether a PascalCase/camelCase ``name`` is a two-part session or token key."""
+    parts = [p.lower() for p in _NAME_PART_RE.findall(name)]
+    if len(parts) != 2:
+        return False
+    head, tail = parts
+    return (tail == "token" and head in _SESSION_TOKEN_PREFIXES) or (
+        head == "session" and tail in _SESSION_KEY_SUFFIXES
+    )
+
+
+def has_session_keyword(text: str) -> bool:
+    """Whether ``text`` is a session/token statement (``session_store``, #663).
+
+    Either ``SESSION_RE`` matches a whole word (``session``, ``token``,
+    ``session_id``, ...), unchanged from before, or the WHERE clause filters on a
+    PascalCase/camelCase session key such as T-SQL's ``[SessionToken]``,
+    ``[CSRFToken]``, ``sessionId`` (:func:`_is_session_key_name`). The second rule
+    is deliberately narrow, because ``session_store`` selects analysis agents on
+    its own: a name part such as ``[SessionTimeout]`` or ``[TokenCount]`` does not
+    count, and neither does a ``[UserSession]`` query keyed by something else or
+    a session key named only in the select list. Needs the SQL in its original
+    case.
+    """
+    text = text or ""
+    if SESSION_RE.search(text):
+        return True
+    where = _WHERE_CLAUSE_RE.search(text)
+    if where is None:
+        return False
+    return any(_is_session_key_name(name) for name in _IDENTIFIER_RE.findall(where.group(1)))
 
 
 def is_write_query(query: Mapping) -> bool:
@@ -203,9 +255,9 @@ def cache_pattern(query: Mapping) -> str | None:
         return None
     if query.get("has_text_search") or query.get("has_aggregations"):
         return None
-    if SESSION_RE.search(text):
+    if has_session_keyword(text):
         return CACHE_HINT_SIGNALS["session_store"]
-    if _TOP_N_RE.search(text):
+    if TOP_N_RE.search(text):
         return "top_n" if float(query.get("rows_returned_avg") or 0) > 1 else "point_lookup"
     parts = _WHERE_RE.split(text, maxsplit=1)
     if len(parts) == 2:

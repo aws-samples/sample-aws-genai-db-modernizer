@@ -622,3 +622,21 @@ class TestSearchReadModel:
         html = render_decision_report_html(_discourse_shape())
         assert "It fronts Aurora PostgreSQL with no data migration of its own" in html
         assert "invalidation follows the engine that owns each cached table" in html
+
+
+def test_engineering_report_read_shapes_use_the_pattern_labels() -> None:
+    """#679 review: the Read shapes line used ``top_n`` -> "top n"; it uses the
+    overlay's own labels ("top-N lookup", "session/token lookup")."""
+    rep = _report()
+    rep["cache_overlay"]["patterns"] = {
+        "point_lookup": 13,
+        "reference_read": 2,
+        "session_lookup": 1,
+        "top_n": 1,
+    }
+    md = render_engineering_report_md(rep)
+    line = next(x for x in md.splitlines() if x.startswith("- Read shapes:"))
+    assert line == (
+        "- Read shapes: point lookup 13, small reference read 2, session/token lookup 1, "
+        "top-N lookup 1"
+    )
