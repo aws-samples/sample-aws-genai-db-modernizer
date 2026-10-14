@@ -56,7 +56,7 @@ For each pattern:
 
 The run is unattended: nobody answers questions. Where a business rule the queries cannot show (soft deletes, audit requirements, a latency SLO) would change the design, make the conservative choice and record it in `trade_offs`.
 
-Work through these steps in order before writing any JSON. Show your reasoning for each decision.
+Work through these steps in order before writing any JSON.
 
 **Step 1 — Group access patterns by entity**
 List every `query_id` (excluding `OTHER`) and the entities it touches. Identify which entities always appear together across multiple patterns.
@@ -85,29 +85,8 @@ For each pattern the base table key cannot serve:
 **Step 5 — Hot partition pre-check**
 Before finalising, estimate the RCU/s or WCU/s each partition key value receives at `design_rps` and run the cost check (see `hot_partition_analysis` below): it computes the utilization against `design_metrics.dynamodb_partition_limits` and flags every value above the at-risk threshold. Apply mitigation (shard suffix, time-bucket PK) where it flags one and update the key design.
 
-**Step 6 — Emit structural `table_definitions` (required before moving to 2b)**
-Output the `table_definitions` array conforming to `TableDefinition` in `dynamodb_model_output.py`. Populate the structural fields only — leave `attributes` and `entities` as empty arrays; Phase 2b fills those in.
-
-Required fields at this stage: `table_name`, `source_tables`, `aggregate_pattern`, `partition_key`, `sort_key`, `gsis`, `item_count`, `item_size_bytes`. For each GSI include `index_name`, `partition_key` (list of `KeyDefinition`), `sort_key`, and `projection`.
-
-```json
-{
-  "table_definitions": [
-    {
-      "table_name": "...",
-      "source_tables": ["..."],
-      "aggregate_pattern": "identifying_relationship | item_collection | separate",
-      "partition_key": {"attribute_name": "...", "attribute_type": "S"},
-      "sort_key": null,
-      "gsis": [],
-      "item_count": 0,
-      "item_size_bytes": 0,
-      "attributes": [],
-      "entities": []
-    }
-  ]
-}
-```
+**Step 6 — Settle the structure of each table**
+Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `index_name`, `partition_key` as a list of `KeyDefinition`, `sort_key` and `projection`), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` or `entities`.
 
 ---
 
