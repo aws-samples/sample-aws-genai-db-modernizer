@@ -100,6 +100,51 @@ class TestExactTieDefaultsToPostgresql:
         assert "exact tie" in choice.reason
 
 
+class TestExactTieMaintainerRuleThroughTheResolver:
+    """ADR-031 Decision 6 amendment (maintainer decision, 2026-10-14, #656):
+    Aurora PostgreSQL wins by the maintainer rule only when every earlier check
+    ties. This fixture ties all of them: both engines serve every query (no
+    capability gate fires, so per-operation support is equal), score it the
+    same (equal totals, so the margin band is moot), and no feature is reported
+    (Oracle and DB2 have no Babelfish signal; plain lookups carry no workload
+    feature). Only then does the rule decide, traced as such."""
+
+    def _resolve(self, source_engine: str):
+        query_ids = [f"q{i}" for i in range(1, 6)]
+        analysis = {
+            "aurora_mysql": _analysis(["db.t1"], confidence=70),
+            "aurora_postgresql": _analysis(["db.t1"], confidence=70),
+        }
+        return AssignmentResolver().resolve(
+            _triage(["aurora_mysql", "aurora_postgresql"]),
+            analysis,
+            _collector(query_ids, engine=source_engine),
+        )
+
+    def test_oracle_exact_tie_goes_to_postgresql_with_the_rule_traced(self):
+        result = self._resolve("oracle")
+        choice = result.aurora_engine_choice
+        assert choice is not None
+        assert choice.totals["aurora_mysql"] == choice.totals["aurora_postgresql"]
+        assert choice.engine == "aurora_postgresql"
+        assert choice.deciding_features == []
+        # Per-operation support ties too: no capability gate fired on any query
+        # (the resolver appends a gate's note to the reason after " | ").
+        assert all(qa.confidence > 0 for qa in result.query_assignments)
+        assert not any(" | " in qa.assignment_reason for qa in result.query_assignments)
+        assert choice.reason.startswith(
+            "tie between Aurora MySQL and Aurora PostgreSQL; "
+            "PostgreSQL preferred on a tie by maintainer rule, ADR-031 Decision 6"
+        )
+        assert {qa.assigned_engine for qa in result.query_assignments} == {"aurora_postgresql"}
+
+    def test_db2_exact_tie_goes_to_postgresql_too(self):
+        choice = self._resolve("db2").aurora_engine_choice
+        assert choice is not None
+        assert choice.engine == "aurora_postgresql"
+        assert "maintainer rule, ADR-031 Decision 6" in choice.reason
+
+
 class TestClearWinner:
     def test_mysql_clearly_earns_more_wins(self):
         # Design: the choice follows the queries, not a hardcoded default --

@@ -6,7 +6,8 @@ goes to Aurora MySQL). For a source with no Aurora dialect of its own (SQL
 Server, Oracle, DB2 -- ``triage.HETEROGENEOUS_SOURCE_ENGINES``), both Aurora
 engines compete on the total adjusted score the assignment resolver computed
 for every query (:func:`choose_heterogeneous_engine`), tipped by source
-features within a close margin, Aurora PostgreSQL on an exact tie (#381).
+features within a close margin, Aurora PostgreSQL on an exact tie (#381; a
+maintainer rule since 2026-10-14, ADR-031 Decision 6, #656).
 Everywhere else -- a caller with no score totals, resolving a tie after the
 #381 choice already dropped the losing engine from scoring -- the engine
 already carrying more of the recorded SETTLED workload wins; a genuine tie
@@ -35,6 +36,7 @@ from typing import Any
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import has_sequence_reference
+from src.shared.engine_names import display_engine
 
 AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
 
@@ -47,12 +49,29 @@ AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
 # Oracle) can be expected to land close to parity whenever they stay close to ANSI SQL
 # too -- so the margin is generous: within 5% of the larger total counts as "close
 # enough" for source features to decide, and an exact tie (including 0 vs 0, no score
-# at all) goes to Aurora PostgreSQL. This is ``choose_heterogeneous_engine``'s own,
-# unchanged preference (out of scope for #550, which only fixed the OTHER, no-score
+# at all) goes to Aurora PostgreSQL (by feature, else the maintainer rule below).
+# This is ``choose_heterogeneous_engine``'s own, unchanged preference (out of scope for #550, which only fixed the OTHER, no-score
 # fallback below, in ``pick_aurora_engine``, to go through the shared ADR-031
 # tie-break instead of a bare name preference) -- it is not "the same as" that
 # fallback's default any more, now that the fallback has none of its own.
 MARGIN_RATIO = 0.05
+
+# ADR-031 Decision 6 amendment (maintainer decision, 2026-10-14, #656): when the two
+# Aurora engines tie EXACTLY on total adjusted score for a heterogeneous source,
+# Aurora PostgreSQL wins. This is a stated maintainer rule, not a score or a feature,
+# and the trace says so. It covers only exact equality (including 0 vs 0) with no
+# deciding feature; a close call inside ``MARGIN_RATIO`` is still decided by features,
+# then the higher total.
+# It is the LAST check: per-query scores (which already include per-operation
+# support, through the scorer's hard capability gate), the margin band and the
+# workload/source features all run first, so it fires only when they all leave an
+# exact tie -- expected to be rare. The chosen engine is NOT source-compatible for
+# a heterogeneous source (ADR-031 Decisions 2 and 13 stay inapplicable): whether it
+# can serve a query depends on that query's own operations, not on this choice.
+EXACT_TIE_RULE_REASON = (
+    f"tie between {display_engine('aurora_mysql')} and {display_engine('aurora_postgresql')}; "
+    "PostgreSQL preferred on a tie by maintainer rule, ADR-031 Decision 6"
+)
 
 # Source features that tip a close Aurora MySQL vs Aurora PostgreSQL call (#381 design):
 # recursive CTEs, sequences, MERGE and JSON all have more direct PostgreSQL equivalents
@@ -365,11 +384,13 @@ def choose_heterogeneous_engine(
     ``totals`` is each engine's total adjusted score across every query (the resolver's
     ``scores``, summed). The higher total wins; within ``MARGIN_RATIO`` of the larger
     total -- including an exact tie -- ``_tie_break_features`` names any source feature
-    favouring Aurora PostgreSQL. On an exact tie Aurora PostgreSQL already wins by
-    default, so a feature there only reinforces the tie-break (it is still recorded as
-    ``deciding_features``, #381 review, so the trace is never silent about a real signal
-    just because the default already agreed with it); on a close-but-not-exact call it
-    is what actually tips the winner. Returns ``(winner, trace)``, where ``trace`` has
+    favouring Aurora PostgreSQL, and that feature decides. Per-operation support is
+    already inside ``totals``: the scorer's hard capability gate scores an engine 0 on
+    a query it cannot serve. Only when the totals tie exactly AND no feature decides
+    does Aurora PostgreSQL win by the maintainer rule (``EXACT_TIE_RULE_REASON``,
+    ADR-031 Decision 6 amendment, 2026-10-14) -- the final tie-break, after every other
+    check. A close-but-not-exact call with no feature still goes to the higher total.
+    Returns ``(winner, trace)``, where ``trace`` has
     the rounded totals, the margin (PostgreSQL's total minus MySQL's), the deciding
     features and a one-line human-readable reason -- everything
     :class:`src.contracts.assignment_models.AuroraEngineChoice` records. The reason never
@@ -401,14 +422,22 @@ def choose_heterogeneous_engine(
 
     if mysql_total == pg_total:
         active = _tie_break_features(features)
+        # Every feature in the pool favours Aurora PostgreSQL today (#445), so the
+        # winner is the same either way; what differs is WHAT decided it. A feature
+        # is checked first (ADR-031 Decision 6 amendment ordering), and only an
+        # exact tie that no feature breaks falls to the maintainer rule.
         winner = "aurora_postgresql"
         deciding_features = active
-        reason = (
-            f"exact tie on total adjusted score ({pg_total:.1f} each); "
-            "Aurora PostgreSQL tie-break"
-        )
         if active:
-            reason += f", also favoured by: {describe_features(active)}"
+            reason = (
+                f"exact tie on total adjusted score ({pg_total:.1f} each); "
+                f"tipped by: {describe_features(active)}"
+            )
+        else:
+            reason = (
+                f"{EXACT_TIE_RULE_REASON} (exact tie on total adjusted score, "
+                f"{pg_total:.1f} each, and no deciding feature)"
+            )
     elif is_close:
         active = _tie_break_features(features)
         if active:

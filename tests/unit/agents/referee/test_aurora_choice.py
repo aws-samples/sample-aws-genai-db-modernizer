@@ -74,7 +74,9 @@ class TestChooseHeterogeneousEngine:
         assert trace["deciding_features"] == ["sequences"]
         assert "exact tie" in trace["reason"]
         assert "earned" not in trace["reason"]
-        assert "tie-break" in trace["reason"]
+        assert "tipped by: sequences" in trace["reason"]
+        # #656: a feature decides before the maintainer rule is ever reached.
+        assert "maintainer rule" not in trace["reason"]
 
     def test_no_score_at_all_is_an_exact_tie(self):
         winner, trace = choose_heterogeneous_engine(["aurora_mysql", "aurora_postgresql"], {})
@@ -131,6 +133,85 @@ class TestChooseHeterogeneousEngine:
             )
             assert winner == "aurora_postgresql", feature
             assert trace["deciding_features"] == [feature]
+
+
+MAINTAINER_TIE_REASON = (
+    "tie between Aurora MySQL and Aurora PostgreSQL; "
+    "PostgreSQL preferred on a tie by maintainer rule, ADR-031 Decision 6"
+)
+
+
+class TestExactTiePrefersPostgresqlByMaintainerRule:
+    """ADR-031 Decision 6 amendment (maintainer decision, 2026-10-14, #656).
+
+    Aurora PostgreSQL wins by the maintainer rule ONLY as the final tie-break:
+    after the per-query scores (which already carry per-operation support,
+    through the scorer's hard capability gate), the margin band and the
+    workload/source features all leave an exact tie. The trace then says it was
+    the maintainer rule, not a score or a feature. A feature on an exact tie,
+    and any close call inside ``MARGIN_RATIO``, are decided as before.
+    """
+
+    BOTH = ["aurora_mysql", "aurora_postgresql"]
+
+    def test_exact_tie_with_no_feature_goes_to_postgresql_by_the_maintainer_rule(self):
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 6859.0, "aurora_postgresql": 6859.0}, features={}
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["margin"] == 0.0
+        assert trace["deciding_features"] == []
+        assert trace["reason"].startswith(MAINTAINER_TIE_REASON)
+        assert "6859.0 each" in trace["reason"]
+
+    def test_a_feature_decides_an_exact_tie_before_the_maintainer_rule(self):
+        # SQL Server always reports Babelfish, so an exact tie on a SQL Server
+        # source is decided by that feature and never reaches the rule.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH,
+            {"aurora_mysql": 6859.0, "aurora_postgresql": 6859.0},
+            features={"babelfish_compatible": True},
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["deciding_features"] == ["babelfish_compatible"]
+        assert "tipped by: Babelfish compatibility" in trace["reason"]
+        assert "maintainer rule" not in trace["reason"]
+
+    def test_features_reported_false_do_not_count_as_deciding(self):
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH,
+            {"aurora_mysql": 6859.0, "aurora_postgresql": 6859.0},
+            features={f: False for f in FEATURE_SIGNALS},
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["deciding_features"] == []
+        assert trace["reason"].startswith(MAINTAINER_TIE_REASON)
+
+    def test_input_order_does_not_change_the_tie_winner(self):
+        totals = {"aurora_postgresql": 10.0, "aurora_mysql": 10.0}
+        for pool in (self.BOTH, list(reversed(self.BOTH))):
+            winner, _ = choose_heterogeneous_engine(pool, totals, features={})
+            assert winner == "aurora_postgresql"
+
+    def test_a_close_call_inside_the_margin_is_not_the_maintainer_tie_rule(self):
+        # Today's margin-band behaviour, unchanged by #656: trailgear's shape
+        # (MySQL 6896 vs PostgreSQL 6859, within 5%) with no deciding feature
+        # goes to the higher total, and the trace never cites the tie rule.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 6896.0, "aurora_postgresql": 6859.0}, features={}
+        )
+        assert winner == "aurora_mysql"
+        assert "maintainer rule" not in trace["reason"]
+
+    def test_a_feature_tipped_close_call_does_not_cite_the_tie_rule_either(self):
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH,
+            {"aurora_mysql": 6896.0, "aurora_postgresql": 6859.0},
+            features={"babelfish_compatible": True},
+        )
+        assert winner == "aurora_postgresql"
+        assert "tipped by: Babelfish compatibility" in trace["reason"]
+        assert "maintainer rule" not in trace["reason"]
 
 
 class TestPickAuroraEngineHeterogeneous:

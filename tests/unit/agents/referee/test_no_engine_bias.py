@@ -371,9 +371,11 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "choose_heterogeneous_engine",
         RULE_LITERAL_PREFERENCE,
     ): (
-        "#445: tracked, open -- Aurora PostgreSQL is the one-sided default "
-        "on an exact tie and the undecided-features branch, pending "
-        "dialect-aware scoring; belongs to the heterogeneous-source owner."
+        "Two literal branches. The exact tie with no deciding feature is "
+        "the maintainer-approved final tie-break (ADR-031 Decision 6 "
+        "amendment, 2026-10-14, #656), traced as such. The feature-tipped "
+        "branches stay one-sided by design pending dialect-aware scoring "
+        "(#445, tracked, open)."
     ),
 }
 
