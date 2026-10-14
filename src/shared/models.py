@@ -33,8 +33,8 @@ after the tool definitions and after the system prompt, the prefix every
 designer and PE turn repeats. A prefix shorter than the model's minimum
 (:func:`min_cacheable_tokens`) is simply not cached; nothing fails.
 
-The default switch to the 5.5 family is a separate, measured change; the 5.5
-IDs below are here so tests (and env overrides) can exercise them.
+The defaults are the 5.5 family (measured before and after the switch on the
+wordpress sample, #624). The 4.x IDs stay for env overrides and tests.
 """
 
 from __future__ import annotations
@@ -56,14 +56,17 @@ logger = logging.getLogger(__name__)
 # Model IDs (the only place in src/ that spells one)
 # ---------------------------------------------------------------------------
 
-#: Bedrock model / cross-region inference profile IDs.
+#: Bedrock model / cross-region inference profile IDs. The ``us.`` profiles
+#: are what ``pipeline/iam-roles.yaml`` allows today (in-region inference
+#: profiles plus ``us-*`` foundation models); a ``global.`` profile also routes
+#: to foundation models outside ``us-*``, which that policy does not cover.
 MODEL_IDS: dict[str, str] = {
     "opus-4.6": "us.anthropic.claude-opus-4-6-v1",
     "sonnet-4.6": "us.anthropic.claude-sonnet-4-6",
     "haiku-4.5": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    "opus-5.5": "global.anthropic.claude-opus-5-5",
-    "sonnet-5.5": "global.anthropic.claude-sonnet-5-5",
-    "haiku-5.5": "global.anthropic.claude-haiku-5-5",
+    "opus-5.5": "us.anthropic.claude-opus-5-5",
+    "sonnet-5.5": "us.anthropic.claude-sonnet-5-5",
+    "haiku-5.5": "us.anthropic.claude-haiku-5-5",
 }
 
 #: ``max_tokens`` floor on families with adaptive thinking on by default:
@@ -99,6 +102,11 @@ class RoleSpec:
     default_model: str
     max_tokens: int | None = None
     max_tokens_env: str | None = None
+    #: ``max_tokens`` floor whenever adaptive thinking is on (it shares the
+    #: budget with the answer): a lower call-site value is raised to it. The
+    #: ``max_tokens_env`` variable, when set, replaces this floor, but is itself
+    #: still raised to :data:`ADAPTIVE_MAX_TOKENS_FLOOR`.
+    adaptive_max_tokens: int | None = None
     legacy_temperature: float | None = None
     #: Extended thinking wanted. 4.x: ``budget_tokens`` on Opus only (as before).
     thinking: bool = False
@@ -122,9 +130,12 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
     # apply to all six.
     Role.SCHEMA_DESIGN: RoleSpec(
         env_vars=("SCHEMA_AGENT_MODEL_ID", "BEDROCK_MODEL_ID"),
-        default_model=MODEL_IDS["opus-4.6"],
+        default_model=MODEL_IDS["opus-5.5"],
         max_tokens=65536,
         max_tokens_env="SCHEMA_AGENT_MAX_TOKENS",
+        # ElastiCache passes 32768; on Opus 5.5 at effort high, thinking plus the
+        # structured output overran that (MaxTokensReachedException, #624).
+        adaptive_max_tokens=65536,
         legacy_temperature=1.0,
         thinking=True,
         legacy_thinking_budget=6000,
@@ -143,7 +154,7 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
     # Reality-check and synthesis executive summaries (a few sentences).
     Role.SUMMARY: RoleSpec(
         env_vars=("SUMMARY_MODEL_ID",),
-        default_model=MODEL_IDS["sonnet-4.6"],
+        default_model=MODEL_IDS["sonnet-5.5"],
         max_tokens=512,
         legacy_temperature=0.2,
         effort="low",
@@ -151,23 +162,22 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
     # Consolidation validator (a JSON array verdict per moved query batch).
     Role.VALIDATOR: RoleSpec(
         env_vars=("VALIDATOR_MODEL_ID", "SUMMARY_MODEL_ID"),
-        default_model=MODEL_IDS["sonnet-4.6"],
+        default_model=MODEL_IDS["sonnet-5.5"],
         max_tokens=4096,
         legacy_temperature=0.0,
         effort="medium",
     ),
-    # Free-text answer check (yes/no). Claude Haiku 3 is retired, so the
-    # default is the closest still-served Haiku with the same 4.x request.
+    # Free-text answer check (yes/no).
     Role.LIGHT_CHECK: RoleSpec(
         env_vars=("LIGHT_CHECK_MODEL_ID",),
-        default_model=MODEL_IDS["haiku-4.5"],
+        default_model=MODEL_IDS["haiku-5.5"],
         max_tokens=LEGACY_MAX_TOKENS_FLOOR,
         effort="low",
     ),
     # Analysis-phase LLM advisor (Strands structured output per query group).
     Role.ANALYSIS_ADVISOR: RoleSpec(
         env_vars=("ANALYSIS_MODEL_ID",),
-        default_model=MODEL_IDS["sonnet-4.6"],
+        default_model=MODEL_IDS["sonnet-5.5"],
         effort="medium",
         structured_output=True,
         strict_tools=True,
@@ -176,7 +186,7 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
     # the ID alone (no sampling or thinking fields), so only the ID is ours.
     Role.ATX_AGENT: RoleSpec(
         env_vars=("MODEL_ID",),
-        default_model=MODEL_IDS["sonnet-4.6"],
+        default_model=MODEL_IDS["sonnet-5.5"],
     ),
 }
 
@@ -338,13 +348,22 @@ def _cache_config(spec: RoleSpec, profile: ModelProfile) -> Any:
 
 def _max_tokens(spec: RoleSpec, profile: ModelProfile, override: int | None) -> int | None:
     value = override if override is not None else spec.max_tokens
-    if spec.max_tokens_env and os.environ.get(spec.max_tokens_env, "").strip():
-        value = int(os.environ[spec.max_tokens_env])
-    if profile.adaptive_by_default:
-        return max(value or 0, ADAPTIVE_MAX_TOKENS_FLOOR)
+    from_env = bool(spec.max_tokens_env and os.environ.get(spec.max_tokens_env, "").strip())
+    if from_env:
+        value = int(os.environ[spec.max_tokens_env or ""])
+    if _adaptive_thinking_on(spec, profile):
+        floor = ADAPTIVE_MAX_TOKENS_FLOOR
+        if spec.adaptive_max_tokens and not from_env:
+            floor = max(floor, spec.adaptive_max_tokens)
+        return max(value or 0, floor)
     if value is None:
         return None
     return max(value, LEGACY_MAX_TOKENS_FLOOR)
+
+
+def _adaptive_thinking_on(spec: RoleSpec, profile: ModelProfile) -> bool:
+    """Adaptive thinking runs: on by default, or asked for (Opus 4.7/4.8)."""
+    return profile.adaptive_by_default or _thinking(spec, profile) == {"type": "adaptive"}
 
 
 def _thinking(spec: RoleSpec, profile: ModelProfile) -> dict | None:

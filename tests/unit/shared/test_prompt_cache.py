@@ -39,7 +39,8 @@ def _clean_env(monkeypatch):
     monkeypatch.setenv("AWS_REGION", "us-east-1")
 
 
-SCHEMA_MODELS = [models.ROLE_SPECS[Role.SCHEMA_DESIGN].default_model, MODEL_IDS["opus-5.5"]]
+# The default (Opus 5.5) and a 4.x override: both cache.
+SCHEMA_MODELS = [models.ROLE_SPECS[Role.SCHEMA_DESIGN].default_model, MODEL_IDS["opus-4.6"]]
 
 
 # ---------------------------------------------------------------------------

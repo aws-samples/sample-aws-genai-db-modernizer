@@ -4,10 +4,12 @@ Every model call in ``src/`` resolves its model through a role in
 ``src.shared.models`` and builds its request settings from that role plus the
 model family. These tests pin three things:
 
-* no literal model ID lives anywhere in ``src/`` or ``scripts/`` outside
-  ``src/shared/models.py``;
-* today's defaults keep exactly the request settings the call sites sent before
-  the role config existed (so the 4.x path does not change);
+* no literal model ID lives in any tracked text file under ``src/``,
+  ``scripts/`` or ``pipeline/`` outside ``src/shared/models.py``;
+* the defaults are the 5.5 family, in the ``us.`` inference-profile form that
+  ``pipeline/iam-roles.yaml`` allows;
+* a 4.x model (still reachable through the env overrides) keeps exactly the
+  request settings the call sites sent before the role config existed;
 * a 5.5-family model gets a valid request: no sampling parameters, no
   ``budget_tokens``, an explicit ``effort``, ``max_tokens`` above a floor, strict
   tools on structured-output roles, and never a forced ``tool_choice``.
@@ -18,8 +20,10 @@ Tests never call a real model: Bedrock clients are built offline and their
 
 from __future__ import annotations
 
+import ast
 import json
 import re
+import subprocess  # nosec B404 -- git ls-files only
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -72,25 +76,45 @@ _ALLOWED = {
     REPO_ROOT / "src" / "shared" / "models.py",
     REPO_ROOT / "pipeline" / "iam-roles.yaml",
 }
-_SCANNED_SUFFIXES = {".py", ".md", ".yaml", ".yml", ".json", ".sh", ".toml", ".txt", ".js"}
-_SKIPPED_DIRS = {"node_modules", "build", "__pycache__", ".pytest_cache"}
+_SCANNED_TOPS = ("src", "scripts", "pipeline")
 
 
-def _scanned_files():
-    for top in ("src", "scripts", "pipeline"):
-        for path in (REPO_ROOT / top).rglob("*"):
-            if not path.is_file() or path in _ALLOWED:
-                continue
-            if _SKIPPED_DIRS.intersection(path.parts):
-                continue
-            if path.suffix in _SCANNED_SUFFIXES or path.name.startswith("Dockerfile"):
-                yield path
+def _tracked_text_files() -> list[tuple[Path, str]]:
+    """Every git-tracked text file under the scanned trees, with its content.
+
+    Tracked files (not a suffix allowlist), so templates such as ``.j2`` are
+    covered too. Only a file with a NUL byte counts as binary; anything else
+    is decoded with replacement characters, so a stray non-UTF-8 byte cannot
+    hide a model ID from the guard.
+    """
+    out = subprocess.run(  # nosec B603 B607 -- fixed argv
+        ["git", "ls-files", "-z", "--", *_SCANNED_TOPS],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode()
+    files = []
+    for rel in filter(None, out.split("\0")):
+        path = REPO_ROOT / rel
+        if path in _ALLOWED or not path.is_file():
+            continue
+        raw = path.read_bytes()
+        if b"\0" in raw:
+            continue
+        files.append((path, raw.decode("utf-8", errors="replace")))
+    return files
+
+
+def test_guard_scans_templates_and_every_tracked_tree():
+    scanned = {path.relative_to(REPO_ROOT).parts[0] for path, _ in _tracked_text_files()}
+    assert scanned == set(_SCANNED_TOPS)
+    assert any(path.suffix == ".j2" for path, _ in _tracked_text_files())
 
 
 def test_no_literal_model_id_outside_models_module():
     offenders = []
-    for path in _scanned_files():
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for path, text in _tracked_text_files():
+        for lineno, line in enumerate(text.splitlines(), 1):
             if _MODEL_ID_PATTERN.search(line):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
     assert (
@@ -101,8 +125,6 @@ def test_no_literal_model_id_outside_models_module():
 def test_every_strands_agent_gets_an_explicit_model():
     """An ``Agent()`` without ``model=`` silently uses the Strands default model,
     which no role (and no literal-ID guard) can see."""
-    import ast
-
     offenders = []
     for path in (REPO_ROOT / "src").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -115,21 +137,117 @@ def test_every_strands_agent_gets_an_explicit_model():
     assert not offenders, "Agent() without model=: " + ", ".join(offenders)
 
 
+_STRING_SOURCES = {"resolve_model_id", "getenv", "get"}
+
+
+def _is_model_id_string(node: ast.AST, string_names: set[str]) -> bool:
+    """A string literal, f-string, ``resolve_model_id(...)``/env lookup, or a
+    name bound to one of those."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.Call):
+        name = getattr(node.func, "id", getattr(node.func, "attr", None))
+        return name in _STRING_SOURCES
+    if isinstance(node, ast.Subscript):  # os.environ["..."]
+        return bool(getattr(node.value, "attr", None) == "environ")
+    return isinstance(node, ast.Name) and node.id in string_names
+
+
+def _agent_model_string_offenders(tree: ast.AST) -> list[int]:
+    string_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _is_model_id_string(node.value, set()):
+            string_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if getattr(node.func, "id", getattr(node.func, "attr", None)) != "Agent":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "model" and _is_model_id_string(kw.value, string_names):
+                offenders.append(node.lineno)
+    return offenders
+
+
+def test_every_strands_agent_gets_a_role_model_object():
+    """``Agent(model="<id>")`` or ``Agent(model=resolve_model_id(...))`` makes
+    Strands build a plain ``BedrockModel`` from the string, without the role's
+    request settings or the forced-choice guard. Pass ``build_bedrock_model(...)``."""
+    offenders = []
+    for path, text in _tracked_text_files():
+        if path.suffix == ".py" and path.parts[len(REPO_ROOT.parts)] == "src":
+            offenders += [
+                f"{path.relative_to(REPO_ROOT)}:{line}"
+                for line in _agent_model_string_offenders(ast.parse(text))
+            ]
+    assert not offenders, "Agent(model=<model ID string>): " + ", ".join(offenders)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'Agent(model="us.x")',
+        "Agent(model=resolve_model_id(Role.SUMMARY))",
+        "m = resolve_model_id(Role.SUMMARY)\nAgent(model=m)",
+        'm = os.environ.get("X")\nAgent(model=m)',
+        'Agent(model=f"{p}.x")',
+    ],
+)
+def test_agent_model_string_guard_catches(source):
+    assert _agent_model_string_offenders(ast.parse(source))
+
+
+def test_agent_model_string_guard_allows_role_models():
+    source = (
+        "model = build_bedrock_model(Role.SUMMARY)\nAgent(model=model)\nAgent(model=_build_model())"
+    )
+    assert not _agent_model_string_offenders(ast.parse(source))
+
+
+def test_bedrock_model_is_built_only_by_the_role_builder():
+    """A direct ``BedrockModel(...)`` skips the role's family-valid settings
+    (and the forced-choice guard); only ``RoleBedrockModel`` may construct one."""
+    allowed = REPO_ROOT / "src" / "shared" / "role_bedrock_model.py"
+    offenders = []
+    for path, text in _tracked_text_files():
+        if path.suffix != ".py" or path == allowed:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "id", getattr(node.func, "attr", None))
+                if name == "BedrockModel":
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+    assert not offenders, "Build models with shared.models.build_bedrock_model: " + ", ".join(
+        offenders
+    )
+
+
 # ---------------------------------------------------------------------------
 # Role resolution
 # ---------------------------------------------------------------------------
 
 
-def test_defaults_keep_todays_models():
-    # The 5.5 default switch is a separate, measured PR (#624).
-    assert resolve_model_id(Role.SCHEMA_DESIGN) == "us.anthropic.claude-opus-4-6-v1"
-    assert resolve_model_id(Role.SUMMARY) == "us.anthropic.claude-sonnet-4-6"
-    assert resolve_model_id(Role.VALIDATOR) == "us.anthropic.claude-sonnet-4-6"
-    assert resolve_model_id(Role.ANALYSIS_ADVISOR) == "us.anthropic.claude-sonnet-4-6"
-    assert resolve_model_id(Role.ATX_AGENT) == "us.anthropic.claude-sonnet-4-6"
-    # Claude Haiku 3 is retired; the light check moves to the closest
-    # still-served Haiku with the same (4.x) request surface.
-    assert resolve_model_id(Role.LIGHT_CHECK) == MODEL_IDS["haiku-4.5"]
+def test_defaults_are_the_five_five_family():
+    assert resolve_model_id(Role.SCHEMA_DESIGN) == "us.anthropic.claude-opus-5-5"
+    assert resolve_model_id(Role.SUMMARY) == "us.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.VALIDATOR) == "us.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.ANALYSIS_ADVISOR) == "us.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.ATX_AGENT) == "us.anthropic.claude-sonnet-5-5"
+    assert resolve_model_id(Role.LIGHT_CHECK) == "us.anthropic.claude-haiku-5-5"
+
+
+def test_defaults_fit_todays_iam_policy():
+    """``pipeline/iam-roles.yaml`` allows in-region inference profiles and
+    ``us-*`` foundation models. A ``us.`` profile routes only to ``us-*``
+    regions; a ``global.`` one does not, so it needs a policy change first."""
+    policy = (REPO_ROOT / "pipeline" / "iam-roles.yaml").read_text(encoding="utf-8")
+    assert '"arn:aws:bedrock:us-*::foundation-model/*"' in policy
+    assert "inference-profile/*" in policy
+    for role in Role:
+        assert models.ROLE_SPECS[role].default_model.startswith("us.anthropic."), role
 
 
 @pytest.mark.parametrize("env_var", ["SCHEMA_AGENT_MODEL_ID", "BEDROCK_MODEL_ID"])
@@ -205,12 +323,22 @@ def test_unknown_model_gets_the_minimal_request_and_a_warning(caplog):
 
 
 # ---------------------------------------------------------------------------
-# Request shape: today's defaults are unchanged
+# Request shape: a 4.x model keeps the pre-#624 request
 # ---------------------------------------------------------------------------
 
+#: A 4.x model per role (reachable through the role's env override).
+_FOUR_X = {
+    Role.SCHEMA_DESIGN: MODEL_IDS["opus-4.6"],
+    Role.SUMMARY: MODEL_IDS["sonnet-4.6"],
+    Role.VALIDATOR: MODEL_IDS["sonnet-4.6"],
+    Role.LIGHT_CHECK: MODEL_IDS["haiku-4.5"],
+    Role.ANALYSIS_ADVISOR: MODEL_IDS["sonnet-4.6"],
+    Role.ATX_AGENT: MODEL_IDS["sonnet-4.6"],
+}
 
-def test_schema_design_default_shape_unchanged():
-    kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN)
+
+def test_schema_design_4x_shape_unchanged():
+    kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN, model_id=MODEL_IDS["opus-4.6"])
     kwargs.pop("cache_config")  # prompt caching (#626), pinned in test_prompt_cache.py
     assert kwargs == {
         "model_id": "us.anthropic.claude-opus-4-6-v1",
@@ -228,6 +356,17 @@ def test_schema_design_non_opus_4x_has_no_thinking(monkeypatch):
     assert kwargs["additional_request_fields"] == {}
 
 
+def test_schema_design_call_site_cap_is_raised_only_on_adaptive_families(monkeypatch):
+    five_five = bedrock_model_kwargs(Role.SCHEMA_DESIGN, max_tokens=32768)
+    assert five_five["max_tokens"] == 65536
+    four_x = bedrock_model_kwargs(
+        Role.SCHEMA_DESIGN, model_id=MODEL_IDS["opus-4.6"], max_tokens=32768
+    )
+    assert four_x["max_tokens"] == 32768
+    monkeypatch.setenv("SCHEMA_AGENT_MAX_TOKENS", "24000")
+    assert bedrock_model_kwargs(Role.SCHEMA_DESIGN, max_tokens=32768)["max_tokens"] == 24000
+
+
 def test_schema_design_max_tokens_env(monkeypatch):
     monkeypatch.setenv("SCHEMA_AGENT_MAX_TOKENS", "16384")
     assert bedrock_model_kwargs(Role.SCHEMA_DESIGN)["max_tokens"] == 16384
@@ -235,34 +374,37 @@ def test_schema_design_max_tokens_env(monkeypatch):
     assert bedrock_model_kwargs(Role.SCHEMA_DESIGN, max_tokens=32768)["max_tokens"] == 16384
 
 
-def test_summary_default_shape_unchanged():
-    assert bedrock_model_kwargs(Role.SUMMARY) == {
+def test_summary_4x_shape_unchanged():
+    assert bedrock_model_kwargs(Role.SUMMARY, model_id=MODEL_IDS["sonnet-4.6"]) == {
         "model_id": "us.anthropic.claude-sonnet-4-6",
         "max_tokens": 512,
         "temperature": 0.2,
     }
 
 
-def test_validator_default_shape_unchanged():
-    assert bedrock_model_kwargs(Role.VALIDATOR) == {
+def test_validator_4x_shape_unchanged():
+    four_x = MODEL_IDS["sonnet-4.6"]
+    assert bedrock_model_kwargs(Role.VALIDATOR, model_id=four_x) == {
         "model_id": "us.anthropic.claude-sonnet-4-6",
         "max_tokens": 4096,
         "temperature": 0.0,
     }
-    assert converse_request_fields(Role.VALIDATOR) == {
+    assert converse_request_fields(Role.VALIDATOR, model_id=four_x) == {
         "modelId": "us.anthropic.claude-sonnet-4-6",
         "inferenceConfig": {"maxTokens": 4096, "temperature": 0.0},
     }
 
 
-def test_analysis_advisor_default_shape_unchanged():
-    assert bedrock_model_kwargs(Role.ANALYSIS_ADVISOR) == {
+def test_analysis_advisor_4x_shape_unchanged():
+    assert bedrock_model_kwargs(Role.ANALYSIS_ADVISOR, model_id=MODEL_IDS["sonnet-4.6"]) == {
         "model_id": "us.anthropic.claude-sonnet-4-6",
     }
 
 
-def test_light_check_default_body_has_a_sane_max_tokens():
-    body = invoke_model_body(Role.LIGHT_CHECK, [{"role": "user", "content": "q"}])
+def test_light_check_4x_body_has_a_sane_max_tokens():
+    body = invoke_model_body(
+        Role.LIGHT_CHECK, [{"role": "user", "content": "q"}], model_id=MODEL_IDS["haiku-4.5"]
+    )
     assert body["anthropic_version"] == "bedrock-2023-05-31"
     assert body["max_tokens"] >= LEGACY_MAX_TOKENS_FLOOR
     assert "output_config" not in body  # Haiku 4.5 rejects effort
@@ -270,13 +412,13 @@ def test_light_check_default_body_has_a_sane_max_tokens():
 
 
 @pytest.mark.parametrize("role", list(Role))
-def test_default_builders_send_exactly_the_plain_bedrock_request(role):
-    """On today's 4.x defaults the role model formats the same request as a plain
+def test_4x_builders_send_exactly_the_plain_bedrock_request(role):
+    """On a 4.x model the role model formats the same request as a plain
     ``BedrockModel`` with the same settings, forced tool_choice included."""
     from strands.models.bedrock import BedrockModel
 
-    model = build_bedrock_model(role)
-    plain = BedrockModel(**bedrock_model_kwargs(role))
+    model = build_bedrock_model(role, model_id=_FOUR_X[role])
+    plain = BedrockModel(**bedrock_model_kwargs(role, model_id=_FOUR_X[role]))
     messages = [{"role": "user", "content": [{"text": "hi"}]}]
     spec = {"name": "out", "description": "d", "inputSchema": {"json": {"type": "object"}}}
     for choice in (None, {"auto": {}}, {"tool": {"name": "out"}}):
@@ -289,8 +431,48 @@ def test_default_builders_send_exactly_the_plain_bedrock_request(role):
 
 
 # ---------------------------------------------------------------------------
-# Request shape: 5.5 family
+# Request shape: 5.5 family (the defaults)
 # ---------------------------------------------------------------------------
+
+
+def test_default_requests_exactly():
+    """The exact settings each default sends (measured on Bedrock, #624)."""
+    schema = bedrock_model_kwargs(Role.SCHEMA_DESIGN)
+    cache = schema.pop("cache_config")  # prompt caching (#626), pinned in test_prompt_cache.py
+    assert (cache.strategy, cache.tools_ttl) == ("auto", True)
+    assert models.min_cacheable_tokens(schema["model_id"]) == 512
+    assert schema == {
+        "model_id": "us.anthropic.claude-opus-5-5",
+        "max_tokens": 65536,
+        "additional_request_fields": {"output_config": {"effort": "high"}},
+    }
+    assert bedrock_model_kwargs(Role.SUMMARY) == {
+        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
+        "additional_request_fields": {"output_config": {"effort": "low"}},
+    }
+    assert bedrock_model_kwargs(Role.VALIDATOR) == {
+        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
+        "additional_request_fields": {"output_config": {"effort": "medium"}},
+    }
+    assert converse_request_fields(Role.VALIDATOR) == {
+        "modelId": "us.anthropic.claude-sonnet-5-5",
+        "inferenceConfig": {"maxTokens": ADAPTIVE_MAX_TOKENS_FLOOR},
+        "additionalModelRequestFields": {"output_config": {"effort": "medium"}},
+    }
+    assert bedrock_model_kwargs(Role.ANALYSIS_ADVISOR) == {
+        "model_id": "us.anthropic.claude-sonnet-5-5",
+        "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
+        "additional_request_fields": {"output_config": {"effort": "medium"}},
+        "strict_tools": True,
+    }
+    body = invoke_model_body(Role.LIGHT_CHECK, [{"role": "user", "content": "q"}])
+    assert {k: v for k, v in body.items() if k != "messages"} == {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": ADAPTIVE_MAX_TOKENS_FLOOR,
+        "output_config": {"effort": "low"},
+    }
 
 
 def _walk(value: Any):
@@ -483,7 +665,7 @@ def test_safe_tool_choice_downgrades_only_forced_choices():
     assert model.safe_tool_choice({"tool": {"name": "x"}}) == {"auto": {}}
     assert model.safe_tool_choice({"auto": {}}) == {"auto": {}}
     assert model.safe_tool_choice(None) is None
-    legacy = build_bedrock_model(Role.SUMMARY)
+    legacy = build_bedrock_model(Role.SUMMARY, model_id=MODEL_IDS["sonnet-4.6"])
     assert legacy.safe_tool_choice({"tool": {"name": "x"}}) == {"tool": {"name": "x"}}
 
 
@@ -523,7 +705,8 @@ _SCHEMA_AGENTS = {
 
 
 @pytest.mark.parametrize("engine,max_tokens", sorted(_SCHEMA_AGENTS.items()))
-def test_schema_agents_keep_todays_request(engine, max_tokens):
+def test_schema_agents_keep_the_4x_request(monkeypatch, engine, max_tokens):
+    monkeypatch.setenv("SCHEMA_AGENT_MODEL_ID", MODEL_IDS["opus-4.6"])
     module = _schema_agent(engine)
     with patch("src.shared.role_bedrock_model.RoleBedrockModel") as bedrock_model:
         module._build_model()
@@ -538,9 +721,8 @@ def test_schema_agents_keep_todays_request(engine, max_tokens):
     assert kwargs["boto_client_config"].read_timeout == 300
 
 
-@pytest.mark.parametrize("engine", sorted(_SCHEMA_AGENTS))
-def test_schema_agents_on_opus_five_five(monkeypatch, engine):
-    monkeypatch.setenv("SCHEMA_AGENT_MODEL_ID", MODEL_IDS["opus-5.5"])
+@pytest.mark.parametrize("engine,max_tokens", sorted(_SCHEMA_AGENTS.items()))
+def test_schema_agents_default_to_opus_five_five(engine, max_tokens):
     module = _schema_agent(engine)
     with patch("src.shared.role_bedrock_model.RoleBedrockModel") as bedrock_model:
         module._build_model()
@@ -548,7 +730,9 @@ def test_schema_agents_on_opus_five_five(monkeypatch, engine):
     assert kwargs["model_id"] == MODEL_IDS["opus-5.5"]
     assert "temperature" not in kwargs
     assert kwargs["additional_request_fields"] == {"output_config": {"effort": "high"}}
-    assert kwargs["max_tokens"] >= ADAPTIVE_MAX_TOKENS_FLOOR
+    # ElastiCache's 32768 is raised: on Opus 5.5 thinking shares the budget,
+    # and 32768 overran on the wordpress sample (#624).
+    assert kwargs["max_tokens"] == 65536
     # The structured-output retry is guarded instead (see the forced-choice tests).
     assert "strict_tools" not in kwargs
 
@@ -586,3 +770,58 @@ def test_light_check_reads_the_text_block(monkeypatch):
     sent = client.return_value.invoke_model.call_args.kwargs
     assert sent["modelId"] == MODEL_IDS["haiku-5.5"]
     assert "temperature" not in json.loads(sent["body"])
+
+
+def _light_check(response: dict) -> Any:
+    from src.agents import answer_validation
+    from src.contracts.agent_interaction_models import AgentQuestion
+
+    body = MagicMock()
+    body.read.return_value = json.dumps(response)
+    question = MagicMock(spec=AgentQuestion)
+    question.question = "Why?"
+    question.question_id = "q-1"
+    question.options = None
+    with patch("boto3.client") as client:
+        client.return_value.invoke_model.return_value = {"body": body}
+        return answer_validation.validate_answer(question, "Because.")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        # Haiku 5.5 safety decline: HTTP 200, stop_reason refusal, no text block.
+        {"stop_reason": "refusal", "content": []},
+        {"stop_reason": "refusal", "content": [{"type": "thinking", "thinking": ""}]},
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "  "}]},
+    ],
+)
+def test_light_check_without_a_verdict_is_could_not_validate(response):
+    """A refusal or empty answer says nothing about the user's answer, so it is
+    accepted with a warning (like an unavailable model), never rejected."""
+    result = _light_check(response)
+    assert result.valid
+    assert result.warnings and "could not be validated" in result.warnings[0]
+    assert not result.errors
+
+
+def test_light_check_no_still_rejects():
+    result = _light_check({"stop_reason": "end_turn", "content": [{"type": "text", "text": "No"}]})
+    assert not result.valid
+    assert result.errors
+
+
+def test_adaptive_floor_follows_thinking_not_just_the_family():
+    """Opus 4.7/4.8 think only when asked; schema design asks, so its 32768
+    call-site cap is raised like on 5.x. Roles without thinking keep theirs."""
+    for model_id in ("anthropic.claude-opus-4-8", "anthropic.claude-opus-4-7"):
+        kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN, model_id=model_id, max_tokens=32768)
+        assert kwargs["additional_request_fields"]["thinking"] == {"type": "adaptive"}
+        assert kwargs["max_tokens"] == 65536
+    summary = bedrock_model_kwargs(Role.SUMMARY, model_id="anthropic.claude-opus-4-8")
+    assert summary["max_tokens"] == 512
+
+
+def test_max_tokens_env_is_still_raised_to_the_adaptive_floor(monkeypatch):
+    monkeypatch.setenv("SCHEMA_AGENT_MAX_TOKENS", "8000")
+    assert bedrock_model_kwargs(Role.SCHEMA_DESIGN)["max_tokens"] == ADAPTIVE_MAX_TOKENS_FLOOR

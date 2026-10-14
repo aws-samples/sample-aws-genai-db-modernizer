@@ -3,7 +3,8 @@ Tiered answer validation for agent interaction protocol.
 
 Option-select answers are validated deterministically (no Bedrock call).
 Free-text answers are validated via Bedrock to check the answer addresses
-the question. If Bedrock is unavailable, the answer is accepted with a warning.
+the question. If Bedrock is unavailable, or the model gives no verdict (a
+safety refusal or an empty answer), the answer is accepted with a warning.
 
 Requirements: 7.3
 """
@@ -78,9 +79,29 @@ def _bedrock_validate(question: AgentQuestion, answer: str) -> ValidationResult:
     result = json.loads(response["body"].read())
     # Newer models may lead with a (possibly empty) thinking block.
     answer_text = next(
-        (block.get("text", "") for block in result["content"] if block.get("type") == "text"),
+        (
+            block.get("text", "")
+            for block in result.get("content") or []
+            if block.get("type") == "text"
+        ),
         "",
     )
+    if result.get("stop_reason") == "refusal" or not answer_text.strip():
+        # A safety decline (HTTP 200, stop_reason "refusal", no text) says
+        # nothing about the answer: treat it as "could not validate", like an
+        # unavailable model, never as an inadequate answer.
+        logger.warning(
+            "Free-text validation of question %s got no verdict (stop_reason=%s); "
+            "accepting answer with warning.",
+            question.question_id,
+            result.get("stop_reason"),
+        )
+        return ValidationResult(
+            valid=True,
+            warnings=[
+                "Answer could not be validated (no model verdict) — accepted without semantic check"
+            ],
+        )
     if answer_text.strip().lower().startswith("yes"):
         return ValidationResult(valid=True)
     return ValidationResult(

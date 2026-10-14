@@ -335,7 +335,12 @@ class TestUntrustedQueryData:
             assert cv._try_boto3_validator("documentdb", "dynamodb", []) == []
         kwargs = client.return_value.converse.call_args.kwargs
         assert kwargs["system"] == [{"text": cv.VALIDATOR_SYSTEM_PROMPT}]
-        assert kwargs["inferenceConfig"]["maxTokens"] == cv.VALIDATOR_MAX_TOKENS
+        # The role decides the cap per model family (4096 on 4.x, the adaptive
+        # floor on the 5.5 default, #624).
+        from src.shared.models import Role, converse_request_fields
+
+        expected = converse_request_fields(Role.VALIDATOR)["inferenceConfig"]["maxTokens"]
+        assert kwargs["inferenceConfig"]["maxTokens"] == expected
 
     def test_command_says_query_text_is_data(self):
         command = (REPO / ".claude" / "commands" / "reality-check.md").read_text()

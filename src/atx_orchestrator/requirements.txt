@@ -8,6 +8,9 @@ agent-builder-mcp-client-aws-transform>=1.0.0
 # Full list lives in pyproject.toml — only runtime deps are listed here.
 # >=1.56: CacheConfig(tools_ttl=...) and the BedrockModel hooks RoleBedrockModel
 # overrides (src/shared/role_bedrock_model.py fails at import without them).
+# <2: those hooks are private. The import check catches a renamed hook, not a
+# kept one that stops being called, and CI tests only 1.56.0 (the lock file),
+# so a newer 1.x minor here is untested.
 strands-agents>=1.56.0,<2
 # LadybugDB — embedded graph DB backing the context-graph read-model that the
 # assessment-core and synthesis boundaries build + publish (graph_transport /
