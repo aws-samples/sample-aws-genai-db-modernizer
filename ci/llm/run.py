@@ -78,8 +78,12 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   never as a broken allowlist. Any *other* denial (the
   model's own exploratory ``cat``/``jq``/``sed``/``python3 -c`` etc.) is
   **not** a failure: it is recorded in ``results.json`` as
-  ``denials: {count, commands}`` (each command's first 120 characters, at
-  most 20 commands) and a warning is printed to stderr.
+  ``denials: {count, commands}`` (each entry is ``<Tool>: <target>``, first
+  120 characters, at most 20 entries) and a warning is printed to stderr.
+  A denied call of a non-Bash tool (Skill, Read, Write, Edit, WebFetch, ...)
+  is named the same way (``Skill: update-config``). If the tool or skill is
+  on the allowlist the denial counts as a broken allowlist; otherwise it is
+  recorded under ``unlisted_tool_denials`` and only warns.
 * the ``MODERNIZE_RESULT`` line's ``job_id``/``db`` aren't a single
   ``[A-Za-z0-9_.-]+`` path component -- fail (they become paths and argv
   downstream).
@@ -110,7 +114,9 @@ includes CLI startup/queueing/non-API time that ``duration_s`` does not.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
+import os
 import re
 import subprocess  # nosec B404 -- used only to read `git rev-parse`, no untrusted input
 import sys
@@ -365,18 +371,131 @@ def _aggregate_result_fields(result_recs: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-def _denial_command(denial: dict[str, Any]) -> str:
-    """Extract the Bash command text from a ``permission_denials`` entry.
-    The confirmed real shape nests it under ``tool_input``; ``input`` is
-    also checked in case a different CLI build uses that key instead."""
+def _denial_input(denial: dict[str, Any]) -> dict[str, Any]:
+    """The tool input of a ``permission_denials`` entry. The confirmed real
+    shape nests it under ``tool_input``; ``input`` is also checked in case a
+    different CLI build uses that key instead."""
     tool_input = denial.get("tool_input")
     if not isinstance(tool_input, dict):
         tool_input = denial.get("input")
-    if isinstance(tool_input, dict):
-        command = tool_input.get("command")
-        if isinstance(command, str):
-            return command
-    return ""
+    return tool_input if isinstance(tool_input, dict) else {}
+
+
+def _denial_tool(denial: dict[str, Any]) -> str:
+    """Name of the denied tool. Entries without ``tool_name`` that carry a
+    ``command`` are Bash (the only shape older CLI builds produced)."""
+    name = denial.get("tool_name")
+    if isinstance(name, str) and name:
+        return name
+    return "Bash" if isinstance(_denial_input(denial).get("command"), str) else "unknown"
+
+
+def _denial_target(tool: str, tool_input: dict[str, Any]) -> str:
+    """What a denied call was aimed at: Bash -> the command, Skill -> the
+    skill name, Read/Write/Edit/NotebookEdit -> the path, WebFetch -> the URL,
+    any other tool -> its compact JSON input (empty when it has none)."""
+    keys = {
+        "Bash": ("command",),
+        "Skill": ("skill",),
+        "Read": ("file_path", "path"),
+        "Write": ("file_path", "path"),
+        "Edit": ("file_path", "path"),
+        "NotebookEdit": ("notebook_path", "file_path"),
+        "WebFetch": ("url",),
+    }.get(tool)
+    if keys:
+        for key in keys:
+            value = tool_input.get(key)
+            if isinstance(value, str):
+                return value
+    if tool in ("Bash", "Skill", "Read", "Write", "Edit", "NotebookEdit", "WebFetch"):
+        return ""
+    if not tool_input:
+        return ""
+    return json.dumps(tool_input, separators=(",", ":"), sort_keys=True, default=str)
+
+
+def _denial_command(denial: dict[str, Any]) -> str:
+    """The Bash command text of a ``permission_denials`` entry ("" when the
+    denied tool is not Bash or carries no command)."""
+    command = _denial_input(denial).get("command")
+    return command if isinstance(command, str) else ""
+
+
+def _denial_label(tool: str, target: str) -> str:
+    """``<Tool>: <target>``, or just the tool name when there is no target."""
+    return f"{tool}: {target}" if target else tool
+
+
+def _tool_rules(settings_path: Path, kind: str) -> list[str]:
+    """Non-Bash rules of ``permissions.<kind>`` (``Agent``, ``Skill(x)``,
+    ``Edit(artifacts/**)``, ...), ``kind`` being ``allow`` or ``deny``."""
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    rules = settings.get("permissions", {}).get(kind, [])
+    if not isinstance(rules, list):
+        return []
+    return [r for r in rules if isinstance(r, str) and not r.startswith("Bash")]
+
+
+_PATH_TOOLS = ("Read", "Write", "Edit", "NotebookEdit")
+
+
+def _match_path(target: str, spec: str, cwd: str) -> bool:
+    """Does file path ``target`` match path rule ``spec`` the way Claude Code
+    reads it: ``//p`` is the absolute ``/p``, ``~/p`` is under the home
+    directory, anything else is relative to the session's cwd. Tool inputs
+    carry absolute paths, so both sides are made absolute and ``..`` is
+    normalised first (``artifacts/../src/a.py`` is ``src/a.py``)."""
+    if spec.startswith("//"):
+        pattern = spec[1:]
+    elif spec.startswith("~/"):
+        pattern = os.path.join(os.path.expanduser("~"), spec[2:])
+    else:
+        pattern = os.path.join(cwd, spec)
+    path = os.path.normpath(os.path.join(cwd, target))
+    pattern = os.path.normpath(pattern)
+    if fnmatch.fnmatchcase(path, pattern):
+        return True
+    # ``**/x`` also covers ``x`` directly under the directory before it.
+    return "/**/" in pattern and fnmatch.fnmatchcase(path, pattern.replace("/**/", "/", 1))
+
+
+def _rule_matches(tool: str, target: str, rules: list[str], cwd: str) -> bool:
+    """True when a non-Bash call matches a rule (a bare tool name, or
+    ``Tool(pattern)``: a glob on the skill name, or a path rule for file tools)."""
+    for rule in rules:
+        name, sep, spec = rule.partition("(")
+        if name != tool:
+            continue
+        if not sep:
+            return True
+        spec = spec[:-1] if spec.endswith(")") else spec
+        if tool in _PATH_TOOLS:
+            if _match_path(target, spec, cwd):
+                return True
+        elif fnmatch.fnmatchcase(target, spec):
+            return True
+    return False
+
+
+def _tool_is_allowlisted(
+    tool: str, target: str, allow: list[str], deny: list[str], cwd: str
+) -> bool:
+    """True when an allow rule covers the call and no deny rule blocks it (a
+    path a deny rule blocks is a correct denial, not a broken allowlist)."""
+    return _rule_matches(tool, target, allow, cwd) and not _rule_matches(tool, target, deny, cwd)
+
+
+def _session_cwd(records: list[dict[str, Any]]) -> str:
+    """The session's working directory (``system``/``init`` record), else the repo root."""
+    for rec in records:
+        cwd = rec.get("cwd")
+        if rec.get("type") == "system" and isinstance(cwd, str) and os.path.isabs(cwd):
+            return cwd
+    return str(REPO_ROOT)
 
 
 def _allowlisted_bash_prefixes(settings_path: Path) -> list[str]:
@@ -581,17 +700,40 @@ def check_transcript(
         if isinstance(denials, list):
             all_denials.extend(d for d in denials if isinstance(d, dict))
 
-    denial_commands: list[str] = [_denial_command(d) for d in all_denials]
-    if not all_denials:
-        denial_commands = list(tool_result_permission_errors(records))
+    settings_path = settings_file or REPO_ROOT / ".claude" / "settings.ci.json"
+    allow_prefixes = _allowlisted_bash_prefixes(settings_path)
+    allow_rules = _tool_rules(settings_path, "allow")
+    deny_rules = _tool_rules(settings_path, "deny")
+    cwd = _session_cwd(records)
 
-    allow_prefixes = _allowlisted_bash_prefixes(
-        settings_file or REPO_ROOT / ".claude" / "settings.ci.json"
-    )
-    classified = [(cmd, _classify_denial(cmd, allow_prefixes)) for cmd in denial_commands]
+    # (label, kind) per denial. Labels read "<Tool>: <target>". Kinds:
+    # "allowlist" (the denied call IS allowlisted: broken allowlist),
+    # "rule_violation", "other" (exploratory Bash) and "unlisted_tool" (a
+    # non-Bash tool call outside the allowlist: the model's own misstep or an
+    # allowlist gap to review, never a failure).
+    classified: list[tuple[str, str]] = []
+    if all_denials:
+        for denial in all_denials:
+            tool = _denial_tool(denial)
+            tool_input = _denial_input(denial)
+            target = _denial_target(tool, tool_input)
+            label = _denial_label(tool, target)
+            if tool == "Bash":
+                classified.append((label, _classify_denial(target, allow_prefixes)))
+            elif _tool_is_allowlisted(tool, target, allow_rules, deny_rules, cwd):
+                classified.append((label, "allowlist"))
+            else:
+                classified.append((label, "unlisted_tool"))
+    else:
+        # No command text is available from tool_result denial text.
+        classified = [
+            (f"tool_result: {text}", _classify_denial(text, allow_prefixes))
+            for text in tool_result_permission_errors(records)
+        ]
     pipeline_denials = [cmd for cmd, kind in classified if kind == "allowlist"]
     rule_violations = [cmd for cmd, kind in classified if kind == "rule_violation"]
     other_denials = [cmd for cmd, kind in classified if kind == "other"]
+    unlisted_tool_denials = [cmd for cmd, kind in classified if kind == "unlisted_tool"]
 
     if other_denials:
         denials_summary = {
@@ -604,6 +746,19 @@ def check_transcript(
             file=sys.stderr,
         )
         fields = {**fields, "denials": denials_summary}
+
+    if unlisted_tool_denials:
+        tools_summary = {
+            "count": len(unlisted_tool_denials),
+            "commands": [_truncate(cmd) for cmd in unlisted_tool_denials[:20]],
+        }
+        print(
+            f"warning: {len(unlisted_tool_denials)} denied call(s) of non-Bash tools outside "
+            f"the allowlist in .claude/settings.ci.json (review: allowlist gap or model "
+            f"misstep): {tools_summary['commands']!r}",
+            file=sys.stderr,
+        )
+        fields = {**fields, "unlisted_tool_denials": tools_summary}
 
     if rule_violations:
         violations_summary = {
@@ -757,6 +912,7 @@ def build_results_row(
     transcript_error: str | None = None
     denials: dict[str, Any] | None = None
     rule_violations: dict[str, Any] | None = None
+    unlisted_tool_denials: dict[str, Any] | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -785,6 +941,8 @@ def build_results_row(
         denials = denials_raw if isinstance(denials_raw, dict) else None
         violations_raw = summary.get("rule_violations")
         rule_violations = violations_raw if isinstance(violations_raw, dict) else None
+        unlisted_raw = summary.get("unlisted_tool_denials")
+        unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -850,6 +1008,7 @@ def build_results_row(
         "transcript_error": transcript_error,
         "denials": denials,
         "rule_violations": rule_violations,
+        "unlisted_tool_denials": unlisted_tool_denials,
         "judge": judge_section,
         "pass": overall_pass,
     }

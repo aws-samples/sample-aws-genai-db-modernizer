@@ -60,7 +60,7 @@ def test_exploratory_denial_passes_with_warning(capsys: pytest.CaptureFixture[st
     summary as ``denials`` and warned about on stderr instead."""
     summary = run.check_transcript(FIXTURES / "synthetic-denial.jsonl", "chat")
     assert summary["job_id"] == "dry00003"
-    assert summary["denials"] == {"count": 1, "commands": ["rm -rf /tmp/whatever"]}
+    assert summary["denials"] == {"count": 1, "commands": ["Bash: rm -rf /tmp/whatever"]}
     assert "exploratory" in capsys.readouterr().err
 
 
@@ -87,7 +87,7 @@ def test_pipe_into_denied_command_is_a_rule_violation_not_a_broken_allowlist() -
     partial = exc_info.value.partial
     assert partial["rule_violations"]["count"] == 1
     assert partial["rule_violations"]["commands"][0].startswith(
-        "uv run python scripts/search_artifacts.py"
+        "Bash: uv run python scripts/search_artifacts.py"
     )
     assert "denials" not in partial
 
@@ -1307,3 +1307,164 @@ def test_collect_logs_refuses_unsafe_names_from_the_state_file(tmp_path: Path) -
     root = tmp_path / "artifacts"
     root.mkdir()
     assert run.collect_logs(root, tmp_path / "out", state_file=state) == []
+
+
+# ---------------------------------------------------------------------------
+# Non-Bash denials are named "<Tool>: <target>" (#693)
+# ---------------------------------------------------------------------------
+
+
+def _denied(tmp_path: Path, *denials: dict[str, object]) -> dict[str, object]:
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=den00001 db=wordpress mode=chat",
+                permission_denials=list(denials),
+            )
+        ],
+    )
+    return run.check_transcript(path, "chat")
+
+
+def test_denied_skill_outside_allowlist_is_named_not_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    summary = _denied(
+        tmp_path,
+        {
+            "tool_name": "Skill",
+            "tool_use_id": "tu-1",
+            "tool_input": {"skill": "update-config", "args": "noop"},
+        },
+    )
+    assert summary["unlisted_tool_denials"] == {"count": 1, "commands": ["Skill: update-config"]}
+    assert "denials" not in summary
+    assert "Skill: update-config" in capsys.readouterr().err
+
+
+def test_denied_allowlisted_skill_is_a_broken_allowlist(tmp_path: Path) -> None:
+    path = _transcript(
+        tmp_path,
+        [
+            _result_line(
+                "MODERNIZE_RESULT: complete job_id=den00002 db=wordpress mode=chat",
+                permission_denials=[
+                    {"tool_name": "Skill", "tool_input": {"skill": "design-schema-dynamodb"}}
+                ],
+            )
+        ],
+    )
+    with pytest.raises(run.TranscriptError, match=r"allowlist.*Skill: design-schema-dynamodb"):
+        run.check_transcript(path, "chat")
+
+
+@pytest.mark.parametrize(
+    ("denial", "label"),
+    [
+        ({"tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}, "Read: /etc/hosts"),
+        ({"tool_name": "Write", "tool_input": {"file_path": "/tmp/x.txt"}}, "Write: /tmp/x.txt"),
+        ({"tool_name": "Edit", "tool_input": {"file_path": "src/a.py"}}, "Edit: src/a.py"),
+        (
+            {"tool_name": "WebFetch", "tool_input": {"url": "https://example.com/a"}},
+            "WebFetch: https://example.com/a",
+        ),
+        (
+            {"tool_name": "Glob", "tool_input": {"pattern": "**/*.py", "path": "src"}},
+            'Glob: {"path":"src","pattern":"**/*.py"}',
+        ),
+        ({"tool_name": "TodoWrite", "tool_input": {}}, "TodoWrite"),
+    ],
+)
+def test_denied_non_bash_tools_are_labeled_with_their_target(
+    tmp_path: Path, denial: dict[str, object], label: str
+) -> None:
+    summary = _denied(tmp_path, denial)
+    assert summary["unlisted_tool_denials"] == {"count": 1, "commands": [label]}
+
+
+CWD = "/workspace/repo"
+
+
+def _denied_path(tmp_path: Path, tool: str, file_path: str, cwd: str | None = CWD) -> dict:
+    """Run check_transcript over a session whose one denial is ``tool`` on the
+    absolute ``file_path`` (Claude Code always sends absolute paths)."""
+    records: list[dict] = []
+    if cwd is not None:
+        records.append({"type": "system", "subtype": "init", "cwd": cwd})
+    records.append(
+        _result_line(
+            "MODERNIZE_RESULT: complete job_id=den00003 db=wordpress mode=chat",
+            permission_denials=[
+                {"tool_name": tool, "tool_use_id": "tu-1", "tool_input": {"file_path": file_path}}
+            ],
+        )
+    )
+    return run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+@pytest.mark.parametrize(
+    ("tool", "file_path"),
+    [
+        ("Write", f"{CWD}/artifacts/wordpress/j1/x.json"),
+        ("Edit", f"{CWD}/artifacts/wordpress/j1/y.json"),
+        ("Edit", f"{CWD}/.modernizer-state.json"),
+        ("Write", f"{CWD}/artifacts/../artifacts/wordpress/x.json"),
+    ],
+)
+def test_denied_absolute_path_inside_allow_rule_is_a_broken_allowlist(
+    tmp_path: Path, tool: str, file_path: str
+) -> None:
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        _denied_path(tmp_path, tool, file_path)
+
+
+@pytest.mark.parametrize(
+    ("tool", "file_path"),
+    [
+        # A deny rule blocks it (Write(artifacts/.local-ui/**)): a correct denial.
+        ("Write", f"{CWD}/artifacts/.local-ui/x.json"),
+        ("Edit", f"{CWD}/.local-ui/state.json"),
+        # ``..`` escapes the allowed directory: src/a.py is not allowlisted.
+        ("Edit", f"{CWD}/artifacts/../src/a.py"),
+        ("Write", f"{CWD}/src/a.py"),
+        # Same relative path in another directory is not under this cwd.
+        ("Write", "/elsewhere/artifacts/x.json"),
+    ],
+)
+def test_denied_path_outside_allowlist_or_blocked_by_deny_rule_only_warns(
+    tmp_path: Path, tool: str, file_path: str
+) -> None:
+    summary = _denied_path(tmp_path, tool, file_path)
+    assert summary["unlisted_tool_denials"]["commands"] == [f"{tool}: {file_path}"]
+
+
+def test_cwd_comes_from_the_init_record(tmp_path: Path) -> None:
+    with pytest.raises(run.TranscriptError, match="allowlist"):
+        _denied_path(tmp_path, "Write", "/other/checkout/artifacts/x.json", cwd="/other/checkout")
+    summary = _denied_path(tmp_path, "Write", "/other/checkout/artifacts/x.json", cwd=CWD)
+    assert "unlisted_tool_denials" in summary
+
+
+def test_bash_and_skill_denials_are_reported_side_by_side(tmp_path: Path) -> None:
+    summary = _denied(
+        tmp_path,
+        {"tool_name": "Bash", "tool_input": {"command": "cat a.json"}},
+        {"tool_name": "Skill", "tool_input": {"skill": "update-config"}},
+    )
+    assert summary["denials"] == {"count": 1, "commands": ["Bash: cat a.json"]}
+    assert summary["unlisted_tool_denials"] == {"count": 1, "commands": ["Skill: update-config"]}
+
+
+def test_results_carry_unlisted_tool_denials(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, unlisted_tool_denials={"count": 1, "commands": ["Skill: x"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["unlisted_tool_denials"] == {"count": 1, "commands": ["Skill: x"]}
