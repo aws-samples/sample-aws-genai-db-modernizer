@@ -239,6 +239,14 @@ class TestLoadAgentInput:
         assert "context" in result
         assert "decision_trace" in result
         assert result["decision_trace"]["trace_version"] == "1.0"
+        # #626: the shard and size figures come with the input, computed.
+        (shards,) = result["design_metrics"]["opensearch_shards"]["tables"]
+        assert shards == {
+            "table_id": "t1",
+            "data_gb": 0.001,  # 1 MB / 1024
+            "search_shards": 1,
+            "timeseries_shards": 1,
+        }
 
     def test_raises_without_env_vars(self):
         import importlib

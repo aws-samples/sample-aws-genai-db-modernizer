@@ -81,7 +81,15 @@ def test_check_costs_passes_and_leaves_the_draft_untouched(monkeypatch, capsys, 
 
 
 def test_check_costs_reports_failure_without_erroring(monkeypatch, capsys, tmp_path):
-    bad = [{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}]
+    # 2850 of 3000 RCU/s is 95%: at risk, and no mitigation.
+    bad = [
+        {
+            **HOT_PARTITIONS[0],
+            "rcu_or_wcu_per_second": 2850.0,
+            "at_risk": True,
+            "utilization_pct": 95.0,
+        }
+    ]
     path = _write_draft(tmp_path, {"hot_partition_analysis": bad})
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--check-costs", str(path))

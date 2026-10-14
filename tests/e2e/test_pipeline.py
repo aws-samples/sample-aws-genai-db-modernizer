@@ -191,6 +191,8 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     group_input = json.loads((group_dir / group["input_file"]).read_text())
     query_id = group_input["collector_output"]["queries"]["query_patterns"][0]["query_id"]
     source_table = group["primary_tables"][0]
+    # The group input carries the pipeline-computed design_rps the draft must copy (#626).
+    rates = {q["query_id"]: q["design_rps"] for q in group_input["design_metrics"]["queries"]}
 
     draft = {
         "job_id": run.job_id,
@@ -205,7 +207,7 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
                 "operation": "GetItem",
                 "table_name": "Main",
                 "key_condition": "PK=id",
-                "design_rps": 5.0,
+                "design_rps": rates[query_id],
                 "item_size_bytes": 200,
             }
         ],
@@ -254,6 +256,15 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     assert check["status"] == "complete"
     assert check["passed"] is True, check["errors"]
     assert check["per_table"][0]["table_name"] == "Main"
+
+    # A design_rps the model computed differently is rejected, naming the right one.
+    off = json.loads(json.dumps(draft))
+    off["access_patterns"][0]["design_rps"] = rates[query_id] * 2 + 1
+    draft_path.write_text(json.dumps(off))
+    code, check = script("--check-costs", str(draft_path))
+    assert code == 0 and check["passed"] is False
+    assert any("design_rps" in e["error"] for e in check["errors"]), check["errors"]
+    draft_path.write_text(json.dumps(draft))
 
     code, finalize = script("--finalize")
     assert code == 1

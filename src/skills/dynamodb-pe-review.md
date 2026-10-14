@@ -46,7 +46,7 @@ You are a Principal Engineer reviewing a DynamoDB data model produced by an auto
 
 **Hot partition analysis:**
 
-- Are the utilization percentages calculated correctly? Verify: `design_rps / partition_limit × 100`.
+- `partition_limit`, `utilization_pct` and `at_risk` are computed by the pipeline's cost check and validated before this review, and each `design_rps` is the pipeline's own figure: do not redo that arithmetic (a `design_metrics: …` entry in `validation_failures` means a number still disagrees; ask for that fix). Judge instead whether each entry's `rcu_or_wcu_per_second` is a plausible load for one partition key value given its `contributing_patterns`.
 - Are at-risk partitions (>80%) mitigated? Is the mitigation realistic?
 
 ### Phase 2: Scope Challenge Review (spend 20% of your analysis here)

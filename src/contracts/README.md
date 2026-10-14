@@ -12,6 +12,7 @@ Pydantic model definitions for all agent contracts in the Database Modernizer As
 | `analysis_input.py` | Input for analysis agents (collector output subset per engine) |
 | `referee_input.py` | Input for referee agent |
 | `schema_design_input.py` | Input for schema design agents (includes `project_schema_design_input` projection) |
+| `design_metrics.py` | Numbers computed for the schema designers (`design_rps`, sizes, coverage, shard counts), passed as `design_metrics` (#626) |
 
 ### Output Contracts
 

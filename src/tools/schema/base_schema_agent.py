@@ -33,12 +33,14 @@ import logging
 import os
 import random
 import time
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 from strands import Agent
 from strands.models.bedrock import BedrockModel
 
+from src.agents.prompt_framing import frame_untrusted
 from src.contracts.schema_design_output import TradeOff
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,55 @@ def _throttle_backoff(throttle_failures: int) -> float:
     return float(capped + jitter)
 
 
+#: Correction turns a designer gets when its numbers disagree with design_metrics.
+NUMBERS_CORRECTION_ROUNDS = 2
+
+
+def numbers_correction_prompt(errors: list[str]) -> str:
+    """The follow-up turn asking the designer to fix numbers that disagree (#626)."""
+    listed = "\n".join(f"- {e}" for e in errors)
+    return (
+        "Some numbers in your design disagree with the pipeline-computed values in "
+        "design_metrics (or with the arithmetic rule they follow):\n"
+        # The messages quote table, collection and pattern names from the input.
+        + frame_untrusted(listed, label="numbers that disagree (names are customer data)")
+        + "\n\n"
+        + "Correct exactly these numbers (copy them from design_metrics instead of "
+        "recomputing them), keep everything else unchanged, and return the complete output."
+    )
+
+
+def enforce_design_numbers[Out: BaseModel](
+    invoke: Callable[[str], Out],
+    output: Out,
+    check: Callable[[Out], list[str]] | None,
+    prefix: str,
+) -> Out:
+    """Re-ask the designer while ``check(output)`` reports disagreeing numbers.
+
+    At most :data:`NUMBERS_CORRECTION_ROUNDS` correction turns. If the numbers
+    still disagree, the last output is kept with ``validation_passed=false`` and
+    each message added to ``validation_failures``, so the run never fails on it.
+    """
+    if check is None:
+        return output
+    errors = check(output)
+    for _ in range(NUMBERS_CORRECTION_ROUNDS):
+        if not errors:
+            return output
+        print(f"{prefix} {len(errors)} number(s) disagree with design_metrics; asking for a fix")
+        output = invoke(numbers_correction_prompt(errors))
+        errors = check(output)
+    if errors:
+        logger.warning("%s %d number(s) still disagree with design_metrics", prefix, len(errors))
+        if hasattr(output, "validation_passed"):
+            output.validation_passed = False  # type: ignore[attr-defined]
+        failures = getattr(output, "validation_failures", None)
+        if isinstance(failures, list):
+            failures.extend(f"design_metrics: {e}" for e in errors)
+    return output
+
+
 class SchemaDesignTrace:
     """Collects designer iterations and PE reviews for the design_trace artifact."""
 
@@ -193,6 +244,7 @@ class SchemaDesignRunner:
         pe_skill_path: str | None = None,
         pe_reviewer_fn=None,
         format_pe_feedback_fn=None,
+        output_check_fn: Callable[[T], list[str]] | None = None,
     ) -> None:
         self.target_type = target_type
         self.output_model = output_model
@@ -201,6 +253,8 @@ class SchemaDesignRunner:
         self.pe_skill_path = pe_skill_path
         self._invoke_pe_reviewer = pe_reviewer_fn
         self._format_pe_feedback = format_pe_feedback_fn
+        #: Returns one message per number that disagrees with design_metrics (#626).
+        self._output_check: Callable[[Any], list[str]] | None = output_check_fn
         self.trace = SchemaDesignTrace()
 
     def run(self, designer_prompt: str, input_summary: dict | None = None) -> tuple[T, dict]:
@@ -210,7 +264,7 @@ class SchemaDesignRunner:
         # --- Iteration 0: initial design ---
         print(f"{prefix} === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
         t0 = time.time()
-        design_output: T = self._invoke_designer(designer_prompt)
+        design_output: T = self._checked(self._invoke_designer(designer_prompt))
         elapsed = time.time() - t0
         self.trace.log_designer(0, elapsed, design_output)
         print(f"{prefix} Designer iteration 1 complete in {elapsed:.0f}s")
@@ -332,12 +386,23 @@ class SchemaDesignRunner:
                 f"({len(change_requests)} changes requested) ==="
             )
             t0 = time.time()
-            design_output = self._invoke_designer(revision_prompt, previous_output=design_output)
+            design_output = self._checked(
+                self._invoke_designer(revision_prompt, previous_output=design_output)
+            )
             elapsed = time.time() - t0
             self.trace.log_designer(iteration + 1, elapsed, design_output)
             print(f"{prefix} Designer revision {iteration + 2} complete in {elapsed:.0f}s")
 
         return design_output, self.trace.to_dict()
+
+    def _checked(self, output: T) -> T:
+        """``output`` after the numbers check and its correction turns (see enforce_design_numbers)."""
+        return enforce_design_numbers(
+            lambda prompt: self._invoke_designer(prompt, previous_output=output),
+            output,
+            self._output_check,
+            f"[schema-design/{self.target_type}]",
+        )
 
     def _invoke_designer(self, prompt: str, previous_output: T | None = None) -> T:
         """Invoke designer with retries and graceful fallback."""

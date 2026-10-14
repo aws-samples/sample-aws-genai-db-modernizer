@@ -542,6 +542,28 @@ def _group_draft_paths(artifact_root: str, db: str, job_id: str, version: int) -
     return [str(path) for _, path in found]
 
 
+def _group_design_metrics(draft_path: Path) -> dict | None:
+    """The ``design_metrics`` of the group input next to a group draft (#626), if any.
+
+    ``schema_draft_group_<G>.json`` pairs with ``input_group_<G>.json`` in the
+    same directory; a draft with another name, or a missing or unreadable
+    input, has none (the ``design_rps`` comparison is then skipped).
+    """
+    import re
+
+    match = re.fullmatch(r"schema_draft_group_(\d+)\.json", draft_path.name)
+    if not match:
+        return None
+    try:
+        group_input = json.loads(
+            (draft_path.parent / f"input_group_{match.group(1)}.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    metrics = group_input.get("design_metrics") if isinstance(group_input, dict) else None
+    return metrics if isinstance(metrics, dict) else None
+
+
 def run_check_costs(
     artifact_root: str, job_id: str, db: str, engine: str, drafts: list[str]
 ) -> None:
@@ -550,7 +572,8 @@ def run_check_costs(
 
     External-mode counterpart of the Bedrock agent's Strands tool
     ``compute_performances_and_costs``: both call the same function. Read-only:
-    no draft is modified; the caller records ``validation_passed`` /
+    no draft is modified. Each draft's access-pattern ``design_rps`` is also
+    compared with its group input's ``design_metrics`` (#626). The caller records ``validation_passed`` /
     ``validation_failures`` from the printed result per the skill's rules.
     Exit 0 whenever every check ran (``passed`` says whether each passed, and
     whether all of them did); exit 1 as soon as one draft could not be
@@ -589,7 +612,8 @@ def run_check_costs(
             _error(f"cannot read draft {draft!r}: {exc}")
         if not isinstance(payload, dict):
             _error(f"draft {draft!r} must be a JSON object")
-        group_results.append({"draft": draft, **check_draft_costs(payload)})
+        metrics = _group_design_metrics(path)
+        group_results.append({"draft": draft, **check_draft_costs(payload, metrics)})
 
     if len(group_results) == 1:
         _output({"status": "complete", **group_results[0]})

@@ -5740,6 +5740,393 @@
     "schema_hash": "ec7da18617b6165001024a097a7b65e1de1aa2cd77d65dc913d37dec3b4fc6a7",
     "version": "3.1"
   },
+  "design_metrics.DesignMetricsContract": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "coverage": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "coverage_ratio": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                },
+                "in_scope_patterns": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "total_queries_analyzed": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "documentdb_embeddings": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "avg_children_per_parent": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "child_row_size_kb": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "child_table": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "doc_avg_kb_if_embedded": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "embedded_avg_kb": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "parent_row_size_kb": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "parent_table": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "dynamodb_partition_limits": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "at_risk_threshold_pct": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "number"
+                  }
+                },
+                "read_units_per_second": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "number"
+                  }
+                },
+                "write_units_per_second": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "engine": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "growth_multiplier": {
+        "required": false,
+        "schema": {
+          "exclusiveMinimum": 0,
+          "kind": "scalar",
+          "type": "number"
+        }
+      },
+      "opensearch_shards": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "assumed_node_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "rule": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                },
+                "search_max_shard_gb": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "number"
+                  }
+                },
+                "tables": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "data_gb": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        },
+                        "search_shards": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "table_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "timeseries_shards": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "timeseries_max_shard_gb": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "peak_to_avg_ratio": {
+        "required": false,
+        "schema": {
+          "exclusiveMinimum": 0,
+          "kind": "scalar",
+          "type": "number"
+        }
+      },
+      "queries": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "base_rps": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "design_rps": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "tables": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "avg_row_size_bytes": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "avg_row_size_kb": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "capped_text_columns": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "data_gb": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "row_count": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "schema_item_size_bytes": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "size_estimated": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "boolean"
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      }
+    },
+    "schema_hash": "da8f40d2b183ad0d87936796d59f3aa45e4960411f76b863edc7f924bbfa63fa",
+    "version": "1.0"
+  },
   "documentdb_model_output.DocumentDBModelOutputContract": {
     "fields": {
       "access_patterns": {

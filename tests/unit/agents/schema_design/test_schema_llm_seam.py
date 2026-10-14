@@ -206,6 +206,7 @@ class TestPrepareSchemaDesignInput:
             "analysis_output",
             "database_name",
             "job_id",
+            "design_metrics",  # #626: the numbers the skill reads instead of computing
         }
 
     def test_target_type_preserved(self):

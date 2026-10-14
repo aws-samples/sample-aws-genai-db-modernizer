@@ -16,6 +16,13 @@ The projected input is provided inline in the user prompt as JSON containing:
   - `documentdb_compatibility`: unsupported features detected in query patterns
   - `relationships`: full FK relationship graph
   - `table_groups`: FK-connected table clusters
+- **design_metrics**: numbers the pipeline computed for you. Read them; never recompute them. Validation rejects a design whose numbers disagree with these:
+  - `queries[]`: per `query_id`, `design_rps` = (`calls_per_second` ?? `frequency_per_hour` / 3600) × `peak_to_avg_ratio` × `growth_multiplier`
+  - `tables[]`: per `table_id`, `avg_row_size_kb` (measured from `size_mb` and `row_count`; approximate when `size_estimated` is true)
+  - `documentdb_embeddings[]`: per FK parent/child pair, `avg_children_per_parent`, `parent_row_size_kb`, `child_row_size_kb`, `embedded_avg_kb` (child row size × average children) and `doc_avg_kb_if_embedded`
+  - `coverage`: the share of analysed queries in the input (absent when the input has no whole-database count)
+
+The pipeline has already scoped the input to this engine; design everything you receive in one pass.
 
 ## Phase 1: Silent Analysis
 
@@ -29,15 +36,17 @@ For each entry in `denormalization_strategies`:
 - If strategy is "reference": accept as-is.
 - If strategy is "hybrid": verify the parent-child relationship warrants partial embedding.
 
-### Compute Document Sizes
+### Document Sizes
 
-For each collection (group of source tables per embedding decisions):
+Row sizes come from `design_metrics.tables` (`avg_row_size_kb`), and the size each embedded child adds from `design_metrics.documentdb_embeddings` (`embedded_avg_kb`; a collection that embeds one child at its average array length is `doc_avg_kb_if_embedded`). A document is its parent's row plus, for each `strategy: "embed"` entity directly inside it, the entity's array length × (the entity's own row + everything embedded inside that entity). Array lengths are per enclosing element: `posts.comments` with `avg_array_length` 10 means 10 comments per post.
 
-- `avg_doc_size_kb = parent_size + sum(embedded_child_size * avg_children_per_parent)` for each embedded entity
-- `max_doc_size_kb = parent_size + sum(embedded_child_size * max_children_estimate)`
-- Flag any collection where `max_doc_size_kb > 8000` as a warning, `> 16000` as a blocker requiring redesign.
+- `estimated_avg_doc_size_kb` uses each entity's `avg_array_length`; `estimated_max_doc_size_kb` uses `max_array_length_estimate`
+- Example: user row 2 KB, 4 posts of 1 KB, each with 10 comments of 0.5 KB: post = 1 + 10 × 0.5 = 6 KB, document = 2 + 4 × 6 = 26 KB
+- `avg_array_length` is the pair's `avg_children_per_parent` unless the design bounds the array (say why in `rationale`)
+- Nest with `embed_path` (`posts.comments` sits inside `posts`)
+- Flag any collection where `estimated_max_doc_size_kb > 8000` as a warning, `> 16000` as a blocker requiring redesign.
 
-Item sizes: `(size_mb * 1_048_576) / max(row_count, 1)` per table.
+Validation recomputes both sizes from these row sizes and your array lengths and rejects a collection whose figures are off by more than 10% and 1 KB.
 
 ### Identify Index Needs
 
@@ -165,7 +174,7 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 - `index_used`: reference the index name from Phase 3 that serves this pattern. Must match an entry in the collection's `indexes` list.
 - `source_query_ids`: copy the source query ID(s) from collector that map to this pattern.
 - `source_tables`: copy `tables_accessed` from the source query.
-- `design_rps`: compute as `(calls_per_second ?? frequency_per_hour / 3600) × peak_to_avg_ratio × growth_multiplier`. Read `peak_to_avg_ratio` and `growth_multiplier` from the `context` block in the input JSON (defaults: `peak_to_avg_ratio=3.0`, `growth_multiplier=10.0` per `AgentContextInput`). Read `calls_per_second` or `frequency_per_hour` from each query pattern in `collector_output.queries.query_patterns`.
+- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `source_query_ids`, the sum of theirs.
 - `pipeline`: populate for aggregate operations with the full aggregation pipeline stages.
 - `in_scope`: `true` for patterns DocumentDB can serve. Set `false` for patterns included for completeness but not serviceable.
 - `out_of_scope_reason`: required when `in_scope=false`. Explain why (e.g. "Window functions not supported", "Recursive CTE requires application-layer traversal").
@@ -206,15 +215,3 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 `validation_passed` — `true` only if all Phase 5 checks pass.
 
 `validation_failures` — one string per failed check when `validation_passed=false`.
-
-## Chunking Threshold
-
-The input is pre-projected and compacted by the pipeline. Determine processing mode by estimating the input size:
-
-| Estimated payload | Mode |
-|---|---|
-| < 80 KB | **Full** — process all phases in a single pass |
-| 80 KB – 200 KB | **Aggregate** — Phase 1 for all tables first, then process one aggregate at a time using `aggregate_recommendations`. For each aggregate: only consider query patterns whose `tables_accessed` are a subset of that aggregate's `member_tables`. |
-| > 200 KB | Same as Aggregate, but also truncate `query_text` to 200 characters per pattern |
-
-In Aggregate mode, state which aggregate you are processing at the start of each pass.

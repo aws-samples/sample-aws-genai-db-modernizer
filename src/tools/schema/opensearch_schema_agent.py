@@ -32,6 +32,12 @@ from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.contracts.schema_design_output import TradeOff
 from src.shared.models import Role, build_bedrock_model
+from src.tools.schema.base_schema_agent import enforce_design_numbers
+from src.tools.schema.design_metrics import (
+    check_design_numbers,
+    design_metrics_from_projection,
+    unfiltered_pattern_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,8 +187,14 @@ def load_agent_input() -> dict:
     """Load collector + analysis + decision trace for the schema designer.
 
     Reads from paths set by run_opensearch_schema_agent (preferred) or
-    env vars (fallback).
+    env vars (fallback). Also returns 'design_metrics': the pipeline-computed
+    design_rps, table sizes and shard counts the skill reads.
     """
+    return _project_input()
+
+
+def _project_input() -> dict:
+    """The ``load_agent_input`` result (a plain function, so the run loop can reuse it)."""
     collector_path = _collector_path or os.environ.get("COLLECTOR_OUTPUT_PATH")
     analysis_path = _analysis_path or os.environ.get("ANALYSIS_OUTPUT_PATH")
     trace_path = os.environ.get("DECISION_TRACE_PATH")
@@ -194,7 +206,8 @@ def load_agent_input() -> dict:
         )
 
     with open(collector_path, encoding="utf-8") as f:
-        collector = CollectorOutputContract.model_validate(json.load(f))
+        raw_collector = json.load(f)
+    collector = CollectorOutputContract.model_validate(raw_collector)
 
     with open(analysis_path, encoding="utf-8") as f:
         analysis = AnalysisOutputContract.model_validate(json.load(f))
@@ -215,12 +228,16 @@ def load_agent_input() -> dict:
         f"{len(decision_trace.get('workload_classifications', []))} workload classifications"
     )
 
-    return {
+    projected = {
         "collector": agent_collector.model_dump(mode="json"),
         "analysis": agent_analysis.model_dump(mode="json"),
         "context": agent_context.model_dump(mode="json"),
         "decision_trace": decision_trace,
     }
+    projected["design_metrics"] = design_metrics_from_projection(
+        "opensearch", projected, unfiltered_pattern_count(raw_collector)
+    )
+    return projected
 
 
 def _invoke_designer(
@@ -377,10 +394,24 @@ def run_opensearch_schema_agent(
                 "\n\n".join(revision_sections)
             )
 
+    try:
+        metrics: dict | None = _project_input()["design_metrics"]
+    except (ValueError, OSError):
+        metrics = None
+
+    def _designed(prompt: str) -> OpenSearchModelOutputContract:
+        """One designer call, then the numbers check (#626) with its correction turns."""
+        return enforce_design_numbers(
+            lambda p: _invoke_designer(designer, p),
+            _invoke_designer(designer, prompt),
+            lambda out: check_design_numbers("opensearch", out.model_dump(mode="json"), metrics),
+            "[schema-design/opensearch]",
+        )
+
     # --- Iteration 0: initial design ---
     print(f"[schema-design/opensearch] === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
     t0 = time.time()
-    design_output = _invoke_designer(designer, designer_prompt)
+    design_output = _designed(designer_prompt)
     elapsed = time.time() - t0
     trace.log_designer(0, elapsed, design_output)
     print(f"[schema-design/opensearch] Designer iteration 1 complete in {elapsed:.0f}s")
@@ -455,7 +486,7 @@ def run_opensearch_schema_agent(
             f" ({len(review.change_requests)} changes requested) ==="
         )
         t0 = time.time()
-        design_output = _invoke_designer(designer, revision_prompt)
+        design_output = _designed(revision_prompt)
         elapsed = time.time() - t0
         trace.log_designer(iteration + 1, elapsed, design_output)
 

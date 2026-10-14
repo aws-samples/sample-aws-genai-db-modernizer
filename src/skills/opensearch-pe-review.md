@@ -14,10 +14,9 @@ You are a senior Principal Engineer reviewing an OpenSearch schema design produc
 
 ### 2. Shard Math
 
-- `number_of_shards` must be a **multiple of `assumed_node_count`** (except when `number_of_shards == 1` for small datasets) → BLOCKER if violated.
-- Target shard size for **search indexes**: 20–30 GB. If `total_data_gb / number_of_shards` falls outside this range and the dataset is not small → WARNING.
-- Target shard size for **time-series data streams**: 40–50 GB. Apply the same check against `IndexTemplate.settings` → WARNING.
+- `number_of_shards` is validated against the pipeline's shard rule (`design_metrics.opensearch_shards`: at most 30 GB per search shard, 50 GB per time-series shard, rounded up to a multiple of `assumed_node_count`) before this review. Do not redo that arithmetic (a `design_metrics: …` entry in `validation_failures` means a number still disagrees; ask for that fix).
 - `shard_sizing_rationale` must be present and non-empty → WARNING if missing.
+- An index whose workload type (search index vs time-series data stream) does not match the table's classification sizes its shards against the wrong target → WARNING.
 
 ### 3. ISM Policy Sanity
 

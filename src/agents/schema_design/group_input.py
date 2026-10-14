@@ -19,7 +19,11 @@ contract shape but holds only what the group's design uses (issue #272):
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
   aggregates and table recommendations for the group's tables;
-- no null or empty optional fields.
+- no null or empty optional fields;
+- ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
+  ``design_rps``, row sizes and the engine's sizing figures, computed here so
+  the designer reads them instead of computing them (#626). No coverage ratio:
+  a group has no whole-database query count.
 
 ``render_group_input`` writes it one record per line (a column, an index, a
 query) instead of one field per line. A query text too long for one Read line
@@ -58,6 +62,7 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
+from src.tools.schema.design_metrics import METRIC_ENGINES, build_design_metrics
 
 # Read returns at most 2000 lines per call and cuts lines longer than 2000
 # characters, so records are inlined only up to this width.
@@ -274,7 +279,7 @@ def build_group_input(
     if aggregates:
         group_analysis["aggregate_recommendations"] = aggregates
 
-    return {
+    group_input: dict[str, Any] = {
         "job_id": job_id,
         "database_name": database_name,
         "target_engine": engine,
@@ -284,6 +289,11 @@ def build_group_input(
         "collector_output": group_collector,
         "analysis_output": group_analysis,
     }
+    if engine in METRIC_ENGINES:
+        group_input["design_metrics"] = build_design_metrics(
+            engine, group_tables, group_queries
+        ).model_dump(mode="json")
+    return group_input
 
 
 def render_group_input(data: Any) -> str:

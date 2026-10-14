@@ -21,7 +21,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 2. **Read input and domain expertise**
    a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_documentdb.json`
-      - Contains: filtered queries, tables, analysis results, and `output_schema` (the exact JSON Schema your output must conform to)
+      - Contains: filtered queries, tables, analysis results, `design_metrics` (the `design_rps` and sizing figures computed for you: copy them, never recompute them), and `output_schema` (the exact JSON Schema your output must conform to)
    b. Read: `src/skills/documentdb-data-modeling.md` (domain expertise guide)
 
 3. **Design the schema**
@@ -41,7 +41,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
    If validation fails, the errors tell you exactly which fields are wrong. Fix the response file and re-run `--finalize`. Make **at most 3 `--finalize` attempts in total**, shared between contract-validation failures and scope failures.
 
-   A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope) and where the design references it. Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope) do not fail validation.
+   A `"status": "validation_failed"` with an `output_path` means the design is contract-valid but out of scope: each error names a source table or query ID assigned to another engine (or out of scope) and where the design references it. Remove those from the design, rewrite the response file and re-run `--finalize`; the written output keeps `validation_passed: false` until a re-run passes. `warnings` (query IDs listed only in `unsupported_patterns` that are not in this engine's scope, and `design_metrics: …` numbers that differ from the request's `design_metrics`) do not fail validation. A `design_metrics: …` warning means the written design keeps `validation_passed: false` with the mismatch in `validation_failures`; if attempts remain, copy the number from `design_metrics` into the response file and re-run `--finalize`.
 
    If the third attempt still prints `"status": "validation_failed"`, stop: set `phase_status.schema_design_documentdb` = "failed" and return `failed` with the `errors` as your result. Do not mark the phase complete.
 

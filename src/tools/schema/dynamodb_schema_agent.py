@@ -38,6 +38,11 @@ from src.contracts.dynamodb_pe_review import PEReviewResult, ReviewVerdict  # no
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.models import Role, build_bedrock_model
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
+from src.tools.schema.design_metrics import (
+    check_design_numbers,
+    design_metrics_from_projection,
+    unfiltered_pattern_count,
+)
 from src.tools.schema.dynamodb_cost_check import compute_performances_and_costs_entries
 
 logger = logging.getLogger(__name__)
@@ -93,8 +98,15 @@ def load_agent_input() -> dict:
     Reads from paths set by run_dynamodb_schema_agent (preferred) or
     env vars COLLECTOR_OUTPUT_PATH/ANALYSIS_OUTPUT_PATH (fallback).
 
-    Returns a dict with 'collector', 'analysis', and 'context' keys.
+    Returns a dict with 'collector', 'analysis', 'context' and 'design_metrics'
+    (the pipeline-computed design_rps, item sizes, coverage and partition
+    limits) keys.
     """
+    return _project_input()
+
+
+def _project_input() -> dict:
+    """The ``load_agent_input`` result (a plain function, so the runner can reuse it)."""
     collector_path = _collector_path or os.environ.get("COLLECTOR_OUTPUT_PATH")
     analysis_path = _analysis_path or os.environ.get("ANALYSIS_OUTPUT_PATH")
 
@@ -106,7 +118,8 @@ def load_agent_input() -> dict:
 
     logger.info("Loading collector from %s", collector_path)
     with open(collector_path, encoding="utf-8") as f:
-        collector = CollectorOutputContract.model_validate(json.load(f))
+        raw_collector = json.load(f)
+    collector = CollectorOutputContract.model_validate(raw_collector)
 
     logger.info("Loading analysis from %s", analysis_path)
     with open(analysis_path, encoding="utf-8") as f:
@@ -122,24 +135,33 @@ def load_agent_input() -> dict:
         f"{len(agent_analysis.aggregate_recommendations or [])} aggregates"
     )
 
-    return {
+    projected = {
         "collector": agent_collector.model_dump(mode="json"),
         "analysis": agent_analysis.model_dump(mode="json"),
         "context": agent_context.model_dump(mode="json"),
     }
+    projected["design_metrics"] = design_metrics_from_projection(
+        "dynamodb", projected, unfiltered_pattern_count(raw_collector)
+    )
+    return projected
 
 
 @tool
 def compute_performances_and_costs(
     hot_partition_entries_json: str,
 ) -> list[dict]:
-    """Validate hot partition entries against HotPartitionEntry contract.
+    """Compute partition_limit, utilization_pct and at_risk for hot partition entries.
+
+    Pass each entry's table_name, gsi_name, operation ("read" or "write"),
+    rcu_or_wcu_per_second, contributing_patterns and (when at risk) mitigation.
+    Copy the returned partition_limit, utilization_pct and at_risk into the
+    design's hot_partition_analysis; the final design is checked against them.
 
     Args:
         hot_partition_entries_json: JSON string of list[HotPartitionEntry]
 
     Returns:
-        list of validated HotPartitionEntry dicts
+        list of HotPartitionEntry dicts with the computed figures
     """
     # Same computation as `run_schema_design.py --check-costs` (external mode).
     return compute_performances_and_costs_entries(json.loads(hot_partition_entries_json))
@@ -427,6 +449,10 @@ def run_dynamodb_schema_agent(
                 "\n\n".join(revision_sections)
             )
 
+    try:
+        metrics: dict | None = _project_input()["design_metrics"]
+    except (ValueError, OSError):  # no readable input: only the hot-partition arithmetic
+        metrics = None
     runner = SchemaDesignRunner(
         target_type="dynamodb",
         output_model=DynamoDBModelOutputContract,
@@ -435,6 +461,9 @@ def run_dynamodb_schema_agent(
         pe_skill_path=pe_skill_path or DEFAULT_PE_SKILL_PATH,
         pe_reviewer_fn=_invoke_pe_reviewer,
         format_pe_feedback_fn=_format_pe_feedback,
+        output_check_fn=lambda out: check_design_numbers(
+            "dynamodb", out.model_dump(mode="json"), metrics
+        ),
     )
 
     return runner.run(designer_prompt)

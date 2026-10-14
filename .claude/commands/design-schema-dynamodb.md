@@ -94,7 +94,7 @@ For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job
 
 1. Read your group input: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/input_group_{G}.json`
    - Read it with the Read tool, one call per page of the group's `input_pages` (`offset`, `limit`); with no pages given, read 200 lines per call (`offset` 1, 201, 401, …) until a call returns fewer lines. If Read reports a page is too large, read it in two halves with `offset`/`limit` (half the `limit` each). Do not page it any other way.
-   - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses; no whole-database `total_queries_analyzed`) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
+   - Contains: `collector_output` (the group's queries and the tables they touch, with only the fields the design uses; no whole-database `total_queries_analyzed`) and `analysis_output` (the patterns, anti-patterns, aggregates and table recommendations for those queries and tables), and `design_metrics` (the group's `design_rps`, row and item sizes and partition limits, computed for you: copy them, never recompute them). One record per line; a `query_text` too long for one line is also given as `query_text_lines`.
 2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
 3. Read the output contract: `src/contracts/dynamodb_model_output.py`
 4. Design the schema following Phase 3 from the skill
@@ -106,11 +106,11 @@ For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job
    ```
 
    It prints one JSON line `{"status": "complete", "passed": ..., "results": [...], "per_table": [...], "hot_partition_findings": [...], "errors": [...]}` and does **not** modify the draft. `"status": "error"` (exit 1) means the check could not run (e.g. the path is not under the job's `schema-dynamodb/` directory).
-7. Set `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. If `"passed": false`, fix the `hot_partition_analysis` entries listed in `errors` and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
+7. Set `validation_passed` / `validation_failures` in the draft per the skill's `validation_passed` rules, using that output: the "cost check ran successfully" rule holds only when `--check-costs` returned `"passed": true`. Copy each entry's `partition_limit`, `utilization_pct` and `at_risk` from `results` into the draft. If `"passed": false`, fix what `errors` lists (hot-partition figures that differ from `results`, an at-risk entry without a `mitigation`, a `design_rps` that differs from `design_metrics`) and re-run `--check-costs`; if they cannot be fixed, set `validation_passed: false` and add each error to `validation_failures`.
 
 Key rules for each group draft:
 
-- Skip the skill's coverage check (`len(non-OTHER patterns) / total_queries_analyzed`): a group holds only its share of the queries (`_filtered_count`), and the input has no `total_queries_analyzed`
+- Skip the skill's coverage check: a group holds only its share of the queries (`_filtered_count`), so its `design_metrics` has no `coverage`
 
 - Design only the tables and queries assigned to this engine; finalize rejects others. Reference only the tables and `query_id`s in the group's `collector_output` (`--merge` checks the whole design against the assignment)
 - `access_patterns[].pattern_id` prefixed with `DDB-AP-` (sequential within group; when group IDs collide, `--merge` renumbers them `DDB-AP-1..N` across groups and rewrites the `DDB-AP-<n>` mentions in each group's draft text and design trace to match)

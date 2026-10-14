@@ -31,6 +31,11 @@ from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.models import Role, build_bedrock_model
 from src.tools.schema.base_schema_agent import SchemaDesignRunner
+from src.tools.schema.design_metrics import (
+    check_design_numbers,
+    design_metrics_from_projection,
+    unfiltered_pattern_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +200,8 @@ def load_agent_input() -> dict:
         )
 
     with open(collector_path, encoding="utf-8") as f:
-        collector = CollectorOutputContract.model_validate(json.load(f))
+        raw_collector = json.load(f)
+    collector = CollectorOutputContract.model_validate(raw_collector)
 
     with open(analysis_path, encoding="utf-8") as f:
         analysis = AnalysisOutputContract.model_validate(json.load(f))
@@ -216,12 +222,17 @@ def load_agent_input() -> dict:
         f"{len(decision_trace.get('embedding_candidates', []))} embedding candidates"
     )
 
-    return {
+    projected = {
         "collector": agent_collector.model_dump(mode="json"),
         "analysis": agent_analysis.model_dump(mode="json"),
         "context": agent_context.model_dump(mode="json"),
         "decision_trace": decision_trace,
     }
+    # design_rps, row and document sizes, coverage: computed here, read by the skill (#626).
+    projected["design_metrics"] = design_metrics_from_projection(
+        "documentdb", projected, unfiltered_pattern_count(raw_collector)
+    )
+    return projected
 
 
 def _compact_agent_input(agent_input: dict) -> None:
@@ -419,6 +430,7 @@ def run_documentdb_schema_agent(
         ),
     }
 
+    metrics = agent_input["design_metrics"]
     runner = SchemaDesignRunner(
         target_type="documentdb",
         output_model=DocumentDBModelOutputContract,
@@ -427,6 +439,9 @@ def run_documentdb_schema_agent(
         pe_skill_path=pe_skill_path or DEFAULT_PE_SKILL_PATH,
         pe_reviewer_fn=_invoke_pe_reviewer,
         format_pe_feedback_fn=_format_pe_feedback,
+        output_check_fn=lambda out: check_design_numbers(
+            "documentdb", out.model_dump(mode="json"), metrics
+        ),
     )
 
     return runner.run(designer_prompt, input_summary)

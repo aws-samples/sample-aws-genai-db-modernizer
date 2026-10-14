@@ -11,6 +11,10 @@ Use your `load_agent_input` tool to read the combined input containing:
 - **context**: Growth multiplier, peak-to-average ratio, SLO targets
 - **decision_trace**: Pre-computed OpenSearch-specific signals:
   - `workload_classifications`: per-table workload type (SEARCH / TIMESERIES / NOT_SUITABLE) and time-series criteria details
+- **design_metrics**: numbers the pipeline computed for you. Read them; never recompute them. Validation rejects a design whose numbers disagree with these:
+  - `queries[]`: per `query_id`, `design_rps` = (`calls_per_second` ?? `frequency_per_hour` / 3600) × `peak_to_avg_ratio` × `growth_multiplier`
+  - `tables[]`: per `table_id`, `data_gb` (`size_mb` / 1024)
+  - `opensearch_shards`: the shard rule (`assumed_node_count`, `search_max_shard_gb`, `timeseries_max_shard_gb`) and, per table, `search_shards` and `timeseries_shards`
 
 Read all inputs silently before producing any output.
 
@@ -99,30 +103,14 @@ Use `delete_after_days` whenever there is a retention requirement. Omit `warm_ph
 
 ## Shard Sizing Rules
 
-Correct shard sizing is critical for cluster health. Follow these rules:
+Shard counts come from `design_metrics.opensearch_shards`; do not derive them yourself.
 
-1. **Target shard size by workload**:
-   - Search indexes: **20–30 GB per primary shard**
-   - Time-series data streams: **40–50 GB per primary shard** (data compresses well over time)
+- **An index or data stream built from one table**: `number_of_shards` is that table's `search_shards` (index) or `timeseries_shards` (data stream).
+- **Built from several tables**: apply the rule in `design_metrics.opensearch_shards.rule` to the sum of their `data_gb`: 1 shard up to `search_max_shard_gb` (30 GB, search) or `timeseries_max_shard_gb` (50 GB, time series), otherwise `ceil(total / max)` rounded up to a multiple of `assumed_node_count`.
+- Set `assumed_node_count` to `design_metrics.opensearch_shards.assumed_node_count` (3) unless the analysis options specify another count; the rule then rounds to that count.
+- **Explain the numbers** in `shard_sizing_rationale`, quoting `data_gb` and the shard count, e.g. `"45 GB of data at most 30 GB per shard -> 2 shards, rounded up to 3 for 3 nodes"`.
 
-2. **Calculate shard count from data size**:
-
-   ```
-   raw_shards = ceil(total_data_gb / target_shard_gb)
-   ```
-
-3. **Round up to the nearest multiple of `assumed_node_count`** for even distribution:
-
-   ```
-   number_of_shards = ceil(raw_shards / assumed_node_count) * assumed_node_count
-   ```
-
-   Default `assumed_node_count` is 3 unless specified otherwise in analysis options.
-
-4. **Small datasets** (total size < target shard size) — use **1 primary shard**. The multiple-of-node-count rule is waived for small indexes.
-
-5. **Always explain the math** in `shard_sizing_rationale`. Example:
-   `"45GB data / 3 nodes = 15GB per shard, within 20-30GB target — 3 shards (1 per node)"`
+Validation recomputes every `number_of_shards` from these figures and rejects one that differs.
 
 ## Access Pattern Translation
 
@@ -195,7 +183,7 @@ Translate the design into `OpenSearchModelOutputContract` (defined in `opensearc
 - `opensearch_dsl`: the equivalent OpenSearch query DSL as a JSON string. Follow the translation rules in "Access Pattern Translation" above.
 - `index_or_stream`: the index name or data stream name that serves this pattern (must match an entry in `index_designs` or `data_stream_designs`).
 - `operation`: classify as `search` | `aggregate` | `get_by_id` | `bulk_index` based on the SQL shape.
-- `design_rps`: compute as `(calls_per_second ?? frequency_per_hour / 3600) × peak_to_avg_ratio × growth_multiplier`. Read `peak_to_avg_ratio` and `growth_multiplier` from the `context` block in the input JSON (defaults: `peak_to_avg_ratio=3.0`, `growth_multiplier=10.0` per `AgentContextInput`). Read `calls_per_second` or `frequency_per_hour` from each query pattern in `collector_output.queries.query_patterns`.
+- `design_rps`: copy from `design_metrics.queries`; for a pattern with several `query_ids`, the sum of theirs.
 - `in_scope`: `true` for patterns OpenSearch can serve. Set `false` for patterns included for completeness but not serviceable.
 - `out_of_scope_reason`: required when `in_scope=false`. Explain why OpenSearch cannot serve this pattern (e.g. "Requires transactional write isolation", "Multi-table JOIN without denormalization path").
 
@@ -203,7 +191,7 @@ Translate the design into `OpenSearchModelOutputContract` (defined in `opensearc
 
 - `index_name`: lowercase, hyphen-separated, e.g. `"wp-posts"`, `"forum-topics"`.
 - `source_tables`: all source `table_id`s consolidated into this index.
-- `settings`: populate `number_of_shards` using the shard sizing rules above. Always fill `shard_sizing_rationale` with the math. Set `assumed_node_count` (default 3). Add `custom_analyzers` when the access patterns require edge_ngram, language-specific, or other non-standard analysis.
+- `settings`: populate `number_of_shards` from `design_metrics.opensearch_shards` (see the shard sizing rules above). Always fill `shard_sizing_rationale`. Set `assumed_node_count` (default 3). Add `custom_analyzers` when the access patterns require edge_ngram, language-specific, or other non-standard analysis.
 - `field_mappings`: one `FieldMapping` per source column that is indexed. Each mapping must have `source_column` (traceability back to relational schema), `field_type` (from the SQL Type → OpenSearch mapping table), and `analyzer`/`search_analyzer` when applicable. Set `multi_field: true` for columns needing both text search and keyword aggregation.
 - `aliases`: at least one alias for zero-downtime reindexing, e.g. `["posts-live"]`.
 
@@ -241,7 +229,7 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 - All SEARCH-workload tables have an `IndexMapping`
 - All TIMESERIES-workload tables have a `DataStreamConfig`
 - Every data stream has an `@timestamp` field mapping
-- Shard counts follow the sizing rules (20-30GB for search, 40-50GB for time-series)
+- Shard counts are the ones `design_metrics.opensearch_shards` gives (see Shard Sizing Rules)
 - Every access pattern has a non-empty `opensearch_dsl`. For `search`/`aggregate` it must parse as JSON. It never has a top-level `inner_hits` key (see "`inner_hits` placement" above) -- `get_by_id`/`bulk_index` are exempt from the JSON requirement (request line / NDJSON per "Common translations" above) but still must not carry a top-level `inner_hits`.
 - Every access pattern references a valid `index_or_stream`
 
