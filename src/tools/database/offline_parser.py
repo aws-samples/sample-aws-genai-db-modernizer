@@ -324,6 +324,19 @@ def _resolve_qualified_table(
     return written
 
 
+# Leading ``--`` line and ``/* */`` block comments before a statement's verb.
+_LEADING_COMMENTS_RE = re.compile(r"^(?:\s*(?:--[^\n]*(?:\n|$)|/\*.*?\*/))+", re.DOTALL)
+
+
+def _is_merge_statement(query_text: str) -> bool:
+    """Whether ``query_text`` is a MERGE (#663): its first verb, after any leading
+    comments, is MERGE, or it is a ``WITH ... AS (...) MERGE`` (a CTE feeding it)."""
+    text = _LEADING_COMMENTS_RE.sub("", query_text).lstrip()
+    if re.match(r"MERGE\b", text, re.I):
+        return True
+    return bool(re.match(r"WITH\b", text, re.I) and re.search(r"\)\s*MERGE\b", text, re.I))
+
+
 def _transform_queries(
     raw: list[dict],
     db_name: str,
@@ -365,17 +378,33 @@ def _transform_queries(
         #   FROM schema.table, FROM [schema].[table], FROM `schema`.`table`
         #   FROM database.schema.table (T-SQL three-part name)
         #   REFRESH MATERIALIZED VIEW [CONCURRENTLY] <name> (PostgreSQL)
-        # The named groups capture up to two qualifiers and the table.
+        #   MERGE [INTO] <target> USING <source> (SQL Server, Oracle, PostgreSQL
+        #   15+; #663). USING names a table only in a MERGE: elsewhere it is
+        #   JOIN ... USING (col) or CREATE INDEX ... USING gin.
+        # The named groups capture up to two qualifiers and the table. A keyword
+        # must start a word and not be a parameter or variable name: T-SQL's
+        # ``@From`` or a column such as ``valid_from`` followed by ``AND`` is not a
+        # FROM clause (#663).
+        is_merge = _is_merge_statement(query_text)
+        using = r"|USING" if is_merge else ""
         table_re = re.compile(
-            r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+"
+            r"(?<![\w@$#])"
+            r"(?:FROM|JOIN|INTO|UPDATE|MERGE(?:\s+INTO)?"
+            r"|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?" + using + r")\s+"
             r'(?:[`"\[]?(?P<qual1>\w+)[`"\]]?\s*\.\s*)?'
             r'(?:[`"\[]?(?P<qual2>\w+)[`"\]]?\s*\.\s*)?'
             r'[`"\[]?(?P<table>\w+)[`"\]]?',
             re.I,
         )
-        # Upsert clauses use UPDATE for a column assignment, not a table reference.
+        # Upsert clauses use UPDATE for a column assignment, not a table reference:
+        # MySQL's ON DUPLICATE KEY UPDATE, PostgreSQL's DO UPDATE, and, in a MERGE
+        # only, WHEN MATCHED THEN UPDATE SET (#663). Outside a MERGE, a procedural
+        # ``IF ... THEN UPDATE orders SET ...`` is a real update of ``orders``.
+        upsert_update = r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b"
+        if is_merge:
+            upsert_update += r"|\bTHEN\s+UPDATE\b"
         scanned_query = re.sub(
-            r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
+            upsert_update,
             " ",
             query_text,
             flags=re.I,

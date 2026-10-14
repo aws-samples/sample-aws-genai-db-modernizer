@@ -604,3 +604,110 @@ class TestSchemaQualifiedTableResolution:
         assert self._tables("SELECT * FROM [trailgear].[Archive].[EventLog]") == [
             "trailgear.Archive.EventLog"
         ]
+
+
+class TestTsqlTableExtractionGaps:
+    """#663 (parts 3 and 4): T-SQL shapes the table regex misread."""
+
+    @staticmethod
+    def _tables(sql: str) -> list[str]:
+        from src.tools.database.offline_parser import _transform_queries
+
+        known = {"EventLog", "StockLevel", "StockMovement"}
+        tables: list[str] = _transform_queries([{"query_text": sql}], "trailgear", known)[0][
+            "tables_accessed"
+        ]
+        return tables
+
+    def test_parameter_named_from_is_not_a_table_keyword(self):
+        sql = "SELECT [EventType] FROM [EventLog] WHERE [EventTime] >= @From AND [EventTime] < @To"
+        assert self._tables(sql) == ["trailgear.EventLog"]
+
+    def test_parameter_named_into_or_join_is_not_a_table_keyword(self):
+        sql = "SELECT [EventType] FROM [EventLog] WHERE [Kind] IN (@Into, @Join) OR @Update IS NULL"
+        assert self._tables(sql) == ["trailgear.EventLog"]
+
+    def test_column_ending_in_from_is_not_a_table_keyword(self):
+        sql = "SELECT [EventType] FROM [EventLog] WHERE valid_from IS NULL"
+        assert self._tables(sql) == ["trailgear.EventLog"]
+
+    def test_merge_names_its_target_and_update_set_adds_no_table(self):
+        sql = (
+            "MERGE [StockLevel] AS tgt USING (SELECT [WarehouseID], [ProductID], "
+            "SUM([Delta]) AS [Delta] FROM [StockMovement] WHERE [MovedDate] >= @Since "
+            "GROUP BY [WarehouseID], [ProductID]) AS src ON tgt.[WarehouseID] = src.[WarehouseID] "
+            "WHEN MATCHED THEN UPDATE SET tgt.[OnHand] = tgt.[OnHand] + src.[Delta] "
+            "WHEN NOT MATCHED THEN INSERT ([WarehouseID], [ProductID], [OnHand]) "
+            "VALUES (src.[WarehouseID], src.[ProductID], src.[Delta]);"
+        )
+        assert self._tables(sql) == ["trailgear.StockLevel", "trailgear.StockMovement"]
+
+    def test_merge_into_names_its_target(self):
+        sql = (
+            "MERGE INTO [StockLevel] t USING [StockMovement] s ON t.[ProductID] = s.[ProductID] "
+            "WHEN MATCHED THEN UPDATE SET t.[OnHand] = s.[Delta];"
+        )
+        assert self._tables(sql) == ["trailgear.StockLevel", "trailgear.StockMovement"]
+
+    def test_lowercase_merge(self):
+        sql = (
+            "merge stocklevel_x as t using StockMovement as s on t.id = s.id "
+            "when matched then update set t.n = s.n;"
+        )
+        assert self._tables(sql) == ["stocklevel_x", "trailgear.StockMovement"]
+
+    def test_column_named_merged_is_not_a_merge_target(self):
+        sql = "SELECT merged FROM [EventLog] WHERE [EventID] = @EventID"
+        assert self._tables(sql) == ["trailgear.EventLog"]
+
+    def test_then_update_outside_a_merge_keeps_its_table(self):
+        # #678 review: procedural IF ... THEN UPDATE <table> SET is a real update.
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = "IF @x = 1 THEN UPDATE orders SET a = 1"
+        result = _transform_queries([{"query_text": sql}], "db", {"orders"})
+        assert result[0]["tables_accessed"] == ["db.orders"]
+
+    def test_merge_after_a_leading_comment(self):
+        sql = (
+            "/* nightly job */ MERGE StockLevel t USING StockMovement s "
+            "ON t.[ProductID] = s.[ProductID] WHEN MATCHED THEN UPDATE SET t.[OnHand] = s.[Delta];"
+        )
+        assert self._tables(sql) == ["trailgear.StockLevel", "trailgear.StockMovement"]
+
+    def test_merge_after_a_line_comment(self):
+        sql = (
+            "-- nightly job\nMERGE StockLevel t USING StockMovement s "
+            "ON t.[ProductID] = s.[ProductID] WHEN MATCHED THEN UPDATE SET t.[OnHand] = s.[Delta];"
+        )
+        assert self._tables(sql) == ["trailgear.StockLevel", "trailgear.StockMovement"]
+
+    def test_merge_after_a_cte(self):
+        sql = (
+            "WITH src AS (SELECT [ProductID], [Delta] FROM [EventLog]) "
+            "MERGE StockLevel t USING StockMovement s ON t.[ProductID] = s.[ProductID] "
+            "WHEN MATCHED THEN UPDATE SET t.[OnHand] = s.[Delta];"
+        )
+        assert self._tables(sql) == [
+            "trailgear.EventLog",
+            "trailgear.StockLevel",
+            "trailgear.StockMovement",
+        ]
+
+    def test_using_outside_a_merge_is_not_a_table(self):
+        sql = "SELECT * FROM [EventLog] e JOIN [StockLevel] s USING (ProductID)"
+        assert self._tables(sql) == ["trailgear.EventLog", "trailgear.StockLevel"]
+
+    def test_schema_qualified_merge_resolves_both_tables(self):
+        # With #653: a qualified MERGE target and USING source resolve to their ids.
+        from src.tools.database.offline_parser import _transform_queries
+
+        sql = (
+            "MERGE [dbo].[StockLevel] AS t USING [dbo].[StockMovement] AS s "
+            "ON t.[ProductID] = s.[ProductID] WHEN MATCHED THEN UPDATE SET t.[OnHand] = s.[Delta];"
+        )
+        schemas = {"StockLevel": {"dbo"}, "StockMovement": {"dbo"}}
+        result = _transform_queries(
+            [{"query_text": sql}], "trailgear", set(schemas), table_schemas=schemas
+        )
+        assert result[0]["tables_accessed"] == ["trailgear.StockLevel", "trailgear.StockMovement"]

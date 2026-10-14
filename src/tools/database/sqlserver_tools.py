@@ -544,7 +544,10 @@ def _extract_tables(sql: str) -> list[str]:
     """
     tables = set()
     for match in re.finditer(
-        r"\b(?:FROM|JOIN)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?", sql, re.IGNORECASE
+        # (?<![\w@]): a keyword, not the end of a parameter name like @From (#663).
+        r"(?<![\w@])(?:FROM|JOIN)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?",
+        sql,
+        re.IGNORECASE,
     ):
         schema, table = match.group(1), match.group(2)
         if not table:

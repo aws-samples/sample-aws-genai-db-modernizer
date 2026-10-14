@@ -495,6 +495,11 @@ class TestHelpers:
         sql = "SELECT * FROM sys.tables WHERE schema_id = 1"
         assert _extract_tables(sql) == []
 
+    def test_extract_tables_ignores_a_parameter_named_from(self) -> None:
+        # #663: T-SQL's @From is a parameter, never a FROM clause.
+        sql = "SELECT [EventType] FROM [EventLog] WHERE [EventTime] >= @From AND [EventTime] < @To"
+        assert _extract_tables(sql) == ["EventLog"]
+
     def test_extract_filter_columns_from_where(self) -> None:
         sql = "SELECT * FROM Orders WHERE customer_id = 5 AND status LIKE 'open' AND total > 100"
         cols = _extract_filter_columns(sql)
