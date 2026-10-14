@@ -14,6 +14,8 @@ test.each([
   'A',
   'x'.repeat(128),
   '  shop  ',
+  '\tshop\n',
+  '\nshop\t',
 ])('accepts %p', (name) => {
   expect(isValidDatabaseName(name)).toBe(true);
 });

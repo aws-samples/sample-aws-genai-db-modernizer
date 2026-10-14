@@ -1000,6 +1000,10 @@ function DatabaseAnalysisForm() {
       addFlashbarMessage({ type: 'error', header: 'Database name required', content: 'Please enter a database name for this assessment.', dismissible: true, id: `error-${Date.now()}` });
       return;
     }
+    if (!isValidDatabaseName(offlineDatabaseName)) {
+      addFlashbarMessage({ type: 'error', header: 'Invalid database name', content: 'Use only letters, digits, _ and -, up to 128 characters.', dismissible: true, id: `error-${Date.now()}` });
+      return;
+    }
 
     setLoading(true);
     setFlashbarItems([]);
@@ -1185,7 +1189,7 @@ function DatabaseAnalysisForm() {
       const connection = {
         host: formData.host,
         port: parseInt(formData.port),
-        database: formData.databaseName,
+        database: formData.databaseName.trim(),
         credentials_type: formData.credentialsType
       };
 
@@ -1225,7 +1229,7 @@ function DatabaseAnalysisForm() {
           method: 'POST',
           params: {
             source_database_type: "mysql", // TODO: Get from RDS instance or form
-            database_name: formData.databaseName,
+            database_name: formData.databaseName.trim(),
             connection: connection,
             options: options,
             target_databases: targetDatabasesArray,
