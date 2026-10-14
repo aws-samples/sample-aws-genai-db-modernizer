@@ -1,6 +1,6 @@
 # ADR-013: Core Infrastructure Cost Optimization for Dev Environment
 
-**Status:** Accepted
+**Status:** Deprecated: Decisions 1 to 5 (`core-infra.yaml` was removed with the retired hosted deployment) and Decision 6 (the remaining templates and the hook do not follow it)
 
 **Date:** 2026-02-13
 
@@ -16,6 +16,8 @@ The core infrastructure stack (`core-infra.yaml`) provides VPC networking, conta
 
 Use one NAT gateway instead of the HA pair (one per AZ) recommended for production.
 
+*Superseded (#700): `core-infra.yaml` was removed with the retired hosted deployment; no file under `infrastructure/cloudformation/` holds this.*
+
 **Cost impact:** Saves ~$33/month ($0.045/hr + $0.045/GB processed).
 
 **Tradeoff:** If the NAT gateway's AZ goes down, private subnets lose outbound internet temporarily. Acceptable for dev.
@@ -26,11 +28,15 @@ Use one NAT gateway instead of the HA pair (one per AZ) recommended for producti
 
 Added free gateway endpoints that route S3 and DynamoDB traffic over the AWS backbone instead of through the NAT gateway.
 
+*Superseded (#700): `core-infra.yaml` was removed with the retired hosted deployment; no file under `infrastructure/cloudformation/` holds this.*
+
 **Cost impact:** $0/month. Reduces NAT data processing charges ($0.045/GB saved on all S3/DynamoDB traffic).
 
 ### 3. Shared KMS Key for Core Infrastructure
 
 Use a single KMS key for all encryption in the core stack (VPC flow logs, ECR repository) instead of per-resource keys.
+
+*Superseded (#700): `core-infra.yaml` was removed with the retired hosted deployment; no file under `infrastructure/cloudformation/` holds this.*
 
 **Cost impact:** $1/month instead of $2+/month for multiple keys.
 
@@ -40,11 +46,15 @@ Use a single KMS key for all encryption in the core stack (VPC flow logs, ECR re
 
 Added VPC flow logs to a KMS-encrypted CloudWatch Log Group with 30-day retention, rather than suppressing the cfn-nag W60 warning.
 
+*Superseded (#700): `core-infra.yaml` was removed with the retired hosted deployment; no file under `infrastructure/cloudformation/` holds this.*
+
 **Cost impact:** ~$0.50/GB ingested (minimal in dev).
 
 ### 5. ECR with KMS Encryption and Immutable Tags
 
 ECR repository uses KMS encryption (via shared key) and immutable image tags instead of AES256 and mutable tags.
+
+*Superseded (#700): `core-infra.yaml` was removed with the retired hosted deployment; no file under `infrastructure/cloudformation/` holds this.*
 
 **Rationale:** Resolves Checkov CKV_AWS_136 and CKV_AWS_51. Immutable tags prevent overwriting tagged images with different content.
 
@@ -52,18 +62,20 @@ ECR repository uses KMS encryption (via shared key) and immutable image tags ins
 
 All cfn-nag warnings must be resolved with real security implementations, not suppressions. The only pre-approved suppression is W28 (explicit resource naming) when following the project naming convention for cross-stack references.
 
+*Superseded (#700): the remaining templates also suppress W5 and W29 (`infrastructure/cloudformation/automation.yaml`), W13 (`infrastructure/cloudformation/example-ci-runner-iam.yaml`) and W11 (`pipeline/iam-roles.yaml`). The `cfn-nag` hook in `.pre-commit-config.yaml` has no `--fail-on-warnings`, runs the scan through `find -exec ... \;` (exit 0 even when a scan fails), and its `files:` pattern never scans `pipeline/iam-roles.yaml`.*
+
 ## Enforcement
 
 Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
 
 | Decision | Enforced by |
 |---|---|
-| 1. Single NAT Gateway for Dev Environment | none yet -- #700 (the stack was removed) |
-| 2. VPC Gateway Endpoints for S3 and DynamoDB | none yet -- #700 (the stack was removed) |
-| 3. Shared KMS Key for Core Infrastructure | none yet -- #700 (the stack was removed) |
-| 4. VPC Flow Logs with KMS Encryption | none yet -- #700 (the stack was removed) |
-| 5. ECR with KMS Encryption and Immutable Tags | none yet -- #700 (the stack was removed) |
-| 6. cfn-nag Warnings Treated as Failures | none yet -- #700 (current templates suppress more than W28) |
+| 1. Single NAT Gateway for Dev Environment | superseded -- #700 (the stack was removed, `core-infra.yaml` no longer exists) |
+| 2. VPC Gateway Endpoints for S3 and DynamoDB | superseded -- #700 (the stack was removed, `core-infra.yaml` no longer exists) |
+| 3. Shared KMS Key for Core Infrastructure | superseded -- #700 (the stack was removed, `core-infra.yaml` no longer exists) |
+| 4. VPC Flow Logs with KMS Encryption | superseded -- #700 (the stack was removed, `core-infra.yaml` no longer exists) |
+| 5. ECR with KMS Encryption and Immutable Tags | superseded -- #700 (the stack was removed, `core-infra.yaml` no longer exists) |
+| 6. cfn-nag Warnings Treated as Failures | superseded -- #700 (the remaining templates and the hook do not follow it, `.pre-commit-config.yaml`) |
 
 ## Monthly Cost Summary (Dev Environment)
 

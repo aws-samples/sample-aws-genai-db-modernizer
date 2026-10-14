@@ -1,6 +1,6 @@
 # ADR-028: Aurora PostgreSQL & MySQL Schema-Design Agents (Script-First)
 
-**Status:** Accepted
+**Status:** Partially superseded: Decision 2 (heterogeneous sources) by ADR-031 Decision 6
 **Date:** 2026-09-11
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-027 (Consolidate the Schema-Design Fleet into One Agent), ADR-025 (Consolidate the Deterministic Core Agent)
@@ -56,6 +56,8 @@ guess. This keeps the script/LLM boundary explicit and auditable.
 
 The heterogeneous translation work concentrates in the PostgreSQL agent.
 
+*Superseded (#701) by ADR-031 Decision 6 for heterogeneous sources (exactly one of Aurora PostgreSQL or Aurora MySQL is chosen per source, deterministically; MySQL can win). The homogeneous rows above still hold.*
+
 ### 3. `_SAME_FAMILY` override
 
 Same-family sources no longer emit "no redesign needed." The orchestrator routes
@@ -93,7 +95,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | Decision | Enforced by |
 |---|---|
 | 1. Script-first, LLM-augments | `tests/unit/tools/schema/aurora_common/test_ddl_generator.py::test_residual_marker_for_lengthless_string`<br>`tests/unit/tools/schema/aurora_common/test_ddl_generator.py::test_structured_tables_carry_provenance`<br>`tests/unit/tools/schema/aurora_common/test_type_map.py`<br>`tests/unit/tools/schema/test_aurora_schema_agents.py::test_agent_designs_a_delta_from_the_view_and_returns_the_merged_contract` |
-| 2. Target-selection rule | `tests/unit/agents/referee/test_aurora_choice.py::TestPickAuroraEngineHeterogeneous::test_homogeneous_source_unaffected_by_score_totals`<br>none yet -- #701 (heterogeneous sources: ADR-031 Decision 6 replaced this rule) |
+| 2. Target-selection rule | `tests/unit/agents/referee/test_aurora_choice.py::TestPickAuroraEngineHeterogeneous::test_homogeneous_source_unaffected_by_score_totals`<br>superseded by ADR-031 Decision 6 (heterogeneous sources) |
 | 3. `_SAME_FAMILY` override | `tests/unit/tools/schema/aurora_common/test_source_family.py::test_migration_strategy`<br>`tests/unit/atx_orchestrator/test_aurora_pg_wiring.py::test_aurora_pg_is_implemented_designer`<br>`tests/unit/atx_orchestrator/test_aurora_mysql_wiring.py::test_aurora_mysql_is_implemented_designer` |
 | 4. Single-pass (no split→merge) | `tests/unit/agents/test_schema_design_handler.py::TestRunSchemaDesignAutoRouting::test_aurora_always_single_pass_even_when_large` |
 | 5. Phasing | `tests/unit/atx_orchestrator/test_aurora_pg_wiring.py`<br>`tests/unit/atx_orchestrator/test_aurora_mysql_wiring.py` |

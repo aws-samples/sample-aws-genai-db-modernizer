@@ -15,7 +15,10 @@ so do the decisions an ``## Amendment`` section adds (ADR-028's D, E, F). Each `
 path under ``tests/``, optionally followed by ``::Class`` and ``::function``
 names that must exist in that file. A decision with no guard says
 ``none yet -- #N`` (the follow-up issue that adds one) instead of inventing a
-weak test; it is never left blank. Sections of ADRs that predate this rule are
+weak test; it is never left blank. A decision a later ADR replaced says
+``superseded by ADR-NNN Decision N``: that ADR must exist and number that decision, and the
+superseding decision carries the guard (its own Enforcement row). When no later ADR covers
+it, ``superseded -- #N (reason)`` or ``superseded -- <what changed and the code path>`` says so (the decision text stays). Sections of ADRs that predate this rule are
 listed in ``PENDING_ADOPTION`` (#641) and leave that list when their table is
 added.
 """
@@ -49,6 +52,12 @@ DECISION_SECTIONS = ("Decision", "Amendment")
 SECTION_HEADING = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
 ROW = re.compile(rf"^\|\s*{LABEL}[^|]*\|(.*)\|\s*$")
 NONE_YET = re.compile(r"^none yet\s+(?:--|—)\s+#\d+(?:\s+\(.*\))?$")
+SUPERSEDED_NOTE = re.compile(
+    r"^superseded\s+(?:--|—)\s+(?:#\d+(?:\s+\(.*\))?|[^#\s].*)$", re.IGNORECASE
+)
+SUPERSEDED = re.compile(
+    r"^superseded by ADR-(\d{3}) Decision (\d+|[A-Z])(?:\s+\(.*\))?$", re.IGNORECASE
+)
 TEST_ENTRY = re.compile(r"^`(tests/[\w./-]+\.py)((?:::\w+)*)`$")
 
 
@@ -108,10 +117,79 @@ def _members(node: ast.AST) -> dict[str, ast.AST]:
     }
 
 
-def entry_problems(entry: str) -> list[str]:
+def _status(text: str) -> str:
+    m = re.search(r"\*\*Status:\*\*\s*(.*)", text)
+    return m.group(1).strip() if m else ""
+
+
+def superseding_problems(adr_number: str, label: str, current: str | None = None) -> list[str]:
+    """Why ``superseded by ADR-NNN Decision N`` does not point at a real, guarded decision.
+
+    The target must be another ADR (not ``current``) that is itself in force, and its row must
+    name at least one test, so a superseded decision cannot point at a decision with no guard.
+    """
+    files = sorted(ADR_DIR.glob(f"ADR-{adr_number}-*.md"))
+    if not files:
+        return [f"superseded by ADR-{adr_number}: no such ADR"]
+    if all(f.name == current for f in files):
+        return [f"superseded by ADR-{adr_number}: an ADR cannot supersede its own decision"]
+    for f in files:
+        if f.name == current:
+            continue
+        text = f.read_text()
+        if label in decision_numbers(text):
+            if re.match(r"(?:Superseded|Deprecated|Rejected)\b", _status(text)):
+                return [f"{f.name} is itself {_status(text)!r}: point at its successor"]
+            cell = enforcement_rows(text).get(label)
+            if cell is None:
+                return [f"{f.name} decision {label} has no Enforcement row to carry the guard"]
+            if not any(TEST_ENTRY.match(e.strip()) for e in cell.split("<br>")):
+                return [f"{f.name} decision {label} names no test, so it cannot carry the guard"]
+            return []
+    return [f"superseded by ADR-{adr_number}: no decision {label!r} in it"]
+
+
+def decision_text(text: str, label: str) -> str:
+    """The body of one decision: from its heading to the next ``###``/``##`` heading."""
+    body = _decision_body(text)
+    for m in DECISION_HEADING.finditer(body):
+        if m.group(1) == label:
+            nxt = re.search(r"^##+ ", body[m.end() :], re.MULTILINE)
+            return body[m.start() : m.end() + (nxt.start() if nxt else len(body))]
+    return ""
+
+
+SUPERSEDED_STATUS = re.compile(r"(?:Partially\s+)?(?:superseded|deprecated)", re.IGNORECASE)
+SUPERSEDED_BODY_NOTE = re.compile(r"^\*(?:Superseded|Deprecated)\b", re.MULTILINE)
+
+
+def superseded_context_problems(text: str, label: str, cell: str) -> list[str]:
+    """A superseded marker needs the ADR's status line and the decision's own italic note.
+
+    Without both, one edit to a row could replace a live guard and stay green.
+    """
+    entries = [e.strip() for e in cell.split("<br>")]
+    if not any(SUPERSEDED_NOTE.match(e) or SUPERSEDED.match(e) for e in entries):
+        return []
+    problems = []
+    if not SUPERSEDED_STATUS.match(_status(text)):
+        problems.append(
+            "the Status line does not say Superseded, Partially superseded or Deprecated"
+        )
+    if not SUPERSEDED_BODY_NOTE.search(decision_text(text, label)):
+        problems.append("the decision has no italic `*Superseded ...*` note")
+    return problems
+
+
+def entry_problems(entry: str, current: str | None = None) -> list[str]:
     """Why one cell entry is not a valid guard reference (empty when valid)."""
     if NONE_YET.match(entry):
         return []
+    if SUPERSEDED_NOTE.match(entry):
+        return []
+    sup = SUPERSEDED.match(entry)
+    if sup:
+        return superseding_problems(sup.group(1), sup.group(2), current)
     m = TEST_ENTRY.match(entry)
     if not m:
         return [f"{entry!r} is neither a `tests/...py[::Name]` reference nor 'none yet -- #N'"]
@@ -149,11 +227,11 @@ def entry_problems(entry: str) -> list[str]:
     return []
 
 
-def cell_problems(cell: str) -> list[str]:
+def cell_problems(cell: str, current: str | None = None) -> list[str]:
     entries = [e.strip() for e in cell.split("<br>") if e.strip()]
     if not entries:
         return ["the Enforced by cell is empty"]
-    return [p for e in entries for p in entry_problems(e)]
+    return [p for e in entries for p in entry_problems(e, current)]
 
 
 def _adrs() -> list[Path]:
@@ -162,7 +240,8 @@ def _adrs() -> list[Path]:
 
 def _in_force(text: str) -> bool:
     status = re.search(r"\*\*Status:\*\*\s*(\w+)", text)
-    return not status or status.group(1) not in {"Superseded", "Deprecated", "Rejected"}
+    # Deprecated ADRs stay checked: their decisions are marked, not dropped.
+    return not status or status.group(1) not in {"Superseded", "Rejected"}
 
 
 def _checked_adrs() -> list[Path]:
@@ -219,7 +298,8 @@ def test_every_numbered_decision_names_an_existing_guard(adr: Path) -> None:
         f"Enforcement row {n} matches no numbered decision" for n in rows if n not in numbers
     ]
     for n, cell in rows.items():
-        problems += [f"decision {n}: {p}" for p in cell_problems(cell)]
+        problems += [f"decision {n}: {p}" for p in cell_problems(cell, adr.name)]
+        problems += [f"decision {n}: {p}" for p in superseded_context_problems(text, n, cell)]
     assert not problems, f"{adr.name}:\n" + "\n".join(problems)
 
 
@@ -284,6 +364,49 @@ def test_checker_accepts_the_explicit_marker_only_with_an_issue_number() -> None
     assert cell_problems("none yet -- #638") == []
     assert cell_problems("none yet — #638") == []
     assert cell_problems("none yet -- later")
+
+
+def test_checker_accepts_a_superseded_marker_only_when_the_target_decision_exists() -> None:
+    assert cell_problems("superseded by ADR-031 Decision 6") == []
+    assert cell_problems("Superseded by ADR-031 Decision 6 (one engine per source)") == []
+    assert cell_problems("superseded by ADR-028 Decision A") == []  # two ADR-028 files
+    assert cell_problems("superseded by ADR-031 Decision 99")
+    assert cell_problems("superseded by ADR-999 Decision 1")
+    assert cell_problems("superseded by ADR-031")
+    assert cell_problems("superseded by ADR-031 Decision 6<br>`tests/nope.py`")
+
+
+def test_checker_accepts_a_superseded_note_only_with_a_reason() -> None:
+    assert cell_problems("superseded -- groups are 20 queries (`group_splitter.py`)") == []
+    assert cell_problems("Superseded — the stack was removed") == []
+    assert cell_problems("superseded")
+    assert cell_problems("superseded --")
+    assert cell_problems("superseded -- #701") == []
+    assert cell_problems("superseded -- #701 (weights table is stale)") == []
+    assert cell_problems("superseded -- #") and cell_problems("superseded -- #abc")
+    assert cell_problems("superseded -- #701 no parentheses")
+
+
+def test_checker_rejects_self_superseded_and_unguarded_targets() -> None:
+    gate = "ADR-018-reality-check-and-human-gate.md"
+    assert superseding_problems("018", "3", gate)  # self-reference
+    assert superseding_problems("017", "2")  # target row is only `none yet`
+    assert superseding_problems("001", "1")  # target ADR is itself Superseded
+    assert superseding_problems("031", "6", gate) == []
+
+
+def test_a_superseded_marker_needs_the_status_line_and_the_decision_note() -> None:
+    live = "# A\n\n**Status:** Accepted\n\n## Decision\n\n### 1. One\n\nbody\n"
+    marked = (
+        "# A\n\n**Status:** Partially superseded: Decision 1\n\n## Decision\n\n### 1. One\n\n"
+        "body\n\n*Superseded (#1): the code changed.*\n\n### 2. Two\n"
+    )
+    cell = "superseded -- #1 (the code changed)"
+    assert superseded_context_problems(live, "1", cell)  # silences a live guard
+    assert superseded_context_problems(marked.replace("*Superseded", "Superseded"), "1", cell)
+    assert superseded_context_problems(marked, "2", cell)  # the note belongs to decision 1
+    assert superseded_context_problems(marked, "1", cell) == []
+    assert superseded_context_problems(live, "1", "`tests/unit/docs/x.py`") == []
 
 
 def test_checker_accepts_several_entries_in_one_cell() -> None:

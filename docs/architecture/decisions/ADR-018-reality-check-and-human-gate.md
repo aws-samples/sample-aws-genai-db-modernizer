@@ -1,6 +1,6 @@
 # ADR-018: Reality Check and Human Approval Gate
 
-**Status:** Accepted
+**Status:** Partially superseded: Decision 2 (the `waitForTaskToken` mechanism, no ADR replaced it); Decision 4 (group size is in queries, not tables); the reality check's own scoring logic (Decision 1) by ADR-031 Decision 7
 **Date:** 2026-04-24
 **Deciders:** Database Modernizer Assessment Architecture Team
 
@@ -24,6 +24,8 @@ Add a deterministic post-processing step after assignment resolution that evalua
 - If an engine can be eliminated, reassign its queries to the best surviving engine
 - Output: `before_distribution`, `after_distribution`, `consolidations[]`, `architectural_patterns[]`, `recommendations[]`
 
+*Superseded by ADR-031 Decision 7 for the reality check's own capability and scoring logic (it now uses the shared per-query score). The consolidation role itself stands.*
+
 **Why "Reality Check" and not just better triage?** Triage operates on collector signals alone (pre-analysis). The reality check operates on fully-scored analysis output — it knows actual confidence scores, anti-pattern counts, and cross-engine query overlap. This is fundamentally different information.
 
 ### 2. Human Approval Gate (Assignment Review Phase)
@@ -38,6 +40,8 @@ Add a `waitForTaskToken` pause point in the Step Functions workflow between real
 - On approval, API calls `SendTaskSuccess` with the stored task token
 
 **Why `waitForTaskToken` instead of polling?** Step Functions native callback pattern — no polling infrastructure, no state management, no timeouts to manage. The workflow simply pauses until the token is returned.
+
+*Superseded (#701): the Step Functions `waitForTaskToken` pause is gone; only a vestigial `TaskTokenNotFoundError` in `src/orchestrator/base.py` remains. The gate is the `ASSIGNMENT_REVIEW` phase of the local orchestrator, behind `GET`/`PUT /assignments` and `POST /resume`. No ADR records that replacement; ADR-028 (customer assignment review gate) Decision A later made the transform orchestrator honor the same phase.*
 
 ### 3. Signal-Driven Assignment Resolution
 
@@ -56,16 +60,18 @@ For large workloads (20+ tables per engine), split into groups before schema des
 - MAX_GROUP_SIZE = 20 tables (empirically determined — balances LLM context limits with design quality)
 - Groups processed in parallel, then merged into a unified schema per engine
 
+*Superseded (#701): `MAX_GROUP_SIZE = 20` in `src/agents/schema_design/group_splitter.py` caps groups at 20 queries, and `src/agents/schema_design/handler.py` decides whether to split by counting in-scope queries, not tables.*
+
 ## Enforcement
 
 Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
 
 | Decision | Enforced by |
 |---|---|
-| 1. Reality Check Agent (CTO-Level Engine Consolidation) | `tests/contract/test_reality_check_output.py`<br>`tests/unit/agents/referee/test_reality_check_resettle.py`<br>`tests/unit/test_reality_check.py::TestAbsorptionAppliedToAssignments` |
-| 2. Human Approval Gate (Assignment Review Phase) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_schema_design_blocked_before_approval`<br>`tests/unit/api/test_local_execution_status.py::TestWaitingStatus::test_assignment_approval_gate_reports_waiting`<br>none yet -- #701 (the task-token mechanism no longer exists) |
+| 1. Reality Check Agent (CTO-Level Engine Consolidation) | `tests/contract/test_reality_check_output.py`<br>`tests/unit/agents/referee/test_reality_check_resettle.py`<br>`tests/unit/test_reality_check.py::TestAbsorptionAppliedToAssignments`<br>superseded by ADR-031 Decision 7 (own scoring logic replaced) |
+| 2. Human Approval Gate (Assignment Review Phase) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_schema_design_blocked_before_approval`<br>`tests/unit/api/test_local_execution_status.py::TestWaitingStatus::test_assignment_approval_gate_reports_waiting`<br>superseded -- #701 (the task-token pause is gone; the gate is the `ASSIGNMENT_REVIEW` phase in `src/orchestrator/`) |
 | 3. Signal-Driven Assignment Resolution | `tests/unit/test_assignment_resolver.py::TestSignalOverrides`<br>`tests/unit/test_assignment_resolver.py::TestAntiPatternPenalties` |
-| 4. Group Splitting for Schema Design | none yet -- #701 (the ADR says groups of 20 tables; the code caps groups at 20 queries) |
+| 4. Group Splitting for Schema Design | superseded -- #701 (groups are capped at 20 queries, not 20 tables, `src/agents/schema_design/group_splitter.py`) |
 
 ## Updated Pipeline Flow
 

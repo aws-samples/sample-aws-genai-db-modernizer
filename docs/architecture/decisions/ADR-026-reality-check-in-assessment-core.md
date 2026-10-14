@@ -1,6 +1,6 @@
 # ADR-026: Fold Reality Check into the Assessment Core
 
-**Status:** Accepted
+**Status:** Partially superseded: Decision 4 (the human gate half) by ADR-028 (customer assignment review gate) Decision A; the external LLM mode half still holds in the transform core
 **Date:** 2026-08-27
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-025 (Consolidate the Deterministic Core), ADR-024 (Consolidate the Analysis Fleet), ADR-018 (Reality Check and Human Approval Gate), ADR-021 (Aurora Absorption Pass)
@@ -94,6 +94,8 @@ mid-run human or LLM input, which the current A2A model (submit, poll, terminal;
 no streaming, no mid-run input) does not support. Both are deferred. Reality
 Check runs to completion without either.
 
+*Superseded (#701) by ADR-028 (customer assignment review gate) Decision A for the human gate, which was added. The external-mode half still holds: `run_reality_check_core` in `src/atx_orchestrator/core.py` leaves `"external"` intentionally unsupported in the transform core and defaults `REALITY_CHECK_LLM_MODE` to `bedrock`.*
+
 ## Enforcement
 
 Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
@@ -103,7 +105,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 1. Fold Reality Check into the core agent | `tests/unit/atx_orchestrator/test_run_assessment_core.py::test_runs_all_phases_and_writes_same_artifacts` |
 | 2. Rename the agent to `assessment-core` | `tests/unit/atx_orchestrator/test_tools_a2a.py::TestRunDeterministicCoreViaA2AHappyPath::test_invokes_correct_agent_name` |
 | 3. Resolve the assignment version in Python, not the prompt | `tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestCoreResolvesAbsentVersion`<br>`tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestSubagentParams`<br>`tests/unit/atx_orchestrator/test_run_assessment_core.py::test_resolve_assignment_version` |
-| 4. Defer the human gate and the external LLM mode | none yet -- #701 (the gate has since been added by ADR-028) |
+| 4. Defer the human gate and the external LLM mode | superseded by ADR-028 Decision A (the gate was added)<br>none yet -- #708 (external mode unsupported in the transform core) |
 
 ## Rationale
 

@@ -1,6 +1,6 @@
 # ADR-017: Analysis Agent Scoring Framework
 
-**Status:** Accepted
+**Status:** Partially superseded: the Decision 4 weights table (the code uses other weights)
 **Date:** 2026-03-13
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-006 (Analysis Agent Architecture)
@@ -75,6 +75,8 @@ The analysis agent is the core product value — the component where specialist 
 | DynamoDB | 50%           | 25%        | 15%         | 10%  |
 | Redis    | 40%           | 20%        | 30%         | 10%  |
 
+*Superseded (#701): `DYNAMODB_SCORE_WEIGHTS` in `src/tools/analysis/dynamodb_pattern_catalog.py` is 60/20/5/15, and `src/tools/analysis/redis_analysis_tools.py` passes no weights, so Redis uses the 40/30/20/10 default.*
+
 **Alternatives considered:**
 
 - Universal weights: simpler but wrong. DynamoDB's value proposition is access pattern fit (pattern_match), while Redis's is latency improvement (performance). Same weights for both misrepresents the analysis.
@@ -103,7 +105,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 1. Queries are the atomic unit of analysis | `tests/unit/test_assignment_resolver.py::TestOpenSearchScoresTheQueryNotTheTable`<br>`tests/unit/test_assignment_resolver.py::TestComputeQueryConfidence::test_pattern_match_on_a_table_outside_the_querys_own_tables_has_no_effect` |
 | 2. Specialist-curated pattern catalogs drive scoring | none yet -- #703 |
 | 3. Decision trace is a required output | `tests/unit/agents/analysis/test_decision_trace_completeness_properties.py`<br>none yet -- #703 (every engine, and the trace as a separate artifact) |
-| 4. Score weights are per-target configurable | `tests/unit/agents/referee/test_cost_dimension.py::test_an_engine_may_weight_cost_differently_but_keeps_the_same_four_dimensions`<br>none yet -- #701 (the weights table is stale) |
+| 4. Score weights are per-target configurable | `tests/unit/agents/referee/test_cost_dimension.py::test_an_engine_may_weight_cost_differently_but_keeps_the_same_four_dimensions`<br>superseded -- #701 (the weights table does not match the code, `src/tools/analysis/dynamodb_pattern_catalog.py`) |
 | 5. Workload segments are per-pattern groupings | none yet -- #703 |
 
 ## Consequences
