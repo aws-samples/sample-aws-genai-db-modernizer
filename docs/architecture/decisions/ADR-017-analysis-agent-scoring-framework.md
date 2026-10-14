@@ -1,6 +1,6 @@
 # ADR-017: Analysis Agent Scoring Framework
 
-**Status:** Partially superseded: the Decision 4 weights table (the code uses other weights)
+**Status:** Partially superseded: Decision 2 (per-engine pattern catalogs, by ADR-031 Decision 8); the Decision 4 weights table (the code uses other weights)
 **Date:** 2026-03-13
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-006 (Analysis Agent Architecture)
@@ -45,6 +45,8 @@ The analysis agent is the core product value — the component where specialist 
 - LLM-driven scoring: too expensive, non-deterministic, hard to calibrate. Deferred to Phase 1 for unmatched queries only.
 
 **Rationale:** A DynamoDB specialist knows that "key-value lookup → DynamoDB" is a 95% confidence match, while "denormalizable relationship" is 70% (needs design work). This knowledge should be encoded as data in the catalog, not buried in if/else logic. The catalog is version-controlled and evolves with each assessment.
+
+*Superseded by ADR-031 Decision 8 (#707): per-engine pattern catalogs with independent detection code are replaced by one engine-neutral catalog, one file per access-pattern type. Scores are still catalog data, not a generic formula.*
 
 ### 3. Decision trace is a required output
 
@@ -103,7 +105,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | Decision | Enforced by |
 |---|---|
 | 1. Queries are the atomic unit of analysis | `tests/unit/test_assignment_resolver.py::TestOpenSearchScoresTheQueryNotTheTable`<br>`tests/unit/test_assignment_resolver.py::TestComputeQueryConfidence::test_pattern_match_on_a_table_outside_the_querys_own_tables_has_no_effect` |
-| 2. Specialist-curated pattern catalogs drive scoring | none yet -- #703 |
+| 2. Specialist-curated pattern catalogs drive scoring | superseded -- #707 (ADR-031 Decision 8 replaces per-engine catalogs with one engine-neutral catalog; its guard is #639) |
 | 3. Decision trace is a required output | `tests/unit/agents/analysis/test_decision_trace_completeness_properties.py`<br>none yet -- #703 (every engine, and the trace as a separate artifact) |
 | 4. Score weights are per-target configurable | `tests/unit/agents/referee/test_cost_dimension.py::test_an_engine_may_weight_cost_differently_but_keeps_the_same_four_dimensions`<br>superseded -- #701 (the weights table does not match the code, `src/tools/analysis/dynamodb_pattern_catalog.py`) |
 | 5. Workload segments are per-pattern groupings | none yet -- #703 |

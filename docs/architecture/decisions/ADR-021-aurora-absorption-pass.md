@@ -1,6 +1,6 @@
 # ADR-021: Aurora Absorption Pass in Reality Check
 
-**Status:** Accepted
+**Status:** Partially superseded: the Aurora-specific absorption pass and its own fitness gate (by ADR-031 Decision 7); the general principle stands
 **Date:** 2026-05-29
 **Deciders:** Database Modernizer Assessment Architecture Team
 
@@ -28,6 +28,8 @@ The customer is migrating FROM RDS (single-instance relational). Aurora is a NEW
 ## Decision
 
 Add an **Aurora Absorption Pass** to the reality check, executed after the existing unique value assessment (Pass 0) and before consolidation (Pass 1). This pass runs only when an Aurora engine is already committed in the architecture.
+
+*Superseded by ADR-031 Decision 7 (#707): the Aurora-specific absorption pass, with its own fitness gate and thresholds separate from the shared score, is replaced by the reality check's single per-query scoring path. The principle that a committed engine can absorb orphan queries from an engine that does not justify its cost stands.*
 
 ### Rules
 
