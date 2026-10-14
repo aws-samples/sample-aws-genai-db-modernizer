@@ -338,9 +338,13 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # check still consolidates it back to Aurora MySQL for lacking unique
     # value once there, which the ``before_distribution`` below -- the
     # first-assignment count -- does not reflect.)
+    # #690: aurora-anti-05 ("no relational need") no longer fires for
+    # wp_comments, whose own COUNT(*) query is an aggregate, so its point read
+    # and its INSERT lose the 20-point Aurora penalty and move back from
+    # DynamoDB -- dynamodb -2, aurora_mysql +2.
     assert rc["before_distribution"] == {
-        "dynamodb": 39,
-        "aurora_mysql": 60,
+        "dynamodb": 37,
+        "aurora_mysql": 62,
         "documentdb": 8,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

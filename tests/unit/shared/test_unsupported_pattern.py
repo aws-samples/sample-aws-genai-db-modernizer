@@ -16,6 +16,7 @@ import pytest
 
 from src.shared.unsupported_pattern import (
     is_dedup_only_group_by,
+    non_scalar_function_names,
     unsupported_pattern_ids,
     unsupported_pattern_label,
     unsupported_pattern_mitigation,
@@ -284,3 +285,34 @@ _NEVER_RESOLVED_CASES = {
 @pytest.mark.parametrize("sql", _NEVER_RESOLVED_CASES.values(), ids=_NEVER_RESOLVED_CASES.keys())
 def test_never_resolved(sql: str) -> None:
     assert is_dedup_only_group_by(sql) is False
+
+
+class TestNonScalarFunctionNames:
+    """The shared function-call scan aurora-anti-05's CRUD check uses (#690)."""
+
+    def test_scalar_allowlist_calls_are_not_returned(self):
+        assert non_scalar_function_names("SELECT lower(a), coalesce(b, 0), now() FROM t") == set()
+
+    def test_engine_specific_and_aggregate_calls_are_returned(self):
+        sql = "SELECT family(ip), masklen(ip), count(*) FROM t GROUP BY 1, 2"
+        assert non_scalar_function_names(sql) == {"family", "masklen", "count"}
+
+    def test_insert_column_lists_and_conflict_targets_are_not_calls(self):
+        for sql in (
+            "INSERT INTO t (a, b) VALUES ($1, $2)",
+            'INSERT INTO "public"."t" ("a") VALUES ($1) ON CONFLICT ("a") DO NOTHING',
+            "INSERT INTO `t` ( `a` ) VALUES (...)",
+            "INSERT INTO [dbo].[t] ([a]) VALUES (@p1)",
+        ):
+            assert non_scalar_function_names(sql) == set(), sql
+
+    def test_calls_inside_literals_and_comments_are_ignored(self):
+        assert non_scalar_function_names("SELECT a FROM t WHERE b = 'x(1)' -- y(2)") == set()
+
+    def test_keywords_followed_by_a_paren_are_not_calls(self):
+        for sql in (
+            "SELECT TOP (200) [a] FROM [t] WITH (NOLOCK) WHERE [b] = @b",
+            "SELECT * FROM t WHERE (public) ORDER BY (kind IS NOT NULL) DESC",
+            "INSERT INTO [t] ([a], [at]) VALUES (@a, SYSUTCDATETIME())",
+        ):
+            assert non_scalar_function_names(sql) == set(), sql

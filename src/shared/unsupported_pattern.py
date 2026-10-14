@@ -47,6 +47,10 @@ Version History:
   denylist known aggregate names, after a review found the original
   ``COUNT``/``SUM``/``AVG``/``MIN``/``MAX``-only denylist let through
   ``GROUP_CONCAT``, ``STRING_AGG``, window functions and more.
+- 1.2 (2026-10-14): ``strip_comments_and_literals`` and
+  ``non_scalar_function_names`` (#690): the same stripping and the same
+  scalar allowlist, exposed so ``aurora-anti-05``'s single-table CRUD check
+  reads function calls exactly the way the dedup check does.
 """
 
 from __future__ import annotations
@@ -182,6 +186,11 @@ _SCALAR_OPERATION_ALLOWLIST = frozenset(
         "curdate",
         "current_date",
         "current_timestamp",
+        # SQL Server's spellings of the same current date/time (#690)
+        "getdate",
+        "getutcdate",
+        "sysdatetime",
+        "sysutcdatetime",
         "date",
         "year",
         "month",
@@ -284,3 +293,55 @@ def is_dedup_only_group_by(query_sql: str | None) -> bool:
         if match.group(1).lower() not in _SCALAR_OPERATION_ALLOWLIST:
             return False
     return True
+
+
+# Not function calls, though each is followed by "(": an INSERT's target table
+# and an ON CONFLICT target (both before a column list), and the keywords
+# TOP (n), ORDER/GROUP/PARTITION BY (expr) and WITH (table hint or OPENJSON
+# schema). _FUNCTION_CALL_RE / _QUOTED_FUNCTION_CALL_RE would read each as a
+# call to a function named after the table or keyword. Removed before the
+# function-call scan in ``non_scalar_function_names`` only;
+# ``is_dedup_only_group_by`` is unchanged.
+_IDENT = r'(?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_$]*)'
+_NOT_A_CALL_RE = re.compile(
+    rf"\bINTO\s+(?:{_IDENT}\s*\.\s*)?{_IDENT}\s*(?=\()"
+    r"|\bON\s+CONFLICT\s*(?=\()|\b(?:TOP|BY|WITH)\s*(?=\()",
+    re.IGNORECASE,
+)
+
+
+def strip_comments_and_literals(query_sql: str | None) -> str:
+    """``query_sql`` with comments and quoted strings/identifiers blanked out.
+
+    The same stripping ``is_dedup_only_group_by`` applies first, so a keyword,
+    operator or function call that only appears inside a literal or comment
+    never counts as part of the query.
+    """
+    return _STRIP_RE.sub(" ", query_sql or "")
+
+
+def non_scalar_function_names(query_sql: str | None) -> set[str]:
+    """Every function called in ``query_sql`` that is not on the scalar allowlist.
+
+    Lower-cased names; empty when every call is one of the short list of
+    per-row operations (``lower``, ``coalesce``, ``now``, ...) that
+    ``is_dedup_only_group_by`` already accepts. Anything else -- an aggregate,
+    a window function, or an engine-specific function such as PostgreSQL's
+    ``family()``/``masklen()`` on ``inet`` -- is returned. Like the dedup check
+    this proves rather than guesses: an unrecognised name is returned, never
+    assumed harmless. An INSERT's ``INTO <table> (`` column list, an
+    ``ON CONFLICT (`` target, ``TOP (n)``, ``BY (expr)`` and ``WITH (...)``
+    are not function calls and are never returned.
+    """
+    # "," rather than "": "INSERT INTO t (" must not become "INSERT (".
+    original = _NOT_A_CALL_RE.sub(" , ", query_sql or "")
+    names = {
+        m.group(1).lower()
+        for m in _QUOTED_FUNCTION_CALL_RE.finditer(original)
+        if m.group(1).lower() not in _SCALAR_OPERATION_ALLOWLIST
+    }
+    for match in _FUNCTION_CALL_RE.finditer(_STRIP_RE.sub(" ", original)):
+        name = match.group(1).lower()
+        if name not in _SCALAR_OPERATION_ALLOWLIST:
+            names.add(name)
+    return names

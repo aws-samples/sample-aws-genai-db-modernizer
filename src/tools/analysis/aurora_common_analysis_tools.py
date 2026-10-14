@@ -12,6 +12,10 @@ Implements:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from src.agents.referee.query_shape import RELATIONAL, single_table_access_shape
+from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
@@ -104,6 +108,20 @@ def _is_single_row_pk_lookup(query: dict) -> bool:
         return False
     rows_avg = query.get("rows_returned_avg") or 0.0
     return rows_avg <= 1.0
+
+
+# --------------------------------------------------------------------------
+# aurora-anti-05 helpers (#690)
+# --------------------------------------------------------------------------
+
+
+def _is_admin_statement(query: Mapping) -> bool:
+    """SHOW/DESCRIBE/SET/... (``SKIP_QUERY_TYPES``) or a utility statement
+    (``utility_statements.is_utility_statement``): not application data access."""
+    query_type = str(query.get("query_type") or "").upper()
+    return query_type in SKIP_QUERY_TYPES or is_utility_statement(
+        query.get("query_text"), query.get("tables_accessed")
+    )
 
 
 # ==========================================================================
@@ -466,8 +484,26 @@ def analyze_aurora_common_use_cases(
             _build_anti_pattern("aurora-anti-04", anti04_query_ids, anti04_table_ids)
         )
 
-    # aurora-anti-05: no-relational-need
-    # Table with 0 FKs AND no query for this table has joins or multi-table access
+    # aurora-anti-05: no-relational-need (#690, ADR-031 Decision 14)
+    # Two steps, in this order:
+    # 1. The per-query check, for every application query on the table:
+    #    ``query_shape.single_table_access_shape`` with the table's own primary
+    #    key from the schema. CRUD (a point or simple-key read or write,
+    #    ``ORDER BY <primary key> LIMIT 1`` included), an ordered 1:M read
+    #    (``ORDER BY <primary key> LIMIT n``, n > 1 or a bind parameter with no
+    #    evidence it is 1: neutral, neither CRUD nor relational evidence), or
+    #    relational. A relational query never takes the penalty.
+    # 2. The table-level complement: the catalog rule ("no foreign keys and no
+    #    join participation -- all queries are single-table CRUD") adds the
+    #    penalty only when no application query on the table is relational
+    #    (ordered 1:M reads are neutral: they neither block nor are needed),
+    #    the table has 0 FKs, and no query joins it to another table. It then
+    #    covers the CRUD and the ordered 1:M queries -- neither has a
+    #    relational need -- and never overrides a per-query result.
+    # Admin statements are not application access: they neither block the
+    # table nor take the penalty. That is the scan above's ``SKIP_QUERY_TYPES``
+    # skip plus ``is_utility_statement`` (a metadata read typed SELECT, a
+    # transaction control statement, ...), which the scan above does not skip.
     anti05_query_ids: list[str] = []
     anti05_table_ids: list[str] = []
     tables_with_joins: set[str] = set()
@@ -478,14 +514,21 @@ def analyze_aurora_common_use_cases(
 
     for table in tables_schema:
         tid = table.get("table_id", "")
-        fks = table.get("foreign_keys") or []
-        if len(fks) > 0:
-            continue
-        if tid in tables_with_joins:
-            continue
-        # Must have at least some queries (don't flag unused tables)
-        table_qs = [q for q in queries if tid in (q.get("tables_accessed") or [])]
+        # Must have at least some application queries (don't flag unused tables)
+        table_qs = [
+            q
+            for q in queries
+            if tid in (q.get("tables_accessed") or []) and not _is_admin_statement(q)
+        ]
         if not table_qs:
+            continue
+        # Step 1: per query.
+        primary_key = table.get("primary_key") or []
+        shapes = [single_table_access_shape(q, primary_key=primary_key) for q in table_qs]
+        # Step 2: the table-level complement, only on top of step 1.
+        if RELATIONAL in shapes:
+            continue
+        if table.get("foreign_keys") or tid in tables_with_joins:
             continue
         anti05_query_ids.extend(q.get("query_id", "") for q in table_qs)
         anti05_table_ids.append(tid)

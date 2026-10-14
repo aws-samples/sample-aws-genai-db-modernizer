@@ -14,7 +14,13 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
+from tests.unit.agents.referee.test_query_shape import (
+    NOT_SINGLE_TABLE_CRUD_SQL,
+    SINGLE_TABLE_CRUD_SQL,
+)
 
 REPO = Path(__file__).resolve().parents[4]
 
@@ -168,6 +174,146 @@ class TestNoRelationalNeed:
         _, anti_patterns = analyze_aurora_common_use_cases(_make_collector(tables, queries))
         anti_ids = [ap.anti_pattern_id for ap in anti_patterns]
         assert "aurora-anti-05" not in anti_ids
+
+
+# ==========================================================================
+# TestNoRelationalNeedRequiresSingleTableCrud (aurora-anti-05, #690)
+#
+# The catalog entry says "all queries are single-table CRUD". A table with
+# no FKs and no joins still has a relational need when one of its own
+# queries is an aggregate, a window function, a CTE or subquery, a range or
+# unkeyed bulk write, a table-wide ORDER BY or range read, or calls a
+# function outside the shared scalar allowlist.
+# ==========================================================================
+
+
+def _q(qid: str, sql: str, query_type: str | None = None, table: str = "t1") -> dict:
+    return {
+        "query_id": qid,
+        "query_type": query_type or sql.split()[0].upper(),
+        "tables_accessed": [table],
+        "has_joins": False,
+        "join_count": 0,
+        "rows_returned_avg": 1.0,
+        "calls_per_second": 1.0,
+        "query_text": sql,
+    }
+
+
+def _anti05(
+    queries: list[dict],
+    tables: list[str] | None = None,
+    primary_keys: dict[str, list[str]] | None = None,
+):
+    schema = [
+        {
+            "table_id": t,
+            "foreign_keys": [],
+            "columns": [],
+            "primary_key": (primary_keys or {}).get(t, []),
+        }
+        for t in (tables or ["t1"])
+    ]
+    _, anti_patterns = analyze_aurora_common_use_cases(_make_collector(schema, queries))
+    return next((ap for ap in anti_patterns if ap.anti_pattern_id == "aurora-anti-05"), None)
+
+
+class TestNoRelationalNeedRequiresSingleTableCrud:
+    @pytest.mark.parametrize(
+        "sql", NOT_SINGLE_TABLE_CRUD_SQL.values(), ids=NOT_SINGLE_TABLE_CRUD_SQL.keys()
+    )
+    def test_one_relational_query_clears_the_whole_table(self, sql):
+        """The point read next to it is not penalised either: the table has a relational need."""
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), _q("rel", sql)]
+        assert _anti05(queries) is None
+
+    def test_fires_when_every_query_is_crud(self):
+        queries = [_q(f"q{i}", sql) for i, sql in enumerate(SINGLE_TABLE_CRUD_SQL)]
+        ap = _anti05(queries)
+        assert ap is not None
+        assert ap.query_ids == [q["query_id"] for q in queries]
+        assert ap.table_ids == ["t1"]
+
+    def test_only_the_qualifying_table_is_flagged(self):
+        queries = [
+            _q("a1", "SELECT * FROM a WHERE id = $1", table="a"),
+            _q("b1", "SELECT * FROM b WHERE id = $1", table="b"),
+            _q("b2", "DELETE FROM b WHERE date < $1", table="b"),
+        ]
+        ap = _anti05(queries, tables=["a", "b"])
+        assert ap is not None
+        assert ap.table_ids == ["a"]
+        assert ap.query_ids == ["a1"]
+
+    def test_a_primary_key_first_row_read_does_not_clear_the_table(self):
+        """Maintainer decision on #692: ``ORDER BY <primary key> LIMIT 1`` is a key lookup."""
+        queries = [
+            _q("point", 'SELECT * FROM "t1" WHERE "t1"."key" = $1 LIMIT $2'),
+            _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."key" ASC LIMIT 1'),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["key"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "first"]
+
+    def test_an_ordered_one_to_many_read_neither_clears_nor_qualifies_the_table(self):
+        """``ORDER BY <primary key> LIMIT $1`` with no evidence it is 1 is neutral (#692)."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "first"]
+
+    def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
+        """Neutral means neutral: no relational query, so the table rule still fires (#692)."""
+        queries = [
+            _q("first", 'SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT $1'),
+            _q("top20", "SELECT * FROM t1 ORDER BY id LIMIT 20"),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["first", "top20"]
+
+    def test_an_ordered_one_to_many_read_does_not_save_a_relational_table(self):
+        queries = [
+            _q("first", "SELECT * FROM t1 ORDER BY id LIMIT 20"),
+            _q("purge", "DELETE FROM t1 WHERE created_at < $1"),
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+        ]
+        assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
+
+    def test_first_row_by_a_column_that_is_not_the_primary_key_clears_the_table(self):
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE key = $1"),
+            _q("first", "SELECT * FROM t1 ORDER BY id ASC LIMIT 1"),
+        ]
+        assert _anti05(queries, primary_keys={"t1": ["key"]}) is None
+
+    def test_per_query_check_runs_first_and_the_table_rule_never_overrides_it(self):
+        """ADR-031 Decision 14: only queries that pass the per-query check are ever listed."""
+        queries = [
+            _q("a1", "SELECT * FROM a WHERE id = $1", table="a"),
+            _q("a2", "UPDATE a SET v = $1 WHERE $2=$3", table="a"),
+            _q("b1", "SELECT * FROM b WHERE id = $1", table="b"),
+        ]
+        ap = _anti05(queries, tables=["a", "b"])
+        assert ap is not None
+        assert ap.query_ids == ["b1"]
+        assert ap.table_ids == ["b"]
+
+    def test_admin_statements_neither_block_nor_take_the_penalty(self):
+        """SHOW/DESCRIBE are not application access: skipped, as the main scan skips them."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER"),
+        ]
+        ap = _anti05(queries)
+        assert ap is not None
+        assert ap.query_ids == ["point"]
+
+    def test_a_table_with_only_admin_statements_is_not_flagged(self):
+        assert _anti05([_q("show", "SHOW FULL FIELDS FROM `t1`", query_type="OTHER")]) is None
 
 
 # ==========================================================================

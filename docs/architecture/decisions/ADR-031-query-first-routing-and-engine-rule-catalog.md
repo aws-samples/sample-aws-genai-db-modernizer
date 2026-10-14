@@ -103,6 +103,20 @@ The rule applies only when the source-compatible engine scores at least as well 
 
 A heterogeneous source (SQL Server, Oracle, DB2) has no source-compatible engine, so this rule does not apply to it; the one relational engine Decision 6 chooses for it gets no protection from standing cost under this decision.
 
+### 14. A whole-workload anti-pattern's table-level rule only complements the per-query check (maintainer decision, 2026-10-14, #692)
+
+Some catalog anti-patterns are defined over a table's whole workload. Today that is only `aurora-anti-05` ("no-relational-need": no foreign keys, no join participation, every application query single-table CRUD). Such an anti-pattern runs in two steps, always in this order:
+
+1. **The per-query check, first.** Each application query on the table is classified on its own access pattern (`query_shape.single_table_access_shape`):
+   - **CRUD**: a point or simple-key read or write. `ORDER BY <the table's own primary key> LIMIT 1` is a key-value lookup and counts.
+   - **Ordered 1:M read**: `ORDER BY <primary key> LIMIT n` with n > 1, or a bind-parameter limit with no evidence it is 1. A key-value store models it, so it is neutral: neither CRUD evidence nor relational evidence. It is never labelled a key-value lookup, and it never removes an engine or reduces any engine's points.
+   - **Relational**: anything else. A relational query never takes the penalty.
+2. **The table-level rule, as a complement.** The anti-pattern's own table condition (for `aurora-anti-05`, no foreign keys and no join participation) can add the penalty only when step 1 found no relational query on the table. Ordered 1:M reads are neutral here too: they neither block the rule nor are needed for it, so a table whose application queries are all ordered 1:M reads is treated exactly as it would be without this classification. The penalty then covers the table's CRUD and ordered 1:M queries, because neither has a relational need. It never overrides a per-query result.
+
+Why the table-level rule exists at all: the catalog rule is a negative claim about the table, that it needs nothing relational. One aggregate, window function, subquery, range or unkeyed write, or ordering over non-key columns on the table makes that claim false. Penalising the table's keyed reads and writes while its relational queries stay on the relational engine would split one table's writes across two engines (the `web_crawler_requests` case found in #686's review). The table-level rule never assigns a query and never adds to a score. It only gates that one penalty, and every query is still scored from its own tables (Decision 1). The per-query facts underneath are engine-neutral and defined once (Decision 8).
+
+A new anti-pattern may use a table-level rule only if its catalog text defines it over the table's whole workload, and only in this order: per query first, then table.
+
 ## Enforcement
 
 Each decision names the guard test that fails when the code stops following it. `tests/unit/docs/test_adr_enforcement.py` fails when a decision has no row here, or when a row names a test file, class or function that does not exist. A decision with no guard yet says `none yet` and the issue that will add one; it is never left blank.
@@ -122,6 +136,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 11. Models explain; they do not decide | `tests/unit/agents/referee/test_reality_check_sweep_parity.py`<br>`tests/e2e/test_hashseed_determinism.py`<br>none yet -- #647 (a model never decides or changes an assignment; conflicts with LLM corrections) |
 | 12. A still-unresolved tie gets a placeholder | `tests/unit/agents/referee/test_tie_break.py::TestPickUnresolvedTiePlaceholder`<br>`tests/unit/agents/referee/test_tie_break.py::TestSettledCounts` |
 | 13. The source-compatible engine is not removed on cost for a no-better engine | `tests/unit/agents/referee/test_source_compatible_tie_survival.py`<br>`tests/unit/agents/referee/test_tie_break.py::TestCheaperEngineDisplacesSourceCompatible` |
+| 14. A whole-workload anti-pattern's table-level rule only complements the per-query check | `tests/unit/tools/analysis/test_aurora_anti_patterns.py::TestNoRelationalNeedRequiresSingleTableCrud`<br>`tests/unit/agents/referee/test_query_shape.py::TestIsSingleTableCrud`<br>`tests/unit/agents/referee/test_query_shape.py::TestPrimaryKeyFirstRowRead` |
 
 ## What this ADR supersedes
 
