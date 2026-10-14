@@ -12,6 +12,7 @@ from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import resettle_after_corrections
 from src.agents.referee.reality_check_floors import _find_best_absorber_for_query
 from src.agents.referee.reality_check_patterns import _build_recommendations
+from src.agents.referee.reality_check_place import _place_settled_queries
 from src.agents.referee.reality_check_records import reconcile_consolidations
 
 # --- the mandatory-engine tie bonus ------------------------------------------
@@ -152,8 +153,39 @@ class TestRemovedEnginesAndMovedQueriesAreReported:
                 assert "DocumentDB → DynamoDB" in qa["assignment_reason"]
                 assert "DynamoDB scores 70.0" in qa["assignment_reason"]
 
-    # The "before" half (the score on the engine the query left) is reported as
-    # "n/a" today, so it has no guard until #698 is fixed.
+    def test_each_moved_query_states_the_score_on_the_engine_it_left(self) -> None:
+        revised, _ = _resettle_documentdb_into_dynamodb()
+        for qa in revised:
+            if qa["query_id"] in {"d1", "d2"}:
+                assert "DocumentDB scores 65.0" in qa["assignment_reason"]
+                assert "n/a" not in qa["assignment_reason"]
+
+    def test_a_moved_co_dependency_group_states_the_group_score_on_both_engines(self) -> None:
+        group = {"key": "g", "scores": {"documentdb": 65, "dynamodb": 70}}
+        trace = {
+            "g1": {"engines": {"documentdb": 65, "dynamodb": 70}, "group": group},
+            "g2": {"engines": {"documentdb": 65, "dynamodb": 70}, "group": group},
+        }
+        revised, _ = _place_settled_queries(
+            query_assignments=[
+                {"query_id": q, "assigned_engine": "documentdb", "assignment_reason": "t"}
+                for q in ("g1", "g2")
+            ],
+            committed_engines={"dynamodb"},
+            mandatory_query_ids=set(),
+            current_engine_by_qid={"g1": "documentdb", "g2": "documentdb"},
+            query_signals={},
+            query_map={},
+            query_capabilities=None,
+            trace_by_query=trace,
+            source_compatible_engine=None,
+            workload_justified={},
+        )
+        for qa in revised:
+            reason = qa["assignment_reason"]
+            assert "co-dependency group moves together" in reason
+            assert "DocumentDB scores 65.0" in reason
+            assert "DynamoDB scores 70.0" in reason
 
 
 # --- savings only for an engine the first assignment justified --------------------

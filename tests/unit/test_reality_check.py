@@ -21,6 +21,7 @@ signal-pinned engine is judged by the justification floors
 
 import itertools
 import random
+import re
 
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
@@ -1023,6 +1024,22 @@ class TestOpenSearchJustificationFloor:
         from_os = [c for c in result["consolidations"] if c["from_engine"] == "opensearch"]
         assert len(from_os) == 1
         assert "justification floor" in from_os[0]["reason"] or "326" in from_os[0]["reason"]
+
+    def test_a_floor_move_states_the_score_on_the_engine_it_left(self):
+        """ADR-031 Decision 7 (#698): the reason carries before and after scores."""
+        result = self._run(
+            "SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?",
+            0.07,
+            query_capabilities={},
+        )
+        reason = next(
+            qa["assignment_reason"]
+            for qa in result["revised_assignments"]
+            if qa["query_id"] == "search"
+        )
+        assert re.search(r"OpenSearch scores \d+(\.\d+)?", reason), reason
+        assert re.search(r"DynamoDB scores \d+(\.\d+)?", reason), reason
+        assert "n/a" not in reason
 
     def test_plain_join_with_no_search_predicate_is_dropped(self):
         """The Action Scheduler shape: a join with no text predicate at all.
@@ -3118,6 +3135,16 @@ class TestJustificationFloorMovesACoDependencyGroupTogether:
         assert len(from_docdb) == 1
         assert from_docdb[0]["to_engine"] == "aurora_mysql"
         assert from_docdb[0]["query_count"] == 2
+
+        # ADR-031 Decision 7 (#698): a floor-moved group reports the group
+        # score on the engine it left as well as on the one it went to; a
+        # missing (None) before score would print "n/a" here.
+        for qa in result["revised_assignments"]:
+            if qa["query_id"] in {"g1", "g2"}:
+                reason = qa["assignment_reason"]
+                assert re.search(r"DocumentDB scores \d+(\.\d+)?", reason), reason
+                assert re.search(r"Aurora MySQL scores \d+(\.\d+)?", reason), reason
+                assert "n/a" not in reason, reason
 
 
 class TestPhaseOneTieSurfacesBeyondUniqueValueAssessment:

@@ -11,6 +11,7 @@ from src.agents.referee.reality_check_rules import (
     ENGINE_BASE_COST,
     EXTRA_ENGINE_BURDEN_MONTHLY,
     _group_eligible_engines,
+    _move_scores_text,
     _pick_winner,
     _resolver_score,
     _tie_unresolved_note,
@@ -28,6 +29,7 @@ def _phase2_reason(
     moved: bool,
     group: bool,
     original_tied: Iterable[str] | None = None,
+    before_score: float | None = None,
 ) -> str:
     """Build a Phase 2 ``assignment_reason`` honestly (#503): engines named
     with ``display_engine``, no raw code and no internal ``ADR-031``
@@ -41,15 +43,10 @@ def _phase2_reason(
     resolved" with no reason given."""
     winner_name = display_engine(winner)
     if moved:
-        basis = (
-            "co-dependency group moves together"
-            if group
-            else (
-                f"{display_engine(current_engine)} scores "
-                f"{eligible_scores.get(current_engine, 'n/a')}, {winner_name} scores "
-                f"{eligible_scores[winner]}"
-            )
+        scores_text = _move_scores_text(
+            current_engine, before_score, winner, eligible_scores.get(winner)
         )
+        basis = f"co-dependency group moves together; {scores_text}" if group else scores_text
         tie_note = (
             _tie_unresolved_note(_top_scorers(eligible_scores), winner)
             if tie_kind == "tie_unresolved"
@@ -218,6 +215,7 @@ def _place_settled_queries(
             moved=True,
             group=False,
             original_tied=original_tied,
+            before_score=_resolver_score(trace_by_query, qid, current_engine),
         )
         moves[(current_engine, winner)].append(qid)
         if tie_kind == "tie_unresolved":
@@ -321,6 +319,7 @@ def _place_settled_queries(
                     moved=True,
                     group=True,
                     original_tied=group_original_tied,
+                    before_score=group_info["scores"].get(member_engine),
                 )
                 moves[(member_engine, winner)].append(member_qid)
                 if tie_kind == "tie_unresolved":

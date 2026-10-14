@@ -115,6 +115,24 @@ def _resolver_score(trace_by_query: dict[str, dict], qid: str, engine: str) -> f
     return None
 
 
+def _move_scores_text(
+    from_engine: str, before: float | None, to_engine: str, after: float | None
+) -> str:
+    """``"<from> scores N, <to> scores M"``: the before and after scores a moved
+    query reports (ADR-031 Decision 7, #698). Both come from the resolver's own
+    first-assignment scores (``_resolver_score`` or the group's recorded group
+    score), never a recompute; ``n/a`` only when the resolver's own gate ruled
+    the engine out for the query, so it had no score to report."""
+
+    def _fmt(value: float | None) -> str:
+        return "n/a" if value is None else str(float(value))
+
+    return (
+        f"{display_engine(from_engine)} scores {_fmt(before)}, "
+        f"{display_engine(to_engine)} scores {_fmt(after)}"
+    )
+
+
 def _query_eligible_engines(
     qid: str,
     qa: dict,

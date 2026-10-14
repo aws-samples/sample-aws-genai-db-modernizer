@@ -21,6 +21,7 @@ from src.agents.referee.reality_check_rules import (
     ENGINE_BASE_COST,
     EXTRA_ENGINE_BURDEN_MONTHLY,
     _group_eligible_engines,
+    _move_scores_text,
     _query_has_join,
     _resolver_score,
     _tie_unresolved_note,
@@ -382,7 +383,9 @@ def _apply_justification_floors(
         if not floor_candidates:
             continue  # nowhere to send them (#335): leave the engine as owner
 
-        floor_placement: dict[str, list[tuple[dict, str]]] = defaultdict(list)
+        # (query assignment, fit reason, whether the reason already carries the
+        # before and after scores -- true for a group move, false for an individual one)
+        floor_placement: dict[str, list[tuple[dict, str, bool]]] = defaultdict(list)
         floor_unplaced: list[dict] = []
         to_move_by_id = {qa["query_id"]: qa for qa in to_move_qas}
         handled_floor_groups: set[str] = set()
@@ -457,12 +460,19 @@ def _apply_justification_floors(
                         else " (tie: source-compatible engine)"
                     )
                 winner_fit = round(group_scores[winner])
-                reason = f"fit={winner_fit}, co-dependency group moves together{tie_note}"
+                before = group_info["scores"].get(
+                    engine, _resolver_score(trace_by_query, qid, engine)
+                )
+                reason = (
+                    f"fit={winner_fit}, co-dependency group moves together; "
+                    f"{_move_scores_text(engine, before, winner, group_scores[winner])}"
+                    f"{tie_note}"
+                )
                 # #503: a tie this floor pass resolves (or decides for real)
                 # is recorded, same as Phase 2.
                 for member_qa in member_qas:
                     member_qa["tied_engines"] = tied_group if tie_kind == "tie_unresolved" else []
-                    floor_placement[winner].append((member_qa, reason))
+                    floor_placement[winner].append((member_qa, reason, True))
                 continue
 
             absorber = _find_best_absorber_for_query(
@@ -483,9 +493,9 @@ def _apply_justification_floors(
                 floor_unplaced.append(qa)
                 continue
             qa["tied_engines"] = absorber.get("tied_engines", [])
-            floor_placement[absorber["target_engine"]].append((qa, absorber["reason"]))
+            floor_placement[absorber["target_engine"]].append((qa, absorber["reason"], False))
 
-        moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _ in placed}
+        moved_ids = {qa["query_id"] for placed in floor_placement.values() for qa, _, _ in placed}
         if not moved_ids:
             # #502 review round 6, finding 2: every query that failed the
             # floor also had no eligible destination (``floor_unplaced``
@@ -506,8 +516,19 @@ def _apply_justification_floors(
             continue
 
         for target_engine, placed in floor_placement.items():
-            for qa, fit_reason in placed:
+            for qa, fit_reason, has_scores in placed:
                 _, this_reason = verdicts[qa["query_id"]]
+                # ADR-031 Decision 7 (#698): before and after scores, from the
+                # resolver's own first-assignment scores. A grouped move
+                # already carries its group scores in ``fit_reason``.
+                if not has_scores:
+                    scores_text = _move_scores_text(
+                        engine,
+                        _resolver_score(trace_by_query, qa["query_id"], engine),
+                        target_engine,
+                        _resolver_score(trace_by_query, qa["query_id"], target_engine),
+                    )
+                    fit_reason = f"{fit_reason}; {scores_text}"
                 for rqa in revised:
                     if rqa["query_id"] == qa["query_id"]:
                         rqa["assigned_engine"] = target_engine
