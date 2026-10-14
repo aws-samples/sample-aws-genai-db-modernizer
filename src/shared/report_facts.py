@@ -657,6 +657,64 @@ def reality_check_trade_off_facts(report: dict[str, Any], final: set[str]) -> li
     return out
 
 
+_KEPT_RE = re.compile(rf"^({_ENGINE_NAME_ALT}) kept: ")
+_PATTERN_PREFIX = "Recommended pattern: "
+
+
+def reality_check_decision_facts(
+    report: dict[str, Any],
+    trade_offs: list[dict[str, Any]],
+    removed: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """The reality-check trade-offs that still apply, as every deliverable shows them (#595).
+
+    The reality check's own lines (consolidations, the sanity sweep's
+    kept-engine verdicts, #593, and recommended patterns) used to reach only
+    the engineering report: the decision report, the deck and the UI's
+    trade-offs tab read trade-offs per schema-design engine, and
+    "reality-check" is not one. Each entry here carries its ``kind``, the
+    ``engine`` it is about, a short ``title`` and the ``detail``, split once
+    from the line's own text; a renderer only formats them.
+    ``with_removed_engine`` marks a consolidation of an engine
+    ``removed_engines`` already lists with this same line as its reason.
+    A reversed line (#546) is not here at all.
+    """
+    rows = report.get("trade_offs") or []
+    removed_set = {e["engine"] for e in removed}
+    out: list[dict[str, Any]] = []
+    for t in trade_offs:
+        if t["reversed"]:
+            continue
+        entry = rows[t["index"]]
+        desc = str(entry.get("description") or "").strip()
+        consolidated = CONSOLIDATED_FROM_TO_RE.match(desc)
+        kept = _KEPT_RE.match(desc)
+        if consolidated:
+            kind, engine = "consolidation", t["from_engine"]
+            title, detail = consolidated.group(0), desc[consolidated.end() :]
+        elif kept:
+            kind, engine = "kept", engine_id_from_name(kept.group(1))
+            title, detail = f"{kept.group(1)} kept", desc[kept.end() :]
+        elif desc.startswith(_PATTERN_PREFIX):
+            kind, engine = "pattern", None
+            name, _, rest = desc[len(_PATTERN_PREFIX) :].partition(". ")
+            title, detail = _PATTERN_PREFIX + name.rstrip("."), rest
+        else:
+            kind, engine, title, detail = "other", t["from_engine"], desc, ""
+        out.append(
+            {
+                "index": t["index"],
+                "kind": kind,
+                "engine": engine,
+                "title": title.strip(),
+                "detail": detail.strip(" :"),
+                "query_ids": [str(q) for q in entry.get("query_ids") or []],
+                "with_removed_engine": kind == "consolidation" and engine in removed_set,
+            }
+        )
+    return out
+
+
 def removed_engine_facts(
     report: dict[str, Any], final: set[str], trade_offs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -792,6 +850,7 @@ def compute_report_facts(
     final = final_engines(engines)
     rc_trade_offs = reality_check_trade_off_facts(report, final)
     n_trade_offs = sum(1 for t in report.get("trade_offs") or [] if isinstance(t, dict))
+    removed = removed_engine_facts(report, final, rc_trade_offs)
     wave_rows = [wave_facts(w, views) for w in waves]
     tables_analyzed = report.get("source_table_count")
     if not isinstance(tables_analyzed, int) or isinstance(tables_analyzed, bool):
@@ -837,7 +896,8 @@ def compute_report_facts(
         "table_basis": table_basis(report, engines, waves),
         "waves": wave_rows,
         "no_migration": no_migration,
-        "removed_engines": removed_engine_facts(report, final, rc_trade_offs),
+        "removed_engines": removed,
+        "reality_check_decisions": reality_check_decision_facts(report, rc_trade_offs, removed),
         "reality_check_trade_offs": rc_trade_offs,
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
         **risks,

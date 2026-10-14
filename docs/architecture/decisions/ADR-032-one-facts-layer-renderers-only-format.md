@@ -41,6 +41,10 @@ The modules under `src/report/` read figures through `src.report.facts.report_fa
 
 A deliverable never reads a decision back out of prose. The triage signals that overrode queries onto an engine are `facts.engines[].signal_overrides`, from the assignment's own `signal_override` fields; the reason text itself names the signal and the engine by their readable forms (#584). The engines the reality check removed are `facts.removed_engines`, judged against the final architecture of the effective assignment, so an engine a customer edit moved queries back onto is never listed; a reality-check consolidation line that edit reversed is `reversed` in `facts.reality_check_trade_offs` and no deliverable states it as current (#546). The reality check's own consolidation lines are parsed once, in the facts layer, never by a renderer.
 
+### 7. Every deliverable shows the reality-check decisions
+
+The reality check's own trade-offs that still apply (the engines it consolidated, the engines its sanity sweep kept, the patterns it recommends) are `facts.reality_check_decisions`, each with its kind, engine, title and detail. The decision report lists them under "Reality check decisions" (a consolidation of an engine "Engines not used" already lists is stated there once), the deck gives them a "Reality Check Decisions" slide when there are any, the engineering report keeps its "Migration trade-offs" section, and the interactive analysis report and the UI's results page list them in a "Reality check" trade-offs tab (#595).
+
 ## Enforcement
 
 | Decision | Enforced by |
@@ -51,14 +55,14 @@ A deliverable never reads a decision back out of prose. The triage signals that 
 | 4. One reader, one answer for an old report | `tests/unit/report/test_report_facts.py::test_a_report_without_facts_gets_the_same_block_synthesis_writes`<br>`tests/unit/api/test_results.py::TestGetResults::test_backfills_facts_for_a_report_written_before_615` |
 | 5. The consistency test stays underneath | `tests/e2e/test_deliverable_figures.py` |
 | 6. Labels and reasons are facts too | `tests/unit/report/test_report_facts.py::test_584_the_stored_fact_decides_not_the_reason_text`<br>`tests/unit/report/test_report_facts.py::test_546_no_deliverable_claims_the_removal_or_its_saving`<br>`tests/unit/test_assignment_resolver.py::TestAssignmentReasons::test_signal_override_reason` |
+| 7. Every deliverable shows the reality-check decisions | `tests/e2e/test_deliverable_figures.py::test_every_deliverable_shows_the_reality_check_decisions`<br>`tests/unit/report/test_report_facts.py::test_595_the_decision_report_deck_and_engineering_report_show_them` |
 
 ## Consequences
 
 - A deliverable can no longer disagree with another on a figure the facts layer owns: both print the same field. The renderers lose their own arithmetic (`architecture._architecture_engines` and the wave headline are formatters over facts now).
 - `report.json` grows by the facts block (a few kilobytes on the discourse sample).
 - A new deliverable, or a new figure in an existing one, starts by adding the figure to `compute_report_facts` and its contract model; the guard test fails if a renderer computes it instead.
-- The reality-check trade-offs every deliverable shows follow in the last step of #615.
 
 ## Related
 
-Issues #615 (this change), #533, #578, #581, #584, #546, #568, #573 and #235; ADR-031.
+Issues #615 (this change), #533, #578, #581, #584, #546, #595, #568, #573 and #235; ADR-031.

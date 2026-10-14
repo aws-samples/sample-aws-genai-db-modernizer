@@ -386,8 +386,8 @@ class TestSynthesisOutputContract:
 
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
-        # #615 step 2: labels and reasons added to the facts block
-        assert output.contract_version == "1.16"
+        # #615 step 3: the reality-check decisions added to the facts block
+        assert output.contract_version == "1.17"
 
     def test_missing_job_id_fails(self, valid_synthesis_data):
         del valid_synthesis_data["job_id"]

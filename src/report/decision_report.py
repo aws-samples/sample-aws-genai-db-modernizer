@@ -15,7 +15,12 @@ from .architecture import (
     architecture_svg,
 )
 from .cache_layer import _cache_note, cache_layer_text
-from .engine_choices import _reroutes_html, _tied_queries_html, _why_engines_were_dropped_html
+from .engine_choices import (
+    _reality_check_decisions_html,
+    _reroutes_html,
+    _tied_queries_html,
+    _why_engines_were_dropped_html,
+)
 from .engine_roles import SEARCH_READ_MODEL
 from .facts import report_facts
 from .formatting import (
@@ -323,6 +328,7 @@ def render_decision_report_html(
     out += _tied_queries_html(report)
     out += _reroutes_html(report)
     out += _why_engines_were_dropped_html(report)
+    out += _reality_check_decisions_html(report)
     out += _roadmap_html(report)
 
     risks = filtered_risks(report)

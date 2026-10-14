@@ -67,7 +67,7 @@ def test_pointer_has_a_section_without_the_elimination_marker() -> None:
     assert "see Engines not used below" in html
     section = _section(html)
     assert section is not None
-    assert re.findall(r'<li data-engine="([^"]+)">', section) == ["documentdb"]
+    assert re.findall(r'<li data-engine="([^"]+)"', section) == ["documentdb"]
     assert "<b>DocumentDB</b> → Aurora MySQL, DynamoDB:" in section
     assert "documentdb leaves the architecture." in section
 
@@ -85,7 +85,7 @@ def test_engine_still_in_the_architecture_is_not_listed() -> None:
     report["reality_check"]["after_distribution"]["opensearch"] = 4
     section = _section(render_decision_report_html(report))
     assert section is not None
-    assert re.findall(r'<li data-engine="([^"]+)">', section) == ["documentdb"]
+    assert re.findall(r'<li data-engine="([^"]+)"', section) == ["documentdb"]
 
 
 def test_no_dropped_engine_no_section() -> None:
@@ -113,7 +113,7 @@ def test_report_without_distributions_still_uses_the_marker() -> None:
     ]
     section = _section(render_decision_report_html(report))
     assert section is not None
-    assert re.findall(r'<li data-engine="([^"]+)">', section) == ["opensearch"]
+    assert re.findall(r'<li data-engine="([^"]+)"', section) == ["opensearch"]
 
 
 def test_display_name_reasons_map_back_to_engine_ids():

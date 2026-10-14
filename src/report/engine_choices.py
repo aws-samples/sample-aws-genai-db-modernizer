@@ -74,16 +74,25 @@ def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
     line that moved its queries and where they went (#547); this formats it.
     """
     esc = escaping.html_text
+    facts = report_facts(report)
     items: list[str] = []
-    for removed in report_facts(report).get("removed_engines") or []:
+    for removed in facts.get("removed_engines") or []:
         engine = removed["engine"]
+        # The reality-check decisions this item states (#595), for the
+        # deliverable-figures e2e test to account for every decision once.
+        shown = " ".join(
+            str(d["index"])
+            for d in facts.get("reality_check_decisions") or []
+            if d.get("with_removed_engine") and d.get("engine") == engine
+        )
         reason = " ".join(removed.get("reasons") or []) or (
             "The reality check removed it from the architecture."
         )
         targets = removed.get("moved_to") or []
         arrow = " → " + ", ".join(esc(display_engine(x)) for x in targets) if targets else ""
         items.append(
-            f'<li data-engine="{escaping.html_attr(engine)}"><b>{esc(display_engine(engine))}</b>'
+            f'<li data-engine="{escaping.html_attr(engine)}" '
+            f'data-decisions="{escaping.html_attr(shown)}"><b>{esc(display_engine(engine))}</b>'
             f"{arrow}: {esc(reason)}</li>"
         )
     if not items:
@@ -93,6 +102,33 @@ def _why_engines_were_dropped_html(report: dict[str, Any]) -> list[str]:
         "<div class=card data-figure=engines-not-used><div class=card-b><ul>",
         *items,
         "</ul></div></div>",
+    ]
+
+
+def _reality_check_decisions_html(report: dict[str, Any]) -> list[str]:
+    """Decision Report "Reality check decisions" (#595): the reality check's own
+    trade-offs that still apply -- the engines its sanity sweep kept (#593),
+    the patterns it recommends, a consolidation that kept its engine -- the
+    same list the engineering report, the deck and the UI show. A
+    consolidation of an engine "Engines not used" already lists is stated
+    there, with its engine, not twice.
+    """
+    esc = escaping.html_text
+    items = [
+        f'<li data-decision="{d["index"]}" data-kind="{escaping.html_attr(d["kind"])}">'
+        f"<b>{esc(d['title'])}</b>" + (f": {esc(d['detail'])}" if d.get("detail") else "") + "</li>"
+        for d in report_facts(report).get("reality_check_decisions") or []
+        if not d.get("with_removed_engine")
+    ]
+    if not items:
+        return []
+    return [
+        "<section data-figure=reality-check-decisions>",
+        "<h2 class=section-title>Reality check decisions</h2>",
+        "<div class=card><div class=card-b><ul>",
+        *items,
+        "</ul></div></div>",
+        "</section>",
     ]
 
 

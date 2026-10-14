@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import re
+from pathlib import Path
 from typing import Any
 
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
@@ -534,3 +535,135 @@ def test_546_a_removed_engine_still_lists_with_its_reasons() -> None:
     assert removed["moved_to"] == ["aurora_mysql", "dynamodb"]
     assert len(removed["reasons"]) == 2
     assert not any(t["reversed"] for t in facts["reality_check_trade_offs"])
+
+
+# --------------------------------------------------------------------------
+# #595: reality-check trade-offs in every deliverable
+# --------------------------------------------------------------------------
+
+
+def _kept_report() -> dict[str, Any]:
+    """The sanity sweep kept a small DocumentDB (#593): its verdict is a
+    reality-check trade-off, next to a recommended pattern."""
+    report = _readded_report()
+    report["trade_offs"] = [
+        {
+            "description": "DocumentDB kept: 2 queries need nested-document updates "
+            "no other selected engine supports.",
+            "impact": "same",
+            "engine": "reality-check",
+            "query_ids": ["q1", "q2"],
+        },
+        {
+            "description": "Recommended pattern: Event-Driven Sync. Use change streams to "
+            "propagate changes between databases.",
+            "impact": "same",
+            "engine": "reality-check",
+        },
+        {"description": "GSI overloading", "impact": "fewer tables", "engine": "dynamodb"},
+    ]
+    report["reality_check"] = {
+        "consolidations": [],
+        "before_distribution": {"aurora_mysql": 62, "dynamodb": 43, "documentdb": 2},
+        "after_distribution": {"aurora_mysql": 62, "dynamodb": 43, "documentdb": 2},
+    }
+    return report
+
+
+def test_595_the_facts_carry_each_reality_check_decision() -> None:
+    decisions = _with_facts(_kept_report())["facts"]["reality_check_decisions"]
+    assert [(d["kind"], d["engine"], d["title"]) for d in decisions] == [
+        ("kept", "documentdb", "DocumentDB kept"),
+        ("pattern", None, "Recommended pattern: Event-Driven Sync"),
+    ]
+    assert decisions[0]["detail"].startswith("2 queries need nested-document updates")
+    assert decisions[0]["query_ids"] == ["q1", "q2"]
+
+
+def test_595_the_decision_report_deck_and_engineering_report_show_them() -> None:
+    report = _with_facts(_kept_report())
+    html = render_decision_report_html(report)
+    section = re.search(r"<section data-figure=reality-check-decisions>.*?</section>", html, re.S)
+    assert section, "no Reality check decisions section"
+    assert '<li data-decision="0" data-kind="kept"><b>DocumentDB kept</b>: 2 queries' in (
+        section.group(0)
+    )
+    assert "Recommended pattern: Event-Driven Sync" in section.group(0)
+
+    md = render_engineering_report_md(report)
+    assert "DocumentDB kept: 2 queries need nested-document updates" in md
+
+    f = pptx_report.derive(report, {})
+    prs = pptx_report.open_deck(keep=1)
+    for build in pptx_report.SLIDES:
+        build(prs, f)
+    texts = [
+        " ".join(sh.text_frame.text for sh in slide.shapes if sh.has_text_frame)
+        for slide in prs.slides
+    ]
+    rc_slide = next(t for t in texts if "Reality Check Decisions" in t)
+    assert "DocumentDB kept" in rc_slide
+    assert "Recommended pattern: Event-Driven Sync" in rc_slide
+
+
+def test_595_no_reality_check_decision_no_slide_and_no_section() -> None:
+    report = _kept_report()
+    report["trade_offs"] = report["trade_offs"][2:]
+    report = _with_facts(report)
+    assert "reality-check-decisions" not in render_decision_report_html(report)
+    f = pptx_report.derive(report, {})
+    assert pptx_report.slide_reality_check(pptx_report.open_deck(keep=1), f) is None
+
+
+def test_595_the_deck_slide_prints_no_glyph_its_pdf_fonts_lack() -> None:
+    """The PDF draws with Amazon Ember, which has no arrow glyph: the
+    consolidation title "DocumentDB → Aurora MySQL" says "to" instead."""
+    from reportlab.pdfbase.ttfonts import TTFontFile
+
+    fonts = Path(pptx_report.__file__).parent / "assets" / "fonts"
+    regular = TTFontFile(str(fonts / "AmazonEmber_Rg.ttf"))
+    bold = TTFontFile(str(fonts / "AmazonEmber_Bd.ttf"))
+    report = _readded_report()
+    report["ranking"] = report["ranking"][:2]  # DocumentDB removed: its lines apply
+    report = _with_facts(report)
+    prs = pptx_report.open_deck(keep=1)
+    slide = pptx_report.slide_reality_check(prs, pptx_report.derive(report, {}))
+    assert slide is not None
+    printed = [
+        (run.text, run.font.bold)
+        for shape in slide.shapes
+        if shape.has_text_frame
+        for para in shape.text_frame.paragraphs
+        for run in para.runs
+    ]
+    assert any("DocumentDB to Aurora MySQL" in text for text, _ in printed)
+    missing = {
+        ch
+        for text, is_bold in printed
+        for ch in text
+        if not ch.isspace() and ord(ch) not in (bold if is_bold else regular).charToGlyph
+    }
+    assert missing == set()
+
+
+def test_595_each_deck_card_fits_its_text_box() -> None:
+    """The longest real reality-check line (trailgear: 11 queries consolidated)
+    still fits one card: a title line plus the detail clipped to the slide's own
+    limit. The box size, point sizes and clip come from ``slide_reality_check``'s
+    constants, so changing the card without this test noticing is not possible."""
+    detail = (
+        "DocumentDB provides no unique capabilities — 11 queries can be served by Aurora "
+        "PostgreSQL. Removes $271.80/mo of infrastructure cost (DocumentDB's own analysed "
+        "estimate before removal), plus a qualitative reduction in operational overhead."
+    )
+    title_h = pptx_report._estimated_text_height_in(
+        "Consolidated 11 queries from DocumentDB to Aurora PostgreSQL",
+        pptx_report.RC_TITLE_PT,
+        pptx_report.RC_CARD_TEXT_W,
+    )
+    detail_h = pptx_report._estimated_text_height_in(
+        pptx_report.clip(detail, pptx_report.RC_DETAIL_CLIP),
+        pptx_report.RC_DETAIL_PT,
+        pptx_report.RC_CARD_TEXT_W,
+    )
+    assert title_h + detail_h < pptx_report.RC_CARD_TEXT_H

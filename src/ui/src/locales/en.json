@@ -525,6 +525,7 @@
   "analysis-results-v2.trade-offs.pe-notes-header": "Principal Engineer notes ({{count}})",
   "analysis-results-v2.tradeoffs.title": "Trade-offs and design decisions",
   "analysis-results-v2.tradeoffs.mapping": "Mapping",
+  "analysis-results-v2.tradeoffs.reality-check": "Reality check",
   "analysis-results-v2.tradeoffs.sql-ids": "SQL IDs",
   "analysis-results-v2.aurora-design.title": "Aurora design",
   "analysis-results-v2.aurora-design.tab-label": "{{name}} · {{count}} table",

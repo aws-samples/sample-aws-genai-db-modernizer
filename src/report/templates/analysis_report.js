@@ -498,7 +498,20 @@
         const wanted = normalized.filter(t => String(t.description || '').startsWith('[PE note]') === (kind === 'pe'));
         if (wanted.length > 0) out[d.target_type] = wanted;
       });
+      if (kind !== 'pe') {
+        const rc = realityCheckDecisions();
+        if (rc.length > 0) out['reality-check'] = rc;
+      }
       return out;
+    }
+
+    function realityCheckDecisions() {
+      const synthesis = DATA.results?.synthesis || {};
+      const decisions = synthesis.facts?.reality_check_decisions;
+      if (Array.isArray(decisions)) {
+        return decisions.map(d => ({ description: d.title, impact: d.detail || '', source_tables: [], target_tables: [], query_ids: d.query_ids || [] }));
+      }
+      return (synthesis.trade_offs || []).filter(t => t && t.engine === 'reality-check').map(t => Object.assign({}, t, { impact: t.impact === t.description ? '' : (t.impact || '') }));
     }
 
     function sqlIdsHtml(queryIds) {
@@ -516,7 +529,7 @@
       let out = '<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 20px;">';
       engines.forEach(function(engine, idx) {
         const activeStyle = idx === 0 ? 'color: var(--color-blue); border-bottom-color: var(--color-blue);' : 'color: var(--color-text-secondary); border-bottom-color: transparent;';
-        out += '<button class="' + btnClass + (idx === 0 ? ' active' : '') + '" onclick="' + switchFn + '(' + jsArg(engine) + ')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; ' + activeStyle + ' margin-bottom: -2px;">' + escapeHtml(ENGINE_LABELS[engine] || engine) + ' (' + byEngine[engine].length + ')</button>';
+        out += '<button class="' + btnClass + (idx === 0 ? ' active' : '') + '" onclick="' + switchFn + '(' + jsArg(engine) + ')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; ' + activeStyle + ' margin-bottom: -2px;">' + escapeHtml(engine === 'reality-check' ? 'Reality check' : (ENGINE_LABELS[engine] || engine)) + ' (' + byEngine[engine].length + ')</button>';
       });
       return out + '</div>';
     }

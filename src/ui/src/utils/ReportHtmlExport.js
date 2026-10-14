@@ -17,7 +17,7 @@ import { analysisConfidence, confidenceText, hasRoutedConfidence } from './ranki
 import { displayEngine } from './engineNames';
 import { WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL } from './workloadFitLabels';
 import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
-import { openRiskCountOf, waveTableStats } from './reportFacts';
+import { currentTradeOffs, openRiskCountOf, waveTableStats } from './reportFacts';
 
 // A wave with more tables than this shows "+N more" rather than every name
 // inline (#225 -- discourse wave 4 lists 226 tables).
@@ -123,7 +123,8 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
       description: String(risk.description).replace(/^\[\w+\]\s*/, ''),
       reason: risk.reason || '',
     }));
-  const tradeoffs = asArray(synthesis.trade_offs);
+  // #546: a reality-check line a later assignment edit reversed is not listed.
+  const tradeoffs = asArray(currentTradeOffs(synthesis));
   const tcoAnalysis = synthesis.tco_analysis || {};
   const queryGroups = asArray(synthesis.query_groups);
   // #478: neither "blame" label (a utility/session statement,

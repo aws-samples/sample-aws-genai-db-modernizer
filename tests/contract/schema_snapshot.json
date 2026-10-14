@@ -12585,6 +12585,77 @@
                     "type": "number"
                   }
                 },
+                "reality_check_decisions": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "detail": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "engine": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "index": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "kind": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "consolidation",
+                              "kept",
+                              "other",
+                              "pattern"
+                            ]
+                          }
+                        },
+                        "query_ids": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "with_removed_engine": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
                 "reality_check_trade_offs": {
                   "required": false,
                   "schema": {
@@ -14320,8 +14391,8 @@
         }
       }
     },
-    "schema_hash": "c9634fa202ae931417e1e44ff93d98427123a65fa13f82d63e8a7921503b72a7",
-    "version": "1.16"
+    "schema_hash": "0de5fc360d5b89d9dd49b245f093577812504eab4a859b5e6c7c5b2997a40a0e",
+    "version": "1.17"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

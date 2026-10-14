@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from pypdf import PdfReader
@@ -36,13 +37,24 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-def test_has_seven_pages(run: PipelineResult) -> None:
-    assert len(_reader(run).pages) == 7
+def _slide_titles(run: PipelineResult) -> list[str]:
+    """The deck's slide titles; "Reality Check Decisions" only when the
+    reality check made a decision that still applies (#595)."""
+    titles = list(SLIDE_TITLES)
+    report = json.loads((run.deliverable(".md").parent / "report.json").read_text())
+    if (report.get("facts") or {}).get("reality_check_decisions"):
+        titles.insert(titles.index("Engine Fit and Open Decisions") + 1, "Reality Check Decisions")
+    return titles
+
+
+def test_has_one_page_per_slide(run: PipelineResult) -> None:
+    # The title slide, then one page per content slide.
+    assert len(_reader(run).pages) == 1 + len(_slide_titles(run))
 
 
 def test_every_slide_title_present_in_order(run: PipelineResult) -> None:
     texts = [_normalize(p.extract_text() or "") for p in _reader(run).pages]
-    for i, title in enumerate(SLIDE_TITLES, start=1):
+    for i, title in enumerate(_slide_titles(run), start=1):
         assert title in texts[i], f"page {i + 1} lacks {title!r}: {texts[i][:200]!r}"
 
 

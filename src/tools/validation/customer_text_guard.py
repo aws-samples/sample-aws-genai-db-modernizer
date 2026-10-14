@@ -175,6 +175,7 @@ ID_FIELD_PATHS = frozenset(
         ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)
         ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)
+        ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("unresolved_names", "names"),  # UnresolvedNames.names, report.json's own key
         ("unresolved_table_names", "names"),  # UnresolvedNames.names, assignment.json's own key
         # table_mappings and the per-engine schema_designs projection

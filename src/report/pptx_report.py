@@ -1328,6 +1328,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             rep, [m for m in rep.get("table_mappings") or [] if isinstance(m, dict)]
         ),
         "n_tradeoffs": int(facts.get("trade_off_count") or 0),
+        "rc_decisions": list(facts.get("reality_check_decisions") or []),
         "assignment": assignment,
         "risks": risks,
         "sev": sev,
@@ -1830,6 +1831,69 @@ def slide_decisions(prs, f):
     return s
 
 
+# Cards on the Reality Check Decisions slide; the rest are named by their count
+# and listed in full in the Engineering Report's "Migration trade-offs".
+MAX_RC_DECISION_CARDS = 5
+# One card's text box (inches), point sizes and the detail clip (characters):
+# a title line plus the clipped detail must fit it (test_595_each_deck_card_fits_its_text_box).
+RC_CARD_TEXT_W = 11.0
+RC_CARD_TEXT_H = 0.74
+RC_TITLE_PT = 11.0
+RC_DETAIL_PT = 9.5
+RC_DETAIL_CLIP = 170
+_RC_KIND_ACCENT = {"consolidation": ORANGE, "kept": GREEN, "pattern": BLUE}
+
+
+def _no_arrow(text: str) -> str:
+    """``DocumentDB → Aurora MySQL`` -> ``DocumentDB to Aurora MySQL``: the PDF's
+    embedded Amazon Ember fonts have no U+2192 glyph, so an arrow renders as a
+    blank (same reason as ``_resolved_engine_label``)."""
+    return text.replace(" → ", " to ").replace("→", " to ")
+
+
+def slide_reality_check(prs, f):
+    """Reality Check Decisions (#595): the reality check's own trade-offs that
+    still apply -- which engines it consolidated, which its sanity sweep kept
+    (#593), the patterns it recommends -- the same list the decision report,
+    the engineering report and the UI show. No slide when there are none."""
+    decisions = f.get("rc_decisions") or []
+    if not decisions:
+        return None
+    s = add_slide(prs, LAYOUT_CONTENT)
+    set_title(s, "Reality Check Decisions")
+    set_subtitle(s, "What the reality check consolidated, kept and recommends")
+    shown = decisions[:MAX_RC_DECISION_CARDS]
+    for i, d in enumerate(shown):
+        y = BODY_TOP + i * 0.90
+        accent = _RC_KIND_ACCENT.get(str(d.get("kind")), MUTED)
+        card(s, 0.67, y, 11.43, 0.82, accent)
+        tf = textbox(s, 0.90, y + 0.06, RC_CARD_TEXT_W, RC_CARD_TEXT_H)
+        para(
+            tf,
+            _no_arrow(str(d.get("title") or "")),
+            size=RC_TITLE_PT,
+            bold=True,
+            color=accent,
+            first=True,
+        )
+        if d.get("detail"):
+            para(
+                tf,
+                clip(_no_arrow(str(d["detail"])), RC_DETAIL_CLIP),
+                size=RC_DETAIL_PT,
+                color=WHITE,
+            )
+    rest = decisions[MAX_RC_DECISION_CARDS:]
+    if rest:
+        n_rest = len(rest)
+        footer_note(
+            s,
+            f"{n_rest} more reality-check {plural_noun(n_rest, 'decision')} in the "
+            "Engineering Report's Migration trade-offs.",
+        )
+    return s
+
+
 # Resolved-risk rows past this count are named only by their total; the table
 # keeps the Risk Profile slide one page and the Engineering Report lists every
 # one of them (``renderers.render_engineering_report_md``'s "Resolved by the
@@ -2256,6 +2320,7 @@ SLIDES = (
     slide_evidence,
     slide_workload,
     slide_decisions,
+    slide_reality_check,
     slide_risk,
     slide_sequencing,
 )
@@ -2304,7 +2369,7 @@ def render_executive_summary_pptx(
     logger.info(
         "Rendered %s: %d slides, %d bytes, database=%s job=%s",
         FILENAME,
-        len(SLIDES) + 1,
+        len(prs.slides),
         len(data),
         f["database"],
         f["job_id"],

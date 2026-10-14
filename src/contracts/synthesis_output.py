@@ -239,6 +239,12 @@ Version History:
   reality-check trade-off's engines and whether a later assignment edit
   ``reversed`` it, #546); ``trade_off_count`` (the trade-offs that still
   apply). Backward compatible: every new field defaults to empty.
+- 1.17 (2026-10-14, #615 step 3, #595): ``facts.reality_check_decisions``:
+  the reality-check trade-offs that still apply (consolidations, the sanity
+  sweep's kept-engine verdicts, recommended patterns), each with its
+  ``kind``, ``engine``, ``title`` and ``detail``, so the decision report, the
+  deck and the UI show them the way the engineering report always did.
+  Backward compatible: defaults to empty.
 """
 
 from datetime import datetime
@@ -757,6 +763,20 @@ class RealityCheckTradeOff(BaseModel):
     )
 
 
+class RealityCheckDecision(BaseModel):
+    """A reality-check trade-off that still applies, as every deliverable shows it (#595)."""
+
+    index: int = Field(..., ge=0, description="Its position in the report's trade_offs")
+    kind: Literal["consolidation", "kept", "pattern", "other"] = Field(...)
+    engine: str | None = Field(None, description="The engine it is about, if any")
+    title: str = Field(..., description="Short heading, e.g. 'DocumentDB kept'")
+    detail: str = Field("", description="The rest of the reality check's own line")
+    query_ids: list[str] = Field(default_factory=list)
+    with_removed_engine: bool = Field(
+        False, description="A consolidation removed_engines already lists as its reason"
+    )
+
+
 class TableBasis(BaseModel):
     """The figure behind "N tables mapped to a named target" (#530, #533)."""
 
@@ -806,6 +826,7 @@ class ReportFacts(BaseModel):
     no_migration: NoMigrationFacts = Field(default_factory=NoMigrationFacts)
     removed_engines: list[RemovedEngine] = Field(default_factory=list)
     reality_check_trade_offs: list[RealityCheckTradeOff] = Field(default_factory=list)
+    reality_check_decisions: list[RealityCheckDecision] = Field(default_factory=list)
     trade_off_count: int = Field(
         0, ge=0, description="Trade-offs that still apply (reversed reality-check lines excluded)"
     )
@@ -839,7 +860,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.16",
+        default="1.17",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -49,7 +49,9 @@ from tests.e2e.deliverable_figures import (
     expected_figures,
     final_architecture,
     invariant_violations,
+    md_plain,
     migrating,
+    norm,
     pdf_page_texts,
     report_invariant_violations,
 )
@@ -230,6 +232,53 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
     assert isinstance(stored, dict), "report.json has no facts block"
     recomputed = compute_report_facts({k: v for k, v in report.items() if k != "facts"})
     assert stored == recomputed
+
+
+def _rc_titles(report: dict[str, Any]) -> list[str]:
+    """The reality-check decisions that still apply, by title (#595)."""
+    return [
+        str(d["title"]) for d in (report.get("facts") or {}).get("reality_check_decisions") or []
+    ]
+
+
+def test_every_deliverable_shows_the_reality_check_decisions(
+    page: Page, run: PipelineResult
+) -> None:
+    """#595: the reality check's own trade-offs (consolidations, kept engines,
+    recommended patterns) appear in every deliverable that shows trade-offs or
+    engine decisions, not only in the engineering report."""
+    report = _report_json(run)
+    titles = _rc_titles(report)
+    assert titles, "the sample's reality check made no decision to show"
+    _open(page, run.html("decision-report"))
+    shown = {
+        int(i)
+        for li in page.locator("[data-figure=reality-check-decisions] li[data-decision]").all()
+        for i in [li.get_attribute("data-decision")]
+        if i is not None
+    }
+    for li in page.locator("[data-figure=engines-not-used] li[data-decisions]").all():
+        shown |= {int(i) for i in (li.get_attribute("data-decisions") or "").split()}
+    expected = {
+        int(d["index"]) for d in (report.get("facts") or {}).get("reality_check_decisions") or []
+    }
+    assert shown == expected, "decision report"
+    texts = {
+        "engineering report": md_plain(run.deliverable(".md").read_text()),
+        "deck": " ".join(deck_slide_texts(str(run.deliverable("summary-executive-report.pptx")))),
+        "PDF": " ".join(pdf_page_texts(str(run.deliverable("summary-executive-report.pdf")))),
+    }
+    _open(page, run.html("analysis-report"))
+    texts["analysis report"] = norm(page.locator("#tradeoffs-container").text_content() or "")
+    for deliverable, text in texts.items():
+        if deliverable in ("deck", "PDF"):
+            # The deck shows the first cards and names how many more the
+            # engineering report lists, with "to" for the arrow its fonts lack.
+            shown_titles = [t.replace(" → ", " to ") for t in titles[:5]]
+        else:
+            shown_titles = titles
+        missing = [t for t in shown_titles if norm(t) not in text]
+        assert not missing, f"{deliverable} does not show {missing}"
 
 
 def test_decision_report_figures(page: Page, run: PipelineResult) -> None:

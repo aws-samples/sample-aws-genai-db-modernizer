@@ -34,3 +34,51 @@ export function openRiskCountOf(synthesis, shownRisks) {
   const n = synthesis && synthesis.facts && synthesis.facts.open_risk_count;
   return typeof n === 'number' ? n : (shownRisks || []).length;
 }
+
+// #595: the reality-check trade-offs that still apply, shaped like a schema
+// design's trade-off ({description, impact, query_ids}) so the trade-offs tab
+// lists them next to the engines' own. A report synthesized before
+// `facts.reality_check_decisions` existed lists its reality-check entries as-is.
+export function realityCheckDecisions(synthesis) {
+  const facts = synthesis && synthesis.facts;
+  if (facts && Array.isArray(facts.reality_check_decisions)) {
+    return facts.reality_check_decisions.map(d => ({
+      description: d.title,
+      impact: d.detail || '',
+      source_tables: [],
+      target_tables: [],
+      query_ids: d.query_ids || [],
+    }));
+  }
+  return ((synthesis && synthesis.trade_offs) || [])
+    .filter(t => t && t.engine === 'reality-check')
+    .map(t => ({ ...t, impact: t.impact === t.description ? '' : (t.impact || '') }));
+}
+
+// The report's trade-offs without the reality-check lines a later assignment
+// edit reversed (#546): those no longer describe the architecture.
+export function currentTradeOffs(synthesis) {
+  const all = (synthesis && synthesis.trade_offs) || [];
+  const rc = (synthesis && synthesis.facts && synthesis.facts.reality_check_trade_offs) || [];
+  const reversed = new Set(rc.filter(t => t.reversed).map(t => t.index));
+  return all.filter((t, i) => !reversed.has(i));
+}
+
+// The results page's "Trade-offs and design decisions" tabs (ADR-032 Decision 7):
+// each engine's own trade-offs, plus a "reality-check" tab for the decisions the
+// reality check made. An empty list gets no tab.
+export const REALITY_CHECK_TAB = 'reality-check';
+
+export function tradeOffsByTab(designTradeOffs, synthesis) {
+  const map = { ...designTradeOffs };
+  const rc = realityCheckDecisions(synthesis || {});
+  if (rc.length > 0) map[REALITY_CHECK_TAB] = rc;
+  return map;
+}
+
+export function tradeOffTabLabel(tab, count, t, engineLabels) {
+  const name = tab === REALITY_CHECK_TAB
+    ? t('analysis-results-v2.tradeoffs.reality-check')
+    : (engineLabels[tab] || tab);
+  return `${name} (${count})`;
+}

@@ -640,8 +640,8 @@ def build_export_data(
     schema_designs = _cap_generated_ddl(_read_schema_designs(store, database_name, job_id))
     if not schema_designs:
         logger.warning(
-            "No schema-design artifacts for job %s: the Access Pattern Explorer and "
-            "Trade-offs sections will render as unavailable. This is the documented "
+            "No schema-design artifacts for job %s: the Access Pattern Explorer and the "
+            "per-engine Trade-offs tabs will render as unavailable. This is the documented "
             "gap when schema design has not run, not a failure.",
             job_id,
         )

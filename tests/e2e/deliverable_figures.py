@@ -692,7 +692,7 @@ def analysis_figures(page: Any) -> Figures:
 # --------------------------------------------------------------------------
 
 
-def _md_plain(text: str) -> str:
+def md_plain(text: str) -> str:
     """Markdown source as the reader sees it: no backslash escapes or entities."""
     return html_lib.unescape(re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~])", r"\1", text))
 
@@ -721,15 +721,15 @@ def engineering_figures(md_text: str) -> Figures:
     """Figures the engineering report shows."""
     f = Figures("engineering report")
     md = md_text
-    plain = _md_plain(md)
+    plain = md_plain(md)
     h2 = dict(_md_sections(md, 2))
 
     targets: set[str] = set()
     for row in _md_table_rows(h2.get("Target engines", "")):
-        eng = engine_id(_md_plain(row[0]))
+        eng = engine_id(md_plain(row[0]))
         targets.add(eng)
         f.name(eng, "Target engines table")
-        m = re.match(r"^([\d,]+) cached reads?\b", _md_plain(row[2]))
+        m = re.match(r"^([\d,]+) cached reads?\b", md_plain(row[2]))
         if m:
             f.add(f"cached_reads:{eng}", _int(m.group(1)), "Target engines Workload")
     f.add("engine_count", len(targets), "Target engines table")
@@ -744,7 +744,7 @@ def engineering_figures(md_text: str) -> Figures:
     for heading, body in _md_sections(md, 2):
         m = re.match(r"^Cache layer \((.+)\)$", heading)
         if m:
-            k = re.search(r"fronts ([\d,]+) hot reads?", _md_plain(body))
+            k = re.search(r"fronts ([\d,]+) hot reads?", md_plain(body))
             if k:
                 f.add(
                     f"cached_reads:{engine_id(m.group(1))}", _int(k.group(1)), "Cache layer section"
@@ -755,7 +755,7 @@ def engineering_figures(md_text: str) -> Figures:
             rows = _md_table_rows(body)
             f.add("tied", len(rows), "Unresolved engine ties table")
             for row in rows:
-                f.name(engines_in(_md_plain(" ".join(row[1:]))), "Unresolved engine ties table")
+                f.name(engines_in(md_plain(" ".join(row[1:]))), "Unresolved engine ties table")
         m = re.match(r"^Risk register \(([\d,]+)\)$", heading)
         if m:
             f.add("risks:total", _int(m.group(1)), "Risk register heading")
@@ -763,9 +763,9 @@ def engineering_figures(md_text: str) -> Figures:
             for s in SEVERITIES:
                 f.add(f"risks:{s}", sev.get(s, 0), "Risk register entries")
             for eng_heading, _ in _md_sections(body, 3):
-                f.name(engine_id(_md_plain(eng_heading)), "Risk register")
+                f.name(engine_id(md_plain(eng_heading)), "Risk register")
         if heading.startswith("Migration trade-offs"):
-            for x in re.findall(r"Consolidated [\d,]+ quer(?:y|ies) from (\w+) →", _md_plain(body)):
+            for x in re.findall(r"Consolidated [\d,]+ quer(?:y|ies) from (\w+) →", md_plain(body)):
                 if engine_id(x) not in targets:
                     removed.add(engine_id(x))
     if "Unresolved engine ties" not in " ".join(h2):
@@ -782,7 +782,7 @@ def engineering_figures(md_text: str) -> Figures:
             continue
         n = m.group(1)
         where = f"roadmap wave {n}"
-        text = _md_plain(body)
+        text = md_plain(body)
         e = re.search(r"^- Engines: (.+)$", text, re.M)
         if e:
             f.name({engine_id(x) for x in e.group(1).split(",")}, where)

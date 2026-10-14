@@ -52,6 +52,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
+import { tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -528,8 +529,9 @@ const AnalysisResultsPage = memo(() => {
     activeDesigns.forEach(d => {
       map[d.target_type] = d.content?.trade_offs || [];
     });
-    return map;
-  }, [activeDesigns]);
+    // #595: the reality check's own trade-offs that still apply, in their own tab.
+    return tradeOffsByTab(map, resultsData?.synthesis);
+  }, [activeDesigns, resultsData]);
 
   // #478: while Aurora's schema design has not run yet, its tables carry
   // over 1:1 with no access_patterns at all, so the explorer above has
@@ -2470,7 +2472,7 @@ const AnalysisResultsPage = memo(() => {
 
                       return {
                         id: engine,
-                        label: `${ENGINE_LABELS[engine] || engine} (${tradeoffs.length})`,
+                        label: tradeOffTabLabel(engine, tradeoffs.length, t, ENGINE_LABELS),
                         content: (
                           <SpaceBetween size="m">
                             {/* Design Decisions */}

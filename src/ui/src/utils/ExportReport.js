@@ -827,7 +827,22 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        const wanted = normalized.filter(t => String(t.description || \'\').startsWith(\'[PE note]\') === (kind === \'pe\'));\n';
   script += '        if (wanted.length > 0) out[d.target_type] = wanted;\n';
   script += '      });\n';
+  // #595: the reality check's own trade-offs that still apply (synthesis.facts),
+  // listed in their own tab like every other deliverable lists them.
+  script += '      if (kind !== \'pe\') {\n';
+  script += '        const rc = realityCheckDecisions();\n';
+  script += '        if (rc.length > 0) out[\'reality-check\'] = rc;\n';
+  script += '      }\n';
   script += '      return out;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function realityCheckDecisions() {\n';
+  script += '      const synthesis = DATA.results?.synthesis || {};\n';
+  script += '      const decisions = synthesis.facts?.reality_check_decisions;\n';
+  script += '      if (Array.isArray(decisions)) {\n';
+  script += '        return decisions.map(d => ({ description: d.title, impact: d.detail || \'\', source_tables: [], target_tables: [], query_ids: d.query_ids || [] }));\n';
+  script += '      }\n';
+  script += '      return (synthesis.trade_offs || []).filter(t => t && t.engine === \'reality-check\').map(t => Object.assign({}, t, { impact: t.impact === t.description ? \'\' : (t.impact || \'\') }));\n';
   script += '    }\n';
   script += '\n';
   script += '    function sqlIdsHtml(queryIds) {\n';
@@ -848,7 +863,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      let out = \'<div style="border-bottom: 2px solid var(--color-border); margin-bottom: 20px;">\';\n';
   script += '      engines.forEach(function(engine, idx) {\n';
   script += '        const activeStyle = idx === 0 ? \'color: var(--color-blue); border-bottom-color: var(--color-blue);\' : \'color: var(--color-text-secondary); border-bottom-color: transparent;\';\n';
-  script += '        out += \'<button class="\' + btnClass + (idx === 0 ? \' active\' : \'\') + \'" onclick="\' + switchFn + \'(\' + jsArg(engine) + \')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + escapeHtml(ENGINE_LABELS[engine] || engine) + \' (\' + byEngine[engine].length + \')</button>\';\n';
+  script += '        out += \'<button class="\' + btnClass + (idx === 0 ? \' active\' : \'\') + \'" onclick="\' + switchFn + \'(\' + jsArg(engine) + \')" style="padding: 8px 24px; cursor: pointer; border: none; background: none; font-size: 14px; font-weight: 600; \' + activeStyle + \' margin-bottom: -2px;">\' + escapeHtml(engine === \'reality-check\' ? \'Reality check\' : (ENGINE_LABELS[engine] || engine)) + \' (\' + byEngine[engine].length + \')</button>\';\n';
   script += '      });\n';
   script += '      return out + \'</div>\';\n';
   script += '    }\n';
