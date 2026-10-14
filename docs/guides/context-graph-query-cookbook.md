@@ -69,7 +69,7 @@ purpose-shaped JSON, so you don't hand-write Cypher. Prefer these; use raw
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/provenance` | Why a query migrated where it did, plus the producing agent/phase |
 | `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | Destinations and source tables migrating to an engine |
 | `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying risk and anti-patterns, weighted by traffic |
-| `GET /api/v1/assessments/{job_id}/graph/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
+| `GET /api/v1/assessments/{job_id}/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
 
 Unknown ids and not-yet-run stages return `200` with empty collections, not
 `404`, so consumers distinguish "no data" from an error.

@@ -176,7 +176,13 @@ def load_test_results(
     # STRING" for the STRING engine/prefix). Only binding a param in its true-typed
     # comparison removes that ambiguity, and an omitted filter contributes no parameter
     # at all.
-    conditions: list[str] = []
+    # A run only belongs to the access pattern of its own engine and schema version;
+    # without this a query designed on several engines would attach every engine's runs
+    # to each engine's pattern.
+    conditions: list[str] = [
+        "lt.engine = ap.engine",
+        "lt.schema_version = ap.schema_version",
+    ]
     params: dict[str, Any] = {}
     if engine is not None:
         conditions.append("ap.engine = $engine")
@@ -187,16 +193,16 @@ def load_test_results(
     if prefix is not None:
         conditions.append("starts_with(ap.id, $prefix)")
         params["prefix"] = prefix
-    where_clause = ("WHERE " + " AND ".join(conditions) + " ") if conditions else ""
+    where_clause = "WHERE " + " AND ".join(conditions) + " "
 
     rows = store.query(
-        "MATCH (ap:AccessPattern)<-[:PART_OF]-(q:Query)-[:TESTED_IN]-(lt:LoadTestRun) "
+        "MATCH (ap:AccessPattern)<-[:PART_OF]-(q:Query)-[:TESTED_IN]->(lt:LoadTestRun) "
         f"{where_clause}"
         "RETURN ap.id AS pattern_id, ap.engine AS engine, "
         "  ap.schema_version AS schema_version, ap.description AS description, "
         "  ap.pattern_group AS pattern_group, ap.design_rps AS design_rps, "
         "  COLLECT({"
-        "    query_id: q.id, improvement_factor: lt.improvement_factor, "
+        "    query_id: q.id, run_id: lt.id, improvement_factor: lt.improvement_factor, "
         "    throughput_rps: lt.throughput_rps, error_rate_pct: lt.error_rate_pct, "
         "    source_p50: lt.source_p50, source_p90: lt.source_p90, "
         "    source_p95: lt.source_p95, source_p99: lt.source_p99, "
@@ -228,7 +234,9 @@ def load_test_results(
                     throughput_rps=q.get("throughput_rps"),
                     error_rate_pct=q.get("error_rate_pct"),
                 )
-                for q in sorted(row.get("queries") or [], key=lambda x: x["query_id"])
+                for q in sorted(
+                    row.get("queries") or [], key=lambda x: (x["query_id"], x["run_id"])
+                )
             ],
         )
         for row in rows

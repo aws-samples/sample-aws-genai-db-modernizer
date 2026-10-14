@@ -115,3 +115,76 @@ class TestLoadTestResults:
             client.get("/api/v1/assessments/job-1/load-test-results?version=2").json()["results"]
             == []
         )
+
+
+def _run(query_id: str, p50: float, factor: float) -> dict:
+    latency = {"p50": p50, "p90": p50, "p95": p50, "p99": p50, "p999": p50, "min": p50, "max": p50}
+    return {
+        "query_id": query_id,
+        "source_latency_ms": latency,
+        "target_latency_ms": latency,
+        "improvement_factor": factor,
+        "throughput_rps": 100.0,
+        "error_rate_pct": 0.0,
+    }
+
+
+class TestMultiEngineRuns:
+    """A query designed and load tested on two engines keeps each engine's runs apart."""
+
+    @pytest.fixture
+    def two_engine_store(self, tmp_path, sample_collector_output, sample_assignment):
+        store = GraphStore(str(tmp_path / "two.lbug"))
+        initialize_schema(store)
+        populate_from_collector(sample_collector_output, store)
+        populate_from_assignment(sample_assignment, store)
+        for engine, pid in (("dynamodb", "DDB-AP-1"), ("opensearch", "OS-AP-1")):
+            design = {
+                "access_patterns": [
+                    {"pattern_id": pid, "query_ids": ["q1", "q3"], "description": engine}
+                ]
+            }
+            populate_from_schema_design(design, engine, 1, store)
+        populate_from_load_test(
+            {"pattern_results": [_run("q3", 3.0, 3.0), _run("q1", 2.0, 2.0)]}, "dynamodb", 1, store
+        )
+        populate_from_load_test(
+            {"pattern_results": [_run("q1", 9.0, 9.0), _run("q3", 8.0, 8.0)]},
+            "opensearch",
+            1,
+            store,
+        )
+        yield store
+        store.close()
+
+    def test_each_pattern_lists_only_its_own_engines_runs(self, two_engine_store):
+        from src.graph.queries import load_test_results
+
+        resp = load_test_results(two_engine_store, "job-1")
+        by_id = {
+            r.pattern_id: [(q.query_id, q.improvement_factor) for q in r.queries]
+            for r in resp.results
+        }
+        assert by_id == {
+            "DDB-AP-1": [("q1", 2.0), ("q3", 3.0)],
+            "OS-AP-1": [("q1", 9.0), ("q3", 8.0)],
+        }
+
+    def test_ordering_is_stable_across_reads(self, two_engine_store):
+        from src.graph.queries import load_test_results
+
+        first = load_test_results(two_engine_store, "job-1").model_dump()
+        for _ in range(3):
+            assert load_test_results(two_engine_store, "job-1").model_dump() == first
+
+    def test_run_from_other_schema_version_is_not_attached(self, two_engine_store):
+        from src.graph.queries import load_test_results
+
+        populate_from_load_test(
+            {"pattern_results": [_run("q1", 50.0, 50.0)]}, "dynamodb", 2, two_engine_store
+        )
+        resp = load_test_results(two_engine_store, "job-1", engine="dynamodb", version=1)
+        assert [(q.query_id, q.improvement_factor) for q in resp.results[0].queries] == [
+            ("q1", 2.0),
+            ("q3", 3.0),
+        ]
