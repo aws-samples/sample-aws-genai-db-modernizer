@@ -28,10 +28,18 @@ from __future__ import annotations
 
 import pytest
 
+from src.agents.referee import synthesis_report
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
-from src.agents.referee.synthesis_report import build_risk_assessment
+from src.agents.referee.synthesis_report import (
+    _assigned_engine_mitigation,
+    _without_hedge,
+    build_risk_assessment,
+)
+from src.shared.engine_names import display_engine
 from src.tools.analysis.aurora_common_pattern_catalog import (
     AURORA_COMMON_ANTI_PATTERNS,
+    CATALOG_ENGINE_GUIDANCE,
+    CATALOG_ENGINE_HINTS,
     NO_RELATIONAL_NEED_ENGINE_HINT,
 )
 
@@ -478,3 +486,100 @@ def test_out_of_scope_resolved_risk_drops_the_hedge_too() -> None:
         if r["resolved_on"] is None and "Hot lookups" in r["description"]
     ]
     assert [r["description"] for r in resolved] == ["[aurora_mysql] Hot lookups."]
+
+
+def _with_catalog_entry(data: SynthesisData, pattern_type: str) -> None:
+    entry = next(ap for ap in AURORA_COMMON_ANTI_PATTERNS if ap.pattern_type == pattern_type)
+    for ap in data.engines["aurora_mysql"].analysis["workload_analysis"]["anti_patterns_detected"]:
+        if ap["anti_pattern_type"] == pattern_type:
+            ap["description"] = entry.description
+            ap["recommendation"] = entry.guidance
+
+
+def test_every_catalog_engine_hint_is_part_of_its_entry_text() -> None:
+    """#668: the catalog composes descriptions from the hint constants, so the report strips
+    exactly the wording the catalog prints."""
+    descriptions = " ".join(ap.description for ap in AURORA_COMMON_ANTI_PATTERNS)
+    guidance = {ap.guidance for ap in AURORA_COMMON_ANTI_PATTERNS}
+    assert all(hint in descriptions for hint in CATALOG_ENGINE_HINTS)
+    assert guidance == set(CATALOG_ENGINE_GUIDANCE)
+
+
+@pytest.mark.parametrize("pattern_type", ["high-frequency-pk-lookup", "no-relational-need"])
+def test_kept_risk_mitigation_names_only_the_assigned_engine(pattern_type: str) -> None:
+    """#668: a risk that stays on Aurora must not print "Consider DynamoDB ... ElastiCache"
+    as its mitigation; it states the action for the engine actually assigned."""
+    data = _data()
+    _with_catalog_entry(data, pattern_type)
+    for qa in data.assignment["query_assignments"]:
+        qa["assigned_engine"] = "aurora_mysql"
+    risks = [
+        r
+        for r in build_risk_assessment(data)["risks"]
+        if _engine(r) == "aurora_mysql" and r.get("mitigation")
+    ]
+    assert risks
+    for r in risks:
+        for engine_name in ("DynamoDB", "ElastiCache", "OpenSearch", "Redis"):
+            assert engine_name not in r["mitigation"], r
+    kept = [r for r in risks if "Load-test" in r["mitigation"]]
+    assert kept and all("Aurora MySQL" in r["mitigation"] for r in kept)
+
+
+def test_moved_risk_background_drops_the_catalog_guidance() -> None:
+    data = _data()
+    _with_catalog_entry(data, "no-relational-need")
+    for r in build_risk_assessment(data)["risks"]:
+        assert "Consider DynamoDB" not in (r.get("mitigation") or "")
+        assert "ElastiCache is more appropriate" not in (r.get("mitigation") or "")
+
+
+def test_analysis_output_keeps_the_catalog_guidance() -> None:
+    data = _data()
+    _with_catalog_entry(data, "no-relational-need")
+    build_risk_assessment(data)
+    aps = data.engines["aurora_mysql"].analysis["workload_analysis"]["anti_patterns_detected"]
+    assert any(ap.get("recommendation") in CATALOG_ENGINE_GUIDANCE for ap in aps)
+
+
+_OTHER_ENGINE_NAMES = ("Redis", "DynamoDB", "ElastiCache", "OpenSearch", "DocumentDB")
+
+
+@pytest.mark.parametrize("entry", AURORA_COMMON_ANTI_PATTERNS, ids=lambda e: e.pattern_id)
+def test_stripped_catalog_description_names_no_other_engine(entry) -> None:
+    """#668: for every Aurora catalog entry, the report text names no engine but the
+    risk's own (display names, from src/shared/engine_names)."""
+    others = {display_engine(e) for e in ("dynamodb", "elasticache", "opensearch", "documentdb")}
+    text = _without_hedge(entry.description)
+    assert text.strip()
+    for name in others | set(_OTHER_ENGINE_NAMES):
+        assert name not in text, (entry.pattern_id, text)
+
+
+def test_stripped_description_guard_fails_when_only_the_old_hint_is_stripped(monkeypatch) -> None:
+    monkeypatch.setattr(synthesis_report, "CATALOG_ENGINE_HINTS", (NO_RELATIONAL_NEED_ENGINE_HINT,))
+    entry = next(e for e in AURORA_COMMON_ANTI_PATTERNS if e.pattern_id == "aurora-anti-02")
+    assert "ElastiCache" in _without_hedge(entry.description)
+
+
+def test_hint_rewritten_as_two_sentences_is_removed_whole(monkeypatch) -> None:
+    hint = "OpenSearch is built for this. It scales out horizontally."
+    monkeypatch.setattr(synthesis_report, "CATALOG_ENGINE_HINTS", (hint,))
+    assert _without_hedge(f"Text search on a table. {hint}") == "Text search on a table."
+    assert _without_hedge(f"{hint} Facts stay.") == "Facts stay."
+
+
+@pytest.mark.parametrize(
+    ("pattern_type", "expected"),
+    [
+        ("unbounded-time-series-ingest", "write throughput"),
+        ("full-text-search-candidate", "text index and search configuration"),
+        ("high-volume-text-search", "text index and search configuration"),
+        ("single-access-pattern-table", "tune indexes or query plans"),
+    ],
+)
+def test_mitigation_follows_the_concern_of_the_catalog_entry(pattern_type, expected) -> None:
+    entry = next(e for e in AURORA_COMMON_ANTI_PATTERNS if e.pattern_type == pattern_type)
+    text = _assigned_engine_mitigation(entry.guidance, "aurora_mysql", 3)
+    assert expected in text and "Aurora MySQL" in text and "3 flagged queries" in text
+    assert not any(n in text for n in _OTHER_ENGINE_NAMES)

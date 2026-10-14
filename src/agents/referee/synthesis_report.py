@@ -48,7 +48,13 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_mitigation,
     unsupported_pattern_text,
 )
-from src.tools.analysis.aurora_common_pattern_catalog import NO_RELATIONAL_NEED_ENGINE_HINT
+from src.tools.analysis.aurora_common_pattern_catalog import (
+    CATALOG_ENGINE_GUIDANCE,
+    CATALOG_ENGINE_HINTS,
+    FULL_TEXT_SEARCH_GUIDANCE,
+    HIGH_VOLUME_TEXT_SEARCH_GUIDANCE,
+    TIME_SERIES_INGEST_GUIDANCE,
+)
 
 if TYPE_CHECKING:
     from src.agents.referee.synthesis_data import SynthesisData
@@ -1186,7 +1192,9 @@ def build_risk_assessment(
                             f" ({pct_covered}% of queries resolved by schema design, "
                             f"{len(uncovered)} remaining)"
                         )
-                    mitigation = ap.get("recommendation")
+                    mitigation = _assigned_engine_mitigation(
+                        ap.get("recommendation"), engine, len(ids)
+                    )
                     if ap_type in _DYNAMODB_ALTERNATIVE_ANTI_PATTERNS:
                         sibling_qids: set[str] = set()
                         for t in tables:
@@ -1323,9 +1331,11 @@ def build_risk_assessment(
                 # The old engine's advice is kept only as background, and dropped when it
                 # leans on that engine's own features (e.g. DynamoDB Streams for queries
                 # now on ElastiCache).
-                if recommendation and engine not in {
-                    e for e, _, _ in engine_mentions(recommendation)
-                }:
+                if (
+                    recommendation
+                    and recommendation not in CATALOG_ENGINE_GUIDANCE
+                    and engine not in {e for e, _, _ in engine_mentions(recommendation)}
+                ):
                     mitigation += f" Background ({display_name(engine)} analysis): {recommendation}"
                 n_ids = len(ids)
                 risks.append(
@@ -2085,15 +2095,53 @@ def _design_conflict_risks(
 def _without_hedge(description: str) -> str:
     """``description`` without the catalog's engine-hint sentence (#649).
 
-    ``NO_RELATIONAL_NEED_ENGINE_HINT`` ("...could run on a simpler, purpose-built engine
-    (DynamoDB..., ElastiCache...)") is the analysis finding's advice with a fixed engine
-    list; in the report it contradicts the engine a risk is attributed to (a risk now on
+    The ``CATALOG_ENGINE_HINTS`` sentences (e.g. "...could run on a simpler, purpose-built
+    engine (DynamoDB..., ElastiCache...)", "OpenSearch provides purpose-built inverted
+    indexes...") are the analysis finding's advice naming a fixed engine; in the report
+    they contradict the engine a risk is attributed to (a risk now on
     DocumentDB suggesting DynamoDB or ElastiCache) and, once resolved, hedges a decision
     already made. The analysis output and the catalog keep it.
     """
-    sentences = re.split(r"(?<=[.!?])\s+", description.strip())
-    kept = [x for x in sentences if NO_RELATIONAL_NEED_ENGINE_HINT not in x]
-    return " ".join(kept) if kept else description
+    # Remove each hint's exact text (not the sentences that contain it), so a hint that
+    # grows to several sentences, or shares a sentence with other text, is still removed
+    # whole and nothing of it is left behind.
+    text = description
+    for hint in CATALOG_ENGINE_HINTS:
+        text = text.replace(hint, " ")
+    text = " ".join(text.split())
+    return text or description
+
+
+def _assigned_engine_mitigation(
+    recommendation: str | None, engine: str, n_queries: int
+) -> str | None:
+    """The risk's mitigation for deliverables, naming only the engine it is attributed to.
+
+    A catalog ``guidance`` that is an alternative-engine suggestion ("Consider DynamoDB ...
+    or ElastiCache") contradicts a table that stays on ``engine`` (#668); it is replaced by
+    the load-test action the mitigation strategies already use. Any other recommendation
+    (an analysis agent's own wording) is kept. ``analysis.json`` is not touched.
+    """
+    if (recommendation or "") not in CATALOG_ENGINE_GUIDANCE:
+        return recommendation
+    noun = "query" if n_queries == 1 else "queries"
+    count = f"the {n_queries} flagged {noun}" if n_queries else "the flagged queries"
+    name = display_name(engine)
+    if recommendation == TIME_SERIES_INGEST_GUIDANCE:
+        return (
+            f"Load-test the write throughput of {count} on {name} at the production insert "
+            "rate and size capacity and batching until sustained ingest stays within the target."
+        )
+    if recommendation in (FULL_TEXT_SEARCH_GUIDANCE, HIGH_VOLUME_TEXT_SEARCH_GUIDANCE):
+        return (
+            f"Load-test the text search in {count} on {name} with production-scale data and "
+            "review its text index and search configuration where latency or result quality "
+            "misses the target."
+        )
+    return (
+        f"Load-test {count} on {name} with production-scale data before "
+        "cutover and tune indexes or query plans where the measured latency misses the target."
+    )
 
 
 def _moved_description(description: str, target: str) -> str:

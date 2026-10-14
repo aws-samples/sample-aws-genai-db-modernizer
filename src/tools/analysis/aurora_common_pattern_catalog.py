@@ -134,43 +134,88 @@ AURORA_COMMON_PATTERNS: list[CatalogPattern] = [
 # Aurora Common Anti-Pattern Catalog
 # ==========================================================================
 
-# The catalog's closing sentence for "no-relational-need": an open-finding hint that names
-# a fixed engine list. Report text drops it (synthesis_report._without_hedge, #649), so
-# it is a constant the report imports rather than a copy of the wording.
+# Sentences of the Aurora anti-pattern catalog that name, or lean toward, an engine other
+# than Aurora. They are separate constants so the catalog composes its text from them and
+# report text can drop them (synthesis_report._without_hedge, #649/#668): a risk in a
+# deliverable is attributed to the engine its queries are assigned to, and must not
+# advise another one. The analysis output keeps the full catalog wording.
 NO_RELATIONAL_NEED_ENGINE_HINT = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
+HIGH_FREQUENCY_PK_LOOKUP_ENGINE_HINT = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
+SIMPLE_CACHE_READ_ENGINE_HINT = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
+FULL_TEXT_SEARCH_ENGINE_HINT = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
+TIME_SERIES_INGEST_ENGINE_HINT = "DynamoDB or OpenSearch time-series indices are better suited for high-throughput append-only ingestion without relational query needs."
+SINGLE_ACCESS_PATTERN_ENGINE_HINT = (
+    "This is a key-value workload wearing a relational costume — no query optimizer benefit."
+)
+HIGH_VOLUME_TEXT_SEARCH_ENGINE_HINT = "While Aurora can handle text search, OpenSearch provides purpose-built inverted indexes, relevance scoring, and horizontal scaling for search-dominant workloads."
+
+CATALOG_ENGINE_HINTS: tuple[str, ...] = (
+    HIGH_FREQUENCY_PK_LOOKUP_ENGINE_HINT,
+    SIMPLE_CACHE_READ_ENGINE_HINT,
+    FULL_TEXT_SEARCH_ENGINE_HINT,
+    TIME_SERIES_INGEST_ENGINE_HINT,
+    NO_RELATIONAL_NEED_ENGINE_HINT,
+    SINGLE_ACCESS_PATTERN_ENGINE_HINT,
+    HIGH_VOLUME_TEXT_SEARCH_ENGINE_HINT,
+)
+
+# The `guidance` of those entries is an alternative-engine suggestion as a whole.
+HIGH_FREQUENCY_PK_LOOKUP_GUIDANCE = "Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale."
+SIMPLE_CACHE_READ_GUIDANCE = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
+FULL_TEXT_SEARCH_GUIDANCE = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
+TIME_SERIES_INGEST_GUIDANCE = "Consider DynamoDB (with TTL) or OpenSearch data streams for high-throughput append-only workloads that don't require complex relational queries."
+NO_RELATIONAL_NEED_GUIDANCE = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+SINGLE_ACCESS_PATTERN_GUIDANCE = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+HIGH_VOLUME_TEXT_SEARCH_GUIDANCE = "Offload text search to OpenSearch for better relevance, scalability, and latency. Keep Aurora as source of truth with async replication. Consider this especially if search latency or result quality matters."
+
+CATALOG_ENGINE_GUIDANCE: frozenset[str] = frozenset(
+    {
+        HIGH_FREQUENCY_PK_LOOKUP_GUIDANCE,
+        SIMPLE_CACHE_READ_GUIDANCE,
+        FULL_TEXT_SEARCH_GUIDANCE,
+        TIME_SERIES_INGEST_GUIDANCE,
+        NO_RELATIONAL_NEED_GUIDANCE,
+        SINGLE_ACCESS_PATTERN_GUIDANCE,
+        HIGH_VOLUME_TEXT_SEARCH_GUIDANCE,
+    }
+)
 
 AURORA_COMMON_ANTI_PATTERNS: list[CatalogAntiPattern] = [
     # Signals: Single-row SELECT by PK at >100 cps
     CatalogAntiPattern(
         pattern_id="aurora-anti-01",
         pattern_type="high-frequency-pk-lookup",
-        description="Single-row SELECT by primary key at very high frequency (>100 calls/second). DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern.",
+        description="Single-row SELECT by primary key at very high frequency (>100 calls/second). "
+        + HIGH_FREQUENCY_PK_LOOKUP_ENGINE_HINT,
         severity_weight=0.8,
-        guidance="Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale.",
+        guidance=HIGH_FREQUENCY_PK_LOOKUP_GUIDANCE,
     ),
     # Signals: High-freq reads of small/static data, TTL-like patterns
     CatalogAntiPattern(
         pattern_id="aurora-anti-02",
         pattern_type="simple-cache-read",
-        description="High-frequency reads of small, rarely-changing data (config, sessions, feature flags). ElastiCache provides microsecond latency for cached reads without database connection overhead.",
+        description="High-frequency reads of small, rarely-changing data (config, sessions, feature flags). "
+        + SIMPLE_CACHE_READ_ENGINE_HINT,
         severity_weight=0.7,
-        guidance="Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data.",
+        guidance=SIMPLE_CACHE_READ_GUIDANCE,
     ),
     # Signals: LIKE '%term%', text search patterns
     CatalogAntiPattern(
         pattern_id="aurora-anti-03",
         pattern_type="full-text-search-candidate",
-        description="Full-text search patterns using LIKE '%term%' or similar constructs. OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming.",
+        description="Full-text search patterns using LIKE '%term%' or similar constructs. "
+        + FULL_TEXT_SEARCH_ENGINE_HINT,
         severity_weight=0.6,
-        guidance="Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync.",
+        guidance=FULL_TEXT_SEARCH_GUIDANCE,
     ),
     # Signals: Append-only INSERT at very high rate with no complex reads
     CatalogAntiPattern(
         pattern_id="aurora-anti-04",
         pattern_type="unbounded-time-series-ingest",
-        description="Append-only INSERT workload at very high rate with no complex read queries. DynamoDB or OpenSearch time-series indices are better suited for high-throughput append-only ingestion without relational query needs.",
+        description="Append-only INSERT workload at very high rate with no complex read queries. "
+        + TIME_SERIES_INGEST_ENGINE_HINT,
         severity_weight=0.7,
-        guidance="Consider DynamoDB (with TTL) or OpenSearch data streams for high-throughput append-only workloads that don't require complex relational queries.",
+        guidance=TIME_SERIES_INGEST_GUIDANCE,
     ),
     # aurora-anti-05
     CatalogAntiPattern(
@@ -179,23 +224,25 @@ AURORA_COMMON_ANTI_PATTERNS: list[CatalogAntiPattern] = [
         description="Table with no foreign keys and no join participation — all queries are single-table CRUD. "
         + NO_RELATIONAL_NEED_ENGINE_HINT,
         severity_weight=0.6,
-        guidance="Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate.",
+        guidance=NO_RELATIONAL_NEED_GUIDANCE,
     ),
     # aurora-anti-06
     CatalogAntiPattern(
         pattern_id="aurora-anti-06",
         pattern_type="single-access-pattern-table",
-        description="Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. This is a key-value workload wearing a relational costume — no query optimizer benefit.",
+        description="Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. "
+        + SINGLE_ACCESS_PATTERN_ENGINE_HINT,
         severity_weight=0.5,
-        guidance="Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them.",
+        guidance=SINGLE_ACCESS_PATTERN_GUIDANCE,
     ),
     # aurora-anti-07
     CatalogAntiPattern(
         pattern_id="aurora-anti-07",
         pattern_type="high-volume-text-search",
-        description="High-frequency text search patterns (LIKE '%', tsvector, ILIKE) on a text-heavy table (>40% text columns). While Aurora can handle text search, OpenSearch provides purpose-built inverted indexes, relevance scoring, and horizontal scaling for search-dominant workloads.",
+        description="High-frequency text search patterns (LIKE '%', tsvector, ILIKE) on a text-heavy table (>40% text columns). "
+        + HIGH_VOLUME_TEXT_SEARCH_ENGINE_HINT,
         severity_weight=0.7,
-        guidance="Offload text search to OpenSearch for better relevance, scalability, and latency. Keep Aurora as source of truth with async replication. Consider this especially if search latency or result quality matters.",
+        guidance=HIGH_VOLUME_TEXT_SEARCH_GUIDANCE,
     ),
 ]
 
