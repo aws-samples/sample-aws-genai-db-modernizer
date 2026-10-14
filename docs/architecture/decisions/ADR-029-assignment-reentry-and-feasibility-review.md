@@ -251,7 +251,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | Decision | Enforced by |
 |---|---|
 | A. Staleness-driven re-entry (mechanics) | `tests/unit/atx_orchestrator/test_reentry.py::TestReopen`<br>`tests/unit/atx_orchestrator/test_reentry.py::TestRedispatch`<br>`tests/unit/test_assignment_engine_diff.py`<br>`tests/unit/atx_orchestrator/test_get_synthesis_report.py::TestGetSynthesisReport` |
-| B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>none yet -- #704 (the reality check's revised write, and `finalize` returning the warnings) |
+| B. Keep the gate honest (cheap, high value) | `tests/unit/test_assignment_overrides.py::TestRecomputesDerivedViews`<br>`tests/unit/agents/referee/test_reality_check_revised_write_layer_b.py::TestRevisedWriteRecomputesDerivedViews`<br>`tests/unit/atx_orchestrator/test_finalize_returns_validation_warnings.py::TestFinalizeReturnsTheNewVersionsWarnings` |
 | C. Post-gate feasibility reviewer | `tests/unit/agents/referee/test_feasibility_review.py::TestReadWriteSplit`<br>`tests/unit/agents/referee/test_feasibility_review.py::TestCoDependencySplit`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestFeasibilityGate` |
 | E. Prune dead-engine signals after consolidation | `tests/unit/test_assignment_overrides.py::TestRefreshConsolidatedAssignment`<br>`tests/unit/agents/referee/test_synthesis_dead_engine_filter.py`<br>`tests/unit/agents/referee/test_eliminated_engine_agreement.py` |
 
