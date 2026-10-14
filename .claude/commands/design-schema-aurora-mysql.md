@@ -4,22 +4,14 @@
 Designs the Aurora MySQL target schema: resolved table/column types, DDL,
 app-layer notes, and Aurora-specific optimizations.
 
-Single-pass (ADR-028) — no `run_schema_split` / `run_schema_merge`, unlike
-DynamoDB. Aurora runs once, like OpenSearch.
-
-The design is a 1:1 carry-over of a deterministic draft plus your Aurora-level
-decisions, so you write **only a delta** against that draft. `--finalize`
-rebuilds the draft, merges your delta into it, regenerates the DDL and
-validates the full output contract and the scope. Your output stays small
-however many tables and columns the schema has.
+A deterministic script has already drafted the schema, so you write
+**only a delta** against that draft. `--finalize` rebuilds the draft, merges your delta
+into it, regenerates the DDL and validates the full output contract and the
+scope.
 
 ## Tool Use
 
 Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it.
-
-## Prerequisites
-
-- Assignment phase complete
 
 ## Steps
 
@@ -35,10 +27,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
         (checked by `--finalize`; do not copy it), `input_pages` (the Read
         pages that cover the file), `output_schema` (the JSON
         Schema of the delta you write, `AuroraDesignDeltaContract`) and
-        `design_view`, a compact view of the deterministic draft built by the
-        script from the shared draft builder
-        (`src/tools/schema/aurora_common/draft_builder.py`), the same draft the
-        automated Bedrock path uses (ADR-028):
+        `design_view`, a compact view of the deterministic draft:
         - `residual_types`: the residual columns grouped by source data type,
           with a count and examples
         - `hot_queries`: the busiest in-scope queries by database load and by
@@ -62,15 +51,11 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
         `uv run python scripts/search_artifacts.py '"table_name": "orders"' <request file>`.
         Never read it with `cat`, `sed`, `jq`, `grep` or a script.
    b. Read: `src/skills/aurora_mysql-data-modeling.md` (domain expertise
-      guide — the same skill the automated designer follows)
+      guide)
 
-3. **Trust the migration strategy (ADR-028 target rule)**
-   Use `migration_strategy` from the request as-is — do not re-derive it:
-   - `carry_over` (source is MySQL): column types map 1:1; your value-add
-     is Aurora optimizations, not translation.
-   - `translate` (any other source engine): the draft has already translated
-     every column it could resolve confidently; only residuals need your
-     judgment.
+3. **Trust the migration strategy**
+   Use `migration_strategy` from the request as-is (the skill says what
+   `carry_over` and `translate` mean); do not re-derive it.
 
 4. **Design the delta**
    Design only the tables and queries assigned to this engine: the tables in
@@ -98,14 +83,12 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    - Types (`aurora_type`) are plain SQL types only: `BIGINT`, `VARCHAR(255)`,
      `NUMERIC(10,2)`, `TIMESTAMP WITH TIME ZONE`, `INT UNSIGNED`, `ENUM('a','b')`. No
      constraints, defaults or anything else; `--finalize` rejects them
-   - `optimizations`: partitioning for large hot tables, read-replica routing
-     for read-heavy patterns, I/O-Optimized for write-heavy throughput,
-     index recommendations you do not express as DDL
-   - `app_layer_notes`: any source feature that cannot be expressed as Aurora
-     DDL (triggers, stored procedures, events, generated columns) with a concrete recommendation —
-     never fabricate DDL for it
-   - `trade_offs`: the significant decisions, each with a `description` and an
-     `impact` written for a CTO
+   - `optimizations`: the skill's Aurora optimizations, plus index
+     recommendations you do not express as DDL
+   - `app_layer_notes`: each source feature that cannot be expressed as
+     Aurora DDL, with a concrete recommendation; never fabricate DDL for it
+   - `trade_offs`: the significant decisions, each with a `description` and
+     an `impact` written for a CTO
    - No pattern-ID prefix — this contract is table-shaped, not access-pattern-shaped
 
    Example:

@@ -91,12 +91,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    uv run python scripts/run_report.py --job-id {job_id} --db {database_name}
    ```
 
-   Prints `{"status": ..., "files": [...], "errors": [...], "warnings": [...]}`.
-   `complete` means every deliverable rendered with nothing to flag; `partial`
-   covers both outright failures (in `errors`) and successful-but-suspect renders
-   (in `warnings`, e.g. an analysis report with zero query journeys embedded) —
-   tell the user what it says, then continue; `error` means no synthesis report
-   exists, or rendering itself blew up (stop and report it).
+   Prints `status`, `files`, `errors` and `warnings`. On `partial` tell the user
+   what `errors` and `warnings` say, then continue; on `error` (no synthesis
+   report, or rendering failed) stop and report it.
 
 5. **Present report**
    Show:
@@ -111,15 +108,9 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    - Top risks and mitigations
    - Executive summary
    - `cache_safety_net_notes`, when non-empty on step 3e's `--finalize` status
-     line: quote each note verbatim (do not paraphrase or re-round its
-     numbers, and do not read `report.json` for this — the status line
-     already carries it). This is how the cache layer's final scope is
-     explained when it differs from what the assignment gate showed — the
-     post-schema-design safety net drops a cached read the cache's own schema
-     design does not cover, and the note already states exactly how many
-     reads were assigned at the assignment gate, how many the schema design
-     covers, how many no longer are, and how many remain, deterministically
-     computed, not something to re-derive.
+     line: quote each note verbatim (no paraphrasing or re-rounding, and no
+     reading `report.json` for it). It explains why the cache layer is smaller
+     than at the assignment gate.
 
 6. **Update state**
    Set `phase_status.synthesis` = "complete"

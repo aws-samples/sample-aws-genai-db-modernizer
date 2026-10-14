@@ -606,3 +606,37 @@ def test_dynamodb_group_task_halves_a_page_read_refuses_and_skips_coverage() -> 
     )
     assert "Skip the skill's coverage check" in flat
     assert "would not fit in three Read pages" in text
+
+
+# #625 review: the commands point at skill text by name instead of repeating
+# it, so a later skill trim must not drop what they point at.
+SKILLS_DIR = REPO_ROOT / "src" / "skills"
+
+
+def test_group_draft_validation_passed_does_not_fail_a_merge() -> None:
+    # #246: group subagents report validation_passed; a merge that passed
+    # stays passed even when one group's own check is false.
+    line = next(
+        ln for ln in _phase_6(_modernize_text()).splitlines() if '`"status": "merge_failed"`' in ln
+    )
+    assert "a group draft's own `validation_passed: false` does not make a merge fail" in line
+
+
+def test_state_updates_never_use_sed() -> None:
+    assert "never `sed` or another Bash edit" in _modernize_text()
+
+
+def test_skill_sections_the_commands_point_at_exist() -> None:
+    dynamodb = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    assert "the skill's Output Construction rules" in dynamodb
+    skill = (SKILLS_DIR / "dynamodb-data-modeling.md").read_text()
+    assert re.search(r"^#+ .*Output Construction", skill, re.MULTILINE)
+    for field in ("trade_offs", "unsupported_patterns", "hot_partition_analysis"):
+        assert f"`{field}`" in skill, field
+    assert "`validation_passed` — `true` only if" in skill
+    for engine in ("mysql", "postgresql"):
+        command = (COMMANDS_DIR / f"design-schema-aurora-{engine}.md").read_text()
+        assert "the skill says what" in " ".join(command.split())
+        aurora_skill = (SKILLS_DIR / f"aurora_{engine}-data-modeling.md").read_text()
+        assert "`carry_over`" in aurora_skill and "`translate`" in aurora_skill
+        assert "`optimizations`" in aurora_skill
