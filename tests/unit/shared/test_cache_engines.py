@@ -16,7 +16,7 @@ import pytest
 from src.agents.referee import cache_overlay
 from src.contracts.analysis_output import ScoreBreakdown
 from src.report import engine_roles
-from src.shared import cache_engines, migration_wave_engines
+from src.shared import cache_engines, migration_wave_engines, report_facts
 from src.tools.analysis import redis_analysis_tools
 from src.tools.analysis.scoring import TableProfile
 
@@ -47,7 +47,8 @@ def test_cache_role_label_follows_the_shared_set(monkeypatch: pytest.MonkeyPatch
         return engine_roles._engine_role(engine, {engine}, {}, workload=10)
 
     assert label("elasticache") == "Cache layer"
-    monkeypatch.setattr(engine_roles, "_CACHE_ENGINES", frozenset({"fakecache"}))
+    # The role rule lives in the facts layer (#615); engine_roles only re-exports it.
+    monkeypatch.setattr(report_facts, "CACHE_ENGINES", frozenset({"fakecache"}))
     assert label("fakecache") == "Cache layer"
     assert label("elasticache") != "Cache layer"
 

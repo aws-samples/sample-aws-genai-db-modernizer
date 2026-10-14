@@ -175,10 +175,28 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        # #568 review round 2: table_counts_by_engine/owned_counts_by_engine added
-        assert report["contract_version"] == "1.14"
+        # #615: the facts block added
+        assert report["contract_version"] == "1.15"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
+
+    def test_written_report_carries_the_facts_block(self, store):
+        """#615: synthesis computes every figure once, into report.json's facts."""
+        from src.agents.referee.synthesis_handler import _write_synthesis_report
+
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        _write_synthesis_report(store, result, assignment_version=2)
+        report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+        facts = report["facts"]
+        assert facts["engine_count"] == len(report["ranking"])
+        assert [w["wave"] for w in facts["waves"]] == [1, 2, 3]
+        dynamo = facts["waves"][2]
+        assert dynamo["migrating"] is True
+        assert dynamo["served_tables"] == report["migration_waves"][2]["table_count"]
+        assert facts["tables_migrate"] == dynamo["moving_tables"]
+        # Wave 1 carries the whole schema: 3 tables, no views here.
+        assert (facts["waves"][0]["tables_only"], facts["waves"][0]["views"]) == (3, 0)
+        assert facts["source_table_count"] == report["source_table_count"] == 3
 
 
 @pytest.fixture

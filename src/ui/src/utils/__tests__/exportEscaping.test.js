@@ -240,6 +240,8 @@ describe('buildReportHtml (ReportHtmlExport.js)', () => {
           rationale: 'r',
           gate: 'g',
         }],
+        // #615: the figures come from facts (/results fills them in for an older report).
+        facts: { waves: [{ wave: 1, served_tables: 17, moving_tables: 15, kept_in_sync_tables: 2 }] },
       },
     };
     const doc = parse(buildReportHtml({ resultsData, jobId: 'job', t }));

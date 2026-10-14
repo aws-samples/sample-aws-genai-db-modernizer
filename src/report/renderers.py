@@ -9,25 +9,22 @@ re-exports their names so callers keep importing from ``renderers``.
 
 from __future__ import annotations
 
+from src.shared.report_facts import ANALYZED_SOURCE_TABLES as _ANALYZED_SOURCE_TABLES
+from src.shared.report_facts import cache_layer_counts
+from src.shared.report_facts import design_source_tables as _design_source_tables
+from src.shared.report_facts import engine_costs as _engine_costs
+from src.shared.report_facts import rationale_text as _rationale_text
+
 from .architecture import (
-    _ANALYZED_SOURCE_TABLES,
     _ROLE_PHRASE,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
-    _design_source_tables,
     _mapping_split,
     _n_tables_mapped,
-    _rationale_text,
     architecture_svg,
 )
-from .cache_layer import (
-    _cache_layer_md,
-    _cache_note,
-    cache_layer_counts,
-    cache_layer_text,
-    cache_wave_note,
-)
+from .cache_layer import _cache_layer_md, _cache_note, cache_layer_text, cache_wave_note
 from .decision_report import (
     _DECISION_CSS,
     _ENGINE_BADGE,
@@ -76,7 +73,6 @@ from .formatting import (
     _completed_designs,
     _cost_baseline_text,
     _eliminated_engine_costs_text,
-    _engine_costs,
     _fmt_usd,
     access_pattern_scope,
     artifact_stem,

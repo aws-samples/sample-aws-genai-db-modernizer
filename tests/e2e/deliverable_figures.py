@@ -125,6 +125,18 @@ def migrating(wave: dict[str, Any]) -> bool:
     return bool(wave.get("moves_from")) and wave.get("homogeneity") is None
 
 
+def wave_synced_tables(wave: dict[str, Any]) -> set[str]:
+    """Tables a wave keeps in sync from an owner outside it. In the merged
+    DynamoDB/DocumentDB wave, a table one engine serves from the other moves
+    with its owner (#581): it is not kept in sync from anyone outside."""
+    engines = set(wave.get("engines") or [])
+    return {
+        str(o.get("table"))
+        for o in wave.get("table_owners") or []
+        if isinstance(o, dict) and o.get("owner") not in engines
+    }
+
+
 def wave_moving_by_engine(wave: dict[str, Any]) -> dict[str, int]:
     """Tables each engine of a migrating wave owns, i.e. moves."""
     owned = wave.get("owned_counts_by_engine")
@@ -168,11 +180,17 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         served = int(w.get("table_count") or 0)
         if served:
             exp[f"wave{n}:served"] = served
+        if w.get("homogeneity") is not None and report.get("source_table_count") is not None:
+            # #578: wave 1 carries every analyzed table plus the real views.
+            exp[f"wave{n}:tables_only"] = int(report["source_table_count"])
+            exp[f"wave{n}:views"] = int(((report.get("facts") or {}).get("source_view_count")) or 0)
         if migrating(w) and served:
-            synced = len(w.get("table_owners") or [])
-            exp[f"wave{n}:synced"] = synced
-            exp[f"wave{n}:moving"] = served - synced
-            tables_migrate += served - synced
+            per_engine = wave_moving_by_engine(w)
+            # #581: the tables that move are the ones the wave's engines own.
+            moving = sum(per_engine.values()) if per_engine else served - len(wave_synced_tables(w))
+            exp[f"wave{n}:synced"] = served - moving
+            exp[f"wave{n}:moving"] = moving
+            tables_migrate += moving
             for e, k in wave_moving_by_engine(w).items():
                 exp[f"wave{n}:moving:{e}"] = k
             for e, k in wave_served_by_engine(w).items():
@@ -214,6 +232,12 @@ def invariant_violations(
     analyzed, a wave whose moved and kept-in-sync tables do not add up to the
     tables it serves."""
     tables_analyzed = int(report.get("source_table_count") or 0)
+    views = int(((report.get("facts") or {}).get("source_view_count")) or 0)
+    whole_schema = {
+        f"wave{w.get('wave')}:served"
+        for w in report.get("migration_waves") or []
+        if isinstance(w, dict) and w.get("homogeneity") is not None
+    }
     queries_analyzed = int((report.get("assignment_summary") or {}).get("query_count") or 0)
     out: list[tuple[str, str]] = []
     for key, observations in figs.items():
@@ -227,12 +251,14 @@ def invariant_violations(
         for value, where in observations:
             if not isinstance(value, int) or isinstance(value, bool):
                 continue
-            if is_table and tables_analyzed and value > tables_analyzed:
+            # Wave 1 carries the whole schema: every table and view (#578).
+            limit = tables_analyzed + (views if key in whole_schema else 0)
+            if is_table and tables_analyzed and value > limit:
                 out.append(
                     (
                         key,
-                        f"{label} {where}: {key}={value} exceeds the {tables_analyzed} "
-                        "source tables analyzed",
+                        f"{label} {where}: {key}={value} exceeds the {limit} "
+                        "source tables (and views, for wave 1) analyzed",
                     )
                 )
             if is_query and queries_analyzed and value > queries_analyzed:
@@ -349,26 +375,41 @@ def report_invariant_violations(report: dict[str, Any]) -> list[tuple[str, str]]
                     f"{w.get('query_count')}",
                 )
             )
+        if w.get("homogeneity") is not None and report.get("source_table_count") is not None:
+            views = int(((report.get("facts") or {}).get("source_view_count")) or 0)
+            if int(w.get("table_count") or 0) != int(report["source_table_count"]) + views:
+                out.append(
+                    (
+                        f"wave{n}:served",
+                        f"wave {n} carries {w.get('table_count')} tables and views, not the "
+                        f"{report['source_table_count']} tables analyzed plus {views} views",
+                    )
+                )
         owners = w.get("table_owners") or []
         owner_tables = [o.get("table") for o in owners]
         if set(owner_tables) - set(tables):
             out.append((f"wave{n}:synced", f"wave {n} keeps in sync tables it does not serve"))
-        if {o.get("owner") for o in owners} & set(w.get("engines") or []):
+        # A single-engine wave never lists its own engine as a table's owner;
+        # the merged wave may (one engine serves what the other owns, #581).
+        if len(w.get("engines") or []) == 1 and {o.get("owner") for o in owners} & set(
+            w.get("engines") or []
+        ):
             out.append((f"wave{n}:synced", f"wave {n} keeps a table in sync from its own engine"))
         if {o.get("owner") for o in owners} - final:
             out.append(
                 (f"wave{n}:synced", f"wave {n} syncs from an engine not in the architecture")
             )
         if migrating(w) and w.get("table_count"):
-            moving = int(w["table_count"]) - len(owners)
+            synced = wave_synced_tables(w)
+            moving = int(w["table_count"]) - len(synced)
             per_engine = wave_moving_by_engine(w)
             if per_engine and sum(per_engine.values()) != moving:
                 out.append(
                     (
                         f"wave{n}:moving",
                         f"wave {n} engines move {sum(per_engine.values())} tables between them, "
-                        f"but it serves {w['table_count']} and keeps {len(owners)} in sync "
-                        f"({moving} move)",
+                        f"but it serves {w['table_count']} and keeps {len(synced)} in sync "
+                        f"from outside it ({moving} move)",
                     )
                 )
             served = wave_served_by_engine(w)
@@ -427,7 +468,7 @@ def report_invariant_violations(report: dict[str, Any]) -> list[tuple[str, str]]
 
 _DECISION_WAVE_CUTOVER = re.compile(
     r"^all ([\d,]+) quer(?:y|ies) at cutover; ([\d,]+) \([\d.]+%\) remain on .+? at the end"
-    r"(?:, ([\d,]+) source tables? and views)?$"
+    r"(?:, ([\d,]+) source tables? and views(?: \(([\d,]+) tables?, ([\d,]+) views?\))?)?$"
 )
 _DECISION_WAVE = re.compile(
     r"^([\d,]+) quer(?:y|ies) \([\d.]+% of (?:calls|query patterns)\)"
@@ -504,6 +545,9 @@ def decision_figures(page: Any) -> Figures:
             f.add(f"wave{n}:queries", _int(m.group(2)), where)
             if m.group(3):
                 f.add(f"wave{n}:served", _int(m.group(3)), where)
+            if m.group(4):
+                f.add(f"wave{n}:tables_only", _int(m.group(4)), where)
+                f.add(f"wave{n}:views", _int(m.group(5)), where)
             continue
         m = _DECISION_WAVE.match(stats)
         if not m:
@@ -565,7 +609,8 @@ def decision_figures(page: Any) -> Figures:
 
 _ANALYSIS_WAVE = re.compile(
     r"^([\d,]+) queries · [\d.]+% of (?:calls|query patterns)"
-    r"(?: · ([\d,]+) served, ([\d,]+) move| · ([\d,]+) source tables)?$"
+    r"(?: · ([\d,]+) served, ([\d,]+) move| · ([\d,]+) source tables"
+    r"(?: and views \(([\d,]+) tables?, ([\d,]+) views?\))?)?$"
 )
 
 
@@ -611,6 +656,9 @@ def analysis_figures(page: Any) -> Figures:
             f.add(f"wave{n}:synced", served - moving, where)
         elif m.group(4):
             f.add(f"wave{n}:served", _int(m.group(4)), where)
+            if m.group(5):
+                f.add(f"wave{n}:tables_only", _int(m.group(5)), where)
+                f.add(f"wave{n}:views", _int(m.group(6)), where)
 
     for card in page.locator("#cost-breakdown-container .stat-card").all():
         eng = card.locator("[data-engine]").first.get_attribute("data-engine")
@@ -745,9 +793,17 @@ def engineering_figures(md_text: str) -> Figures:
             if c.group(1):
                 f.add(f"wave{n}:cutover_queries", _int(c.group(1)), where)
             f.add(f"wave{n}:queries", _int(c.group(2)), where)
-        st = re.search(r"^- ([\d,]+) source (?:tables and views|tables?): ", text, re.M)
+        st = re.search(
+            r"^- ([\d,]+) source (?:tables and views(?: \(([\d,]+) tables?, ([\d,]+) views?\))?"
+            r"|tables?): ",
+            text,
+            re.M,
+        )
         if st:
             f.add(f"wave{n}:served", _int(st.group(1)), where)
+            if st.group(2):
+                f.add(f"wave{n}:tables_only", _int(st.group(2)), where)
+                f.add(f"wave{n}:views", _int(st.group(3)), where)
         k = re.search(r"^- ([\d,]+) tables? kept in sync from their owner: ", text, re.M)
         if k:
             f.add(f"wave{n}:synced", _int(k.group(1)), where)

@@ -192,16 +192,6 @@ def _eliminated_engine_costs_text(tco: dict[str, Any]) -> str:
     )
 
 
-def _engine_costs(report: dict[str, Any]) -> dict[str, float]:
-    """engine name -> monthly USD, from tco_analysis.cost_breakdown."""
-    out: dict[str, float] = {}
-    for row in (report.get("tco_analysis") or {}).get("cost_breakdown") or []:
-        db, c = row.get("database"), row.get("monthly_cost_usd")
-        if db is not None and isinstance(c, (int, float)):
-            out[db] = c
-    return out
-
-
 def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:
     """engine -> design summary, only for engines whose design completed."""
     sd = report.get("schema_designs") or {}

@@ -31,6 +31,7 @@ const data = {
       tco_analysis: { projected_monthly_cost: 300, cost_breakdown: [] },
       query_groups: [],
       post_schema_reroutes: [REROUTE],
+      facts: { post_schema_reroute_count: 1 },
     },
   },
 };

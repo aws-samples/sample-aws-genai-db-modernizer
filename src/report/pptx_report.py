@@ -58,21 +58,18 @@ from pptx.util import Inches, Pt
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
+from src.shared.report_facts import wave_facts
 
 # SEVERITY_ORDER, UNRATED and _severity come from src.shared.risk_severity (#536
 # S1): a risk whose severity is none of SEVERITY_ORDER is shown, not dropped
 # (#249 review), the same shared counter renderers.py and the summary grounding
 # check use.
 from src.shared.risk_severity import SEVERITY_ORDER, UNRATED
-from src.shared.risk_severity import count_by_severity as _count_by_severity
 from src.shared.risk_severity import severity_of as _severity
-from src.shared.workload_fit_labels import (
-    WORKLOAD_FIT_DEFINITION,
-    WORKLOAD_FIT_LABEL,
-    fit_phrase,
-)
+from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL, fit_phrase
 
 from .engine_choices import REROUTE_OVERRIDE_TEXT, reroute_summary
+from .facts import report_facts, wave_facts_for
 from .renderers import (
     NO_OPEN_RISKS_CAVEAT,
     SHARED_TABLES_LABEL,
@@ -891,11 +888,12 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # engine" (the exact wording slide 2's footer uses this figure for). This
     # figure keeps its pre-#321 meaning instead: tables that leave Aurora for
     # a purpose-built engine, so wave 1 is excluded from the sum.
-    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
-        w.get("table_count", 0)
-        for w in stored_waves
-        if w.get("moves_from") and w.get("homogeneity") is None
-    )
+    facts = report_facts(rep)
+    # "Tables migrate" (#225, #321 review finding 4, #568, #581): one figure
+    # from the facts layer -- tables that leave Aurora for a purpose-built
+    # engine -- the same the decision report's tile and the roadmap show.
+    migrated = int(facts.get("tables_migrate") or 0)
+    n_engines = int(facts.get("engine_count") or 0)
     # #530: "Basis of the analysis" said "0 tables mapped to a named target" on
     # the same run this ``migrated`` figure (and slide 2's tile) already call
     # 8 -- read from ``table_mappings``, which stays empty without a completed
@@ -907,6 +905,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # its own fit score" implies a per-table figure that does not
     # exist without a design, and a bare "N tables assigned" when nothing is
     # known at all (no waves, no mappings) would be a fabricated zero.
+    basis = facts.get("table_basis") or {}
     if schema_mapped:
         basis_table_line = (
             f"{n_tables:,} {plural_noun(n_tables, 'table')} mapped to a named target, each "
@@ -919,6 +918,20 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         # -- a clip below must never be able to cut the one clause that
         # explains why there is no per-table fit score.
         disclaimer = "Schema mapping has not run, so there are no per-table fit scores yet"
+        if basis.get("design_coverage") == "partial":
+            # #533: a design ran for some engines only. Its table_mappings
+            # cover those engines alone, so the count stays the tables
+            # analyzed (never lower than "Tables migrate"), and the line says
+            # plainly which engines the per-table fit scores cover.
+            mapped = int(basis.get("mapped_tables") or 0)
+            designed = join_names(
+                [ENGINE_LABEL.get(e, e) for e in basis.get("designed_engines") or []]
+            )
+            disclaimer = (
+                f"Schema mapping has run for {designed} only, so only {mapped:,} "
+                f"{plural_noun(mapped, 'table')} {plural_verb(mapped, 'has', 'have')} a "
+                "per-table fit score yet"
+            )
         # Any wave with a ``homogeneity`` (homogeneous, heterogeneous or
         # cross_engine, #381) is wave 1, the whole collected schema moving
         # as one -- the same marker ``migrated`` above excludes by. A
@@ -999,7 +1012,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
 
     # ---- risks --------------------------------------------------------------
     risks = sorted(filtered_risks(rep), key=lambda r: str(r.get("risk_id")))
-    sev: dict[str, int] = _count_by_severity(risks)
+    sev: dict[str, int] = dict(facts.get("open_risks_by_severity") or {})
     # #270: CRITICAL is at least as severe as HIGH, so every count that singles
     # out "HIGH" to flag what needs escalating -- the Scope/no-migration
     # decision cards, the engine table, the per-wave counts and the worst-
@@ -1010,15 +1023,9 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # and HIGH in separate buckets -- that table is explicitly about which
     # severity, not which risks need escalating.
     crit_high = [r for r in risks if str(r.get("severity", "")).upper() in ("CRITICAL", "HIGH")]
-    crit_high_by_engine: dict[str, int] = {}
-    for r in crit_high:
-        eng = risk_engine(str(r.get("description") or ""))
-        if eng:
-            crit_high_by_engine[eng] = crit_high_by_engine.get(eng, 0) + 1
-    by_type: dict[str, int] = {}
-    for r in risks:
-        t = str(r.get("risk_type") or "other").replace("_", " ").lower()
-        by_type[t] = by_type.get(t, 0) + 1
+    n_crit_high = int(facts.get("critical_high_risk_count") or 0)
+    crit_high_by_engine: dict[str, int] = dict(facts.get("critical_high_risks_by_engine") or {})
+    by_type: dict[str, int] = dict(facts.get("open_risks_by_type") or {})
     # The Risk Profile table lists the highest severity present, so a run with no
     # HIGH risks still shows its top MEDIUM (or LOW) risks rather than an empty
     # table (#249). Within that severity, the risks touching the most queries first.
@@ -1034,8 +1041,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         shown_risks = crit_high
     # "all the same root cause" is only claimed when the CRITICAL/HIGH risks
     # really do share one risk_type.
-    crit_high_types = sorted({str(r.get("risk_type") or "") for r in crit_high})
-    one_root_cause = len(crit_high_types) == 1 and bool(crit_high)
+    root_cause = facts.get("critical_high_root_cause")
+    one_root_cause = bool(root_cause) and bool(n_crit_high)
 
     # Analysis risks the effective assignment resolved (#434): with no open risks
     # the Risk Profile slide leads with these instead of an empty table and an
@@ -1127,7 +1134,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         lead = (
             "No table-level evidence; confirm the requirement"
             if is_signal_only(weakest)
-            else f"Lowest fit of the {len(ranking)} {plural_noun(len(ranking), 'engine')}"
+            else f"Lowest fit of the {n_engines} {plural_noun(n_engines, 'engine')}"
         )
         also = [ENGINE_LABEL.get(str(r.get("target")), str(r.get("target"))) for r in confirm[1:]]
         decisions.append(
@@ -1153,8 +1160,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             {
                 "question": f"Scope {ENGINE_LABEL.get(eng, eng)}?",
                 "badge": (
-                    f"{crit_high_by_engine[eng]} of {len(crit_high)} CRITICAL/HIGH "
-                    f"{plural_noun(len(crit_high), 'risk')}"
+                    f"{crit_high_by_engine[eng]} of {n_crit_high} CRITICAL/HIGH "
+                    f"{plural_noun(n_crit_high, 'risk')}"
                 ),
                 "accent": ENGINE_COLOR.get(eng, GREEN),
                 "against": (
@@ -1167,9 +1174,10 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     no_move = [e for e in engines if e["role"] in NO_MIGRATION_ROLES]
     if no_move:
         names = " + ".join(ENGINE_LABEL.get(e["engine"], e["engine"]) for e in no_move)
-        pct = sum(workload.get(e["engine"], 0) for e in no_move if e["engine"] not in cache)
-        no_move_crit_high = sum(crit_high_by_engine.get(e["engine"], 0) for e in no_move)
-        cached_share = sum(cache[e["engine"]][1] for e in no_move if e["engine"] in cache)
+        no_migration = facts.get("no_migration") or {}
+        pct = float(no_migration.get("workload_percent") or 0.0)
+        no_move_crit_high = int(no_migration.get("critical_high_risks") or 0)
+        cached_share = float(no_migration.get("cached_call_share_percent") or 0.0)
         badge = (
             f"{pct:.0f}% of workload"
             if not cached_share
@@ -1200,12 +1208,13 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # engineering report list ("Pending engine choices" / "Unresolved
     # engine ties"), so the deck/PDF shows the same fact too.
     tied_queries = [t for t in (rep.get("tied_queries") or []) if isinstance(t, dict)]
+    n_tied = int(facts.get("tied_query_count") or 0)
     if tied_queries:
         tied_engine_names = sorted({e for t in tied_queries for e in (t.get("tied_engines") or [])})
         decisions.append(
             {
                 "question": "Pick the engine for tied queries?",
-                "badge": f"{len(tied_queries)} {plural_noun(len(tied_queries), 'query', 'queries')}",
+                "badge": f"{n_tied} {plural_noun(n_tied, 'query', 'queries')}",
                 "accent": ORANGE,
                 "against": (
                     f"Scores tie between {join_names([ENGINE_LABEL.get(e, e) for e in tied_engine_names])}; "
@@ -1218,11 +1227,12 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
     # #629: the same post-approval reroutes the decision and engineering
     # reports list ("Moved after your approval"), with the same override path.
     reroutes = [r for r in (rep.get("post_schema_reroutes") or []) if isinstance(r, dict)]
+    n_reroutes = int(facts.get("post_schema_reroute_count") or 0)
     if reroutes:
         decisions.append(
             {
                 "question": "Keep the queries moved after approval?",
-                "badge": f"{len(reroutes)} {plural_noun(len(reroutes), 'query', 'queries')}",
+                "badge": f"{n_reroutes} {plural_noun(n_reroutes, 'query', 'queries')}",
                 "accent": ORANGE,
                 "against": reroute_summary(rep) or "",
                 "action": REROUTE_OVERRIDE_TEXT,
@@ -1254,6 +1264,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
             accent = YELLOW
         is_cache_share = sw.get("share_basis") == "calls"
         share = float(sw.get("workload_share_percent") or 0.0)
+        wf = wave_facts_for(rep, sw)
         waves.append(
             {
                 "engines": wave_keys,
@@ -1263,7 +1274,8 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 # #568 review round 2, Important 1: the owned-vs-kept-in-sync
                 # split, built from structured fields -- never lost to the
                 # gate's own 90-character clip in the card below.
-                "sync_summary": _wave_sync_summary(sw),
+                "sync_summary": _wave_sync_summary(sw, wf),
+                "crit_high": int(wf.get("critical_high_risks") or 0),
                 # A wave moves no data only when it has nothing to move away from
                 # (the cache, which only fronts reads; the search read model and
                 # retained wave, which sync/stay rather than migrate).
@@ -1279,7 +1291,6 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         )
     for w in waves:
         w["names"] = " + ".join(ENGINE_LABEL.get(e, e) for e in w["engines"])
-        w["crit_high"] = sum(crit_high_by_engine.get(e, 0) for e in w["engines"])
         w["conf_text"] = conf_text(
             min(w["engines"], key=lambda e: (conf.get(e, 0), e)),
             short=True,
@@ -1297,6 +1308,14 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "risk_level": str(risk.get("overall_risk_level") or "not assessed"),
         "engines": engines,
         "migrated": migrated,
+        "engine_count": n_engines,
+        "migration_wave_count": int(facts.get("migration_wave_count") or 0),
+        "n_risks": int(facts.get("open_risk_count") or 0),
+        "n_crit_high": n_crit_high,
+        "n_resolved": int(facts.get("resolved_risk_count") or 0),
+        "kept_workload_percent": float(
+            (facts.get("no_migration") or {}).get("workload_percent") or 0.0
+        ),
         "ranking": by_workload,
         "conf": conf,
         "conf_text": {t: conf_text(t, short=True) for t in conf},
@@ -1327,7 +1346,7 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
         "resolved_risks": resolved,
         "by_type": sorted(by_type.items(), key=lambda kv: (-kv[1], kv[0])),
         "one_root_cause": one_root_cause,
-        "high_type": crit_high_types[0].replace("_", " ").lower() if one_root_cause else "",
+        "high_type": str(root_cause).replace("_", " ").lower() if one_root_cause else "",
         "ops": ops_sorted,
         "n_ops": n_ops,
         "n_patterns": n_patterns,
@@ -1379,7 +1398,7 @@ def slide_summary(prs, f):
     # like "5 target engines" invites the "why would I move to 5 databases?"
     # objection, whereas the wave framing reads as a phased, lower-risk plan
     # (ADR-029 waves alignment). The wave breakdown is on the sequencing slide.
-    n_waves = len(f.get("waves") or [])
+    n_waves = f["migration_wave_count"]
     tiles = [
         (f"{f['n_patterns']:,}", f"query {plural_noun(f['n_patterns'], 'pattern')} analyzed", BLUE),
         (f"{n_waves}", f"migration {plural_noun(n_waves, 'wave')}", PURPLE),
@@ -1391,7 +1410,7 @@ def slide_summary(prs, f):
         ),
         (
             f["risk_level"],
-            f"overall risk, {len(f['risks'])} {plural_noun(len(f['risks']), 'item')}",
+            f"overall risk, {f['n_risks']} {plural_noun(f['n_risks'], 'item')}",
             _risk_accent(f["risk_level"]),
         ),
     ]
@@ -1446,7 +1465,7 @@ def slide_summary(prs, f):
         for e in f["engines"]
         if e["role"] in NO_MIGRATION_ROLES and e.get("cached_queries") is None
     ]
-    kept_pct = sum(e.get("workload") or 0 for e in kept)
+    kept_pct = f["kept_workload_percent"]
     caches = [e for e in f["engines"] if e.get("cached_queries")]
     # The summary beside this footer says "22 source tables mapped"; when some of
     # them map to the cache layer, the footer says how 21 relates to 22 (#258).
@@ -1467,7 +1486,7 @@ def slide_summary(prs, f):
         f"{subject} {plural_verb(n_mig, 'moves', 'move')} to a purpose-built engine; "
         + (
             f"{join_names([ENGINE_LABEL.get(e['engine'], e['engine']) for e in kept])} "
-            f"{plural_verb(len(kept), 'keeps', 'keep')} {kept_pct:.1f}% of the workload "
+            f"{plural_verb(len(kept), 'keeps', 'keep')} {kept_pct:.1f}% of the workload "  # facts: presentation (verb agreement for the engines named)
             f"with no data migration. "
             if kept
             else ""
@@ -1503,13 +1522,14 @@ def slide_evidence(prs, f):
     )
 
     left, width, top = 0.67, 9.4, BODY_TOP + 0.08
-    total_pct = sum(f["workload"].values()) or 100.0
+    # Chart geometry: each bar's width is its share of the bar's full width.
+    total_pct = sum(f["workload"].values()) or 100.0  # facts: presentation (bar widths)
     x = left
     for r in f["ranking"]:
         eng = r.get("target")
-        w = width * (f["workload"].get(eng, 0) / total_pct)
+        w = width * (f["workload"].get(eng, 0) / total_pct)  # facts: presentation (bar width)
         bar(s, x, top, w, 0.52, ENGINE_COLOR.get(eng, BLUE))
-        x += w
+        x += w  # facts: presentation (bar position)
     for i, r in enumerate(f["ranking"]):
         eng = r.get("target")
         y = 2.78 + i * 0.42
@@ -1728,7 +1748,7 @@ def slide_decisions(prs, f):
     d = f["decisions"]
     set_title(s, "Engine Fit and Open Decisions")
     weak = min(f["conf"].items(), key=lambda kv: (kv[1], kv[0])) if f["conf"] else None
-    n_ranking = len(f["ranking"])
+    n_ranking = f["engine_count"]
     engines_word = plural_noun(n_ranking, "engine")
     set_subtitle(
         s,
@@ -1807,7 +1827,7 @@ def slide_decisions(prs, f):
     )
     if f["crit_high_by_engine"]:
         worst = sorted(f["crit_high_by_engine"].items(), key=lambda kv: (-kv[1], kv[0]))[0]
-        n_crit_high = len(f["crit_high"])
+        n_crit_high = f["n_crit_high"]
         para(
             tf,
             _worst_engine_sentence(worst, n_crit_high),
@@ -1827,6 +1847,12 @@ MAX_RESOLVED_ROWS = 6
 # so it does not get the open-risk table's severity colour-coding -- the point
 # of this table is that these are no longer live, not how bad they used to be.
 _RESOLVED_SEVERITY_COLOR = MUTED
+
+
+def _row_emphasis(rows: list, color: Any) -> dict[tuple[int, int], Any]:
+    """The first-column colour of every body row of a table (row 0 is the header)."""
+    n_rows = len(rows)
+    return {(i, 0): color for i in range(1, n_rows)}
 
 
 def _resolved_engine_label(risk: dict[str, Any]) -> str:
@@ -1864,7 +1890,7 @@ def _slide_risk_no_open_risks(s, f) -> None:
     the same as "no migration risk".
     """
     resolved = f["resolved_risks"]
-    n_resolved = len(resolved)
+    n_resolved = f["n_resolved"]
     if not n_resolved:
         # Nothing to show at all: the caveat is the only real content on this
         # slide, so it sits in the lead card instead of being stranded alone at
@@ -1916,7 +1942,7 @@ def _slide_risk_no_open_risks(s, f) -> None:
         body_size=9.5,
         row_h=0.44,
         head_h=0.30,
-        emphasis={(i, 0): _RESOLVED_SEVERITY_COLOR for i in range(1, len(rows))},
+        emphasis=_row_emphasis(rows, _RESOLVED_SEVERITY_COLOR),
     )
     reminder = NO_OPEN_RISKS_CAVEAT
     if n_resolved > MAX_RESOLVED_ROWS:
@@ -1941,13 +1967,13 @@ def slide_risk(prs, f):
     # HIGH together), so the count named here must be the same set, not the
     # HIGH-only bucket of ``sev`` -- otherwise a CRITICAL-only run could claim
     # "all 0 CRITICAL/HIGH risks are X".
-    n_crit_high = len(f["crit_high"])
+    n_crit_high = f["n_crit_high"]
     mix = ", ".join(
         f"{f['sev'][k]} {k.lower() if k == UNRATED else k}"
         for k in (*SEVERITY_ORDER, UNRATED)
         if f["sev"].get(k)
     )
-    n_risks = len(f["risks"])
+    n_risks = f["n_risks"]
     sub = f"{n_risks} {plural_noun(n_risks, 'risk')}: {mix}"
     if f["one_root_cause"]:
         sub += f"  ·  {_root_cause_sentence(n_crit_high, f['high_type'])}"
@@ -2020,43 +2046,43 @@ def slide_risk(prs, f):
     return s
 
 
-def _wave_sync_summary(sw: dict[str, Any]) -> str:
+def _wave_sync_summary(sw: dict[str, Any], wf: dict[str, Any] | None = None) -> str:
     """One short, structured line stating the owned-vs-kept-in-sync split for
     a wave that moves data (#568 review round 2, Important 1).
 
-    Built from the wave's own structured fields (``table_count``,
-    ``table_owners``, and, for the merged DynamoDB/DocumentDB wave,
-    ``table_counts_by_engine``/``owned_counts_by_engine``) -- never from
-    truncating the gate's prose, which is how the deck/PDF lost this split
-    entirely: ``_wave_card_text`` clips the gate at 90 characters, so on
-    real data the card stopped mid-sentence before "keeps owning" or "kept
-    in sync" ever appeared, even though the round-1 fix had already put
-    both clauses in the gate text itself.
+    Built from the wave's facts (``wf``, #615): the tables each engine moves
+    and the tables kept in sync from an owner outside the wave -- never from
+    truncating the gate's prose, which ``_wave_card_text`` clips at 90
+    characters. #581: a table one engine of the merged wave serves from the
+    other is not "kept in sync from" anyone outside it; it moves with its
+    owner.
 
     ``""`` for a wave with nothing to move (the cache, search/analytics, or
     wave 1/Aurora, which carries the whole schema rather than a per-engine
     owned/synced split).
     """
+    if wf is None:
+        wf = wave_facts(sw)
     engines = [str(e) for e in (sw.get("engines") or []) if e]
-    if not engines or not sw.get("moves_from") or sw.get("homogeneity") is not None:
+    if not engines or not wf.get("migrating"):
         return ""
-    table_owners = sw.get("table_owners") or []
-    per_engine_served = sw.get("table_counts_by_engine")
-    per_engine_owned = sw.get("owned_counts_by_engine")
-    if per_engine_served and per_engine_owned and len(engines) > 1:
-        move_bits = [
-            f"{ENGINE_LABEL.get(e, e)} moves {int(per_engine_owned.get(e) or 0)} "
-            f"{plural_noun(int(per_engine_owned.get(e) or 0), 'table')}"
-            for e in engines
-        ]
-        text = "; ".join(move_bits) + "."
+    per_engine = wf.get("moving_by_engine") or {}
+    if len(engines) > 1 and per_engine:
+        text = (
+            "; ".join(
+                f"{ENGINE_LABEL.get(e, e)} moves {int(per_engine.get(e) or 0)} "
+                f"{plural_noun(int(per_engine.get(e) or 0), 'table')}"
+                for e in engines
+            )
+            + "."
+        )
     else:
-        served = int(sw.get("table_count") or 0)
-        owned = max(served - len(table_owners), 0)
+        owned = int(wf.get("moving_tables") or 0)
         text = f"Moves {owned} {plural_noun(owned, 'table')}."
-    if table_owners:
-        owner_names = sorted({ENGINE_LABEL.get(o["owner"], o["owner"]) for o in table_owners})
-        n = len(table_owners)
+    kept = wf.get("kept_in_sync") or []
+    if kept:
+        owner_names = sorted({ENGINE_LABEL.get(o["owner"], o["owner"]) for o in kept})
+        n = int(wf.get("kept_in_sync_tables") or 0)
         text += f" Kept in sync from {join_names(owner_names)}: {n} {plural_noun(n, 'table')}."
     return text
 

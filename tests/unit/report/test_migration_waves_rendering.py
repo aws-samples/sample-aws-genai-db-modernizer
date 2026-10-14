@@ -305,8 +305,10 @@ class TestEngineeringReportRoadmap:
                 "kind": "co_dependency",
             }
         ]
+        # The owner is outside the wave (#615: an owner inside it is a table
+        # the wave moves, never one it keeps in sync).
         rep["migration_waves"][1]["table_owners"] = [
-            {"table": "wordpress.wp_comments", "owner": "dynamodb", "sync": "OpenSearch Ingestion"}
+            {"table": "wordpress.wp_comments", "owner": "aurora_mysql", "sync": "CDC"}
         ]
         md = render_engineering_report_md(rep)
         assert "2 table names in the assignment did not resolve to a table or view" in md
@@ -317,7 +319,7 @@ class TestEngineeringReportRoadmap:
         # synced copy from instead.
         assert (
             "1 table kept in sync from their owner: "
-            "`wordpress.wp_comments` -> DynamoDB (OpenSearch Ingestion)" in md
+            "`wordpress.wp_comments` -> Aurora MySQL (CDC)" in md
         )
 
     def test_unresolved_names_note_agrees_in_number_when_singular(self):

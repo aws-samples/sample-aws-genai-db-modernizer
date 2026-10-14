@@ -213,6 +213,22 @@ Version History:
   the decision report, the engineering report and the deck can say which
   queries moved after approval, why, and how to override them. None for a
   report synthesized before this field existed.
+- 1.15 (2026-10-14, #615, ADR-032): Added optional ``facts`` (``ReportFacts``):
+  every customer-facing figure the deliverables print, computed once by
+  ``src.shared.report_facts.compute_report_facts`` at synthesis -- each
+  engine's role, workload, cached reads, source tables, tables that migrate
+  and monthly cost; the totals (engines, tables migrate, workload, cost); the
+  table basis behind the deck's "N tables mapped" bullet with its design
+  coverage (#533) and its mapped tables per role (#258's "21 migrate, 1 to the
+  cache layer"); each wave's served, moving and kept-in-sync tables, moving
+  from ``owned_counts_by_engine`` for the merged wave (#581), and wave 1's
+  view count next to the tables-only ``source_table_count`` (#578); the open
+  and resolved risk counts by severity, type and engine (and the one shared
+  CRITICAL/HIGH root cause, if any); the tied-query
+  count, the count of queries moved after approval (#629), and the
+  migration-wave count. Renderers read these fields and only format them. Backward
+  compatible -- ``None`` for a report synthesized before this field existed;
+  ``src.report.facts.report_facts`` computes the same block for one.
 """
 
 from datetime import datetime
@@ -592,6 +608,183 @@ class MigrationWave(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class EngineFacts(BaseModel):
+    """One engine of the target architecture, as every deliverable states it (#615)."""
+
+    engine: str = Field(..., description="Engine id")
+    role: Literal[
+        "Retained",
+        "Migration target",
+        "Cache layer",
+        "Search read model",
+        "Evaluated",
+        "Assessed",
+    ] = Field(..., description="The engine's role in the target architecture")
+    workload_percent: float | None = Field(
+        None, description="Share of the owned workload; None for the cache layer (#296)"
+    )
+    cached_queries: int | None = Field(None, ge=0, description="Cache layer only: reads fronted")
+    cached_call_share_percent: float | None = Field(
+        None, description="Cache layer only: share of calls those reads carry"
+    )
+    engine_source_tables: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Migration target only: source tables mapped to it (its schema design), or "
+            "served by its migration wave when no design has run yet (#524)"
+        ),
+    )
+    shared_source_tables: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Source tables its schema design serves, when more than source_tables: "
+            "includes tables also served by another engine (#257)"
+        ),
+    )
+    target_objects: int | None = Field(
+        None, ge=0, description="Target tables, indexes or key designs in its schema design"
+    )
+    tables_migrate: int = Field(
+        0, ge=0, description="Source tables that move to it (owned, not only served; #568)"
+    )
+    monthly_cost_usd: float | None = Field(None, ge=0)
+    rationale: str = Field("", description="Why the engine is in the target (#152)")
+
+
+class WaveFacts(BaseModel):
+    """The table figures one migration wave states (#615)."""
+
+    wave: int = Field(..., ge=0)
+    engines: list[str] = Field(default_factory=list)
+    migrating: bool = Field(
+        False,
+        description=(
+            "Moves tables off Aurora to a purpose-built engine (counts towards Tables "
+            "migrate); wave 1, the cache and read-model waves do not"
+        ),
+    )
+    served_tables: int = Field(..., ge=0, description="The wave's table_count")
+    moving_tables: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Tables one of the wave's engines durably owns, the sum of "
+            "owned_counts_by_engine for the merged wave (#581); for a read-model wave, "
+            "the served tables not kept in sync from an owner. None for wave 1"
+        ),
+    )
+    kept_in_sync_tables: int | None = Field(
+        None,
+        ge=0,
+        description="Tables owned outside the wave and kept in sync from it. None for wave 1",
+    )
+    moving_by_engine: dict[str, int] | None = Field(None)
+    served_by_engine: dict[str, int] | None = Field(None)
+    kept_in_sync: list[TableOwner] = Field(
+        default_factory=list,
+        description="One entry per kept-in-sync table, naming its owner outside the wave",
+    )
+    shared_in_wave: list[TableOwner] = Field(
+        default_factory=list,
+        description=(
+            "Tables one engine of this wave serves while another engine of the same wave "
+            "owns them (#581): they move, with their owner"
+        ),
+    )
+    views: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Wave 1 only: how many of served_tables are views; the rest are the "
+            "source_table_count tables (#578)"
+        ),
+    )
+    tables_only: int | None = Field(
+        None, ge=0, description="Wave 1 only: served_tables minus its views (#578)"
+    )
+    critical_high_risks: int = Field(
+        0, ge=0, description="Open CRITICAL/HIGH risks on the wave's engines"
+    )
+
+
+class NoMigrationFacts(BaseModel):
+    """The engines that need no data migration: the retained core and the cache layer."""
+
+    engines: list[str] = Field(default_factory=list)
+    workload_percent: float = Field(
+        0.0, ge=0, description="Workload they keep (cache layer excluded, it owns none)"
+    )
+    cached_call_share_percent: float = Field(0.0, ge=0)
+    critical_high_risks: int = Field(0, ge=0)
+
+
+class TableBasis(BaseModel):
+    """The figure behind "N tables mapped to a named target" (#530, #533)."""
+
+    basis_table_count: int = Field(
+        ..., ge=0, description='The "N tables mapped to a named target" figure itself'
+    )
+    mapped_tables: int = Field(0, ge=0, description="Tables a completed schema design mapped")
+    design_coverage: Literal["complete", "partial", "none"] = Field(...)
+    designed_engines: list[str] = Field(default_factory=list)
+    pending_engines: list[str] = Field(
+        default_factory=list, description="Migration targets with no completed schema design"
+    )
+    mapped_tables_by_role: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Mapped tables per role of their engine (#258: '21 migrate, 1 to the cache "
+            "layer'); 'Other' for an engine with no role in the architecture"
+        ),
+    )
+
+
+class ReportFacts(BaseModel):
+    """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
+
+    Built by ``src.shared.report_facts.compute_report_facts``; every
+    deliverable reads it through ``src.report.facts.report_facts`` and only
+    formats it.
+    """
+
+    projected_monthly_cost_usd: float = Field(
+        0.0, ge=0, description="The headline projected monthly cost (#358)"
+    )
+    source_table_count: int | None = Field(None, ge=0)
+    source_view_count: int | None = Field(
+        None, ge=0, description="Views wave 1 carries on top of the tables (#578)"
+    )
+    engine_count: int = Field(..., ge=0)
+    migration_wave_count: int = Field(
+        0, ge=0, description="The 'N migration waves' figure: the roadmap's waves"
+    )
+    engines: list[EngineFacts] = Field(default_factory=list)
+    tables_migrate: int = Field(..., ge=0, description='The "Tables migrate" figure')
+    workload_total_percent: float = Field(0.0, ge=0)
+    engine_cost_total_usd: float = Field(0.0, ge=0)
+    table_basis: TableBasis
+    waves: list[WaveFacts] = Field(default_factory=list)
+    no_migration: NoMigrationFacts = Field(default_factory=NoMigrationFacts)
+    open_risk_count: int = Field(0, ge=0)
+    open_risks_by_severity: dict[str, int] = Field(default_factory=dict)
+    critical_high_risk_count: int = Field(0, ge=0)
+    critical_high_risks_by_engine: dict[str, int] = Field(default_factory=dict)
+    critical_high_risk_types: list[str] = Field(
+        default_factory=list, description="The distinct risk_type of the CRITICAL/HIGH risks"
+    )
+    critical_high_root_cause: str | None = Field(
+        None, description="The one risk_type every CRITICAL/HIGH risk shares, if they share one"
+    )
+    open_risks_by_type: dict[str, int] = Field(default_factory=dict)
+    resolved_risk_count: int = Field(0, ge=0)
+    tied_query_count: int = Field(0, ge=0)
+    post_schema_reroute_count: int = Field(
+        0, ge=0, description="Queries moved after approval (#629, post_schema_reroutes)"
+    )
+
+
 class SynthesisOutputContract(BaseModel):
     """Output contract for the synthesis agent.
 
@@ -604,7 +797,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.14",
+        default="1.15",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -695,6 +888,14 @@ class SynthesisOutputContract(BaseModel):
             "so the decision report and the engineering report can list the same "
             "queries the approval gate does. Empty list when none; None for a report "
             "synthesized before this field existed."
+        ),
+    )
+    facts: ReportFacts | None = Field(
+        None,
+        description=(
+            "Every customer-facing figure, computed once (#615, ADR-032); the "
+            "deliverables only format it. None for a report synthesized before this "
+            "field existed."
         ),
     )
 

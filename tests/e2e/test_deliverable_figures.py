@@ -37,6 +37,7 @@ from typing import Any
 import pytest
 from playwright.sync_api import Page
 
+from src.shared.report_facts import compute_report_facts
 from tests.e2e.deliverable_figures import (
     SEVERITIES,
     Figures,
@@ -61,20 +62,7 @@ pytestmark = pytest.mark.deterministic
 # that one figure in that one deliverable is excused: any other mismatch still
 # fails, and an entry that no longer reproduces fails too, so it is removed
 # once its issue is fixed.
-KNOWN: dict[tuple[str, str, str], str] = {
-    # Wave 1 lists the view `badge_posts` with no schema prefix on top of the
-    # 311 analyzed tables: 312 "source tables and views".
-    ("discourse", "report.json", "wave1:served"): "#578",
-    ("discourse", "decision report", "wave1:served"): "#578",
-    ("discourse", "engineering report", "wave1:served"): "#578",
-    ("discourse", "analysis report", "wave1:served"): "#578",
-    # The same on the synthetic SQL Server sample: its one view,
-    # `vw_ActiveProduct`, on top of the 30 analyzed tables.
-    ("trailgear", "report.json", "wave1:served"): "#578",
-    ("trailgear", "decision report", "wave1:served"): "#578",
-    ("trailgear", "engineering report", "wave1:served"): "#578",
-    ("trailgear", "analysis report", "wave1:served"): "#578",
-}
+KNOWN: dict[tuple[str, str, str], str] = {}
 
 
 def _report_json(run: PipelineResult) -> dict[str, Any]:
@@ -95,6 +83,16 @@ def _waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     return [w for w in report.get("migration_waves") or [] if isinstance(w, dict)]
 
 
+def _whole_schema_required(exp: dict[str, Any]) -> set[str]:
+    """Wave 1 states its tables and views apart whenever it carries views (#578)."""
+    return {
+        k
+        for k in exp
+        if (k.endswith(":views") and exp[k])
+        or (k.endswith(":tables_only") and exp.get(k.replace("tables_only", "views")))
+    }
+
+
 def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req = {"risks:total", *(f"risks:{s}" for s in SEVERITIES)} if exp["risks:total"] else set()
     req |= {k for k in exp if k.startswith("cached_reads:")}
@@ -103,7 +101,11 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
 
 
 def _decision_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
-    req = _common_required(report, exp) | {"cost:total", "engine_count", "tables_migrate", "tied"}
+    req = (
+        _common_required(report, exp)
+        | _whole_schema_required(exp)
+        | {"cost:total", "engine_count", "tables_migrate", "tied"}
+    )
     req |= {f"cost:{e}" for e in final_architecture(report)}
     req |= {k for k in exp if k.startswith("tables:")}
     for w in _waves(report):
@@ -116,7 +118,9 @@ def _decision_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
 
 
 def _analysis_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
-    req = _common_required(report, exp) | {"cost:total", "engine_count"}
+    req = (
+        _common_required(report, exp) | _whole_schema_required(exp) | {"cost:total", "engine_count"}
+    )
     req |= {f"cost:{e}" for e in final_architecture(report)}
     req |= {k for k in exp if k.startswith("queries:")}
     for w in _waves(report):
@@ -129,7 +133,11 @@ def _analysis_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
 
 
 def _engineering_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
-    req = _common_required(report, exp) | {"cost:total", "engine_count", "tied"}
+    req = (
+        _common_required(report, exp)
+        | _whole_schema_required(exp)
+        | {"cost:total", "engine_count", "tied"}
+    )
     req |= {f"queries:{e}" for e in final_architecture(report) if e.startswith("aurora")}
     for w in _waves(report):
         req.add(f"wave{w['wave']}:queries")
@@ -211,6 +219,17 @@ def test_report_json_is_consistent(run: PipelineResult) -> None:
     problems = report_invariant_violations(report)
     problems += invariant_violations(report, as_observed, "report.json")
     _settle(run.db, "report.json", problems)
+
+
+def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> None:
+    """#615: report.json carries the facts block, and it is exactly what the
+    facts layer computes from the report's own fields -- the figures every
+    deliverable reads are the ones synthesis computed, once."""
+    report = _report_json(run)
+    stored = report.get("facts")
+    assert isinstance(stored, dict), "report.json has no facts block"
+    recomputed = compute_report_facts({k: v for k, v in report.items() if k != "facts"})
+    assert stored == recomputed
 
 
 def test_decision_report_figures(page: Page, run: PipelineResult) -> None:

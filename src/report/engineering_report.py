@@ -17,6 +17,7 @@ from .architecture import _architecture_engines, _mapping_split
 from .cache_layer import _cache_layer_md, cache_layer_text
 from .engine_choices import _reroutes_md, _tied_queries_md
 from .engine_roles import _RELATIONAL_ENGINES
+from .facts import report_facts
 from .formatting import (
     _completed_designs,
     _cost_baseline_text,
@@ -304,6 +305,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     ]
 
     target_engines = _architecture_engines(report)
+    facts = report_facts(report)
     if target_engines:
         # Why each engine is in the target, from the workload routed to it (#152)
         out += [
@@ -360,9 +362,10 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out.append("")
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
+    mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)
     if mappings:
         out += [
-            f"## Migration map ({len(mappings)} {plural_noun(len(mappings), 'table')}"
+            f"## Migration map ({mapped} {plural_noun(mapped, 'table')}"
             f"{_mapping_split(report, mappings)})",
             "",
             f"| Source table | Target engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
@@ -564,7 +567,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         for r in risks:
             eng, _ = _risk_engine_and_body(r.get("description"))
             by_eng.setdefault(eng, []).append(r)
-        out += [f"## Risk register ({len(risks)})", ""]
+        out += [f"## Risk register ({facts.get('open_risk_count', 0)})", ""]
         for eng, items in by_eng.items():
             # #572: eng is the raw [engine] tag _risk_engine_and_body parsed off the
             # description (or "(general)") -- display_engine leaves "(general)" as is
@@ -594,7 +597,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
     if resolved:
         # Analysis risks the effective assignment resolved (#221): listed so none
         # disappears without a record.
-        out += [f"## Resolved by the assignment ({len(resolved)})", ""]
+        out += [f"## Resolved by the assignment ({facts.get('resolved_risk_count', 0)})", ""]
         for r in resolved:
             _, body = _risk_engine_and_body(r.get("description"))
             where = resolved_risk_label(r)

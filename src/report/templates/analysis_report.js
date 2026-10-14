@@ -729,12 +729,13 @@
       if (!container) return;
       const rows = ((DATA.results && DATA.results.synthesis && DATA.results.synthesis.post_schema_reroutes) || []).filter(r => r && r.query_id).slice().sort((a, b) => String(a.query_id).localeCompare(String(b.query_id)));
       if (rows.length === 0) { container.innerHTML = ''; return; }
-      const noun = rows.length === 1 ? 'query' : 'queries';
+      const nRerouted = (DATA.results && DATA.results.synthesis && DATA.results.synthesis.facts && DATA.results.synthesis.facts.post_schema_reroute_count) || 0;
+      const noun = nRerouted === 1 ? 'query' : 'queries';
       const approved = rows[0].approved_version ? ' (version ' + rows[0].approved_version + ')' : '';
       const score = v => (typeof v === 'number' ? String(Number(v.toFixed(2))) : 'n/a');
       let html = '<div class="section" data-figure="post-schema-reroutes">';
-      html += '<div class="section-header">Moved after your approval (' + rows.length + ' ' + noun + ')</div>';
-      html += '<p class="section-desc">' + escapeHtml('After you approved the assignment' + approved + ', schema design review found that ' + rows.length + ' ' + noun + ' cannot run on the approved engine, so each moved to the best-scoring engine you kept.') + '</p>';
+      html += '<div class="section-header">Moved after your approval (' + nRerouted + ' ' + noun + ')</div>';
+      html += '<p class="section-desc">' + escapeHtml('After you approved the assignment' + approved + ', schema design review found that ' + nRerouted + ' ' + noun + ' cannot run on the approved engine, so each moved to the best-scoring engine you kept.') + '</p>';
       html += '<ul>';
       rows.forEach(r => {
         const why = FLAG_REASON_TEXT[r.reason_category] || FLAG_REASON_TEXT.other;
@@ -744,6 +745,24 @@
       html += '<p class="section-desc">' + escapeHtml(REROUTE_OVERRIDE_TEXT) + '</p>';
       html += '</div>';
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
+    function waveFacts(wave) {
+      const rows = DATA.results?.synthesis?.facts?.waves || [];
+      return rows.find(r => r.wave === wave.wave) || null;
+    }
+
+    function waveTableStats(wave) {
+      const wf = waveFacts(wave);
+      const served = wf ? wf.served_tables : (wave.table_count || 0);
+      if (!served) return '';
+      if (wf && wf.views && typeof wf.tables_only === 'number') {
+        return ' · ' + served + ' source tables and views (' + wf.tables_only + (wf.tables_only === 1 ? ' table, ' : ' tables, ') + wf.views + (wf.views === 1 ? ' view)' : ' views)');
+      }
+      if (wf && wf.kept_in_sync_tables && typeof wf.moving_tables === 'number') {
+        return ' · ' + served + ' served, ' + wf.moving_tables + ' move';
+      }
+      return ' · ' + served + ' source tables';
     }
 
     function buildMigrationRoadmap() {
@@ -761,15 +780,7 @@
         html += '<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">' + escapeHtml(wave.title) + '</div>';
         const basis = wave.share_basis === 'calls' ? '% of calls' : '% of query patterns';
         let stats = (wave.query_count || 0) + ' queries · ' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;
-        if (wave.table_count) {
-          const syncedCount = (wave.table_owners || []).length;
-          if (syncedCount) {
-            const movedCount = Math.max(wave.table_count - syncedCount, 0);
-            stats += ' · ' + wave.table_count + ' served, ' + movedCount + ' move';
-          } else {
-            stats += ' · ' + wave.table_count + ' source tables';
-          }
-        }
+        stats += waveTableStats(wave);
         html += '<div data-figure="wave-stats" style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">' + escapeHtml(stats) + '</div>';
         html += '<div style="font-size: 13px; margin-top: 6px;">' + escapeHtml(wave.rationale) + '</div>';
         if ((wave.tables || []).length > 0) {

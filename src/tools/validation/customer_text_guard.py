@@ -123,6 +123,8 @@ ID_FIELDS = frozenset(
         "serves_from",  # MigrationWave.serves_from
         "eliminated_engines",  # RealityCheckOutputContract.eliminated_engines
         "deciding_features",  # AuroraEngineChoice.deciding_features
+        "designed_engines",  # ReportFacts.table_basis.designed_engines (#615)
+        "pending_engines",  # ReportFacts.table_basis.pending_engines (#615)
         # Rule/pattern ids (exclusion rule ids, generated pattern ids like
         # "relational-aurora_mysql-<query_id>"): internal identifiers, not prose.
         "rule_id",  # ExclusionResult.rule_id (decision-trace shape)
@@ -168,6 +170,8 @@ ID_FIELD_PATHS = frozenset(
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
         ("table_owners", "owner"),  # TableOwner.owner (synthesis_output.py:429)
+        ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)
+        ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
         ("unresolved_names", "names"),  # UnresolvedNames.names, report.json's own key
         ("unresolved_table_names", "names"),  # UnresolvedNames.names, assignment.json's own key
         # table_mappings and the per-engine schema_designs projection

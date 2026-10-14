@@ -41,6 +41,7 @@ from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
 from src.storage.parallel import map_parallel
 
 from . import escaping, renderers
+from .facts import report_facts
 from .formatting import label_other_targets
 from .renderers import _cost_baseline_text, resolve_migration_waves
 
@@ -583,6 +584,10 @@ def build_export_data(
     # /results API, not an empty one.
     if not report.get("migration_waves"):
         report = {**report, "migration_waves": resolve_migration_waves(report) or None}
+    # #615: the client code reads every figure from synthesis.facts; a report
+    # synthesized before that field existed gets the same block here.
+    if not isinstance(report.get("facts"), dict):
+        report = {**report, "facts": report_facts(report)}
     # #459 round 3: cache_overlay.notes is the full cumulative audit trail --
     # customer-edit notes (full query hashes) and the legacy-migration note,
     # neither customer-facing. Nothing in this report or the live Results
@@ -920,29 +925,16 @@ def render_analysis_report_html(export_data: dict, filename: str = "") -> str:
 
     after = (synthesis.get("reality_check") or {}).get("after_distribution") or {}
     tco = synthesis.get("tco_analysis") or {}
-    cost_rows = tco.get("cost_breakdown") or []
     cache_overlay = synthesis.get("cache_overlay") or {}
     cache_engine = cache_overlay.get("engine")
     current_cost_stat, savings_stat = _interactive_cost_baseline_stats(tco)
-
-    def _finite_number(value: Any) -> bool:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
 
     # #358: the headline total is the report's own tco_analysis.projected_monthly_cost
     # -- one source of truth, matching the decision report and chat -- never a sum
     # recomputed from cost_breakdown (which can disagree, e.g. an eliminated engine
     # still listed there). Falls back to summing only the kept rows (owners + the
     # cache layer) when that field is missing (older artifacts predating it).
-    reported_total = tco.get("projected_monthly_cost")
-    if isinstance(reported_total, (int, float)) and not isinstance(reported_total, bool):
-        projected = float(reported_total)
-    else:
-        kept = set(after) | ({cache_engine} if cache_engine else set())
-        projected = sum(
-            r.get("monthly_cost_usd")
-            for r in cost_rows
-            if r.get("database") in kept and _finite_number(r.get("monthly_cost_usd"))
-        )
+    projected = float(report_facts(synthesis).get("projected_monthly_cost_usd") or 0.0)
     # #405: the cache layer gets its own schema design (and its own
     # access_patterns) too, but those patterns were never queries it owns --
     # counting them here double-counted the cache engine as if it were an owner

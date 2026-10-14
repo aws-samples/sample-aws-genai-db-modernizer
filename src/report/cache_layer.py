@@ -15,28 +15,6 @@ from .formatting import fmt_num, plural_noun
 from .roadmap import _moves_from_label, resolve_migration_waves
 
 
-def cache_layer_counts(report: dict[str, Any], engine: str) -> tuple[int, float] | None:
-    """``(cached queries, % of calls)`` of a cache-layer engine, or None (#296).
-
-    The cache owns no query, so it has no workload share; it is described by the hot
-    reads it fronts. ``None`` for a legacy report where the cache owned queries.
-    """
-    entry = next(
-        (
-            r
-            for r in report.get("ranking") or []
-            if isinstance(r, dict) and r.get("target") == engine
-        ),
-        {},
-    )
-    overlay = report.get("cache_overlay") or {}
-    if entry.get("role") != "cache_layer" and overlay.get("engine") != engine:
-        return None
-    n = entry.get("cache_overlay_queries", overlay.get("query_count", 0))
-    share = entry.get("cache_call_share_percent", overlay.get("call_share_percent", 0.0))
-    return int(n or 0), float(share or 0.0)
-
-
 def cache_wave_note(front: str) -> str:
     """The cache's role in the migration-waves roadmap (#296, reworded by #321).
 
@@ -108,11 +86,16 @@ def _cache_note(engines: list[dict[str, Any]], report: dict[str, Any]) -> str:
     if not counted:
         base = f"<b>{names}</b> is an additive cache layer."
         return f"{base} {overlay_notes}" if overlay_notes else base
-    n = sum(e["cached_queries"] for e in counted)
-    share = sum(e["cached_call_share"] for e in counted)
+    # One clause per cache engine, each its own facts (#615): never a sum here.
+    one = len(caches) == 1
+    fronts = "; ".join(
+        f"{'it' if one else esc(display_engine(e['engine']))} fronts "
+        f"{e['cached_queries']} hot {plural_noun(e['cached_queries'], 'read')} "
+        f"({esc(fmt_num(e['cached_call_share'], 1))}% of calls)"
+        for e in counted
+    )
     note = (
-        f"<b>{names}</b> is an additive cache layer: it fronts {n} hot "
-        f"{plural_noun(n, 'read')} ({esc(fmt_num(share, 1))}% of calls) cache-aside and owns "
+        f"<b>{names}</b> is an additive cache layer: {fronts} cache-aside and owns "
         "none of the workload: the engines listed above still own every cached read. "
         + cache_wave_note(front)
     )

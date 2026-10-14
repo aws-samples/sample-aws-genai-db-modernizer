@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 from src.report import renderers
+from src.shared.report_facts import risk_facts
 
 
 def _risk(risk_id: str, severity: str) -> dict:
@@ -90,21 +91,29 @@ def test_a_severity_at_zero_count_is_not_mentioned() -> None:
 # (``pptx_report.py``).
 
 
+def _counted(risks: list[dict]) -> dict[str, int]:
+    """The facts layer's per-severity counts (#615), which the posture line formats."""
+    counts: dict[str, int] = risk_facts({"risk_assessment": {"risks": risks}})[
+        "open_risks_by_severity"
+    ]
+    return counts
+
+
 def test_lowercase_severities_are_matched_case_insensitively() -> None:
     risks = [_risk("RISK-001", "critical"), _risk("RISK-002", "low")]
-    assert renderers._severity_counts_text(risks) == "1 critical, 1 low"
+    assert renderers._severity_counts_text(_counted(risks)) == "1 critical, 1 low"
 
 
 def test_an_unknown_severity_is_named_unrated_not_folded_into_low() -> None:
     risks = [_risk("RISK-001", "MEDIUM"), _risk("RISK-002", "SOMETHING_ELSE")]
-    text = renderers._severity_counts_text(risks)
+    text = renderers._severity_counts_text(_counted(risks))
     assert text == "1 medium, 1 unrated"
     assert "low" not in text
 
 
 def test_only_unknown_severities_still_sums_to_the_total() -> None:
     risks = [_risk("RISK-001", ""), _risk("RISK-002", "NOT_A_SEVERITY")]
-    text = renderers._severity_counts_text(risks)
+    text = renderers._severity_counts_text(_counted(risks))
     assert text == "2 unrated"
 
 

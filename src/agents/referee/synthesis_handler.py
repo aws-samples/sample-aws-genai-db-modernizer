@@ -655,6 +655,18 @@ def _write_synthesis_report(
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
+    # #615 (ADR-032): every customer-facing figure, computed once from the
+    # fields above; the deliverables only format it. The collected views let
+    # wave 1 state its tables and views apart (#578).
+    from src.shared.report_facts import compute_report_facts
+
+    schema = (data.collector or {}).get("database_schema") or {}
+    view_ids = {
+        str(v["view_id"])
+        for v in schema.get("views") or []
+        if isinstance(v, dict) and v.get("view_id")
+    }
+    output_data["facts"] = compute_report_facts(output_data, view_ids=view_ids)
 
     output = SynthesisOutputContract.model_validate(output_data)
     job_id = result["job_id"]

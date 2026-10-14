@@ -17,6 +17,7 @@ from .architecture import (
 from .cache_layer import _cache_note, cache_layer_text
 from .engine_choices import _reroutes_html, _tied_queries_html, _why_engines_were_dropped_html
 from .engine_roles import SEARCH_READ_MODEL
+from .facts import report_facts
 from .formatting import (
     DASH,
     _cost_baseline_text,
@@ -28,8 +29,8 @@ from .formatting import (
     plural_noun,
     plural_verb,
 )
-from .risks import NO_OPEN_RISKS_CAVEAT, _severity_counts_text, filtered_risks, resolved_risks
-from .roadmap import _roadmap_html, resolve_migration_waves
+from .risks import NO_OPEN_RISKS_CAVEAT, _severity_counts_text, filtered_risks
+from .roadmap import _roadmap_html
 
 _DECISION_CSS = """
 :root { --green:#00d563; --green-d:#00a84f; --navy:#1a1a2e; }
@@ -169,24 +170,10 @@ def render_decision_report_html(
     risk = report.get("risk_assessment") or {}
     tco = report.get("tco_analysis") or {}
     engines = _architecture_engines(report)
-    # #225: prefer the schema-design-based figure (#257/#258)
-    # when it has one; fall back to the wave-table count (resolve_migration_waves,
-    # the same fallback the deck tile uses) only when that figure is 0, so this
-    # sentence can't disagree with the roadmap just below it on the same page.
-    #
-    # #321 review (finding 4): wave 1 (Aurora) now also carries ``moves_from``,
-    # but its ``table_count`` is the *whole* collected schema, not a
-    # purpose-built-engine migration -- summing it in here would both double
-    # count against the later waves it's a superset of, and relabel "the
-    # whole schema moves to Aurora" as "tables migrate to a purpose-built
-    # engine". This figure keeps its pre-#321 meaning: tables that leave
-    # Aurora for a purpose-built engine, so wave 1 is excluded from the sum
-    # (see ``pptx_report.derive``'s identical fix for the deck tile).
-    migrated = sum(e["migrates"] for e in engines if e["role"] == "Migration target") or sum(
-        w.get("table_count", 0)
-        for w in resolve_migration_waves(report)
-        if w.get("moves_from") and w.get("homogeneity") is None
-    )
+    facts = report_facts(report)
+    # "Tables migrate" (#225, #321 review finding 4, #568, #581): one figure
+    # from the facts layer, the same the deck tile and the roadmap reconcile to.
+    migrated = int(facts.get("tables_migrate") or 0)
     risk_level = risk.get("overall_risk_level", "not assessed")
 
     out = [
@@ -216,7 +203,7 @@ def render_decision_report_html(
         f'<div class="tile slate"><p>Current monthly</p><p class=val>{esc(current_cost_text)}</p></div>',
         f'<div class="tile green"><p>Projected monthly</p><p class=val>{_fmt_usd(tco.get("projected_monthly_cost"))}</p></div>',
         f'<div class="tile green"><p>Savings</p><p class=val>{esc(savings_text)}</p></div>',
-        f'<div class="tile blue"><p>Engines</p><p class=val>{len(engines)}</p></div>',
+        f'<div class="tile blue"><p>Engines</p><p class=val>{facts.get("engine_count", 0)}</p></div>',
         f'<div class="tile slate"><p>Tables migrate</p><p class=val>{migrated}</p></div>',
         f'<div class="tile {_risk_tile_class(risk_level)}"><p>Overall risk</p><p class=val>{esc(risk_level)}</p></div>',
         "</div>",
@@ -263,15 +250,8 @@ def render_decision_report_html(
             "<table><thead><tr><th>Engine</th><th>Role</th><th>Workload</th>"  # nosemgrep: string-concat-in-list -- intentional multi-line string
             "<th>Scope</th><th>Est. monthly</th><th>Why</th></tr></thead><tbody>",
         ]
-        total_cost = 0.0
-        total_wl = 0.0
         for e in engines:
-            wl = e.get("workload")
             c = e.get("cost")
-            if isinstance(c, (int, float)):
-                total_cost += c
-            if isinstance(wl, (int, float)):
-                total_wl += wl
             # data-engine/data-figure: stable hooks for the deliverable-figures
             # e2e test (#573), which reads each figure back from the page.
             out.append(
@@ -285,10 +265,11 @@ def render_decision_report_html(
             )
         out.append(
             f"<tr data-figure=total><td colspan=2>Total</td>"
-            f"<td>{total_wl:.0f}%</td>"
+            f"<td>{fmt_num(facts.get('workload_total_percent') or 0, 0)}%</td>"
             f"<td data-figure=scope>{migrated} {plural_noun(migrated, 'table')} "
             f"{plural_verb(migrated, 'migrates', 'migrate')}</td>"
-            f"<td data-figure=monthly-cost>{_fmt_usd(total_cost)}</td><td></td></tr>"
+            f"<td data-figure=monthly-cost>{_fmt_usd(facts.get('engine_cost_total_usd'))}</td>"
+            "<td></td></tr>"
         )
         out.append("</tbody></table></div></div>")
         # First appearance of a fit figure in this report (inside "Why", e.g. "93%
@@ -346,7 +327,8 @@ def render_decision_report_html(
 
     risks = filtered_risks(report)
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
-    resolved_count = len(resolved_risks(report))
+    resolved_count = int(facts.get("resolved_risk_count") or 0)
+    open_count = int(facts.get("open_risk_count") or 0)
     # #645: always shown; an empty register still carries its caveat, as the deck does.
     out += ["<h2 class=section-title>Risk posture</h2>", "<div class=card><div class=card-b>"]
     if not risks:
@@ -365,7 +347,7 @@ def render_decision_report_html(
         )
         out.append(f"<p class=note>{esc(NO_OPEN_RISKS_CAVEAT)}</p>")
     if risks:
-        sev_txt = _severity_counts_text(risks)
+        sev_txt = _severity_counts_text(facts.get("open_risks_by_severity") or {})
         types = sorted(
             {
                 str(r.get("risk_type", "")).replace("_", " ").lower()
@@ -374,7 +356,7 @@ def render_decision_report_html(
             }
         )
         types_txt = ", ".join(types) if types else "several areas"
-        n_resolved = len(resolved_risks(report))
+        n_resolved = resolved_count
         # The resolved risks are not among the open ones; saying "(…; 4 resolved)"
         # inside the open count read as 4 of them being resolved (#258).
         resolved_txt = (
@@ -385,8 +367,8 @@ def render_decision_report_html(
         )
         out.append(
             f"<p data-figure=risk-summary>Overall risk <b>{esc(risk_level)}</b>. "
-            f"{len(risks)} open migration "
-            f"{plural_noun(len(risks), 'risk')} "
+            f"{open_count} open migration "
+            f"{plural_noun(open_count, 'risk')} "
             f"({sev_txt}) across {esc(types_txt)}.{resolved_txt} The full "
             "risk register, with "
             "per-engine detail and mitigations, and the migration trade-offs are in the "

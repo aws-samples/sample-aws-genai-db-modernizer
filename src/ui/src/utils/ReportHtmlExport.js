@@ -17,6 +17,7 @@ import { analysisConfidence, confidenceText, hasRoutedConfidence } from './ranki
 import { displayEngine } from './engineNames';
 import { WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL } from './workloadFitLabels';
 import { AURORA_BLAME_LABELS, reasonTextFor } from './auroraDesign';
+import { openRiskCountOf, waveTableStats } from './reportFacts';
 
 // A wave with more tables than this shows "+N more" rather than every name
 // inline (#225 -- discourse wave 4 lists 226 tables).
@@ -110,6 +111,8 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   const tableMappings = asArray(synthesis.table_mappings);
   const riskAssessment = synthesis.risk_assessment || {};
   const risks = asArray(riskAssessment.risks).filter(risk => riskHasContent(risk.description));
+  // #615: the open-risk count is a fact (the same list's count, computed once).
+  const openRiskCount = openRiskCountOf(synthesis, risks);
   // Analysis risks the effective assignment resolved (risk_assessment.resolved_risks).
   const resolvedRisks = asArray(riskAssessment.resolved_risks)
     .filter(risk => riskHasContent(risk.description))
@@ -285,14 +288,14 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
   </div>
 
   <div class="section-separator">
-    <h2>Risk Assessment — ${risks.length} risks identified (${overallRisk})</h2>
+    <h2>Risk Assessment — ${openRiskCount} risks identified (${overallRisk})</h2>
     <div class="desc">Technical, operational, and business risks identified during analysis with recommended mitigation strategies</div>
   </div>
 
   <div class="container">
     <div class="alert alert-${alertClass}">
       <strong>Overall Risk Level: ${overallRisk}</strong><br>
-      The migration has been assessed with an overall ${overallRisk} risk level based on ${risks.length} identified risks.
+      The migration has been assessed with an overall ${overallRisk} risk level based on ${openRiskCount} identified risks.
     </div>
 
     <h3>High Severity Risks</h3>
@@ -410,20 +413,7 @@ export const buildReportHtml = ({ resultsData, jobId, t, now = new Date() }) => 
           ${wave.share_basis === 'calls'
             ? html`${fixed(wave.workload_share_percent, 1, '0')}% of calls`
             : html`${fixed(wave.workload_share_percent, 1, '0')}% of query patterns`}
-          ${(() => {
-            // #568 review round 2, Suggestion 2: a wave with a served-but-
-            // not-owned subset (table_owners) states both halves -- "N
-            // served, M move" -- instead of a bare served count a reader
-            // has to compare against the Tables migrate tile themselves.
-            const tableCount = wave.table_count || 0;
-            if (!tableCount) return '';
-            const synced = asArray(wave.table_owners).length;
-            if (synced) {
-              const moved = Math.max(tableCount - synced, 0);
-              return html` · ${tableCount} served, ${moved} move`;
-            }
-            return html` · ${tableCount} source tables`;
-          })()}
+          ${waveTableStats(synthesis, wave)}
         </div>
         <p>${wave.rationale}</p>
         ${asArray(wave.tables).length > 0 ? html`

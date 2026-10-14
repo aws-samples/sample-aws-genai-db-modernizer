@@ -81,6 +81,39 @@ class TestGetResults:
         # #321: the relational move comes first, even in the legacy fallback.
         assert [w["engines"] for w in waves] == [["aurora_mysql"], ["dynamodb"]]
 
+    def test_backfills_facts_for_a_report_written_before_615(self, mock_services):
+        """#615: an older report gets the facts block the deliverables read, so
+        the UI exports print the merged wave's real move count (#581)."""
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [
+                {"target": "dynamodb", "workload_percent": 60.0},
+                {"target": "documentdb", "workload_percent": 40.0},
+            ],
+            "migration_waves": [
+                {
+                    "wave": 2,
+                    "engines": ["dynamodb", "documentdb"],
+                    "moves_from": ["aurora_mysql"],
+                    "tables": ["t1", "t2", "t3", "t4"],
+                    "table_count": 4,
+                    "table_owners": [
+                        {"table": "t2", "owner": "dynamodb", "sync": "CDC"},
+                        {"table": "t4", "owner": "aurora_mysql", "sync": "CDC"},
+                    ],
+                    "table_counts_by_engine": {"dynamodb": 2, "documentdb": 3},
+                    "owned_counts_by_engine": {"dynamodb": 2, "documentdb": 1},
+                }
+            ],
+        }
+        mock_services["s3"].read_triage.return_value = None
+        facts = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]["facts"]
+        wave = facts["waves"][0]
+        assert (wave["served_tables"], wave["moving_tables"], wave["kept_in_sync_tables"]) == (
+            4,
+            3,
+            1,
+        )
+
     def test_keeps_the_stored_waves_when_present(self, mock_services):
         stored = [{"wave": 1, "engines": ["elasticache"], "moves_from": [], "serves_from": []}]
         mock_services["s3"].read_synthesis.return_value = {

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
+from src.report.facts import report_facts
 from src.report.renderers import resolve_migration_waves
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
@@ -41,6 +42,12 @@ async def get_results(job_id: str = Depends(job_id_param)):
     # decision report and engineering report already derive, not an empty one.
     if not synthesis.get("migration_waves"):
         synthesis["migration_waves"] = resolve_migration_waves(synthesis) or None
+    # #615 (ADR-032): the UI and its HTML exports read every figure from
+    # synthesis.facts; a report synthesized before that field existed gets the
+    # same block here, from the same function, so no export falls back to a
+    # formula of its own.
+    if not isinstance(synthesis.get("facts"), dict):
+        synthesis["facts"] = report_facts(synthesis)
 
     triage = s3_service.read_triage(db_name, job_id)
 

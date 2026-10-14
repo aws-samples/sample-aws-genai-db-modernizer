@@ -9,6 +9,7 @@ from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.flag_reasons import flag_reason_text
 
 from . import escaping
+from .facts import report_facts
 from .formatting import plural_noun
 
 # A "Consolidated N queries from <engine> -> <absorber>: ... no in-scope
@@ -44,6 +45,7 @@ def _tied_queries_html(report: dict[str, Any]) -> list[str]:
     tied = [t for t in (report.get("tied_queries") or []) if isinstance(t, dict)]
     if not tied:
         return []
+    n = int(report_facts(report).get("tied_query_count") or 0)
     items = []
     for t in sorted(tied, key=lambda t: str(t.get("query_id", ""))):
         tied_names = ", ".join(esc(display_engine(e)) for e in sorted(t.get("tied_engines") or []))
@@ -56,7 +58,7 @@ def _tied_queries_html(report: dict[str, Any]) -> list[str]:
     return [
         "<section data-figure=tied-queries>",
         f"<h2 class=section-title>Pending engine choices "
-        f"({len(tied)} {esc(plural_noun(len(tied), 'query', 'queries'))})</h2>",
+        f"({n} {esc(plural_noun(n, 'query', 'queries'))})</h2>",
         "<div class=card><div class=card-b><ul>",
         *items,
         "</ul></div></div>",
@@ -182,8 +184,9 @@ def _tied_queries_md(report: dict[str, Any]) -> list[str]:
     tied = [t for t in (report.get("tied_queries") or []) if isinstance(t, dict)]
     if not tied:
         return []
+    n = int(report_facts(report).get("tied_query_count") or 0)
     out = [
-        f"## Unresolved engine ties ({len(tied)} {plural_noun(len(tied), 'query', 'queries')})",
+        f"## Unresolved engine ties ({n} {plural_noun(n, 'query', 'queries')})",
         "",
         "No routing rule decides between the engines listed for each of these "
         "queries; each is listed under a deterministic placeholder pending the "
@@ -221,16 +224,22 @@ def _fmt_score(value: Any) -> str:
     return "n/a" if not isinstance(value, (int, float)) else f"{value:g}"
 
 
+def _n_reroutes(report: dict[str, Any]) -> int:
+    """How many queries moved after approval: the facts layer's count (#615)."""
+    return int(report_facts(report).get("post_schema_reroute_count") or 0)
+
+
 def reroute_summary(report: dict[str, Any]) -> str | None:
     """One sentence stating how many queries moved after approval, or None."""
     rows = _reroutes(report)
     if not rows:
         return None
+    n = _n_reroutes(report)
     approved = rows[0].get("approved_version")
     version = f" (version {approved})" if approved else ""
     return (
         f"After you approved the assignment{version}, schema design review found that "
-        f"{len(rows)} {plural_noun(len(rows), 'query', 'queries')} cannot run on the "
+        f"{n} {plural_noun(n, 'query', 'queries')} cannot run on the "
         f"approved engine, so each moved to the best-scoring engine you kept."
     )
 
@@ -241,6 +250,7 @@ def _reroutes_html(report: dict[str, Any]) -> list[str]:
     rows = _reroutes(report)
     if not rows:
         return []
+    n = _n_reroutes(report)
     items = [
         f"<li><code>{esc(str(r.get('query_id', '?')))}</code>: "
         f"{esc(display_engine(str(r.get('from_engine', ''))))} to "
@@ -253,7 +263,7 @@ def _reroutes_html(report: dict[str, Any]) -> list[str]:
     return [
         "<section data-figure=post-schema-reroutes>",
         f"<h2 class=section-title>Moved after your approval "
-        f"({len(rows)} {esc(plural_noun(len(rows), 'query', 'queries'))})</h2>",
+        f"({n} {esc(plural_noun(n, 'query', 'queries'))})</h2>",
         "<div class=card><div class=card-b>",
         f"<p>{esc(reroute_summary(report) or '')}</p>",
         "<ul>",
@@ -270,8 +280,9 @@ def _reroutes_md(report: dict[str, Any]) -> list[str]:
     rows = _reroutes(report)
     if not rows:
         return []
+    n = _n_reroutes(report)
     out = [
-        f"## Moved after approval ({len(rows)} {plural_noun(len(rows), 'query', 'queries')})",
+        f"## Moved after approval ({n} {plural_noun(n, 'query', 'queries')})",
         "",
         reroute_summary(report) or "",
         "",

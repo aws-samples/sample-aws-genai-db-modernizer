@@ -1118,12 +1118,14 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      if (!container) return;\n';
   script += '      const rows = ((DATA.results && DATA.results.synthesis && DATA.results.synthesis.post_schema_reroutes) || []).filter(r => r && r.query_id).slice().sort((a, b) => String(a.query_id).localeCompare(String(b.query_id)));\n';
   script += '      if (rows.length === 0) { container.innerHTML = \'\'; return; }\n';
-  script += '      const noun = rows.length === 1 ? \'query\' : \'queries\';\n';
+  // #615: the count is the facts layer's (synthesis.facts.post_schema_reroute_count).
+  script += '      const nRerouted = (DATA.results && DATA.results.synthesis && DATA.results.synthesis.facts && DATA.results.synthesis.facts.post_schema_reroute_count) || 0;\n';
+  script += '      const noun = nRerouted === 1 ? \'query\' : \'queries\';\n';
   script += '      const approved = rows[0].approved_version ? \' (version \' + rows[0].approved_version + \')\' : \'\';\n';
   script += '      const score = v => (typeof v === \'number\' ? String(Number(v.toFixed(2))) : \'n/a\');\n';
   script += '      let html = \'<div class="section" data-figure="post-schema-reroutes">\';\n';
-  script += '      html += \'<div class="section-header">Moved after your approval (\' + rows.length + \' \' + noun + \')</div>\';\n';
-  script += '      html += \'<p class="section-desc">\' + escapeHtml(\'After you approved the assignment\' + approved + \', schema design review found that \' + rows.length + \' \' + noun + \' cannot run on the approved engine, so each moved to the best-scoring engine you kept.\') + \'</p>\';\n';
+  script += '      html += \'<div class="section-header">Moved after your approval (\' + nRerouted + \' \' + noun + \')</div>\';\n';
+  script += '      html += \'<p class="section-desc">\' + escapeHtml(\'After you approved the assignment\' + approved + \', schema design review found that \' + nRerouted + \' \' + noun + \' cannot run on the approved engine, so each moved to the best-scoring engine you kept.\') + \'</p>\';\n';
   script += '      html += \'<ul>\';\n';
   script += '      rows.forEach(r => {\n';
   script += '        const why = FLAG_REASON_TEXT[r.reason_category] || FLAG_REASON_TEXT.other;\n';
@@ -1133,6 +1135,28 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      html += \'<p class="section-desc">\' + escapeHtml(REROUTE_OVERRIDE_TEXT) + \'</p>\';\n';
   script += '      html += \'</div>\';\n';
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
+  // #615: a wave's table figures, read from synthesis.facts.waves (served,
+  // moving, kept in sync; wave 1's tables and views). Formats only: both
+  // callers' data carry facts (the /results API and the report exporter fill
+  // them in for an older report), the same rule as reportFacts.waveTableStats.
+  script += '    function waveFacts(wave) {\n';
+  script += '      const rows = DATA.results?.synthesis?.facts?.waves || [];\n';
+  script += '      return rows.find(r => r.wave === wave.wave) || null;\n';
+  script += '    }\n';
+  script += '\n';
+  script += '    function waveTableStats(wave) {\n';
+  script += '      const wf = waveFacts(wave);\n';
+  script += '      const served = wf ? wf.served_tables : (wave.table_count || 0);\n';
+  script += '      if (!served) return \'\';\n';
+  script += '      if (wf && wf.views && typeof wf.tables_only === \'number\') {\n';
+  script += '        return \' · \' + served + \' source tables and views (\' + wf.tables_only + (wf.tables_only === 1 ? \' table, \' : \' tables, \') + wf.views + (wf.views === 1 ? \' view)\' : \' views)\');\n';
+  script += '      }\n';
+  script += '      if (wf && wf.kept_in_sync_tables && typeof wf.moving_tables === \'number\') {\n';
+  script += '        return \' · \' + served + \' served, \' + wf.moving_tables + \' move\';\n';
+  script += '      }\n';
+  script += '      return \' · \' + served + \' source tables\';\n';
   script += '    }\n';
   script += '\n';
   script += '    function buildMigrationRoadmap() {\n';
@@ -1151,15 +1175,9 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '        html += \'<div style="font-size: 14px; font-weight: 700; margin-top: 6px;">\' + escapeHtml(wave.title) + \'</div>\';\n';
   script += '        const basis = wave.share_basis === \'calls\' ? \'% of calls\' : \'% of query patterns\';\n';
   script += '        let stats = (wave.query_count || 0) + \' queries · \' + Number(wave.workload_share_percent || 0).toFixed(1) + basis;\n';
-  script += '        if (wave.table_count) {\n';
-  script += '          const syncedCount = (wave.table_owners || []).length;\n';
-  script += '          if (syncedCount) {\n';
-  script += '            const movedCount = Math.max(wave.table_count - syncedCount, 0);\n';
-  script += '            stats += \' · \' + wave.table_count + \' served, \' + movedCount + \' move\';\n';
-  script += '          } else {\n';
-  script += '            stats += \' · \' + wave.table_count + \' source tables\';\n';
-  script += '          }\n';
-  script += '        }\n';
+  // #615: the table figures come from synthesis.facts (one per wave, computed
+  // once at synthesis); waveTableStats only formats them (#578, #581).
+  script += '        stats += waveTableStats(wave);\n';
   script += '        html += \'<div data-figure="wave-stats" style="font-size: 13px; color: var(--color-text-secondary); margin-top: 2px;">\' + escapeHtml(stats) + \'</div>\';\n';
   script += '        html += \'<div style="font-size: 13px; margin-top: 6px;">\' + escapeHtml(wave.rationale) + \'</div>\';\n';
   script += '        if ((wave.tables || []).length > 0) {\n';
