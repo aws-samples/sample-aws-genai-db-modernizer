@@ -490,4 +490,8 @@ def run_opensearch_schema_agent(
         elapsed = time.time() - t0
         trace.log_designer(iteration + 1, elapsed, design_output)
 
-    return design_output, trace.to_dict()
+    trace_dict = trace.to_dict()
+    usage = getattr(model, "usage", None)
+    if isinstance(usage, dict):  # token usage over every designer and PE call (#626)
+        trace_dict["token_usage"] = dict(usage)
+    return design_output, trace_dict

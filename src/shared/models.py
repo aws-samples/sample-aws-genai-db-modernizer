@@ -28,6 +28,11 @@ instruction instead of a 400 (``src/shared/role_bedrock_model.py``), and roles w
 strict mode also turn on ``strict_tools`` (schema-valid tool input on the first
 try).
 
+Roles with ``prompt_cache`` (schema design, #626) send Bedrock cache points
+after the tool definitions and after the system prompt, the prefix every
+designer and PE turn repeats. A prefix shorter than the model's minimum
+(:func:`min_cacheable_tokens`) is simply not cached; nothing fails.
+
 The default switch to the 5.5 family is a separate, measured change; the 5.5
 IDs below are here so tests (and env overrides) can exercise them.
 """
@@ -104,6 +109,11 @@ class RoleSpec:
     #: Send ``strict_tools`` where forced ``tool_choice`` is rejected. Needs
     #: every tool schema in the call to compile under Bedrock strict mode.
     strict_tools: bool = False
+    #: Bedrock prompt caching (#626): cache points after the tool definitions
+    #: and after the system prompt, so the stable prefix every turn resends
+    #: (output-contract tool schema, skill text) bills at the cache-read rate.
+    #: The conversation itself is not cached. Claude model IDs only.
+    prompt_cache: bool = False
 
 
 ROLE_SPECS: dict[Role, RoleSpec] = {
@@ -125,6 +135,10 @@ ROLE_SPECS: dict[Role, RoleSpec] = {
         # ``minimum`` (x6) and ``maxItems``, and has ~35 optional properties;
         # the designers also carry many other tools whose schemas are compiled.
         strict_tools=False,
+        # Every designer and PE turn resends the same skill text and contract
+        # tool schema (#626). Parallel groups start together, so each group's
+        # first call writes the entry; later turns and later groups read it.
+        prompt_cache=True,
     ),
     # Reality-check and synthesis executive summaries (a few sentences).
     Role.SUMMARY: RoleSpec(
@@ -262,6 +276,62 @@ def _budget_profile(family: str, tier: str) -> ModelProfile:
 
 
 # ---------------------------------------------------------------------------
+# Prompt caching
+# ---------------------------------------------------------------------------
+
+
+def min_cacheable_tokens(model_id: str) -> int | None:
+    """The shortest prefix (tokens) ``model_id`` caches, or None if unknown.
+
+    A cache point on a shorter prefix is silently ignored: no error, no cache
+    write, no cache read. Values from Anthropic's prompt-caching reference; the
+    minimum is not monotonic across generations (Opus 4.6 needs 4096, 5.x 512).
+    """
+    legacy = _LEGACY_NAMED.search(model_id)
+    if legacy:
+        return 2048 if legacy["tier"] == "haiku" else 1024
+    match = _NAMED.search(model_id)
+    if not match:
+        return None
+    tier, version = match["tier"], (int(match["major"]), int(match["minor"] or 0))
+    if version >= (5, 0):
+        return 1024 if (tier, version) == ("sonnet", (5, 0)) else 512
+    if tier == "haiku":
+        return 4096 if version >= (4, 5) else 2048
+    if tier == "opus":
+        if version in ((4, 5), (4, 6)):
+            return 4096
+        if version == (4, 7):
+            return 2048
+    return 1024
+
+
+def _cache_config(spec: RoleSpec, profile: ModelProfile) -> Any:
+    """The Strands ``CacheConfig`` for ``spec``, or None when the role or model has none.
+
+    ``strategy="auto"`` places cache points only on Claude model IDs; with
+    ``tools_ttl=True`` Strands adds one after the tool definitions and one after
+    the system prompt (Bedrock renders tools, then system, then messages, so the
+    second covers both). Strands would also put one on the last user turn;
+    :class:`~src.shared.role_bedrock_model.RoleBedrockModel` drops that one,
+    because a designer prompt or a PE review input is sent once and a cache
+    write on it is a 25% surcharge nothing reads back. The TTL is Bedrock's
+    default (5 minutes), refreshed by every read.
+    """
+    if not spec.prompt_cache or profile.family == "unknown":
+        return None
+    try:
+        from strands.models.model import CacheConfig
+    except ImportError:  # a Strands release older than CacheConfig: no caching
+        logger.warning("strands has no CacheConfig; schema-design prompt caching is off")
+        return None
+    try:
+        return CacheConfig(strategy="auto", tools_ttl=True)  # type: ignore[call-arg]
+    except TypeError:  # a Strands release older than tools_ttl: system + messages only
+        return CacheConfig(strategy="auto")
+
+
+# ---------------------------------------------------------------------------
 # Request builders
 # ---------------------------------------------------------------------------
 
@@ -330,6 +400,9 @@ def bedrock_model_kwargs(
         kwargs["additional_request_fields"] = fields
     if spec.strict_tools and not profile.accepts_forced_tool_choice:
         kwargs["strict_tools"] = True
+    cache_config = _cache_config(spec, profile)
+    if cache_config is not None:
+        kwargs["cache_config"] = cache_config
     return kwargs
 
 

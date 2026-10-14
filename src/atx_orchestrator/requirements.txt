@@ -6,7 +6,9 @@ agent-builder-mcp-client-aws-transform>=1.0.0
 
 # Project core dependencies (subset needed inside the container)
 # Full list lives in pyproject.toml — only runtime deps are listed here.
-strands-agents>=1.0.0
+# >=1.56: CacheConfig(tools_ttl=...) and the BedrockModel hooks RoleBedrockModel
+# overrides (src/shared/role_bedrock_model.py fails at import without them).
+strands-agents>=1.56.0,<2
 # LadybugDB — embedded graph DB backing the context-graph read-model that the
 # assessment-core and synthesis boundaries build + publish (graph_transport /
 # src.graph). Required in the agent image: without it, `from src.graph import

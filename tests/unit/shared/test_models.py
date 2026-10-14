@@ -211,6 +211,7 @@ def test_unknown_model_gets_the_minimal_request_and_a_warning(caplog):
 
 def test_schema_design_default_shape_unchanged():
     kwargs = bedrock_model_kwargs(Role.SCHEMA_DESIGN)
+    kwargs.pop("cache_config")  # prompt caching (#626), pinned in test_prompt_cache.py
     assert kwargs == {
         "model_id": "us.anthropic.claude-opus-4-6-v1",
         "max_tokens": 65536,
@@ -279,9 +280,12 @@ def test_default_builders_send_exactly_the_plain_bedrock_request(role):
     messages = [{"role": "user", "content": [{"text": "hi"}]}]
     spec = {"name": "out", "description": "d", "inputSchema": {"json": {"type": "object"}}}
     for choice in (None, {"auto": {}}, {"tool": {"name": "out"}}):
-        assert model.format_request(messages, [spec], None, choice) == plain.format_request(
-            messages, [spec], None, choice
-        )
+        expected = plain.format_request(messages, [spec], None, choice)
+        # The one intended difference (#626): with prompt caching on, the role
+        # model caches the stable prefix only, never the last user turn.
+        for message in expected["messages"]:
+            message["content"] = [b for b in message["content"] if "cachePoint" not in b]
+        assert model.format_request(messages, [spec], None, choice) == expected
 
 
 # ---------------------------------------------------------------------------
