@@ -17,6 +17,10 @@ Closes #
 - [ ] Documentation
 - [ ] Refactor
 
+## Evidence
+
+<!-- For each behavior claim above, paste the command and its output (trimmed) or a rendered excerpt. Do not assert behavior in prose. -->
+
 ## Checklist
 
 - [ ] Tests added/updated (if applicable)
