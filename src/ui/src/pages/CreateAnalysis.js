@@ -35,6 +35,7 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
+import { isValidDatabaseName } from "../utils/databaseName";
 function SourceDatabaseSection({ formData, setFormData, errors }) {
   const { t } = useTranslation();
   const rdsOptions = [
@@ -137,6 +138,7 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
         </FormField>
 
         <FormField
+          constraintText={t("create-analysis.source.database-name.constraint-text")}
           description={t("create-analysis.source.database-name.description")}
           label={t("create-analysis.source.database-name.label")}
           errorText={errors.databaseName}
@@ -866,6 +868,8 @@ function DatabaseAnalysisForm() {
 
       if (!formData.databaseName.trim()) {
         newErrors.databaseName = "Database name is required";
+      } else if (!isValidDatabaseName(formData.databaseName)) {
+        newErrors.databaseName = t("create-analysis.source.database-name.error-text");
       }
 
       if (formData.credentialsType === "secrets-arn") {
@@ -931,6 +935,8 @@ function DatabaseAnalysisForm() {
     // Validate database name (required)
     if (!formData.databaseName.trim()) {
       newErrors.databaseName = "Database name is required";
+    } else if (!isValidDatabaseName(formData.databaseName)) {
+      newErrors.databaseName = t("create-analysis.source.database-name.error-text");
     }
 
     // Validate credentials based on type
@@ -1366,6 +1372,8 @@ function DatabaseAnalysisForm() {
   const handleSubmit = useCallback(() => {
     createAssessment();
   }, [createAssessment]);
+  // An empty name is reported by handleOfflineUpload; this flags a typed one the API would reject
+  const offlineNameInvalid = offlineDatabaseName.trim() !== "" && !isValidDatabaseName(offlineDatabaseName);
   return (
     <>
       <AppHeader />
@@ -1457,7 +1465,12 @@ function DatabaseAnalysisForm() {
 
                 <Container header={<Header variant="h2">{t("create-analysis.offline.database-info.title")}</Header>}>
                   <ColumnLayout columns={2} variant="text-grid">
-                    <FormField label={t("create-analysis.offline.database-info.database-name-label")} description={t("create-analysis.offline.database-info.database-name-description")} errorText={!offlineDatabaseName.trim() && errors.offlineDatabaseName}>
+                    <FormField
+                      label={t("create-analysis.offline.database-info.database-name-label")}
+                      description={t("create-analysis.offline.database-info.database-name-description")}
+                      constraintText={t("create-analysis.source.database-name.constraint-text")}
+                      errorText={offlineNameInvalid ? t("create-analysis.source.database-name.error-text") : undefined}
+                    >
                       <Input
                         placeholder="my_database"
                         value={offlineDatabaseName}
@@ -1540,6 +1553,7 @@ function DatabaseAnalysisForm() {
                         variant="normal"
                         onClick={handleOfflineUpload}
                         loading={loading}
+                        disabled={offlineNameInvalid}
                         iconName="upload"
                       >
                         {t("create-analysis.offline.upload.upload-button")}
