@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from src.agents.referee.query_shape import CRUD, ORDERED_ONE_TO_MANY, single_table_access_shape
 from src.contracts.analysis_output import WorkloadAnalysis
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
 from src.tools.analysis.aurora_mysql_analysis_tools import build_aurora_mysql_decision_trace
@@ -284,14 +285,25 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         assert ap is not None
         assert ap.query_ids == ["point", "first"]
 
-    def test_a_skipped_key_order_page_neither_clears_nor_qualifies_the_table(self):
-        """#782: ``LIMIT 1 OFFSET $1`` reads an unknown position, so an unknown row --
-        not a key lookup, and not relational either: neutral, so the point read
-        next to it still takes the penalty, and the page is covered by it."""
-        queries = [
-            _q("point", "SELECT * FROM t1 WHERE id = $1"),
-            _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1"),
-        ]
+    def test_one_row_at_an_offset_is_a_key_lookup(self):
+        """Maintainer decision of 2026-10-15 (#857, supersedes the #782 pin):
+        ``ORDER BY <primary key> LIMIT 1 OFFSET $1`` reads one row from a known
+        table, so it is a key-value lookup (CRUD), not a neutral read. The rule
+        still fires and covers it, now as CRUD evidence."""
+        page = _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1")
+        assert single_table_access_shape(page, ["id"]) == CRUD
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
+
+    def test_a_multi_row_page_at_an_offset_neither_clears_nor_qualifies_the_table(self):
+        """#782, unchanged by #857: ``LIMIT 5 OFFSET $1`` is a page of the key
+        order -- neutral, so the point read next to it still takes the penalty,
+        and the page is covered by it."""
+        page = _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 5 OFFSET $1")
+        assert single_table_access_shape(page, ["id"]) == ORDERED_ONE_TO_MANY
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
         ap = _anti05(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
         assert ap.query_ids == ["point", "page"]
@@ -547,14 +559,25 @@ class TestSingleAccessPatternRequiresSingleTableCrud:
         assert ap is not None
         assert ap.query_ids == ["point", "first"]
 
-    def test_a_skipped_key_order_page_neither_clears_nor_qualifies_the_table(self):
-        """#782: ``LIMIT 1 OFFSET $1`` reads an unknown position, so an unknown row --
-        not a key lookup, and not relational either: neutral, so the point read
-        next to it still takes the penalty, and the page is covered by it."""
-        queries = [
-            _q("point", "SELECT * FROM t1 WHERE id = $1"),
-            _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1"),
-        ]
+    def test_one_row_at_an_offset_is_a_key_lookup(self):
+        """Maintainer decision of 2026-10-15 (#857, supersedes the #782 pin):
+        ``ORDER BY <primary key> LIMIT 1 OFFSET $1`` reads one row from a known
+        table, so it is a key-value lookup (CRUD), not a neutral read. The rule
+        still fires and covers it, now as CRUD evidence."""
+        page = _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1")
+        assert single_table_access_shape(page, ["id"]) == CRUD
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
+
+    def test_a_multi_row_page_at_an_offset_neither_clears_nor_qualifies_the_table(self):
+        """#782, unchanged by #857: ``LIMIT 5 OFFSET $1`` is a page of the key
+        order -- neutral, so the point read next to it still takes the penalty,
+        and the page is covered by it."""
+        page = _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 5 OFFSET $1")
+        assert single_table_access_shape(page, ["id"]) == ORDERED_ONE_TO_MANY
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), page]
         ap = _anti06(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
         assert ap.query_ids == ["point", "page"]

@@ -110,11 +110,13 @@ _LITERAL_PREFIX_LIKE_RE = re.compile(r"\bI?LIKE\s+'[^%_']", re.IGNORECASE)
 # ``LIMIT n OFFSET m`` / ``OFFSET m LIMIT n``, ``[OFFSET m ROW(S)] FETCH
 # FIRST|NEXT [n] ROW(S) ONLY`` (no count means 1; T-SQL requires the OFFSET
 # clause) and ``SELECT TOP n`` / ``TOP (n)`` [``PERCENT``] [``WITH TIES``].
-# Only a literal one-row limit with no skip (no offset, or a literal
-# ``OFFSET 0``) is a first-row read. A skip (``OFFSET 5``, ``OFFSET $1``,
-# ``LIMIT 5, 1``) pages through the key order, ``TOP (1) PERCENT`` is a share
-# of the table, and ``WITH TIES`` can return more than one row: all three are
-# ordered 1:M reads.
+# A literal one-row limit is a single-row read at any offset, literal or
+# placeholder (``LIMIT 1 OFFSET 5``, ``LIMIT 1 OFFSET $1``, MySQL ``LIMIT 5,
+# 1``, ``OFFSET @skip ROWS FETCH NEXT 1 ROW ONLY``): one row from a known
+# table is a key-value lookup (maintainer decision of 2026-10-15, #857; it
+# supersedes the 2026-10-14 reading that any skip is neutral). ``TOP (1)
+# PERCENT`` is a share of the table and ``WITH TIES`` can return more than
+# one row: both are ordered 1:M reads, with or without an offset.
 #
 # A bind-parameter limit (``LIMIT $1``/``LIMIT ?``) counts as ``LIMIT 1`` only
 # with evidence that the bound value is 1 (``limit_value``). No collector
@@ -165,8 +167,9 @@ _TRAILING_LIMIT_RES = (
 # The exception is a lock that skips rows: ``SKIP LOCKED`` (PostgreSQL, MySQL
 # 8) and T-SQL's ``READPAST`` hint return the first row nobody else holds --
 # the work-queue claim pattern -- not the row the key or the key order names.
-# The row is unknown, so the 2026-10-14 rule for an unknown row applies (review
-# of #840): such a read is at most a neutral ordered 1:M read, never a
+# The row is unknown -- unlike an offset, which names a position in a known
+# order (#857) -- so (review of #840) such a read, with or without an
+# offset, is at most a neutral ordered 1:M read, never a
 # key-value lookup; relational evidence (a range, an aggregate, a non-key
 # order) stays relational.
 #
@@ -394,7 +397,7 @@ def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]
     literal, the placeholder (``$1``, ``?``, ...) for a bind parameter, ``"1"``
     for a ``FETCH`` with no count, ``"n PERCENT"`` / ``"n WITH TIES"`` when
     ``n`` is not a plain row count. The offset is not part of
-    the answer; :func:`is_primary_key_first_row_read` reads it. Each sort
+    the answer and does not change the shape (#857). Each sort
     column may be table-qualified and quoted, and may be ASC or DESC; the
     comparison with ``primary_key`` is case-insensitive. An empty
     ``primary_key`` (no key in the schema) never matches.
@@ -413,21 +416,21 @@ def is_primary_key_first_row_read(
 
     :func:`primary_key_ordered_limit` with a limit of 1 -- a literal ``1``, or a
     bind parameter whose bound value ``limit_value`` (when a collector supplies
-    it) is 1 -- and no skip: no offset, or a literal ``OFFSET 0``. With no
-    evidence (``None``) a parameterised limit is not a first-row read; a
-    skipped-to row (``OFFSET 5``, ``OFFSET $1``: an unknown position is an
-    unknown row), ``TOP (1) PERCENT`` and ``WITH TIES`` (which can return more
-    rows than ``n``) never are, and neither is a read that skips locked rows
-    (``SKIP LOCKED``, ``READPAST``: the first row nobody else holds is an
-    unknown row, review of #840). Offsets, like limits, compare as numbers
-    (``OFFSET 00`` is ``OFFSET 0``).
+    it) is 1 -- at any offset: none, a literal (``OFFSET 5``, ``LIMIT 5, 1``)
+    or a placeholder (``OFFSET $1``). One row from a known table is a
+    key-value lookup wherever it sits in the key order (maintainer decision
+    of 2026-10-15, #857), so "first row" here means the single row the read
+    returns. With no evidence (``None``) a parameterised limit is not a
+    single-row read; ``TOP (1) PERCENT`` and ``WITH TIES`` (which can return
+    more rows than ``n``) never are, and neither is a read that skips locked
+    rows (``SKIP LOCKED``, ``READPAST``: the first row nobody else holds is
+    an unknown row, review of #840).
     """
     limit = _primary_key_ordered_row_limit(query_text, primary_key)
     if limit is None or skips_locked_rows(query_text):
         return False
-    n, offset, qualifier = limit
-    skipped = offset is not None and not (offset.isdigit() and int(offset) == 0)
-    if qualifier or skipped:
+    n, _offset, qualifier = limit
+    if qualifier:
         return False
     bound = int(n) if n.isdigit() else limit_value
     return bound == 1
@@ -508,16 +511,17 @@ def single_table_access_shape(
     - a ``SELECT`` with no key predicate has no ``ORDER BY`` and no range
       predicate: ordering or ranging over the whole table is not a simple-key
       read. An unordered, unfiltered read (a full scan) still is, and so is a
-      first-row read (``LIMIT 1``) in the table's own primary-key order
+      single-row read (``LIMIT 1``, at any offset, #857) in the table's own
+      primary-key order
       (:func:`is_primary_key_first_row_read`, given ``primary_key``, the
       table's primary-key columns from the schema, and ``limit_value``, the
       bound value of a parameterised limit when known; without the key no
       ordered, unkeyed read qualifies).
 
     ``ORDERED_ONE_TO_MANY`` for the same primary-key-ordered read with a limit
-    other than 1 (or a bind parameter with no evidence it is 1), a skip
-    (``OFFSET m``, ``LIMIT m, n``), ``TOP n PERCENT`` or ``WITH TIES``. ``RELATIONAL`` for
-    everything else.
+    other than 1 (or a bind parameter with no evidence it is 1), ``TOP n
+    PERCENT`` or ``WITH TIES``, at any offset. ``RELATIONAL`` for everything
+    else.
 
     ``source`` is the collected database (#835), see
     :func:`~src.agents.referee.utility_statements.is_utility_statement`.

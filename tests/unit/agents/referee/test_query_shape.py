@@ -116,6 +116,8 @@ class TestIsSingleTableCrud:
 # CRUD -- for the schema's primary key only, never a hard-coded ``id``.
 # ``ORDER BY <primary key> LIMIT n`` with n > 1 (or a bind parameter with no
 # evidence it is 1) is an ordered 1:M read: neither CRUD nor relational.
+# The maintainer decision of 2026-10-15 (#857): an offset, literal or
+# placeholder, does not change that -- one row at any offset is still CRUD.
 PK_FIRST_ROW_SQL = [
     ("SELECT * FROM t1 ORDER BY id LIMIT 1", ["id"], None),
     ("SELECT * FROM t1 ORDER BY id DESC LIMIT 1", ["id"], None),
@@ -144,6 +146,25 @@ PK_FIRST_ROW_SQL = [
     ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 00", ["id"], None),
     ("SELECT * FROM [t1] ORDER BY [ID] OFFSET 00 ROWS FETCH NEXT 01 ROWS ONLY", ["id"], None),
     ("SELECT * FROM `t1` ORDER BY `id` LIMIT 00, 1", ["id"], None),
+    # Maintainer decision of 2026-10-15 (#782, #857): one row from a known table
+    # at any offset, literal or placeholder, is a key-value lookup. These were
+    # ordered 1:M reads under the 2026-10-14 reading ("any skip is neutral").
+    ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 5", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id DESC LIMIT 1 OFFSET ?", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 5 ROWS", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id OFFSET 5 LIMIT 1", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id OFFSET $1 LIMIT 1", ["id"], None),
+    ("SELECT * FROM `t1` ORDER BY `id` LIMIT 5, 1", ["id"], None),
+    ("SELECT * FROM `t1` ORDER BY `id` LIMIT ?, 1", ["id"], None),
+    ("SELECT * FROM [t1] ORDER BY [ID] OFFSET 5 ROWS FETCH NEXT 1 ROWS ONLY", ["id"], None),
+    ("SELECT * FROM [t1] ORDER BY [ID] OFFSET 5 ROWS FETCH NEXT 1 ROW ONLY", ["id"], None),
+    ("SELECT * FROM [t1] ORDER BY [ID] OFFSET @skip ROWS FETCH NEXT 1 ROWS ONLY", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id OFFSET $1 ROWS FETCH FIRST ROW ONLY", ["id"], None),
+    ('SELECT "t1".* FROM "t1" ORDER BY "t1"."id" ASC LIMIT 1 OFFSET $1', ["id"], None),
+    ("SELECT * FROM t1 ORDER BY a, b LIMIT 1 OFFSET $1", ["a", "b"], None),
+    # A placeholder limit bound to 1 is a limit of 1, so the offset does not matter either.
+    ("SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET $2", ["id"], 1),
 ]
 
 ORDERED_ONE_TO_MANY_SQL = {
@@ -191,14 +212,42 @@ ORDERED_ONE_TO_MANY_SQL = {
         ["id"],
         None,
     ),
-    # #782: one row after a skip is a page of the key order, not a key lookup.
-    "offset 5 fetch 1": (
-        "SELECT * FROM [t1] ORDER BY [ID] OFFSET 5 ROWS FETCH NEXT 1 ROWS ONLY",
+    # 2026-10-15 decision (#857): an offset does not make a multi-row, a
+    # placeholder-limit, a WITH TIES or a PERCENT read a key lookup.
+    "offset 5 fetch next 1 row with ties": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET 5 ROWS FETCH NEXT 1 ROW WITH TIES",
         ["id"],
         None,
     ),
-    "parameterised offset fetch 1": (
-        "SELECT * FROM [t1] ORDER BY [ID] OFFSET @skip ROWS FETCH NEXT 1 ROWS ONLY",
+    "parameterised offset fetch 5": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET @skip ROWS FETCH NEXT 5 ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "parameterised offset, parameterised fetch": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "limit 5 offset placeholder": ("SELECT * FROM t1 ORDER BY id LIMIT 5 OFFSET $1", ["id"], None),
+    "placeholder limit, literal offset": (
+        "SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET 5",
+        ["id"],
+        None,
+    ),
+    "placeholder limit and offset, no evidence": (
+        "SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET $2",
+        ["id"],
+        None,
+    ),
+    "a bound limit of 5 after a skip": (
+        "SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET $2",
+        ["id"],
+        5,
+    ),
+    "mysql limit 5, 10": ("SELECT * FROM `t1` ORDER BY `id` LIMIT 5, 10", ["id"], None),
+    "mysql literal offset, placeholder count": (
+        "SELECT * FROM `t1` ORDER BY `id` LIMIT 5, ?",
         ["id"],
         None,
     ),
@@ -212,17 +261,8 @@ ORDERED_ONE_TO_MANY_SQL = {
         ["id"],
         None,
     ),
-    "mysql limit 5, 1": ("SELECT * FROM `t1` ORDER BY `id` LIMIT 5, 1", ["id"], None),
     "mysql limit 0, 5": ("SELECT * FROM `t1` ORDER BY `id` LIMIT 0, 5", ["id"], None),
     "mysql limit ?, ?": ("SELECT * FROM `t1` ORDER BY `id` LIMIT ?, ?", ["id"], None),
-    "limit 1 offset 5": ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 5", ["id"], None),
-    "limit 1 offset placeholder": ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1", ["id"], None),
-    "a bound limit of 1 after a skip": (
-        "SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET $2",
-        ["id"],
-        1,
-    ),
-    "offset before limit": ("SELECT * FROM t1 ORDER BY id OFFSET 5 LIMIT 1", ["id"], None),
 }
 
 RELATIONAL_ORDERED_SQL = {
@@ -243,6 +283,22 @@ RELATIONAL_ORDERED_SQL = {
     "offset, no limit": ("SELECT * FROM t1 ORDER BY id OFFSET 5 ROWS", ["id"], None),
     "filtered scan": ("SELECT * FROM t1 WHERE flag IS NULL ORDER BY id LIMIT 1", ["id"], None),
     "range then key order": ("SELECT * FROM t1 WHERE id > $1 ORDER BY id LIMIT 1", ["id"], None),
+    # 2026-10-15 decision (#857): the offset rule needs the table's own key order.
+    "non-key order, one row at an offset": (
+        "SELECT * FROM t1 ORDER BY created_at DESC LIMIT 1 OFFSET $1",
+        ["id"],
+        None,
+    ),
+    "hard-coded id, one row at an offset": (
+        "SELECT * FROM `t1` ORDER BY `id` LIMIT ?, 1",
+        ["key"],
+        None,
+    ),
+    "filtered, one row at an offset": (
+        "SELECT * FROM t1 WHERE flag IS NULL ORDER BY id LIMIT 1 OFFSET $1",
+        ["id"],
+        None,
+    ),
 }
 
 
@@ -390,6 +446,12 @@ LOCKING_SQL = {
         "SELECT TOP 1 * FROM [t1] WITH (INDEX(pk_t1)) ORDER BY [ID]",
         ["id"],
         "WITH (UPDLOCK, INDEX)",
+    ),
+    "first row read at an offset, for update (#857)": (
+        "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1 FOR UPDATE",
+        "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1",
+        ["id"],
+        "FOR UPDATE",
     ),
     "first row for share": (
         "SELECT * FROM t1 ORDER BY id LIMIT 1 FOR SHARE",
@@ -557,6 +619,24 @@ SKIP_LOCKED_SQL = {
         "SELECT * FROM t1 WHERE status = $1 LIMIT 1 FOR UPDATE SKIP LOCKED",
         ORDERED_ONE_TO_MANY,
         "FOR UPDATE SKIP LOCKED",
+    ),
+    # 2026-10-15 decision (#857): an offset makes a single-row read key-value,
+    # but a skip-locked read at an offset still claims an unknown row.
+    "one row at an offset, for update skip locked": (
+        "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1 FOR UPDATE SKIP LOCKED",
+        ORDERED_ONE_TO_MANY,
+        "FOR UPDATE SKIP LOCKED",
+    ),
+    "mysql one row at an offset, for update skip locked": (
+        "SELECT * FROM `t1` ORDER BY `id` LIMIT 5, 1 FOR UPDATE SKIP LOCKED",
+        ORDERED_ONE_TO_MANY,
+        "FOR UPDATE SKIP LOCKED",
+    ),
+    "t-sql readpast, one row at an offset": (
+        "SELECT * FROM [t1] WITH (UPDLOCK, READPAST) ORDER BY [ID]"
+        " OFFSET @skip ROWS FETCH NEXT 1 ROW ONLY",
+        ORDERED_ONE_TO_MANY,
+        "WITH (UPDLOCK, READPAST)",
     ),
     "ordered 1:M skip locked queue read": (
         "SELECT * FROM t1 ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED",
