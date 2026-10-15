@@ -1,0 +1,50 @@
+# Pattern batch-in-list. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "batch-in-list"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: WHERE col IN (...) with multiple values
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-11"
+score = 70
+why = "Batch lookups using WHERE column IN (...) with multiple values. Aurora optimizes IN-list queries with index range scans — more flexible than DynamoDB's BatchGetItem (100-item limit, PK-only)."
+concerns = [
+    "Very large IN-lists (>1000 values) may benefit from temporary tables or joins.",
+]
+
+# Detection signals: WHERE col IN (...) with multiple values
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-11"
+score = 70
+why = "Batch lookups using WHERE column IN (...) with multiple values. Aurora optimizes IN-list queries with index range scans — more flexible than DynamoDB's BatchGetItem (100-item limit, PK-only)."
+concerns = [
+    "Very large IN-lists (>1000 values) may benefit from temporary tables or joins.",
+]

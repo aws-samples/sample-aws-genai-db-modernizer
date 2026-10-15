@@ -223,14 +223,14 @@ repos:
         files: '(\.claude/commands/.*\.md|\.claude/skills/.*\.md|scripts/run_.*\.py|src/contracts/.*\.py|src/skills/.*\.md)'
         pass_filenames: false
 
-  # The UI's engine tables are generated from the engine catalog (#492)
+  # The UI's engine tables and the rule-catalog doc are generated from the catalog (#492)
   - repo: local
     hooks:
       - id: render-catalog
-        name: Engine catalog generated UI module is fresh
+        name: Rule catalog generated files are fresh
         entry: uv run python scripts/render_catalog.py --check
         language: system
-        files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js)'
+        files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js|docs/architecture/rule-catalog\.md)'
         pass_filenames: false
 
 # Configuration

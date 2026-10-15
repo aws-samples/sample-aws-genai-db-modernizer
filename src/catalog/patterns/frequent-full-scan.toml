@@ -1,0 +1,41 @@
+# Pattern frequent-full-scan. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "frequent-full-scan"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+penalty = 0
+
+# Detection signals: no_where_clause, high_frequency, large_rows_examined
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-01"
+severity = 0.5
+why = "Source database has queries performing full table scans at high frequency. These queries lack proper indexes or filter conditions in the source database. In DynamoDB, these must be replaced with Query operations using partition keys or GSIs — Scan operations at >1/min are not acceptable."
+guidance = "The schema design agent will replace these scans with targeted Query or GetItem operations. Verify the generated access patterns cover all flagged queries. Remaining scans may need a GSI or access pattern redesign."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

@@ -1,0 +1,41 @@
+# Pattern multi-index-joins. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "multi-index-joins"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+penalty = 25
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+# Detection signals: has_joins == True AND join_count >= 2
+[engines.opensearch]
+kind = "anti_pattern"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-ap-01"
+severity = 0.8
+why = "Queries joining multiple tables (join_count >= 2). OpenSearch does not support cross-index joins natively — these must be denormalized into a single index or handled in the application layer."
+guidance = "Denormalize into a single OpenSearch index, or handle joins in the application layer by fetching related documents separately."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."

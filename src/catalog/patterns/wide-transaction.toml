@@ -1,0 +1,39 @@
+# Pattern wide-transaction. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "wide-transaction"
+detectors = []
+penalty = 0
+
+# Detection signals: multi_table_write_in_transaction, high_affected_row_count
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-04"
+severity = 0.3
+why = "Transactions spanning many items or tables. DynamoDB TransactWriteItems supports up to 100 items across tables, but at higher latency and cost."
+guidance = "Transactions up to 100 items work well. Larger scopes need saga pattern or eventual consistency design."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

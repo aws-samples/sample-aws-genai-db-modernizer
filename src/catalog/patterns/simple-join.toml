@@ -1,0 +1,44 @@
+# Pattern simple-join. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "simple-join"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: 2-table JOIN (simpler than complex-join but still relational)
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-09"
+score = 70
+why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins."
+
+# Detection signals: 2-table JOIN (simpler than complex-join but still relational)
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-09"
+score = 70
+why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins."

@@ -1,0 +1,44 @@
+# Pattern complex-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "complex-aggregation"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "aggregations"
+# Penalty: Heavy penalty: better engines exist, but DynamoDB can pre-compute (complex_aggregation is the underscore spelling some analysis agents used).
+penalty = 50
+penalty_aliases = ["complex_aggregation"]
+
+# Detection signals: group_by_multiple_columns, having_clause, multi_table_aggregation
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-02"
+severity = 0.7
+why = "Complex GROUP BY / HAVING / multi-table aggregations. DynamoDB doesn't support server-side aggregation — these need to move to application layer, pre-computed aggregates, or a separate analytics store."
+guidance = "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."

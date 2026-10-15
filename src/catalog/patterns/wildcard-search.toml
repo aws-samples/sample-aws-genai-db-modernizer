@@ -1,0 +1,49 @@
+# Pattern wildcard-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "wildcard-search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "text_search"
+# Penalty: LIKE '%term%' is not DynamoDB's job.
+penalty = 40
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "$regex expresses LIKE natively; a leading wildcard runs as an unindexed scan."
+
+# Detection signals: like %, ilike %
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-02"
+score = 80
+profile = "search"
+why = "LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets — no full-table scan."
+concerns = [
+    "Leading wildcard queries (LIKE '%term') are expensive in both SQL and OpenSearch.",
+    "For prefix queries, consider edge-ngram tokenizer for better performance.",
+]
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "LIKE/ILIKE is native SQL; pg_trgm's GIN/GiST index also indexes a leading wildcard."
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "LIKE is native SQL; a leading wildcard runs as an unindexed scan."

@@ -1,0 +1,40 @@
+# Pattern large-result-sets. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "large-result-sets"
+detectors = [
+    "src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "anti_pattern"
+supported = true
+catalog = "elasticache"
+catalog_id = "redis-large-results-001"
+severity = 0.5
+why = "Queries returning large result sets (>10k rows) not ideal for Redis"
+guidance = "Consider pagination or filtering to reduce result set size"
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

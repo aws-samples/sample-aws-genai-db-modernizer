@@ -1,0 +1,49 @@
+# Pattern fuzzy-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "fuzzy-search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "fuzzy_search"
+# Penalty: pg_trgm similarity(): same reasoning as wildcard-search.
+penalty = 40
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "penalized"
+supported = false
+why = "DocumentDB cannot run this pattern: a query another engine reports it for loses 40 points on DocumentDB."
+
+# Detection signals: pg_trgm, similarity(
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-04"
+score = 85
+profile = "search"
+why = "Fuzzy/similarity search via pg_trgm or similarity(). OpenSearch fuzzy queries use Levenshtein distance natively — no extension required."
+concerns = [
+    "Fuzzy search performance depends on fuzziness parameter tuning.",
+    "Trigram-based similarity may require custom tokenizer in OpenSearch.",
+]
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "pg_trgm's similarity() is a native fuzzy-match operator."
+
+[engines.aurora_mysql]
+kind = "penalized"
+supported = false
+why = "Aurora MySQL cannot run this pattern: a query another engine reports it for loses 40 points on Aurora MySQL."

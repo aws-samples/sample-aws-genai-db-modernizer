@@ -28,9 +28,13 @@ out to be a capability statement too.
 ``capability_registry.ENGINE_CAPABILITIES``'s ``multi_doc_acid`` set (same
 three engines) rather than importing it: ``src.shared`` must not depend on
 ``src.agents`` (the dependency runs the other way everywhere else in this
-codebase), so this stays a small literal constant, not an import, and
-``tests/unit/test_capability_registry.py`` asserts the two sets agree so they
-cannot drift apart silently.
+codebase), and ``tests/unit/test_capability_registry.py`` asserts the two sets
+agree so they cannot drift apart silently.
+
+The three sets are read from the pattern catalog (ADR-031 Decision 8, #492): the
+``native`` entries of the pattern files whose ``capability`` names them
+(``acid-transactions``; ``wildcard-search``, ``full-text-search``, ``regex-search``;
+``fuzzy-search``). The comments below record why each engine is in or out.
 
 #490 removed the third capability table this module used to also track
 against: the reality check's own ``ENGINE_CAPABILITIES`` (workload-fit
@@ -43,6 +47,8 @@ capability tables are the only ones left.
 """
 
 from __future__ import annotations
+
+from src.shared.catalog.patterns import capability_engines
 
 # Engines with native multi-row / multi-document ACID transactions: a single
 # statement, or an explicit BEGIN/COMMIT block, that applies to more than one
@@ -71,9 +77,7 @@ from __future__ import annotations
 #     commands run back-to-back with no other client interleaved (atomicity)
 #     -- there is no rollback on a failed command and no durability guarantee
 #     across a replica failover, so it is not a transaction in the ACID sense.
-ACID_TRANSACTION_ENGINES: frozenset[str] = frozenset(
-    {"aurora_postgresql", "aurora_mysql", "documentdb"}
-)
+ACID_TRANSACTION_ENGINES: frozenset[str] = capability_engines("acid_transactions")
 
 # Engines that can run a text/pattern-search-shaped query at all, without a
 # dedicated search engine -- the same "CAN serve this pattern, even if
@@ -121,7 +125,7 @@ ACID_TRANSACTION_ENGINES: frozenset[str] = frozenset(
 # before this set was ever reached. ``ENGINE_CAPABILITIES`` now lists
 # ``inverted_index`` for DocumentDB too, so both gates agree and the soft
 # exemption below is reachable for every pattern this set covers.
-TEXT_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_mysql", "documentdb"})
+TEXT_SEARCH_ENGINES: frozenset[str] = capability_engines("text_search")
 
 # Engines with a native fuzzy/similarity-match operator. Today that is only
 # ``pg_trgm``'s ``similarity()`` on Aurora PostgreSQL: Aurora MySQL and
@@ -131,7 +135,7 @@ TEXT_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql", "aurora_my
 # scan, there is no SQL/query-language construct for ``fuzzy-search`` on
 # those two, so this is its own, narrower set rather than reusing
 # ``TEXT_SEARCH_ENGINES``.
-FUZZY_SEARCH_ENGINES: frozenset[str] = frozenset({"aurora_postgresql"})
+FUZZY_SEARCH_ENGINES: frozenset[str] = capability_engines("fuzzy_search")
 
 # Engines whose per-query fit is a property of the query, not the table they
 # happen to touch (#475). OpenSearch's own analysis

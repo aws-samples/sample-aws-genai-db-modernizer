@@ -1,0 +1,42 @@
+# Pattern key-value-lookup. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "key-value-lookup"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "key_value_lookups"
+penalty = 0
+
+# Detection signals: single_row_select, primary_key_equality, high_frequency, low_latency
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-01"
+score = 100
+why = "Single-item lookups by primary key."
+concerns = ["Large item sizes (>400KB) require splitting"]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

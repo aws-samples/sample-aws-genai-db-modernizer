@@ -1,0 +1,43 @@
+# Pattern upsert-conflict. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "upsert-conflict"
+detectors = [
+    "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: ON CONFLICT DO UPDATE, RETURNING
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_pg"
+catalog_id = "aurora-pg-07"
+score = 80
+why = "UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking — no read-modify-write cycle needed."
+concerns = [
+    "High-concurrency upserts on the same key may cause retry loops.",
+]
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

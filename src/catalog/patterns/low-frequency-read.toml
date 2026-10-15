@@ -1,0 +1,46 @@
+# Pattern low-frequency-read. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "low-frequency-read"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "low_frequency_reads"
+penalty = 0
+
+# Detection signals: low_frequency_read, select_below_threshold, no_pattern_match
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-09"
+score = 55
+why = "Infrequent read operations (SELECT below 0.1 cps) that don't match any specific access pattern. May include admin queries, health checks, or reporting. DynamoDB Scan or Query with GSI depending on access pattern."
+concerns = [
+    "Full-table scans (no WHERE clause) require DynamoDB Scan — acceptable at low frequency",
+    "COUNT(*) queries need application-level counting or a metadata item",
+    "Schema design agent should propose a specific access pattern for each query",
+]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

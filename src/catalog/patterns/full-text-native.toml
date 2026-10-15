@@ -1,0 +1,44 @@
+# Pattern full-text-native. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "full-text-native"
+detectors = [
+    "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: to_tsvector, ts_query, @@ operator
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_pg"
+catalog_id = "aurora-pg-05"
+score = 75
+why = "Native full-text search using to_tsvector, ts_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine."
+concerns = [
+    "High-volume search workloads may still benefit from dedicated OpenSearch.",
+    "Custom dictionaries and language-specific stemming require configuration.",
+]
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

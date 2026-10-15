@@ -1,0 +1,51 @@
+# Pattern aggregation-analytics. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "aggregation-analytics"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+triage_signal = "aggregations"
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: GROUP BY + HAVING, SUM/COUNT/AVG, subquery aggregates
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-02"
+score = 85
+why = "Aggregation queries with GROUP BY, HAVING, and aggregate functions (SUM, COUNT, AVG). Aurora handles analytical aggregations efficiently with parallel query execution."
+concerns = [
+    "Very large aggregation result sets may benefit from pre-computed summary tables.",
+]
+
+# Detection signals: GROUP BY + HAVING, SUM/COUNT/AVG, subquery aggregates
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-02"
+score = 85
+why = "Aggregation queries with GROUP BY, HAVING, and aggregate functions (SUM, COUNT, AVG). Aurora handles analytical aggregations efficiently with parallel query execution."
+concerns = [
+    "Very large aggregation result sets may benefit from pre-computed summary tables.",
+]

@@ -1,0 +1,51 @@
+# Pattern high-frequency-pk-lookup. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "high-frequency-pk-lookup"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty: DynamoDB does this better at scale.
+penalty = 30
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+# Detection signals: Single-row SELECT by PK at >100 cps
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-01"
+severity = 0.8
+why = "Single-row SELECT by primary key at very high frequency (>100 calls/second)."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
+guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale."
+guidance_names_engine = true
+
+# Detection signals: Single-row SELECT by PK at >100 cps
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-01"
+severity = 0.8
+why = "Single-row SELECT by primary key at very high frequency (>100 calls/second)."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
+guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale."
+guidance_names_engine = true

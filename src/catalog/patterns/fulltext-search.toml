@@ -1,0 +1,44 @@
+# Pattern fulltext-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "fulltext-search"
+detectors = [
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: MATCH ... AGAINST, FULLTEXT index usage
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-02"
+score = 80
+why = "Full-text search using MATCH ... AGAINST with FULLTEXT indexes. Aurora MySQL provides built-in boolean and natural language full-text modes suitable for moderate search workloads."
+concerns = [
+    "High-volume search workloads may still benefit from dedicated OpenSearch.",
+    "InnoDB FULLTEXT indexes have higher write overhead than MyISAM.",
+]

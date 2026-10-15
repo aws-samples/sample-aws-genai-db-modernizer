@@ -1,0 +1,45 @@
+# Pattern time-series-event-log. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "time-series-event-log"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "time_series"
+penalty = 0
+
+# Detection signals: timestamp_in_where_or_order, range_on_datetime_column, insert_dominant, bounded_time_window_reads
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-04"
+score = 85
+why = "Time-ordered data with timestamp-based range reads. Maps to DynamoDB with entity ID as partition key and timestamp as sort key. TTL for automatic expiry."
+concerns = [
+    "Hot partitions if all writes go to 'latest' partition — consider time-bucketing",
+    "Analytics queries (GROUP BY time) better served by aggregation or export to S3",
+]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

@@ -1,0 +1,49 @@
+# Pattern no-relational-need. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "no-relational-need"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty: DynamoDB can serve simple KV without relational overhead.
+penalty = 20
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-05"
+severity = 0.6
+why = "Table with no foreign keys and no join participation — all queries are single-table CRUD."
+engine_hint = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
+guidance = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+guidance_names_engine = true
+
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-05"
+severity = 0.6
+why = "Table with no foreign keys and no join participation — all queries are single-table CRUD."
+engine_hint = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
+guidance = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
+guidance_names_engine = true

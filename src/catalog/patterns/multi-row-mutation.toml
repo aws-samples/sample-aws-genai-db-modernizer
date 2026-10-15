@@ -1,0 +1,50 @@
+# Pattern multi-row-mutation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "multi-row-mutation"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: UPDATE/DELETE with complex WHERE (not simple PK), batch operations
+[engines.aurora_postgresql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-07"
+score = 75
+why = "UPDATE or DELETE operations with complex WHERE clauses affecting multiple rows. Aurora handles bulk mutations with row-level locking and MVCC, maintaining consistency without full-table locks."
+concerns = [
+    "Large batch mutations may benefit from chunking to avoid long lock holds.",
+]
+
+# Detection signals: UPDATE/DELETE with complex WHERE (not simple PK), batch operations
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-common-07"
+score = 75
+why = "UPDATE or DELETE operations with complex WHERE clauses affecting multiple rows. Aurora handles bulk mutations with row-level locking and MVCC, maintaining consistency without full-table locks."
+concerns = [
+    "Large batch mutations may benefit from chunking to avoid long lock holds.",
+]

@@ -1,0 +1,51 @@
+# Pattern simple-cache-read. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "simple-cache-read"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty: ElastiCache does this at microsecond latency.
+penalty = 25
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+# Detection signals: High-freq reads of small/static data, TTL-like patterns
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-02"
+severity = 0.7
+why = "High-frequency reads of small, rarely-changing data (config, sessions, feature flags)."
+engine_hint = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
+guidance = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
+guidance_names_engine = true
+
+# Detection signals: High-freq reads of small/static data, TTL-like patterns
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-02"
+severity = 0.7
+why = "High-frequency reads of small, rarely-changing data (config, sessions, feature flags)."
+engine_hint = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
+guidance = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
+guidance_names_engine = true

@@ -5,89 +5,21 @@ PG-specific patterns that complement the shared relational patterns from
 aurora_common_pattern_catalog.py. These detect PostgreSQL-native features
 (CTEs, window functions, JSONB, arrays, LATERAL, tsvector) that make
 Aurora PostgreSQL the ideal target.
+
+The entries live in ``src/catalog/patterns/<pattern_type>.toml`` (ADR-031 Decision 8,
+#492): ``catalog_patterns``/``catalog_anti_patterns`` build the lists below from them,
+under the names the analysis tools import. Edit the TOML file, not this module.
 """
 
 import re
 
-from src.tools.analysis.pattern_catalog_base import CatalogPattern
+from src.tools.analysis.pattern_catalog_base import CatalogPattern, catalog_patterns
 
 # ==========================================================================
 # Aurora PG-Specific Pattern Catalog
 # ==========================================================================
 
-AURORA_PG_PATTERNS: list[CatalogPattern] = [
-    # Signals: WITH RECURSIVE, hierarchical data traversal
-    CatalogPattern(
-        pattern_id="aurora-pg-01",
-        pattern_type="cte-recursive",
-        description="Recursive CTEs (WITH RECURSIVE) for hierarchical data traversal — org charts, category trees, bill of materials. Aurora PG executes these natively; no NoSQL engine provides equivalent functionality without application-level graph walks.",
-        base_score=95,
-        concerns=[
-            "Deep recursion (>100 levels) may require LIMIT on recursion depth.",
-        ],
-    ),
-    # Signals: OVER(), PARTITION BY, ROW_NUMBER/RANK/LAG/LEAD
-    CatalogPattern(
-        pattern_id="aurora-pg-02",
-        pattern_type="window-function",
-        description="Window functions (OVER, PARTITION BY, ROW_NUMBER, RANK, LAG, LEAD) for running totals, rankings, and row-level analytics. Aurora PG executes these in a single pass without self-joins.",
-        base_score=90,
-        concerns=[
-            "Large partition sizes may increase memory usage during window computation.",
-        ],
-    ),
-    # Signals: ->>, @>, jsonb_agg, jsonb_build_object
-    CatalogPattern(
-        pattern_id="aurora-pg-03",
-        pattern_type="jsonb-operations",
-        description="JSONB operations (->>, @>, jsonb_agg, jsonb_build_object) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries — combining document flexibility with relational joins.",
-        base_score=85,
-        concerns=[
-            "Deeply nested JSONB paths may not be indexable; consider flattening hot paths.",
-        ],
-    ),
-    # Signals: ANY(ARRAY[...]), array_agg, unnest
-    CatalogPattern(
-        pattern_id="aurora-pg-04",
-        pattern_type="array-operations",
-        description="Array operations (ANY, array_agg, unnest) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes — avoiding junction tables for simple multi-value cases.",
-        base_score=80,
-        concerns=[
-            "Very large arrays (>1000 elements) may degrade GIN index performance.",
-        ],
-    ),
-    # Signals: to_tsvector, ts_query, @@ operator
-    CatalogPattern(
-        pattern_id="aurora-pg-05",
-        pattern_type="full-text-native",
-        description="Native full-text search using to_tsvector, ts_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine.",
-        base_score=75,
-        concerns=[
-            "High-volume search workloads may still benefit from dedicated OpenSearch.",
-            "Custom dictionaries and language-specific stemming require configuration.",
-        ],
-    ),
-    # Signals: LATERAL, complex subquery in FROM
-    CatalogPattern(
-        pattern_id="aurora-pg-06",
-        pattern_type="lateral-join",
-        description="LATERAL joins for correlated subqueries in the FROM clause. Aurora PG executes these efficiently — each row from the left side feeds the lateral subquery, enabling top-N-per-group patterns.",
-        base_score=85,
-        concerns=[
-            "Large outer tables with expensive lateral subqueries may need index support.",
-        ],
-    ),
-    # Signals: ON CONFLICT DO UPDATE, RETURNING
-    CatalogPattern(
-        pattern_id="aurora-pg-07",
-        pattern_type="upsert-conflict",
-        description="UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking — no read-modify-write cycle needed.",
-        base_score=80,
-        concerns=[
-            "High-concurrency upserts on the same key may cause retry loops.",
-        ],
-    ),
-]
+AURORA_PG_PATTERNS: list[CatalogPattern] = catalog_patterns("aurora_pg")
 
 
 # ==========================================================================

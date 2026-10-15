@@ -1,0 +1,49 @@
+# Pattern full-text-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "full-text-search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "text_search"
+# Penalty: tsvector/MATCH AGAINST: same reasoning as wildcard-search.
+penalty = 40
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "The $text operator runs full-text search natively."
+
+# Detection signals: tsvector, tsquery, to_tsvector, plainto_tsquery, @@, match against
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-01"
+score = 95
+profile = "search"
+why = "Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload — tokenization, stemming, and relevance ranking are native."
+concerns = [
+    "Ranking differences: OpenSearch uses BM25; PostgreSQL uses ts_rank. Results may differ.",
+    "Custom analyzers may be needed to match existing text normalization.",
+]
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "tsvector/tsquery full-text search is native SQL."
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "FULLTEXT indexes with MATCH ... AGAINST are native SQL."

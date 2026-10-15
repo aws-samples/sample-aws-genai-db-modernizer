@@ -1,0 +1,43 @@
+# Pattern polymorphic-data. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "polymorphic-data"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: sparse_columns (>30% nullable), type/category discriminator, eav_tables
+[engines.documentdb]
+kind = "fit"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-03"
+score = 80
+why = "Tables with sparse columns or EAV pattern indicating polymorphic entities. DocumentDB stores each variant as a document with only its relevant fields."
+concerns = [
+    "Wildcard indexes ($**) not supported in any DocumentDB version — flatten queryable attributes to top-level with targeted compound indexes",
+]
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

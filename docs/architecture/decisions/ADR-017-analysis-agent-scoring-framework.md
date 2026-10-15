@@ -133,7 +133,7 @@ Each decision names the guard test that fails when the code stops following it. 
 
 ## Implementation
 
-- `src/tools/analysis/<target>_pattern_catalog.py` — specialist-curated patterns with base scores and weights
+- `src/catalog/patterns/<pattern_type>.toml` — specialist-curated patterns with base scores (ADR-031 Decision 8); `src/tools/analysis/<target>_pattern_catalog.py` builds each engine's lists from them and still holds the weights
 - `src/tools/analysis/<target>_analysis_tools.py` — per-query detection, scoring adjustments, decision trace builder
 - `src/tools/analysis/scoring.py` — shared scoring with configurable weights (`compute_confidence(scores, weights=...)`)
 - Reference implementation: DynamoDB agent (`src/agents/analysis/dynamodb_analysis_agent.py`)

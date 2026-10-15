@@ -1,0 +1,45 @@
+# Pattern range-query. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "range-query"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "range_queries"
+penalty = 0
+
+# Detection signals: partition_key_equality_plus_range, between_clause, order_by_with_limit, bounded_result_set
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-02"
+score = 90
+why = "Queries that filter on a partition key with a range condition on a sort key. Maps directly to DynamoDB Query with KeyConditionExpression."
+concerns = [
+    "Result sets exceeding 1MB require pagination, which is not the same as SQL",
+    "Complex filter expressions evaluated after read (consume RCUs)",
+]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

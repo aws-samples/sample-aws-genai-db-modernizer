@@ -1,0 +1,50 @@
+# Pattern full-text-search-candidate. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "full-text-search-candidate"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: LIKE '%term%', text search patterns
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-03"
+severity = 0.6
+why = "Full-text search patterns using LIKE '%term%' or similar constructs."
+engine_hint = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
+guidance = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
+guidance_names_engine = true
+
+# Detection signals: LIKE '%term%', text search patterns
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-03"
+severity = 0.6
+why = "Full-text search patterns using LIKE '%term%' or similar constructs."
+engine_hint = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
+guidance = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
+guidance_names_engine = true

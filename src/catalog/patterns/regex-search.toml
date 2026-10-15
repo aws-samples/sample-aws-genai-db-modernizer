@@ -1,0 +1,49 @@
+# Pattern regex-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "regex-search"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "text_search"
+capability = "text_search"
+# Penalty: REGEXP/RLIKE/~: same reasoning as wildcard-search.
+penalty = 40
+exempt_note = "{engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine"
+
+[engines.dynamodb]
+kind = "penalized"
+supported = false
+why = "DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "$regex is a native query operator."
+
+# Detection signals: regexp, rlike, ~ , ~*
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-03"
+score = 75
+profile = "search"
+why = "Regex pattern matching (REGEXP, RLIKE, PostgreSQL ~ operator). OpenSearch supports regexp queries with finite automaton execution, avoiding full-scan overhead."
+concerns = [
+    "Complex regex patterns can be expensive even with inverted index.",
+    "Requires custom analyzer configuration for optimal performance.",
+]
+
+[engines.elasticache]
+kind = "penalized"
+supported = false
+why = "ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "~ and ~* regular-expression matching is native SQL."
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "REGEXP/RLIKE is native SQL."

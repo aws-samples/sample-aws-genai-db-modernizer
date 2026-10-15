@@ -1,0 +1,39 @@
+# Pattern unbounded-array-growth. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "unbounded-array-growth"
+detectors = []
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: parent-child FK with unbounded child growth
+[engines.documentdb]
+kind = "anti_pattern"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-anti-02"
+severity = 0.7
+why = "Embedded arrays that grow without limit hit the 16MB document size limit."
+guidance = "Use Bucket Pattern (bounded arrays) or Reference Pattern for unbounded relationships."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

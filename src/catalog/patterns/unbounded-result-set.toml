@@ -1,0 +1,41 @@
+# Pattern unbounded-result-set. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "unbounded-result-set"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+penalty = 0
+
+# Detection signals: no_limit_clause, high_rows_returned
+[engines.dynamodb]
+kind = "anti_pattern"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-ap-03"
+severity = 0.2
+why = "Queries returning large unbounded result sets without LIMIT. DynamoDB returns max 1MB per Query/Scan — pagination is required."
+guidance = "Add pagination. DynamoDB handles this natively with LastEvaluatedKey."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

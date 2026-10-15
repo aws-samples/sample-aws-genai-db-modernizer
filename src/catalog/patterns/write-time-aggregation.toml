@@ -1,0 +1,44 @@
+# Pattern write-time-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "write-time-aggregation"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: multiple SUM/COUNT/MIN/MAX + JOIN, high read:write ratio on aggregated data
+[engines.documentdb]
+kind = "fit"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-08"
+score = 90
+why = "Complex aggregation queries (multiple SUM/COUNT/MIN/MAX with JOINs) that can be pre-computed at write time via CDC pipeline and stored as documents. Eliminates real-time aggregation entirely. Validated: 65x speedup in AnyCompany PoC."
+concerns = [
+    "Requires CDC pipeline (DMS/Lambda) to maintain pre-aggregated documents",
+    "Stale data window between write and CDC propagation",
+]
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

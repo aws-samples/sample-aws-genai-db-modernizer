@@ -1,0 +1,46 @@
+# Pattern time-range-query. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "time-range-query"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+triage_signal = "time_range_filters"
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: timestamp keywords + range operators (between, >=, <=)
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-05"
+score = 85
+profile = "timeseries"
+why = "Range queries on timestamp columns (created_at, event_time, etc.). OpenSearch time-series indices with date histograms excel at this access pattern."
+concerns = [
+    "Hot shard risk if all documents are in the same time bucket.",
+    "Index lifecycle management (ILM) policy needed for retention.",
+]
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

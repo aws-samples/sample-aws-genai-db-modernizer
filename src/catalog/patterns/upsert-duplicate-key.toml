@@ -1,0 +1,41 @@
+# Pattern upsert-duplicate-key. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "upsert-duplicate-key"
+detectors = [
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: ON DUPLICATE KEY UPDATE
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-03"
+score = 80
+why = "UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key."
+concerns = ["Auto-increment gaps may occur with ON DUPLICATE KEY UPDATE."]

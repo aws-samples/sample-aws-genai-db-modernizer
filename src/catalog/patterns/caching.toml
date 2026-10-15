@@ -1,0 +1,40 @@
+# Pattern caching. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "caching"
+detectors = [
+    "src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases",
+]
+triage_signal = "high_frequency_reads"
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "fit"
+supported = true
+catalog = "elasticache"
+catalog_id = "redis-caching-001"
+confidence = "high"
+why = "Detected high-frequency SELECT queries suitable for caching"
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

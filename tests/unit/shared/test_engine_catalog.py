@@ -286,6 +286,7 @@ class TestGeneratedUiModule:
         stale = tmp_path / "engineCatalog.generated.js"
         stale.write_text("// stale\n", encoding="utf-8")
         monkeypatch.setattr(module, "JS_OUT", stale)
+        monkeypatch.setattr(module, "MD_OUT", tmp_path / "rule-catalog.md")
         monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
         assert module.main(["--check"]) == 1
         assert module.main([]) == 0

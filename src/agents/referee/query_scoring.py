@@ -41,13 +41,21 @@ from dataclasses import dataclass, field, replace
 from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.shared.capability_labels import capability_label
-from src.shared.engine_capabilities import (
-    ACID_TRANSACTION_ENGINES,
-    FUZZY_SEARCH_ENGINES,
-    PATTERN_ONLY_ENGINES,
-    TEXT_SEARCH_ENGINES,
+from src.shared.catalog.patterns import (
+    anti_pattern_penalties,
+    capability_exempt_notes,
+    capability_redesign_notes,
+    capability_redesign_penalties,
+    capability_signal_engines,
 )
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import display_engine
+
+ANTI_PATTERN_PENALTIES: dict[str, int] = anti_pattern_penalties()
+CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = capability_signal_engines()
+CAPABILITY_REDESIGN_PENALTIES: dict[str, dict[str, int]] = capability_redesign_penalties()
+CAPABILITY_REDESIGN_NOTES: dict[str, str] = capability_redesign_notes()
+CAPABILITY_EXEMPT_NOTES: dict[str, str] = capability_exempt_notes()
 
 
 def compute_query_confidence(
@@ -131,110 +139,24 @@ def compute_query_confidence(
 # Anti-pattern penalty (ADR-031 Decision 2 step 5)
 # ---------------------------------------------------------------------------
 
-# Analysis anti-pattern types that indicate an engine is the WRONG fit for a query.
-# When a query appears in one of these anti-patterns for an engine, that engine's
-# score is penalized for this specific query.
-ANTI_PATTERN_PENALTIES: dict[str, int] = {
-    # NoSQL engine anti-patterns (queries wrong for DynamoDB/DocumentDB)
-    "text_search": 40,  # DynamoDB can't do full-text search at all
-    "wildcard-search": 40,  # LIKE '%term%' is not DynamoDB's job
-    "full-text-search": 40,  # tsvector/MATCH AGAINST — same reasoning
-    "regex-search": 40,  # REGEXP/RLIKE/~ — same reasoning
-    "fuzzy-search": 40,  # pg_trgm similarity() — same reasoning
-    "complex-aggregation": 50,  # Heavy penalty — better engines exist, but DynamoDB can pre-compute
-    "complex_aggregation": 50,  # Alias (some analysis agents use underscore)
-    "multi-index-joins": 25,
-    "acid-transactions": 20,
-    "frequent-writes": 15,
-    # Aurora anti-patterns (queries wrong for Aurora — better on purpose-built engines)
-    "high-frequency-pk-lookup": 30,  # DynamoDB does this better at scale
-    "simple-cache-read": 25,  # ElastiCache does this at microsecond latency
-    "no-relational-need": 20,  # DynamoDB can serve simple KV without relational overhead
-    "single-access-pattern-table": 15,  # DynamoDB is cheaper for simple patterns
-    "high-volume-text-search": 35,  # OpenSearch purpose-built for this
-}
-
-# Which ANTI_PATTERN_PENALTIES keys are capability statements rather than pure
-# workload-fit anti-patterns: "this query needs X" versus "this engine is a
-# worse fit for this query than a purpose-built one". The "patterns detected
-# by other engines penalise OTHER engines" step in ``build_anti_pattern_map``
-# must not apply a capability key's penalty to an engine that has the
-# capability natively -- a capability signal says nothing about whether THIS
-# engine is a good fit, only that engines without the capability need one.
-# Mapped to ``src.shared.engine_capabilities`` so this stays the single fact
-# every caller agrees on, instead of a second, possibly-drifted copy.
+# The anti-pattern penalty table and its capability scoping come from the pattern catalog
+# (``src/catalog/patterns/<pattern_type>.toml``, ADR-031 Decision 8, #492), built under
+# the names this module has always used (see the imports above):
 #
-# ``acid-transactions``: Aurora PostgreSQL, Aurora MySQL and DocumentDB run
-# multi-row/-document transactions natively (#477).
-#
-# ``wildcard-search``, ``full-text-search`` and ``regex-search``: OpenSearch's
-# os-01..os-03 patterns all ask the same question -- can this engine run a
-# text/pattern-search-shaped query at all, even as an unindexed scan -- so
-# all three share ``TEXT_SEARCH_ENGINES`` (#480). ``fuzzy-search`` (os-04)
-# asks a narrower one -- does this engine have a similarity/fuzzy-match
-# operator at all -- which only Aurora PostgreSQL's ``pg_trgm`` answers yes
-# to, so it gets its own ``FUZZY_SEARCH_ENGINES``. OpenSearch itself is
-# still worth the move when traffic, data size or search depth justify it
-# (#326); that is a separate, untouched mechanism (``high-volume-text-search``
-# above is Aurora's own self-detected anti-pattern for exactly that case).
-CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = {
-    "acid-transactions": ACID_TRANSACTION_ENGINES,
-    "wildcard-search": TEXT_SEARCH_ENGINES,
-    "full-text-search": TEXT_SEARCH_ENGINES,
-    "regex-search": TEXT_SEARCH_ENGINES,
-    "fuzzy-search": FUZZY_SEARCH_ENGINES,
-}
-
-# Reduced penalty for an engine that lacks a capability outright but has a
-# documented, bounded way to redesign around it, so the cost stays visible
-# instead of collapsing to the same full "wrong engine" penalty as an engine
-# with no path at all (#477). DynamoDB's own ``TransactWriteItems`` (no
-# interactive BEGIN/COMMIT, each item usable at most once per transaction,
-# <=100 items, <=4 MB, one account/Region, 2x the write capacity of the same
-# writes done without it) or an idempotent multi-step flow both work, at a
-# real engineering cost; 10 sits below ``acid-transactions``'s own full 20.
-#
-# The search patterns have no entry here (#480): every engine without the
-# relevant capability set (``TEXT_SEARCH_ENGINES`` or ``FUZZY_SEARCH_ENGINES``)
-# has no bounded redesign to point to the way ``TransactWriteItems`` is one
-# -- they keep the full 40.
-CAPABILITY_REDESIGN_PENALTIES: dict[str, dict[str, int]] = {
-    "acid-transactions": {"dynamodb": 10},
-}
-
-# The reason text for a reduced redesign penalty: plain language, no raw
-# engine id, worded so it reads as "this engine needs extra work", never as
-# "this engine already relies on transactions". ``{engine}`` is replaced
-# with the engine's display name (e.g. "DynamoDB") -- see ``resolve()`` for
-# where this is attached (only to the engine the note is about, and only if
-# that engine is the one the query is actually assigned to).
-CAPABILITY_REDESIGN_NOTES: dict[str, str] = {
-    "acid-transactions": (
-        "Uses transactions: moving it to {engine} needs a redesign "
-        "({engine} transactions, up to 100 items, or retry-safe steps)"
-    ),
-}
-
-# The reason text for a capability EXEMPTION (decision-trace note, #480):
-# unlike a redesign note, this fires when the engine the query ended up on
-# is the one with the capability, so it reads as "nothing to see here, this
-# engine already runs it" rather than "this needs extra work". ``{engine}``
-# is replaced with the engine's display name the same way
-# ``CAPABILITY_REDESIGN_NOTES`` is. Shared by all four search patterns --
-# the wording fits each of them (LIKE, regex, full-text or fuzzy, all
-# "search patterns"). ``acid-transactions`` has no entry: that exemption
-# stays silent, unchanged from before #480.
-_TEXT_SEARCH_EXEMPT_NOTE = (
-    "{engine} runs this search pattern natively: not penalized. OpenSearch "
-    "is worth the move only when traffic, data size or search depth justify "
-    "a dedicated search engine"
-)
-CAPABILITY_EXEMPT_NOTES: dict[str, str] = {
-    "wildcard-search": _TEXT_SEARCH_EXEMPT_NOTE,
-    "full-text-search": _TEXT_SEARCH_EXEMPT_NOTE,
-    "regex-search": _TEXT_SEARCH_EXEMPT_NOTE,
-    "fuzzy-search": _TEXT_SEARCH_EXEMPT_NOTE,
-}
+# - ``ANTI_PATTERN_PENALTIES``: pattern type -> points an engine loses on a query that
+#   shows it (each file's ``penalty``, plus ``penalty_aliases``).
+# - ``CAPABILITY_SIGNAL_ENGINES``: the penalty keys that are capability statements ("this
+#   query needs X") rather than workload-fit anti-patterns, mapped to the engines that
+#   have the capability natively (``native`` entries): the "patterns detected by other
+#   engines" step in ``build_anti_pattern_map`` never penalises those engines (#477,
+#   #480). The sets are ``src.shared.engine_capabilities``'s, read from the same files.
+# - ``CAPABILITY_REDESIGN_PENALTIES``: the reduced penalty for an engine that lacks the
+#   capability but has a documented, bounded redesign (``redesign`` entries; DynamoDB's
+#   ``TransactWriteItems`` for ``acid-transactions``, #477).
+# - ``CAPABILITY_REDESIGN_NOTES`` / ``CAPABILITY_EXEMPT_NOTES``: the decision-trace
+#   sentences for a reduced penalty and for an exemption (``{engine}`` is the engine's
+#   display name). ``acid-transactions`` has no exemption note: that exemption stays
+#   silent, unchanged from before #480.
 
 
 def _capability_scoped_penalty(

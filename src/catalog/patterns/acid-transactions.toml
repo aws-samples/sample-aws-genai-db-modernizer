@@ -1,0 +1,45 @@
+# Pattern acid-transactions. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "acid-transactions"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+capability = "acid_transactions"
+penalty = 20
+redesign_note = "Uses transactions: moving it to {engine} needs a redesign ({engine} transactions, up to 100 items, or retry-safe steps)"
+
+[engines.dynamodb]
+kind = "redesign"
+supported = true
+penalty = 10
+why = "TransactWriteItems (no interactive BEGIN/COMMIT, up to 100 items and 4 MB, 2x write capacity) or retry-safe steps: a bounded redesign, not a native transaction."
+
+[engines.documentdb]
+kind = "native"
+supported = true
+why = "Multi-document ACID transactions are native (engine 4.0 or later, one-minute limit per transaction)."
+
+# Detection signals: UPDATE or DELETE query_type with CPS > 1
+[engines.opensearch]
+kind = "anti_pattern"
+# No multi-document ACID transactions (no multi_doc_acid in the hard capability gate).
+supported = false
+catalog = "opensearch"
+catalog_id = "os-ap-02"
+severity = 0.6
+why = "Frequent UPDATE/DELETE operations (> 1 CPS) indicate mutable data with ACID transactional requirements. OpenSearch is optimized for immutable, append-only workloads."
+guidance = "Keep transactional data in the relational database. Use OpenSearch for read-heavy search/analytics queries only, with async sync from the source of truth."
+
+[engines.elasticache]
+kind = "unscored"
+supported = false
+why = "MULTI/EXEC has no rollback or failover durability, so no ACID transactions; its analysis does not report this pattern, and the penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "native"
+supported = true
+why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) are native."
+
+[engines.aurora_mysql]
+kind = "native"
+supported = true
+why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) are native."

@@ -1,0 +1,49 @@
+# Pattern high-volume-text-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "high-volume-text-search"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty: OpenSearch purpose-built for this.
+penalty = 35
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-07"
+severity = 0.7
+why = "High-frequency text search patterns (LIKE '%', tsvector, ILIKE) on a text-heavy table (>40% text columns)."
+engine_hint = "While Aurora can handle text search, OpenSearch provides purpose-built inverted indexes, relevance scoring, and horizontal scaling for search-dominant workloads."
+guidance = "Offload text search to OpenSearch for better relevance, scalability, and latency. Keep Aurora as source of truth with async replication. Consider this especially if search latency or result quality matters."
+guidance_names_engine = true
+
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-07"
+severity = 0.7
+why = "High-frequency text search patterns (LIKE '%', tsvector, ILIKE) on a text-heavy table (>40% text columns)."
+engine_hint = "While Aurora can handle text search, OpenSearch provides purpose-built inverted indexes, relevance scoring, and horizontal scaling for search-dominant workloads."
+guidance = "Offload text search to OpenSearch for better relevance, scalability, and latency. Keep Aurora as source of truth with async replication. Consider this especially if search latency or result quality matters."
+guidance_names_engine = true

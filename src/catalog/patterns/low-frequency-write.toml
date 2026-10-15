@@ -1,0 +1,45 @@
+# Pattern low-frequency-write. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "low-frequency-write"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "low_frequency_writes"
+penalty = 0
+
+# Detection signals: low_frequency_write, insert_update_delete, cps_below_threshold
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-08"
+score = 70
+why = "Infrequent write operations (INSERT/UPDATE/DELETE below 0.5 cps). Low frequency does not mean low importance — batch loads, admin operations, and periodic jobs are common. DynamoDB on-demand handles sporadic writes without provisioned capacity waste."
+concerns = [
+    "Verify these writes are not part of a larger transaction that spans multiple tables",
+    "Batch seed operations may benefit from BatchWriteItem (25 items per request)",
+]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

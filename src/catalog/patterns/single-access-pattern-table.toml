@@ -1,0 +1,49 @@
+# Pattern single-access-pattern-table. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "single-access-pattern-table"
+detectors = [
+    "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
+]
+# Penalty: DynamoDB is cheaper for simple patterns.
+penalty = 15
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.aurora_postgresql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-06"
+severity = 0.5
+why = "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter."
+engine_hint = "This is a key-value workload wearing a relational costume — no query optimizer benefit."
+guidance = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+guidance_names_engine = true
+
+[engines.aurora_mysql]
+kind = "anti_pattern"
+supported = true
+catalog = "aurora_common"
+catalog_id = "aurora-anti-06"
+severity = 0.5
+why = "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter."
+engine_hint = "This is a key-value workload wearing a relational costume — no query optimizer benefit."
+guidance = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
+guidance_names_engine = true

@@ -17,7 +17,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `src/tools/` | Deterministic tools: `analysis/`, `schema/`, `validation/`, `database/`, `aws/` |
 | `src/report/` | Deliverable renderers (decision/analysis HTML, engineering Markdown, PDF, PPTX) from one synthesis `report.json`; `escaping.py` |
 | `src/shared/` | Cross-cutting helpers, including `engine_names.py` (engine display names) |
-| `src/catalog/engines/` | Engine catalog (ADR-031 Decision 8): one TOML per engine (display name, colours, status, role), loaded by `src/shared/catalog/`; `scripts/render_catalog.py` generates the UI's `engineCatalog.generated.js` (`--check` runs in lint) |
+| `src/catalog/` | Rule catalog (ADR-031 Decision 8): `engines/` one TOML per engine (display name, colours, status, role), `patterns/` one TOML per pattern type (per-engine fit score, anti-pattern severity, penalty, why), loaded by `src/shared/catalog/`; `scripts/render_catalog.py` generates the UI's `engineCatalog.generated.js` and `docs/architecture/rule-catalog.md` (`--check` runs in lint) |
 | `src/skills/` | Markdown prompts (data-modeling and PE-review guidance per engine) that agents and commands load |
 | `src/orchestrator/`, `src/storage/`, `src/graph/` | Local phase orchestrator, artifact store and assignment versioning, context graph |
 | `src/api/`, `src/ui/` | FastAPI backend and React UI (the interactive report template is extracted from `src/ui/src/utils/ExportReport.js`) |

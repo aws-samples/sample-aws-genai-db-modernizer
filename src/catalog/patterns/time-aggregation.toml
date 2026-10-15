@@ -1,0 +1,45 @@
+# Pattern time-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "time-aggregation"
+detectors = [
+    "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: date_trunc, date(, hour(, extract(
+[engines.opensearch]
+kind = "fit"
+supported = true
+catalog = "opensearch"
+catalog_id = "os-06"
+score = 90
+profile = "timeseries"
+why = "Time-based aggregations using DATE_TRUNC, DATE(), HOUR(), or EXTRACT(). OpenSearch date histogram aggregations run against pre-sorted time fields — very efficient."
+concerns = [
+    "Deep aggregation nesting (>3 levels) can cause memory pressure.",
+    "High cardinality fields in sub-aggregations may require field data cache tuning.",
+]
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

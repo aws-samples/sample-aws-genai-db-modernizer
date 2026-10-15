@@ -1,0 +1,45 @@
+# Pattern aggregation-pipeline. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "aggregation-pipeline"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: group_by + aggregate_functions (SUM/COUNT/AVG), reporting queries
+[engines.documentdb]
+kind = "fit"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-05"
+score = 75
+why = "Queries using GROUP BY with aggregate functions that map to DocumentDB's aggregation pipeline ($group, $match, $project, $sort)."
+concerns = [
+    "$stdDevPop/$stdDevSamp need DocumentDB 8.0.1+ — otherwise compute in application layer",
+    "$facet needs DocumentDB 8.0.2+ — otherwise run multiple pipelines in parallel",
+    "$setWindowFields needs DocumentDB 8.0.2+ — otherwise use Computed Pattern or application layer",
+]
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

@@ -1,0 +1,45 @@
+# Pattern adjacency-list. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "adjacency-list"
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+triage_signal = "self_referential_fk"
+penalty = 0
+
+# Detection signals: self_referential_fk, hierarchy_traversal, graph_relationship
+[engines.dynamodb]
+kind = "fit"
+supported = true
+catalog = "dynamodb"
+catalog_id = "dynamodb-07d"
+score = 60
+why = "Hierarchical or graph-like relationship (self-referential FK or multi-level hierarchy traversal). Maps to DynamoDB adjacency list pattern with PK/SK design."
+concerns = [
+    "Complex key design required — needs careful PK/SK modeling",
+    "Deep hierarchies may require multiple queries or GSI",
+]
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."

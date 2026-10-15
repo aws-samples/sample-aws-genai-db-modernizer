@@ -1,0 +1,44 @@
+# Pattern stored-routine. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+id = "stored-routine"
+detectors = [
+    "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection signals: CALL procedure, DELIMITER patterns
+[engines.aurora_mysql]
+kind = "fit"
+supported = true
+catalog = "aurora_mysql"
+catalog_id = "aurora-mysql-05"
+score = 70
+why = "Stored procedures and functions (CALL, CREATE PROCEDURE). Aurora MySQL supports stored routines for encapsulating business logic server-side — reducing network round-trips for multi-step operations."
+concerns = [
+    "Stored routines increase operational complexity and are harder to version-control.",
+    "Consider migrating complex logic to application layer for testability.",
+]
