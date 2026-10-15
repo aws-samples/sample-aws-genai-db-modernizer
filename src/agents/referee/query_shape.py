@@ -32,7 +32,9 @@ __all__ = [
     "RELATIONAL",
     "is_primary_key_first_row_read",
     "is_single_table_crud",
+    "locking_clause",
     "primary_key_ordered_limit",
+    "skips_locked_rows",
     "single_table_access_shape",
 ]
 
@@ -148,6 +150,158 @@ _TRAILING_LIMIT_RES = (
         re.IGNORECASE,
     ),
 )
+
+# ---------------------------------------------------------------------------
+# Locking reads (#799, ADR-031 Decisions 3 and 14)
+#
+# A locking clause takes a row lock inside a transaction. On its own it does
+# not change which rows a read returns, so it does not change the read's
+# shape: a locking point read by the primary key is still a key lookup (CRUD),
+# a locking ordered or range read keeps its non-locking classification.
+# ``NOWAIT`` only changes what happens when a row is already locked (an error
+# instead of a wait), so it is shape-neutral too.
+#
+# The exception is a lock that skips rows: ``SKIP LOCKED`` (PostgreSQL, MySQL
+# 8) and T-SQL's ``READPAST`` hint return the first row nobody else holds --
+# the work-queue claim pattern -- not the row the key or the key order names.
+# The row is unknown, so the 2026-10-14 rule for an unknown row applies (review
+# of #840): such a read is at most a neutral ordered 1:M read, never a
+# key-value lookup; relational evidence (a range, an aggregate, a non-key
+# order) stays relational.
+#
+# The lock is recorded on its own, as a transactional need
+# (:func:`locking_clause`), never as relational evidence and never as a score:
+# DynamoDB supports transactions (ADR-031 Decision 3), and the ownership gate
+# that keeps a locking read off an engine that is not a system of record
+# (``cache_overlay.is_locking_read``) is a separate rule, unchanged here (#838).
+#
+# The forms read: PostgreSQL/MySQL ``FOR UPDATE`` / ``FOR NO KEY UPDATE`` /
+# ``FOR SHARE`` / ``FOR KEY SHARE`` (each with an optional ``OF <tables>``,
+# schema-qualified or not, and ``NOWAIT`` / ``SKIP LOCKED``; PostgreSQL
+# accepts the clause before or after the row limit), MySQL ``LOCK IN SHARE
+# MODE``, and a SQL Server table hint list ``WITH (...)`` -- comma-separated
+# or not, with ``INDEX(...)`` allowed -- naming ``UPDLOCK``, ``HOLDLOCK``,
+# ``XLOCK`` or ``SERIALIZABLE`` (``NOLOCK``/``READPAST`` alone take no lock).
+# Only names on the fixed T-SQL table-hint list (``_TABLE_HINT_NAMES``) are
+# ever recorded. Everything is matched after comments and literals are
+# stripped and quoted identifiers are replaced, so ``"update"`` (a column) or
+# ``'FOR UPDATE'`` (a value) is never a lock.
+# ---------------------------------------------------------------------------
+
+_LOCK_STRENGTH = r"(?P<strength>NO\s+KEY\s+UPDATE|UPDATE|KEY\s+SHARE|SHARE)"
+_LOCKED_TABLE = r"[\w$]+(?:\s*\.\s*[\w$]+)*"
+_FOR_LOCKING_RE = re.compile(
+    rf"\bFOR\s+{_LOCK_STRENGTH}"
+    rf"(?:\s+OF\s+{_LOCKED_TABLE}(?:\s*,\s*{_LOCKED_TABLE})*)?"
+    r"(?:\s+(?P<wait>NOWAIT|SKIP\s+LOCKED))?\b",
+    re.IGNORECASE,
+)
+_LOCK_IN_SHARE_MODE_RE = re.compile(r"\bLOCK\s+IN\s+SHARE\s+MODE\b", re.IGNORECASE)
+# ``WITH ( ... )`` with at most one level of nested parentheses (``INDEX(pk)``).
+_TABLE_HINTS_RE = re.compile(r"\bWITH\s*\((?P<hints>(?:[^()]|\([^()]*\))*)\)", re.IGNORECASE)
+_HINT_ARGUMENTS_RE = re.compile(r"\([^()]*\)")
+_HINT_WORD_RE = re.compile(r"[A-Za-z_]+")
+# The SQL Server table hints (the documented list); nothing else is recorded.
+_TABLE_HINT_NAMES = frozenset(
+    {
+        "FORCESCAN",
+        "FORCESEEK",
+        "HOLDLOCK",
+        "INDEX",
+        "NOEXPAND",
+        "NOLOCK",
+        "NOWAIT",
+        "PAGLOCK",
+        "READCOMMITTED",
+        "READCOMMITTEDLOCK",
+        "READPAST",
+        "READUNCOMMITTED",
+        "REPEATABLEREAD",
+        "ROWLOCK",
+        "SERIALIZABLE",
+        "SNAPSHOT",
+        "TABLOCK",
+        "TABLOCKX",
+        "UPDLOCK",
+        "XLOCK",
+    }
+)
+_LOCKING_HINTS = frozenset({"UPDLOCK", "HOLDLOCK", "XLOCK", "SERIALIZABLE"})
+_ROW_SKIPPING_HINTS = frozenset({"READPAST"})
+
+
+def _normalized_sql(text: str) -> str:
+    """``text`` with quoted identifiers replaced by ``ident``, then comments and literals blanked."""
+    return strip_comments_and_literals(_QUOTED_IDENT_RE.sub(" ident ", text))
+
+
+def _hint_names(hints: str) -> list[str]:
+    """The known table-hint names in a ``WITH (...)`` body, in order, arguments dropped."""
+    words = _HINT_WORD_RE.findall(_HINT_ARGUMENTS_RE.sub(" ", hints))
+    names = [w.upper() for w in words if w.upper() in _TABLE_HINT_NAMES]
+    return list(dict.fromkeys(names))
+
+
+def _table_hint_lists(sql: str) -> list[list[str]]:
+    """The known hint names of each ``WITH (...)`` table-hint list in ``sql``."""
+    return [
+        names for m in _TABLE_HINTS_RE.finditer(sql) if (names := _hint_names(m.group("hints")))
+    ]
+
+
+def _locking_hint_lists(sql: str) -> list[list[str]]:
+    """Each table-hint list in ``sql`` that names a locking hint."""
+    return [names for names in _table_hint_lists(sql) if _LOCKING_HINTS.intersection(names)]
+
+
+def _without_locking_clauses(sql: str) -> str:
+    """``sql`` (already normalized) with every locking clause removed."""
+    sql = _FOR_LOCKING_RE.sub(" ", sql)
+    sql = _LOCK_IN_SHARE_MODE_RE.sub(" ", sql)
+    return _TABLE_HINTS_RE.sub(
+        lambda m: " " if _locking_hint_lists(m.group(0)) else m.group(0), sql
+    )
+
+
+def skips_locked_rows(query_text: str | None) -> bool:
+    """Whether ``query_text`` skips rows other transactions hold (``SKIP LOCKED``, ``READPAST``).
+
+    Such a read returns an unknown row (a work-queue claim), so it is never a
+    key-value lookup (review of #840).
+    """
+    sql = _normalized_sql(query_text or "")
+    if any(
+        " ".join((m.group("wait") or "").upper().split()) == "SKIP LOCKED"
+        for m in _FOR_LOCKING_RE.finditer(sql)
+    ):
+        return True
+    return any(_ROW_SKIPPING_HINTS.intersection(names) for names in _table_hint_lists(sql))
+
+
+def locking_clause(query_text: str | None) -> str | None:
+    """The locking clause of ``query_text`` in canonical form, else ``None``.
+
+    ``"FOR UPDATE"``, ``"FOR NO KEY UPDATE NOWAIT"``, ``"FOR UPDATE SKIP
+    LOCKED"`` (an ``OF <tables>`` list is not part of the answer), ``"LOCK IN
+    SHARE MODE"`` or the hint list as ``"WITH (UPDLOCK, ROWLOCK)"`` (known
+    hint names only, arguments dropped: ``INDEX(pk)`` is ``INDEX``). Several
+    locking clauses (PostgreSQL allows one per table) are joined with ``"; "``.
+    This is the transactional need a locking read records (#799). It changes
+    :func:`single_table_access_shape` only through :func:`skips_locked_rows`.
+    """
+    sql = _normalized_sql(query_text or "")
+    clauses = []
+    for match in _FOR_LOCKING_RE.finditer(sql):
+        words = ["FOR", " ".join(match.group("strength").upper().split())]
+        if match.group("wait"):
+            words.append(" ".join(match.group("wait").upper().split()))
+        clauses.append(" ".join(words))
+    if _LOCK_IN_SHARE_MODE_RE.search(sql):
+        clauses.append("LOCK IN SHARE MODE")
+    clauses.extend(f"WITH ({', '.join(hints)})" for hints in _locking_hint_lists(sql))
+    return "; ".join(clauses) or None
+
+
 _TOP_RE = re.compile(
     rf"^\s*SELECT\s+TOP\s*(?:\(\s*(?P<paren>{_PARAM_OR_INT})\s*\)|(?P<bare>{_PARAM_OR_INT}))"
     r"(?P<percent>\s*PERCENT\b)?(?P<ties>\s*WITH\s+TIES\b)?",
@@ -209,7 +363,9 @@ def _primary_key_ordered_row_limit(
     key = [c.lower() for c in primary_key or []]
     if not key:
         return None
-    sql = strip_comments_and_literals(_unquote_identifiers(query_text or "")).strip()
+    sql = strip_comments_and_literals(_unquote_identifiers(query_text or ""))
+    # A lock changes no row the read returns (#799): read the shape without it.
+    sql = _without_locking_clauses(sql).strip()
     if _WHERE_WORD_RE.search(sql):
         return None
     limit = _row_limit(sql)
@@ -260,11 +416,13 @@ def is_primary_key_first_row_read(
     evidence (``None``) a parameterised limit is not a first-row read; a
     skipped-to row (``OFFSET 5``, ``OFFSET $1``: an unknown position is an
     unknown row), ``TOP (1) PERCENT`` and ``WITH TIES`` (which can return more
-    rows than ``n``) never are. Offsets, like limits, compare as numbers
+    rows than ``n``) never are, and neither is a read that skips locked rows
+    (``SKIP LOCKED``, ``READPAST``: the first row nobody else holds is an
+    unknown row, review of #840). Offsets, like limits, compare as numbers
     (``OFFSET 00`` is ``OFFSET 0``).
     """
     limit = _primary_key_ordered_row_limit(query_text, primary_key)
-    if limit is None:
+    if limit is None or skips_locked_rows(query_text):
         return False
     n, offset, qualifier = limit
     skipped = offset is not None and not (offset.isdigit() and int(offset) == 0)
@@ -355,7 +513,13 @@ def single_table_access_shape(
     everything else.
 
     Comments and string literals are stripped first, so a ``<`` or a function
-    call inside a quoted value never changes the verdict.
+    call inside a quoted value never changes the verdict. A locking clause
+    (``FOR UPDATE``, ``LOCK IN SHARE MODE``, ``WITH (UPDLOCK)``, ``NOWAIT``
+    included) does not change it either (#799): the answer is the one for the
+    same read without the lock, and the lock is a separate fact,
+    :func:`locking_clause`. A read that skips locked rows (``SKIP LOCKED``,
+    ``READPAST``, :func:`skips_locked_rows`) returns an unknown row, so it is
+    at most ``ORDERED_ONE_TO_MANY``, never ``CRUD`` (review of #840).
     """
     query_type = str(query.get("query_type") or "").upper()
     if query_type not in _CRUD_QUERY_TYPES:
@@ -394,4 +558,7 @@ def single_table_access_shape(
             if primary_key_ordered_limit(text, primary_key or []) is not None:
                 return ORDERED_ONE_TO_MANY
             return RELATIONAL
+    if query_type == "SELECT" and skips_locked_rows(text):
+        # SKIP LOCKED / READPAST returns an unknown row: at most neutral (#840).
+        return ORDERED_ONE_TO_MANY
     return CRUD

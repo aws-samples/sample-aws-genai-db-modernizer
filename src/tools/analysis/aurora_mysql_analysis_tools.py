@@ -15,6 +15,7 @@ Implements:
 
 from __future__ import annotations
 
+from src.agents.referee.query_shape import locking_clause
 from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
@@ -336,6 +337,8 @@ def build_aurora_mysql_decision_trace(
                 "matched_patterns": query_pattern_map.get(qid, []),
                 "matched_anti_patterns": query_anti_pattern_map.get(qid, []),
                 "mysql_features": detect_mysql_specific_features(q.get("query_text") or ""),
+                # A locking read's transactional need (#799): recorded, never scored.
+                "locking_clause": locking_clause(q.get("query_text") or ""),
             }
         )
 

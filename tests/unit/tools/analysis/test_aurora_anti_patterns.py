@@ -16,7 +16,10 @@ from pathlib import Path
 
 import pytest
 
+from src.contracts.analysis_output import WorkloadAnalysis
 from src.tools.analysis.aurora_common_analysis_tools import analyze_aurora_common_use_cases
+from src.tools.analysis.aurora_mysql_analysis_tools import build_aurora_mysql_decision_trace
+from src.tools.analysis.aurora_pg_analysis_tools import build_aurora_pg_decision_trace
 from tests.unit.agents.referee.test_query_shape import (
     NOT_SINGLE_TABLE_CRUD_SQL,
     SINGLE_TABLE_CRUD_SQL,
@@ -633,6 +636,60 @@ class TestSingleAccessPatternRequiresSingleTableCrud:
         }
         queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), join]
         assert _anti06(queries, tables=["t1", "u"]) is None
+
+
+class TestLockingReadsKeepTheirShape:
+    """#799 (ADR-031 Decision 3, 14): a lock is a transactional need, not a relational one.
+
+    A locking first-row read by the primary key is a key lookup like the same
+    read without the lock, so it neither clears the table nor stays out of
+    the penalty; a locking range read is still relational. The lock itself is
+    recorded in the Aurora decision traces (``locking_clause``).
+    """
+
+    def test_a_locking_first_row_read_qualifies_for_anti06(self):
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1 FOR UPDATE"),
+            _q("first", "SELECT * FROM t1 ORDER BY id LIMIT 1 FOR UPDATE"),
+        ]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "first"]
+
+    def test_a_locking_first_row_read_qualifies_for_anti05(self):
+        queries = [
+            _q("point", "SELECT * FROM `t1` WHERE `id` = ? LOCK IN SHARE MODE"),
+            _q("first", "SELECT * FROM `t1` ORDER BY `id` LIMIT 1 LOCK IN SHARE MODE"),
+            _q("write", "UPDATE `t1` SET `v` = ? WHERE `id` = ?"),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "first", "write"]
+
+    def test_a_locking_range_read_still_clears_the_table(self):
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("range", "SELECT * FROM t1 WHERE created_at < $1 FOR UPDATE"),
+        ]
+        assert _anti05(queries, primary_keys={"t1": ["id"]}) is None
+        assert _anti06(queries, primary_keys={"t1": ["id"]}) is None
+
+    @pytest.mark.parametrize(
+        "build_trace",
+        [build_aurora_pg_decision_trace, build_aurora_mysql_decision_trace],
+        ids=["aurora_postgresql", "aurora_mysql"],
+    )
+    def test_the_lock_is_recorded_in_the_decision_trace(self, build_trace):
+        queries = [
+            _q("locked", "SELECT * FROM t1 ORDER BY id LIMIT 1 FOR UPDATE"),
+            _q("plain", "SELECT * FROM t1 WHERE note = 'FOR UPDATE' AND id = $1"),
+        ]
+        trace = build_trace(
+            _make_collector([], queries), WorkloadAnalysis(patterns_detected=[]), []
+        )
+        by_id = {m["query_id"]: m for m in trace["query_matches"]}
+        assert by_id["locked"]["locking_clause"] == "FOR UPDATE"
+        assert by_id["plain"]["locking_clause"] is None
 
 
 # ==========================================================================
