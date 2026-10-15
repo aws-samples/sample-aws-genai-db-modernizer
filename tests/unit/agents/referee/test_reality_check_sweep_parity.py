@@ -336,3 +336,66 @@ class TestExternalFinalizeRunsTheSameSweep:
         assert _engines_of(store_a, version_a) == {"documentdb", "dynamodb"}
         (decision,) = out_a["flag_decisions"]
         assert (decision["outcome"], decision["destination_engine"]) == ("moved", "documentdb")
+
+
+def _pinned_assignment(pinned: set[str]) -> dict:
+    """``_assignment`` with the ``pinned`` DocumentDB queries kept there by the customer."""
+    assignment = _assignment(1)
+    for qa in assignment["query_assignments"]:
+        if qa["query_id"] in pinned:
+            qa["customer_override"] = True
+    return assignment
+
+
+class TestCustomerPinsKeepTheOrphanEngine:
+    """#844: a customer pin on a tiny orphan engine keeps that engine in the
+    plan, so the sweep records it as kept (the pin is the reason), never as
+    removed, and never moves the pinned query off for the restore to undo."""
+
+    @pytest.mark.parametrize("pinned", [{"DOC-0", "DOC-1", "DOC-2"}, {"DOC-1"}])
+    def test_a_pinned_orphan_engine_is_kept_with_the_pin_as_the_reason(
+        self, tmp_path, pinned
+    ) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed(store, _pinned_assignment(pinned))
+
+        summary = run_reality_check_handler(JOB, DB, store, llm_mode="none")
+
+        out = _rc_output(store)
+        (decision,) = out["sweep_decisions"]
+        assert decision["engine"] == "documentdb"
+        assert decision["decision"] == "kept"
+        assert decision["blocking_rule"] == "customer_pin"
+        assert decision["blocking_query_ids"] == sorted(pinned)
+        assert "customer" in decision["reason"]
+        # The verdict matches the plan: DocumentDB is still in it, nothing moved.
+        assert out["after_distribution"].get("documentdb") == 3
+        assert out["eliminated_engines"] == []
+        assert out["consolidations"] == []
+        assert summary["output_version"] is None
+
+    def test_no_move_takes_a_pinned_query_off_and_back(self, tmp_path) -> None:
+        """The pinned query never leaves its engine, so the ledger holds no
+        sweep Move and no ``customer_pick`` restore for it."""
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed(store, _pinned_assignment({"DOC-0", "DOC-1", "DOC-2"}))
+        det = run_reality_check_deterministic(JOB, DB, store, assignment_version=1)
+
+        _run_sanity_sweep(det)
+        write_reality_check_result(store, JOB, DB, det, assignment_version=1)
+
+        assert det["move_ledger"].moves == []
+        assert {qa["assigned_engine"] for qa in det["revised_assignments"]} == {
+            "dynamodb",
+            "documentdb",
+        }
+
+    def test_external_finalize_agrees(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed(store, _pinned_assignment({"DOC-0"}))
+        run_reality_check_handler(JOB, DB, store, llm_mode="external")
+
+        finalize_reality_check(store, JOB, DB, {}, assignment_version=1)
+
+        (decision,) = _rc_output(store)["sweep_decisions"]
+        assert (decision["decision"], decision["blocking_rule"]) == ("kept", "customer_pin")

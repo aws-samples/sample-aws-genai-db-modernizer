@@ -257,7 +257,7 @@ class TestRealityCheckOutputContract:
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
         # #589: bumped to 1.10 for sweep_decisions.
-        assert output.contract_version == "1.12"
+        assert output.contract_version == "1.13"
 
     def test_sweep_decisions_defaults_and_roundtrips(self, valid_reality_check_data):
         # Additive in 1.10 (#589): an output written before this field

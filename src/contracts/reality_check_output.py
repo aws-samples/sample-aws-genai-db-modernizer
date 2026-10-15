@@ -70,6 +70,12 @@ Version History:
   ``ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY`` placeholder. Defaults to
   ``False``, except that a record without the flag and with a positive
   ``saved_cost_estimate`` (written before 1.12) reads as claimed.
+- 1.13 (2026-10-15, #844): ``SweepDecision.blocking_rule`` gains the value
+  ``customer_pin``: the sanity sweep keeps an orphan engine that holds a
+  customer-pinned query (``customer_override``), with the pinned ids in
+  ``blocking_query_ids``, instead of recording it ``removed`` while the
+  customer-override restore puts the query back. No field is added or
+  removed; an artifact written before 1.13 never carries the new value.
 """
 
 from typing import Literal
@@ -210,14 +216,16 @@ class SweepDecision(BaseModel):
         default_factory=list,
         description=(
             "Query (or co-dependency group member) IDs that had no serviceable, "
-            "eligible committed destination -- what blocked a 'kept' decision. "
+            "eligible committed destination, or that the customer pinned on the "
+            "engine -- what blocked a 'kept' decision. "
             "Always empty for a 'removed' decision"
         ),
     )
     blocking_rule: str | None = Field(
         None,
         description=(
-            "Why the blocking query/group had nowhere else to go: 'signal_override' "
+            "Why the blocking query/group had nowhere else to go: 'customer_pin' "
+            "(the customer chose this engine for it), 'signal_override' "
             "(mandatory for a signal override), 'no_serviceable_engine' (a hard "
             "exclusion or missing capability on every other committed engine), "
             "'ineligible_destination' (serviceable, but not somewhere the reality "
@@ -295,7 +303,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.12", description="Contract version")
+    contract_version: str = Field(default="1.13", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )

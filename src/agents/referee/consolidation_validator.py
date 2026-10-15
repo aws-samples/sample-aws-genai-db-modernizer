@@ -78,11 +78,16 @@ logger = logging.getLogger(__name__)
 # more DIFFERENT rules blocking the same engine (see the sweep below); it
 # never comes from a single query/group's own gate.
 BLOCKING_RULE_SIGNAL_OVERRIDE = "signal_override"
+# #844: a query the customer pinned on the engine (``customer_override``). The
+# customer-override restore puts it back there whatever the sweep does, so the
+# engine stays in the plan and the sweep keeps it rather than report it removed.
+BLOCKING_RULE_CUSTOMER_PIN = "customer_pin"
 BLOCKING_RULE_NO_SERVICEABLE_ENGINE = "no_serviceable_engine"
 BLOCKING_RULE_INELIGIBLE_DESTINATION = "ineligible_destination"
 BLOCKING_RULE_MIXED = "mixed"
 BLOCKING_RULES: tuple[str, ...] = (
     BLOCKING_RULE_SIGNAL_OVERRIDE,
+    BLOCKING_RULE_CUSTOMER_PIN,
     BLOCKING_RULE_NO_SERVICEABLE_ENGINE,
     BLOCKING_RULE_INELIGIBLE_DESTINATION,
     BLOCKING_RULE_MIXED,
@@ -436,6 +441,20 @@ def _signal_override_block(members: list[str], by_id: dict[str, dict]) -> str | 
     return None
 
 
+def _customer_pin_block(members: list[str], by_id: dict[str, dict], engine: str) -> str | None:
+    """A "the customer chose this engine" reason when any of ``members`` is a
+    customer pin (``customer_override``, #844). The reality check never moves a
+    pinned query (the customer-override restore puts it back), so an orphan
+    engine holding one stays in the plan: the sweep keeps it, the same way a
+    signal override keeps it, instead of recording a removal the restore then
+    undoes. ``None`` when no member is pinned.
+    """
+    pinned = [m for m in members if by_id[m].get("customer_override")]
+    if not pinned:
+        return None
+    return f"the customer chose {display_engine(engine)} for {', '.join(pinned)}"
+
+
 def _eligible_destinations(
     members: list[str],
     engine: str,
@@ -536,10 +555,13 @@ def sanity_sweep(
     on which happened to be evaluated first, trading the old raw-count bias
     for an iteration-order one.
 
-    Four things keep a query (or its whole group) from moving at all, and
+    Five things keep a query (or its whole group) from moving at all, and
     each one keeps the WHOLE orphan engine, not just that one query (round
-    2/3 review): a mandatory signal override (nowhere else to go, the same
-    way the rest of the reality check treats it); no committed engine that
+    2/3 review): a customer pin (``customer_override``, #844: the customer-
+    override restore puts it back, so the engine stays in the plan and is
+    recorded as kept, never removed); a mandatory signal override (nowhere
+    else to go, the same way the rest of the reality check treats it); no
+    committed engine that
     can serve it (a hard exclusion or missing capability); for a
     co-dependency group, any one member failing either of those on a given
     candidate, which excludes that candidate for every member; or no
@@ -704,6 +726,12 @@ def sanity_sweep(
         for members in units:
             is_group = len(members) > 1
 
+            pin_reason = _customer_pin_block(members, by_id, engine)
+            if pin_reason is not None:
+                blocked_notes.append(pin_reason)
+                blocked_units.append({"members": members, "rule": BLOCKING_RULE_CUSTOMER_PIN})
+                continue
+
             override_reason = _signal_override_block(members, by_id)
             if override_reason is not None:
                 blocked_notes.append(override_reason)
@@ -783,10 +811,16 @@ def sanity_sweep(
             # onto it either -- never decided by raw count, and never by
             # generalizing one blocked query's gate into protecting (or
             # redirecting) every other query here too.
+            # A customer pin is not a missing destination (#844): say what kept
+            # the engine. Without a pin the reason is unchanged.
+            kept_because = (
+                "not every query can leave it"
+                if any(u["rule"] == BLOCKING_RULE_CUSTOMER_PIN for u in blocked_units)
+                else "not every query has a serviceable committed engine"
+            )
             print(
                 f"[reality-check] Sanity sweep: kept {display_engine(engine)} "
-                f"({count} queries) -- not every query has a serviceable committed "
-                f"engine: {'; '.join(blocked_notes)}"
+                f"({count} queries) -- {kept_because}: {'; '.join(blocked_notes)}"
             )
             # #589: the same verdict, structured -- blocking_query_ids/_rule
             # name EVERY blocked unit, not just the first, the same way
@@ -805,10 +839,7 @@ def sanity_sweep(
                 {
                     "engine": engine,
                     "decision": "kept",
-                    "reason": (
-                        "not every query has a serviceable committed engine: "
-                        f"{'; '.join(blocked_notes)}"
-                    ),
+                    "reason": f"{kept_because}: {'; '.join(blocked_notes)}",
                     "blocking_query_ids": sorted({m for u in blocked_units for m in u["members"]}),
                     "blocking_rule": (
                         distinct_rules[0] if len(distinct_rules) == 1 else BLOCKING_RULE_MIXED

@@ -531,6 +531,46 @@ class TestSanitySweepDecisions:
         assert set(decision["blocking_query_ids"]) == {"s1", "s2"}
         assert decision["blocking_rule"] == "mixed"
 
+    def test_a_customer_pinned_group_member_keeps_the_engine_and_the_group(self) -> None:
+        # #844: g1 is pinned on documentdb, g2 is in its co-dependency group,
+        # and both score well on dynamodb. The pin keeps the whole group (it
+        # moves as one unit), so documentdb stays and nothing moves.
+        assignments: list[dict] = [
+            {"query_id": "g1", "assigned_engine": "documentdb", "customer_override": True},
+            {"query_id": "g2", "assigned_engine": "documentdb"},
+            *({"query_id": f"y{i}", "assigned_engine": "dynamodb"} for i in range(6)),
+        ]
+        query_map = _query_map("g1", "g2", *(f"y{i}" for i in range(6)))
+        scoring_context = _scoring_context({"g1": {"dynamodb": 90}, "g2": {"dynamodb": 90}})
+
+        updated, consolidations, sweep_decisions = sanity_sweep(
+            assignments, [], scoring_context, query_map, co_dependency_groups=[["g1", "g2"]]
+        )
+
+        assert consolidations == []
+        assert {qa["query_id"]: qa["assigned_engine"] for qa in updated}["g2"] == "documentdb"
+        (decision,) = sweep_decisions
+        assert (decision["decision"], decision["blocking_rule"]) == ("kept", "customer_pin")
+        assert decision["blocking_query_ids"] == ["g1", "g2"]
+        assert decision["reason"] == (
+            "not every query can leave it: the customer chose DocumentDB for g1"
+        )
+
+    def test_a_customer_pin_and_another_blocking_rule_report_mixed(self) -> None:
+        assignments: list[dict] = [
+            {"query_id": "p1", "assigned_engine": "opensearch", "customer_override": True},
+            {"query_id": "s1", "assigned_engine": "opensearch", "signal_override": "text_search"},
+            *({"query_id": f"y{i}", "assigned_engine": "dynamodb"} for i in range(6)),
+        ]
+        query_map = _query_map("p1", "s1", *(f"y{i}" for i in range(6)))
+        scoring_context = _scoring_context({"p1": {"dynamodb": 90}, "s1": {"dynamodb": 90}})
+
+        _, _, sweep_decisions = sanity_sweep(assignments, [], scoring_context, query_map)
+
+        (decision,) = sweep_decisions
+        assert (decision["decision"], decision["blocking_rule"]) == ("kept", "mixed")
+        assert decision["blocking_query_ids"] == ["p1", "s1"]
+
     def test_a_kept_engine_with_no_other_committed_engine_at_all(self) -> None:
         # documentdb is the ONLY engine in the whole distribution -- no
         # Aurora, no other engine over the orphan threshold -- so there is
