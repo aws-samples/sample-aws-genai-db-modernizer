@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from src.agents.referee.move_ledger import MoveLedger, apply, ledger_for
+from src.agents.referee.reality_check_records import consolidations_from_moves
 from src.contracts.move_ledger import MovePass, ReasonCode
 
 
@@ -34,3 +35,26 @@ def recorded_ledger(before: Iterable[Mapping], after: Iterable[Mapping]) -> Move
             tied_engines=tied,
         )
     return ledger
+
+
+def records_from_moves(
+    before: list[dict],
+    after: Iterable[Mapping],
+    consolidations: list[dict],
+    unique_value_assessment: Mapping[str, Mapping] | None = None,
+    engine_costs: Mapping[str, float] | None = None,
+) -> list[dict]:
+    """The records a reality check that moved ``before`` to ``after`` writes (#846).
+
+    Records the engine changes as Moves (:func:`recorded_ledger`) and fits the
+    records the way the reality check does, from those Moves
+    (``consolidations_from_moves``), so a test states its scenario as two
+    assignment lists and still exercises the ledger path.
+    """
+    return consolidations_from_moves(
+        before,
+        recorded_ledger(before, after).moves,
+        consolidations,
+        unique_value_assessment,
+        engine_costs,
+    )

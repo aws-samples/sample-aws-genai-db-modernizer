@@ -680,7 +680,7 @@ def test_truncate_scrubs_bare_issue_references():
     # Issue #329 review: the mandatory-engine justification floor in
     # reality_check.py used to build a draft reason with a bare issue tag,
     # e.g. "... does not meet its justification floor (#167) -- ...", which
-    # reconcile_consolidations did not always rewrite before the artifact
+    # the record fitting did not always rewrite before the artifact
     # was written (see test_reality_check_status_line_never_leaks_an_issue_tag,
     # below). #406 fixed that at the source -- reality_check.py never emits
     # the tag at all now -- but an internal issue number must never reach a

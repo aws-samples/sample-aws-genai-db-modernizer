@@ -12,7 +12,7 @@ made it mandatory.
 This module also guards against a regression (#406): the justification
 floor used to build its consolidation reason with a bare internal issue tag
 baked in (e.g. ``"... justification floor (#167) ..."``), and
-``reconcile_consolidations`` only rewrites a record's ``reason`` when its
+the record fitting (``consolidations_from_moves``) only rewrites a record's ``reason`` when its
 ``query_count``/``action``/``retained`` queries changed, so the tag could
 survive verbatim into ``reality-check/output.json`` and from there into the
 deliverables and the ``/modernize`` approval gate. Customer-facing text must

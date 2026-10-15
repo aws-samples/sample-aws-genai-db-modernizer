@@ -129,7 +129,7 @@ def consolidations_from_moves(
     replayed on ``before_assignments``, so no "after" list is needed and the
     records cannot disagree with the ledger. ``consolidations`` are the passes'
     own records, read only for what a Move does not carry (see the module
-    docstring); the rest is :func:`reconcile_consolidations`.
+    docstring); the fitting rules are :func:`_fit_records`'s.
     """
     start = {
         qa["query_id"]: (qa["assigned_engine"], sorted(qa.get("tied_engines") or []))
@@ -148,18 +148,18 @@ def consolidations_from_moves(
     )
 
 
-def reconcile_consolidations(
+def _fit_records(
     before_assignments: list[dict],
-    after_assignments: list[dict],
+    after: list[tuple[str, str, bool]],
     consolidations: list[dict],
-    unique_value_assessment: dict[str, dict] | None = None,
-    engine_costs: dict[str, float] | None = None,
+    unique_value_assessment: Mapping[str, Mapping] | None,
+    engine_costs: Mapping[str, float] | None,
 ) -> list[dict]:
-    """Make the consolidation records describe the net per-query moves (#218).
+    """Fit the consolidation records to the net per-query moves (#218).
 
-    The reality check calls :func:`consolidations_from_moves`, which builds
-    ``after_assignments`` from its Moves; this is the fitting step on its own,
-    for a caller that holds two assignment lists and no ledger.
+    :func:`consolidations_from_moves` is the only caller: ``after`` is each
+    query's ``(query_id, engine, in_scope)`` once the check's Moves are
+    replayed on ``before_assignments``.
 
     Pass 2, the LLM corrections, the post-correction re-settle, the sanity sweep and
     the customer-override restore each move queries and edit records on their own,
@@ -198,26 +198,6 @@ def reconcile_consolidations(
 
     Record order is kept; new records follow. Inputs are not mutated.
     """
-    return _fit_records(
-        before_assignments,
-        [
-            (qa["query_id"], qa["assigned_engine"], qa.get("in_scope", True))
-            for qa in after_assignments
-        ],
-        consolidations,
-        unique_value_assessment,
-        engine_costs,
-    )
-
-
-def _fit_records(
-    before_assignments: list[dict],
-    after: list[tuple[str, str, bool]],
-    consolidations: list[dict],
-    unique_value_assessment: Mapping[str, Mapping] | None,
-    engine_costs: Mapping[str, float] | None,
-) -> list[dict]:
-    """:func:`reconcile_consolidations`, with ``after`` as ``(query_id, engine, in_scope)``."""
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
     after_engine = {qid: engine for qid, engine, _ in after}
     # The single rule ("no in-scope query remains") lives in one place

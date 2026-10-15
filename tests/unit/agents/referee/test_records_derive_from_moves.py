@@ -277,3 +277,13 @@ class TestFlagMovesIgnoreOtherPasses:
         apply(ledger, "b", "dynamodb", pass_=MovePass.SWEEP, reason_code=ReasonCode.SWEEP_ORPHAN)
 
         assert flag_moves_by_query(ledger.moves) == {"a": ("dynamodb", "aurora_mysql")}
+
+
+class TestOneWayToFitRecords:
+    def test_records_are_fitted_only_from_moves(self) -> None:
+        """#846: the before/after builder ``reconcile_consolidations`` is gone, so
+        consolidation records have one entry point, the ledger path."""
+        from src.agents.referee import reality_check, reality_check_records
+
+        assert not hasattr(reality_check_records, "reconcile_consolidations")
+        assert "reconcile_consolidations" not in reality_check.__all__

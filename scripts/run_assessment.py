@@ -589,7 +589,7 @@ _REASON_LIMIT = 140  # keeps the reality_check status line compact (#329)
 # A draft reasoning pass inside reality_check_floors.py's mandatory-engine
 # justification floor builds its reason text with a bare issue tag, e.g.
 # "... does not meet its justification floor (#167) -- ...". Reconciliation
-# (reconcile_consolidations) usually replaces that text once query counts
+# (consolidations_from_moves) usually replaces that text once query counts
 # settle, but review of #329 found a scenario where the tag survives all
 # the way into reality-check/output.json unchanged. An internal issue
 # number is not something an approval gate should show a customer, so this

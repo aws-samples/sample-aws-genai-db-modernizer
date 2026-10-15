@@ -172,7 +172,7 @@ def test_reality_check_resets_safety_net_notes(tmp_path):
         "(60.0% of calls) remains."
     )
     # Original: q1 on opensearch, q2 already on aurora_mysql. Revised: both on
-    # aurora_mysql -- a real net move, so reconcile_consolidations (run by
+    # aurora_mysql -- a real net move, so consolidations_from_moves (run by
     # write_reality_check_result's _settle_records) keeps the record instead
     # of discarding it as a no-op.
     original = [

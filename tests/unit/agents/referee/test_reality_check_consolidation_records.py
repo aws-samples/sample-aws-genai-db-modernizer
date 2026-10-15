@@ -24,13 +24,12 @@ from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
     _build_recommendations,
     _engine_infra_cost,
-    reconcile_consolidations,
 )
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.contracts.model_flag import ModelFlag
 from src.report import renderers
 from src.storage.local_store import LocalArtifactStore
-from tests.unit.agents.referee.ledger_fakes import recorded_ledger
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger, records_from_moves
 
 
 def _qa(qid: str, engine: str, reason: str = "assigned", **extra) -> dict:
@@ -268,7 +267,7 @@ class TestReconcile:
                 qa["assigned_engine"] = "aurora_mysql"
         records.append(_record("opensearch", "aurora_mysql", 3, saved=450))
 
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, revised, records, engine_costs={"opensearch": 450, "documentdb": 500}
         )
 
@@ -282,7 +281,7 @@ class TestReconcile:
     def test_unrecorded_move_gets_a_record(self) -> None:
         before = [_qa("a", "aurora_mysql"), _qa("b", "aurora_mysql"), _qa("c", "opensearch")]
         after = [_qa("a", "dynamodb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
-        final = reconcile_consolidations(before, after, [], engine_costs={"opensearch": 240.96})
+        final = records_from_moves(before, after, [], engine_costs={"opensearch": 240.96})
         _assert_invariant(before, after, final)
         am = next(c for c in final if c["from_engine"] == "aurora_mysql")
         assert am["query_count"] == 1 and am["action"] == "partial"
@@ -297,7 +296,7 @@ class TestReconcile:
             _record("documentdb", "dynamodb", 5, saved=500),
             _record("opensearch", "documentdb", 1, saved=450),
         ]
-        final = reconcile_consolidations(before, after, records, engine_costs={"documentdb": 500})
+        final = records_from_moves(before, after, records, engine_costs={"documentdb": 500})
         _assert_invariant(before, after, final)
         assert [(c["from_engine"], c["query_count"]) for c in final] == [("documentdb", 2)]
         assert final[0]["saved_cost_estimate"] == 500
@@ -309,13 +308,13 @@ class TestReconcile:
             _record("documentdb", "dynamodb", 1, saved=500),
             _record("documentdb", "aurora_mysql", 1, saved=500),
         ]
-        final = reconcile_consolidations(before, after, records, engine_costs={"documentdb": 500})
+        final = records_from_moves(before, after, records, engine_costs={"documentdb": 500})
         assert sum(c["saved_cost_estimate"] for c in final) == 500
 
     def test_out_of_scope_leftovers_do_not_keep_an_engine(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "documentdb", in_scope=False)]
         after = [_qa("a", "dynamodb"), _qa("b", "documentdb", in_scope=False)]
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, after, [_record("documentdb", "dynamodb", 1, 500)], {}, {"documentdb": 500}
         )
         assert final[0]["action"] == "full" and final[0]["saved_cost_estimate"] == 500
@@ -323,13 +322,13 @@ class TestReconcile:
     def test_customer_override_left_on_an_emptied_engine_keeps_it(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "documentdb", customer_override=True)]
         after = [_qa("a", "dynamodb"), _qa("b", "documentdb", customer_override=True)]
-        final = reconcile_consolidations(before, after, [_record("documentdb", "dynamodb", 1, 500)])
+        final = records_from_moves(before, after, [_record("documentdb", "dynamodb", 1, 500)])
         assert final[0]["action"] == "partial" and final[0]["saved_cost_estimate"] == 0
 
     def test_engine_with_no_in_scope_query_in_the_input_claims_no_savings(self) -> None:
         before = [_qa("a", "opensearch", in_scope=False), _qa("b", "dynamodb")]
         after = [_qa("a", "dynamodb", in_scope=False), _qa("b", "dynamodb")]
-        final = reconcile_consolidations(before, after, [_record("opensearch", "dynamodb", 1, 450)])
+        final = records_from_moves(before, after, [_record("opensearch", "dynamodb", 1, 450)])
         assert final[0]["action"] == "partial" and final[0]["saved_cost_estimate"] == 0
         _assert_invariant(before, after, final)
 
@@ -344,7 +343,7 @@ class TestReconcile:
             "2 stay on aurora_mysql (unserviceable on dynamodb)",
             "queries_retained": ["b", "c"],
         }
-        final = reconcile_consolidations(before, after, [record])
+        final = records_from_moves(before, after, [record])
         ddb = next(c for c in final if c["to_engine"] == "dynamodb")
         assert ddb["queries_retained"] == ["c"]
         assert "2 stay on" not in ddb["reason"]
@@ -353,7 +352,7 @@ class TestReconcile:
 
     def test_cost_justification_survives_the_reconciler(self) -> None:
         """Review finding 5: the justification-floor reason (#326, #167) must survive
-        reconcile_consolidations, which otherwise overwrites the reason with a generic
+        the record fitting, which otherwise overwrites the reason with a generic
         "N queries moved; no in-scope query remains" when anything else moved too."""
         before = [_qa(q, "opensearch") for q in ("a", "b", "c")]
         after = [_qa(q, "aurora_mysql") for q in ("a", "b", "c")]
@@ -362,7 +361,7 @@ class TestReconcile:
                 "cost_justification": ("3 queries use LIKE/prefix matching, not relevance ranking")
             }
         }
-        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        final = records_from_moves(before, after, [], unique_value_assessment)
         record = next(c for c in final if c["from_engine"] == "opensearch")
         assert "LIKE/prefix" in record["reason"]
 
@@ -370,7 +369,7 @@ class TestReconcile:
         """The parameter is optional -- existing callers that don't pass it keep working."""
         before = [_qa("a", "opensearch")]
         after = [_qa("a", "aurora_mysql")]
-        final = reconcile_consolidations(before, after, [])
+        final = records_from_moves(before, after, [])
         assert final[0]["from_engine"] == "opensearch"
 
     def test_cost_justification_only_attaches_to_the_floors_own_pair(self) -> None:
@@ -389,7 +388,7 @@ class TestReconcile:
                 "cost_justification_query_ids": ["d"],
             }
         }
-        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        final = records_from_moves(before, after, [], unique_value_assessment)
         to_aurora = next(c for c in final if c["to_engine"] == "aurora_postgresql")
         to_dynamodb = next(c for c in final if c["to_engine"] == "dynamodb")
         assert "no search predicate" not in to_aurora["reason"]
@@ -404,7 +403,7 @@ class TestReconcile:
                 "cost_justification_query_ids": ["a", "b"],
             }
         }
-        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        final = records_from_moves(before, after, [], unique_value_assessment)
         record = next(c for c in final if c["from_engine"] == "opensearch")
         assert "no search predicate" in record["reason"]
 
@@ -426,7 +425,7 @@ class TestReconcile:
                 "cost_justification_query_ids": ["c", "d"],
             }
         }
-        final = reconcile_consolidations(before, after, [], unique_value_assessment)
+        final = records_from_moves(before, after, [], unique_value_assessment)
         record = next(c for c in final if c["from_engine"] == "opensearch")
         assert "2 queries of these, moved by the justification floor" in record["reason"]
         assert "no search predicate" in record["reason"]
@@ -447,7 +446,7 @@ class TestReconcile:
         records = [
             {**_record("opensearch", "dynamodb", 1, saved=450), "workload_justified": False},
         ]
-        final = reconcile_consolidations(before, after, records)
+        final = records_from_moves(before, after, records)
         by_dst = {c["to_engine"]: c for c in final}
         assert by_dst["dynamodb"]["workload_justified"] is False
         assert by_dst["aurora_mysql"]["workload_justified"] is False
@@ -469,7 +468,7 @@ class TestReconcile:
         records = [
             {**_record("opensearch", "dynamodb", 1, saved=450), "workload_justified": False},
         ]
-        final = reconcile_consolidations(before, after, records)
+        final = records_from_moves(before, after, records)
 
         assert never_justified_engines({"consolidations": final}) == {"opensearch"}
         recs = _build_recommendations([], final, [], {}, {"opensearch": 240.96})
@@ -482,7 +481,7 @@ class TestReconcile:
     def test_counts_of_one_are_singular(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
         after = [_qa("a", "dynamodb"), _qa("b", "dynamodb"), _qa("c", "aurora_mysql")]
-        final = reconcile_consolidations(before, after, [])
+        final = records_from_moves(before, after, [])
         text = " ".join(c["reason"] for c in final) + " ".join(
             _build_recommendations([], final, [], {})
         )
@@ -636,7 +635,7 @@ class TestEliminatedEnginesField:
         result = {
             "move_ledger": recorded_ledger(before, revised),
             "revised_assignments": revised,
-            "consolidations": reconcile_consolidations(before, revised, []),
+            "consolidations": records_from_moves(before, revised, []),
             "architectural_patterns": [],
             "recommendations": [],
             "unique_value_assessment": {},

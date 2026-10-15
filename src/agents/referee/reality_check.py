@@ -63,7 +63,6 @@ from src.agents.referee.reality_check_place import _place_settled_queries
 from src.agents.referee.reality_check_records import (
     _queries,
     consolidations_from_moves,
-    reconcile_consolidations,
 )
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
@@ -129,7 +128,6 @@ __all__ = [
     "may_absorb",
     "opensearch_justification",
     "patterns_for_assignment",
-    "reconcile_consolidations",
     "refresh_patterns_and_recommendations",
     "run_reality_check",
 ]

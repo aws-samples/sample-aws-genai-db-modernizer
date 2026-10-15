@@ -13,7 +13,7 @@ from src.agents.referee.reality_check import run_reality_check
 from src.agents.referee.reality_check_floors import _find_best_absorber_for_query
 from src.agents.referee.reality_check_patterns import _build_recommendations
 from src.agents.referee.reality_check_place import _place_settled_queries
-from src.agents.referee.reality_check_records import reconcile_consolidations
+from tests.unit.agents.referee.ledger_fakes import records_from_moves
 
 # --- the mandatory-engine tie bonus ------------------------------------------
 
@@ -214,7 +214,7 @@ class TestSavingsAreClaimedOnlyForAJustifiedEngine:
     def test_a_never_justified_engine_claims_no_saving_in_the_record_or_the_text(self) -> None:
         before = self._qas("opensearch")
         after = [{**qa, "assigned_engine": "aurora_postgresql"} for qa in before]
-        records = reconcile_consolidations(
+        records = records_from_moves(
             before, after, [_record("opensearch", "aurora_postgresql", justified=False)]
         )
         assert records[0]["action"] == "full"
@@ -226,7 +226,7 @@ class TestSavingsAreClaimedOnlyForAJustifiedEngine:
     def test_a_justified_engine_still_claims_its_saving(self) -> None:
         before = self._qas("opensearch")
         after = [{**qa, "assigned_engine": "aurora_postgresql"} for qa in before]
-        records = reconcile_consolidations(
+        records = records_from_moves(
             before,
             after,
             [_record("opensearch", "aurora_postgresql", justified=True)],
@@ -240,7 +240,7 @@ class TestSavingsAreClaimedOnlyForAJustifiedEngine:
     def test_a_partial_move_claims_no_saving_either(self) -> None:
         before = self._qas("opensearch")
         after = [dict(before[0], assigned_engine="aurora_postgresql"), before[1]]
-        records = reconcile_consolidations(
+        records = records_from_moves(
             before, after, [_record("opensearch", "aurora_postgresql", justified=True)]
         )
         assert records[0]["action"] == "partial"

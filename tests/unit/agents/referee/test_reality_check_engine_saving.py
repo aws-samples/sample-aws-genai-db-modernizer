@@ -9,8 +9,9 @@ is claimed only for an engine the first assignment justified, and counted once.
 
 from __future__ import annotations
 
-from src.agents.referee.reality_check import _build_recommendations, reconcile_consolidations
+from src.agents.referee.reality_check import _build_recommendations
 from src.agents.referee.reality_check_records import removal_log_lines
+from tests.unit.agents.referee.ledger_fakes import records_from_moves
 
 WORDPRESS_DOCDB_COST = 367.39
 
@@ -47,7 +48,7 @@ def _wordpress_like() -> tuple[list[dict], list[dict], list[dict]]:
 class TestReconcileUsesTheAnalysedCost:
     def test_saving_is_the_analysed_cost_not_the_placeholder(self) -> None:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, after, records, engine_costs={"documentdb": WORDPRESS_DOCDB_COST}
         )
         assert sum(c["saved_cost_estimate"] for c in final) == WORDPRESS_DOCDB_COST
@@ -55,21 +56,21 @@ class TestReconcileUsesTheAnalysedCost:
 
     def test_every_record_of_the_engine_marks_the_removal_as_claimed(self) -> None:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, after, records, engine_costs={"documentdb": WORDPRESS_DOCDB_COST}
         )
         assert [c["removal_saving_claimed"] for c in final] == [True, True]
 
     def test_no_analysed_cost_claims_no_dollar_figure(self) -> None:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(before, after, records, engine_costs={})
+        final = records_from_moves(before, after, records, engine_costs={})
         assert [c["saved_cost_estimate"] for c in final] == [0.0, 0.0]
         assert [c["removal_saving_claimed"] for c in final] == [True, True]
 
     def test_unjustified_engine_claims_nothing(self) -> None:
         before = [_qa("a", "opensearch"), _qa("b", "opensearch")]
         after = [_qa("a", "aurora_postgresql"), _qa("b", "aurora_postgresql")]
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before,
             after,
             [_record("opensearch", "aurora_postgresql", 2, workload_justified=False)],
@@ -81,7 +82,7 @@ class TestReconcileUsesTheAnalysedCost:
     def test_partial_move_claims_nothing(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "documentdb")]
         after = [_qa("a", "dynamodb"), _qa("b", "documentdb")]
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before,
             after,
             [_record("documentdb", "dynamodb", 1)],
@@ -95,7 +96,7 @@ class TestReconcileUsesTheAnalysedCost:
 class TestRecommendationWording:
     def _recs(self) -> list[str]:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, after, records, engine_costs={"documentdb": WORDPRESS_DOCDB_COST}
         )
         return _build_recommendations(after, final, [], {}, {"documentdb": WORDPRESS_DOCDB_COST})
@@ -121,7 +122,7 @@ class TestRecommendationWording:
     def test_a_single_move_keeps_its_wording(self) -> None:
         before = [_qa("a", "opensearch")]
         after = [_qa("a", "aurora_mysql")]
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before,
             after,
             [_record("opensearch", "aurora_mysql", 1)],
@@ -133,7 +134,7 @@ class TestRecommendationWording:
 
     def test_a_multi_move_engine_without_a_cost_names_no_figure(self) -> None:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(before, after, records, engine_costs={})
+        final = records_from_moves(before, after, records, engine_costs={})
         recs = _build_recommendations(after, final, [], {}, {})
         assert all("$" not in r for r in recs)
         assert "Retiring DocumentDB (2 queries to Aurora MySQL, 5 to DynamoDB)" in recs[0]
@@ -143,7 +144,7 @@ class TestRecommendationWording:
 class TestLogLines:
     def test_one_saving_line_per_removed_engine_with_the_same_figure(self) -> None:
         before, after, records = _wordpress_like()
-        final = reconcile_consolidations(
+        final = records_from_moves(
             before, after, records, engine_costs={"documentdb": WORDPRESS_DOCDB_COST}
         )
         lines = removal_log_lines(final)

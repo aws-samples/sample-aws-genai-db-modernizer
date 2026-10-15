@@ -565,8 +565,8 @@ ENGINE_BY_NAME = {
 _ENGINE_NAME_ALT = "|".join(re.escape(n) for n in sorted(ENGINE_BY_NAME, key=len, reverse=True))
 # A "Consolidated N queries from <engine> -> <absorber>: ... no in-scope
 # <engine> query remains ..." trade-off line (reality_check_patterns.
-# _build_recommendations / reality_check_records.reconcile_consolidations): the
-# "no in-scope ... remains" clause is reconcile_consolidations' own marker for a
+# _build_recommendations / reality_check_records.consolidations_from_moves): the
+# "no in-scope ... remains" clause is the record fitting's own marker for a
 # full elimination.
 FULLY_ELIMINATED_RE = re.compile(rf"no in-scope ({_ENGINE_NAME_ALT}) query remains")
 CONSOLIDATED_FROM_TO_RE = re.compile(
