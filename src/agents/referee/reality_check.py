@@ -37,6 +37,7 @@ that feed into synthesis.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.move_ledger import MoveLedger, ledger_for
@@ -48,6 +49,7 @@ from src.agents.referee.reality_check_floors import (
     _apply_justification_floors,
     _find_best_absorber_for_query,
     _workload_ever_justified,
+    closed_to_pinned_search,
     opensearch_justification,
 )
 from src.agents.referee.reality_check_patterns import (
@@ -141,6 +143,7 @@ def run_reality_check(
     query_capabilities: dict[str, list[str]] | None = None,
     source_engine: str | None = None,
     ledger: MoveLedger | None = None,
+    customer_kept_engines: Iterable[str] = (),
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
 
@@ -151,6 +154,18 @@ def run_reality_check(
     recorded on (Phase 1/2 and the justification floors, through
     ``move_ledger.apply_to_assignment``); a fresh one starting from
     ``assignment``'s engines when ``None``. Returned as ``move_ledger``.
+
+    ``customer_kept_engines`` (#860) are the engines that hold a customer pin
+    (``customer_override``). The handler holds pinned queries out of
+    ``assignment`` and puts them back as they are, so these engines stay in
+    the plan whatever this check decides: Phase 1 keeps them committed (never
+    a removal candidate), Phase 2 treats them as any other kept engine, and the
+    floors that ask whether the workload pays for an engine skip them (their
+    cost is paid for the pin). A query then leaves one only for an engine that
+    scores it higher, and a query that scores higher on one goes there
+    (ADR-031 Decision 7) -- except that a query with no real search depth
+    never joins a pinned OpenSearch, and still leaves it (the per-query #326
+    check, which is not about cost). An engine with no analysis is ignored.
 
     Thinks like a pragmatic CTO: "Every additional database is operational
     burden. Does this engine EARN its place, or can another engine already
@@ -243,6 +258,7 @@ def run_reality_check(
 
     # ADR-031 Decision 9: a placeholder engine is never a candidate, absorber or owner.
     analysis_outputs = without_placeholder_engines(analysis_outputs)
+    kept_by_customer = frozenset(customer_kept_engines) & set(analysis_outputs)
     _trace = RoutingTrace()
     AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
     trace_by_query = _trace.by_query
@@ -307,6 +323,7 @@ def run_reality_check(
         tied_engines_by_qid,
         source_compatible_engine,
         settled_counts,
+        customer_kept_engines=kept_by_customer,
     )
 
     # -------------------------------------------------------------------
@@ -332,6 +349,7 @@ def run_reality_check(
         settled_counts,
         tied_engines_by_qid,
         ledger=ledger,
+        closed_destinations=closed_to_pinned_search(query_assignments, query_map, kept_by_customer),
     )
     lightweight_recommendations: list[dict] = []
 
@@ -356,6 +374,7 @@ def run_reality_check(
         scoring_ctx=scoring_ctx,
         workload_justified=workload_justified,
         ledger=ledger,
+        customer_kept_engines=kept_by_customer,
     )
 
     # Reconcile before Pass 3/4 (#475 review follow-up): this floor now runs

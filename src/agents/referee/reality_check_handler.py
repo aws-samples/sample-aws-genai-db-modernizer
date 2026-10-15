@@ -164,6 +164,8 @@ def run_reality_check_deterministic(
     # Run the core reality check (deterministic consolidation logic). Queries the
     # customer re-routed (customer_override) are not consolidation candidates:
     # Reality Check never moves them, so they are held out and re-attached as-is.
+    # Their engines therefore stay in the plan, and the consolidation is told so
+    # (#860): it never removes one and moves the other queries off it.
     all_qas = assignment.get("query_assignments", [])
     pinned = [qa for qa in all_qas if qa.get("customer_override")]
     candidates = [qa for qa in all_qas if not qa.get("customer_override")]
@@ -175,6 +177,7 @@ def run_reality_check_deterministic(
         query_capabilities,
         source_engine=source_database_engine(collector_output),
         ledger=ledger,
+        customer_kept_engines=sorted({qa["assigned_engine"] for qa in pinned}),
     )
     if pinned:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}

@@ -104,6 +104,7 @@ def _place_settled_queries(
     settled_counts: Mapping[str, int] | None = None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     ledger: MoveLedger | None = None,
+    closed_destinations: Mapping[str, set[str]] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
     engine within the settled committed set, using the SAME per-query
@@ -157,7 +158,24 @@ def _place_settled_queries(
     the runner-up from the same scores this phase compared. A tie this phase
     clears or opens while the engine stays is a Move too (``from_engine ==
     to_engine``), so replaying the Moves rebuilds ``tied_engines`` as well.
+
+    ``closed_destinations`` (engine -> query ids, #860) names queries that may
+    stay on an engine but not join it: a pinned OpenSearch never takes a query
+    with no real search depth (the floor would only move it off again). A
+    closed engine is still used when it is the only eligible one, so nothing
+    is stranded on a removed engine.
     """
+    closed = closed_destinations or {}
+
+    def _open_to(scores: dict[str, float], members: list[tuple[str, str]]) -> dict[str, float]:
+        """``scores`` without the engines closed to a member not already on them."""
+        kept = {
+            e: s
+            for e, s in scores.items()
+            if not any(m in closed.get(e, ()) and engine != e for m, engine in members)
+        }
+        return kept or scores
+
     tie_unresolved_qids = tie_unresolved_qids or set()
     tied_engines_by_qid = tied_engines_by_qid or {}
     revised = deepcopy(query_assignments)
@@ -251,6 +269,7 @@ def _place_settled_queries(
         eligible_scores = {e: takeable[e] for e in tied_survivors_first(original_tied, takeable)}
         if not eligible_scores:
             return  # nothing eligible at all; leave it where it is (should not happen)
+        eligible_scores = _open_to(eligible_scores, [(qid, current_engine)])
         # A placeholder pick from an unresolved tie earns no stability credit
         # (#503 review item 2): it is not "today's real engine," so it is
         # never passed as a stability candidate here.
@@ -346,6 +365,8 @@ def _place_settled_queries(
                 e: takeable_group[e]
                 for e in tied_survivors_first(group_original_tied, takeable_group)
             }
+            # #860: never pull the group onto an engine closed to a member.
+            eligible = _open_to(eligible, members) if eligible else eligible
             if not eligible:
                 # Should not happen: Phase 1 never removes an engine while
                 # one of its co-dependency groups has no eligible survivor

@@ -311,9 +311,18 @@ def _settle_committed_engines(
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     source_compatible_engine: str | None = None,
     settled_counts: Mapping[str, int] | None = None,
+    *,
+    customer_kept_engines: Iterable[str] = (),
 ) -> tuple[set[str], dict[str, dict]]:
     """Phase 1 (#502 review): settle which engines earn a place, independent
     of the order they happen to be evaluated in.
+
+    ``customer_kept_engines`` (#860) hold a customer-pinned query, which the
+    handler keeps out of ``engine_queries`` and puts back as it is: they are
+    in the plan whatever this pass decides, so they start committed (with or
+    without a native query here) and are never a removal candidate. They are
+    still assessed like every other engine. Removing one would only move its
+    other queries to an engine that scores them lower, for no saving.
 
     Every engine in a round is judged against the SAME frozen snapshot of
     the committed set at the round's start, using the resolver's own
@@ -351,7 +360,8 @@ def _settle_committed_engines(
     the eligible-engines set happens to iterate in -- which depended on
     ``PYTHONHASHSEED`` and input order, not on anything ADR-031 recognizes.
     """
-    committed = {e for e in engine_queries if engine_queries.get(e)}
+    kept_by_customer = frozenset(customer_kept_engines)
+    committed = {e for e in engine_queries if engine_queries.get(e)} | kept_by_customer
     assessment: dict[str, dict] = {}
     # #485 review: the native, non-mandatory queries of every engine
     # ALREADY removed earlier in this same settling pass -- one flat,
@@ -393,7 +403,7 @@ def _settle_committed_engines(
             info["is_primary"] = False
             info["is_mandatory"] = engine in mandatory_committed_engines
             assessment[engine] = info
-            if removable:
+            if removable and engine not in kept_by_customer:
                 candidates.append((rank_key, engine))
         if not candidates:
             converged = True

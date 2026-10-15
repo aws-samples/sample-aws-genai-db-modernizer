@@ -479,7 +479,7 @@ INLINE_ENGINE_LITERALS: dict[str, tuple[int, str]] = {
     ),
     "src/agents/referee/aurora_choice.py": (10, _INLINE_ENGINE_ROUTING + ": the Aurora choice"),
     "src/agents/referee/reality_check_floors.py": (
-        6,
+        7,
         _INLINE_ENGINE_ROUTING + ": OpenSearch and cost-share floors",
     ),
     "src/agents/referee/reality_check_patterns.py": (6, _INLINE_ENGINE_ROUTING),

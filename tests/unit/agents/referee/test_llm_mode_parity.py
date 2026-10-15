@@ -114,7 +114,7 @@ RC_SUMMARY = (
 
 
 def _partial_opensearch_consolidation(
-    assignment, triage, analysis, collector, caps, source_engine=None, ledger=None
+    assignment, triage, analysis, collector, caps, source_engine=None, ledger=None, **_kwargs
 ):
     """One move, OS-0 from OpenSearch to DynamoDB (OS-1 stays)."""
     # Through the move ledger (#616), as the real check's moves are.

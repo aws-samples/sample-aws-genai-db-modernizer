@@ -91,7 +91,7 @@ _EXPECTED_SWEEP_DECISION = {
 
 
 def _identity_reality_check(
-    assignment, triage, analysis, collector, caps, source_engine=None, ledger=None
+    assignment, triage, analysis, collector, caps, source_engine=None, ledger=None, **_kwargs
 ):
     """A no-op stand-in for the main consolidation pass: returns the input
     unchanged, so the only engine-level change a test can observe comes
@@ -223,7 +223,14 @@ class TestExternalFinalizeRunsTheSameSweep:
         ordering (apply, then sweep) matches the handler's."""
 
         def _partial_opensearch_consolidation(
-            assignment, triage, analysis, collector, caps, source_engine=None, ledger=None
+            assignment,
+            triage,
+            analysis,
+            collector,
+            caps,
+            source_engine=None,
+            ledger=None,
+            **_kwargs,
         ):
             revised = []
             for qa in assignment["query_assignments"]:

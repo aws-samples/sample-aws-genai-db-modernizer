@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -200,8 +200,35 @@ def _query_has_search_depth(query_text: str | None) -> bool:
     return bool(_SEARCH_PREDICATE_RE.search(text) and _GROUP_BY_RE.search(text))
 
 
+def closed_to_pinned_search(
+    query_assignments: list[dict], query_map: dict[str, dict], kept_by_customer: Iterable[str]
+) -> dict[str, set[str]]:
+    """The queries that may not join an OpenSearch a customer pin keeps (#860).
+
+    The pin pays OpenSearch's standing cost, not a query's sync scope: a query
+    with no real search depth fails the per-query #326 check whatever the
+    cost, so Phase 2 never pulls it onto the pinned read model (this floor
+    would only move it off again).
+    """
+    engine = "opensearch"
+    if engine not in set(kept_by_customer):
+        return {}
+    return {
+        engine: {
+            qa["query_id"]
+            for qa in query_assignments
+            if qa["assigned_engine"] != engine
+            and not _query_has_search_depth(query_map.get(qa["query_id"], {}).get("query_text"))
+        }
+    }
+
+
 def opensearch_justification(
-    qas: list[dict], query_map: dict[str, dict], source_engine: str | None
+    qas: list[dict],
+    query_map: dict[str, dict],
+    source_engine: str | None,
+    *,
+    standing_cost_paid: bool = False,
 ) -> dict[str, tuple[bool, str]]:
     """Per-query verdict on whether OpenSearch earns its place for each query
     it owns (#326, review of #375 finding B1).
@@ -216,6 +243,12 @@ def opensearch_justification(
     longer drags that search's own floor down (or the lookup's lack of
     traffic up).
 
+    ``standing_cost_paid`` (#860): a customer pin keeps OpenSearch in the plan,
+    so its standing domain is paid whatever the traffic; the traffic/corpus
+    floor, which asks whether the workload pays for that domain, is skipped
+    and every query with real search depth is justified. The per-query depth
+    check still applies: a query with none gains nothing from the read model.
+
     Returns ``{query_id: (justified, reason)}``; ``reason`` always explains
     the decision so the deliverables can state why.
     """
@@ -229,6 +262,13 @@ def opensearch_justification(
         qa["query_id"]: (False, shallow_reason) for qa in qas if qa["query_id"] not in deep_qids
     }
     if not deep_qids:
+        return verdicts
+    if standing_cost_paid:
+        paid = (
+            f"{len(deep_qids)} queries need relevance ranking/fuzzy matching/facets, on an "
+            "OpenSearch domain the customer's own choice keeps"
+        )
+        verdicts.update({qid: (True, paid) for qid in deep_qids})
         return verdicts
 
     deep_rows = {qid: query_map.get(qid, {}) for qid in deep_qids}
@@ -334,8 +374,18 @@ def _apply_justification_floors(
     scoring_ctx: ScoringContext,
     workload_justified: dict[str, bool | None],
     ledger: MoveLedger | None = None,
+    customer_kept_engines: frozenset[str] = frozenset(),
 ) -> None:
     """Run the justification floors on ``revised`` after Phase 2.
+
+    An engine in ``customer_kept_engines`` holds a customer pin, so it stays in
+    the plan and its standing cost is paid whatever its workload (#860, the
+    same reason the sanity sweep keeps it, #844): the floors that ask whether
+    the workload pays for the engine -- the cost-share floor (#167) and
+    OpenSearch's traffic/corpus floor (#326) -- do not run for it. OpenSearch's
+    per-query search-depth check does: a query with no real search depth still
+    leaves a pinned OpenSearch (``opensearch_justification``'s
+    ``standing_cost_paid``).
 
     Mutates ``revised``, ``consolidations``, ``unique_value_assessment``,
     ``committed_engines`` and ``engine_queries`` in place. Every query a floor
@@ -371,7 +421,10 @@ def _apply_justification_floors(
     # mandatory engine's cost-share floor (#167) is unaffected and still only
     # runs for an actual signal override.
     # -------------------------------------------------------------------
-    floor_scope = mandatory_committed_engines | ({"opensearch"} & committed_engines)
+    # A pinned engine's cost is paid (#860): only OpenSearch's depth check stays.
+    floor_scope = (mandatory_committed_engines - customer_kept_engines) | (
+        {"opensearch"} & committed_engines
+    )
     for engine in sorted(floor_scope & committed_engines):
         # Grouped by actual CURRENT ownership, not by any one signal (#475
         # review, suggestion 1) -- deliberately different from the
@@ -392,7 +445,12 @@ def _apply_justification_floors(
         # and vice versa); a single engine-wide (justified, reason) for any
         # other mandatory engine, applied to every one of its queries.
         if engine == "opensearch":
-            verdicts = opensearch_justification(current_qas, query_map, resolved_source_engine)
+            verdicts = opensearch_justification(
+                current_qas,
+                query_map,
+                resolved_source_engine,
+                standing_cost_paid=engine in customer_kept_engines,
+            )
         else:
             cost_reason = _mandatory_cost_share_reason(engine, current_qas, total_queries)
             verdicts = {
