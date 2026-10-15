@@ -88,56 +88,10 @@ TIMESERIES_PATTERN_TYPES: frozenset[str] = profile_pattern_types("timeseries")
 
 
 # ==========================================================================
-# Keyword tuples for detection
+# Keyword tuples for detection. The query-text keywords (full-text, wildcard,
+# regex, fuzzy, timestamp, time range, time functions) live in
+# ``src.tools.sql.query_facts`` (#491); the table-name keywords stay here.
 # ==========================================================================
-
-FULLTEXT_KEYWORDS: tuple[str, ...] = (
-    "tsvector",
-    "tsquery",
-    "to_tsvector",
-    "plainto_tsquery",
-    "@@",
-    "match against",
-)
-
-WILDCARD_KEYWORDS: tuple[str, ...] = (
-    "like ",
-    "ilike ",
-)
-
-REGEX_KEYWORDS: tuple[str, ...] = (
-    "regexp",
-    "rlike",
-    "~ ",
-    "~* ",
-)
-
-FUZZY_KEYWORDS: tuple[str, ...] = (
-    "pg_trgm",
-    "similarity(",
-)
-
-TIMESTAMP_KEYWORDS: tuple[str, ...] = (
-    "timestamp",
-    "created_at",
-    "updated_at",
-    "event_time",
-    "log_time",
-    "ingested_at",
-)
-
-TIME_RANGE_KEYWORDS: tuple[str, ...] = (
-    "between",
-    ">=",
-    "<=",
-)
-
-TIME_AGG_KEYWORDS: tuple[str, ...] = (
-    "date_trunc",
-    "date(",
-    "hour(",
-    "extract(",
-)
 
 STALENESS_TABLE_KEYWORDS: tuple[str, ...] = (
     "log",

@@ -386,6 +386,60 @@ _CORRELATED_SUBQUERY_SHAPE_RE = re.compile(
 _JSON_EXTRACT_WORD_RE = re.compile(r"\b(json_extract|json_unquote|json_value|->>|->)\b", re.I)
 
 
+# ---------------------------------------------------------------------------
+# Search and time-series keywords (the OpenSearch analysis's detectors, moved
+# here from ``opensearch_pattern_catalog``): case-insensitive substring checks.
+# ---------------------------------------------------------------------------
+
+FULLTEXT_KEYWORDS: tuple[str, ...] = (
+    "tsvector",
+    "tsquery",
+    "to_tsvector",
+    "plainto_tsquery",
+    "@@",
+    "match against",
+)
+
+WILDCARD_KEYWORDS: tuple[str, ...] = (
+    "like ",
+    "ilike ",
+)
+
+REGEX_KEYWORDS: tuple[str, ...] = (
+    "regexp",
+    "rlike",
+    "~ ",
+    "~* ",
+)
+
+FUZZY_KEYWORDS: tuple[str, ...] = (
+    "pg_trgm",
+    "similarity(",
+)
+
+TIMESTAMP_KEYWORDS: tuple[str, ...] = (
+    "timestamp",
+    "created_at",
+    "updated_at",
+    "event_time",
+    "log_time",
+    "ingested_at",
+)
+
+TIME_RANGE_KEYWORDS: tuple[str, ...] = (
+    "between",
+    ">=",
+    "<=",
+)
+
+TIME_AGG_KEYWORDS: tuple[str, ...] = (
+    "date_trunc",
+    "date(",
+    "hour(",
+    "extract(",
+)
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -665,6 +719,45 @@ class QueryFacts:
     def comma_count(self) -> int:
         """How many commas the text has."""
         return self._lower.count(",")
+
+    @cached_property
+    def fulltext_keyword(self) -> bool:
+        """A :data:`FULLTEXT_KEYWORDS` substring (``tsvector``, ``tsquery``, ``@@``,
+        ``match against``, ...).
+        """
+        return _contains_any(self._lower, FULLTEXT_KEYWORDS)
+
+    @cached_property
+    def like_keyword(self) -> bool:
+        """``like `` or ``ilike `` (followed by a space)."""
+        return _contains_any(self._lower, WILDCARD_KEYWORDS)
+
+    @cached_property
+    def regex_keyword(self) -> bool:
+        """``regexp``, ``rlike``, ``~ `` or ``~* ``."""
+        return _contains_any(self._lower, REGEX_KEYWORDS)
+
+    @cached_property
+    def fuzzy_keyword(self) -> bool:
+        """``pg_trgm`` or ``similarity(``."""
+        return _contains_any(self._lower, FUZZY_KEYWORDS)
+
+    @cached_property
+    def timestamp_keyword(self) -> bool:
+        """A :data:`TIMESTAMP_KEYWORDS` substring (``timestamp``, ``created_at``,
+        ``updated_at``, ``event_time``, ``log_time``, ``ingested_at``).
+        """
+        return _contains_any(self._lower, TIMESTAMP_KEYWORDS)
+
+    @cached_property
+    def time_range_operator(self) -> bool:
+        """``between``, ``>=`` or ``<=``."""
+        return _contains_any(self._lower, TIME_RANGE_KEYWORDS)
+
+    @cached_property
+    def time_function_keyword(self) -> bool:
+        """``date_trunc``, ``date(``, ``hour(`` or ``extract(``."""
+        return _contains_any(self._lower, TIME_AGG_KEYWORDS)
 
     @property
     def needs_aggregation(self) -> bool:

@@ -33,6 +33,7 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "aurora_pg_pattern_catalog.py",
     _REPO / "src" / "tools" / "analysis" / "dynamodb_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "documentdb_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "opensearch_analysis_tools.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -221,6 +222,13 @@ class TestFacts:
             ("SELECT (SELECT 1 FROM u WHERE u.id = t.uid) FROM t", "correlated_subquery_shape"),
             ("SELECT JSON_EXTRACT(doc, '$.a') FROM t", "json_extract_word"),
             ("SELECT a, b, count(id) FROM t GROUP BY a, b", "group_by_substring"),
+            ("SELECT * FROM t WHERE v @@ q", "fulltext_keyword"),
+            ("SELECT * FROM t WHERE a LIKE ?", "like_keyword"),
+            ("SELECT * FROM t WHERE a ~* 'x'", "regex_keyword"),
+            ("SELECT similarity(a, 'x') FROM t", "fuzzy_keyword"),
+            ("SELECT * FROM t WHERE event_time >= ?", "timestamp_keyword"),
+            ("SELECT * FROM t WHERE event_time >= ?", "time_range_operator"),
+            ("SELECT date_trunc('day', ts) FROM t", "time_function_keyword"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -258,6 +266,8 @@ class TestFacts:
             ("SELECT * FROM t WHERE mydate_x = ?", "timestamp_column_word"),
             ("SELECT * FROM t WHERE a != 1", "negation_word"),  # space before !=
             ("SELECT a FROM t GROUP  BY a", "group_by_substring"),  # two spaces
+            ("SELECT * FROM t WHERE a LIKE\n'x'", "like_keyword"),  # newline, no space
+            ("SELECT * FROM t WHERE a > ?", "time_range_operator"),
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):

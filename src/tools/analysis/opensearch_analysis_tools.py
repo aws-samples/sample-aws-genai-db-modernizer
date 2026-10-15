@@ -37,20 +37,13 @@ from src.contracts.analysis_output import (
 )
 from src.tools.analysis.opensearch_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
-    FULLTEXT_KEYWORDS,
-    FUZZY_KEYWORDS,
     HIGH_INGEST_CPS_THRESHOLD,
     OPENSEARCH_SEARCH_WEIGHTS,
     OPENSEARCH_TIMESERIES_WEIGHTS,
     PATTERN_BY_ID,
-    REGEX_KEYWORDS,
     SEARCH_PATTERN_TYPES,
     STALENESS_TABLE_KEYWORDS,
-    TIME_AGG_KEYWORDS,
-    TIME_RANGE_KEYWORDS,
     TIMESERIES_PATTERN_TYPES,
-    TIMESTAMP_KEYWORDS,
-    WILDCARD_KEYWORDS,
 )
 from src.tools.analysis.scoring import (
     TableProfile,
@@ -58,6 +51,7 @@ from src.tools.analysis.scoring import (
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 # ==========================================================================
 # WorkloadType enum
@@ -114,20 +108,6 @@ def _build_anti_pattern(
         table_ids=sorted(set(table_ids)) if table_ids else None,
         recommendation=catalog.guidance if catalog.guidance else None,
     )
-
-
-def _text_contains_any(text: str, keywords: tuple[str, ...]) -> bool:
-    """Case-insensitive substring check for any keyword in the tuple."""
-    lower = text.lower()
-    return any(kw in lower for kw in keywords)
-
-
-def _has_timestamp_keyword(text: str) -> bool:
-    return _text_contains_any(text, TIMESTAMP_KEYWORDS)
-
-
-def _has_time_range_operator(text: str) -> bool:
-    return _text_contains_any(text, TIME_RANGE_KEYWORDS)
 
 
 def _table_name_is_staleness(table_id: str) -> bool:
@@ -207,8 +187,7 @@ def analyze_opensearch_use_cases(collector_output: dict) -> WorkloadAnalysis:
     for q in queries:
         qid = q.get("query_id", "")
         qt = (q.get("query_type") or "").upper()
-        text = q.get("query_text") or ""
-        text_lower = text.lower()
+        facts = query_facts(q.get("query_text") or "")
         tables = q.get("tables_accessed") or []
         cps = float(q.get("calls_per_second") or 0.0)
         has_joins = bool(q.get("has_joins", False))
@@ -217,25 +196,25 @@ def analyze_opensearch_use_cases(collector_output: dict) -> WorkloadAnalysis:
         # ---- Search pattern detection (uses `if`, not `elif`) ----
 
         # os-01 full-text-search
-        if _text_contains_any(text_lower, FULLTEXT_KEYWORDS):
+        if facts.fulltext_keyword:
             ft_query_ids.append(qid)
             ft_table_ids.extend(tables)
             ft_cps += cps
 
         # os-02 wildcard-search
-        if _text_contains_any(text_lower, WILDCARD_KEYWORDS):
+        if facts.like_keyword:
             wc_query_ids.append(qid)
             wc_table_ids.extend(tables)
             wc_cps += cps
 
         # os-03 regex-search
-        if _text_contains_any(text_lower, REGEX_KEYWORDS):
+        if facts.regex_keyword:
             rx_query_ids.append(qid)
             rx_table_ids.extend(tables)
             rx_cps += cps
 
         # os-04 fuzzy-search
-        if _text_contains_any(text_lower, FUZZY_KEYWORDS):
+        if facts.fuzzy_keyword:
             fz_query_ids.append(qid)
             fz_table_ids.extend(tables)
             fz_cps += cps
@@ -243,13 +222,13 @@ def analyze_opensearch_use_cases(collector_output: dict) -> WorkloadAnalysis:
         # ---- Time-series pattern detection ----
 
         # os-05 time-range-query: timestamp keyword + range operator
-        if _has_timestamp_keyword(text_lower) and _has_time_range_operator(text_lower):
+        if facts.timestamp_keyword and facts.time_range_operator:
             tr_query_ids.append(qid)
             tr_table_ids.extend(tables)
             tr_cps += cps
 
         # os-06 time-aggregation: time function keywords
-        if _text_contains_any(text_lower, TIME_AGG_KEYWORDS):
+        if facts.time_function_keyword:
             ta_query_ids.append(qid)
             ta_table_ids.extend(tables)
             ta_cps += cps
@@ -276,8 +255,8 @@ def analyze_opensearch_use_cases(collector_output: dict) -> WorkloadAnalysis:
 
         # os-ap-03 audit-columns-only tracking
         # Detect timestamp keyword in query text; classify as range or equality
-        if _has_timestamp_keyword(text_lower):
-            has_range = _has_time_range_operator(text_lower)
+        if facts.timestamp_keyword:
+            has_range = facts.time_range_operator
             for tid in tables:
                 if tid not in ts_usage:
                     ts_usage[tid] = {"has_range": False, "query_ids": []}
@@ -892,7 +871,7 @@ def build_opensearch_decision_trace(
     def _signals_for_query(qid: str, q: dict) -> list[str]:
         signals = []
         matched_pids = query_pattern_map.get(qid, [])
-        text = (q.get("query_text") or "").lower()
+        facts = query_facts(q.get("query_text") or "")
         for pid in matched_pids:
             catalog = PATTERN_BY_ID.get(pid)
             if catalog:
@@ -900,7 +879,7 @@ def build_opensearch_decision_trace(
         # Add structural signals
         if q.get("has_joins") and (q.get("join_count") or 0) >= 2:
             signals.append("multi_table_join")
-        if _text_contains_any(text, TIMESTAMP_KEYWORDS) and _has_time_range_operator(text):
+        if facts.timestamp_keyword and facts.time_range_operator:
             signals.append("timestamp_range_filter")
         return signals
 
