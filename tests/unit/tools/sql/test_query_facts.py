@@ -36,6 +36,8 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "opensearch_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "redis_analysis_tools.py",
     _REPO / "src" / "agents" / "referee" / "triage.py",
+    _REPO / "src" / "agents" / "referee" / "reality_check_floors.py",
+    _REPO / "src" / "agents" / "referee" / "aurora_choice.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -250,6 +252,16 @@ class TestFacts:
             ("SELECT TOP (5) * FROM t ORDER BY a", "top_n_shape"),
             ("SELECT * FROM sessions WHERE token = ?", "session_key"),
             ("SELECT * FROM [UserSession] WHERE [SessionToken] = @t", "session_key"),
+            ("SELECT * FROM t WHERE v @@ plainto_tsquery($1)", "search_depth"),
+            ("SELECT a, count(*) FROM t WHERE a LIKE $1 GROUP BY a", "search_depth"),
+            ("MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE", "merge_statement"),
+            ("SELECT JSON_VALUE(doc, '$.a') FROM t", "json_function_call"),
+            ("SELECT * FROM t FOR JSON PATH", "json_function_call"),
+            (
+                "WITH tree AS (SELECT id FROM n UNION ALL SELECT n.id FROM n JOIN tree ON 1=1) "
+                "SELECT * FROM tree",
+                "self_referencing_recursive_cte",
+            ),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -294,6 +306,13 @@ class TestFacts:
             ("SELECT * FROM t WHERE a LIKE CONCAT('%', ?)", "like_pattern_value"),
             ("SELECT * FROM t LIMIT 10", "top_n_shape"),  # no ORDER BY
             ("SELECT * FROM t WHERE [SessionTimeout] > 5", "session_key"),
+            ("SELECT * FROM t WHERE a LIKE $1", "search_depth"),  # a plain LIKE filter
+            ("SELECT * FROM t WHERE a = 'x' -- MERGE INTO t USING s", "merge_statement"),
+            ("SELECT json_value FROM t", "json_function_call"),  # a column, not a call
+            (
+                "WITH a AS (SELECT 1 UNION SELECT 2) SELECT * FROM a",
+                "self_referencing_recursive_cte",
+            ),
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):

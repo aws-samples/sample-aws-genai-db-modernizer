@@ -9,7 +9,6 @@ best remaining engine (``_find_best_absorber_for_query``).
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -39,6 +38,7 @@ from src.agents.referee.reality_check_rules import (
 from src.agents.referee.tie_break import break_tie
 from src.contracts.move_ledger import EngineScore, MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
+from src.tools.sql.query_facts import query_facts
 
 if TYPE_CHECKING:
     from src.agents.referee.query_scoring import ScoringContext
@@ -130,75 +130,16 @@ OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND = 10.0
 # the same as one that returns everything from a small one.
 OPENSEARCH_MIN_CORPUS_ROWS_AVG = 1000.0
 
-# A string literal ('...' or "...") is replaced with a single placeholder
-# before any pattern below runs, so a literal's own characters are never
-# mistaken for a SQL operator -- a review of #375 found a leading-wildcard
-# LIKE pattern (LIKE 'abc%') being read as the pg_trgm similarity operator
-# because the '%' inside the literal matched the same way `title % $1` does.
-_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
-
-
-def _strip_string_literals(text: str) -> str:
-    return _STRING_LITERAL_RE.sub("?", text)
-
-
-# A search predicate: the query actually filters on a text-search pattern,
-# not just an ordinary equality/range WHERE clause. Required before ranking,
-# fuzzy matching or facets are even considered -- a bare GROUP BY, or a
-# to_tsvector() call with no @@ match, is not a search at all (see below).
-_SEARCH_PREDICATE_RE = re.compile(
-    r"\b(like|ilike)\b|match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|"
-    r"plainto_tsquery\s*\(|@@|similarity\s*\(|word_similarity\s*\(",
-    re.IGNORECASE,
-)
-
-# Relevance ranking: an actual full-text match operation. to_tsvector() alone
-# (document construction, e.g. CREATE EXTENSION's companion index build, or a
-# plain SELECT to_tsvector(...) with no @@) does not count -- only a real
-# match (the @@ operator, or constructing the query side with to_tsquery/
-# plainto_tsquery) does.
-_RELEVANCE_RANKING_RE = re.compile(
-    r"match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|plainto_tsquery\s*\(|@@",
-    re.IGNORECASE,
-)
-
-# Fuzzy matching: an actual similarity computation -- the similarity()/
-# word_similarity() functions, the pg_trgm distance/threshold operators
-# ("<%", "%>", word-similarity thresholds), or the real pg_trgm "%" operator
-# (an identifier or closing paren, then "%", then a parameter placeholder,
-# "$N" or "?", not immediately followed by a comparison or arithmetic
-# operator). Checked against literal-stripped text only: a leading-wildcard
-# LIKE pattern like 'abc%' has no "%" left once its literal is stripped, so
-# it never matches this on its own (a review of #375 found the previous
-# regex doing exactly that -- matching a LIKE pattern's own wildcard as the
-# trigram operator). The negative lookahead after the parameter excludes
-# plain modulo arithmetic against a parameter, e.g. "id % $2 = 0" or
-# "id % $2 + 1" -- a real trigram "%" is used as a boolean predicate on its
-# own, never followed immediately by another comparison or arithmetic
-# operator (a second review of #375 found "id % $2 = 0" misread as fuzzy
-# matching).
-_FUZZY_MATCH_RE = re.compile(
-    r"\bsimilarity\s*\(|\bword_similarity\s*\(|<%|%>|"
-    r"[\w)]\s*%\s*(?:\$\d+|\?)(?!\s*(?:=|<>|!=|<=|>=|<|>|[+\-*/%]))",
-    re.IGNORECASE,
-)
-
-# A facet: a search predicate combined with GROUP BY in the SAME query. A
-# bare GROUP BY on an unrelated report query is not a facet.
-_GROUP_BY_RE = re.compile(r"\bgroup\s+by\b", re.IGNORECASE)
-
 
 def _query_has_search_depth(query_text: str | None) -> bool:
-    """Real search depth in one query (#326 finding 4): a search predicate
-    plus relevance ranking, fuzzy matching, or a facet (GROUP BY alongside
-    the same predicate) -- never a bare GROUP BY, a plain LIKE/prefix filter,
-    a plain join, or to_tsvector()/pg_trgm document/extension setup with no
-    match operator.
+    """Real search depth in one query (#326 finding 4): the engine-neutral
+    ``search_depth`` query fact (``src.tools.sql.query_facts``, #491) -- a
+    search predicate plus relevance ranking, fuzzy matching, or a facet
+    (GROUP BY alongside the same predicate) -- never a bare GROUP BY, a plain
+    LIKE/prefix filter, a plain join, or to_tsvector()/pg_trgm
+    document/extension setup with no match operator.
     """
-    text = _strip_string_literals(query_text or "")
-    if _RELEVANCE_RANKING_RE.search(text) or _FUZZY_MATCH_RE.search(text):
-        return True
-    return bool(_SEARCH_PREDICATE_RE.search(text) and _GROUP_BY_RE.search(text))
+    return query_facts(query_text).search_depth
 
 
 def closed_to_pinned_search(

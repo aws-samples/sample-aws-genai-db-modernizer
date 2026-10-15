@@ -39,7 +39,7 @@ from functools import cached_property, lru_cache
 from src.shared.unsupported_pattern import is_dedup_only_group_by
 from src.tools.sql.regex_facts import regex_has_subquery, regex_join_count, regex_wildcard_leading
 
-__all__ = ["QueryFacts", "query_facts"]
+__all__ = ["QueryFacts", "query_facts", "scan_sql"]
 
 # ---------------------------------------------------------------------------
 # Text search (the "inverted_index" capability's detectors)
@@ -579,6 +579,279 @@ def _has_session_key(text: str) -> bool:
     return any(_is_session_key_name(name) for name in _IDENTIFIER_RE.findall(where.group(1)))
 
 
+# ---------------------------------------------------------------------------
+# Search depth (the reality check's OpenSearch justification floor, moved here
+# from ``reality_check_floors``, #326/#375).
+# ---------------------------------------------------------------------------
+
+# A string literal ('...' or "...") is replaced with a single placeholder
+# before any pattern below runs, so a literal's own characters are never
+# mistaken for a SQL operator -- a review of #375 found a leading-wildcard
+# LIKE pattern (LIKE 'abc%') being read as the pg_trgm similarity operator
+# because the '%' inside the literal matched the same way `title % $1` does.
+_STRING_LITERAL_RE = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
+
+
+# A search predicate: the query actually filters on a text-search pattern,
+# not just an ordinary equality/range WHERE clause. Required before ranking,
+# fuzzy matching or facets are even considered -- a bare GROUP BY, or a
+# to_tsvector() call with no @@ match, is not a search at all (see below).
+_SEARCH_PREDICATE_RE = re.compile(
+    r"\b(like|ilike)\b|match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|"
+    r"plainto_tsquery\s*\(|@@|similarity\s*\(|word_similarity\s*\(",
+    re.IGNORECASE,
+)
+
+# Relevance ranking: an actual full-text match operation. to_tsvector() alone
+# (document construction, e.g. CREATE EXTENSION's companion index build, or a
+# plain SELECT to_tsvector(...) with no @@) does not count -- only a real
+# match (the @@ operator, or constructing the query side with to_tsquery/
+# plainto_tsquery) does.
+_RELEVANCE_RANKING_RE = re.compile(
+    r"match\s*\(.+?\)\s*against\s*\(|to_tsquery\s*\(|plainto_tsquery\s*\(|@@",
+    re.IGNORECASE,
+)
+
+# Fuzzy matching: an actual similarity computation -- the similarity()/
+# word_similarity() functions, the pg_trgm distance/threshold operators
+# ("<%", "%>", word-similarity thresholds), or the real pg_trgm "%" operator
+# (an identifier or closing paren, then "%", then a parameter placeholder,
+# "$N" or "?", not immediately followed by a comparison or arithmetic
+# operator). Checked against literal-stripped text only: a leading-wildcard
+# LIKE pattern like 'abc%' has no "%" left once its literal is stripped, so
+# it never matches this on its own (a review of #375 found the previous
+# regex doing exactly that -- matching a LIKE pattern's own wildcard as the
+# trigram operator). The negative lookahead after the parameter excludes
+# plain modulo arithmetic against a parameter, e.g. "id % $2 = 0" or
+# "id % $2 + 1" -- a real trigram "%" is used as a boolean predicate on its
+# own, never followed immediately by another comparison or arithmetic
+# operator (a second review of #375 found "id % $2 = 0" misread as fuzzy
+# matching).
+_FUZZY_MATCH_RE = re.compile(
+    r"\bsimilarity\s*\(|\bword_similarity\s*\(|<%|%>|"
+    r"[\w)]\s*%\s*(?:\$\d+|\?)(?!\s*(?:=|<>|!=|<=|>=|<|>|[+\-*/%]))",
+    re.IGNORECASE,
+)
+
+
+def _has_search_depth(query_text: str) -> bool:
+    """Real search depth in one query (#326 finding 4): a search predicate
+    plus relevance ranking, fuzzy matching, or a facet (GROUP BY alongside
+    the same predicate) -- never a bare GROUP BY, a plain LIKE/prefix filter,
+    a plain join, or to_tsvector()/pg_trgm document/extension setup with no
+    match operator.
+    """
+    text = _STRING_LITERAL_RE.sub("?", query_text)
+    # Each regex below needs a literal word or symbol; a substring test on the lower-cased
+    # text (C speed) skips the regex on the long queries that have none of them.
+    lower = text.lower()
+    if any(word in lower for word in ("against", "tsquery", "@@")) and _RELEVANCE_RANKING_RE.search(
+        text
+    ):
+        return True
+    if ("similarity" in lower or "%" in lower) and _FUZZY_MATCH_RE.search(text):
+        return True
+    return bool(_GROUP_BY_RE.search(text) and _SEARCH_PREDICATE_RE.search(text))
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous-source features (the Aurora engine choice's detectors, moved
+# here from ``aurora_choice``, #381). Each runs on :func:`scan_sql`'s output.
+# ---------------------------------------------------------------------------
+
+# Requires MERGE to be followed by an optional TOP(n) clause, then (optionally "INTO"
+# then) the start of a target identifier -- the shape an actual MERGE statement takes
+# -- not just the bare keyword "merge" (e.g. a column or variable literally named
+# ``merge``) coincidentally followed by "using" somewhere within the next 80
+# characters. The negative lookahead excludes a handful of SQL keywords that can
+# legitimately follow a bare "merge" column reference (``SELECT merge FROM ...
+# USING (...)``) but never follow the MERGE statement itself. ``[#\w]`` (#381 review
+# round 2) only requires the *first* character of the target identifier to look like
+# one -- a word character, or ``#`` for a local temp table (``MERGE #target ...``) --
+# rather than the whole identifier, since by the time this runs ``scan_sql`` has
+# already turned a bracketed or double-quoted identifier into its bare name (``[dbo].
+# [Target]`` -> ``dbo.Target``), and the ``.{0,80}\busing\b`` that follows is what
+# actually confirms this is a MERGE statement, not the identifier shape.
+_MERGE_RE = re.compile(
+    r"\bmerge\s+(?:top\s*\([^)]*\)\s*)?(?:into\s+)?"
+    r"(?!(?:from|where|select|group|order|having|join)\b)[#\w]"
+    r".{0,80}\busing\b",
+    re.IGNORECASE | re.DOTALL,
+)
+# Every function-shaped signal requires an opening paren, so a column literally named
+# e.g. ``json_value`` (not a call to the ``JSON_VALUE(...)`` function) does not match.
+# ``FOR JSON`` and ``IS JSON`` are not function calls -- SQL Server's ``FOR JSON PATH``
+# clause and the ``IS JSON`` predicate take no parens -- so those two keep the plain
+# keyword-boundary match.
+_JSON_FUNCTION_RE = re.compile(
+    r"\bjson_value\s*\(|\bjson_query\s*\(|\bopenjson\s*\(|\bfor\s+json\b|\bjson_table\s*\(|"
+    r"\bis\s+json\b|\bjson_exists\s*\(",
+    re.IGNORECASE,
+)
+# Matches a CTE's own name definition, whether it is the first one after ``WITH`` or a
+# later one introduced by a comma (``WITH a AS (...), b AS (...)``) -- #381 review: the
+# pre-review version only matched the first, so a recursive CTE named anywhere but first
+# in the list went undetected. ``[#\w]+`` (#381 review round 2) rather than
+# ``[a-zA-Z_]\w*``: by the time this runs, ``scan_sql`` has already turned a bracketed
+# or double-quoted CTE name (``[Tree]``, ``"Tree"``) into its bare identifier, so the
+# name itself is always a plain word here regardless of how the query originally quoted
+# it.
+_CTE_NAME_RE = re.compile(r"(?:\bwith\b|,)\s*([#\w]+)\s*(?:\([^)]*\))?\s+as\s*\(", re.IGNORECASE)
+
+
+# The characters :func:`scan_sql` acts on: ``--``, ``/*``, a quote (with an optional
+# ``N`` prefix), ``[`` and ``"``. Everything between two of them passes through.
+_SCAN_SPECIAL_RE = re.compile(r"--|/\*|[Nn]?'|\[|\"")
+
+
+def scan_sql(text: str) -> str:
+    """One left-to-right pass over ``text`` neutralizing comments, strings and
+    quoted identifiers, so every feature regex below runs against SQL as the engine
+    would actually parse it, never raw source text (#381 review round 2).
+
+    Two independent regex passes (strip strings, then strip comments) can each
+    mis-handle what the other produces: a comment containing an apostrophe
+    (``-- don't touch``) made the string-literal pass, if it ran first, swallow
+    everything up to the *next* quote -- which could be an entire real statement
+    later in the query. Scanning once, left to right, in the order these characters
+    are actually encountered removes that ordering bug entirely.
+
+    Each construct below is replaced the way the engine would resolve it, not simply
+    deleted (so a real token on either side is never glued to its neighbour):
+
+    - ``--`` to end of line: a space (the newline itself is kept, so later-line
+      offsets are not shifted and a line comment never merges two lines).
+    - ``/* ... */``: a space, with nesting support (SQL Server supports nested
+      block comments) -- the whole span up to the matching outer ``*/`` is one
+      comment, so text between an inner ``*/`` and the outer one is never
+      mistaken for live code.
+    - ``'...'`` string literals, with ``''``-doubled escapes and an optional
+      ``N``/``n`` (Unicode) prefix: a space. Content is never a real keyword
+      match, only text a customer or generator happened to write.
+    - ``[ident]`` (T-SQL brackets, ``]]``-escaped) and ``"ident"`` (ANSI/Oracle/
+      PostgreSQL double quotes, ``""``-escaped): the bare identifier, with the
+      quoting removed. These name a column, table or CTE -- not a string -- so a
+      feature regex must still be able to see and match the name inside
+      (``MERGE [dbo].[Target]``, ``WITH "Tree" AS (...)``).
+
+    Every other character passes through unchanged.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        # Copy the plain run up to the next character that starts a construct.
+        hit = _SCAN_SPECIAL_RE.search(text, i)
+        if hit is None:
+            out.append(text[i:])
+            break
+        if hit.start() > i:
+            out.append(text[i : hit.start()])
+            i = hit.start()
+        c = text[i]
+        if c == "-" and i + 1 < n and text[i + 1] == "-":
+            j = text.find("\n", i)
+            out.append(" ")
+            i = n if j == -1 else j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            depth = 1
+            i += 2
+            while i < n and depth > 0:
+                if text[i : i + 2] == "/*":
+                    depth += 1
+                    i += 2
+                elif text[i : i + 2] == "*/":
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            out.append(" ")
+            continue
+        if c == "'" or (c in "Nn" and i + 1 < n and text[i + 1] == "'"):
+            if c in "Nn":
+                i += 1
+            i += 1  # opening quote
+            while i < n:
+                if text[i] == "'" and i + 1 < n and text[i + 1] == "'":
+                    i += 2
+                    continue
+                if text[i] == "'":
+                    i += 1
+                    break
+                i += 1
+            out.append(" ")
+            continue
+        if c == "[":
+            j = i + 1
+            body: list[str] = []
+            while j < n:
+                if text[j] == "]" and j + 1 < n and text[j + 1] == "]":
+                    body.append("]")
+                    j += 2
+                    continue
+                if text[j] == "]":
+                    j += 1
+                    break
+                body.append(text[j])
+                j += 1
+            out.append("".join(body))
+            i = j
+            continue
+        if c == '"':
+            j = i + 1
+            body = []
+            while j < n:
+                if text[j] == '"' and j + 1 < n and text[j + 1] == '"':
+                    body.append('"')
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    j += 1
+                    break
+                body.append(text[j])
+                j += 1
+            out.append("".join(body))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _has_recursive_cte(text: str) -> bool:
+    """A CTE whose own body both ``UNION``s and refers back to its own name.
+
+    SQL Server and Oracle have no ``WITH RECURSIVE`` keyword (unlike PostgreSQL and
+    MySQL 8): any ``name AS (...)`` CTE can be recursive if its body unions the anchor
+    member with one that references ``name`` again -- checked for every CTE in the
+    ``WITH`` list, not only the first (#381 review). Requiring both a self-reference and
+    a ``UNION`` inside the CTE's own (paren-balanced) body avoids counting a CTE that is
+    merely referenced again later in the main query -- normal, non-recursive CTE use.
+    """
+    lower = text.lower()
+    if "recursive" in lower and re.search(r"\bwith\s+recursive\b", text, re.IGNORECASE):
+        return True
+    if "union" not in lower:  # a self-referencing CTE body must UNION its anchor member
+        return False
+    for m in _CTE_NAME_RE.finditer(text):
+        name = m.group(1)
+        depth = 1
+        i = m.end()
+        start = i
+        while i < len(text) and depth > 0:
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+            i += 1
+        body = text[start:i]
+        if re.search(r"\bunion\b", body, re.IGNORECASE) and re.search(
+            rf"\b{re.escape(name)}\b", body, re.IGNORECASE
+        ):
+            return True
+    return False
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -986,6 +1259,43 @@ class QueryFacts:
         :func:`src.tools.sql.regex_facts.regex_has_subquery`).
         """
         return regex_has_subquery(self._text)
+
+    @cached_property
+    def _scanned(self) -> str:
+        return scan_sql(self._text)
+
+    @cached_property
+    def _scanned_lower(self) -> str:
+        return self._scanned.lower()
+
+    @cached_property
+    def search_depth(self) -> bool:
+        """Real search depth (#326): relevance ranking or fuzzy matching, or a search
+        predicate with a ``GROUP BY`` facet, read with string literals blanked.
+        """
+        return _has_search_depth(self._text)
+
+    @cached_property
+    def merge_statement(self) -> bool:
+        """A ``MERGE [TOP (n)] [INTO] <target> ... USING`` statement, read on
+        :func:`scan_sql`'s output.
+        """
+        return "merge" in self._scanned_lower and bool(_MERGE_RE.search(self._scanned))
+
+    @cached_property
+    def json_function_call(self) -> bool:
+        """``JSON_VALUE(``, ``JSON_QUERY(``, ``OPENJSON(``, ``FOR JSON``, ``JSON_TABLE(``,
+        ``IS JSON`` or ``JSON_EXISTS(``, read on :func:`scan_sql`'s output.
+        """
+        return "json" in self._scanned_lower and bool(_JSON_FUNCTION_RE.search(self._scanned))
+
+    @cached_property
+    def self_referencing_recursive_cte(self) -> bool:
+        """``WITH RECURSIVE``, or a CTE whose own body both ``UNION``s and names the CTE
+        again (SQL Server and Oracle have no ``RECURSIVE`` keyword), read on
+        :func:`scan_sql`'s output.
+        """
+        return _has_recursive_cte(self._scanned)
 
     @cached_property
     def top_n_shape(self) -> bool:

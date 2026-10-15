@@ -29,7 +29,6 @@ source whose own dialect leans MySQL-compatible. #445 tracks adding it.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -37,6 +36,7 @@ from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import BASELINE, SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import has_sequence_reference
 from src.shared.engine_names import display_engine
+from src.tools.sql.query_facts import query_facts, scan_sql
 
 AURORA_ENGINES = frozenset({"aurora_postgresql", "aurora_mysql"})
 
@@ -123,182 +123,6 @@ def describe_features(features: Iterable[str]) -> str:
 # collation today, and no query-text signal substitutes for it. Left out rather than
 # inferred from nothing (#381 follow-up: extend the SQL Server collector's metadata).
 
-# Requires MERGE to be followed by an optional TOP(n) clause, then (optionally "INTO"
-# then) the start of a target identifier -- the shape an actual MERGE statement takes
-# -- not just the bare keyword "merge" (e.g. a column or variable literally named
-# ``merge``) coincidentally followed by "using" somewhere within the next 80
-# characters. The negative lookahead excludes a handful of SQL keywords that can
-# legitimately follow a bare "merge" column reference (``SELECT merge FROM ...
-# USING (...)``) but never follow the MERGE statement itself. ``[#\w]`` (#381 review
-# round 2) only requires the *first* character of the target identifier to look like
-# one -- a word character, or ``#`` for a local temp table (``MERGE #target ...``) --
-# rather than the whole identifier, since by the time this runs ``_scan_sql`` has
-# already turned a bracketed or double-quoted identifier into its bare name (``[dbo].
-# [Target]`` -> ``dbo.Target``), and the ``.{0,80}\busing\b`` that follows is what
-# actually confirms this is a MERGE statement, not the identifier shape.
-_MERGE_RE = re.compile(
-    r"\bmerge\s+(?:top\s*\([^)]*\)\s*)?(?:into\s+)?"
-    r"(?!(?:from|where|select|group|order|having|join)\b)[#\w]"
-    r".{0,80}\busing\b",
-    re.IGNORECASE | re.DOTALL,
-)
-# Every function-shaped signal requires an opening paren, so a column literally named
-# e.g. ``json_value`` (not a call to the ``JSON_VALUE(...)`` function) does not match.
-# ``FOR JSON`` and ``IS JSON`` are not function calls -- SQL Server's ``FOR JSON PATH``
-# clause and the ``IS JSON`` predicate take no parens -- so those two keep the plain
-# keyword-boundary match.
-_JSON_FUNCTION_RE = re.compile(
-    r"\bjson_value\s*\(|\bjson_query\s*\(|\bopenjson\s*\(|\bfor\s+json\b|\bjson_table\s*\(|"
-    r"\bis\s+json\b|\bjson_exists\s*\(",
-    re.IGNORECASE,
-)
-# Matches a CTE's own name definition, whether it is the first one after ``WITH`` or a
-# later one introduced by a comma (``WITH a AS (...), b AS (...)``) -- #381 review: the
-# pre-review version only matched the first, so a recursive CTE named anywhere but first
-# in the list went undetected. ``[#\w]+`` (#381 review round 2) rather than
-# ``[a-zA-Z_]\w*``: by the time this runs, ``_scan_sql`` has already turned a bracketed
-# or double-quoted CTE name (``[Tree]``, ``"Tree"``) into its bare identifier, so the
-# name itself is always a plain word here regardless of how the query originally quoted
-# it.
-_CTE_NAME_RE = re.compile(r"(?:\bwith\b|,)\s*([#\w]+)\s*(?:\([^)]*\))?\s+as\s*\(", re.IGNORECASE)
-
-
-def _scan_sql(text: str) -> str:
-    """One left-to-right pass over ``text`` neutralizing comments, strings and
-    quoted identifiers, so every feature regex below runs against SQL as the engine
-    would actually parse it, never raw source text (#381 review round 2).
-
-    Two independent regex passes (strip strings, then strip comments) can each
-    mis-handle what the other produces: a comment containing an apostrophe
-    (``-- don't touch``) made the string-literal pass, if it ran first, swallow
-    everything up to the *next* quote -- which could be an entire real statement
-    later in the query. Scanning once, left to right, in the order these characters
-    are actually encountered removes that ordering bug entirely.
-
-    Each construct below is replaced the way the engine would resolve it, not simply
-    deleted (so a real token on either side is never glued to its neighbour):
-
-    - ``--`` to end of line: a space (the newline itself is kept, so later-line
-      offsets are not shifted and a line comment never merges two lines).
-    - ``/* ... */``: a space, with nesting support (SQL Server supports nested
-      block comments) -- the whole span up to the matching outer ``*/`` is one
-      comment, so text between an inner ``*/`` and the outer one is never
-      mistaken for live code.
-    - ``'...'`` string literals, with ``''``-doubled escapes and an optional
-      ``N``/``n`` (Unicode) prefix: a space. Content is never a real keyword
-      match, only text a customer or generator happened to write.
-    - ``[ident]`` (T-SQL brackets, ``]]``-escaped) and ``"ident"`` (ANSI/Oracle/
-      PostgreSQL double quotes, ``""``-escaped): the bare identifier, with the
-      quoting removed. These name a column, table or CTE -- not a string -- so a
-      feature regex must still be able to see and match the name inside
-      (``MERGE [dbo].[Target]``, ``WITH "Tree" AS (...)``).
-
-    Every other character passes through unchanged.
-    """
-    out: list[str] = []
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c == "-" and i + 1 < n and text[i + 1] == "-":
-            j = text.find("\n", i)
-            out.append(" ")
-            i = n if j == -1 else j
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            depth = 1
-            i += 2
-            while i < n and depth > 0:
-                if text[i : i + 2] == "/*":
-                    depth += 1
-                    i += 2
-                elif text[i : i + 2] == "*/":
-                    depth -= 1
-                    i += 2
-                else:
-                    i += 1
-            out.append(" ")
-            continue
-        if c == "'" or (c in "Nn" and i + 1 < n and text[i + 1] == "'"):
-            if c in "Nn":
-                i += 1
-            i += 1  # opening quote
-            while i < n:
-                if text[i] == "'" and i + 1 < n and text[i + 1] == "'":
-                    i += 2
-                    continue
-                if text[i] == "'":
-                    i += 1
-                    break
-                i += 1
-            out.append(" ")
-            continue
-        if c == "[":
-            j = i + 1
-            body: list[str] = []
-            while j < n:
-                if text[j] == "]" and j + 1 < n and text[j + 1] == "]":
-                    body.append("]")
-                    j += 2
-                    continue
-                if text[j] == "]":
-                    j += 1
-                    break
-                body.append(text[j])
-                j += 1
-            out.append("".join(body))
-            i = j
-            continue
-        if c == '"':
-            j = i + 1
-            body = []
-            while j < n:
-                if text[j] == '"' and j + 1 < n and text[j + 1] == '"':
-                    body.append('"')
-                    j += 2
-                    continue
-                if text[j] == '"':
-                    j += 1
-                    break
-                body.append(text[j])
-                j += 1
-            out.append("".join(body))
-            i = j
-            continue
-        out.append(c)
-        i += 1
-    return "".join(out)
-
-
-def _has_recursive_cte(text: str) -> bool:
-    """A CTE whose own body both ``UNION``s and refers back to its own name.
-
-    SQL Server and Oracle have no ``WITH RECURSIVE`` keyword (unlike PostgreSQL and
-    MySQL 8): any ``name AS (...)`` CTE can be recursive if its body unions the anchor
-    member with one that references ``name`` again -- checked for every CTE in the
-    ``WITH`` list, not only the first (#381 review). Requiring both a self-reference and
-    a ``UNION`` inside the CTE's own (paren-balanced) body avoids counting a CTE that is
-    merely referenced again later in the main query -- normal, non-recursive CTE use.
-    """
-    if re.search(r"\bwith\s+recursive\b", text, re.IGNORECASE):
-        return True
-    for m in _CTE_NAME_RE.finditer(text):
-        name = m.group(1)
-        depth = 1
-        i = m.end()
-        start = i
-        while i < len(text) and depth > 0:
-            if text[i] == "(":
-                depth += 1
-            elif text[i] == ")":
-                depth -= 1
-            i += 1
-        body = text[start:i]
-        if re.search(r"\bunion\b", body, re.IGNORECASE) and re.search(
-            rf"\b{re.escape(name)}\b", body, re.IGNORECASE
-        ):
-            return True
-    return False
-
 
 def detect_heterogeneous_features(
     collector_output: Mapping, source_engine: str | None
@@ -307,7 +131,8 @@ def detect_heterogeneous_features(
 
     Every key is a reported signal, never an inference from missing data: query-text
     patterns (sequences, recursive CTEs, ``MERGE``, JSON functions -- each query's text
-    is scanned by :func:`_scan_sql` first, #381 review, so a keyword mentioned only in
+    is scanned by :func:`~src.tools.sql.query_facts.scan_sql` first, #381 review, and
+    each feature is an engine-neutral query fact, #491, so a keyword mentioned only in
     a comment or string literal is never counted, and a bracketed or double-quoted
     identifier is still visible under its bare name), the collected schema
     (JSON/JSONB columns, 2+ distinct ``schema_name`` values -- real per-table schemas:
@@ -318,7 +143,8 @@ def detect_heterogeneous_features(
     """
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
-    texts = [_scan_sql(str(q.get("query_text") or "")) for q in queries]
+    query_texts = [str(q.get("query_text") or "") for q in queries]
+    facts = [query_facts(t) for t in query_texts]
     schema_names = {t.get("schema_name") for t in tables if t.get("schema_name")}
     json_columns = any(
         (c.get("data_type") or "").lower() in ("json", "jsonb")
@@ -326,10 +152,11 @@ def detect_heterogeneous_features(
         for c in (t.get("columns") or [])
     )
     return {
-        "sequences": any(has_sequence_reference(t) for t in texts),  # shared, #654
-        "recursive_ctes": any(_has_recursive_cte(t) for t in texts),
-        "merge_statements": any(_MERGE_RE.search(t) for t in texts),
-        "json_usage": json_columns or any(_JSON_FUNCTION_RE.search(t) for t in texts),
+        # shared, #654
+        "sequences": any(has_sequence_reference(scan_sql(t)) for t in query_texts),
+        "recursive_ctes": any(f.self_referencing_recursive_cte for f in facts),
+        "merge_statements": any(f.merge_statement for f in facts),
+        "json_usage": json_columns or any(f.json_function_call for f in facts),
         "multiple_schemas": len(schema_names) > 1,
         "babelfish_compatible": (source_engine or "").lower() == "sqlserver",
     }
