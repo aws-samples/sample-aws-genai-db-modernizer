@@ -25,16 +25,16 @@ Two kinds of fact, from two readers:
   (:func:`src.tools.sql.regex_facts.regex_wildcard_leading`); it moves to the
   facade's parsed reading once that gate receives the source engine.
 
-:func:`query_facts` caches its answer per text, so a query read by several
-detectors (the capability gate, the exclusion gate, the shape checks) is
-scanned once.
+:func:`query_facts` returns one object per text, and each fact on it is
+computed the first time a reader asks for it, then kept: a query read by
+several detectors is scanned once per fact, and a reader never pays for a fact
+it doesn't read (#895 review).
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 
 from src.shared.unsupported_pattern import is_dedup_only_group_by
 from src.tools.sql.regex_facts import regex_join_count, regex_wildcard_leading
@@ -355,113 +355,316 @@ _AGGREGATION_CALL_WORD_RE = re.compile(
 _RANGE_OPERATOR_WORD_RE = re.compile(r"\b(between|>=?|<=?)\b")
 
 
+# ---------------------------------------------------------------------------
+# Document shapes (the DocumentDB analysis's detectors, moved here from
+# ``documentdb_analysis_tools``).
+# ---------------------------------------------------------------------------
+
+# GROUP BY, HAVING or COUNT/SUM/AVG/MIN/MAX followed by "(" and a word
+# character (the DynamoDB copy, ``_AGGREGATION_CALL_WORD_RE``, has no MIN/MAX).
+_AGGREGATE_CALL_WORD_RE = re.compile(
+    r"\b(group\s+by|having|count\s*\(|sum\s*\(|avg\s*\(|min\s*\(|max\s*\()\b", re.I
+)
+_WINDOW_FUNCTION_WORD_RE = re.compile(
+    r"\b(row_number|rank|dense_rank|ntile|lag|lead|over\s*\()\b", re.I
+)
+# The window functions DocumentDB 8.0.2+ serves through $setWindowFields
+# (ROW_NUMBER/RANK/DENSE_RANK as $documentNumber/$rank/$denseRank, and
+# aggregates such as SUM(...) OVER for running totals), and the ones it has no
+# operator for on any version (LAG/LEAD need $shift; NTILE has none), per the
+# supported-APIs page.
+_SET_WINDOW_FIELDS_RE = re.compile(
+    r"\b(row_number|rank|dense_rank)\s*\("
+    r"|\b(sum|avg|min|max|count)\s*\((?:[^()]|\([^()]*\))*\)\s*over\b",
+    re.I,
+)
+_OFFSET_OR_BUCKET_WINDOW_CALL_RE = re.compile(r"\b(lag|lead|ntile)\s*\(", re.I)
+_NEGATION_WORD_RE = re.compile(r"\b(not\s+in|not\s+exists|<>|!=)\b", re.I)
+_CORRELATED_SUBQUERY_SHAPE_RE = re.compile(
+    r"\(\s*select\b.*?\bwhere\b.*?\b\w+\.\w+\s*=\s*\w+\.\w+", re.I | re.S
+)
+_JSON_EXTRACT_WORD_RE = re.compile(r"\b(json_extract|json_unquote|json_value|->>|->)\b", re.I)
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
 
 
-@dataclass(frozen=True)
 class QueryFacts:
     """The text facts of one query (see the module docstring).
 
-    Attributes:
-        leading_wildcard_like: ``LIKE`` followed by a quote and ``%``
-            (``ILIKE`` and ``NOT LIKE`` included).
-        fulltext_match: MySQL ``MATCH (...) AGAINST (``.
-        text_search_operator: PostgreSQL ``to_tsvector``, ``to_tsquery`` or ``@@``.
-        ranking_window_function: ``ROW_NUMBER``/``RANK``/``DENSE_RANK``/
-            ``NTILE``/``LAG``/``LEAD`` with an empty argument list and ``OVER (``.
-        recursive_cte: ``WITH RECURSIVE``.
-        aggregate_function_call: A call to ``SUM``/``COUNT``/``AVG``/``MIN``/
-            ``MAX``/``FOUND_ROWS``/``GROUP_CONCAT``/``STRING_AGG``/``ARRAY_AGG``
-            (backtick-quoted names included).
-        sql_calc_found_rows: MySQL's ``SQL_CALC_FOUND_ROWS`` modifier.
-        window_function: ``)`` followed by ``OVER (`` -- any window function.
-        group_by: A ``GROUP BY`` anywhere in the text.
-        dedup_only_group_by: The ``GROUP BY`` only de-duplicates rows
-            (``unsupported_pattern.is_dedup_only_group_by``, #336).
-        computed_join_key: Some ``JOIN ... ON`` condition compares a function
-            call with a column (``lower(g.name) = u.username_lower``, either
-            side); a function compared with a bind parameter is a filter, not
-            a computed join key.
-        write_with_subquery: ``INSERT``/``UPDATE``/``DELETE`` followed later
-            by ``SELECT``.
-        join_keyword_count: How many times the word ``join`` appears (the
-            regex join count, :func:`src.tools.sql.regex_facts.regex_join_count`).
-        aggregation_keyword: An :data:`AGGREGATION_KEYWORDS` substring
-            (``group by``, ``having``, ``count(``, ...).
-        exists_or_in_subquery: ``EXISTS (``, ``NOT EXISTS (`` or ``IN (SELECT``.
-        pagination_keyword: A :data:`PAGINATION_KEYWORDS` substring (``limit``,
-            ``offset``, ``fetch first``, ``fetch next``).
-        in_list: `` in (`` or `` in(``.
-        like_percent_literal: The lower-cased text contains ``like '%`` (one
-            space, a single quote; ``ilike '%`` included).
-        text_search_keyword: A :data:`TEXT_SEARCH_KEYWORDS` substring.
-        json_function_keyword: A :data:`JSON_FUNCTION_KEYWORDS` substring
-            (``json_extract(``, ..., ``->``).
-        match_against_keyword: ``match(``, ``match (``, ``against(`` or ``against (``.
-        duplicate_key_upsert: ``on duplicate key`` or ``replace into``.
-        group_concat_call: ``group_concat(``.
-        stored_routine_keyword: A :data:`STORED_ROUTINE_KEYWORDS` substring
-            (``call ``, ``delimiter``, ``create procedure``, ``create function``).
-        window_function_keyword: A named window function call (``ROW_NUMBER(``,
-            ``RANK(``, ... ``PERCENT_RANK(``), ``) OVER (``, or ``OVER (PARTITION
-            BY``/``OVER (ORDER BY``.
-        jsonb_operation: ``->>``, a ``jsonb_*(`` function, ``::jsonb`` or ``@> '``.
-        array_operation: ``ANY(ARRAY``, ``array_agg(``, ``unnest(``,
-            ``ARRAY[`` or ``@> ARRAY``.
-        tsvector_search: A ``to_tsvector``/``*to_tsquery`` call, ``tsvector``,
-            ``ts_rank(`` or ``@@``.
-        lateral_join: ``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``.
-        on_conflict_or_returning: ``ON CONFLICT``, or ``RETURNING <column>``
-            not preceded by ``AS``.
-        timestamp_column_word: A timestamp-like word (``created_at``,
-            ``updated_at``, ``timestamp``, ``date``, ``time``, ``expires_at``,
-            ``ttl``, ``last_*_at``).
-        session_word: ``session``, ``token``, ``sess_id``, ``session_id``,
-            ``login`` or ``auth`` as a word.
-        aggregation_call_word: ``GROUP BY``, ``HAVING``, or ``COUNT(``/``SUM(``/
-            ``AVG(`` followed by a word character (``count(*)`` is not one).
-        range_with_order_by: ``BETWEEN`` or a word character followed by
-            ``<``/``<=``/``>``/``>=``, and ``order by`` somewhere in the text.
-        limit_word: The lower-cased text contains ``limit``.
+    Each fact is computed the first time a reader asks for it, then kept on the
+    object (``functools.cached_property``), so a reader pays only for the facts
+    it reads: a costly detector one analysis needs (the DocumentDB correlated
+    subquery shape) never runs in the steps that don't read it (#895 review).
     """
 
-    leading_wildcard_like: bool
-    fulltext_match: bool
-    text_search_operator: bool
-    ranking_window_function: bool
-    recursive_cte: bool
-    aggregate_function_call: bool
-    sql_calc_found_rows: bool
-    window_function: bool
-    group_by: bool
-    dedup_only_group_by: bool
-    computed_join_key: bool
-    write_with_subquery: bool
-    join_keyword_count: int
-    aggregation_keyword: bool
-    exists_or_in_subquery: bool
-    pagination_keyword: bool
-    in_list: bool
-    like_percent_literal: bool
-    text_search_keyword: bool
-    json_function_keyword: bool
-    match_against_keyword: bool
-    duplicate_key_upsert: bool
-    group_concat_call: bool
-    stored_routine_keyword: bool
-    window_function_keyword: bool
-    jsonb_operation: bool
-    array_operation: bool
-    tsvector_search: bool
-    lateral_join: bool
-    on_conflict_or_returning: bool
-    timestamp_column_word: bool
-    session_word: bool
-    aggregation_call_word: bool
-    range_with_order_by: bool
-    limit_word: bool
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    @cached_property
+    def _lower(self) -> str:
+        return self._text.lower()
+
+    @cached_property
+    def leading_wildcard_like(self) -> bool:
+        """``LIKE`` followed by a quote and ``%`` (``ILIKE`` and ``NOT LIKE`` included)."""
+        return regex_wildcard_leading(self._text)
+
+    @cached_property
+    def fulltext_match(self) -> bool:
+        """MySQL ``MATCH (...) AGAINST (``."""
+        return bool(_FULLTEXT_MATCH_RE.search(self._text))
+
+    @cached_property
+    def text_search_operator(self) -> bool:
+        """PostgreSQL ``to_tsvector``, ``to_tsquery`` or ``@@``."""
+        return bool(_TEXT_SEARCH_OPERATOR_RE.search(self._text))
+
+    @cached_property
+    def ranking_window_function(self) -> bool:
+        """``ROW_NUMBER``/``RANK``/``DENSE_RANK``/ ``NTILE``/``LAG``/``LEAD`` with an empty
+        argument list and ``OVER (``.
+        """
+        return bool(_RANKING_WINDOW_FUNCTION_RE.search(self._text))
+
+    @cached_property
+    def recursive_cte(self) -> bool:
+        """``WITH RECURSIVE``."""
+        return bool(_RECURSIVE_CTE_RE.search(self._text))
+
+    @cached_property
+    def aggregate_function_call(self) -> bool:
+        """A call to ``SUM``/``COUNT``/``AVG``/``MIN``/
+        ``MAX``/``FOUND_ROWS``/``GROUP_CONCAT``/``STRING_AGG``/``ARRAY_AGG``
+        (backtick-quoted names included).
+        """
+        return bool(_AGGREGATE_FUNCTION_CALL_RE.search(self._text))
+
+    @cached_property
+    def sql_calc_found_rows(self) -> bool:
+        """MySQL's ``SQL_CALC_FOUND_ROWS`` modifier."""
+        return bool(_SQL_CALC_FOUND_ROWS_RE.search(self._text))
+
+    @cached_property
+    def window_function(self) -> bool:
+        """``)`` followed by ``OVER (`` -- any window function."""
+        return bool(_WINDOW_FUNCTION_RE.search(self._text))
+
+    @cached_property
+    def group_by(self) -> bool:
+        """A ``GROUP BY`` anywhere in the text."""
+        return bool(_GROUP_BY_RE.search(self._text))
+
+    @cached_property
+    def dedup_only_group_by(self) -> bool:
+        """The ``GROUP BY`` only de-duplicates rows
+        (``unsupported_pattern.is_dedup_only_group_by``, #336).
+        """
+        return self.group_by and is_dedup_only_group_by(self._text)
+
+    @cached_property
+    def computed_join_key(self) -> bool:
+        """Some ``JOIN ... ON`` condition compares a function call with a column
+        (``lower(g.name) = u.username_lower``, either side); a function compared with a
+        bind parameter is a filter, not a computed join key.
+        """
+        return _has_computed_join_key(self._text)
+
+    @cached_property
+    def write_with_subquery(self) -> bool:
+        """``INSERT``/``UPDATE``/``DELETE`` followed later by ``SELECT``."""
+        return bool(_WRITE_WITH_SUBQUERY_RE.search(self._text))
+
+    @cached_property
+    def join_keyword_count(self) -> int:
+        """How many times the word ``join`` appears (the regex join count,
+        :func:`src.tools.sql.regex_facts.regex_join_count`).
+        """
+        return regex_join_count(self._text)
+
+    @cached_property
+    def aggregation_keyword(self) -> bool:
+        """An :data:`AGGREGATION_KEYWORDS` substring (``group by``, ``having``, ``count(``,
+        ...).
+        """
+        return _contains_any(self._lower, AGGREGATION_KEYWORDS)
+
+    @cached_property
+    def exists_or_in_subquery(self) -> bool:
+        """``EXISTS (``, ``NOT EXISTS (`` or ``IN (SELECT``."""
+        return bool(_EXISTS_OR_IN_SUBQUERY_RE.search(self._text))
+
+    @cached_property
+    def pagination_keyword(self) -> bool:
+        """A :data:`PAGINATION_KEYWORDS` substring (``limit``, ``offset``, ``fetch first``,
+        ``fetch next``).
+        """
+        return _contains_any(self._lower, PAGINATION_KEYWORDS)
+
+    @cached_property
+    def in_list(self) -> bool:
+        """`` in (`` or `` in(``."""
+        return _contains_any(self._lower, IN_LIST_KEYWORDS)
+
+    @cached_property
+    def like_percent_literal(self) -> bool:
+        """The lower-cased text contains ``like '%`` (one space, a single quote; ``ilike
+        '%`` included).
+        """
+        return "like '%" in self._lower
+
+    @cached_property
+    def text_search_keyword(self) -> bool:
+        """A :data:`TEXT_SEARCH_KEYWORDS` substring."""
+        return _contains_any(self._lower, TEXT_SEARCH_KEYWORDS)
+
+    @cached_property
+    def json_function_keyword(self) -> bool:
+        """A :data:`JSON_FUNCTION_KEYWORDS` substring (``json_extract(``, ..., ``->``)."""
+        return _contains_any(self._lower, JSON_FUNCTION_KEYWORDS)
+
+    @cached_property
+    def match_against_keyword(self) -> bool:
+        """``match(``, ``match (``, ``against(`` or ``against (``."""
+        return _contains_any(self._lower, MATCH_AGAINST_KEYWORDS)
+
+    @cached_property
+    def duplicate_key_upsert(self) -> bool:
+        """``on duplicate key`` or ``replace into``."""
+        return _contains_any(self._lower, DUPLICATE_KEY_KEYWORDS)
+
+    @cached_property
+    def group_concat_call(self) -> bool:
+        """``group_concat(``."""
+        return _contains_any(self._lower, GROUP_CONCAT_KEYWORDS)
+
+    @cached_property
+    def stored_routine_keyword(self) -> bool:
+        """A :data:`STORED_ROUTINE_KEYWORDS` substring (``call ``, ``delimiter``, ``create
+        procedure``, ``create function``).
+        """
+        return _contains_any(self._lower, STORED_ROUTINE_KEYWORDS)
+
+    @cached_property
+    def window_function_keyword(self) -> bool:
+        """A named window function call (``ROW_NUMBER(``, ``RANK(``, ...
+        ``PERCENT_RANK(``), ``) OVER (``, or ``OVER (PARTITION BY``/``OVER (ORDER BY``.
+        """
+        return bool(_WINDOW_FUNCTION_KEYWORD_RE.search(self._text))
+
+    @cached_property
+    def jsonb_operation(self) -> bool:
+        """``->>``, a ``jsonb_*(`` function, ``::jsonb`` or ``@> '``."""
+        return bool(_JSONB_OPERATION_RE.search(self._text))
+
+    @cached_property
+    def array_operation(self) -> bool:
+        """``ANY(ARRAY``, ``array_agg(``, ``unnest(``, ``ARRAY[`` or ``@> ARRAY``."""
+        return bool(_ARRAY_OPERATION_RE.search(self._text))
+
+    @cached_property
+    def tsvector_search(self) -> bool:
+        """A ``to_tsvector``/``*to_tsquery`` call, ``tsvector``, ``ts_rank(`` or ``@@``."""
+        return bool(_TSVECTOR_SEARCH_RE.search(self._text))
+
+    @cached_property
+    def lateral_join(self) -> bool:
+        """``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``."""
+        return bool(_LATERAL_JOIN_RE.search(self._text))
+
+    @cached_property
+    def on_conflict_or_returning(self) -> bool:
+        """``ON CONFLICT``, or ``RETURNING <column>`` not preceded by ``AS``."""
+        return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._text))
+
+    @cached_property
+    def timestamp_column_word(self) -> bool:
+        """A timestamp-like word (``created_at``, ``updated_at``, ``timestamp``, ``date``,
+        ``time``, ``expires_at``, ``ttl``, ``last_*_at``).
+        """
+        return bool(_TIMESTAMP_COLUMN_RE.search(self._text))
+
+    @cached_property
+    def session_word(self) -> bool:
+        """``session``, ``token``, ``sess_id``, ``session_id``, ``login`` or ``auth`` as a
+        word.
+        """
+        return bool(_SESSION_WORD_RE.search(self._text))
+
+    @cached_property
+    def aggregation_call_word(self) -> bool:
+        """``GROUP BY``, ``HAVING``, or ``COUNT(``/``SUM(``/ ``AVG(`` followed by a word
+        character (``count(*)`` is not one).
+        """
+        return bool(_AGGREGATION_CALL_WORD_RE.search(self._text))
+
+    @cached_property
+    def range_with_order_by(self) -> bool:
+        """``BETWEEN`` or a word character followed by ``<``/``<=``/``>``/``>=``, and
+        ``order by`` somewhere in the text.
+        """
+        return bool(_RANGE_OPERATOR_WORD_RE.search(self._lower)) and "order by" in self._lower
+
+    @cached_property
+    def limit_word(self) -> bool:
+        """The lower-cased text contains ``limit``."""
+        return "limit" in self._lower
+
+    @cached_property
+    def aggregate_call_word_count(self) -> int:
+        """How many ``GROUP BY``, ``HAVING`` or
+        ``COUNT(``/``SUM(``/``AVG(``/``MIN(``/``MAX(`` followed by a word character the
+        text has (``aggregation_call_word`` without ``MIN``/``MAX``, counted).
+        """
+        return len(_AGGREGATE_CALL_WORD_RE.findall(self._text))
+
+    @cached_property
+    def window_function_word(self) -> bool:
+        """``row_number``, ``rank``, ``dense_rank``, ``ntile``, ``lag``, ``lead`` as a
+        word, or ``over (`` followed by a word character.
+        """
+        return bool(_WINDOW_FUNCTION_WORD_RE.search(self._text))
+
+    @cached_property
+    def set_window_fields_shape(self) -> bool:
+        """A ``ROW_NUMBER(``/``RANK(``/``DENSE_RANK(`` call, or
+        ``SUM``/``AVG``/``MIN``/``MAX``/``COUNT(...) OVER``.
+        """
+        return bool(_SET_WINDOW_FIELDS_RE.search(self._text))
+
+    @cached_property
+    def offset_or_bucket_window_call(self) -> bool:
+        """A ``LAG(``, ``LEAD(`` or ``NTILE(`` call."""
+        return bool(_OFFSET_OR_BUCKET_WINDOW_CALL_RE.search(self._text))
+
+    @cached_property
+    def negation_word(self) -> bool:
+        """``NOT IN``, ``NOT EXISTS``, ``<>`` or ``!=`` between word characters."""
+        return bool(_NEGATION_WORD_RE.search(self._text))
+
+    @cached_property
+    def correlated_subquery_shape(self) -> bool:
+        """``( SELECT ... WHERE ... a.b = c.d``."""
+        return bool(_CORRELATED_SUBQUERY_SHAPE_RE.search(self._text))
+
+    @cached_property
+    def json_extract_word(self) -> bool:
+        """``json_extract``, ``json_unquote``, ``json_value``, ``->>`` or ``->`` between
+        word characters.
+        """
+        return bool(_JSON_EXTRACT_WORD_RE.search(self._text))
+
+    @cached_property
+    def group_by_substring(self) -> bool:
+        """The lower-cased text contains ``group by`` (one space)."""
+        return "group by" in self._lower
+
+    @cached_property
+    def comma_count(self) -> int:
+        """How many commas the text has."""
+        return self._lower.count(",")
 
     @property
     def needs_aggregation(self) -> bool:
@@ -479,46 +682,16 @@ def _has_computed_join_key(text: str) -> bool:
     )
 
 
-@lru_cache(maxsize=16384)
+# Covers the 20,000-query ingestion default (``ingestion_limits``) twice
+# over: triage also reads facts of each query's lower-cased text. A collection
+# raised past that by ``MODERNIZER_MAX_UPLOAD_QUERIES`` only recomputes what
+# its readers ask for, since each fact is lazy.
+@lru_cache(maxsize=65536)
+def _query_facts(text: str) -> QueryFacts:
+    return QueryFacts(text)
+
+
 def query_facts(query_text: str | None) -> QueryFacts:
-    """The text facts of ``query_text`` (``None`` reads as empty text)."""
-    text = query_text or ""
-    lower = text.lower()
-    group_by = bool(_GROUP_BY_RE.search(text))
-    return QueryFacts(
-        leading_wildcard_like=regex_wildcard_leading(text),
-        fulltext_match=bool(_FULLTEXT_MATCH_RE.search(text)),
-        text_search_operator=bool(_TEXT_SEARCH_OPERATOR_RE.search(text)),
-        ranking_window_function=bool(_RANKING_WINDOW_FUNCTION_RE.search(text)),
-        recursive_cte=bool(_RECURSIVE_CTE_RE.search(text)),
-        aggregate_function_call=bool(_AGGREGATE_FUNCTION_CALL_RE.search(text)),
-        sql_calc_found_rows=bool(_SQL_CALC_FOUND_ROWS_RE.search(text)),
-        window_function=bool(_WINDOW_FUNCTION_RE.search(text)),
-        group_by=group_by,
-        dedup_only_group_by=group_by and is_dedup_only_group_by(text),
-        computed_join_key=_has_computed_join_key(text),
-        write_with_subquery=bool(_WRITE_WITH_SUBQUERY_RE.search(text)),
-        join_keyword_count=regex_join_count(text),
-        aggregation_keyword=_contains_any(lower, AGGREGATION_KEYWORDS),
-        exists_or_in_subquery=bool(_EXISTS_OR_IN_SUBQUERY_RE.search(text)),
-        pagination_keyword=_contains_any(lower, PAGINATION_KEYWORDS),
-        in_list=_contains_any(lower, IN_LIST_KEYWORDS),
-        like_percent_literal="like '%" in lower,
-        text_search_keyword=_contains_any(lower, TEXT_SEARCH_KEYWORDS),
-        json_function_keyword=_contains_any(lower, JSON_FUNCTION_KEYWORDS),
-        match_against_keyword=_contains_any(lower, MATCH_AGAINST_KEYWORDS),
-        duplicate_key_upsert=_contains_any(lower, DUPLICATE_KEY_KEYWORDS),
-        group_concat_call=_contains_any(lower, GROUP_CONCAT_KEYWORDS),
-        stored_routine_keyword=_contains_any(lower, STORED_ROUTINE_KEYWORDS),
-        window_function_keyword=bool(_WINDOW_FUNCTION_KEYWORD_RE.search(text)),
-        jsonb_operation=bool(_JSONB_OPERATION_RE.search(text)),
-        array_operation=bool(_ARRAY_OPERATION_RE.search(text)),
-        tsvector_search=bool(_TSVECTOR_SEARCH_RE.search(text)),
-        lateral_join=bool(_LATERAL_JOIN_RE.search(text)),
-        on_conflict_or_returning=bool(_ON_CONFLICT_OR_RETURNING_RE.search(text)),
-        timestamp_column_word=bool(_TIMESTAMP_COLUMN_RE.search(text)),
-        session_word=bool(_SESSION_WORD_RE.search(text)),
-        aggregation_call_word=bool(_AGGREGATION_CALL_WORD_RE.search(text)),
-        range_with_order_by=bool(_RANGE_OPERATOR_WORD_RE.search(lower)) and "order by" in lower,
-        limit_word="limit" in lower,
-    )
+    """The text facts of ``query_text`` (``None`` reads as empty text), one
+    object per text: computed facts are kept for every later reader."""
+    return _query_facts(query_text or "")

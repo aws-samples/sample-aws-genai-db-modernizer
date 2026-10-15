@@ -9,13 +9,16 @@ encoded twice and drift (#485).
 from __future__ import annotations
 
 import ast
+from functools import cached_property
 from pathlib import Path
 
 import pytest
 
 from src.agents.referee.capability_registry import detect_required_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.tools.sql import query_facts as query_facts_module
 from src.tools.sql.query_facts import QueryFacts, query_facts
+from tests.unit.tools.sql._timing import assert_fast
 
 _REPO = Path(__file__).resolve().parents[4]
 # Every module whose detectors moved into ``src.tools.sql.query_facts``.
@@ -29,6 +32,7 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "aurora_pg_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "aurora_pg_pattern_catalog.py",
     _REPO / "src" / "tools" / "analysis" / "dynamodb_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "documentdb_analysis_tools.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -149,6 +153,15 @@ def test_the_guard_ignores_checks_on_other_values():
     assert _imported_detectors(ast.parse(table_names)) == set()
 
 
+def _fact_names() -> list[str]:
+    """Every fact :class:`QueryFacts` computes (its public cached properties)."""
+    return [
+        name
+        for name, value in vars(QueryFacts).items()
+        if isinstance(value, cached_property) and not name.startswith("_")
+    ]
+
+
 class TestFacts:
     @pytest.mark.parametrize(
         "sql,fact",
@@ -199,6 +212,15 @@ class TestFacts:
             ("SELECT * FROM t WHERE a BETWEEN 1 AND 2 ORDER BY a", "range_with_order_by"),
             ("SELECT * FROM t WHERE a>=1 ORDER BY a", "range_with_order_by"),
             ("SELECT * FROM t LIMIT 5", "limit_word"),
+            ("SELECT ROW_NUMBER() OVER (ORDER BY a) FROM t", "window_function_word"),
+            ("SELECT RANK() OVER (ORDER BY a) FROM t", "set_window_fields_shape"),
+            ("SELECT SUM(x) OVER (PARTITION BY y) FROM t", "set_window_fields_shape"),
+            ("SELECT LAG(a) OVER (ORDER BY a) FROM t", "offset_or_bucket_window_call"),
+            ("SELECT * FROM t WHERE a NOT IN (1)", "negation_word"),
+            ("SELECT * FROM t WHERE a!=b", "negation_word"),
+            ("SELECT (SELECT 1 FROM u WHERE u.id = t.uid) FROM t", "correlated_subquery_shape"),
+            ("SELECT JSON_EXTRACT(doc, '$.a') FROM t", "json_extract_word"),
+            ("SELECT a, b, count(id) FROM t GROUP BY a, b", "group_by_substring"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -206,13 +228,8 @@ class TestFacts:
 
     def test_empty_and_none_text_have_no_facts(self):
         empty = query_facts(None)
-        assert empty == query_facts("")
-        assert not any(
-            getattr(empty, name)
-            for name in QueryFacts.__dataclass_fields__
-            if name != "join_keyword_count"
-        )
-        assert empty.join_keyword_count == 0
+        assert empty is query_facts("")
+        assert not any(getattr(empty, name) for name in _fact_names())
 
     @pytest.mark.parametrize(
         "sql,needs",
@@ -239,6 +256,8 @@ class TestFacts:
             ("SELECT * FROM t WHERE a >= 1 ORDER BY a", "range_with_order_by"),  # space
             ("SELECT * FROM t WHERE a BETWEEN 1 AND 2", "range_with_order_by"),  # no ORDER BY
             ("SELECT * FROM t WHERE mydate_x = ?", "timestamp_column_word"),
+            ("SELECT * FROM t WHERE a != 1", "negation_word"),  # space before !=
+            ("SELECT a FROM t GROUP  BY a", "group_by_substring"),  # two spaces
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):
@@ -248,6 +267,10 @@ class TestFacts:
         # One definition for the capability gate and the Aurora PostgreSQL
         # recursive-CTE pattern (#491); the gate's copy had no leading \b.
         assert query_facts("with recursive r as (select 1) select * from r").recursive_cte
+
+    def test_counts(self):
+        facts = query_facts("SELECT a, b, count(id), max(id) FROM t GROUP BY a, b")
+        assert (facts.aggregate_call_word_count, facts.comma_count) == (3, 4)
 
     def test_join_keyword_count_reads_every_join_word(self):
         assert query_facts("SELECT * FROM a JOIN b ON 1=1 -- join c").join_keyword_count == 2
@@ -273,3 +296,88 @@ class TestOneFactBothGates:
         excluded = check_exclusions("q", sql, "dynamodb") is not None
         needs_text_search = "inverted_index" in detect_required_capabilities(sql, [])
         assert excluded is needs_text_search is query_facts(sql).leading_wildcard_like
+
+
+# ---------------------------------------------------------------------------
+# Lazy facts (#895 review): a reader pays only for the facts it reads
+# ---------------------------------------------------------------------------
+
+
+def _uncorrelated_subqueries(n_chars: int) -> str:
+    """Many ``IN (SELECT ... WHERE t.c = ?)`` subqueries, none correlated: the
+    text the DocumentDB correlated-subquery shape scans super-linearly."""
+    part = "x IN (SELECT a FROM t WHERE t.c = ?) UNION ALL "
+    return "SELECT * FROM t WHERE " + part * (n_chars // len(part))
+
+
+def _read_non_documentdb_facts(text: str) -> None:
+    """What triage, the gates, assignment, the reality check and the other
+    analyses read (every step but the DocumentDB analysis)."""
+    detect_required_capabilities(text, [])
+    for engine in ("dynamodb", "opensearch", "elasticache"):
+        check_exclusions("q", text, engine)
+    facts = query_facts(text)
+    for name in _fact_names():
+        if name not in _DOCUMENTDB_ONLY_FACTS:
+            getattr(facts, name)
+
+
+# Read by the DocumentDB analysis alone.
+_DOCUMENTDB_ONLY_FACTS = frozenset(
+    {
+        "aggregate_call_word_count",
+        "window_function_word",
+        "set_window_fields_shape",
+        "offset_or_bucket_window_call",
+        "negation_word",
+        "correlated_subquery_shape",
+        "json_extract_word",
+        "comma_count",
+    }
+)
+
+
+def test_a_fact_is_computed_only_when_read(monkeypatch):
+    class _NeverSearched:
+        def search(self, _text):
+            raise AssertionError("the correlated-subquery shape was computed")
+
+    monkeypatch.setattr(query_facts_module, "_CORRELATED_SUBQUERY_SHAPE_RE", _NeverSearched())
+    text = _uncorrelated_subqueries(2_000) + " -- lazy"
+    _read_non_documentdb_facts(text)
+    with pytest.raises(AssertionError, match="correlated-subquery shape"):
+        assert query_facts(text).correlated_subquery_shape is None
+
+
+def test_a_fact_is_computed_once_per_text(monkeypatch):
+    calls = []
+    real = query_facts_module._has_computed_join_key
+
+    def counting(text):
+        calls.append(text)
+        return real(text)
+
+    monkeypatch.setattr(query_facts_module, "_has_computed_join_key", counting)
+    text = "SELECT * FROM g JOIN u ON lower(g.name) = u.n -- once"
+    assert query_facts(text).computed_join_key
+    assert query_facts(text).computed_join_key
+    assert detect_required_capabilities(text, []) == ["computed_join"]
+    assert calls == [text]
+
+
+@pytest.mark.slow
+def test_long_queries_cost_the_steps_that_skip_documentdb_no_more_than_before():
+    """Five 16,000-character queries with many uncorrelated subqueries. Before
+    the facts were lazy, every step paid for the DocumentDB correlated-subquery
+    scan (about 3 s per query, the #895 review measured); before #895 added it,
+    the facts these steps read took about 7.5 ms per query. The budget, 0.25 s
+    CPU for all five, keeps that within a small factor and fails the eager
+    version at once."""
+    texts = [_uncorrelated_subqueries(16_000) + f" -- {i}" for i in range(5)]
+
+    def run() -> None:
+        query_facts_module._query_facts.cache_clear()
+        for text in texts:
+            _read_non_documentdb_facts(text)
+
+    assert_fast(run, 0.25)

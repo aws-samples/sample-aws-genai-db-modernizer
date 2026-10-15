@@ -7,7 +7,6 @@ for Amazon DocumentDB migration assessment.
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
@@ -39,26 +38,13 @@ from src.tools.analysis.scoring import (
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 # ---------------------------------------------------------------------------
-# Regex helpers
+# Target version. The text detectors (aggregate calls, window functions,
+# negation, correlated subqueries, JSON extraction, WITH RECURSIVE) are
+# engine-neutral query facts in ``src.tools.sql.query_facts`` (#491).
 # ---------------------------------------------------------------------------
-
-_AGGREGATION_RE = re.compile(
-    r"\b(group\s+by|having|count\s*\(|sum\s*\(|avg\s*\(|min\s*\(|max\s*\()\b", re.I
-)
-_WINDOW_FN_RE = re.compile(r"\b(row_number|rank|dense_rank|ntile|lag|lead|over\s*\()\b", re.I)
-# The window functions DocumentDB 8.0.2+ serves through $setWindowFields
-# (ROW_NUMBER/RANK/DENSE_RANK as $documentNumber/$rank/$denseRank, and
-# aggregates such as SUM(...) OVER for running totals), and the ones it has no
-# operator for on any version (LAG/LEAD need $shift; NTILE has none), per the
-# supported-APIs page.
-_SET_WINDOW_FIELDS_RE = re.compile(
-    r"\b(row_number|rank|dense_rank)\s*\("
-    r"|\b(sum|avg|min|max|count)\s*\((?:[^()]|\([^()]*\))*\)\s*over\b",
-    re.I,
-)
-_UNSUPPORTED_WINDOW_FN_RE = re.compile(r"\b(lag|lead|ntile)\s*\(", re.I)
 
 # The DocumentDB version and cluster type the analysis (and the PE reviewer)
 # judge compatibility against: a patch level, not just the major version, so
@@ -67,13 +53,6 @@ _UNSUPPORTED_WINDOW_FN_RE = re.compile(r"\b(lag|lead|ntile)\s*\(", re.I)
 # $lookup).
 DOCUMENTDB_TARGET_VERSION = "8.0.2"
 DOCUMENTDB_TARGET_CLUSTER = "instance-based"
-_NEGATION_RE = re.compile(r"\b(not\s+in|not\s+exists|<>|!=)\b", re.I)
-_CORRELATED_SUB_RE = re.compile(
-    r"\(\s*select\b.*?\bwhere\b.*?\b\w+\.\w+\s*=\s*\w+\.\w+", re.I | re.S
-)
-_JSON_EXTRACT_RE = re.compile(r"\b(json_extract|json_unquote|json_value|->>|->)\b", re.I)
-_RECURSIVE_RE = re.compile(r"\bwith\s+recursive\b", re.I)
-_SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|login|auth)\b", re.I)
 
 
 # ---------------------------------------------------------------------------
@@ -402,8 +381,7 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     graph_hierarchy: list[dict] = []
 
     for q in queries:
-        text = q.get("query_text", "")
-        text_lower = text.lower()
+        facts = query_facts(q.get("query_text", ""))
         qt = q.get("query_type", "").upper()
         accessed = q.get("tables_accessed") or []
         join_count = q.get("join_count") or 0
@@ -438,11 +416,11 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
                     break
 
         # aggregation-pipeline: GROUP BY + agg functions
-        if _AGGREGATION_RE.search(text) and not has_joins:
+        if facts.aggregate_call_word_count and not has_joins:
             agg_pipeline.append(q)
 
         # flexible-schema: JSON columns or JSON_EXTRACT
-        if _JSON_EXTRACT_RE.search(text):
+        if facts.json_extract_word:
             flexible_schema.append(q)
         else:
             for tid in accessed:
@@ -458,9 +436,8 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
                 extended_ref.append(q)
 
         # write-time-aggregation: multiple agg functions + JOIN
-        if _AGGREGATION_RE.search(text) and has_joins:
-            agg_count = len(_AGGREGATION_RE.findall(text))
-            if agg_count >= 2:
+        if facts.aggregate_call_word_count and has_joins:
+            if facts.aggregate_call_word_count >= 2:
                 write_time_agg.append(q)
 
         # --- Anti-pattern matching ---
@@ -470,23 +447,23 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
             cross_joins.append(q)
 
         # negation-heavy
-        if _NEGATION_RE.search(text) and cps >= 0.1:
+        if facts.negation_word and cps >= 0.1:
             negation.append(q)
 
         # faceted analytics
-        if "group by" in text_lower and text_lower.count(",") >= 2 and _AGGREGATION_RE.search(text):
+        if facts.group_by_substring and facts.comma_count >= 2 and facts.aggregate_call_word_count:
             faceted.append(q)
 
         # window functions
-        if _WINDOW_FN_RE.search(text):
+        if facts.window_function_word:
             window_fn.append(q)
 
         # correlated subqueries
-        if _CORRELATED_SUB_RE.search(text):
+        if facts.correlated_subquery_shape:
             correlated_sub.append(q)
 
         # graph/hierarchy traversal
-        if _RECURSIVE_RE.search(text):
+        if facts.recursive_cte:
             graph_hierarchy.append(q)
         elif has_joins:
             for tid in accessed:
@@ -926,17 +903,17 @@ def _detect_version_dependent_features(queries: list[dict]) -> list[str]:
     """
     features: set[str] = set()
     for q in queries:
-        text = q.get("query_text", "")
-        if _SET_WINDOW_FIELDS_RE.search(text):
+        facts = query_facts(q.get("query_text", ""))
+        if facts.set_window_fields_shape:
             features.add("$setWindowFields (ranking and window aggregates): needs 8.0.2+")
-        elif _WINDOW_FN_RE.search(text) and not _UNSUPPORTED_WINDOW_FN_RE.search(text):
+        elif facts.window_function_word and not facts.offset_or_bucket_window_call:
             # A window function neither list names (FIRST_VALUE, PERCENT_RANK,
             # a nested aggregate ...): still flagged as the anti-pattern, so it
             # still gets an entry rather than silently none.
             features.add("window function: check $setWindowFields support (needs 8.0.2+)")
-        if _RECURSIVE_RE.search(text):
+        if facts.recursive_cte:
             features.add("$graphLookup (recursive/hierarchical queries): needs 8.0")
-        if _CORRELATED_SUB_RE.search(text):
+        if facts.correlated_subquery_shape:
             features.add("$lookup with let/pipeline (correlated subqueries): needs 8.0.2+")
     return sorted(features)
 
@@ -949,7 +926,7 @@ def _detect_unsupported_features(queries: list[dict]) -> list[str]:
     """
     features: set[str] = set()
     for q in queries:
-        if _UNSUPPORTED_WINDOW_FN_RE.search(q.get("query_text", "")):
+        if query_facts(q.get("query_text", "")).offset_or_bucket_window_call:
             features.add("LAG/LEAD/NTILE (offset and bucketing window functions)")
     return sorted(features)
 
