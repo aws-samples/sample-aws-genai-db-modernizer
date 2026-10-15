@@ -333,6 +333,28 @@ _ON_CONFLICT_OR_RETURNING_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Key-value access shape (the DynamoDB analysis's detectors, moved here from
+# ``dynamodb_analysis_tools``).
+# ---------------------------------------------------------------------------
+
+# A column name that looks like a timestamp (created_at, ttl, last_seen_at, ...).
+_TIMESTAMP_COLUMN_RE = re.compile(
+    r"\b(created_at|updated_at|timestamp|date|time|expires?_at|ttl|last_\w+_at)\b", re.I
+)
+# A word that looks like session or auth data.
+_SESSION_WORD_RE = re.compile(r"\b(session|token|sess_id|session_id|login|auth)\b", re.I)
+# GROUP BY, HAVING or COUNT/SUM/AVG followed by "(" -- the trailing \b needs a
+# word character right after the "(", so ``count(*)`` does not match it but
+# ``count(id)`` does (kept as found, #491).
+_AGGREGATION_CALL_WORD_RE = re.compile(
+    r"\b(group\s+by|having|count\s*\(|sum\s*\(|avg\s*\()\b", re.I
+)
+# BETWEEN, or < / <= / > / >= with a word character before them (``a>=1``,
+# not ``a >= 1``), read on the lower-cased text.
+_RANGE_OPERATOR_WORD_RE = re.compile(r"\b(between|>=?|<=?)\b")
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -393,6 +415,16 @@ class QueryFacts:
         lateral_join: ``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``.
         on_conflict_or_returning: ``ON CONFLICT``, or ``RETURNING <column>``
             not preceded by ``AS``.
+        timestamp_column_word: A timestamp-like word (``created_at``,
+            ``updated_at``, ``timestamp``, ``date``, ``time``, ``expires_at``,
+            ``ttl``, ``last_*_at``).
+        session_word: ``session``, ``token``, ``sess_id``, ``session_id``,
+            ``login`` or ``auth`` as a word.
+        aggregation_call_word: ``GROUP BY``, ``HAVING``, or ``COUNT(``/``SUM(``/
+            ``AVG(`` followed by a word character (``count(*)`` is not one).
+        range_with_order_by: ``BETWEEN`` or a word character followed by
+            ``<``/``<=``/``>``/``>=``, and ``order by`` somewhere in the text.
+        limit_word: The lower-cased text contains ``limit``.
     """
 
     leading_wildcard_like: bool
@@ -425,6 +457,11 @@ class QueryFacts:
     tsvector_search: bool
     lateral_join: bool
     on_conflict_or_returning: bool
+    timestamp_column_word: bool
+    session_word: bool
+    aggregation_call_word: bool
+    range_with_order_by: bool
+    limit_word: bool
 
     @property
     def needs_aggregation(self) -> bool:
@@ -479,4 +516,9 @@ def query_facts(query_text: str | None) -> QueryFacts:
         tsvector_search=bool(_TSVECTOR_SEARCH_RE.search(text)),
         lateral_join=bool(_LATERAL_JOIN_RE.search(text)),
         on_conflict_or_returning=bool(_ON_CONFLICT_OR_RETURNING_RE.search(text)),
+        timestamp_column_word=bool(_TIMESTAMP_COLUMN_RE.search(text)),
+        session_word=bool(_SESSION_WORD_RE.search(text)),
+        aggregation_call_word=bool(_AGGREGATION_CALL_WORD_RE.search(text)),
+        range_with_order_by=bool(_RANGE_OPERATOR_WORD_RE.search(lower)) and "order by" in lower,
+        limit_word="limit" in lower,
     )

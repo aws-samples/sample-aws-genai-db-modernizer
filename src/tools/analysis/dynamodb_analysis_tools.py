@@ -7,7 +7,6 @@ Uses the specialist-curated pattern catalog for detection and scoring.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
@@ -40,6 +39,7 @@ from src.tools.analysis.scoring import (
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 # ---------------------------------------------------------------------------
 # LLM Advisor Pydantic models (structured LLM response parsing only)
@@ -218,11 +218,9 @@ class LlmAdvisor(LlmAdvisorBase):
 # Detection helpers
 # ---------------------------------------------------------------------------
 
-_TIMESTAMP_KEYWORDS = re.compile(
-    r"\b(created_at|updated_at|timestamp|date|time|expires?_at|ttl|last_\w+_at)\b", re.I
-)
-_SESSION_KEYWORDS = re.compile(r"\b(session|token|sess_id|session_id|login|auth)\b", re.I)
-_AGGREGATION_RE = re.compile(r"\b(group\s+by|having|count\s*\(|sum\s*\(|avg\s*\()\b", re.I)
+# The text detectors (timestamp and session words, aggregation calls, range
+# conditions, LIMIT) are engine-neutral query facts in
+# ``src.tools.sql.query_facts`` (#491).
 
 
 def _is_single_row_pk_lookup(q: dict, pk_columns: set[str]) -> bool:
@@ -238,8 +236,7 @@ def _is_single_row_pk_lookup(q: dict, pk_columns: set[str]) -> bool:
 
 
 def _has_range_condition(q: dict) -> bool:
-    text = q.get("query_text", "").lower()
-    return bool(re.search(r"\b(between|>=?|<=?)\b", text)) and "order by" in text
+    return query_facts(q.get("query_text", "")).range_with_order_by
 
 
 def _is_write_query(q: dict) -> bool:
@@ -970,8 +967,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     unbounded_queries: list[dict] = []
 
     for q in queries:
-        text = q.get("query_text", "")
-        text_lower = text.lower()
+        facts = query_facts(q.get("query_text", ""))
         qt = q.get("query_type", "").upper()
         tables_accessed = q.get("tables_accessed") or []
         rows_avg = q.get("rows_returned_avg", 0)
@@ -1003,7 +999,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
             low_freq_write_queries.append(q)
 
         # Time-series / event log
-        if _TIMESTAMP_KEYWORDS.search(text) and (
+        if facts.timestamp_column_word and (
             qt == "INSERT" or (qt == "SELECT" and _has_range_condition(q))
         ):
             timeseries_queries.append(q)
@@ -1016,7 +1012,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
                     break
 
         # Session store
-        if _SESSION_KEYWORDS.search(text):
+        if facts.session_word:
             session_queries.append(q)
 
         # Denormalization sub-type detection (replaces single denormalizable-join)
@@ -1056,11 +1052,11 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         # Complex aggregation — any GROUP BY / SUM / COUNT / AVG is an anti-pattern
         # for DynamoDB regardless of joins. DynamoDB has no server-side aggregation;
         # these need pre-computed counters or a different engine.
-        if _AGGREGATION_RE.search(text):
+        if facts.aggregation_call_word:
             complex_agg_queries.append(q)
 
         # Unbounded result set
-        if qt == "SELECT" and rows_avg > 10000 and "limit" not in text_lower:
+        if qt == "SELECT" and rows_avg > 10000 and not facts.limit_word:
             unbounded_queries.append(q)
 
         # Low-frequency reads — catch-all for SELECTs below frequency thresholds

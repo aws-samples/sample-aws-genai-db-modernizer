@@ -28,6 +28,7 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "aurora_mysql_pattern_catalog.py",
     _REPO / "src" / "tools" / "analysis" / "aurora_pg_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "aurora_pg_pattern_catalog.py",
+    _REPO / "src" / "tools" / "analysis" / "dynamodb_analysis_tools.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -190,6 +191,14 @@ class TestFacts:
             ("SELECT * FROM t JOIN LATERAL (SELECT 1) x ON true", "lateral_join"),
             ("INSERT INTO t VALUES (1) ON CONFLICT DO NOTHING", "on_conflict_or_returning"),
             ("INSERT INTO t VALUES (1) RETURNING id", "on_conflict_or_returning"),
+            ("SELECT * FROM t WHERE created_at > ?", "timestamp_column_word"),
+            ("SELECT * FROM t WHERE last_seen_at > ?", "timestamp_column_word"),
+            ("SELECT * FROM sessions WHERE token = ?", "session_word"),
+            ("SELECT count(id) FROM t", "aggregation_call_word"),
+            ("SELECT a FROM t GROUP BY a", "aggregation_call_word"),
+            ("SELECT * FROM t WHERE a BETWEEN 1 AND 2 ORDER BY a", "range_with_order_by"),
+            ("SELECT * FROM t WHERE a>=1 ORDER BY a", "range_with_order_by"),
+            ("SELECT * FROM t LIMIT 5", "limit_word"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -226,6 +235,10 @@ class TestFacts:
             ("SELECT * FROM t WHERE a LIKE  '%x'", "like_percent_literal"),  # two spaces
             ("SELECT * FROM t WHERE a = 'x'", "in_list"),
             ("SELECT fooWITH RECURSIVE", "recursive_cte"),
+            ("SELECT count(*) FROM t", "aggregation_call_word"),  # no word after "("
+            ("SELECT * FROM t WHERE a >= 1 ORDER BY a", "range_with_order_by"),  # space
+            ("SELECT * FROM t WHERE a BETWEEN 1 AND 2", "range_with_order_by"),  # no ORDER BY
+            ("SELECT * FROM t WHERE mydate_x = ?", "timestamp_column_word"),
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):
