@@ -40,21 +40,20 @@ somewhere else (a dict literal without a ``**`` spread, a constructor's
 reports, the graph, the API and the review surface build projections or
 requests (``QueryOverrideInput``) that are not an engine change. Every one of
 these cases is covered at run time instead: each writer of an assignment
-version (the first assignment, the reality check, the customer gate) calls
+version (the first assignment, the reality check, the customer gate, the
+post-schema router's reroute and rollback) calls
 ``move_ledger.check_replay`` before writing and refuses a version whose
 engines or ties do not follow from its input plus its Moves.
 
-Exceptions are listed in ``_EXCEPTIONS`` with the file, the function, the
-shape, the exact number of writes it may hold and the reason.
-``test_no_exception_is_stale`` fails when an entry no longer matches, and
-``test_only_the_move_ledger_writes_engines_and_ties`` fails when an exception
-holds more writes than listed.
+There are no exceptions: since the post-schema router's reroute and
+rollback versions record their own Moves (#489 Track L PR4, #770), every
+writer goes through the ledger, and the guard fails on any write elsewhere.
+Do not add an allowlist back; record the change as a Move instead.
 """
 
 from __future__ import annotations
 
 import ast
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,25 +71,6 @@ class Finding:
     qualname: str
     shape: str
     lineno: int
-
-    def key(self) -> tuple[str, str, str]:
-        return (self.file, self.qualname, self.shape)
-
-
-# (file, function, shape) -> (exact number of writes, why it may write). Keep it short.
-_EXCEPTIONS: dict[tuple[str, str, str], tuple[int, str]] = {
-    (
-        "src/orchestrator/local_orchestrator.py",
-        "LocalOrchestrator._rerouted_assignment",
-        "copy_with_engine",
-    ): (
-        1,
-        "The post-schema router's reroute version (#629): one {**qa, ...} copy "
-        "setting the moved query's engine and clearing its tie. The one remaining "
-        "writer outside the ledger: Track L PR4 of #489 routes it through "
-        "move_ledger as post_schema_flag Moves (#616, #770 for its rollback).",
-    ),
-}
 
 
 class _Scanner:
@@ -247,21 +227,19 @@ def _all_findings() -> list[Finding]:
 
 def test_only_the_move_ledger_writes_engines_and_ties() -> None:
     findings = _all_findings()
-    unexplained = [f for f in findings if f.key() not in _EXCEPTIONS]
-    assert not unexplained, (
+    assert not findings, (
         "assigned_engine or tied_engines is written outside src/agents/referee/move_ledger.py. "
         "Record the change as a Move (move_ledger.apply / apply_to_assignment) instead:\n"
-        + "\n".join(f"  {f.file}:{f.lineno} in {f.qualname}() [{f.shape}]" for f in unexplained)
+        + "\n".join(f"  {f.file}:{f.lineno} in {f.qualname}() [{f.shape}]" for f in findings)
     )
-    counts = Counter(f.key() for f in findings)
-    over = {k: counts[k] for k, (limit, _) in _EXCEPTIONS.items() if counts[k] > limit}
-    assert not over, f"An exception holds more writes than it lists: {over}"
 
 
-def test_no_exception_is_stale() -> None:
-    counts = Counter(f.key() for f in _all_findings())
-    stale = [key for key, (limit, _) in _EXCEPTIONS.items() if counts[key] != limit]
-    assert not stale, f"Exceptions that no longer match exactly: {stale}"
+def test_the_post_schema_router_writes_through_the_ledger() -> None:
+    """The last writer outside the ledger (#489 Track L PR4) is gone: the
+    reroute and rollback versions are built through move_ledger, so the scan
+    of the orchestrator finds nothing (not even under an exception)."""
+    path = _REPO / "src" / "orchestrator" / "local_orchestrator.py"
+    assert scan_source(path.read_text(encoding="utf-8"), str(path.relative_to(_REPO))) == []
 
 
 def test_the_ledger_itself_is_the_writer() -> None:

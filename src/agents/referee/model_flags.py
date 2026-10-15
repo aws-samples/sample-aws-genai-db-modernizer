@@ -35,10 +35,10 @@ from src.agents.referee.consolidation_validator import (
     _eligible_destinations,
     _group_serviceable_scores,
     _ignoring_flags,
-    _scorer_ladder,
     _serviceable_scores,
     _tied_candidate_pool,
     _unit_score,
+    scorer_ladder,
 )
 from src.agents.referee.move_ledger import (
     MoveLedger,
@@ -367,7 +367,7 @@ def apply_consolidation_flags(
                     score_after=routing.score_after,
                     runner_up=routing.runner_up,
                     evidence=MoveEvidence(
-                        candidates=_scorer_ladder(
+                        candidates=scorer_ladder(
                             query_map.get(m) or {"query_id": m}, flagged_context
                         ),
                         group_scores=dict(routing.scores) if grouped else {},

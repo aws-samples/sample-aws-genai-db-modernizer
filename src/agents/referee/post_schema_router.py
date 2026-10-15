@@ -25,9 +25,12 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
+from src.agents.referee.consolidation_validator import scorer_ladder
 from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags, route_flagged_unit
+from src.agents.referee.move_ledger import group_key
 from src.agents.referee.query_scoring import ScoringContext
 from src.contracts.model_flag import FlagReason, ModelFlag
+from src.contracts.move_ledger import MoveEvidence
 from src.contracts.post_schema_router_output import QueryRouting, RouterOutput
 from src.shared.engine_names import display_engine
 
@@ -251,6 +254,7 @@ def route_unsupported_queries(
             f"{_fmt(routing.score_after)} against {_fmt(routing.score_before)} on "
             f"{display_engine(engine)})"
         )
+        grouped = len(members) > 1
         for member in members:
             routings.append(
                 QueryRouting(
@@ -263,6 +267,17 @@ def route_unsupported_queries(
                     explanation=flag.explanation,
                     score_before=routing.score_before,
                     score_after=routing.score_after,
+                    # What the post_schema_flag Move records (#616), the same
+                    # record the reality check's model_flag Move keeps.
+                    runner_up=routing.runner_up,
+                    evidence=MoveEvidence(
+                        candidates=scorer_ladder(
+                            query_map.get(member) or {"query_id": member}, gated
+                        ),
+                        group_scores=dict(routing.scores) if grouped else {},
+                        tie_rule=routing.tie_rule,
+                    ),
+                    group_key=group_key(group_of[member]) if grouped else None,
                 )
             )
 

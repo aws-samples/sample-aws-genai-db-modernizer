@@ -16,8 +16,12 @@ The first assignment (``AssignmentResolver.resolve``), the reality check (Phase
 1 settle and Phase 2 placement, the justification floors, the model flags, the
 sanity sweep and the customer-override restore), the cache owner normalisation
 (``cache_overlay.normalize_cache_owners``) and the customer gate
-(``assignment_overrides.apply_assignment_overrides``) record Moves. The one
-writer not routed through it yet is the post-schema router (#489 Track L PR4).
+(``assignment_overrides.apply_assignment_overrides``) record Moves, and so does
+the post-schema router (#489 Track L PR4): its reroute version
+(``post_schema_flag``, ``flag.capability_gap``) and its rollback version (the
+reverse Moves, ``rollback.redesign_failed``, #770) in
+``LocalOrchestrator._rerouted_assignment`` / ``_rollback_moves``. No writer is
+left outside the ledger.
 
 The helpers below only read values a pass already computed (the scores it
 compared, the gates it applied); none of them scores anything or decides an

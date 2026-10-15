@@ -6,9 +6,9 @@ v1 plus each later version's own moves rebuilds that later version.
 
 The writers that derive a version from an earlier one hold only their own
 Moves: the reality check's and the customer gate's (#616 Track L PR2/PR3; an
-edit that changes no engine records none). The post-schema router and its
-rollback do not record theirs yet (Track L PR4), so they start the new version
-with an empty ``moves`` list rather than inheriting v1's.
+edit that changes no engine records none), and the post-schema router's
+reroute and rollback (Track L PR4, #770; their content is tested in
+``tests/unit/orchestrator/test_post_schema_move_ledger.py``), never v1's.
 """
 
 from __future__ import annotations
@@ -172,17 +172,19 @@ class TestThePostSchemaRouterDoesNotInheritV1Moves:
         store.write_json(key, {**v1, "moves": moves})
         return prefix
 
-    def test_the_rerouted_version_starts_with_no_moves(self, tmp_path) -> None:
+    def test_the_rerouted_version_holds_only_its_own_moves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed_with_moves(store)
         self.case._run(store, [])
 
         v2 = store.read_json(f"{prefix}/assignment/v2/assignment.json")
         assert v2["source"] == "post_schema_routing"
-        assert v2["moves"] == []
+        assert [(m["seq"], m["query_id"], m["pass"]) for m in v2["moves"]] == [
+            (1, "q-1", "post_schema_flag")
+        ]
         assert len(store.read_json(f"{prefix}/assignment/v1/assignment.json")["moves"]) == 4
 
-    def test_the_rollback_version_starts_with_no_moves(self, tmp_path) -> None:
+    def test_the_rollback_version_holds_only_its_own_moves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed_with_moves(store)
         orch = LocalOrchestrator(store, llm_mode="bedrock")
@@ -197,4 +199,6 @@ class TestThePostSchemaRouterDoesNotInheritV1Moves:
 
         v3 = store.read_json(f"{prefix}/assignment/v3/assignment.json")
         assert v3["status"] == "reroute_rolled_back"
-        assert v3["moves"] == []
+        assert [(m["seq"], m["query_id"], m["reason_code"]) for m in v3["moves"]] == [
+            (1, "q-1", "rollback.redesign_failed")
+        ]

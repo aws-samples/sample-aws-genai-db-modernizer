@@ -210,8 +210,7 @@ This section is a pointer, not a restatement.
   enforces this. Engine removal keeps the source-compatible engine when it scores every query at least as well, unless the alternative is at least 40% and $100/mo cheaper (`tie_break.source_compatible_engine_survives`, ADR-031 Decision 13).
 - An override onto an engine that can't serve the query is rejected.
 - Every engine change is a Move: only `move_ledger.apply` / `apply_to_assignment`
-  write `assigned_engine` and `tied_engines` (the post-schema router until Track L PR4;
-  ADR-031 Amendment 3,
+  write `assigned_engine` and `tied_engines`, with no exceptions (ADR-031 Amendment 3,
   [`test_only_the_ledger_writes_engines.py`](tests/unit/agents/referee/test_only_the_ledger_writes_engines.py)).
 - Explain drift with the [routing snapshot](tests/e2e/routing_snapshot.py),
   and regenerate it on rebase. Never hand-merge it.

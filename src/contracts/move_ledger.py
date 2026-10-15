@@ -67,6 +67,24 @@ Version History:
   runner-up: the best-scoring other engine that may own the query. ``tied_engines``
   is owned by the ledger too: ``MoveLedger.tied`` holds each query's current
   tie, and the first assignment builds v1's ties from it.
+- 1.4 (2026-10-14, #616, #770): Added ``ReasonCode.ROLLBACK_REDESIGN_FAILED``
+  (``rollback.redesign_failed``; additive, 1.3 records still load). The
+  post-schema router (#489 Track L PR4) records its Moves, so no writer of
+  ``assigned_engine`` or ``tied_engines`` is left outside the ledger. A
+  reroute version holds one ``post_schema_flag`` Move per moved query (rule
+  ``flag.capability_gap``, actor ``model_flag``) with the same fields the
+  reality check's ``model_flag`` Move carries: the flagged engine's own score
+  ignoring the flag, the destination's score, the runner-up, the candidate
+  ladder (the flagged engine with its ``model_flag`` gate), the tie rule when
+  an exact tie picked the destination, and a co-dependency group's
+  ``group_key`` and mean scores. A rollback version (the redesign on the
+  reroute failed, so it restates the version before it) holds the reverse
+  Moves, built from the reroute version's own Moves in reverse ``seq``
+  order: pass ``post_schema_flag``, rule ``rollback.redesign_failed``, actor
+  ``rule``, back to the engine and tie the query had, with the undone Move's
+  ``group_key``. Its ``score_before`` is the undone Move's ``score_after``;
+  its ``score_after`` is ``None`` because the flag still gates the engine it
+  lands on (the gate is in ``evidence.candidates``, #770 option (a)).
 """
 
 from __future__ import annotations
@@ -132,6 +150,10 @@ class ReasonCode(str, Enum):
     # the customer did not pick it themselves.
     GROUP_CUSTOMER_PROPAGATION = "group.customer_propagation"
     CACHE_LEGACY_OWNER = "cache.legacy_owner"
+    # A post-schema rollback: the redesign on a reroute version failed, so the
+    # next version restates the one before the reroute and each moved query
+    # goes back (#770).
+    ROLLBACK_REDESIGN_FAILED = "rollback.redesign_failed"
 
 
 class MoveActor(str, Enum):

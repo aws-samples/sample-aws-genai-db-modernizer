@@ -340,7 +340,7 @@ def _ignoring_flags(scoring_context: ScoringContext) -> ScoringContext:
     return replace(scoring_context, flag_gaps={})
 
 
-def _scorer_ladder(query: Mapping, scoring_context: ScoringContext) -> list[CandidateScore]:
+def scorer_ladder(query: Mapping, scoring_context: ScoringContext) -> list[CandidateScore]:
     """``query``'s candidate ladder by the shared scorer, for a Move's evidence (#616).
 
     Every analyzed engine, sorted: its score, or the scorer's gate kind with no
@@ -854,7 +854,7 @@ def sanity_sweep(
                     score_after=score_after,
                     runner_up=best_other(unit_scores, winner),
                     evidence=MoveEvidence(
-                        candidates=_scorer_ladder(
+                        candidates=scorer_ladder(
                             query_map.get(mqid) or {"query_id": mqid}, scoring_context
                         ),
                         group_scores=dict(unit_scores) if is_group else {},

@@ -612,12 +612,25 @@ class LocalOrchestrator(Orchestrator):
         post_schema_routing``, ``previous_version``, and one
         ``post_schema_reroutes`` entry per moved query (cumulative), so every
         deliverable can say which queries moved after approval and why.
+
+        Each moved query is a ``post_schema_flag`` Move (#616, #489 Track L
+        PR4; ``move_ledger.apply_to_assignment``, rule ``flag.capability_gap``,
+        actor ``model_flag``) with the router's scores, runner-up and evidence;
+        the version holds exactly those Moves and is refused when its engines
+        and ties do not replay from ``version`` plus them.
         """
         from copy import deepcopy
         from datetime import UTC, datetime
 
         from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
+        from src.agents.referee.move_ledger import (
+            apply_to_assignment,
+            check_replay,
+            ledger_for,
+            state_of,
+        )
         from src.contracts.assignment_models import AssignmentSource, AssignmentStatus
+        from src.contracts.move_ledger import MoveActor, MoveEvidence, MovePass, ReasonCode
 
         assignment = deepcopy(assignment)  # the refresh below edits records in place
         prior = list(assignment.get("post_schema_reroutes") or [])
@@ -625,17 +638,34 @@ class LocalOrchestrator(Orchestrator):
             (r["approved_version"] for r in prior if r.get("approved_version")), version
         )
         moved = {r.query_id: r for r in routings if r.to_engine}
-        query_assignments = []
-        for qa in assignment.get("query_assignments", []):
+        # Copies: the input records stay as they were, so ``before`` below (the
+        # engines the input version uses) still sees an engine the moves empty.
+        query_assignments = [dict(qa) for qa in assignment.get("query_assignments", [])]
+        start = state_of(query_assignments)
+        ledger = ledger_for(query_assignments)
+        for qa in query_assignments:
             routing = moved.get(qa.get("query_id"))
-            if routing is not None:
-                qa = {
-                    **qa,
-                    "assigned_engine": routing.to_engine,
-                    "assignment_reason": f"post-schema routing: {routing.reason}",
-                    "tied_engines": [],
-                }
-            query_assignments.append(qa)
+            if routing is None:
+                continue
+            apply_to_assignment(
+                ledger,
+                qa,
+                routing.to_engine,
+                pass_=MovePass.POST_SCHEMA_FLAG,
+                reason_code=ReasonCode.FLAG_CAPABILITY_GAP,
+                score_before=routing.score_before,
+                score_after=routing.score_after,
+                runner_up=routing.runner_up,
+                evidence=routing.evidence or MoveEvidence(),
+                group_key=routing.group_key,
+                # Today's behaviour, kept: a reroute clears the query's tie, even
+                # when an exact tie picked the destination (its rule is then in
+                # evidence.tie_rule). Keeping the tie (ADR-031 Decision 12) is
+                # a tracked follow-up.
+                tied_engines=[],
+                actor=MoveActor.MODEL_FLAG,
+            )
+            qa["assignment_reason"] = f"post-schema routing: {routing.reason}"
         reroutes = prior + [
             {
                 "query_id": r.query_id,
@@ -659,10 +689,8 @@ class LocalOrchestrator(Orchestrator):
             "query_assignments": query_assignments,
             "post_schema_reroutes": reroutes,
             "rolled_back_version": None,
-            # #616: moves are per-version (only the Moves that produced this
-            # version). The router does not record its own Moves yet (a later
-            # #616 change), so the new version starts empty.
-            "moves": [],
+            # #616: moves are per-version -- exactly the Moves above.
+            "moves": [m.model_dump(mode="json") for m in ledger.moves],
         }
         prefix = f"{database_name}/{job_id}"
         # The derived views (table mappings, warnings) follow the moved queries,
@@ -680,9 +708,18 @@ class LocalOrchestrator(Orchestrator):
             for e in before | after
             if self.store.exists(f"{prefix}/analysis-{e}/analysis.json")
         }
-        return refresh_consolidated_assignment(
+        refreshed = refresh_consolidated_assignment(
             revised, collector, analysis_outputs, dead_engines=before - after
         )
+        # Refuse a version whose engines do not follow from ``version`` plus
+        # its own Moves (an engine set without move_ledger, #616).
+        check_replay(
+            ledger.moves,
+            start,
+            state_of(refreshed.get("query_assignments", [])),
+            "post-schema reroute",
+        )
+        return refreshed
 
     def _copy_schema_artifacts(
         self, job_id: str, database_name: str, engine: str, src: int, dst: int
@@ -768,8 +805,9 @@ class LocalOrchestrator(Orchestrator):
                 "status": AssignmentStatus.REROUTE_ROLLED_BACK.value,
                 "timestamp": datetime.now(UTC).isoformat(),
                 "rolled_back_version": new_version,
-                # #616: per-version moves; not the restated version's.
-                "moves": [],
+                # #616, #770: per-version moves -- the reverse Moves from the
+                # abandoned reroute back to the version it restates.
+                "moves": self._rollback_moves(revised, assignment),
             }
             self.store.write_json(
                 assignment_artifact_path(database_name, job_id, rollback), restated
@@ -784,6 +822,69 @@ class LocalOrchestrator(Orchestrator):
             )
             raise
         return new_version
+
+    @staticmethod
+    def _rollback_moves(rerouted: dict, restated: dict) -> list[dict]:
+        """The Moves of a rollback version: ``rerouted`` undone, back to ``restated`` (#770).
+
+        Built from the abandoned reroute version's own Moves, never from a diff
+        of the two versions: each of them, in reverse ``seq`` order, gets one
+        ``post_schema_flag`` Move (rule ``rollback.redesign_failed``, actor
+        ``rule``) back to the engine and tie the query had before it, with the
+        same ``group_key``. It leaves the reroute's destination (that Move's
+        ``score_after``) and lands back on the flagged engine, which the flag
+        still gates: ``score_after`` is ``None`` and the gate is in
+        ``evidence.candidates`` (the undone Move's ladder). A rollback is no
+        choice among engines, so it has no runner-up.
+
+        ``check_replay`` then compares ``rerouted`` plus these Moves with
+        ``restated`` (the version the reroute was derived from): a query the
+        reroute never moved that differs between the two is refused, not
+        silently given a Move.
+        """
+        from src.agents.referee.move_ledger import apply, check_replay, ledger_for, state_of
+        from src.contracts.move_ledger import Move, MoveEvidence, MovePass, ReasonCode
+
+        rerouted_qas = rerouted.get("query_assignments", [])
+        ledger = ledger_for(rerouted_qas)
+        undone = sorted(
+            (Move.model_validate(m) for m in rerouted.get("moves") or []),
+            key=lambda m: m.seq,
+            reverse=True,
+        )
+        for move in undone:
+            if move.from_engine is None:
+                raise RuntimeError(
+                    f"post-schema rollback: {move.query_id!r} has no engine to go back to"
+                )
+            # The tie before the undone Move: ``apply_to_assignment`` records it
+            # in ``previous_tied_engines`` when the Move changed it, otherwise it
+            # is the Move's own. A reroute clears every tie today, so a query
+            # that was tied has its tie in ``previous_tied_engines``.
+            restored_tie = list(move.evidence.previous_tied_engines or move.tied_engines)
+            current_tie = ledger.tied_of(move.query_id)
+            apply(
+                ledger,
+                move.query_id,
+                move.from_engine,
+                pass_=MovePass.POST_SCHEMA_FLAG,
+                reason_code=ReasonCode.ROLLBACK_REDESIGN_FAILED,
+                score_before=move.score_after,
+                score_after=None,
+                evidence=MoveEvidence(
+                    candidates=move.evidence.candidates,
+                    previous_tied_engines=current_tie if current_tie != restored_tie else [],
+                ),
+                group_key=move.group_key,
+                tied_engines=restored_tie,
+            )
+        check_replay(
+            ledger.moves,
+            state_of(rerouted_qas),
+            state_of(restated.get("query_assignments", [])),
+            "post-schema rollback",
+        )
+        return [m.model_dump(mode="json") for m in ledger.moves]
 
     def _router_scoring_inputs(
         self,

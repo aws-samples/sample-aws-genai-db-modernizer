@@ -97,6 +97,16 @@ Version History:
   closed), and both writers refuse a version that does not. Only the
   post-schema router (and its rollback) still start their version with an
   empty list (#489 Track L PR4).
+- 1.13 (2026-10-14, #616, #770): No schema change. The post-schema router's
+  versions hold their own Moves (#489 Track L PR4): a reroute version
+  (``source = post_schema_routing``) one ``post_schema_flag`` Move per moved
+  query (rule ``flag.capability_gap``, actor ``model_flag``), a rollback
+  version (status ``reroute_rolled_back``) the reverse Moves, one per Move
+  of the reroute it undoes (rule ``rollback.redesign_failed``, actor
+  ``rule``). Both are refused when they do not replay: the reroute from the
+  version it was derived from, the rollback (from the reroute) to the version
+  it restates. So every version replays from v1 plus each later version's
+  own Moves.
 """
 
 from datetime import datetime
@@ -461,10 +471,10 @@ class Assignment(BaseModel):
             "that produced this version, in seq order, never a copy of an earlier "
             "version's. Replaying v1's moves rebuilds v1's assigned_engine and "
             "tied_engines; v1 plus each later version's own moves rebuilds that version. "
-            "The first assignment, the reality check and the customer gate record Moves "
-            "(their cache owner normalisation included); the post-schema router (and its "
-            "rollback) writes an empty list until it records its own (a later #616 "
-            "change). Empty for artifacts written before 1.10."
+            "Every writer records Moves: the first assignment, the reality check, the "
+            "customer gate (their cache owner normalisation included) and the post-schema "
+            "router (a reroute's post_schema_flag Moves; a rollback's reverse Moves). "
+            "Empty for artifacts written before 1.10."
         ),
     )
 

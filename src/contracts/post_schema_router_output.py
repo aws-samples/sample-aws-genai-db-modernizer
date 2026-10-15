@@ -4,11 +4,19 @@ Defines the output of the deterministic post-schema router: queries a model
 flagged as unsupported on their engine (a PE reviewer's routing flag or a
 designer's unsupported pattern), each re-routed by the shared scorer to the best
 remaining engine (#629). The destination is always the scorer's choice.
+
+Each routing also carries what its Move records (#616, #489 Track L PR4): the
+runner-up, the evidence (candidate ladder, tie rule, a group's mean scores)
+and a co-dependency group's key. The orchestrator writes the routings as
+``post_schema_flag`` Moves (``move_ledger.apply_to_assignment``); the three
+fields are optional, so a router output written before them still loads.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+
+from src.contracts.move_ledger import EngineScore, MoveEvidence
 
 
 class QueryRouting(BaseModel):
@@ -34,6 +42,20 @@ class QueryRouting(BaseModel):
         None, description="from_engine's own score for the query, ignoring the flag"
     )
     score_after: float | None = Field(None, description="to_engine's score for the query")
+    runner_up: EngineScore | None = Field(
+        None, description="The best remaining engine the scorer did not pick, for the Move"
+    )
+    evidence: MoveEvidence | None = Field(
+        None,
+        description=(
+            "What the router saw, for the Move: the query's candidate ladder, the tie "
+            "rule when an exact tie picked to_engine, a co-dependency group's mean scores"
+        ),
+    )
+    group_key: str | None = Field(
+        None,
+        description="The co-dependency group the query moved with (move_ledger.group_key)",
+    )
 
 
 class RouterOutput(BaseModel):
