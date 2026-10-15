@@ -43,7 +43,7 @@ from src.tools.analysis.aurora_common_pattern_catalog import (
     TEXT_SEARCH_KEYWORDS,
     TRANSACTION_WRITE_TYPES,
 )
-from src.tools.analysis.scoring import TableProfile
+from src.tools.analysis.scoring import TableProfile, catalog_pattern_score
 
 # ==========================================================================
 # Internal helpers
@@ -885,30 +885,12 @@ def compute_catalog_pattern_score(
     collector_output: dict,
     pattern_by_id: dict,
 ) -> int:
-    """Compute pattern_match_score from catalog base scores weighted by query frequency."""
-    if not table_patterns:
-        return 0
-
-    queries = collector_output.get("queries", {}).get("query_patterns", [])
-    query_cps: dict[str, float] = {
-        q.get("query_id", ""): float(q.get("calls_per_second") or 0) for q in queries
-    }
-
-    weighted_sum = 0.0
-    total_weight = 0.0
-
-    for p in table_patterns:
-        catalog = pattern_by_id.get(p.pattern_id)
-        if not catalog:
-            continue
-        pattern_cps = sum(query_cps.get(qid, 0) for qid in (p.query_ids or []))
-        weight = max(pattern_cps, 0.01)
-        weighted_sum += catalog.base_score * weight
-        total_weight += weight
-
-    if total_weight == 0:
-        return 0
-    return int(weighted_sum / total_weight)
+    """Aurora's ``pattern_match_score`` for one table: the shared catalog rule
+    (:func:`src.tools.analysis.scoring.catalog_pattern_score`, #784), the
+    strongest relational pattern found on the table. ``collector_output`` is
+    unused; the score does not depend on traffic."""
+    del collector_output
+    return catalog_pattern_score(table_patterns, pattern_by_id)
 
 
 def build_rationale(

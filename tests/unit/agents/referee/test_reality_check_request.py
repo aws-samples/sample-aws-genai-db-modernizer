@@ -245,7 +245,13 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
 
     #714: ``SELECT FOUND_ROWS()`` (``aa03c203``, on the pseudo-table
     ``unknown``) no longer takes aurora-anti-06's penalty, so it is on Aurora
-    MySQL from the first assignment and is no longer one of DocumentDB's moves."""
+    MySQL from the first assignment and is no longer one of DocumentDB's moves.
+
+    #784: a table's catalog pattern score is its strongest pattern, so
+    DynamoDB's score for ``wp_actionscheduler_actions`` rises and two of its
+    queries (``06584926``, ``7ead756f``) start on DynamoDB instead of
+    DocumentDB. DocumentDB's moves are now 5: 2 to Aurora MySQL, 3 to DynamoDB;
+    the final assignment is unchanged."""
 
     FLAGGED = "d72966f8"
 
@@ -258,7 +264,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
             if c["from_engine"] == "documentdb"
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
-        assert sorted(moved.values()).count("dynamodb") == 5
+        assert sorted(moved.values()).count("dynamodb") == 3
         assert sorted(moved.values()).count("aurora_mysql") == 2
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"

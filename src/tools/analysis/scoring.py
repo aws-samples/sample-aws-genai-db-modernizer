@@ -7,10 +7,20 @@ across target-specific agents (Redis, DynamoDB, DocumentDB, etc.).
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import combinations
+from typing import TYPE_CHECKING
 
-from src.contracts.analysis_output import MigrationComplexity, ScoreBreakdown, WorkloadAnalysis
+from src.contracts.analysis_output import (
+    MigrationComplexity,
+    Pattern,
+    ScoreBreakdown,
+    WorkloadAnalysis,
+)
+
+if TYPE_CHECKING:
+    from src.tools.analysis.pattern_catalog_base import CatalogPattern
 
 
 @dataclass
@@ -162,6 +172,34 @@ def compute_base_scores(profile: TableProfile) -> ScoreBreakdown:
         complexity_score=_complexity(profile),
         performance_score=_performance(profile),
         cost_score=_cost(profile),
+    )
+
+
+def catalog_pattern_score(
+    table_patterns: Iterable[Pattern], pattern_by_id: Mapping[str, CatalogPattern]
+) -> int:
+    """A table's ``pattern_match_score`` from an engine's pattern catalog (#784).
+
+    The highest catalog ``base_score`` among the patterns found on the table;
+    0 when none of them is in ``pattern_by_id``. A base score is the
+    specialist's rating of how strongly one pattern calls for the engine, so a
+    table needs the engine at least as much as its strongest pattern does: one
+    more pattern, or one more query matching a pattern, can keep the score or
+    raise it, never lower it. Traffic does not enter here (the performance and
+    cost dimensions carry it), so nothing outside the table moves the score.
+
+    It replaces a calls-weighted mean of the base scores, where a weaker
+    pattern lowered the score and each pattern was weighted by its calls on
+    every table. Every engine with a pattern catalog (Aurora, DynamoDB,
+    DocumentDB, OpenSearch) uses this one rule.
+    """
+    return max(
+        (
+            pattern_by_id[p.pattern_id].base_score
+            for p in table_patterns
+            if p.pattern_id in pattern_by_id
+        ),
+        default=0,
     )
 
 

@@ -55,6 +55,7 @@ from src.tools.analysis.opensearch_pattern_catalog import (
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
+    catalog_pattern_score,
     compute_base_scores,
     compute_confidence,
 )
@@ -478,39 +479,13 @@ def classify_table_workload(
 # ==========================================================================
 
 
-def _compute_catalog_pattern_score(
-    table_patterns: list[Pattern],
-    collector_output: dict,
-) -> int:
-    """Compute pattern_match_score from catalog base scores weighted by query frequency.
-
-    For each pattern matching this table, look up the catalog base_score and
-    weight it by the total calls_per_second of the matched queries.
-    """
-    if not table_patterns:
-        return 0
-
-    queries = collector_output.get("queries", {}).get("query_patterns", [])
-    query_cps: dict[str, float] = {
-        q.get("query_id", ""): float(q.get("calls_per_second") or 0) for q in queries
-    }
-
-    weighted_sum = 0.0
-    total_weight = 0.0
-
-    for p in table_patterns:
-        catalog = PATTERN_BY_ID.get(p.pattern_id)
-        if not catalog:
-            continue
-        # Weight = total CPS of queries in this pattern for this table
-        pattern_cps = sum(query_cps.get(qid, 0) for qid in (p.query_ids or []))
-        weight = max(pattern_cps, 0.01)  # Minimum so zero-traffic patterns still count
-        weighted_sum += catalog.base_score * weight
-        total_weight += weight
-
-    if total_weight == 0:
-        return 0
-    return int(weighted_sum / total_weight)
+def _compute_catalog_pattern_score(table_patterns: list[Pattern], collector_output: dict) -> int:
+    """This engine's ``pattern_match_score`` for one table: the shared catalog
+    rule (:func:`src.tools.analysis.scoring.catalog_pattern_score`, #784), the
+    strongest catalog pattern found on the table. ``collector_output`` is
+    unused; the score does not depend on traffic."""
+    del collector_output
+    return catalog_pattern_score(table_patterns, PATTERN_BY_ID)
 
 
 _TEXT_DATA_TYPES: frozenset[str] = frozenset(

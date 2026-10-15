@@ -360,10 +360,14 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # ``SELECT FOUND_ROWS()`` loses the 15-point Aurora penalty and its first
     # assignment moves from DocumentDB back to Aurora MySQL -- documentdb -1,
     # aurora_mysql +1.
+    # #784: a table's catalog pattern score is its strongest pattern, not a
+    # calls-weighted mean, so DynamoDB's score for wp_actionscheduler_actions
+    # rises and two of its queries start on DynamoDB, not DocumentDB --
+    # dynamodb +2, documentdb -2. The final assignment is unchanged.
     assert rc["before_distribution"] == {
-        "dynamodb": 37,
+        "dynamodb": 39,
         "aurora_mysql": 63,
-        "documentdb": 7,
+        "documentdb": 5,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())
     assert "opensearch" not in rc["after_distribution"]  # consolidated away

@@ -244,13 +244,14 @@ def analyze_aurora_pg_patterns(
         base_scores = compute_base_scores(profile)
 
         # Determine pattern_match_score:
-        # 1. If catalog patterns matched → use catalog score
-        # 2. If table has queries but no catalog patterns → apply baseline floor
-        #    (table is a valid relational workload, just nothing exceptional)
+        # 1. Catalog patterns matched → the strongest one's base score
+        # 2. The table has queries → never below the relational baseline floor
+        #    (a valid relational workload, just nothing exceptional), so a
+        #    first catalog pattern scored under the floor cannot lower the
+        #    score either (#784)
         # 3. No queries at all → use base_scores (table has no workload evidence)
-        if catalog_score > 0:
-            pm_score = max(0, min(catalog_score, 100))
-        elif profile.total_query_count > 0:
+        pm_score = max(0, min(catalog_score, 100))
+        if profile.total_query_count > 0:
             fk_inbound = _count_inbound_fks(table_id, collector_output)
             join_q_count = sum(1 for p in tp if p.pattern_type in {"complex-join", "simple-join"})
             multi_table_w_count = sum(1 for p in tp if p.pattern_type == "transactional-write")
@@ -261,8 +262,11 @@ def analyze_aurora_pg_patterns(
                 multi_table_write_count=multi_table_w_count,
                 total_query_count=profile.total_query_count,
             )
-            pm_score = max(relational_baseline, base_scores.pattern_match_score)
-        else:
+            if catalog_score > 0:
+                pm_score = max(pm_score, relational_baseline)
+            else:
+                pm_score = max(relational_baseline, base_scores.pattern_match_score)
+        elif catalog_score <= 0:
             pm_score = base_scores.pattern_match_score
 
         scores = ScoreBreakdown(

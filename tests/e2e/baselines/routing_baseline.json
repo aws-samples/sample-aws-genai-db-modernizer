@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "Add the synthetic SQL Server sample, trailgear (#618); wordpress and discourse unchanged",
+  "reason": "#784: a table's catalog pattern score is its strongest catalog pattern on every engine (was a calls-weighted mean), so more evidence never lowers an engine's fit; wordpress and trailgear final assignments unchanged; discourse moves 303 queries (233 Aurora PostgreSQL -> DynamoDB, 56 DocumentDB -> DynamoDB, 14 DocumentDB -> Aurora PostgreSQL)",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -22,7 +22,8 @@
     "#502 redesign: two phases -- Phase 1 settles which engines earn a place from their own native queries alone, order-independent to a fixed point (no engine protected for being cheapest or primary); Phase 2 places every query on its highest-scoring settled engine using the resolver's own per-query scores (ADR-031), not the reality check's separate fit scorer. wordpress collapses to a single owner engine (aurora_mysql 107/107) plus the ElastiCache cache layer: DynamoDB's 38 native queries score it meaningfully better than Aurora MySQL on only 2 of them once judged by the resolver's own scores, so the fixed per-engine operational burden is not worth it once Aurora MySQL can serve the rest -- DocumentDB was already being removed for the same reason. discourse keeps two engines (aurora_postgresql 991/1654 = 59.9%, dynamodb 663/1654 = 40.1%, up from 66.0%/34.0%): DynamoDB has far more queries that genuinely score it higher here, so it clears the same burden check wordpress's DynamoDB does not. Both are real, data-driven results, not a universal collapse -- the sample with much less of an actual DynamoDB-shaped workload (wordpress) ends up on fewer engines.",
     "#502: Phase 1 settles the committed engine set with the resolver's own per-query scores (not the reality check's separate fit scorer), removing exactly one worst-ranked candidate per round and re-evaluating the rest fresh against the smaller set; Phase 2 places every query within that final set via the same shared eligibility rule. Wordpress and discourse both keep two real owner engines instead of collapsing to one.",
     "migration waves scope tables by served queries, not table-level ownership (#562): wordpress wave 3 table_count went 5 (as of #502) -> 7 (current main, an unrelated drift from intervening commits) -> 17 (this PR); discourse wave 3 table_count 181->200. wordpress's owner_queries/workload_percent also move from the stale pre-#562 baseline (64/43, last regenerated at #502) to current main's actual, already-true values (63/44) -- that drift predates this change too; routing_snapshot.json needs no update, confirming zero per-query reassignment.",
-    "Add the synthetic SQL Server sample, trailgear (#618); wordpress and discourse unchanged"
+    "Add the synthetic SQL Server sample, trailgear (#618); wordpress and discourse unchanged",
+    "#784: a table's catalog pattern score is its strongest catalog pattern on every engine (was a calls-weighted mean), so more evidence never lowers an engine's fit; wordpress and trailgear final assignments unchanged; discourse moves 303 queries (233 Aurora PostgreSQL -> DynamoDB, 56 DocumentDB -> DynamoDB, 14 DocumentDB -> Aurora PostgreSQL)"
   ],
   "samples": {
     "wordpress": {
@@ -31,14 +32,14 @@
       "assignment_version": 2,
       "queries_in_scope": 107,
       "owner_share_percent": {
-        "aurora_mysql": 58.9,
-        "dynamodb": 41.1
+        "aurora_mysql": 60.7,
+        "dynamodb": 39.3
       },
       "owner_queries": {
-        "aurora_mysql": 63,
-        "dynamodb": 44
+        "aurora_mysql": 65,
+        "dynamodb": 42
       },
-      "source_compatible_share_percent": 58.9,
+      "source_compatible_share_percent": 60.7,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 20,
@@ -49,7 +50,7 @@
           "engines": [
             "aurora_mysql"
           ],
-          "workload_percent": 58.9,
+          "workload_percent": 60.7,
           "cached_call_share_percent": 0.0,
           "table_count": 50
         },
@@ -65,9 +66,9 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 41.1,
+          "workload_percent": 39.3,
           "cached_call_share_percent": 0.0,
-          "table_count": 17
+          "table_count": 16
         }
       ],
       "utility_queries_off_aurora": 0
@@ -78,16 +79,16 @@
       "assignment_version": 2,
       "queries_in_scope": 1654,
       "owner_share_percent": {
-        "aurora_postgresql": 54.2,
-        "documentdb": 11.7,
-        "dynamodb": 34.0
+        "aurora_postgresql": 44.8,
+        "documentdb": 7.4,
+        "dynamodb": 47.8
       },
       "owner_queries": {
-        "aurora_postgresql": 897,
-        "documentdb": 194,
-        "dynamodb": 563
+        "aurora_postgresql": 741,
+        "documentdb": 122,
+        "dynamodb": 791
       },
-      "source_compatible_share_percent": 54.2,
+      "source_compatible_share_percent": 44.8,
       "owner_engines": 3,
       "cache_overlay": {
         "queries": 3,
@@ -98,7 +99,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 54.2,
+          "workload_percent": 44.8,
           "cached_call_share_percent": 0.0,
           "table_count": 312
         },
@@ -115,9 +116,9 @@
             "dynamodb",
             "documentdb"
           ],
-          "workload_percent": 45.7,
+          "workload_percent": 55.2,
           "cached_call_share_percent": 0.0,
-          "table_count": 200
+          "table_count": 207
         }
       ],
       "utility_queries_off_aurora": 0
@@ -138,8 +139,8 @@
       "source_compatible_share_percent": 72.6,
       "owner_engines": 2,
       "cache_overlay": {
-        "queries": 17,
-        "call_share_percent": 73.9
+        "queries": 16,
+        "call_share_percent": 73.1
       },
       "waves": [
         {
@@ -155,7 +156,7 @@
             "elasticache"
           ],
           "workload_percent": 0.0,
-          "cached_call_share_percent": 73.9,
+          "cached_call_share_percent": 73.1,
           "table_count": 0
         },
         {
@@ -164,7 +165,7 @@
           ],
           "workload_percent": 27.4,
           "cached_call_share_percent": 0.0,
-          "table_count": 12
+          "table_count": 13
         }
       ],
       "utility_queries_off_aurora": 0

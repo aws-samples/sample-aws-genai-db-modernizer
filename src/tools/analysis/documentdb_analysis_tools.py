@@ -36,6 +36,7 @@ from src.tools.analysis.llm_advisor_base import LlmAdvisorBase
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
+    catalog_pattern_score,
     compute_base_scores,
     compute_confidence,
 )
@@ -637,23 +638,12 @@ def analyze_documentdb_patterns(
 
 
 def _compute_catalog_pattern_score(table_patterns: list[Pattern], collector_output: dict) -> int:
-    if not table_patterns:
-        return 0
-    queries = (collector_output.get("queries") or {}).get("query_patterns") or []
-    query_cps: dict[str, float] = {
-        q.get("query_id", ""): q.get("calls_per_second") or 0 for q in queries
-    }
-    weighted_sum = 0.0
-    total_weight = 0.0
-    for p in table_patterns:
-        catalog = PATTERN_BY_ID.get(p.pattern_id)
-        if not catalog:
-            continue
-        pattern_cps = sum(query_cps.get(qid, 0) for qid in (p.query_ids or []))
-        weight = max(pattern_cps, 0.01)
-        weighted_sum += catalog.base_score * weight
-        total_weight += weight
-    return int(weighted_sum / total_weight) if total_weight > 0 else 0
+    """This engine's ``pattern_match_score`` for one table: the shared catalog
+    rule (:func:`src.tools.analysis.scoring.catalog_pattern_score`, #784), the
+    strongest catalog pattern found on the table. ``collector_output`` is
+    unused; the score does not depend on traffic."""
+    del collector_output
+    return catalog_pattern_score(table_patterns, PATTERN_BY_ID)
 
 
 def _apply_documentdb_adjustments(scores: ScoreBreakdown, profile: TableProfile) -> ScoreBreakdown:
