@@ -436,6 +436,12 @@ class AssignmentResolver:
                 # Move's evidence -- never "no analysis available" for a member
                 # with real scores of its own.
                 gates = _group_gates(group)
+                # Still a group (#877): later passes find its members through
+                # the trace's group entry and move them as one (Decision 4).
+                if routing_trace is not None:
+                    routing_trace.record_group(
+                        group, {}, fallback=ReasonCode.FALLBACK_NO_GROUP_OWNER.value
+                    )
                 for qid in group:
                     fallback_qids.append(qid)
                     fallback_reason[qid] = ReasonCode.FALLBACK_NO_GROUP_OWNER

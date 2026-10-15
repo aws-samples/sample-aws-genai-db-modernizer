@@ -374,7 +374,9 @@ def _place_settled_queries(
                 # engine is always still committed and always eligible for
                 # it. Leave the group exactly where it is, the same
                 # "should not happen" outcome ``_place_individual`` uses,
-                # never split apart to force a placement.
+                # never split apart to force a placement. A group no engine
+                # can serve (its entry has no scores, #877) lands here too:
+                # it stays on its fallback engine, as one unit.
                 continue
             # A member's current engine earns stability credit only when it
             # is not itself a placeholder pick from an unresolved tie (#503

@@ -30,7 +30,10 @@ class RoutingTrace:
 
     def __init__(self) -> None:
         self.by_query: dict[str, dict] = {}
-        # query_id -> {"key": <12-hex group key>, "scores": {engine: group_score}}
+        # query_id -> {"key": <12-hex group key>, "scores": {engine: group_score}},
+        # plus "fallback": <ledger rule> for a group no engine can serve (#877).
+        # Its "scores" stay {}: every reader takes that as "no engine can take
+        # the whole group" and leaves it in place, so never fill it in.
         self.group_by_query: dict[str, dict] = {}
         # query_id -> the structured tie_kind ("source_compatible" | "tie_unresolved")
         # break_owner_tie resolved it with (#503: a customer-facing sentence should
@@ -46,19 +49,31 @@ class RoutingTrace:
     def record(self, query_id: str, payload: dict) -> None:
         self.by_query[query_id] = payload
 
-    def record_group(self, group: Iterable[str], group_score: Mapping[str, float]) -> None:
+    def record_group(
+        self,
+        group: Iterable[str],
+        group_score: Mapping[str, float],
+        fallback: str | None = None,
+    ) -> None:
         """A co-dependency group's membership and every candidate's group score.
 
         Called once per group in ``resolve()``'s Step 5, before a tie (if any) is
         resolved -- ``group_score`` is every candidate engine's score for the whole
         group (the mean ``resolve()`` actually compared), not just the winner's.
+
+        A group no analyzed engine can serve (#787) is recorded too, with no
+        candidate scores and ``fallback`` set to its ledger rule
+        (``fallback.no_group_owner``, #877): it is still one unit for every later
+        pass (ADR-031 Decision 4), which finds its members through this entry.
         """
         members = sorted(group)
         # The same key the group's Moves carry (``Move.group_key``, #616).
-        payload = {
+        payload: dict[str, object] = {
             "key": group_key(members),
             "scores": {e: round(s, 2) for e, s in group_score.items()},
         }
+        if fallback is not None:
+            payload["fallback"] = fallback
         for qid in members:
             self.group_by_query[qid] = payload
 
