@@ -17,6 +17,7 @@ import json
 import re
 from collections import defaultdict
 
+from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
     AgentCollectorInput,
@@ -80,35 +81,25 @@ def _load(q) -> float:
     return _qps(q) * float(q.execution_time_ms_avg or 0.0)
 
 
-_SYSTEM_SCHEMAS = ("pg_catalog.", "information_schema.", "mysql.", "performance_schema.", "sys.")
-_NON_DESIGN_STATEMENT = re.compile(
-    r"^\s*(?:BEGIN|COMMIT|ROLLBACK|START\s+TRANSACTION|SAVEPOINT|RELEASE|END|SET|SHOW|RESET"
-    r"|DISCARD|DEALLOCATE|VACUUM|ANALYZE|CHECKPOINT|LISTEN|NOTIFY|UNLISTEN|LOCK"
-    r"|REFRESH\s+MATERIALIZED\s+VIEW)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_system_table(name: str) -> bool:
-    lowered = name.strip().strip('"`').lower()
-    if lowered.startswith(_SYSTEM_SCHEMAS):
-        return True
-    bare = lowered.rsplit(".", 1)[-1]
-    return bare.startswith("pg_") or lowered in ("unknown", "")
-
-
-def _designable(q: AgentQueryPattern) -> bool:
+def _designable(q: AgentQueryPattern, table_keys: set[str]) -> bool:
     """Whether a query can inform a schema decision.
 
-    Dropped: transaction control and maintenance statements (BEGIN, COMMIT,
-    SET, SHOW, VACUUM, REFRESH MATERIALIZED VIEW, ...), and queries that touch
-    only system catalogs (pg_catalog, information_schema, mysql.*, pg_*) or
-    an unknown table.
+    Dropped: every utility statement, by routing's own definition
+    (``utility_statements.is_utility_statement``, #778): transaction control,
+    session and maintenance statements, DDL, ``EXPLAIN``, queries that read
+    only system catalogs, after any leading comment. Also dropped, as
+    design-only: a query that names no table this design view holds
+    (``table_keys``, folded by ``_key``). It has nothing to design for: an
+    ``unknown`` table, or an object the view has no entry for, such as a
+    materialized view the collector did not collect. That is why a ``REFRESH
+    MATERIALIZED VIEW``, application access for routing and aurora-anti-05
+    (#733), only reaches the design when the view holds what it refreshes
+    (#831 review).
     """
-    if _NON_DESIGN_STATEMENT.match(q.query_text or ""):
-        return False
     tables = q.tables_accessed or []
-    return bool(tables) and not all(_is_system_table(t) for t in tables)
+    if is_utility_statement(q.query_text, tables):
+        return False
+    return any(_key(str(t)) in table_keys for t in tables)
 
 
 def _bad_index_counts(raw_collector: dict) -> dict[str, int]:
@@ -138,13 +129,15 @@ _HOT_QUERY_FIELDS = (
 )
 
 
-def _hot_queries(collector: AgentCollectorInput, limit: int, raw_collector: dict) -> list[dict]:
+def _hot_queries(
+    collector: AgentCollectorInput, limit: int, raw_collector: dict, table_keys: set[str]
+) -> list[dict]:
     """The busiest queries: top by database load (time) together with top by call rate.
 
     A slow query called rarely and a fast query called constantly can both need
     an index, so neither ranking alone is enough. Ordered by load.
     """
-    patterns = [q for q in collector.queries.query_patterns if _designable(q)]
+    patterns = [q for q in collector.queries.query_patterns if _designable(q, table_keys)]
     by_load = sorted(patterns, key=_load, reverse=True)
     by_qps = sorted(patterns, key=_qps, reverse=True)
     chosen: dict[str, AgentQueryPattern] = {}
@@ -274,6 +267,7 @@ def build_design_view(
     first, the per-table list last (it is the long part).
     """
     raw_collector = raw_collector or {}
+    table_keys = {_key(t.table_name) for t in base.tables}
     draft = base.generate()
     rates = _table_rates(collector)
     residual_cols = {(r["table"], r["column"]) for r in draft.residuals}
@@ -308,11 +302,9 @@ def build_design_view(
         "residual_types": _residual_types(base, draft),
         **({"index_notes": draft.index_notes} if draft.index_notes else {}),
         **({"column_notes": draft.column_notes} if draft.column_notes else {}),
-        "hot_queries": _hot_queries(collector, hot_query_limit, raw_collector),
+        "hot_queries": _hot_queries(collector, hot_query_limit, raw_collector, table_keys),
         "analysis": _analysis_summary(analysis),
-        "source_features": _source_features(
-            raw_collector, {_key(t.table_name) for t in base.tables}
-        ),
+        "source_features": _source_features(raw_collector, table_keys),
         "tables": tables,
     }
 

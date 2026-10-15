@@ -23,6 +23,7 @@ filter and synthesis's own ``known_tables`` check (both #225) agree on what a
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
@@ -39,7 +40,7 @@ PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
 # Schemas that hold only the database engine's own catalog/metadata, never an
 # application table (#380 review): a raw collector introspection that does
 # not filter by schema can pick these up alongside the real workload.
-_SYSTEM_SCHEMAS = frozenset(
+SYSTEM_SCHEMAS = frozenset(
     {"information_schema", "pg_catalog", "performance_schema", "mysql", "sys"}
 )
 # Specific engine-internal objects a monitoring/stats extension installs
@@ -59,9 +60,17 @@ _SYSTEM_OBJECT_NAMES = frozenset(
 )
 
 
+# Quote characters around identifier parts (``"pg_catalog"."pg_class"``, ``[sys].[objects]``).
+_IDENTIFIER_QUOTES_RE = re.compile(r'["`\[\]]')
+
+
 def is_engine_system_object(table_id: str) -> bool:
     """True when ``table_id`` names a database-engine-internal object, never
     a real application table (#380 review).
+
+    The one system-table rule (#778): migration waves, routing's utility rule
+    (``utility_statements.is_utility_statement``) and Aurora schema design all
+    use it. Quotes and case are ignored.
 
     Two cases: a system catalog schema (``information_schema.tables``), or a
     monitoring/stats extension's own object regardless of schema
@@ -85,14 +94,20 @@ def is_engine_system_object(table_id: str) -> bool:
     because no such table exists there at all) -- it never reaches here as
     a "known" table in the first place.
     """
-    name = str(table_id or "").strip()
+    name = _IDENTIFIER_QUOTES_RE.sub("", str(table_id or "")).strip().lower()
     if not name:
         return False
     parts = name.split(".")
-    if len(parts) > 1 and parts[0].lower() in _SYSTEM_SCHEMAS:
+    # A system schema at any qualifier: ``mysql.user``, ``db.sys.objects``.
+    if any(part in SYSTEM_SCHEMAS for part in parts[:-1]):
         return True
-    bare = parts[-1].lower()
-    return bare in _SYSTEM_OBJECT_NAMES
+    bare = parts[-1]
+    if bare in _SYSTEM_OBJECT_NAMES:
+        return True
+    # Unqualified, PostgreSQL resolves a ``pg_*`` name to its catalog
+    # (``pg_class``); a ``pg_*`` table in an application schema
+    # (``shop.pg_style_settings``) is an application table (#778).
+    return len(parts) == 1 and (bare.startswith("pg_") or bare == "information_schema")
 
 
 class TableNameResolver:

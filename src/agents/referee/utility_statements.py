@@ -54,7 +54,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from src.agents.referee.table_resolution import PSEUDO_TABLES
+from src.agents.referee.table_resolution import PSEUDO_TABLES, is_engine_system_object
 from src.shared.sql_comments import (
     strip_comments,
     strip_leading_comments,
@@ -89,6 +89,8 @@ from src.shared.sql_comments import (
 #   END, ABORT;
 # - session state: RESET, DISCARD, DEALLOCATE, USE;
 # - object comments: COMMENT ON.
+# - session messaging: LISTEN, UNLISTEN, NOTIFY (PostgreSQL; #778: schema
+#   design already skipped them, and only the source engine can run them).
 # ``COPY`` (and MySQL's ``LOAD DATA``) is deliberately not here: it is application
 # bulk I/O, and ``COPY (SELECT ... GROUP BY ...) TO STDOUT`` is a relational read
 # of a real table that aurora-anti-05 must see (#733, #737 review).
@@ -99,9 +101,16 @@ _UTILITY_VERB_RE = re.compile(
     r"(?:CHECK|REPAIR)\s+TABLES?|"
     r"LOCK|UNLOCK|GRANT|REVOKE|"
     r"START\s+TRANSACTION|END|ABORT|"
-    r"RESET|DISCARD|DEALLOCATE|USE|COMMENT\s+ON)\b",
+    r"RESET|DISCARD|DEALLOCATE|USE|COMMENT\s+ON|"
+    r"LISTEN|UNLISTEN|NOTIFY)\b",
     re.IGNORECASE,
 )
+
+# The one exception to the rules here, written once (#733, #778): ``REFRESH
+# MATERIALIZED VIEW`` looks like maintenance but recomputes a view from the
+# application's own tables, so it is application access -- scored by routing,
+# seen by aurora-anti-05's per-query check and kept by Aurora schema design.
+_APPLICATION_ACCESS_RE = re.compile(r"^\s*REFRESH\s+MATERIALIZED\s+VIEW\b", re.IGNORECASE)
 
 # SQL Server's ``UPDATE STATISTICS <table>`` refreshes optimizer statistics. A
 # DML ``UPDATE`` on a table that happens to be called ``statistics`` always has
@@ -120,11 +129,12 @@ _CATALOG_RE = re.compile(r"\b(information_schema|pg_catalog)\b", re.IGNORECASE)
 # (ActiveRecord/Rails schema dumping uses these heavily). Only treated as a
 # utility statement when the query has no real source table (see below). Not
 # preceded by a dot: ``dbo.NextVal(@k)`` is a schema-qualified user function,
-# not Postgres's ``nextval`` (#654 review).
+# not Postgres's ``nextval`` (#654 review). ``pg_notify`` is NOTIFY's function
+# form, so it is utility in the same case NOTIFY is (#831 review).
 _CATALOG_FUNCTION_RE = re.compile(
     r"(?<![\w.])(obj_description|pg_get_serial_sequence|pg_get_expr|pg_get_indexdef|"
     r"pg_get_constraintdef|format_type|generate_subscripts|pg_typeof|"
-    r"setval|nextval|currval|lastval)\s*\(",
+    r"setval|nextval|currval|lastval|pg_notify)\s*\(",
     re.IGNORECASE,
 )
 
@@ -216,10 +226,6 @@ _CATALOG_CAST_RE = re.compile(
     re.IGNORECASE,
 )
 
-# System catalog tables/schemas (Postgres pg_catalog contents, information_schema)
-# a query can name directly in FROM without the pg_catalog. prefix.
-_SYSTEM_CATALOG_TABLE_RE = re.compile(r"^(pg_[a-z_]+|information_schema(\..+)?)$", re.IGNORECASE)
-
 
 def _statement_heads(query_text: str | None) -> tuple[str, ...]:
     """How the statement starts, once its leading comments are stripped.
@@ -282,11 +288,12 @@ def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
 
 
 def _all_tables_are_system_catalog(tables_accessed: Iterable[str] | None) -> bool:
-    """True when ``tables_accessed`` is non-empty and every entry is a system catalog table."""
+    """True when ``tables_accessed`` names a system catalog table and nothing but
+    system catalog and pseudo tables."""
+    pseudo = {p.upper() for p in PSEUDO_TABLES}
     tables = [str(t).strip() for t in (tables_accessed or []) if t]
-    if not tables:
-        return False
-    return all(_SYSTEM_CATALOG_TABLE_RE.match(t) for t in tables)
+    real = [t for t in tables if t.upper() not in pseudo]
+    return bool(real) and all(is_engine_system_object(t) for t in real)
 
 
 def is_utility_statement(
@@ -303,14 +310,24 @@ def is_utility_statement(
     ``/*! ... */`` executable comment's body is read as the statement, #780),
     for any statement that
     reads ``information_schema`` or ``pg_catalog`` regardless of its leading
-    verb, for a query whose ``tables_accessed`` are all system catalog tables,
+    verb, for a query whose ``tables_accessed`` are all system catalog tables
+    (:func:`~src.agents.referee.table_resolution.is_engine_system_object`;
+    pseudo tables aside),
     and for a catalog function call, ``::reg*`` cast or sequence fetch
     (``NEXT VALUE FOR seq``, ``seq.NEXTVAL``, #654) when ``tables_accessed``
     or a read of a PostgreSQL sequence's own state
     (``SELECT last_value FROM public.badges_id_seq``, :func:`is_sequence_state_read`,
     #783) when ``tables_accessed`` names no real application table.
+
+    This is the one definition: routing's utility pin, aurora-anti-05's admin
+    skip and Aurora schema design (``design_view._designable``) all ask it, so
+    a statement one treats as administration the others do too (#778). Its
+    one exception, ``REFRESH MATERIALIZED VIEW`` as application access (#733),
+    is ``_APPLICATION_ACCESS_RE``.
     """
     heads = _statement_heads(query_text)
+    if _APPLICATION_ACCESS_RE.match(heads[0]):
+        return False
     if any(_UTILITY_VERB_RE.search(head) or _is_update_statistics(head) for head in heads):
         return True
     text = heads[0]

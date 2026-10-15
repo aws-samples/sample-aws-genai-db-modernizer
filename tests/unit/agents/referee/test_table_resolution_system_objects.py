@@ -49,3 +49,34 @@ class TestIsEngineSystemObject:
 
     def test_empty_or_none_is_not_an_engine_object(self) -> None:
         assert is_engine_system_object("") is False
+
+
+class TestOneSystemTableRule:
+    """#831 review: routing's utility rule and schema design use this one
+    function too, so the three system-table rules can't disagree."""
+
+    def test_utility_statements_has_no_system_table_rule_of_its_own(self) -> None:
+        import src.agents.referee.utility_statements as us
+
+        assert not hasattr(us, "is_system_catalog_table")
+        assert us.is_engine_system_object is is_engine_system_object
+
+    def test_an_unqualified_pg_name_is_the_catalog(self) -> None:
+        assert is_engine_system_object("pg_class") is True
+        assert is_engine_system_object("pg_index") is True
+        assert is_engine_system_object("information_schema") is True
+
+    def test_a_pg_named_table_in_an_application_schema_is_an_application_table(self) -> None:
+        assert is_engine_system_object("shop.pg_style_settings") is False
+
+    def test_a_system_schema_counts_at_any_qualifier(self) -> None:
+        assert is_engine_system_object("db.sys.objects") is True
+        assert is_engine_system_object("discourse.information_schema.columns") is True
+        assert is_engine_system_object("sys.app.orders") is True
+        assert is_engine_system_object("sysadmin.jobs") is False
+        assert is_engine_system_object("app.sys_users") is False
+
+    def test_quotes_and_case_are_ignored(self) -> None:
+        assert is_engine_system_object('"pg_catalog"."pg_class"') is True
+        assert is_engine_system_object("[sys].[objects]") is True
+        assert is_engine_system_object("Public.PG_STAT_ACTIVITY") is True

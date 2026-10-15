@@ -710,7 +710,8 @@ def test_hot_queries_skip_catalog_transaction_and_unknown_queries(monkeypatch, c
         noisy("commit", "COMMIT", ["shop.users"]),
         noisy("set", "SET statement_timeout = 0", ["shop.users"]),
         noisy("show", "SHOW search_path", ["shop.users"]),
-        noisy("refresh", "REFRESH MATERIALIZED VIEW mv", ["shop.users"]),
+        noisy("explain", "EXPLAIN SELECT * FROM users", ["shop.users"]),
+        noisy("comment", "/* tx */ BEGIN", ["shop.users"]),
         noisy("unknown", "SELECT 1", ["unknown"]),
         _query("real", "users", cps=1.0),
     ]
@@ -721,3 +722,23 @@ def test_hot_queries_skip_catalog_transaction_and_unknown_queries(monkeypatch, c
 
     hot = _request(store)["design_view"]["hot_queries"]
     assert [q["query_id"] for q in hot] == ["real"]
+
+
+def test_hot_queries_keep_a_materialized_view_refresh(monkeypatch, capsys, tmp_path):
+    """#733/#778: REFRESH MATERIALIZED VIEW is application access, for routing and design."""
+    collector = _collector(n_queries=0)
+    collector["queries"]["query_patterns"] += [
+        {
+            **_query("refresh", "users", cps=1000.0),
+            "query_text": "REFRESH MATERIALIZED VIEW mv",
+            "tables_accessed": ["shop.users"],
+        },
+        _query("real", "users", cps=1.0),
+    ]
+    store = _store(tmp_path)
+    store.write_json(f"{DB}/{JOB}/collector/output.json", collector)
+
+    _run(monkeypatch, capsys, tmp_path, "--llm-mode", "external")
+
+    hot = _request(store)["design_view"]["hot_queries"]
+    assert [q["query_id"] for q in hot] == ["refresh", "real"]
