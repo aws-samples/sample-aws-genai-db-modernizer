@@ -738,13 +738,13 @@ class TestCommentStrippingIsLinear:
         ],
     )
     def test_pathological_comments_finish_fast(self, text):
-        import time
-
         from src.agents.referee.cache_overlay import _strip_leading_comments
         from src.agents.referee.utility_statements import is_sequence_state_read
+        from tests.unit.tools.sql._timing import assert_fast
 
-        start = time.perf_counter()
-        is_sequence_state_read(text)
-        is_utility_statement(text, ["unknown"])
-        _strip_leading_comments(text)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            is_sequence_state_read(text)
+            is_utility_statement(text, ["unknown"])
+            _strip_leading_comments(text)
+
+        assert_fast(run, 1.0)

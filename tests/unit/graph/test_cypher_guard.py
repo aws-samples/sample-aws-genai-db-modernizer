@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from src.graph.cypher_guard import (
@@ -12,6 +10,7 @@ from src.graph.cypher_guard import (
     bound_result_rows,
     validate_read_only_cypher,
 )
+from tests.unit.tools.sql._timing import assert_fast
 
 ALLOWED = [
     "MATCH (q:Query) RETURN q.query_id",
@@ -176,12 +175,14 @@ def test_long_input_is_rejected_quickly():
         "x" * 1_000_000,
     ]
     for cypher in near_limit:
-        started = time.perf_counter()
-        try:
-            validate_read_only_cypher(cypher)
-        except DisallowedStatementError:
-            pass
-        assert time.perf_counter() - started < 0.5
+
+        def run(cypher: str = cypher) -> None:
+            try:
+                validate_read_only_cypher(cypher)
+            except DisallowedStatementError:
+                pass
+
+        assert_fast(run, 0.5)
 
 
 @pytest.mark.parametrize(

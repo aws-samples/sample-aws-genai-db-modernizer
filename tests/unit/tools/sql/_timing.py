@@ -60,3 +60,34 @@ def assert_linear(
     raise AssertionError(
         f"4 MB took {t_large:.3f}s vs {t_small:.3f}s for 1 MB (x{ratio:.1f}): not linear"
     )
+
+
+# A single run this many times over the budget is slow code, not load: fail at once
+# instead of re-running it for every round.
+HOPELESS_FACTOR = 10.0
+
+
+def assert_fast(fn: Callable[[], object], budget_s: float, max_rounds: int = 12) -> None:
+    """``fn()`` uses under ``budget_s`` seconds of CPU time in at least one of
+    up to ``max_rounds`` runs.
+
+    For inputs built to make slow code hang (exponential backtracking, a
+    quadratic rescan of a huge input), where the budget is orders of magnitude
+    below what the slow code needs. Like ``assert_linear`` it measures CPU time
+    and keeps sampling until one run fits: more samples can only lower the best
+    time, so fast code passes on the first run on a quiet machine and keeps
+    getting chances on a busy one, while slow code is over budget in every run.
+    A single run over HOPELESS_FACTOR times the budget fails at once: load does
+    not make CPU time grow tenfold, so slow code is not re-run for every round.
+    """
+    best = float("inf")
+    for _ in range(max_rounds):
+        elapsed = _timed(fn)
+        best = min(best, elapsed)
+        if best < budget_s:
+            return
+        if elapsed > budget_s * HOPELESS_FACTOR:
+            raise AssertionError(
+                f"one run took {elapsed:.3f}s CPU, over {HOPELESS_FACTOR:g}x the {budget_s}s budget"
+            )
+    raise AssertionError(f"best of {max_rounds} runs took {best:.3f}s CPU, budget {budget_s}s")

@@ -7,7 +7,6 @@ text once, so time grows linearly with its length.
 """
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,11 @@ from src.shared.sql_comments import (
     strip_trailing_comments,
     unwrap_executable_comment,
 )
-from tests.unit.tools.sql._timing import assert_linear
+from tests.unit.tools.sql._timing import assert_fast, assert_linear
+
+# CPU seconds one pathological input may use. Exponential backtracking needs hours,
+# so this is far from the slow code; it only has to clear a loaded runner.
+BUDGET_S = 1.0
 
 # The two shapes code scanning reported (#808), plus the leading-comment
 # variants, at 100k characters.
@@ -62,9 +65,10 @@ class TestStripTrailingComments:
 
     @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
     def test_pathological_input_finishes_fast(self, text):
-        start = time.perf_counter()
-        strip_trailing_comments(text)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            strip_trailing_comments(text)
+
+        assert_fast(run, BUDGET_S)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "--" * (n // 2) + "\nx", strip_trailing_comments)
@@ -110,10 +114,11 @@ class TestStripLeadingComments:
 
     @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
     def test_pathological_input_finishes_fast(self, text):
-        start = time.perf_counter()
-        strip_leading_comments(text)
-        strip_leading_comments(text, hash_comments=True, strip_following_space=True)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            strip_leading_comments(text)
+            strip_leading_comments(text, hash_comments=True, strip_following_space=True)
+
+        assert_fast(run, BUDGET_S)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "/* */" * (n // 5) + "x", strip_leading_comments)
@@ -181,10 +186,11 @@ class TestNestedBlockComments:
 
     @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
     def test_pathological_input_finishes_fast(self, text):
-        start = time.perf_counter()
-        strip_leading_comments(text, nested=True)
-        strip_trailing_comments(text, nested=True)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            strip_leading_comments(text, nested=True)
+            strip_trailing_comments(text, nested=True)
+
+        assert_fast(run, BUDGET_S)
 
     def test_scales_linearly(self):
         # A run of unterminated /* opens one nesting level each; rescanning the
@@ -265,11 +271,12 @@ class TestMySqlExecutableComments:
 
     @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
     def test_pathological_input_finishes_fast(self, text):
-        start = time.perf_counter()
-        strip_leading_comments(text, hash_comments=True, mysql_executable=True)
-        unwrap_executable_comment(text)
-        unwrap_executable_comment("/*!" + text)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            strip_leading_comments(text, hash_comments=True, mysql_executable=True)
+            unwrap_executable_comment(text)
+            unwrap_executable_comment("/*!" + text)
+
+        assert_fast(run, BUDGET_S)
 
 
 class TestStripComments:
@@ -303,10 +310,11 @@ class TestStripComments:
 
     @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
     def test_pathological_input_finishes_fast(self, text):
-        start = time.perf_counter()
-        strip_comments(text)
-        strip_comments(text, nested=True, hash_comments=True)
-        assert time.perf_counter() - start < 1.0
+        def run() -> None:
+            strip_comments(text)
+            strip_comments(text, nested=True, hash_comments=True)
+
+        assert_fast(run, BUDGET_S)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "x /* " * (n // 5), strip_comments)

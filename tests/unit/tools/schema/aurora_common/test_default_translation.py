@@ -7,11 +7,10 @@ with a reason, never pasted in and never quoted into a fake literal.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from src.tools.schema.aurora_common.constraint_translator import translate_default
+from tests.unit.tools.sql._timing import assert_fast
 
 PG = "aurora_postgresql"
 MY = "aurora_mysql"
@@ -527,9 +526,14 @@ def test_deeply_nested_parentheses_finish_fast_and_are_dropped(source, shape):
         "unclosed": "(" * depth + "0",
         "unopened": "0" + ")" * depth,
     }[shape]
-    start = time.perf_counter()
-    result = translate_default(value, source_engine=source, target=PG, aurora_type="INTEGER")
-    assert time.perf_counter() - start < 0.05
+    results = []
+    assert_fast(
+        lambda: results.append(
+            translate_default(value, source_engine=source, target=PG, aurora_type="INTEGER")
+        ),
+        0.05,
+    )
+    result = results[-1]
     if source == "mysql" and shape == "unopened":
         # a MySQL default is literal text: "0)))..." is one quoted literal
         assert _single_pg_literal(result.clause)
