@@ -83,6 +83,31 @@ def _never_moved(sample: dict) -> str:
     return qid
 
 
+def _customer_edit_v3(sample: dict, qid: str) -> dict:
+    """A customer-gate version (v3) moving ``qid`` from DynamoDB (69) to Aurora MySQL (54)."""
+    v3: dict = copy.deepcopy(sample["v2"])
+    v3.update(version=3, previous_version=2, source="customer_gate")
+    for qa in v3["query_assignments"]:
+        if qa["query_id"] == qid:
+            qa["assigned_engine"] = "aurora_mysql"
+    rc = next(m for m in sample["v2"]["moves"] if m["query_id"] == qid)
+    v3["moves"] = [
+        {
+            **rc,
+            "seq": 1,
+            "pass": "customer_pick",
+            "reason_code": "customer.pick",
+            "actor": "customer",
+            "from_engine": "dynamodb",
+            "to_engine": "aurora_mysql",
+            "score_before": 69.0,
+            "score_after": 54.0,
+            "runner_up": {"engine": "dynamodb", "score": 69.0},
+        }
+    ]
+    return v3
+
+
 @pytest.fixture
 def traced(graph_store, sample):
     """A graph with the collector, the effective assignment (v2) and both versions' moves."""
@@ -281,26 +306,7 @@ class TestQueryTrace:
         # A customer version (v3) puts the REPLACE INTO query on Aurora MySQL (54),
         # below DynamoDB (69): DynamoDB is outscoring, decided by the customer's pick.
         qid = _settled_with_runner_up(sample)
-        v3 = copy.deepcopy(sample["v2"])
-        v3.update(version=3, previous_version=2, source="customer_gate")
-        for qa in v3["query_assignments"]:
-            if qa["query_id"] == qid:
-                qa["assigned_engine"] = "aurora_mysql"
-        rc = next(m for m in sample["v2"]["moves"] if m["query_id"] == qid)
-        v3["moves"] = [
-            {
-                **rc,
-                "seq": 1,
-                "pass": "customer_pick",
-                "reason_code": "customer.pick",
-                "actor": "customer",
-                "from_engine": "dynamodb",
-                "to_engine": "aurora_mysql",
-                "score_before": 69.0,
-                "score_after": 54.0,
-                "runner_up": {"engine": "dynamodb", "score": 69.0},
-            }
-        ]
+        v3 = _customer_edit_v3(sample, qid)
         populate_from_collector(sample["collector"], graph_store)
         populate_from_assignment(v3, graph_store)
         for version in (sample["v1"], sample["v2"], v3):
@@ -448,6 +454,28 @@ class _DirStore:
         return [k for k in self.files if k.startswith(prefix)]
 
 
+class _FlakyStore(_DirStore):
+    """A _DirStore whose reads or listings can fail, as a throttled or flaky remote store does."""
+
+    def __init__(self, files: dict[str, dict]):
+        super().__init__(files)
+        self.fail_reads: dict[str, int] = {}  # path -> failures left
+        self.fail_listing = False
+        self.listings = 0
+
+    def read_json(self, path: str) -> dict:
+        if self.fail_reads.get(path, 0) > 0:
+            self.fail_reads[path] -= 1
+            raise RuntimeError("SlowDown: please reduce your request rate")
+        return super().read_json(path)
+
+    def list_prefix(self, prefix: str):
+        self.listings += 1
+        if self.fail_listing:
+            raise RuntimeError("SlowDown: please reduce your request rate")
+        return super().list_prefix(prefix)
+
+
 class TestRebuild:
     def _files(self, sample: dict, extra: dict | None = None) -> dict:
         base = "wordpress/job"
@@ -464,6 +492,19 @@ class TestRebuild:
         trace = query_trace(graph_store, _settled_with_runner_up(sample))
         assert [s.version for s in [trace.first_assignment, *trace.moves]] == [1, 2]
         assert trace.effective_version == 2
+
+    def test_a_build_with_an_unreadable_artifact_is_not_stamped(self, graph_store, sample):
+        store = _FlakyStore(self._files(sample))
+        store.fail_reads["wordpress/job/assignment/v2/assignment.json"] = 1
+        stats = rebuild_graph("wordpress", "job", store, graph_store)
+        assert (stats["complete"], stats["failed_reads"]) == (False, 1)
+        assert graph_store.graph_meta() == {"schema_revision": 0, "effective_version": 0}
+
+    def test_missing_artifacts_of_a_partial_run_still_stamp(self, graph_store, sample):
+        # No triage, analysis, reality check or synthesis: a partial run, not a failure.
+        stats = rebuild_graph("wordpress", "job", _DirStore(self._files(sample)), graph_store)
+        assert stats["complete"] is True
+        assert graph_store.graph_meta()["effective_version"] == 2
 
     def test_lineage_skips_a_version_the_effective_one_does_not_descend_from(self, sample):
         stale = {**sample["v2"], "version": 2}
@@ -499,3 +540,218 @@ class TestTraceEndpoint:
     def test_trace_endpoint_unknown_query(self, client):
         resp = client.get("/api/v1/assessments/job-1/graph/queries/nope/trace")
         assert resp.status_code == 404
+
+
+class TestSavedGraphFollowsTheAssignment:
+    """#819: a saved graph built before a new assignment version is rebuilt on the next read."""
+
+    @pytest.fixture
+    def served(self, monkeypatch, tmp_path, sample):
+        from unittest.mock import MagicMock
+
+        from src.graph import GraphStoreCache
+
+        files = TestRebuild()._files(sample)
+        cache = GraphStoreCache(max_size=3, base_dir=str(tmp_path))
+        persistence = MagicMock()
+        persistence.download_if_exists.return_value = False
+        store = _FlakyStore(files)
+        monkeypatch.setattr(graph_routes, "graph_cache", cache)
+        monkeypatch.setattr(graph_routes, "artifact_store", store)
+        monkeypatch.setattr(graph_routes, "graph_persistence", persistence)
+        monkeypatch.setattr(graph_routes, "_resolve_db_name", lambda job_id: "wordpress")
+        # Every read sees the store as it is now; the TTL has its own test.
+        monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 0.0)
+        graph_routes._effective_versions.clear()
+        app = FastAPI()
+        app.include_router(graph_routes.router)
+        self.store, self.persistence = store, persistence
+        yield TestClient(app), files, cache
+        cache.close_all()
+        graph_routes._effective_versions.clear()
+
+    @staticmethod
+    def _trace(client: TestClient, qid: str) -> dict:
+        resp = client.get(f"/api/v1/assessments/job/graph/queries/{qid}/trace")
+        assert resp.status_code == 200, resp.text
+        body: dict = resp.json()
+        return body
+
+    def _customer_edit(self, files: dict, sample: dict, qid: str) -> None:
+        files["wordpress/job/assignment/v3/assignment.json"] = _customer_edit_v3(sample, qid)
+
+    def test_a_customer_edit_after_the_build_shows_in_the_trace(self, served, sample):
+        client, files, _ = served
+        qid = _settled_with_runner_up(sample)
+        before = self._trace(client, qid)
+        assert (before["final_engine"], before["effective_version"]) == ("dynamodb", 2)
+
+        self._customer_edit(files, sample, qid)
+        after = self._trace(client, qid)
+        assert (after["final_engine"], after["effective_version"]) == ("aurora_mysql", 3)
+        last = after["moves"][-1]
+        assert (last["version"], last["pass"], last["reason_code"]) == (
+            3,
+            "customer_pick",
+            "customer.pick",
+        )
+
+    def test_a_saved_file_of_an_earlier_version_is_rebuilt_on_open(self, served, sample):
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        assert self._trace(client, qid)["effective_version"] == 2
+        cache.close_all()  # as after an API restart: only the saved file is left
+
+        self._customer_edit(files, sample, qid)
+        path = cache.local_path("wordpress", "job")
+        assert graph_routes._is_populated_file(path, effective_version=2) is True
+        assert graph_routes._is_populated_file(path, effective_version=3) is False
+        assert self._trace(client, qid)["final_engine"] == "aurora_mysql"
+
+    def test_an_unchanged_assignment_reuses_the_graph(self, served, sample, monkeypatch):
+        client, _, _ = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        builds: list[str] = []
+        real = graph_routes._build_graph_file
+        monkeypatch.setattr(
+            graph_routes,
+            "_build_graph_file",
+            lambda db, job, path: builds.append(job) or real(db, job, path),
+        )
+        self._trace(client, qid)
+        assert builds == []
+
+    def test_a_failed_read_during_a_rebuild_is_not_stamped_and_retries(self, served, sample):
+        """#842 review: a rebuild whose v3 read failed must not count as current for v3."""
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        assert self._trace(client, qid)["effective_version"] == 2
+
+        self._customer_edit(files, sample, qid)
+        v3 = "wordpress/job/assignment/v3/assignment.json"
+        self.store.fail_reads[v3] = 99  # the store fails this read until it recovers
+        during = self._trace(client, qid)
+        # The incomplete build is discarded: the previous (v2) graph is still served.
+        assert (during["final_engine"], during["effective_version"]) == ("dynamodb", 2)
+        path = cache.local_path("wordpress", "job")
+        assert not Path(f"{path}.building").exists()
+
+        self.store.fail_reads.clear()
+        after = self._trace(client, qid)  # the store recovered: the next read retries
+        assert (after["final_engine"], after["effective_version"]) == ("aurora_mysql", 3)
+
+    def test_a_failed_first_build_is_served_unstamped_and_retried(self, served, sample):
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        v2 = "wordpress/job/assignment/v2/assignment.json"
+        self.store.fail_reads[v2] = 99
+        first = self._trace(client, qid)
+        assert first["effective_version"] is None  # no stamp: not current for any version
+        self.persistence.upload.assert_not_called()  # a partial graph is never shared
+        self.store.fail_reads.clear()
+        after = self._trace(client, qid)
+        assert (after["final_engine"], after["effective_version"]) == ("dynamodb", 2)
+
+    def test_a_failed_version_lookup_serves_the_open_graph(self, served, sample, caplog):
+        """#842 review: a throttled listing is not a 500; the next read checks again."""
+        client, files, _ = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        self._customer_edit(files, sample, qid)
+        self.store.fail_listing = True
+        with caplog.at_level("WARNING", logger="src.api.routes.graph"):
+            during = self._trace(client, qid)
+        assert during["effective_version"] == 2
+        assert "could not read the effective assignment version" in caplog.text
+        self.store.fail_listing = False
+        assert self._trace(client, qid)["effective_version"] == 3
+
+    def test_a_failed_version_lookup_serves_a_saved_file(self, served, sample):
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        cache.close_all()
+        self.store.fail_listing = True
+        assert self._trace(client, qid)["effective_version"] == 2
+
+    def test_the_effective_version_is_cached_for_a_few_seconds(self, served, sample, monkeypatch):
+        client, files, _ = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        clock = [1000.0]
+        monkeypatch.setattr(graph_routes.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 3.0)
+        graph_routes._effective_versions.clear()
+        listings = self.store.listings
+        for _ in range(5):
+            self._trace(client, qid)
+        assert self.store.listings == listings + 1  # one listing for five reads
+
+        self._customer_edit(files, sample, qid)
+        assert self._trace(client, qid)["effective_version"] == 2  # still within the TTL
+        clock[0] += 3.5
+        assert self._trace(client, qid)["effective_version"] == 3
+
+    def test_a_downloaded_copy_of_an_earlier_version_is_rebuilt_and_uploaded(
+        self, served, sample, tmp_path
+    ):
+        """The remote copy (another API task's upload) was built from v2; the job is at v3."""
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        path = cache.local_path("wordpress", "job")
+        cache.close_all()
+        remote = tmp_path / "remote.lbug"
+        Path(path).rename(remote)
+
+        def _download(db, job, dest):
+            Path(dest).write_bytes(remote.read_bytes())
+            return True
+
+        self.persistence.download_if_exists.reset_mock()
+        self.persistence.download_if_exists.side_effect = _download
+        self.persistence.upload.reset_mock()
+        self._customer_edit(files, sample, qid)
+        after = self._trace(client, qid)
+        assert (after["final_engine"], after["effective_version"]) == ("aurora_mysql", 3)
+        self.persistence.download_if_exists.assert_called_once()
+        self.persistence.upload.assert_called_once()
+
+    def test_concurrent_reads_after_an_edit_rebuild_once(self, served, sample, monkeypatch):
+        import threading
+
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        builds: list[str] = []
+        exclusives: list[str] = []
+        real_build, real_exclusive = graph_routes._build_graph_file, cache.exclusive
+        monkeypatch.setattr(
+            graph_routes,
+            "_build_graph_file",
+            lambda db, job, path: builds.append(job) or real_build(db, job, path),
+        )
+        monkeypatch.setattr(
+            cache, "exclusive", lambda db, job: exclusives.append(job) or real_exclusive(db, job)
+        )
+        self._customer_edit(files, sample, qid)
+
+        results: list[tuple[int, dict]] = []
+        start = threading.Barrier(12)
+
+        def _read() -> None:
+            start.wait()
+            resp = client.get(f"/api/v1/assessments/job/graph/queries/{qid}/trace")
+            results.append((resp.status_code, resp.json()))
+
+        threads = [threading.Thread(target=_read) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert [code for code, _ in results] == [200] * 12
+        assert {(b["final_engine"], b["effective_version"]) for _, b in results} == {
+            ("aurora_mysql", 3)
+        }
+        assert builds == ["job"] and exclusives == ["job"]

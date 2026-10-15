@@ -7,6 +7,7 @@ threadpool instead of on the event loop.
 import logging
 import os
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,6 +36,7 @@ from src.graph.raw_query_worker import RawQueryError, run_raw_query
 from src.graph.schema import GRAPH_SCHEMA_REVISION, initialize_schema
 from src.graph.store import MAX_RESULT_ROWS, READ_QUERY_TIMEOUT_MS, GraphStore
 from src.storage.artifact_store import ArtifactStore
+from src.storage.assignment_versioning import resolve_effective_assignment_version
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,20 @@ MAX_CONCURRENT_RAW_QUERIES = 2
 _raw_query_slots = threading.BoundedSemaphore(MAX_CONCURRENT_RAW_QUERIES)
 TIMEOUT_DETAIL = "The graph query did not finish within the time limit."
 MEMORY_DETAIL = "The graph query needed more memory than is available; retry shortly."
+
+
+# The job's effective assignment version is cached this long (seconds) per job,
+# so one results page load (several graph requests) lists the artifact store
+# once rather than on every request (#819). A new version shows up on the
+# first read after the entry expires.
+EFFECTIVE_VERSION_TTL_S = 2.0
+_effective_versions: dict[tuple[str, str], tuple[float, int]] = {}
+_effective_versions_lock = threading.Lock()
+# One refresh of an open graph per job at a time, so concurrent reads after a
+# new assignment version wait for one rebuild instead of each taking the
+# exclusive lock to re-check.
+_refresh_locks: dict[tuple[str, str], threading.Lock] = {}
+_refresh_locks_guard = threading.Lock()
 
 
 class CypherRequest(BaseModel):
@@ -86,12 +102,15 @@ def _services() -> tuple[GraphStoreCache, ArtifactStore, GraphPersistence]:
     return graph_cache, artifact_store, graph_persistence
 
 
-def _is_populated_file(path: str) -> bool:
+def _is_populated_file(path: str, effective_version: int | None = None) -> bool:
     """True when ``path`` holds a readable, current graph with at least one node.
 
     Current means built with this code's schema revision (``GraphMeta``): a
     graph saved by an earlier release (no MOVED table, say) is stale, so the
     caller rebuilds it from the artifacts instead of serving it (ADR-023).
+    When ``effective_version`` is given, the graph must also have been built
+    from that assignment version: a graph saved before a customer edit or any
+    later assignment version is stale too (#819).
     """
     if not Path(path).exists():
         return False
@@ -103,7 +122,8 @@ def _is_populated_file(path: str) -> bool:
     try:
         if not probe.is_populated():
             return False
-        revision = probe.graph_meta()["schema_revision"]
+        meta = probe.graph_meta()
+        revision = meta["schema_revision"]
         if revision != GRAPH_SCHEMA_REVISION:
             logger.info(
                 "graph at %s has schema revision %s, not %s: rebuilding",
@@ -112,9 +132,47 @@ def _is_populated_file(path: str) -> bool:
                 GRAPH_SCHEMA_REVISION,
             )
             return False
+        if effective_version is not None and meta["effective_version"] != effective_version:
+            logger.info(
+                "graph at %s was built from assignment v%s, not v%s: rebuilding",
+                path,
+                meta["effective_version"],
+                effective_version,
+            )
+            return False
         return True
     finally:
         probe.close()
+
+
+def _effective_assignment_version(db_name: str, job_id: str) -> int | None:
+    """The job's effective assignment version (ADR-028; 0 when there is none).
+
+    Cached per job for ``EFFECTIVE_VERSION_TTL_S``. None when the artifact
+    store cannot be listed (a throttled or failing store): the caller serves
+    the graph it has, and the next read checks again (a failure is not cached).
+    """
+    key = (db_name, job_id)
+    now = time.monotonic()
+    with _effective_versions_lock:
+        hit = _effective_versions.get(key)
+    if hit is not None and now - hit[0] < EFFECTIVE_VERSION_TTL_S:
+        return hit[1]
+    _, store, _ = _services()
+    try:
+        version = resolve_effective_assignment_version(store, db_name, job_id)
+    except Exception as exc:  # noqa: BLE001 - never fail a read on the freshness check
+        logger.warning(
+            "could not read the effective assignment version of %s/%s, serving the "
+            "current graph: %s",
+            db_name,
+            job_id,
+            exc,
+        )
+        return None
+    with _effective_versions_lock:
+        _effective_versions[key] = (now, version)
+    return version
 
 
 def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
@@ -140,11 +198,25 @@ def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
         stats = rebuild_graph(db_name, job_id, store, writer)
     finally:
         writer.close()
+    complete = stats.get("complete", True)
+    if not complete and _is_populated_file(path):
+        # An artifact could not be read: keep the previous graph (and its
+        # stamp), so the next read retries instead of serving a partial one.
+        logger.warning(
+            "graph rebuild for %s/%s was incomplete; keeping the previous graph", db_name, job_id
+        )
+        for leftover in _sidecars(building):
+            Path(leftover).unlink(missing_ok=True)
+        return stats
     for leftover in _sidecars(path)[1:]:
         Path(leftover).unlink(missing_ok=True)
     os.replace(building, path)
     for leftover in _sidecars(building)[1:]:
         Path(leftover).unlink(missing_ok=True)
+    if not complete:
+        # No previous graph: serve this unstamped one, which the next read
+        # rebuilds; never upload it for other API tasks to reuse.
+        return stats
     try:
         persistence.upload(db_name, job_id, path)
     except Exception as exc:  # upload failure must not break the response
@@ -158,11 +230,17 @@ def _sidecars(path: str) -> tuple[str, str, str]:
 
 
 def _prepare_graph_file(db_name: str, job_id: str, path: str) -> None:
-    """Make ``path`` hold this job's graph: local file -> store download -> build+upload."""
-    if _is_populated_file(path):
+    """Make ``path`` hold this job's graph: local file -> store download -> build+upload.
+
+    A local or downloaded graph is used only when it was built from the job's
+    current effective assignment version; otherwise it is rebuilt (#819).
+    When that version can't be read, a current-revision graph is used as it is.
+    """
+    version = _effective_assignment_version(db_name, job_id)
+    if _is_populated_file(path, version):
         return
     _, _, persistence = _services()
-    if persistence.download_if_exists(db_name, job_id, path) and _is_populated_file(path):
+    if persistence.download_if_exists(db_name, job_id, path) and _is_populated_file(path, version):
         return
     # Cache miss or unusable download: build fresh, then upload (self-healing).
     _build_graph_file(db_name, job_id, path)
@@ -198,10 +276,65 @@ def graph_lease(job_id: str) -> Iterator[tuple[GraphStore, str]]:
     """
     cache, _, _ = _services()
     db_name = _resolve_db_name(job_id)
+    _require_graph_path(cache, db_name, job_id)
+    _refresh_if_behind(cache, db_name, job_id)
     with cache.reader(
         db_name, job_id, lambda path: _prepare_graph_file(db_name, job_id, path)
     ) as store:
         yield store, db_name
+
+
+def _require_graph_path(cache: GraphStoreCache, db_name: str, job_id: str) -> str:
+    """The job's graph path, or 404 when the stored database name or the job id
+    would put it outside the artifact root (``GraphStoreCache.local_path``)."""
+    try:
+        return cache.local_path(db_name, job_id)
+    except ValueError as exc:
+        logger.warning("graph path refused: %s", exc)
+        raise HTTPException(status_code=404, detail="Assessment not found") from exc
+
+
+def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> None:
+    """Rebuild an open graph built from an earlier assignment version (#819).
+
+    A customer edit, a reality check or a post-schema reroute writes a new
+    assignment version without touching the graph, so an already-open handle
+    can lag behind. A graph that is not open yet is checked by
+    ``_prepare_graph_file`` when the reader opens it. When the version can't
+    be read, the open graph is served as it is.
+    """
+    if not cache.is_open(db_name, job_id):
+        return
+    version = _effective_assignment_version(db_name, job_id)
+    if version is None or _open_graph_is_current(cache, db_name, job_id, version):
+        return
+    with _refresh_lock(db_name, job_id):
+        # Another request may have rebuilt it while this one waited.
+        if _open_graph_is_current(cache, db_name, job_id, version):
+            return
+        with cache.exclusive(db_name, job_id) as path:
+            if not _is_populated_file(path, version):
+                logger.info(
+                    "graph for %s/%s is behind assignment v%s: rebuilding",
+                    db_name,
+                    job_id,
+                    version,
+                )
+                _build_graph_file(db_name, job_id, path)
+
+
+def _open_graph_is_current(cache: GraphStoreCache, db_name: str, job_id: str, version: int) -> bool:
+    """True when the job's graph carries this code's schema revision and ``version``'s stamp."""
+    with cache.reader(
+        db_name, job_id, lambda path: _prepare_graph_file(db_name, job_id, path)
+    ) as store:
+        meta = store.graph_meta()
+    return meta == {"schema_revision": GRAPH_SCHEMA_REVISION, "effective_version": version}
+
+
+def _refresh_lock(db_name: str, job_id: str) -> threading.Lock:
+    with _refresh_locks_guard:
+        return _refresh_locks.setdefault((db_name, job_id), threading.Lock())
 
 
 def get_graph_for_job(job_id: str = Depends(job_id_param)) -> Iterator[tuple[GraphStore, str]]:
@@ -332,9 +465,10 @@ def rebuild_assessment_graph(job_id: str = Depends(job_id_param)):
     """
     cache, _, _ = _services()
     db_name = _get_database_name(job_id)
+    _require_graph_path(cache, db_name, job_id)
     with cache.exclusive(db_name, job_id) as path:
         stats = _build_graph_file(db_name, job_id, path)
-    return {"status": "rebuilt", **stats}
+    return {"status": "rebuilt" if stats.get("complete", True) else "incomplete", **stats}
 
 
 @router.get("/{job_id}/load-test-results", response_model=LoadTestResultsResponse)

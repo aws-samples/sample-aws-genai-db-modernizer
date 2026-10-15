@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
@@ -9,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from src.graph.store import READ_BUFFER_POOL_BYTES, READ_QUERY_TIMEOUT_MS, GraphStore
+from src.shared.database_name import validate_database_name
+from src.shared.job_id import validate_job_id
 
 
 class _Entry:
@@ -49,8 +52,23 @@ class GraphStoreCache:
         self._entries: OrderedDict[tuple[str, str], _Entry] = OrderedDict()
 
     def local_path(self, db_name: str, job_id: str) -> str:
-        """The on-disk path where this job's .lbug lives."""
-        return str(Path(self._base_dir) / db_name / job_id / "graph" / "context.lbug")
+        """The on-disk path where this job's .lbug lives, or ValueError.
+
+        ``db_name`` (the job's stored input) and ``job_id`` (the URL) must pass
+        the repo's database-name and job-id rules, and the resolved path must
+        be exactly the literal ``{root}/{db}/{job}/graph/context.lbug`` under
+        the resolved root: a symlinked database, job or graph directory is
+        refused even when it lands back inside the root (the same rule as
+        ``LocalExecutionService._resolve_job_dir``).
+        """
+        db = validate_database_name(db_name)
+        job = validate_job_id(job_id)
+        root = os.path.realpath(self._base_dir)
+        expected = os.path.join(root, db, job, "graph", "context.lbug")
+        resolved = os.path.realpath(os.path.join(self._base_dir, db, job, "graph", "context.lbug"))
+        if resolved != expected or not resolved.startswith(root + os.sep):
+            raise ValueError("graph path escapes the artifact root")
+        return resolved
 
     def _pin(self, key: tuple[str, str]) -> _Entry:
         with self._lock:

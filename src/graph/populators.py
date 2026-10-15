@@ -657,10 +657,20 @@ def rebuild_graph(
 
     prefix = f"{db_name}/{job_id}"
 
+    # Artifacts that exist but could not be read (a throttled or failing
+    # store). A missing artifact is a partial run, not a failure.
+    failed_reads: list[str] = []
+
     def _read_safe(path: str) -> dict | None:
         try:
             return artifact_store.read_json(path)
-        except Exception:  # noqa: BLE001
+        except ValueError as exc:  # malformed JSON: retrying would not help
+            logger.warning("graph rebuild skipped malformed %s: %s", path, exc)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            if not _is_missing(artifact_store, path, exc):
+                logger.warning("graph rebuild could not read %s: %s", path, exc)
+                failed_reads.append(path)
             return None
 
     # 1. Collector
@@ -737,7 +747,10 @@ def rebuild_graph(
 
     # 10. The schema revision this graph was built with (a saved graph with
     # another revision is rebuilt before it is read) and its assignment version.
-    stamp_graph_meta(graph_store, assignment_version)
+    # Only a complete build is stamped (#819): a graph missing an artifact that
+    # exists must not count as current, so the next read rebuilds it.
+    if not failed_reads:
+        stamp_graph_meta(graph_store, assignment_version)
 
     duration_ms = int((time.time() - start) * 1000)
     node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
@@ -747,4 +760,24 @@ def rebuild_graph(
         "nodes_created": node_count,
         "edges_created": edge_count,
         "duration_ms": duration_ms,
+        "complete": not failed_reads,
+        "failed_reads": len(failed_reads),
     }
+
+
+# A read error that means "this artifact does not exist": the local store's
+# FileNotFoundError, a mapping's KeyError, an object store's NoSuchKey or 404.
+_MISSING_CODES = frozenset({"NoSuchKey", "404", "NotFound"})
+
+
+def _is_missing(artifact_store: ArtifactStore, path: str, exc: Exception) -> bool:
+    """True when ``exc`` reading ``path`` means the artifact is absent, not unreadable."""
+    if isinstance(exc, (FileNotFoundError, KeyError)):
+        return True
+    code = (getattr(exc, "response", None) or {}).get("Error", {}).get("Code")
+    if code in _MISSING_CODES:
+        return True
+    try:
+        return not artifact_store.exists(path)
+    except Exception:  # noqa: BLE001 - the store is failing: treat it as unreadable
+        return False
