@@ -15,7 +15,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.agents.referee.co_dependency import group_engine_scores
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply_to_assignment,
@@ -28,6 +27,8 @@ from src.agents.referee.reality_check_rules import (
     ENGINE_BASE_COST,
     _group_eligible_engines,
     _move_scores_text,
+    _moving_group_scores,
+    _moving_members,
     _query_has_join,
     _resolver_score,
     _tie_unresolved_note,
@@ -486,11 +487,11 @@ def _apply_justification_floors(
                 if group_key in handled_floor_groups:
                     continue
                 handled_floor_groups.add(group_key)
-                members = [
-                    mqid
-                    for mqid, mpayload in trace_by_query.items()
-                    if (mg := mpayload.get("group")) and mg["key"] == group_key
-                ]
+                # The members this check holds (a customer-pinned one is
+                # held out, #860/#882); the floor moves the mandatory ones
+                # too, so none stays put here (#894: the same member set
+                # Phase 1 and 2 use, minus their mandatory exclusion).
+                members = _moving_members(qid, trace_by_query, (), current_engine_by_qid)
                 member_qas = [to_move_by_id[m] for m in members if m in to_move_by_id]
                 if len(member_qas) != len(members):
                     # Not every member of this group is failing the floor
@@ -521,26 +522,10 @@ def _apply_justification_floors(
                         if to_move_by_id[m].get("tied_engines")
                     },
                 )
-                # The group's mean score, the one the resolver recorded, or
-                # the same rule over the members' resolver scores for an
-                # engine it has none for -- never one member's own score.
-                # (Defensive: the resolver records a mean for every engine
-                # that may own and is not gated for any member, and the
-                # eligibility above requires both, so ``computed`` is empty
-                # on a trace the resolver wrote.)
-                recorded = group_info["scores"]
-
-                def _member_score(m: str, e: str) -> float | None:
-                    return _resolver_score(trace_by_query, m, e)
-
-                computed = group_engine_scores(
-                    members, [e for e in eligible if e not in recorded], _member_score
-                )
-                group_scores = {
-                    e: recorded[e] if e in recorded else computed[e]
-                    for e in eligible
-                    if e in recorded or e in computed
-                }
+                # The group's mean over its moving members (#894): the same
+                # numbers Phase 1 and 2 judge it on (Decision 7), never one
+                # member's own score.
+                group_scores = _moving_group_scores(members, sorted(eligible), trace_by_query)
                 if not group_scores:
                     floor_unplaced.extend(member_qas)
                     continue
@@ -562,7 +547,7 @@ def _apply_justification_floors(
                         set(),
                         source_compatible_engine,
                         settled_counts,
-                        ",".join(sorted(members)),
+                        ",".join(members),
                     )
                     tie_note = (
                         _tie_unresolved_note(tied_group, winner)
@@ -573,11 +558,7 @@ def _apply_justification_floors(
                 # The group's score on the engine it leaves (the Move's
                 # ``score_before``): its mean there, none when that engine
                 # cannot serve every member.
-                before = (
-                    recorded[engine]
-                    if engine in recorded
-                    else group_engine_scores(members, [engine], _member_score).get(engine)
-                )
+                before = _moving_group_scores(members, [engine], trace_by_query).get(engine)
                 reason = (
                     f"fit={winner_fit}, co-dependency group moves together; "
                     f"{_move_scores_text(engine, before, winner, group_scores[winner])}"
@@ -595,9 +576,7 @@ def _apply_justification_floors(
                     group_scores=group_scores,
                     group_key=group_key,
                     tie_rule=(
-                        tie_reason_code(
-                            tie_kind, tied_group, settled_counts, ",".join(sorted(members))
-                        )
+                        tie_reason_code(tie_kind, tied_group, settled_counts, ",".join(members))
                         if tie_kind is not None
                         else None
                     ),

@@ -10,10 +10,11 @@ query is never judged one way by one pass and another way by the next.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Container, Iterable, Mapping
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import can_engine_serve_capability
+from src.agents.referee.co_dependency import group_engine_scores
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.tie_break import (
     TIE_KIND_SOURCE_COMPATIBLE,
@@ -319,6 +320,9 @@ def _group_eligible_engines(
     A mandatory member (a signal override, ADR #296) never travels with its
     group, so it is excluded from the "every member" requirement here, the
     same way Phase 2 already excludes it when it applies the group's move.
+    Neither does a member this check does not hold (a customer pin, #882).
+    The member set is ``_moving_members``, the one Phase 1's and Phase 2's
+    group scores use too (#894).
 
     ``tied_engines_by_qid`` (#503) is forwarded to ``_query_eligible_engines``
     for every member still flagged with a
@@ -345,13 +349,7 @@ def _group_eligible_engines(
             query_map,
             query_capabilities,
         )
-    group_key = group_info["key"]
-    members = [
-        mqid
-        for mqid, mpayload in trace_by_query.items()
-        if (mg := mpayload.get("group")) and mg["key"] == group_key
-        if mqid not in mandatory_query_ids
-    ]
+    members = _moving_members(qid, trace_by_query, mandatory_query_ids, current_engine_by_qid)
     return [
         e
         for e in candidates
@@ -370,6 +368,58 @@ def _group_eligible_engines(
             for m_qid in members
         )
     ]
+
+
+def _moving_members(
+    qid: str,
+    trace_by_query: dict[str, dict],
+    staying_query_ids: Container[str],
+    held_query_ids: Container[str],
+) -> list[str]:
+    """``qid``'s co-dependency group members that move with it, sorted; just
+    ``[qid]`` when it is in no group.
+
+    The one member set every reality-check pass judges a group on (#894,
+    ADR-031 Decisions 4 and 7): Phase 1's eligibility and removal scores,
+    Phase 2's placement and the justification floor. A member in
+    ``staying_query_ids`` (a mandatory signal override, ADR #296) stays put,
+    and a member missing from ``held_query_ids`` (the queries this check
+    holds; a customer-pinned query is held out of it, #860/#882) is not this
+    check's to move, so neither counts.
+    """
+    group_info = trace_by_query.get(qid, {}).get("group")
+    if not group_info:
+        return [qid]
+    return sorted(
+        mqid
+        for mqid, mpayload in trace_by_query.items()
+        if (mg := mpayload.get("group")) and mg["key"] == group_info["key"]
+        if mqid not in staying_query_ids and mqid in held_query_ids
+    )
+
+
+def _moving_group_scores(
+    members: Iterable[str],
+    engines: Iterable[str],
+    trace_by_query: dict[str, dict],
+) -> dict[str, float]:
+    """The group's score on each of ``engines`` that serves every one of
+    ``members`` (``_moving_members``): the mean of their resolver scores
+    (``co_dependency.group_engine_scores``, ADR-031 Decision 4, Amendment 4),
+    rounded to 2 decimals as the routing trace records a group's mean. An
+    engine that strands a member has no entry. For one query (ungrouped, or
+    the only member that moves) this is its own resolver score, unrounded.
+    Phase 1, Phase 2 and the justification floor all read a group's scores
+    from here, so they judge it on the same numbers (Decision 7).
+    """
+    members = list(members)
+    scores = group_engine_scores(
+        members, engines, lambda mqid, e: _resolver_score(trace_by_query, mqid, e)
+    )
+    if len(members) == 1:
+        # One query's own resolver score, read raw as everywhere else.
+        return scores
+    return {e: round(score, 2) for e, score in scores.items()}
 
 
 def _pick_winner(

@@ -17,6 +17,8 @@ from src.agents.referee.reality_check_records import engine_changes
 from src.agents.referee.reality_check_rules import (
     _group_eligible_engines,
     _move_scores_text,
+    _moving_group_scores,
+    _moving_members,
     _pick_winner,
     _resolver_score,
     _tie_unresolved_note,
@@ -322,11 +324,10 @@ def _place_settled_queries(
             if group_key in handled_groups:
                 continue
             handled_groups.add(group_key)
+            # The one moving-member set (#894), the one Phase 1 and the floor use.
             members = [
                 (mqid, revised_by_id[mqid]["assigned_engine"])
-                for mqid, mpayload in trace_by_query.items()
-                if (mgroup := mpayload.get("group")) and mgroup["key"] == group_key
-                if mqid in revised_by_id and mqid not in mandatory_query_ids
+                for mqid in _moving_members(qid, trace_by_query, mandatory_query_ids, revised_by_id)
             ]
             if not members:
                 continue
@@ -356,9 +357,17 @@ def _place_settled_queries(
                 query_capabilities,
                 tied_engines_by_qid,
             )
-            takeable_group = {
-                e: s for e, s in group_info["scores"].items() if e in eligible_group_engines
-            }
+            # The group's scores over the members that move (#894): the same
+            # numbers Phase 1 and the floor judge it on (Decision 7), so a
+            # mandatory or customer-pinned member that stays put never
+            # weighs in on where the others go.
+            member_ids = [mqid for mqid, _ in members]
+            group_scores = _moving_group_scores(
+                member_ids,
+                sorted(set(eligible_group_engines) | {e for _, e in members}),
+                trace_by_query,
+            )
+            takeable_group = {e: s for e, s in group_scores.items() if e in eligible_group_engines}
             # The surviving tied engines that can take the whole group first;
             # every engine that can take it when none of them can (#503, #876).
             eligible = {
@@ -391,7 +400,7 @@ def _place_settled_queries(
             # and the floor's group tie-break use, so Phase 2 can never
             # re-pick between the same two tied engines just because of input
             # order (#503).
-            group_seed = ",".join(sorted(mqid for mqid, _ in members))
+            group_seed = ",".join(member_ids)
             winner, tie_kind = _pick_winner(
                 eligible, current_engines, source_compatible_engine, settled_counts, group_seed
             )
@@ -411,7 +420,7 @@ def _place_settled_queries(
                     tie_kind,
                     group_seed,
                     tie_relevant=member_tie_relevant,
-                    score_before=group_info["scores"].get(member_engine),
+                    score_before=group_scores.get(member_engine),
                     group=group_info,
                 )
                 if member_engine == winner:
@@ -434,7 +443,7 @@ def _place_settled_queries(
                     moved=True,
                     group=True,
                     original_tied=group_original_tied or member_tied,
-                    before_score=group_info["scores"].get(member_engine),
+                    before_score=group_scores.get(member_engine),
                 )
             continue
 

@@ -17,10 +17,16 @@ from src.agents.referee.reality_check_rules import (
     TARGET_ENGINE_COUNT,
     UNIQUE_DELTA_THRESHOLD,
     _group_eligible_engines,
-    _resolver_score,
+    _moving_group_scores,
+    _moving_members,
     _top_scorers,
 )
 from src.agents.referee.tie_break import break_tie, source_compatible_engine_survives
+
+
+def _in_group(trace_by_query: dict[str, dict], qid: str) -> bool:
+    """Whether the resolver recorded ``qid`` in a co-dependency group."""
+    return bool(trace_by_query.get(qid, {}).get("group"))
 
 
 def _evaluate_engine_removal(
@@ -134,6 +140,9 @@ def _evaluate_engine_removal(
     # #600: for each native query ``engine`` scores >= every alternative on,
     # the best-scoring alternatives (the engines it would otherwise go to).
     best_rivals_by_qid: dict[str, list[str]] = {}
+    # Split-group members (#894): ``engine`` cannot keep them as one unit, so
+    # they are left out of Decision 13's every-query check as well.
+    split: list[str] = []
 
     for qa in native_qas:
         qid = qa["query_id"]
@@ -154,8 +163,21 @@ def _evaluate_engine_removal(
         if not eligible_alts:
             irreplaceable.append(qid)
             continue
-        this_score = _resolver_score(trace_by_query, qid, engine) or 0
-        alt_scores = {alt: _resolver_score(trace_by_query, qid, alt) or 0 for alt in eligible_alts}
+        # #894: a group member is judged on the group's score, never its own.
+        scored = _moving_group_scores(
+            _moving_members(qid, trace_by_query, mandatory_query_ids, current_engine_by_qid),
+            [engine, *eligible_alts],
+            trace_by_query,
+        )
+        if engine not in scored and _in_group(trace_by_query, qid):
+            # ``engine`` cannot serve every moving member (a split group):
+            # the group is not held here as one unit, so it has no value on
+            # ``engine`` to weigh -- never a 0 the scorer did not give.
+            redundant.append(qid)
+            split.append(qid)
+            continue
+        this_score = scored.get(engine, 0)
+        alt_scores = {alt: scored[alt] for alt in eligible_alts}
         best_alt = max(alt_scores.values())
         delta = this_score - best_alt
         deltas.append(delta)
@@ -187,7 +209,8 @@ def _evaluate_engine_removal(
         return False, assessment, 0.0
     if (
         engine == source_compatible_engine
-        and len(best_rivals_by_qid) == len(native_qas)
+        and best_rivals_by_qid
+        and len(best_rivals_by_qid) == len(native_qas) - len(split)
         and source_compatible_engine_survives(
             ENGINE_BASE_COST.get(engine, 100),
             (
@@ -284,17 +307,28 @@ def _removal_tiebreak_key(
         )
         if not alts:
             continue
-        own_score = _resolver_score(trace_by_query, qid, engine) or 0
-        alt_scores = {alt: _resolver_score(trace_by_query, qid, alt) or 0 for alt in alts}
+        # #894: a group member is scored with its group, so the group has one destination.
+        members = _moving_members(qid, trace_by_query, mandatory_query_ids, current_engine_by_qid)
+        scored = _moving_group_scores(members, [engine, *alts], trace_by_query)
+        alt_scores = {alt: scored[alt] for alt in alts}
         top_alts = _top_scorers(alt_scores)
         best_alt = (
             top_alts[0]
             if len(top_alts) == 1
-            else break_tie(top_alts, set(), source_compatible_engine, settled_counts, qid)[0]
+            else break_tie(
+                top_alts,
+                set(),
+                source_compatible_engine,
+                settled_counts,
+                # The group's stable seed (sorted member ids), as every pass uses.
+                ",".join(members),
+            )[0]
         )
-        best_score = alt_scores[best_alt]
         destinations.add(best_alt)
-        total_fit_lost += own_score - best_score
+        if engine in scored or not _in_group(trace_by_query, qid):
+            # A split group (``engine`` cannot serve every moving member)
+            # loses no fit it had here as one unit, so it adds none.
+            total_fit_lost += scored.get(engine, 0) - alt_scores[best_alt]
     return len(destinations), total_fit_lost
 
 
