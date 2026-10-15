@@ -584,3 +584,31 @@ class TestSequenceReads:
     def test_application_access_is_not_utility(self, sql):
         text, tables = _collected(sql)
         assert is_utility_statement(text, tables) is False
+
+
+class TestCommentStrippingIsLinear:
+    """#808: the trailing-comment regex backtracked exponentially on a run of
+    ``--`` or ``*//*``; every entry point that strips comments now finishes a
+    100k-character pathological input well under a second."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "--" * 50_000 + "\nx",
+            "SELECT last_value FROM badges_id_seq " + "--" * 50_000 + "\nx",
+            "/*" + "*//*" * 25_000 + "x",
+            "SELECT last_value FROM badges_id_seq /*" + "*//*" * 25_000 + "x",
+        ],
+        ids=["dashes", "dashes after a sequence read", "blocks", "blocks after a sequence read"],
+    )
+    def test_pathological_comments_finish_fast(self, text):
+        import time
+
+        from src.agents.referee.cache_overlay import _strip_leading_comments
+        from src.agents.referee.utility_statements import is_sequence_state_read
+
+        start = time.perf_counter()
+        is_sequence_state_read(text)
+        is_utility_statement(text, ["unknown"])
+        _strip_leading_comments(text)
+        assert time.perf_counter() - start < 1.0

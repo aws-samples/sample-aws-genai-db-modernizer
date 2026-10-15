@@ -50,6 +50,7 @@ from src.shared.cache_engines import CACHE_ENGINES, HOT_READ_MIN_CALLS_PER_SECON
 from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
+from src.shared.sql_comments import strip_leading_comments
 
 if TYPE_CHECKING:
     from src.agents.referee.move_ledger import MoveLedger
@@ -120,11 +121,11 @@ _SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
 _WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
 _LOCKING_RE = re.compile(r"\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b", re.IGNORECASE)
 
-# A leading ``--`` or ``#`` line comment, or a ``/* ... */`` block comment,
-# repeated as many times as the statement opens with one (review of #303: a
-# statement opening with a comment is typed ``OTHER`` by the collector
-# because the SQL verb is no longer the first token).
-_LEADING_COMMENT_RE = re.compile(r"^(\s*(--[^\n]*\n|#[^\n]*\n|/\*.*?\*/)\s*)+", re.DOTALL)
+# Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
+# many as the statement opens with, are stripped first (review of #303: a
+# statement opening with a comment is typed ``OTHER`` by the collector because
+# the SQL verb is no longer the first token). ``src.shared.sql_comments`` does
+# it in linear time (#808).
 # A DML keyword anywhere in the statement -- not just at the start -- so a
 # data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
 # is caught too, the same way the collector's own query_type misses it.
@@ -138,7 +139,7 @@ _LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE
 
 
 def _strip_leading_comments(text: str) -> str:
-    return _LEADING_COMMENT_RE.sub("", text, count=1) if text else text
+    return strip_leading_comments(text, hash_comments=True, strip_following_space=True)
 
 
 def _is_session_key_name(name: str) -> bool:

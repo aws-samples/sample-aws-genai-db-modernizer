@@ -53,12 +53,12 @@ import re
 from collections.abc import Iterable
 
 from src.agents.referee.table_resolution import PSEUDO_TABLES
+from src.shared.sql_comments import strip_leading_comments, strip_trailing_comments
 
-# A leading ``/* block */`` or ``-- line`` comment, repeated, before the verb
-# that actually marks the statement. Stripped before any verb match so a
+# Leading ``/* block */`` and ``-- line`` comments before the verb that
+# actually marks the statement are stripped before any verb match, so a
 # commented-out utility statement (``/* schema dump */ SHOW TABLES``) is still
-# caught.
-_LEADING_COMMENT_RE = re.compile(r"^(?:\s*(?:/\*.*?\*/|--[^\n]*\n))+", re.DOTALL)
+# caught. ``src.shared.sql_comments`` does it in linear time (#808).
 
 # A leading SQL verb that marks a statement as DDL, transaction control or
 # session/administration traffic rather than application read/write workload.
@@ -154,8 +154,6 @@ _SEQUENCE_STATE_READ_RE = re.compile(
     r"(?:\s+LIMIT\s+1)?\s*;?\s*$",
     re.IGNORECASE,
 )
-# One or more trailing ``-- line`` / ``/* block */`` comments.
-_TRAILING_COMMENT_RE = re.compile(r"(?:\s*(?:--[^\n]*|/\*.*?\*/))+\s*$", re.DOTALL)
 
 # PostgreSQL's sequence functions, called by name (not schema-qualified UDFs).
 _SEQUENCE_FUNCTION_RE = re.compile(
@@ -210,7 +208,7 @@ _SYSTEM_CATALOG_TABLE_RE = re.compile(r"^(pg_[a-z_]+|information_schema(\..+)?)$
 
 
 def _strip_leading_comments(text: str) -> str:
-    return _LEADING_COMMENT_RE.sub("", text)
+    return strip_leading_comments(text)
 
 
 def is_sequence_state_read(query_text: str | None) -> bool:
@@ -224,7 +222,7 @@ def is_sequence_state_read(query_text: str | None) -> bool:
     not hold it, and :func:`is_utility_statement` then counts it as utility.
     """
     text = _blank_string_literals(_strip_leading_comments(query_text or ""))
-    return bool(_SEQUENCE_STATE_READ_RE.search(_TRAILING_COMMENT_RE.sub("", text)))
+    return bool(_SEQUENCE_STATE_READ_RE.search(strip_trailing_comments(text)))
 
 
 def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
