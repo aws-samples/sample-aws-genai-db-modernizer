@@ -122,6 +122,7 @@ def route_unsupported_queries(
     query_signals: Mapping[str, list[str]] | None = None,
     source_engine: str = "",
     settled: Mapping[str, int] | None = None,
+    tied_engines: Mapping[str, list[str]] | None = None,
 ) -> RouterOutput:
     """Route unsupported queries to the best remaining engine by score.
 
@@ -156,6 +157,12 @@ def route_unsupported_queries(
         query_signals / source_engine / settled: the eligibility rule's triage
             signals, the source database engine and the settled workload, for
             the placement rule and the shared tie-break
+        tied_engines: {query_id: its unresolved tie} from the same assignment.
+            A flagged query (or group, using the tie a member carries) is
+            re-routed among its other tied engines first and keeps the tie
+            minus the flagged engine when the scorer leaves it unresolved,
+            exactly as the reality check's model-flag path does (ADR-031
+            Decisions 11 Amendment 2 and 12, #811)
 
     Returns:
         RouterOutput with routing decisions and terminal queries
@@ -166,6 +173,7 @@ def route_unsupported_queries(
     routing_flags_by_engine = routing_flags_by_engine or {}
     scoring_context = scoring_context or ScoringContext()
     query_map = query_map or {}
+    tied_engines = tied_engines or {}
 
     routings: list[QueryRouting] = []
     terminal: list[str] = []
@@ -229,6 +237,8 @@ def route_unsupported_queries(
             continue
         failed = set().union(*(failed_engines.get(m, set()) for m in members))
         remaining = [e for e in candidates if e not in failed]
+        # The unit's tie: the first member's that has one, the reality check's rule.
+        tie = next((list(tied_engines[m]) for m in members if tied_engines.get(m)), None)
         routing = route_flagged_unit(
             members,
             engine,
@@ -238,6 +248,7 @@ def route_unsupported_queries(
             query_signals=query_signals,
             source_engine=source_engine,
             settled=settled,
+            tied_engines=tie,
         )
         if routing.destination is None:
             terminal.extend(members)
@@ -278,6 +289,7 @@ def route_unsupported_queries(
                         tie_rule=routing.tie_rule,
                     ),
                     group_key=group_key(group_of[member]) if grouped else None,
+                    tied_engines=list(routing.tied),
                 )
             )
 

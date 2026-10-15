@@ -121,12 +121,15 @@ class TestTheRerouteVersionHoldsItsOwnMoves:
         # v1's own Moves are not copied into v2.
         assert len(_version(store, 1)["moves"]) == 4
 
-    def test_the_move_clears_a_tie_and_records_the_one_it_left(self, tmp_path) -> None:
+    def test_a_two_way_tie_settles_on_the_other_tied_engine(self, tmp_path) -> None:
+        """#811: the other tied engine (DocumentDB, 55) comes before Aurora
+        MySQL (70); one engine left is no tie, so the Move records the one it left."""
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store, tied={"q-1": ["documentdb", "dynamodb"]})
         CASE._run(store, [])
 
         (move,) = _moves(_version(store, 2))
+        assert move.to_engine == "documentdb"
         assert move.tied_engines == []
         assert move.evidence.previous_tied_engines == ["documentdb", "dynamodb"]
         assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
@@ -334,3 +337,152 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         _rollback_run(store)
 
         assert {m.query_id for m in _moves(_version(store, 3))} == {"q-1"}
+
+
+def _seed_tie_case(
+    store: LocalArtifactStore, scores: dict[str, float], *, tied: list[str] | None = None
+) -> None:
+    """The #629 seed with q-1 scored ``scores`` and a source with no
+    source-compatible engine among them, so an exact tie stays unresolved."""
+    _seed(store, tied={"q-1": tied} if tied else None)
+    for engine, score in scores.items():
+        store.write_json(
+            f"{PREFIX}/analysis-{engine}/analysis.json",
+            {"table_recommendations": [{"table_id": "t_q1", "confidence_score": score}]},
+        )
+    key = f"{PREFIX}/collector/output.json"
+    collector = store.read_json(key)
+    store.write_json(key, {**collector, "metadata": {"source_database": {"engine": "mongodb"}}})
+
+
+class TestTheRerouteKeepsTheTie:
+    """#811: the post-schema reroute keeps a query's tie the way the reality
+    check's model-flag path does (ADR-031 Decisions 11 Amendment 2 and 12)."""
+
+    def test_a_tied_engine_comes_before_a_higher_scoring_one(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed_tie_case(
+            store,
+            {"dynamodb": 70, "documentdb": 70, "aurora_mysql": 80},
+            tied=["documentdb", "dynamodb"],
+        )
+        CASE._run(store, [])
+
+        (move,) = _moves(_version(store, 2))
+        assert (move.from_engine, move.to_engine) == ("dynamodb", "documentdb")
+        assert move.tied_engines == []
+        assert move.evidence.previous_tied_engines == ["documentdb", "dynamodb"]
+        assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
+
+    def test_the_tie_minus_the_flagged_engine_is_kept(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed_tie_case(
+            store,
+            {"dynamodb": 70, "documentdb": 70, "aurora_mysql": 70},
+            tied=["aurora_mysql", "documentdb", "dynamodb"],
+        )
+        CASE._run(store, [])
+
+        v2 = _version(store, 2)
+        (move,) = _moves(v2)
+        assert move.to_engine in {"aurora_mysql", "documentdb"}
+        assert move.tied_engines == ["aurora_mysql", "documentdb"]
+        assert move.evidence.previous_tied_engines == ["aurora_mysql", "documentdb", "dynamodb"]
+        q1 = next(qa for qa in v2["query_assignments"] if qa["query_id"] == "q-1")
+        assert q1["tied_engines"] == ["aurora_mysql", "documentdb"]
+        router = store.read_json(f"{PREFIX}/post-schema-router/router_output.json")
+        assert router["routings"][0]["tied_engines"] == ["aurora_mysql", "documentdb"]
+        assert _replayed(store, 2) == move_ledger.state_of(v2["query_assignments"])
+
+    def test_an_untied_query_keeps_the_fresh_tie_the_scorer_leaves(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed_tie_case(store, {"dynamodb": 90, "documentdb": 70, "aurora_mysql": 70})
+        CASE._run(store, [])
+
+        (move,) = _moves(_version(store, 2))
+        assert move.tied_engines == ["aurora_mysql", "documentdb"]
+        assert move.evidence.previous_tied_engines == []
+        assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
+
+
+class TestTheRollbackAfterATieKeepingReroute:
+    """#807 round-2 review note on #811: once a reroute can keep a tie, the
+    rollback must tell "the tie was empty" from "the tie is unchanged"."""
+
+    def test_a_query_with_no_tie_before_gets_no_tie_back(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed_tie_case(store, {"dynamodb": 90, "documentdb": 70, "aurora_mysql": 70})
+        _rollback_run(store)
+
+        assert _moves(_version(store, 2))[0].tied_engines == ["aurora_mysql", "documentdb"]
+        (move,) = _moves(_version(store, 3))
+        assert move.to_engine == "dynamodb"
+        assert move.tied_engines == []
+        assert move.evidence.previous_tied_engines == ["aurora_mysql", "documentdb"]
+        v1, v3 = _version(store, 1), _version(store, 3)
+        assert v3["query_assignments"] == v1["query_assignments"]
+        assert _replayed(store, 3) == move_ledger.state_of(v1["query_assignments"])
+
+    def test_a_kept_tie_rolls_back_to_the_tie_before(self, tmp_path) -> None:
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed_tie_case(
+            store,
+            {"dynamodb": 70, "documentdb": 70, "aurora_mysql": 70},
+            tied=["aurora_mysql", "documentdb", "dynamodb"],
+        )
+        _rollback_run(store)
+
+        (move,) = _moves(_version(store, 3))
+        assert move.to_engine == "dynamodb"
+        assert move.tied_engines == ["aurora_mysql", "documentdb", "dynamodb"]
+        assert move.evidence.previous_tied_engines == ["aurora_mysql", "documentdb"]
+        assert _replayed(store, 3) == move_ledger.state_of(_version(store, 1)["query_assignments"])
+
+    def test_an_unchanged_tie_is_restored_as_it_was(self) -> None:
+        """A Move that leaves the tie as it was records no earlier tie
+        (``apply_to_assignment``); the rollback still restores that tie, not
+        an empty one."""
+        restated = {
+            "query_assignments": [
+                {"query_id": "q-1", "assigned_engine": "aurora_mysql", "tied_engines": ["a", "b"]}
+            ]
+        }
+        qa = dict(restated["query_assignments"][0])
+        ledger = move_ledger.ledger_for([qa])
+        move_ledger.apply_to_assignment(
+            ledger,
+            qa,
+            "documentdb",
+            pass_=move_ledger.MovePass.POST_SCHEMA_FLAG,
+            reason_code=move_ledger.ReasonCode.FLAG_CAPABILITY_GAP,
+            tied_engines=["a", "b"],
+        )
+        assert ledger.moves[0].evidence.previous_tied_engines == []
+        rerouted = {
+            "query_assignments": [qa],
+            "moves": [m.model_dump(mode="json") for m in ledger.moves],
+        }
+
+        (back,) = [
+            Move.model_validate(m) for m in LocalOrchestrator._rollback_moves(rerouted, restated)
+        ]
+
+        assert (back.to_engine, back.tied_engines) == ("aurora_mysql", ["a", "b"])
+        assert back.evidence.previous_tied_engines == []
+
+    def test_a_move_whose_tie_record_disagrees_with_the_input_is_refused(self, tmp_path) -> None:
+        """The reverse Moves never trust a tie the input does not have: a Move
+        recording an earlier tie the restated version lacks fails loudly."""
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        _seed(store, tied={"q-1": ["documentdb", "dynamodb"]})
+        CASE._run(store, [])
+        rerouted, restated = _version(store, 2), _version(store, 1)
+        untied = {
+            **restated,
+            "query_assignments": [
+                {**qa, "tied_engines": []} for qa in restated["query_assignments"]
+            ],
+        }
+
+        with pytest.raises(RuntimeError, match="records the tie"):
+            LocalOrchestrator._rollback_moves(rerouted, untied)

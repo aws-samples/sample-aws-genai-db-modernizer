@@ -7,9 +7,10 @@ remaining engine (#629). The destination is always the scorer's choice.
 
 Each routing also carries what its Move records (#616, #489 Track L PR4): the
 runner-up, the evidence (candidate ladder, tie rule, a group's mean scores)
-and a co-dependency group's key. The orchestrator writes the routings as
-``post_schema_flag`` Moves (``move_ledger.apply_to_assignment``); the three
-fields are optional, so a router output written before them still loads.
+and a co-dependency group's key, and the tie the move leaves (#811). The
+orchestrator writes the routings as ``post_schema_flag`` Moves
+(``move_ledger.apply_to_assignment``); these fields are optional, so a router
+output written before them still loads.
 """
 
 from __future__ import annotations
@@ -55,6 +56,13 @@ class QueryRouting(BaseModel):
     group_key: str | None = Field(
         None,
         description="The co-dependency group the query moved with (move_ledger.group_key)",
+    )
+    tied_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The tie the move leaves (sorted): the query's tie minus the flagged engine "
+            "when the scorer leaves it unresolved, empty when it is settled (#811)"
+        ),
     )
 
 

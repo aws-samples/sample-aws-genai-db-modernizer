@@ -534,6 +534,13 @@ class LocalOrchestrator(Orchestrator):
                     if qa.get("customer_override")
                 },
                 co_dependency_groups=assignment.get("co_dependency_groups", []),
+                # A tied query is re-routed among its tied engines first and
+                # keeps the rest of its tie (ADR-031 Decision 12, #811).
+                tied_engines={
+                    qa["query_id"]: list(qa["tied_engines"])
+                    for qa in assignment.get("query_assignments", [])
+                    if qa.get("tied_engines")
+                },
                 **scoring,
             )
             router_output.job_id = job_id
@@ -658,11 +665,10 @@ class LocalOrchestrator(Orchestrator):
                 runner_up=routing.runner_up,
                 evidence=routing.evidence or MoveEvidence(),
                 group_key=routing.group_key,
-                # Today's behaviour, kept: a reroute clears the query's tie, even
-                # when an exact tie picked the destination (its rule is then in
-                # evidence.tie_rule). Keeping the tie (ADR-031 Decision 12) is
-                # a tracked follow-up.
-                tied_engines=[],
+                # The tie the router left: the query's tie minus the flagged
+                # engine while it stays unresolved, else none (ADR-031
+                # Decision 12, #811); the reality check's model-flag rule.
+                tied_engines=list(routing.tied_engines),
                 actor=MoveActor.MODEL_FLAG,
             )
             qa["assignment_reason"] = f"post-schema routing: {routing.reason}"
@@ -841,27 +847,46 @@ class LocalOrchestrator(Orchestrator):
         ``restated`` (the version the reroute was derived from): a query the
         reroute never moved that differs between the two is refused, not
         silently given a Move.
+
+        The tie each reverse Move restores is the one the undone Move found
+        (#811). A Move records it in ``previous_tied_engines`` only when it
+        changed the tie, so an empty list there means either "the tie was
+        empty" or "the tie did not change". The rollback tells them apart from
+        the state the reroute started from (``restated``, the reroute's input),
+        stepped through the reroute's Moves in order, and refuses a Move whose
+        record disagrees with that state.
         """
         from src.agents.referee.move_ledger import apply, check_replay, ledger_for, state_of
         from src.contracts.move_ledger import Move, MoveEvidence, MovePass, ReasonCode
 
         rerouted_qas = rerouted.get("query_assignments", [])
         ledger = ledger_for(rerouted_qas)
-        undone = sorted(
+        done = sorted(
             (Move.model_validate(m) for m in rerouted.get("moves") or []),
             key=lambda m: m.seq,
-            reverse=True,
         )
-        for move in undone:
+        # The tie each Move found: the reroute's input, stepped through its Moves.
+        tie_now = {
+            qid: sorted(tie)
+            for qid, (_, tie) in state_of(restated.get("query_assignments", [])).items()
+        }
+        tie_before: dict[int, list[str]] = {}
+        for move in done:
+            before = tie_now.get(move.query_id, [])
+            recorded = sorted(move.evidence.previous_tied_engines)
+            if (recorded or before != move.tied_engines) and recorded != before:
+                raise RuntimeError(
+                    f"post-schema rollback: the Move of {move.query_id!r} records the tie "
+                    f"{recorded} before it, but the reroute's input has {before}"
+                )
+            tie_before[move.seq] = before
+            tie_now[move.query_id] = list(move.tied_engines)
+        for move in reversed(done):
             if move.from_engine is None:
                 raise RuntimeError(
                     f"post-schema rollback: {move.query_id!r} has no engine to go back to"
                 )
-            # The tie before the undone Move: ``apply_to_assignment`` records it
-            # in ``previous_tied_engines`` when the Move changed it, otherwise it
-            # is the Move's own. A reroute clears every tie today, so a query
-            # that was tied has its tie in ``previous_tied_engines``.
-            restored_tie = list(move.evidence.previous_tied_engines or move.tied_engines)
+            restored_tie = tie_before[move.seq]
             current_tie = ledger.tied_of(move.query_id)
             apply(
                 ledger,
