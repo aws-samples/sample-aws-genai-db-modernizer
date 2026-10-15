@@ -45,21 +45,16 @@ Cross-cutting signals:
 from __future__ import annotations
 
 import logging
-import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from src.agents.referee.cache_overlay import (
-    CACHE_OVERLAY_ENGINES,
-    HOT_READ_MIN_CALLS_PER_SECOND,
-    TOP_N_RE,
-    has_session_keyword,
-)
+from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, HOT_READ_MIN_CALLS_PER_SECOND
 from src.agents.referee.capability_registry import (
     detect_required_capabilities,
     requires_aggregation_capability,
 )
 from src.agents.referee.table_resolution import SourceScope
+from src.tools.sql.query_facts import query_facts
 
 logger = logging.getLogger(__name__)
 
@@ -279,11 +274,8 @@ def _is_eav_table(t: dict) -> bool:
 # Query-level signal detection (SQL text analysis)
 # ---------------------------------------------------------------------------
 
-_TIMESTAMP_RE = re.compile(
-    r"\b(created_at|updated_at|timestamp|event_time|open_date|close_date|"
-    r"created_date|modified_date|log_time|event_date)\b",
-    re.IGNORECASE,
-)
+# The text detectors below are engine-neutral query facts
+# (``src.tools.sql.query_facts``, #491), read once per query.
 
 
 def _detect_query_signals(co: dict) -> list[TriageSignal]:
@@ -313,6 +305,7 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
 
     for q in queries:
         text = (q.get("query_text") or "").lower()
+        facts = query_facts(q.get("query_text") or "")
         qtype = (q.get("query_type") or "").upper()
         cps = q.get("calls_per_second") or 0
         rows_avg = q.get("rows_returned_avg") or 0
@@ -322,19 +315,19 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         # Group 1: Key-value lookups
         if qtype == "SELECT" and not q.get("has_joins") and rows_avg <= 5:
             kv_lookups.append(qid)
-        if re.search(r"\b(max|min)\s*\(", text) and not q.get("has_joins"):
+        if facts.min_max_call and not q.get("has_joins"):
             kv_lookups.append(qid)
 
         # Group 2: Range queries (PK + sort key range)
-        if qtype == "SELECT" and re.search(r"\b(between|>=?|<=?)\b", text) and "order by" in text:
+        if qtype == "SELECT" and facts.range_with_order_by:
             range_queries.append(qid)
 
         # Group 3: Status-based filters
-        if re.search(r"\bstatus\s*=\s*[\?'\"]", text):
+        if facts.status_equals_value:
             status_filters.append(qid)
-        if re.search(r"\b(exists|not\s+exists)\s*\(", text):
+        if facts.exists_call:
             status_filters.append(qid)
-        if re.search(r"\bis\s+null\b", text) and q.get("has_joins"):
+        if facts.is_null and q.get("has_joins"):
             status_filters.append(qid)
 
         # Group 4: Write operations
@@ -352,7 +345,7 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         # Group 5: Complex joins (3+ tables, i.e. 2+ JOIN clauses). join_count
         # >= 3 used to require 4+ tables -- a 3-table join (join_count == 2)
         # scored no signal at all and was free to move to DynamoDB (#338).
-        if join_count >= 2 or (q.get("has_joins") and text.count(" join ") >= 2):
+        if join_count >= 2 or (q.get("has_joins") and facts.join_with_spaces_count >= 2):
             complex_joins.append(qid)
 
         # Group 6: Aggregations -- an aggregate function call needs real
@@ -365,20 +358,20 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
             aggregations.append(qid)
 
         # Group 7: Large result sets / bulk scans
-        if re.search(r"\bcount\s*\(\s*[\*1]\s*\)", text) and q.get("has_time_range_filter"):
+        if facts.count_star_or_one and q.get("has_time_range_filter"):
             large_scans.append(qid)
         if (q.get("full_table_scans") or 0) > 0 and rows_avg > 1000:
             large_scans.append(qid)
 
         # Group 8: Time-series / event log
-        if _TIMESTAMP_RE.search(text) and (
-            qtype == "INSERT" or (qtype == "SELECT" and "order by" in text)
+        if facts.event_timestamp_word and (
+            qtype == "INSERT" or (qtype == "SELECT" and facts.order_by_substring)
         ):
             timeseries.append(qid)
 
         # Group 9: Session store. Matched on the original text, not the
         # lower-cased one, so a PascalCase [SessionToken] still splits (#663).
-        if has_session_keyword(q.get("query_text") or ""):
+        if facts.session_key:
             session_store.append(qid)
 
         # Group 10: Metadata/config store (small result, high reads)
@@ -389,13 +382,13 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
         # Check both the collector's has_text_search flag AND SQL text patterns
         if q.get("has_text_search"):
             text_searches.append(qid)
-        elif re.search(r"\b(like|ilike)\s+['\"\?%]", text):
+        elif facts.like_pattern_value:
             text_searches.append(qid)
-        elif re.search(r"\b(tsvector|tsquery|to_tsvector|plainto_tsquery|match\s+against)\b", text):
+        elif facts.fulltext_word:
             text_searches.append(qid)
-        elif re.search(r"\b(regexp|rlike)\b", text):
+        elif facts.regexp_word:
             text_searches.append(qid)
-        elif re.search(r"\b(similarity\s*\(|pg_trgm)\b", text):
+        elif facts.similarity_or_trigram:
             text_searches.append(qid)
 
         # Cross-cutting: Time range filters
@@ -404,15 +397,15 @@ def _detect_query_signals(co: dict) -> list[TriageSignal]:
 
         # Cross-cutting: Leaderboard / top-N (ORDER BY + LIMIT, or T-SQL's
         # TOP (n) ... ORDER BY / FETCH FIRST|NEXT, #663; one pattern shared with
-        # the cache overlay, ``cache_overlay.TOP_N_RE``). Only a hot SELECT
+        # the cache overlay, the ``top_n_shape`` query fact). Only a hot SELECT
         # counts: a Rails ``.first`` / ``find_by`` at 0.01 calls/s has the same
         # shape and is not cache material (#296). The signal is a cache-overlay
         # hint, never an ownership override.
-        if qtype == "SELECT" and cps >= HOT_READ_MIN_CALLS_PER_SECOND and TOP_N_RE.search(text):
+        if qtype == "SELECT" and cps >= HOT_READ_MIN_CALLS_PER_SECOND and facts.top_n_shape:
             leaderboards.append(qid)
 
         # Cross-cutting: Subqueries
-        if q.get("has_subqueries") or text.count("select") > 1:
+        if q.get("has_subqueries") or facts.select_word_repeated:
             subqueries.append(qid)
 
         # Cross-cutting: High-frequency reads

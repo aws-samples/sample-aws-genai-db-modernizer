@@ -52,6 +52,7 @@ from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
 from src.shared.sql_comments import strip_leading_comments
+from src.tools.sql.query_facts import query_facts
 
 if TYPE_CHECKING:
     from src.agents.referee.move_ledger import MoveLedger
@@ -90,67 +91,12 @@ PATTERN_LABELS: dict[str, str] = CACHE_PATTERN_LABELS
 
 WRITE_QUERY_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT"})
 
-# A top-N read: ``ORDER BY ... LIMIT n``, or its T-SQL and ANSI spellings (#663),
-# ``SELECT TOP (n) ... ORDER BY`` and ``ORDER BY ... [OFFSET ...] FETCH {FIRST|NEXT}``.
-# TOP takes a number, a ``(expression)`` or a variable, so a column named ``top``
-# is not one; TOP with no ORDER BY returns arbitrary rows and is not a top-N.
-TOP_N_RE = re.compile(
-    r"order\s+by\b.*\b(?:limit|fetch\s+(?:first|next))\b|\btop\s*(?:\(|\d|@).*\border\s+by\b",
-    re.IGNORECASE | re.DOTALL,
-)
 _WHERE_RE = re.compile(r"\bwhere\b", re.IGNORECASE)
 _KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
 _AGGREGATE_RE = re.compile(r"\bgroup\s+by\b|\b(sum|count|avg)\s*\(", re.IGNORECASE)
 _TEXT_SEARCH_RE = re.compile(
     r"\b(i?like|regexp|rlike)\b|\bmatch\s*\(|to_tsvector|to_tsquery|@@", re.IGNORECASE
 )
-# Same keywords as triage's session_store signal (both call has_session_keyword).
-SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
-# The parts of a PascalCase / camelCase name: ``SessionToken`` -> Session, Token;
-# ``CSRFToken`` -> CSRF, Token; ``sessionId`` -> session, Id; ``SessionID`` -> Session, ID.
-_NAME_PART_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
-_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
-# The two-part session-store key names a PascalCase or camelCase schema uses
-# (#663, kept narrow after review: ``session_store`` alone selects analysis
-# agents). ``<prefix>Token`` for these prefixes, or ``Session{Id,Key,Token}``.
-# Not ``SessionTimeout``, ``TokenCount``, ``TrainingSession``, ``ExpressionToken``
-# or ``PaymentTokenVault``: a name part alone is not a session key. The
-# prefixes name a login, session or account-access credential: the session and
-# auth ones, and the one-time tokens an account flow looks up by value
-# (``ResetToken``, ``LoginToken``, ``RememberToken``, ``VerificationToken``,
-# ``InviteToken``, ``IdToken``, ..., #742). A token that is not a credential
-# (``PaymentToken``, ``DeviceToken``, ``UnsubscribeToken``) is not one.
-_SESSION_TOKEN_PREFIXES = frozenset(
-    {
-        # session and auth
-        "session",
-        "csrf",
-        "xsrf",
-        "auth",
-        "access",
-        "refresh",
-        "jwt",
-        "api",
-        "bearer",
-        "id",
-        "sso",
-        # login and account flows
-        "login",
-        "remember",
-        "reset",
-        "verification",
-        "verify",
-        "confirmation",
-        "confirm",
-        "activation",
-        "invite",
-        "invitation",
-        "magic",
-        "otp",
-    }
-)
-_SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
-_WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
 
 # Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
 # many as the statement opens with, are stripped first (review of #303: a
@@ -197,37 +143,11 @@ def _leading_comment_readings(text: str) -> tuple[str, ...]:
     return (plain,) if len(nested) > len(plain) else (plain, nested)
 
 
-def _is_session_key_name(name: str) -> bool:
-    """Whether a PascalCase/camelCase ``name`` is a two-part session or token key."""
-    parts = [p.lower() for p in _NAME_PART_RE.findall(name)]
-    if len(parts) != 2:
-        return False
-    head, tail = parts
-    return (tail == "token" and head in _SESSION_TOKEN_PREFIXES) or (
-        head == "session" and tail in _SESSION_KEY_SUFFIXES
-    )
-
-
 def has_session_keyword(text: str) -> bool:
-    """Whether ``text`` is a session/token statement (``session_store``, #663).
-
-    Either ``SESSION_RE`` matches a whole word (``session``, ``token``,
-    ``session_id``, ...), unchanged from before, or the WHERE clause filters on a
-    PascalCase/camelCase session key such as T-SQL's ``[SessionToken]``,
-    ``[CSRFToken]``, ``sessionId`` (:func:`_is_session_key_name`). The second rule
-    is deliberately narrow, because ``session_store`` selects analysis agents on
-    its own: a name part such as ``[SessionTimeout]`` or ``[TokenCount]`` does not
-    count, and neither does a ``[UserSession]`` query keyed by something else or
-    a session key named only in the select list. Needs the SQL in its original
-    case.
-    """
-    text = text or ""
-    if SESSION_RE.search(text):
-        return True
-    where = _WHERE_CLAUSE_RE.search(text)
-    if where is None:
-        return False
-    return any(_is_session_key_name(name) for name in _IDENTIFIER_RE.findall(where.group(1)))
+    """Whether ``text`` is a session/token statement (``session_store``, #663):
+    the engine-neutral ``session_key`` query fact (``src.tools.sql.query_facts``,
+    #491). Needs the SQL in its original case."""
+    return query_facts(text or "").session_key
 
 
 def is_write_query(query: Mapping) -> bool:
@@ -311,6 +231,7 @@ def cache_pattern(query: Mapping) -> str | None:
     so the overlay is re-evaluated identically wherever only the collector is at hand.
     """
     text = str(query.get("query_text") or "")
+    facts = query_facts(text)
     if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or locking_clause(text):
         return None
     # A sequence fetch returns a new value on every call: a cached answer is wrong (#654).
@@ -318,9 +239,9 @@ def cache_pattern(query: Mapping) -> str | None:
         return None
     if query.get("has_text_search") or query.get("has_aggregations"):
         return None
-    if has_session_keyword(text):
+    if facts.session_key:
         return CACHE_HINT_SIGNALS["session_store"]
-    if TOP_N_RE.search(text):
+    if facts.top_n_shape:
         return "top_n" if float(query.get("rows_returned_avg") or 0) > 1 else "point_lookup"
     parts = _WHERE_RE.split(text, maxsplit=1)
     if len(parts) == 2:

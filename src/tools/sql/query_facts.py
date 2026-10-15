@@ -37,7 +37,7 @@ import re
 from functools import cached_property, lru_cache
 
 from src.shared.unsupported_pattern import is_dedup_only_group_by
-from src.tools.sql.regex_facts import regex_join_count, regex_wildcard_leading
+from src.tools.sql.regex_facts import regex_has_subquery, regex_join_count, regex_wildcard_leading
 
 __all__ = ["QueryFacts", "query_facts"]
 
@@ -461,6 +461,124 @@ GEOSPATIAL_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Workload signals (triage's detectors, moved here from
+# ``src.agents.referee.triage``). Each reads the lower-cased text, as triage did.
+# ---------------------------------------------------------------------------
+
+_MIN_MAX_CALL_RE = re.compile(r"\b(max|min)\s*\(")
+_STATUS_EQUALS_VALUE_RE = re.compile(r"\bstatus\s*=\s*[\?'\"]")
+_EXISTS_CALL_RE = re.compile(r"\b(exists|not\s+exists)\s*\(")
+_IS_NULL_RE = re.compile(r"\bis\s+null\b")
+_COUNT_STAR_OR_ONE_RE = re.compile(r"\bcount\s*\(\s*[\*1]\s*\)")
+_EVENT_TIMESTAMP_WORD_RE = re.compile(
+    r"\b(created_at|updated_at|timestamp|event_time|open_date|close_date|"
+    r"created_date|modified_date|log_time|event_date)\b",
+    re.IGNORECASE,
+)
+_LIKE_PATTERN_VALUE_RE = re.compile(r"\b(like|ilike)\s+['\"\?%]")
+_FULLTEXT_WORD_RE = re.compile(
+    r"\b(tsvector|tsquery|to_tsvector|plainto_tsquery|match\s+against)\b"
+)
+_REGEXP_WORD_RE = re.compile(r"\b(regexp|rlike)\b")
+_SIMILARITY_OR_TRIGRAM_RE = re.compile(r"\b(similarity\s*\(|pg_trgm)\b")
+
+
+# ---------------------------------------------------------------------------
+# Top-N and session-key shapes (moved here from ``src.agents.referee.cache_overlay``,
+# #296/#663). Triage and the cache overlay read the same facts.
+# ---------------------------------------------------------------------------
+
+# A top-N read: ``ORDER BY ... LIMIT n``, or its T-SQL and ANSI spellings (#663),
+# ``SELECT TOP (n) ... ORDER BY`` and ``ORDER BY ... [OFFSET ...] FETCH {FIRST|NEXT}``.
+# TOP takes a number, a ``(expression)`` or a variable, so a column named ``top``
+# is not one; TOP with no ORDER BY returns arbitrary rows and is not a top-N.
+_TOP_N_RE = re.compile(
+    r"order\s+by\b.*\b(?:limit|fetch\s+(?:first|next))\b|\btop\s*(?:\(|\d|@).*\border\s+by\b",
+    re.IGNORECASE | re.DOTALL,
+)
+# Same keywords for triage's session_store signal and the cache overlay (``session_key``).
+_SESSION_RE = re.compile(r"\b(session|token|sess_id|session_id|csrf)\b", re.IGNORECASE)
+# The parts of a PascalCase / camelCase name: ``SessionToken`` -> Session, Token;
+# ``CSRFToken`` -> CSRF, Token; ``sessionId`` -> session, Id; ``SessionID`` -> Session, ID.
+_NAME_PART_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+# The two-part session-store key names a PascalCase or camelCase schema uses
+# (#663, kept narrow after review: ``session_store`` alone selects analysis
+# agents). ``<prefix>Token`` for these prefixes, or ``Session{Id,Key,Token}``.
+# Not ``SessionTimeout``, ``TokenCount``, ``TrainingSession``, ``ExpressionToken``
+# or ``PaymentTokenVault``: a name part alone is not a session key. The
+# prefixes name a login, session or account-access credential: the session and
+# auth ones, and the one-time tokens an account flow looks up by value
+# (``ResetToken``, ``LoginToken``, ``RememberToken``, ``VerificationToken``,
+# ``InviteToken``, ``IdToken``, ..., #742). A token that is not a credential
+# (``PaymentToken``, ``DeviceToken``, ``UnsubscribeToken``) is not one.
+_SESSION_TOKEN_PREFIXES = frozenset(
+    {
+        # session and auth
+        "session",
+        "csrf",
+        "xsrf",
+        "auth",
+        "access",
+        "refresh",
+        "jwt",
+        "api",
+        "bearer",
+        "id",
+        "sso",
+        # login and account flows
+        "login",
+        "remember",
+        "reset",
+        "verification",
+        "verify",
+        "confirmation",
+        "confirm",
+        "activation",
+        "invite",
+        "invitation",
+        "magic",
+        "otp",
+    }
+)
+_SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
+_WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
+
+
+def _is_session_key_name(name: str) -> bool:
+    """Whether a PascalCase/camelCase ``name`` is a two-part session or token key."""
+    parts = [p.lower() for p in _NAME_PART_RE.findall(name)]
+    if len(parts) != 2:
+        return False
+    head, tail = parts
+    return (tail == "token" and head in _SESSION_TOKEN_PREFIXES) or (
+        head == "session" and tail in _SESSION_KEY_SUFFIXES
+    )
+
+
+def _has_session_key(text: str) -> bool:
+    """Whether ``text`` is a session/token statement (``session_store``, #663).
+
+    Either ``_SESSION_RE`` matches a whole word (``session``, ``token``,
+    ``session_id``, ...), unchanged from before, or the WHERE clause filters on a
+    PascalCase/camelCase session key such as T-SQL's ``[SessionToken]``,
+    ``[CSRFToken]``, ``sessionId`` (:func:`_is_session_key_name`). The second rule
+    is deliberately narrow, because ``session_store`` selects analysis agents on
+    its own: a name part such as ``[SessionTimeout]`` or ``[TokenCount]`` does not
+    count, and neither does a ``[UserSession]`` query keyed by something else or
+    a session key named only in the select list. Needs the SQL in its original
+    case.
+    """
+    text = text or ""
+    if _SESSION_RE.search(text):
+        return True
+    where = _WHERE_CLAUSE_RE.search(text)
+    if where is None:
+        return False
+    return any(_is_session_key_name(name) for name in _IDENTIFIER_RE.findall(where.group(1)))
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -801,6 +919,88 @@ class QueryFacts:
         ``geometry``).
         """
         return _contains_any(self._lower, GEOSPATIAL_KEYWORDS)
+
+    @cached_property
+    def min_max_call(self) -> bool:
+        """A ``MAX(`` or ``MIN(`` call."""
+        return bool(_MIN_MAX_CALL_RE.search(self._lower))
+
+    @cached_property
+    def status_equals_value(self) -> bool:
+        """``status = ?`` / ``status = '...`` / ``status = "...``."""
+        return bool(_STATUS_EQUALS_VALUE_RE.search(self._lower))
+
+    @cached_property
+    def exists_call(self) -> bool:
+        """``EXISTS (`` or ``NOT EXISTS (``."""
+        return bool(_EXISTS_CALL_RE.search(self._lower))
+
+    @cached_property
+    def is_null(self) -> bool:
+        """``IS NULL``."""
+        return bool(_IS_NULL_RE.search(self._lower))
+
+    @cached_property
+    def join_with_spaces_count(self) -> int:
+        """How many times `` join `` (a space on each side) appears in the lower-cased text."""
+        return self._lower.count(" join ")
+
+    @cached_property
+    def count_star_or_one(self) -> bool:
+        """``COUNT(*)`` or ``COUNT(1)``."""
+        return bool(_COUNT_STAR_OR_ONE_RE.search(self._lower))
+
+    @cached_property
+    def event_timestamp_word(self) -> bool:
+        """An event-time column word (``created_at``, ``updated_at``, ``timestamp``,
+        ``event_time``, ``open_date``, ``close_date``, ``created_date``,
+        ``modified_date``, ``log_time``, ``event_date``).
+        """
+        return bool(_EVENT_TIMESTAMP_WORD_RE.search(self._lower))
+
+    @cached_property
+    def like_pattern_value(self) -> bool:
+        """``LIKE``/``ILIKE`` followed by a quote, ``?`` or ``%``."""
+        return bool(_LIKE_PATTERN_VALUE_RE.search(self._lower))
+
+    @cached_property
+    def fulltext_word(self) -> bool:
+        """``tsvector``, ``tsquery``, ``to_tsvector``, ``plainto_tsquery`` or
+        ``match against`` as a word.
+        """
+        return bool(_FULLTEXT_WORD_RE.search(self._lower))
+
+    @cached_property
+    def regexp_word(self) -> bool:
+        """``regexp`` or ``rlike`` as a word."""
+        return bool(_REGEXP_WORD_RE.search(self._lower))
+
+    @cached_property
+    def similarity_or_trigram(self) -> bool:
+        """``similarity(`` followed by a word character, or ``pg_trgm``."""
+        return bool(_SIMILARITY_OR_TRIGRAM_RE.search(self._lower))
+
+    @cached_property
+    def select_word_repeated(self) -> bool:
+        """More than one ``select`` substring (the regex subquery test,
+        :func:`src.tools.sql.regex_facts.regex_has_subquery`).
+        """
+        return regex_has_subquery(self._text)
+
+    @cached_property
+    def top_n_shape(self) -> bool:
+        """A top-N read: ``ORDER BY ... LIMIT``/``FETCH FIRST|NEXT``, or
+        ``TOP (n)``/``TOP n``/``TOP @v`` ... ``ORDER BY``.
+        """
+        return bool(_TOP_N_RE.search(self._text))
+
+    @cached_property
+    def session_key(self) -> bool:
+        """A session/token statement (#663): a session word (``session``, ``token``,
+        ``sess_id``, ``session_id``, ``csrf``), or a two-part PascalCase/camelCase session
+        key in the WHERE clause (``[SessionToken]``, ``sessionId``). Reads the original case.
+        """
+        return _has_session_key(self._text)
 
     @property
     def needs_aggregation(self) -> bool:

@@ -35,6 +35,7 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "documentdb_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "opensearch_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "redis_analysis_tools.py",
+    _REPO / "src" / "agents" / "referee" / "triage.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -234,6 +235,21 @@ class TestFacts:
             ("SELECT * FROM t ORDER BY a", "order_by_substring"),
             ("SELECT * FROM t WHERE updated_at > ?", "timestamp_or_date_keyword"),
             ("SELECT ST_Distance(a, b) FROM t", "geospatial_keyword"),
+            ("SELECT MAX(id) FROM t", "min_max_call"),
+            ("SELECT * FROM t WHERE status = ?", "status_equals_value"),
+            ("SELECT * FROM t WHERE EXISTS (SELECT 1)", "exists_call"),
+            ("SELECT * FROM t WHERE a IS NULL", "is_null"),
+            ("SELECT COUNT(*) FROM t", "count_star_or_one"),
+            ("SELECT * FROM t WHERE event_date > ?", "event_timestamp_word"),
+            ("SELECT * FROM t WHERE a LIKE ?", "like_pattern_value"),
+            ("SELECT * FROM t WHERE MATCH AGAINST", "fulltext_word"),
+            ("SELECT * FROM t WHERE a RLIKE 'x'", "regexp_word"),
+            ("SELECT * FROM t WHERE similarity(a, 'x') > 0.3", "similarity_or_trigram"),
+            ("SELECT id FROM themes WHERE user_selectable", "select_word_repeated"),
+            ("SELECT * FROM t ORDER BY score DESC LIMIT 10", "top_n_shape"),
+            ("SELECT TOP (5) * FROM t ORDER BY a", "top_n_shape"),
+            ("SELECT * FROM sessions WHERE token = ?", "session_key"),
+            ("SELECT * FROM [UserSession] WHERE [SessionToken] = @t", "session_key"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -273,6 +289,11 @@ class TestFacts:
             ("SELECT a FROM t GROUP  BY a", "group_by_substring"),  # two spaces
             ("SELECT * FROM t WHERE a LIKE\n'x'", "like_keyword"),  # newline, no space
             ("SELECT * FROM t WHERE a > ?", "time_range_operator"),
+            ("SELECT * FROM t WHERE status = 1", "status_equals_value"),  # a bare number
+            ("SELECT COUNT(id) FROM t", "count_star_or_one"),
+            ("SELECT * FROM t WHERE a LIKE CONCAT('%', ?)", "like_pattern_value"),
+            ("SELECT * FROM t LIMIT 10", "top_n_shape"),  # no ORDER BY
+            ("SELECT * FROM t WHERE [SessionTimeout] > 5", "session_key"),
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):
@@ -286,6 +307,8 @@ class TestFacts:
     def test_counts(self):
         facts = query_facts("SELECT a, b, count(id), max(id) FROM t GROUP BY a, b")
         assert (facts.aggregate_call_word_count, facts.comma_count) == (3, 4)
+        joined = query_facts("SELECT * FROM a JOIN b ON 1=1 JOIN c ON 1=1\nJOIN d ON 1=1")
+        assert joined.join_with_spaces_count == 2
 
     def test_join_keyword_count_reads_every_join_word(self):
         assert query_facts("SELECT * FROM a JOIN b ON 1=1 -- join c").join_keyword_count == 2
