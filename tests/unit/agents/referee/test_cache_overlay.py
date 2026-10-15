@@ -23,7 +23,6 @@ from src.agents.referee.cache_overlay import (
     CACHE_MAX_ROWS_AVG,
     CACHE_OVERLAY_ENGINES,
     HOT_READ_MIN_CALLS_PER_SECOND,
-    NO_SERVICEABLE_CANDIDATE_REASON,
     NON_SYSTEM_OF_RECORD_ENGINES,
     WRITE_HEAVY_TABLE_MIN_WRITE_SHARE,
     apply_cache_overlay,
@@ -35,6 +34,7 @@ from src.agents.referee.cache_overlay import (
     fallback_owner,
     is_locking_read,
     is_write_query,
+    no_serviceable_candidate_reason,
     normalize_cache_owners,
     overlay_summary,
     refresh_cache_overlay,
@@ -723,12 +723,15 @@ class TestFallbackOwner:
     def test_no_candidate_falls_back_to_source_compatible_aurora(self):
         owner, tied, fallback_reason = _fallback_owner(None, [], source_engine="mysql")
         assert (owner, tied) == ("aurora_mysql", [])
-        assert fallback_reason == NO_SERVICEABLE_CANDIDATE_REASON.format(engine="Aurora MySQL")
+        assert fallback_reason == no_serviceable_candidate_reason("aurora_mysql", "mysql")
 
-    def test_no_candidate_with_no_source_defaults_to_aurora_postgresql(self):
+    def test_no_candidate_with_no_source_uses_the_generic_aurora_placeholder(self):
+        """#786: the shared fallback rule (``fallback_aurora_engine``), the same
+        one the first assignment uses: with no source there is no
+        source-compatible Aurora engine, so the generic placeholder."""
         owner, tied, fallback_reason = _fallback_owner(None, [])
-        assert (owner, tied) == ("aurora_postgresql", [])
-        assert fallback_reason == NO_SERVICEABLE_CANDIDATE_REASON.format(engine="Aurora PostgreSQL")
+        assert (owner, tied) == ("aurora", [])
+        assert fallback_reason == no_serviceable_candidate_reason("aurora", "")
 
     def test_source_compatible_engine_wins_a_full_tie_with_no_score_data(self):
         """With no analysis to score with, every candidate is tied
@@ -943,7 +946,7 @@ class TestFallbackOwner:
         )
         assert (owner, tied) == ("aurora_mysql", [])
         assert fallback_reason == (
-            "No analyzed engine can serve this query; it stays on Aurora MySQL, which "
+            "No analyzed engine can serve this query; it moves to Aurora MySQL, which "
             "runs the source SQL as is."
         )
 

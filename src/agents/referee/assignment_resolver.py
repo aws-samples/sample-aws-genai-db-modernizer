@@ -46,6 +46,7 @@ from src.agents.referee.aurora_choice import (
     AURORA_ENGINES,
     choose_heterogeneous_engine,
     detect_heterogeneous_features,
+    fallback_aurora_engine,
     pick_aurora_engine,
     pick_aurora_engine_with_tie,
     source_database_engine,
@@ -1006,8 +1007,11 @@ def _resolve_aurora_fallback(
     Uses the Aurora engine selected by triage. When both are selected, the one
     matching the source database's dialect wins, then the shared ADR-031
     tie-break on the recorded SETTLED workload decides (``pick_aurora_engine_
-    with_tie``, #288, #550). If no Aurora engine was selected, uses a generic
-    'aurora' placeholder (legacy behavior) and no tie.
+    with_tie``, #288, #550). If no Aurora engine was selected, uses the shared
+    fallback rule (:func:`src.agents.referee.aurora_choice.fallback_aurora_engine`,
+    #786): the source-compatible Aurora engine, else the generic ``aurora``
+    placeholder, and no tie -- the same engine ``cache_overlay.owner_decision``
+    falls back to.
 
     ``prior_choice`` (#381 review) is ``Assignment.aurora_engine_choice.engine``
     when the resolver already made that choice this run -- passed through so
@@ -1024,4 +1028,4 @@ def _resolve_aurora_fallback(
         prior_choice=prior_choice,
         tie_key=tie_key,
     )
-    return winner or "aurora", tie_kind
+    return winner or fallback_aurora_engine(source_engine), tie_kind

@@ -439,7 +439,6 @@ def _apply_cache_override(
                 qa,
                 owner,
                 pass_=MovePass.CACHE_OWNER_NORMALIZE,
-                reason_code=ReasonCode.CACHE_LEGACY_OWNER,
                 actor=MoveActor.CUSTOMER,
                 **owner_move_fields(decision),
             )

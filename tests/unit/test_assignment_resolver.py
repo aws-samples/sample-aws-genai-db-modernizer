@@ -465,9 +465,10 @@ class TestUtilityStatementsExcludedFromRouting:
         """With no Aurora candidate, the pin never leaves the query unset.
 
         DynamoDB fails the SQL-administration capability gate for SHOW, so it
-        is not a candidate (#766): the scored assignment is the generic Aurora
-        fallback, and the pin (which needs an analyzed Aurora engine) leaves
-        it as it is rather than unset."""
+        is not a candidate (#766): the scored assignment is the Aurora
+        fallback, which for this MySQL source is Aurora MySQL (the shared
+        fallback rule, #786), and the pin (which needs an analyzed Aurora
+        engine) leaves it as it is rather than unset."""
         resolver = AssignmentResolver()
         triage = _make_triage(["dynamodb"])
         collector = self._collector_with_metadata({"q1": "SHOW TABLES"}, "mysql")
@@ -477,7 +478,7 @@ class TestUtilityStatementsExcludedFromRouting:
 
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine == "aurora"
+        assert q1.assigned_engine == "aurora_mysql"
         assert [m.pass_ for m in result.moves if m.query_id == "q1"] == [MovePass.AURORA_FALLBACK]
 
 

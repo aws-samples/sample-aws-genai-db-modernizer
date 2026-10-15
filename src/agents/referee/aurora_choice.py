@@ -34,7 +34,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from src.agents.referee.tie_break import break_tie
-from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.triage import BASELINE, SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import has_sequence_reference
 from src.shared.engine_names import display_engine
 
@@ -468,6 +468,22 @@ def choose_heterogeneous_engine(
         "deciding_features": deciding_features,
         "reason": reason,
     }
+
+
+def fallback_aurora_engine(source_engine: str | None) -> str:
+    """The engine a query falls back to when no engine in play can serve it (#786).
+
+    The one rule both "no serviceable engine" fallbacks use: the first
+    assignment's Aurora fallback once no Aurora engine is in its pool
+    (``assignment_resolver._resolve_aurora_fallback``) and the cache owner
+    fallback (``cache_overlay.owner_decision``). It is the source-compatible
+    Aurora engine when the source has one (ADR-031 Decision 2 step 1: a
+    homogeneous source always has its matching relational engine as a
+    candidate), else the generic ``aurora`` placeholder: a heterogeneous
+    source has no source-compatible Aurora engine (Decision 6), and an
+    unknown source names none.
+    """
+    return SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower()) or BASELINE
 
 
 def pick_aurora_engine_with_tie(

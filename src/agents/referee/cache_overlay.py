@@ -451,12 +451,30 @@ def _score_candidates(
 # every registered capability includes both Aurora engines
 # (``capability_registry.ENGINE_CAPABILITIES``) and ``engine_exclusions``
 # has no rule that targets either one -- the capability gate can never rule
-# out the relational engine. For a homogeneous source it is also the engine
-# that already runs the source SQL unchanged.
-NO_SERVICEABLE_CANDIDATE_REASON = (
-    "No analyzed engine can serve this query; it stays on {engine}, which runs the "
+# out the relational engine. The query moves there (it is leaving the
+# cache). Only the source-compatible engine of a homogeneous source runs the
+# source SQL unchanged; the generic placeholder (a heterogeneous or unknown
+# source, #786) makes no such claim (ADR-031 Decision 6, Amendment 1).
+_NO_SERVICEABLE_SOURCE_COMPATIBLE = (
+    "No analyzed engine can serve this query; it moves to {engine}, which runs the "
     "source SQL as is."
 )
+_NO_SERVICEABLE_FALLBACK = (
+    "No analyzed engine can serve this query; it moves to {engine}, the relational fallback."
+)
+
+
+def no_serviceable_candidate_reason(engine: str, source_engine: str | None) -> str:
+    """The customer-facing sentence for a "no serviceable candidate" fallback onto ``engine``.
+
+    It says ``engine`` runs the source SQL as is only when ``engine`` is the
+    source's own Aurora engine (#816 review).
+    """
+    from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+
+    compatible = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower()) == engine
+    template = _NO_SERVICEABLE_SOURCE_COMPATIBLE if compatible else _NO_SERVICEABLE_FALLBACK
+    return template.format(engine=display_engine(engine))
 
 
 def fallback_owner(
@@ -495,16 +513,15 @@ def fallback_owner(
     exclusion/capability gate (``_candidate_scores`` returns ``{}``, not
     ``None``), there is no serviceable owner -- this is never a tie to
     resolve among engines already known unable to serve the query. Both
-    cases fall back to the source-compatible Aurora engine (the relational
-    baseline): for a HOMOGENEOUS source this is the same answer
-    ``AssignmentResolver.resolve()``'s own Step 7 Aurora fallback gives a
-    query no engine could score at all; for a heterogeneous source (SQL
-    Server, Oracle, DB2) ``resolve()``'s Step 7 instead follows the #381
-    ``aurora_engine_choice`` recorded for the run (via
-    ``_resolve_aurora_fallback``'s ``prior_choice``), which this function
-    does not have access to, so it always defaults to ``aurora_postgresql``
-    there regardless of which Aurora engine #381 chose (#549 round-3 review,
-    Suggestion 1).
+    cases fall back through the one shared rule,
+    :func:`src.agents.referee.aurora_choice.fallback_aurora_engine` (#786):
+    the source-compatible Aurora engine when the source has one, else the
+    generic ``aurora`` placeholder. ``AssignmentResolver.resolve()``'s Step 7
+    Aurora fallback uses the same rule once no Aurora engine is in its pool;
+    when one is (triage always selects the source's Aurora engine, and both
+    for a heterogeneous source), it follows that engine or the #381
+    ``aurora_engine_choice`` instead, which this function does not have
+    access to (#549 round-3 review, Suggestion 1).
 
     Returns ``(owner, tied_engines, fallback_reason)``. ``tied_engines`` is
     the sorted tied candidate set when ``break_tie`` reports the pick as an
@@ -512,7 +529,7 @@ def fallback_owner(
     recorded the same way every other tie-break call site in this codebase
     records it), else empty. ``fallback_reason`` is ``None`` for every real,
     scored (or tied-and-resolved) pick; it is
-    :data:`NO_SERVICEABLE_CANDIDATE_REASON` -- a complete, customer-facing
+    :func:`no_serviceable_candidate_reason` -- a complete, customer-facing
     sentence naming the owner with :func:`src.shared.engine_names.
     display_engine` -- for the "no candidate"/"no serviceable candidate"
     fallback above, so a caller never has to say "owned by {engine}" as if
@@ -542,6 +559,11 @@ class OwnerDecision:
     serviceable one (``None`` when there was no analysis to score with),
     ``gates`` the gate kind of each gated one, and ``tie_rule`` the tie rule
     that picked ``owner`` when an exact tie did (``None`` otherwise).
+    ``fallback_rule`` is the fallback rule when no candidate could serve the
+    query (#786: ``fallback.no_owner`` with no owner candidate at all,
+    ``fallback.no_score`` when every candidate is gated), the same reason
+    codes the first assignment's Aurora fallback records; ``None`` for a
+    scored pick.
     """
 
     owner: str
@@ -551,6 +573,7 @@ class OwnerDecision:
     scores: dict[str, float] | None = None
     gates: dict[str, str] = field(default_factory=dict)
     tie_rule: ReasonCode | None = None
+    fallback_rule: ReasonCode | None = None
 
 
 def owner_decision(
@@ -564,15 +587,18 @@ def owner_decision(
     ctx: ScoringContext | None = None,
 ) -> OwnerDecision:
     """:func:`fallback_owner`, returning the whole :class:`OwnerDecision`."""
+    from src.agents.referee.aurora_choice import fallback_aurora_engine
     from src.agents.referee.reality_check_rules import tie_reason_code
     from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 
     counts = owner_counts or {}
-    default = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower(), "aurora_postgresql")
-    fallback_reason = NO_SERVICEABLE_CANDIDATE_REASON.format(engine=display_engine(default))
+    default = fallback_aurora_engine(source_engine)
+    fallback_reason = no_serviceable_candidate_reason(default, source_engine)
     candidates = sorted(owner_candidates(set(engines), query))
     if not candidates:
-        return OwnerDecision(default, [], fallback_reason)
+        return OwnerDecision(
+            default, [], fallback_reason, fallback_rule=ReasonCode.FALLBACK_NO_OWNER
+        )
     scored = (
         _score_candidates(query, candidates, engines, triage, collector, ctx) if query else None
     )
@@ -586,7 +612,15 @@ def owner_decision(
     elif not scores:
         # Every candidate failed the exclusion/capability gate: there is no
         # serviceable owner among them, so this is not a tie either.
-        return OwnerDecision(default, [], fallback_reason, candidates, scores, gates)
+        return OwnerDecision(
+            default,
+            [],
+            fallback_reason,
+            candidates,
+            scores,
+            gates,
+            fallback_rule=ReasonCode.FALLBACK_NO_SCORE,
+        )
     else:
         top = max(scores.values())
         tied = sorted(e for e in scores if scores[e] == top)
@@ -607,11 +641,16 @@ def owner_decision(
 
 
 def owner_move_fields(decision: OwnerDecision) -> dict:
-    """The Move fields of a cache owner pick: its scores, runner-up and ladder (#616)."""
+    """The Move fields of a cache owner pick: its rule, scores, runner-up and ladder (#616).
+
+    The rule is ``cache.legacy_owner`` for a scored pick and the fallback rule
+    (``fallback.*``, #786) when no candidate could serve the query.
+    """
     from src.agents.referee.move_ledger import best_other, candidate_ladder
 
     scores = decision.scores or {}
     return {
+        "reason_code": decision.fallback_rule or ReasonCode.CACHE_LEGACY_OWNER,
         "score_after": scores.get(decision.owner),
         "runner_up": best_other(scores, decision.owner),
         "evidence": MoveEvidence(
@@ -661,7 +700,8 @@ def normalize_cache_owners(
     caller's to recompute.
 
     Each move is a Move on ``ledger`` (#616: pass ``cache_owner_normalize``,
-    rule ``cache.legacy_owner``, with the shared scorer's scores, the runner-up,
+    rule ``cache.legacy_owner``, or the ``fallback.*`` rule when no candidate
+    could serve the query (#786), with the shared scorer's scores, the runner-up,
     the candidate ladder and, when an exact tie picked the owner, the tie rule).
     A caller writing a new version passes the ledger that version's Moves come
     from. Without one, the change is to this version in memory: the Moves are
@@ -709,7 +749,6 @@ def normalize_cache_owners(
             qa,
             owner,
             pass_=MovePass.CACHE_OWNER_NORMALIZE,
-            reason_code=ReasonCode.CACHE_LEGACY_OWNER,
             **owner_move_fields(decision),
         )
         qa["signal_override"] = None
