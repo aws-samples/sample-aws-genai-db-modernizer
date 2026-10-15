@@ -9,7 +9,7 @@ that callers translate to their own protocol (HTTP status, chat message, ...).
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
@@ -28,14 +28,24 @@ from src.agents.referee.cache_overlay import (
     CACHE_OVERLAY_ENGINES,
     CUSTOMER_UNCACHE_REASON,
     available_cache_engine,
-    fallback_owner,
+    can_own,
     normalize_cache_owners,
     overlay_summary,
+    owner_decision,
+    owner_move_fields,
     pin_customer_cache,
     refresh_cache_overlay,
     write_heavy_tables,
 )
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    check_replay,
+    group_key,
+    ledger_for,
+    state_of,
+)
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import (
@@ -46,6 +56,7 @@ from src.contracts.assignment_models import (
     QueryAssignment,
     ValidationResult,
 )
+from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
@@ -249,7 +260,10 @@ def load_assignment_for_edit(
     An assignment written before the cache overlay (#296) can have ElastiCache
     owners, which the validator rejects; they are moved to their system-of-record
     engine here, in memory, with a note in ``cache_notes``, so the assignment
-    stays viewable and editable. The stored artifact is not rewritten.
+    stays viewable and editable. The stored artifact is not rewritten. Each
+    such move is a Move (#616, ``cache_owner_normalize``) appended to the
+    in-memory version's own ``moves``, so what is shown still replays from the
+    stored version.
 
     ``triage`` is read the same way ``collector_output`` is (missing reads as
     ``{}``) and passed to :func:`normalize_cache_owners` so its
@@ -260,7 +274,40 @@ def load_assignment_for_edit(
     also needs it (``apply_assignment_overrides``'s own ``fallback_owner``
     calls) does not read triage.json a second time.
     """
+    loaded = _load_for_edit(store, database_name, job_id, version, new_version=False)
+    return loaded.raw, loaded.collector_output, loaded.analysis_outputs, loaded.triage
+
+
+@dataclass
+class _EditInputs:
+    """What the customer gate reads to derive a new version (#616)."""
+
+    raw: dict
+    collector_output: dict
+    analysis_outputs: dict[str, dict]
+    triage: dict
+    # Each query's (engine, tied_engines) in the stored version, before the
+    # cache owner normalisation: the state the new version's Moves replay from.
+    stored_state: dict[str, tuple[str, list[str]]]
+    # The new version's ledger, holding the normalisation's Moves (None when
+    # the version is only read, not derived).
+    ledger: MoveLedger | None
+
+
+def _load_for_edit(
+    store: _Store,
+    database_name: str,
+    job_id: str,
+    version: int,
+    *,
+    new_version: bool,
+) -> _EditInputs:
+    """:func:`load_assignment_for_edit`'s reads. For a ``new_version`` the cache
+    owner normalisation is recorded on that version's ledger (returned);
+    otherwise on the in-memory version's own ``moves``."""
     raw = store.read_json(assignment_artifact_path(database_name, job_id, version))
+    stored_state = state_of(raw.get("query_assignments") or [])
+    ledger = ledger_for(raw.get("query_assignments") or []) if new_version else None
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
@@ -278,6 +325,7 @@ def load_assignment_for_edit(
         source_database_engine(collector_output),
         triage=triage,
         collector=collector_output,
+        ledger=ledger,
     ):
         qas = [QueryAssignment.model_validate(qa) for qa in raw["query_assignments"]]
         table_assignments, unresolved_table_names = derive_table_assignments(
@@ -289,7 +337,7 @@ def load_assignment_for_edit(
         )
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
-    return raw, collector_output, analysis_outputs, triage
+    return _EditInputs(raw, collector_output, analysis_outputs, triage, stored_state, ledger)
 
 
 def _apply_cache_override(
@@ -304,13 +352,21 @@ def _apply_cache_override(
     triage: dict | None,
     collector: dict | None,
     ctx: ScoringContext | None = None,
+    *,
+    ledger: MoveLedger,
 ) -> str | None:
-    """Apply a cache request to ``qa`` in place; return the note to record, if any."""
+    """Apply a cache request to ``qa`` in place; return the note to record, if any.
+
+    A cache engine cannot own ``qa``: when it does (a legacy owner the edit
+    surface did not already move), the owner :func:`owner_decision` picks is a
+    Move on ``ledger`` (#616: ``cache_owner_normalize``, actor ``customer``,
+    since the customer's cache request is what moved it).
+    """
     wants_cache = override.cached is True or override.assigned_engine in CACHE_OVERLAY_ENGINES
     if wants_cache:
         note = None
         if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
-            owner, tied, fallback_reason = fallback_owner(
+            decision = owner_decision(
                 query,
                 analysis_outputs,
                 source_engine,
@@ -319,6 +375,7 @@ def _apply_cache_override(
                 collector=collector,
                 ctx=ctx,
             )
+            owner, fallback_reason = decision.owner, decision.fallback_reason
             if fallback_reason:
                 note = (
                     f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot "
@@ -329,8 +386,15 @@ def _apply_cache_override(
                     f"Query {qa.query_id}: {qa.assigned_engine} is a cache layer and cannot "
                     f"own it; owned by {owner}, cached by {cache} as requested."
                 )
-            qa.assigned_engine = owner
-            qa.tied_engines = tied
+            apply_to_assignment(
+                ledger,
+                qa,
+                owner,
+                pass_=MovePass.CACHE_OWNER_NORMALIZE,
+                reason_code=ReasonCode.CACHE_LEGACY_OWNER,
+                actor=MoveActor.CUSTOMER,
+                **owner_move_fields(decision),
+            )
         elif override.assigned_engine in CACHE_OVERLAY_ENGINES:
             note = (
                 f"Query {qa.query_id}: requested engine {override.assigned_engine} is a "
@@ -391,9 +455,15 @@ def apply_assignment_overrides(
     if current_version == 0:
         raise NoAssignmentFound
 
-    raw, collector_output, analysis_outputs, triage = load_assignment_for_edit(
-        store, database_name, job_id, current_version
-    )
+    loaded = _load_for_edit(store, database_name, job_id, current_version, new_version=True)
+    raw, collector_output = loaded.raw, loaded.collector_output
+    analysis_outputs, triage = loaded.analysis_outputs, loaded.triage
+    # The move ledger of the new version (#616): it already holds the cache
+    # owner normalisation's Moves; every engine change below is a Move on it,
+    # and the version holds exactly these Moves.
+    ledger = loaded.ledger
+    if ledger is None:  # pragma: no cover - new_version=True always builds one
+        raise RuntimeError("customer gate: no move ledger for the new version")
     current = Assignment.model_validate(raw)
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_by_id = {q.get("query_id"): q for q in queries}
@@ -419,6 +489,28 @@ def apply_assignment_overrides(
         ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
+
+    def scores(query_id: str, from_engine: str, to_engine: str) -> dict:
+        """A customer Move's scores: the shared scorer's on both engines, and the
+        runner-up (the best-scoring other analyzed engine that may own the query)."""
+        from src.agents.referee.move_ledger import best_other
+        from src.agents.referee.query_scoring import score_query_for_engine
+
+        if ctx is None:
+            return {}
+        query = query_by_id.get(query_id) or {"query_id": query_id}
+        serviceable = {
+            engine: score
+            for engine in sorted(analysis_outputs)
+            if can_own(engine, query)
+            and (score := score_query_for_engine(query, engine, ctx).score) is not None
+        }
+        return {
+            "score_before": score_query_for_engine(query, from_engine, ctx).score,
+            "score_after": score_query_for_engine(query, to_engine, ctx).score,
+            "runner_up": best_other(serviceable, to_engine),
+        }
+
     cache_notes: list[str] = []
     # #548 round 2: every excluded override in the batch is collected and
     # reported together (never just the first), and a group move is checked
@@ -458,6 +550,7 @@ def apply_assignment_overrides(
             triage,
             collector_output,
             ctx,
+            ledger=ledger,
         )
         if note:
             cache_notes.append(note)
@@ -485,25 +578,35 @@ def apply_assignment_overrides(
                     )
                 )
             else:
-                qa.assigned_engine = override.assigned_engine
-                qa.customer_override = True
                 # #503: the customer's own pick is a real decision, so any open
                 # tie this query carried is resolved by it, not left to still
                 # read "pending your choice" after the customer chose -- and the
                 # reason itself is rewritten to say so, rather than leave the old
                 # tie sentence standing after the field it was about has already
                 # been cleared.
-                if qa.tied_engines:
+                was_tied = sorted(qa.tied_engines)
+                if qa.assigned_engine != override.assigned_engine or was_tied:
+                    # #616: the pick is a Move (pass and rule customer_pick,
+                    # actor customer) with the shared scorer's scores.
+                    apply_to_assignment(
+                        ledger,
+                        qa,
+                        override.assigned_engine,
+                        pass_=MovePass.CUSTOMER_PICK,
+                        reason_code=ReasonCode.CUSTOMER_PICK,
+                        tied_engines=[],
+                        actor=MoveActor.CUSTOMER,
+                        **scores(qa.query_id, qa.assigned_engine, override.assigned_engine),
+                    )
+                qa.customer_override = True
+                if was_tied:
                     others = ", ".join(
-                        display_engine(e)
-                        for e in sorted(qa.tied_engines)
-                        if e != qa.assigned_engine
+                        display_engine(e) for e in was_tied if e != qa.assigned_engine
                     )
                     qa.assignment_reason = (
                         f"Placed on {display_engine(qa.assigned_engine)} by your choice; "
                         f"scores tied with {others}."
                     )
-                    qa.tied_engines = []
         if override.in_scope is not None:
             qa.in_scope = override.in_scope
 
@@ -513,7 +616,7 @@ def apply_assignment_overrides(
     # of silently splitting. A cache request is not a re-route.
     owner_overrides = [o for o in overrides if o.assigned_engine not in CACHE_OVERLAY_ENGINES]
     propagated_query_ids, group_excluded = _propagate_codependent_overrides(
-        qa_map, owner_overrides, query_by_id, collector_output
+        qa_map, owner_overrides, query_by_id, collector_output, ledger=ledger, scores=scores
     )
     excluded.extend(group_excluded)
 
@@ -565,10 +668,9 @@ def apply_assignment_overrides(
             # again. The next synthesis run, if it drops anything from this
             # version's overlay, writes its own note here.
             "cache_safety_net_notes": [],
-            # #616: moves are per-version (only the Moves that produced this
-            # version). The customer gate does not record its own Moves yet
-            # (a later #616 change), so the new version starts empty.
-            "moves": [],
+            # #616: moves are per-version: exactly the Moves that produced this
+            # version (the cache owner normalisation's, then the customer's).
+            "moves": list(ledger.moves),
         }
     )
 
@@ -601,6 +703,14 @@ def apply_assignment_overrides(
         if in_scope_counts.get(engine, 0) == 0
     )
 
+    # #616: refuse a version whose engines do not follow from the stored one
+    # plus its own Moves (an engine set without move_ledger).
+    check_replay(
+        new_assignment.moves,
+        loaded.stored_state,
+        state_of(new_assignment.query_assignments),
+        "customer gate",
+    )
     new_path = assignment_artifact_path(database_name, job_id, new_version)
     store.write_json(new_path, new_assignment.model_dump(mode="json"))
 
@@ -654,6 +764,9 @@ def _propagate_codependent_overrides(
     overrides: list[QueryOverrideInput],
     query_by_id: dict[str, dict],
     collector_output: dict,
+    *,
+    ledger: MoveLedger,
+    scores: Callable[[str, str, str], dict] | None = None,
 ) -> tuple[list[str], list[ExcludedOverride]]:
     """Move a customer-re-routed query's co-dependent group-mates with it.
 
@@ -680,6 +793,10 @@ def _propagate_codependent_overrides(
 
     Best-effort: any error building the groups leaves the explicit overrides intact
     and propagates nothing — propagation is an enhancement, never a blocker.
+
+    Each move is a Move on ``ledger`` (#616: pass
+    ``customer_group_propagation``, rule ``group.customer_propagation``, actor ``customer``,
+    with the group's key), scored by ``scores(query_id, from, to)`` when given.
     """
     explicit: dict[str, str] = {
         ov.query_id: ov.assigned_engine for ov in overrides if ov.assigned_engine is not None
@@ -725,9 +842,19 @@ def _propagate_codependent_overrides(
                 )
                 continue
             if qa.assigned_engine != target:
-                qa.assigned_engine = target
+                # #503: a propagated move is a real decision too, so it clears a tie.
+                apply_to_assignment(
+                    ledger,
+                    qa,
+                    target,
+                    pass_=MovePass.CUSTOMER_GROUP_PROPAGATION,
+                    reason_code=ReasonCode.GROUP_CUSTOMER_PROPAGATION,
+                    group_key=group_key(group),
+                    tied_engines=[],
+                    actor=MoveActor.CUSTOMER,
+                    **(scores(qid, qa.assigned_engine, target) if scores else {}),
+                )
                 qa.co_dependency_propagated = True
-                qa.tied_engines = []  # #503: a propagated move is a real decision too
                 qa.assignment_reason = (
                     f"Co-located with co-dependent query group of {anchor} (shared JOIN) "
                     f"after a customer routing change."

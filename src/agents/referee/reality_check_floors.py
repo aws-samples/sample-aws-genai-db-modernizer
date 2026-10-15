@@ -542,7 +542,7 @@ def _apply_justification_floors(
                 continue
             target = absorber["target_engine"]
             floor_moves[qid] = _FloorMove(
-                tied=absorber.get("tied_engines", []),
+                tied=absorber.get("tied", []),
                 score_before=_resolver_score(trace_by_query, qid, engine),
                 score_after=_resolver_score(trace_by_query, qid, target),
                 runner_up=absorber.get("runner_up"),
@@ -854,7 +854,9 @@ def _find_best_absorber_for_query(
     if len(tied) == 1:
         return {
             **tied[0],
-            "tied_engines": [],
+            # The tie the move would leave (``tied``, not ``tied_engines``: this is
+            # a candidate, not a query record; the floor's Move sets the query's).
+            "tied": [],
             "runner_up": _runner_up(tied[0]["target_engine"]),
             "tie_rule": None,
         }
@@ -874,7 +876,7 @@ def _find_best_absorber_for_query(
     return {
         **winner,
         "reason": f"{winner['reason']}{tie_note}",
-        "tied_engines": sorted(tied_engine_names) if tie_kind == "tie_unresolved" else [],
+        "tied": sorted(tied_engine_names) if tie_kind == "tie_unresolved" else [],
         "runner_up": _runner_up(winner_engine),
         "tie_rule": tie_reason_code(tie_kind, tied_engine_names, settled_counts, qid),
     }

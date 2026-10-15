@@ -53,12 +53,14 @@ def _assignment(version: int, doc_engine: str = "documentdb", **extra: object) -
     }
 
 
-def _fake_reality_check(assignment, triage, analysis, collector, caps, source_engine=None) -> dict:
+def _fake_reality_check(
+    assignment, triage, analysis, collector, caps, source_engine=None, ledger=None
+) -> dict:
     """Consolidate documentdb into dynamodb; no-op when no documentdb query remains."""
     moved = [qa for qa in assignment["query_assignments"] if qa["assigned_engine"] == "documentdb"]
     # Every engine change goes through the move ledger (#616), as the real check's
     # do: the handler refuses to write a revision that does not replay.
-    ledger = ledger_for(assignment["query_assignments"])
+    ledger = ledger if ledger is not None else ledger_for(assignment["query_assignments"])
     revised = [dict(qa) for qa in assignment["query_assignments"]]
     for qa in revised:
         if qa["assigned_engine"] == "documentdb":

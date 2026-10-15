@@ -20,14 +20,11 @@ Steps, each in its own module:
      records describe the net per-query moves
   5. Architectural patterns and recommendations (``reality_check_patterns``)
 
-Every engine change these steps make (and the handler's model flags, sanity
-sweep and customer-override restore) goes through the move ledger
-(``move_ledger.apply_to_assignment``, #616), so the reality check's version
-holds exactly the Moves that produced it. One exception, closed by Track L
-PR3: before the check runs, the handler's ``normalize_cache_owners`` moves the
-ElastiCache owners of an assignment written before #296 to their
-system-of-record engine without a Move. Such a version replays from its input
-as the check read it (normalized), not from the stored one.
+Every engine change these steps make (and the handler's cache owner
+normalisation, model flags, sanity sweep and customer-override restore) goes
+through the move ledger (``move_ledger.apply_to_assignment``, #616), so the
+reality check's version holds exactly the Moves that produced it and replays
+from its stored input version.
 
 The eligibility gate, engine costs and tie-break all passes share live in
 ``reality_check_rules``. This module runs the steps in order and re-exports

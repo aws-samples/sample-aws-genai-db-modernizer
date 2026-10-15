@@ -57,7 +57,9 @@ from src.agents.referee.move_ledger import (
     apply,
     best_other,
     candidate_ladder,
+    check_replay,
     group_key,
+    state_of,
 )
 from src.agents.referee.query_scoring import (
     ScoringContext,
@@ -524,7 +526,6 @@ class AssignmentResolver:
         settled_counts = Counter(ledger.engines.values())
         if routing_trace is not None:
             routing_trace.record_settled_counts(settled_counts)
-        assigned_tied_engines: dict[str, list[str]] = {}
         if tied:
             source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
             for qids, best, top_score, kind, ranked in tied:
@@ -558,8 +559,6 @@ class AssignmentResolver:
                         group_key=group_key(qids) if is_group else None,
                         tied_engines=best if unresolved else (),
                     )
-                    if unresolved:
-                        assigned_tied_engines[qid] = sorted(best)
                     if kind == "individual":
                         assigned_confidence[qid] = top_score
                         assigned_reason[qid] = f"highest fit for {display_engine(winner)} ({why})"
@@ -614,7 +613,6 @@ class AssignmentResolver:
                     tied_engines=fallback_tied if fallback_tie_kind == "tie_unresolved" else (),
                 )
                 if fallback_tie_kind == "tie_unresolved":
-                    assigned_tied_engines[qid] = fallback_tied
                     if routing_trace is not None:
                         routing_trace.record_tie(qid, fallback_tie_kind)
 
@@ -688,8 +686,8 @@ class AssignmentResolver:
                 assigned_signal.pop(qid, None)
                 # The pin settles the query, so an unresolved tie it went
                 # through earlier (Step 6b or the Aurora fallback) leaves no
-                # customer choice open; the pin's Move records no tie either.
-                assigned_tied_engines.pop(qid, None)
+                # customer choice open: the pin's Move records no tie, which
+                # clears it in the ledger.
 
         # Step 7c: Populate the opt-in routing trace (#497), off by default
         # (``routing_trace is None``). Reads ``exclusion_notes``, ``anti_pattern_map``
@@ -796,7 +794,7 @@ class AssignmentResolver:
                     cache_engine=overlay_by_id[qid]["cache_engine"],
                     cache_pattern=overlay_by_id[qid]["cache_pattern"],
                     cache_reason=overlay_by_id[qid]["cache_reason"],
-                    tied_engines=assigned_tied_engines.get(qid, []),
+                    tied_engines=ledger.tied_of(qid),
                 )
             )
 
@@ -815,6 +813,10 @@ class AssignmentResolver:
 
         # Flatten co-dep groups to list of lists of query_ids
         co_dep_lists = [list(g) for g in co_dep_groups]
+
+        # #616 (ADR-031 Amendment 3): v1 must replay from its own Moves, the same
+        # write-time check every later version passes.
+        check_replay(ledger.moves, {}, state_of(query_assignments), "first assignment")
 
         return Assignment(
             job_id=collector_output.get("job_id", "unknown"),

@@ -4,9 +4,10 @@ Each assignment version holds only the Moves that produced it (design brief
 Option 1A), never a cumulative copy of v1's. Replaying v1's moves rebuilds v1;
 v1 plus each later version's own moves rebuilds that later version.
 
-The writers that derive a version from an earlier one -- the reality check,
-the customer gate, the post-schema router and its rollback -- do not record
-their own Moves yet (PR2-PR4 of #616), so today they start the new version
+The writers that derive a version from an earlier one hold only their own
+Moves: the reality check's and the customer gate's (#616 Track L PR2/PR3; an
+edit that changes no engine records none). The post-schema router and its
+rollback do not record theirs yet (Track L PR4), so they start the new version
 with an empty ``moves`` list rather than inheriting v1's.
 """
 

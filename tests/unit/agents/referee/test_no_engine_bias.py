@@ -353,9 +353,13 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
     # --- Real bias, already tracked by an open issue (not fixed here) ---
     (
         "cache_overlay.py",
-        "fallback_owner",
+        "owner_decision",
         RULE_SORTED_INDEX0,
-    ): "singleton guard: tied[0] runs only when len(tied) == 1; real ties go through break_tie (#549).",
+    ): (
+        "fallback_owner's pick (owner_decision since #616 returns what it compared): "
+        "singleton guard, tied[0] runs only when len(tied) == 1; real ties go through "
+        "break_tie (#549)."
+    ),
     (
         "aurora_choice.py",
         "choose_heterogeneous_engine",

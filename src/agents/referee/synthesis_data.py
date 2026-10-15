@@ -19,6 +19,7 @@ from src.agents.referee.cache_overlay import (
     overlay_summary,
     safety_net_note,
 )
+from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
     reality_check_run_for_lineage,
@@ -148,13 +149,33 @@ def load_synthesis_data(
                 required=False,
             )
 
+    # Each engine's analysis, read at most once: the cache owner normalisation
+    # below scores with it, and the per-engine artifacts reuse it.
+    analyses: dict[str, dict] = {}
+
+    def analysis_of(engine: str) -> dict:
+        if engine not in analyses:
+            analyses[engine] = _read_artifact(
+                store,
+                f"{database_name}/{job_id}/analysis-{engine}/analysis.json",
+                required=False,
+            )
+        return analyses[engine]
+
     # Legacy ElastiCache owners (an assignment written before the cache overlay,
-    # #296) move to their system-of-record engine, in memory only.
-    if data.assignment:
+    # #296) move to their system-of-record engine, in memory only. Scored with
+    # the engines' analysis, so the capability gate applies (#786: passing the
+    # engine names alone skipped it and tied every candidate), the same way the
+    # reality check and the customer gate score it. Each move is a Move appended
+    # to the in-memory version's own ``moves`` (#616, ``cache_owner_normalize``).
+    if data.assignment and any(
+        qa.get("assigned_engine") in CACHE_OVERLAY_ENGINES
+        for qa in data.assignment.get("query_assignments") or []
+    ):
         normalize_cache_owners(
             data.assignment,
             data.source_queries,
-            data.selected_engines,
+            {e: analysis_of(e) for e in _scoring_engines(data.selected_engines, data.assignment)},
             source_database_engine(data.collector),
             triage=data.triage,
             collector=data.collector,
@@ -192,11 +213,7 @@ def load_synthesis_data(
             continue
         artifacts = EngineArtifacts(engine=engine)
 
-        artifacts.analysis = _read_artifact(
-            store,
-            f"{database_name}/{job_id}/analysis-{engine}/analysis.json",
-            required=False,
-        )
+        artifacts.analysis = analysis_of(engine)
 
         # Schema design: versioned path when assignment_version > 0, else unversioned
         if assignment_version > 0:
@@ -237,6 +254,22 @@ def load_synthesis_data(
 
     _apply_cache_safety_net(data)
     return data
+
+
+def _scoring_engines(selected: list[str], assignment: dict) -> list[str]:
+    """The engines a cache owner is scored among: the selected ones, less a
+    placeholder engine (ADR-031 Decision 9) and the Aurora engine #381's
+    recorded choice says lost -- the set the reality check scores with."""
+    from src.agents.referee.aurora_choice import AURORA_ENGINES
+
+    choice = assignment.get("aurora_engine_choice")
+    winner = choice.get("engine") if isinstance(choice, dict) else None
+    return [
+        e
+        for e in selected
+        if e not in PLACEHOLDER_ENGINES
+        and not (winner in AURORA_ENGINES and e in AURORA_ENGINES and e != winner)
+    ]
 
 
 def _apply_cache_safety_net(data: SynthesisData) -> None:

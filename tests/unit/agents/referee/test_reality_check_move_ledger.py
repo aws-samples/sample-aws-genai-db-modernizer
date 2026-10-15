@@ -650,6 +650,25 @@ class TestTheHandlerRefusesAnUnexplainedRevision:
 
         assert not any("assignment/v2" in k for k in store._written)
 
+    def test_a_tie_set_without_a_move_fails_loudly(self) -> None:
+        """A tie-only change (the engine stays) with no Move is drift too: the
+        replay check compares ``tied_engines`` as well as the engine."""
+        from src.agents.referee.reality_check_handler import (
+            run_reality_check_deterministic,
+            write_reality_check_result,
+        )
+        from tests.unit.agents.referee.test_reality_check_llm_seam import _mock_store
+
+        store = _mock_store()
+        det = run_reality_check_deterministic("job-1", "mydb", store, 1)
+        stray = next(qa for qa in det["revised_assignments"] if qa["query_id"] == "DDB-AP-1")
+        stray["tied_engines"] = sorted({stray["assigned_engine"], "documentdb"})
+
+        with pytest.raises(RuntimeError, match="changed engine or tie without a Move"):
+            write_reality_check_result(store, "job-1", "mydb", det, 1)
+
+        assert not any("assignment/v2" in k for k in store._written)
+
     def test_a_clean_run_writes_a_version_that_replays(self) -> None:
         from src.agents.referee.reality_check_handler import (
             run_reality_check_deterministic,
@@ -668,11 +687,12 @@ class TestTheHandlerRefusesAnUnexplainedRevision:
         start = _state(_ASSIGNMENT["query_assignments"])
         assert replay(moves, start=start) == _state(written["query_assignments"])
 
-    def test_a_pre_296_cache_owner_is_the_named_exception(self) -> None:
+    def test_a_pre_296_cache_owner_is_a_move_and_replays_from_the_stored_input(self) -> None:
         """An assignment written before #296 has an ElastiCache owner, which
-        ``normalize_cache_owners`` moves without a Move (Track L PR3). The check
-        replays from the normalized input, so the write succeeds; replaying from
-        the stored input differs on exactly that query."""
+        ``normalize_cache_owners`` moves to a system-of-record engine. That is a
+        ``cache_owner_normalize`` Move (Track L PR3 closed PR2's named
+        exception), recorded first, so the revision replays from the stored
+        input, not only from the normalized one."""
         from copy import deepcopy
 
         from src.agents.referee.reality_check_handler import (
@@ -700,11 +720,17 @@ class TestTheHandlerRefusesAnUnexplainedRevision:
 
         written = _written_version(store, version)
         moves = [Move.model_validate(m) for m in written["moves"]]
-        assert moves and "DDB-AP-2" not in {m.query_id for m in moves}
+        first = moves[0]
+        assert (first.seq, first.query_id, first.pass_, first.reason_code) == (
+            1,
+            "DDB-AP-2",
+            MovePass.CACHE_OWNER_NORMALIZE,
+            ReasonCode.CACHE_LEGACY_OWNER,
+        )
+        assert first.from_engine == "elasticache"
+        assert first.to_engine == normalized["DDB-AP-2"]
         expected = _state(written["query_assignments"])
-        assert replay(moves, start=_state(det["assignment"]["query_assignments"])) == expected
-        from_stored = replay(moves, start=_state(stored["query_assignments"]))
-        assert {q for q in expected if from_stored[q] != expected[q]} == {"DDB-AP-2"}
+        assert replay(moves, start=_state(stored["query_assignments"])) == expected
 
 
 def _trace(scores: dict[str, dict[str, float]], groups: dict[str, dict] | None = None) -> dict:

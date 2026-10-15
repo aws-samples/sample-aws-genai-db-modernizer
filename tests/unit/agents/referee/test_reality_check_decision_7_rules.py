@@ -53,7 +53,7 @@ class TestMandatorySecondaryBonus:
             result = _absorb({"aurora_mysql": 70, "documentdb": 70}, mandatory={mandatory})
             assert result is not None
             assert result["target_engine"] == mandatory, other
-            assert result["tied_engines"] == []
+            assert result["tied"] == []
 
     def test_the_bonus_never_beats_a_higher_score(self) -> None:
         result = _absorb({"aurora_mysql": 71, "documentdb": 70}, mandatory={"documentdb"})
@@ -89,7 +89,7 @@ class TestMandatorySecondaryBonus:
         both = {"aurora_mysql", "documentdb"}
         result = _absorb({"aurora_mysql": 70, "documentdb": 70}, mandatory=both)
         assert result is not None
-        assert result["tied_engines"] == ["aurora_mysql", "documentdb"]
+        assert result["tied"] == ["aurora_mysql", "documentdb"]
 
 
 # --- reporting every removed engine and moved query ------------------------------

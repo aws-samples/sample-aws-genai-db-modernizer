@@ -23,7 +23,13 @@ from src.agents.referee.consolidation_validator import (
     validate_consolidations,
 )
 from src.agents.referee.model_flags import apply_consolidation_flags, parse_model_flags
-from src.agents.referee.move_ledger import MoveLedger, apply_to_assignment, ledger_for, replay
+from src.agents.referee.move_ledger import (
+    MoveLedger,
+    apply_to_assignment,
+    check_replay,
+    ledger_for,
+    state_of,
+)
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
@@ -123,12 +129,16 @@ def run_reality_check_deterministic(
         loser = next(e for e in AURORA_ENGINES if e != winner)
         analysis_outputs.pop(loser, None)
 
+    # The move ledger (#616) of the version this check writes, starting from the
+    # stored input: every engine change from here on is one Move on it, and the
+    # revision replays from ``input_state`` plus those Moves.
+    input_state = state_of(assignment.get("query_assignments", []))
+    ledger = ledger_for(assignment.get("query_assignments", []))
+
     # An assignment written before the cache overlay (#296) has ElastiCache owners:
     # move them to their system-of-record engine first, so the revision carries
-    # no cache owner (recorded in cache_notes). This is the one engine change of
-    # this run that is not a Move yet (Track L PR3 records it as
-    # cache_owner_normalize): the move ledger below starts from the normalized
-    # assignment, so the revision replays from its input as read here.
+    # no cache owner (recorded in cache_notes). Each is a cache_owner_normalize
+    # Move, recorded before the check's own.
     normalize_cache_owners(
         assignment,
         collector_output.get("queries", {}).get("query_patterns", []),
@@ -136,6 +146,7 @@ def run_reality_check_deterministic(
         source_database_engine(collector_output),
         triage=triage,
         collector=collector_output,
+        ledger=ledger,
     )
 
     # Extract query capabilities from triage
@@ -159,6 +170,7 @@ def run_reality_check_deterministic(
         collector_output,
         query_capabilities,
         source_engine=source_database_engine(collector_output),
+        ledger=ledger,
     )
     if pinned:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
@@ -168,16 +180,17 @@ def run_reality_check_deterministic(
             revised_by_id.get(qa["query_id"]) or deepcopy(qa) for qa in all_qas
         ]
 
-    # The move ledger (#616): every engine change this check makes, from Phase 2
-    # to the customer-override restore, is one Move on this ledger (the cache
-    # owner normalization above is the exception, Track L PR3). It holds the
-    # Moves ``run_reality_check`` recorded, and its engines are where every query
-    # (customer picks included) is now. The revised version holds exactly these
-    # Moves (moves are per-version).
+    # The move ledger (#616): every engine change this check makes, from the
+    # cache owner normalisation to the customer-override restore, is one Move on
+    # this ledger. It holds the Moves ``run_reality_check`` returned (the
+    # normalisation's first, on the ledger passed in), and its engines are where
+    # every query (customer picks included) is now. The revised version holds
+    # exactly these Moves (moves are per-version).
     check_ledger = result.get("move_ledger")
     ledger = MoveLedger(
         {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]},
-        check_ledger.moves if isinstance(check_ledger, MoveLedger) else [],
+        check_ledger.moves if isinstance(check_ledger, MoveLedger) else ledger.moves,
+        tied={qa["query_id"]: qa.get("tied_engines") or [] for qa in result["revised_assignments"]},
     )
 
     # Count queries per engine after reality check
@@ -203,6 +216,9 @@ def run_reality_check_deterministic(
         "lightweight_recommendations": result.get("lightweight_recommendations", []),
         # This check's Moves so far (#616); the later steps add theirs.
         "move_ledger": ledger,
+        # The stored input's (engine, tied_engines) per query: what the
+        # revision replays from (before the cache owner normalisation).
+        "input_state": input_state,
     }
 
 
@@ -681,28 +697,15 @@ def _apply_model_flags(result: dict, flags: list) -> None:
 def _check_replay(result: dict, moves: list) -> None:
     """Fail loudly when the revision does not replay from its input plus its Moves (#616).
 
-    The input is the assignment as this check read it: after
-    ``normalize_cache_owners`` (the one engine change that is not a Move yet,
-    Track L PR3), so an assignment written before #296 with ElastiCache owners
-    replays from its normalized form. Any other engine or tie set without a
-    Move (a stray write that bypassed ``move_ledger.apply``) raises here
-    instead of reaching a version that cannot be explained.
+    The input is the stored assignment version this check read
+    (``result["input_state"]``, before the cache owner normalisation, whose
+    changes are Moves too); a result built without one (an older caller)
+    replays from ``result["assignment"]``. Any engine or tie set without a Move
+    (a stray write that bypassed ``move_ledger.apply``) raises here instead of
+    reaching a version that cannot be explained.
     """
-    start = {
-        qa["query_id"]: (qa["assigned_engine"], list(qa.get("tied_engines") or []))
-        for qa in result["assignment"].get("query_assignments", [])
-    }
-    expected = {
-        qa["query_id"]: (qa["assigned_engine"], list(qa.get("tied_engines") or []))
-        for qa in result["revised_assignments"]
-    }
-    replayed = replay(moves, start=start)
-    bad = sorted(q for q in expected if replayed.get(q) != expected[q])
-    if bad:
-        raise RuntimeError(
-            f"reality check: {len(bad)} queries changed engine or tie without a Move "
-            f"(the revision does not replay from its input plus its moves): {bad[:5]}"
-        )
+    start = result.get("input_state") or state_of(result["assignment"].get("query_assignments", []))
+    check_replay(moves, start, state_of(result["revised_assignments"]), "reality check")
 
 
 def _ledger(result: dict) -> MoveLedger:

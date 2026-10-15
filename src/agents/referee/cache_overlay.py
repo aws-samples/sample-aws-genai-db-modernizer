@@ -40,16 +40,19 @@ from __future__ import annotations
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.utility_statements import is_sequence_fetch
+from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
 from src.shared.cache_engines import CACHE_ENGINES, HOT_READ_MIN_CALLS_PER_SECOND
 from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
 
 if TYPE_CHECKING:
+    from src.agents.referee.move_ledger import MoveLedger
     from src.agents.referee.query_scoring import ScoringContext
 
 # Engines that can only be a cache layer: they never own a query. Declared once
@@ -393,15 +396,33 @@ def _candidate_scores(
     mapping entirely, never recorded as a 0 a real, lower-but-serviceable
     score could lose to by accident.
 
-    ``engines`` is a plain engine-name iterable at some call sites (e.g.
-    ``normalize_cache_owners``'s synthesis-time caller, which only has the
-    selected engine list, not their analysis) and the real
-    ``{engine: analysis}`` mapping at others. ``None`` here -- rather than a
+    ``engines`` is normally the real ``{engine: analysis}`` mapping (every
+    production caller passes it since #786: the reality check, the customer
+    gate and synthesis); a plain engine-name iterable, or a candidate with no
+    analysis, still works. ``None`` here -- rather than a
     partial score for whichever candidates happen to have analysis and a
     silent exclusion for the rest -- means every remaining candidate is
     treated as tied (:func:`fallback_owner`), which is the honest answer
     when there is no fitness signal to compare them with, never a stand-in
     for "the engine with no analysis loses."
+    """
+    scored = _score_candidates(query, candidates, engines, triage, collector, ctx)
+    return None if scored is None else scored[0]
+
+
+def _score_candidates(
+    query: Mapping,
+    candidates: list[str],
+    engines: Iterable[str] | Mapping[str, Mapping],
+    triage: Mapping | None,
+    collector: Mapping | None,
+    ctx: ScoringContext | None = None,
+) -> tuple[dict[str, float], dict[str, str]] | None:
+    """:func:`_candidate_scores` plus each gated candidate's gate kind.
+
+    ``(scores, gates)``: ``scores`` as :func:`_candidate_scores` returns it, and
+    ``gates`` the scorer's gate kind for every candidate it gated (the move
+    ledger's candidate ladder, #616). ``None`` when there is no analysis.
     """
     if not isinstance(engines, Mapping):
         return None
@@ -410,6 +431,7 @@ def _candidate_scores(
     if ctx is None:
         ctx = ScoringContext.from_pipeline(engines, triage, collector)
     scores: dict[str, float] = {}
+    gates: dict[str, str] = {}
     for engine in candidates:
         analysis = engines.get(engine)
         if not isinstance(analysis, Mapping) or not analysis:
@@ -417,7 +439,9 @@ def _candidate_scores(
         result = score_query_for_engine(query, engine, ctx)
         if result.score is not None:
             scores[engine] = result.score
-    return scores
+        else:
+            gates[engine] = result.gate_kind or "gated"
+    return scores, gates
 
 
 # Customer-facing reason for fallback_owner's "no serviceable candidate"
@@ -495,6 +519,51 @@ def fallback_owner(
     Important 1: before this fix, both ``normalize_cache_owners`` and
     ``assignment_overrides._apply_cache_override`` wrote exactly that).
     """
+    decision = owner_decision(
+        query,
+        engines,
+        source_engine,
+        owner_counts,
+        triage=triage,
+        collector=collector,
+        ctx=ctx,
+    )
+    return decision.owner, decision.tied_engines, decision.fallback_reason
+
+
+@dataclass(frozen=True)
+class OwnerDecision:
+    """:func:`fallback_owner`'s pick, with what it compared (for the move ledger, #616).
+
+    ``owner``, ``tied_engines`` and ``fallback_reason`` are
+    :func:`fallback_owner`'s return values. ``candidates`` are the owner
+    candidates it considered, ``scores`` the shared scorer's value for each
+    serviceable one (``None`` when there was no analysis to score with),
+    ``gates`` the gate kind of each gated one, and ``tie_rule`` the tie rule
+    that picked ``owner`` when an exact tie did (``None`` otherwise).
+    """
+
+    owner: str
+    tied_engines: list[str]
+    fallback_reason: str | None
+    candidates: list[str] = field(default_factory=list)
+    scores: dict[str, float] | None = None
+    gates: dict[str, str] = field(default_factory=dict)
+    tie_rule: ReasonCode | None = None
+
+
+def owner_decision(
+    query: Mapping | None,
+    engines: Iterable[str] | Mapping[str, Mapping],
+    source_engine: str = "",
+    owner_counts: Mapping[str, int] | None = None,
+    *,
+    triage: Mapping | None,
+    collector: Mapping | None,
+    ctx: ScoringContext | None = None,
+) -> OwnerDecision:
+    """:func:`fallback_owner`, returning the whole :class:`OwnerDecision`."""
+    from src.agents.referee.reality_check_rules import tie_reason_code
     from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 
     counts = owner_counts or {}
@@ -502,10 +571,11 @@ def fallback_owner(
     fallback_reason = NO_SERVICEABLE_CANDIDATE_REASON.format(engine=display_engine(default))
     candidates = sorted(owner_candidates(set(engines), query))
     if not candidates:
-        return default, [], fallback_reason
-    scores = (
-        _candidate_scores(query, candidates, engines, triage, collector, ctx) if query else None
+        return OwnerDecision(default, [], fallback_reason)
+    scored = (
+        _score_candidates(query, candidates, engines, triage, collector, ctx) if query else None
     )
+    scores, gates = scored if scored is not None else (None, {})
     if scores is None:
         # No fitness signal available at all (no real analysis to score
         # with): every original candidate is tied -- break_tie still
@@ -515,16 +585,40 @@ def fallback_owner(
     elif not scores:
         # Every candidate failed the exclusion/capability gate: there is no
         # serviceable owner among them, so this is not a tie either.
-        return default, [], fallback_reason
+        return OwnerDecision(default, [], fallback_reason, candidates, scores, gates)
     else:
         top = max(scores.values())
         tied = sorted(e for e in scores if scores[e] == top)
     if len(tied) == 1:
-        return tied[0], [], None
+        return OwnerDecision(tied[0], [], None, candidates, scores, gates)
     query_id = str((query or {}).get("query_id") or "")
     source_aurora = SOURCE_ENGINE_TO_AURORA.get((source_engine or "").lower())
     winner, tie_kind = break_tie(tied, set(), source_aurora, counts, query_id)
-    return winner, (sorted(tied) if tie_kind == "tie_unresolved" else []), None
+    return OwnerDecision(
+        winner,
+        sorted(tied) if tie_kind == "tie_unresolved" else [],
+        None,
+        candidates,
+        scores,
+        gates,
+        tie_reason_code(tie_kind, tied, counts, query_id),
+    )
+
+
+def owner_move_fields(decision: OwnerDecision) -> dict:
+    """The Move fields of a cache owner pick: its scores, runner-up and ladder (#616)."""
+    from src.agents.referee.move_ledger import best_other, candidate_ladder
+
+    scores = decision.scores or {}
+    return {
+        "score_after": scores.get(decision.owner),
+        "runner_up": best_other(scores, decision.owner),
+        "evidence": MoveEvidence(
+            candidates=candidate_ladder(decision.candidates, scores, decision.gates),
+            tie_rule=decision.tie_rule,
+        ),
+        "tied_engines": decision.tied_engines,
+    }
 
 
 def normalize_cache_owners(
@@ -535,6 +629,7 @@ def normalize_cache_owners(
     *,
     triage: Mapping | None,
     collector: Mapping | None,
+    ledger: MoveLedger | None = None,
 ) -> list[str]:
     """Move queries a cache owns to a system-of-record engine, in place (#296).
 
@@ -563,7 +658,17 @@ def normalize_cache_owners(
     ``cache_notes``, refreshes the overlay summary and returns the new notes
     (empty when nothing was owned by a cache). Derived table views are the
     caller's to recompute.
+
+    Each move is a Move on ``ledger`` (#616: pass ``cache_owner_normalize``,
+    rule ``cache.legacy_owner``, with the shared scorer's scores, the runner-up,
+    the candidate ladder and, when an exact tie picked the owner, the tie rule).
+    A caller writing a new version passes the ledger that version's Moves come
+    from. Without one, the change is to this version in memory: the Moves are
+    appended to ``assignment["moves"]``, after the version's own, so it still
+    replays from its input.
     """
+    from src.agents.referee.move_ledger import apply_to_assignment, ledger_continuing
+
     qas = assignment.get("query_assignments") or []
     legacy = [qa for qa in qas if qa.get("assigned_engine") in CACHE_OVERLAY_ENGINES]
     if not legacy:
@@ -577,14 +682,19 @@ def normalize_cache_owners(
         from src.agents.referee.query_scoring import ScoringContext
 
         ctx = ScoringContext.from_pipeline(engines, triage, collector)
+    in_memory = ledger is None
+    if ledger is None:
+        ledger = ledger_continuing(assignment)
+    recorded = len(ledger.moves)
     moved: Counter = Counter()
     kept = 0
     cache = legacy[0]["assigned_engine"]
     for qa in legacy:
         q = by_id.get(qa.get("query_id"))
-        owner, tied, fallback_reason = fallback_owner(
+        decision = owner_decision(
             q, engines, source_engine, counts, triage=triage, collector=collector, ctx=ctx
         )
+        owner, fallback_reason = decision.owner, decision.fallback_reason
         # #572: owned by {display_engine(owner)}, never the raw id -- fallback_reason
         # (the no-serviceable-candidate sentence) already names its engine this way.
         owner_clause = fallback_reason or f"owned by {display_engine(owner)}"
@@ -593,8 +703,14 @@ def normalize_cache_owners(
             f"query in an assignment written before the cache overlay; {owner_clause} "
             f"(was: {qa.get('assignment_reason', '')})"
         )
-        qa["assigned_engine"] = owner
-        qa["tied_engines"] = tied
+        apply_to_assignment(
+            ledger,
+            qa,
+            owner,
+            pass_=MovePass.CACHE_OWNER_NORMALIZE,
+            reason_code=ReasonCode.CACHE_LEGACY_OWNER,
+            **owner_move_fields(decision),
+        )
         qa["signal_override"] = None
         moved[owner] += 1
         verdict = cache_eligibility(q, heavy) if q else None
@@ -615,6 +731,11 @@ def normalize_cache_owners(
     if note not in notes:
         notes.append(note)
     assignment["cache_overlay"] = overlay_summary(qas, query_list)
+    if in_memory:
+        assignment["moves"] = [
+            *(assignment.get("moves") or []),
+            *(m.model_dump(mode="json") for m in ledger.moves[recorded:]),
+        ]
     return [note]
 
 

@@ -4,17 +4,20 @@
 a :class:`~src.contracts.move_ledger.Move` (the engine the query left, where it
 lands, the scores, the runner-up, the rule and the evidence) and then sets the
 engine in the ledger. ``apply_to_assignment`` is the same call for a pass that
-works on query-assignment dicts (the reality check): it records the Move and
-then sets the dict's ``assigned_engine`` (and ``tied_engines``) from it.
-``replay`` folds a list of Moves back into each query's engine and tied
-engines, so a version's Moves can be checked against the version itself.
+works on query assignments (a dict, or a ``QueryAssignment`` model): it records
+the Move and then sets the record's ``assigned_engine`` (and ``tied_engines``)
+from it. ``replay`` folds a list of Moves back into each query's engine and
+tied engines, so a version's Moves can be checked against the version itself
+(``unexplained`` / ``check_replay``).
 
-The first assignment (``AssignmentResolver.resolve``) and the reality check
-(Phase 1 settle and Phase 2 placement, the justification floors, the model
-flags, the sanity sweep and the customer-override restore) record Moves. Not
-yet routed through ``apply`` (#616, #489 Track L): the reality check handler's
-``normalize_cache_owners`` (ElastiCache owners in an assignment written before
-#296; Track L PR3), the customer gate and the post-schema router.
+This module is the only writer of ``assigned_engine`` and ``tied_engines`` (ADR-031 Amendment 3,
+guarded by ``tests/unit/agents/referee/test_only_the_ledger_writes_engines.py``).
+The first assignment (``AssignmentResolver.resolve``), the reality check (Phase
+1 settle and Phase 2 placement, the justification floors, the model flags, the
+sanity sweep and the customer-override restore), the cache owner normalisation
+(``cache_overlay.normalize_cache_owners``) and the customer gate
+(``assignment_overrides.apply_assignment_overrides``) record Moves. The one
+writer not routed through it yet is the post-schema router (#489 Track L PR4).
 
 The helpers below only read values a pass already computed (the scores it
 compared, the gates it applied); none of them scores anything or decides an
@@ -25,7 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, MutableMapping
+from typing import Any
 
 from src.contracts.move_ledger import (
     CandidateScore,
@@ -45,30 +49,42 @@ __all__ = [
     "apply_to_assignment",
     "best_other",
     "candidate_ladder",
+    "check_replay",
     "group_key",
+    "ledger_continuing",
     "ledger_for",
     "replay",
+    "state_of",
+    "unexplained",
 ]
 
 
 class MoveLedger:
     """The engines of one assignment being built, and the Moves that set them.
 
-    ``engines`` maps a query id to its current engine; a query with no Move
-    yet has no entry. Read it, never write it: ``apply`` is the only writer.
+    ``engines`` maps a query id to its current engine and ``tied`` to its
+    current unresolved tie (sorted; empty when there is none); a query with no
+    Move yet has no ``engines`` entry. Read them, never write them: ``apply``
+    is the only writer.
     """
 
     def __init__(
         self,
         engines: Mapping[str, str] | None = None,
         moves: Iterable[Move] = (),
+        tied: Mapping[str, Iterable[str]] | None = None,
     ) -> None:
         self.engines: dict[str, str] = dict(engines or {})
         self.moves: list[Move] = list(moves)
+        self.tied: dict[str, list[str]] = {q: sorted(t) for q, t in (tied or {}).items() if t}
 
     def engine_of(self, query_id: str) -> str | None:
         """The query's current engine, ``None`` before its first Move."""
         return self.engines.get(query_id)
+
+    def tied_of(self, query_id: str) -> list[str]:
+        """The query's current unresolved tie (sorted), empty when there is none."""
+        return list(self.tied.get(query_id, []))
 
 
 def apply(
@@ -118,12 +134,16 @@ def apply(
     )
     ledger.moves.append(move)
     ledger.engines[query_id] = to_engine
+    if move.tied_engines:
+        ledger.tied[query_id] = list(move.tied_engines)
+    else:
+        ledger.tied.pop(query_id, None)
     return move
 
 
 def apply_to_assignment(
     ledger: MoveLedger,
-    qa: dict,
+    qa: Any,
     to_engine: str,
     *,
     pass_: MovePass,
@@ -139,7 +159,9 @@ def apply_to_assignment(
     """Record one Move for a query-assignment dict, then set the dict from it.
 
     The same as :func:`apply` (the keywords are passed through), for a pass that
-    keeps its state in query-assignment dicts. ``qa["assigned_engine"]`` should
+    keeps its state in query assignments: a dict (the reality check, the cache
+    owner normalisation) or a ``QueryAssignment`` model (the customer gate).
+    ``qa``'s ``assigned_engine`` should
     be the ledger's current engine for the query: a mismatch means something
     set the engine without a Move. It is logged, and the Move still records
     the ledger's engine as ``from_engine``, so replaying the Moves stays
@@ -149,15 +171,15 @@ def apply_to_assignment(
     Move that changes the tie records the earlier one in
     ``evidence.previous_tied_engines``.
     """
-    qid = qa["query_id"]
-    if ledger.engine_of(qid) != qa.get("assigned_engine"):
+    qid = _get(qa, "query_id")
+    if ledger.engine_of(qid) != _get(qa, "assigned_engine"):
         logger.warning(
             "move_ledger: query %r is on %r but the ledger has %r (an engine set without a Move)",
             qid[:80],
-            qa.get("assigned_engine"),
+            _get(qa, "assigned_engine"),
             ledger.engine_of(qid),
         )
-    current_tied = sorted(qa.get("tied_engines") or [])
+    current_tied = sorted(_get(qa, "tied_engines") or [])
     tied = current_tied if tied_engines is None else list(tied_engines)
     if sorted(tied) != current_tied:
         # The tie changes with this Move: keep the earlier one in evidence.
@@ -178,19 +200,106 @@ def apply_to_assignment(
         tied_engines=tied,
         actor=actor,
     )
-    qa["assigned_engine"] = move.to_engine
-    if tied_engines is not None:
-        qa["tied_engines"] = list(move.tied_engines)
+    # The one write of a query's engine and tie (ADR-031 Amendment 3). With
+    # ``tied_engines=None`` the record keeps its tie, which is what the Move
+    # recorded (``tied`` above is the record's current tie then).
+    if isinstance(qa, MutableMapping):
+        qa["assigned_engine"] = move.to_engine
+        if tied_engines is not None:
+            qa["tied_engines"] = list(move.tied_engines)
+    else:
+        qa.assigned_engine = move.to_engine
+        if tied_engines is not None:
+            qa.tied_engines = list(move.tied_engines)
     return move
 
 
-def ledger_for(query_assignments: Iterable[Mapping]) -> MoveLedger:
+def _get(qa: Any, key: str) -> Any:
+    """A query assignment's field, from a dict or a ``QueryAssignment`` model."""
+    return qa.get(key) if isinstance(qa, Mapping) else getattr(qa, key, None)
+
+
+def ledger_for(query_assignments: Iterable[Any]) -> MoveLedger:
     """An empty ledger starting from each query's current engine.
 
     For a pass that derives a version from an earlier one: its Moves start from
     the engines the queries are on, and only its own Moves are recorded.
     """
-    return MoveLedger({qa["query_id"]: qa["assigned_engine"] for qa in query_assignments})
+    qas = list(query_assignments)
+    return MoveLedger(
+        {_get(qa, "query_id"): _get(qa, "assigned_engine") for qa in qas},
+        tied={_get(qa, "query_id"): _get(qa, "tied_engines") or [] for qa in qas},
+    )
+
+
+def ledger_continuing(assignment: Mapping) -> MoveLedger:
+    """A ledger that continues an assignment version's own Moves.
+
+    For a change made in memory to a version that is not written as a new one
+    (synthesis's and the edit surface's cache owner normalisation): the Moves
+    follow the version's own in ``seq``, so the version's ``moves`` plus the
+    new ones still replay to what is in memory.
+    """
+    moves = [
+        m if isinstance(m, Move) else Move.model_validate(m)
+        for m in (assignment.get("moves") or [])
+    ]
+    return MoveLedger(
+        {
+            _get(qa, "query_id"): _get(qa, "assigned_engine")
+            for qa in assignment.get("query_assignments") or []
+        },
+        sorted(moves, key=lambda m: m.seq),
+        tied={
+            _get(qa, "query_id"): _get(qa, "tied_engines") or []
+            for qa in assignment.get("query_assignments") or []
+        },
+    )
+
+
+def state_of(query_assignments: Iterable[Any]) -> dict[str, tuple[str, list[str]]]:
+    """Each query's ``(engine, tied_engines)``, the shape :func:`replay` returns."""
+    return {
+        _get(qa, "query_id"): (
+            _get(qa, "assigned_engine"),
+            sorted(_get(qa, "tied_engines") or []),
+        )
+        for qa in query_assignments
+    }
+
+
+def unexplained(
+    moves: Iterable[Move],
+    start: Mapping[str, tuple[str, list[str]]],
+    end: Mapping[str, tuple[str, list[str]]],
+) -> list[str]:
+    """The queries whose ``end`` state does not follow from ``start`` plus ``moves``."""
+    replayed = {
+        qid: (engine, sorted(tied)) for qid, (engine, tied) in replay(moves, start=start).items()
+    }
+    return sorted(q for q in end if replayed.get(q) != (end[q][0], sorted(end[q][1])))
+
+
+def check_replay(
+    moves: Iterable[Move],
+    start: Mapping[str, tuple[str, list[str]]],
+    end: Mapping[str, tuple[str, list[str]]],
+    writer: str,
+) -> None:
+    """Raise when ``end`` does not replay from ``start`` plus ``moves`` (#616).
+
+    ``start`` and ``end`` are :func:`state_of` the version read and the
+    version about to be written. Called by every writer of an assignment
+    version before it writes: an engine or tie set without a Move (a write
+    that bypassed :func:`apply`) fails here instead of reaching a version
+    nothing can explain.
+    """
+    bad = unexplained(list(moves), start, end)
+    if bad:
+        raise RuntimeError(
+            f"{writer}: {len(bad)} queries changed engine or tie without a Move "
+            f"(the version does not replay from its input plus its moves): {bad[:5]}"
+        )
 
 
 def replay(

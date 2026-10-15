@@ -191,8 +191,7 @@ def _place_settled_queries(
         if winner == current and (
             new_tied is None or new_tied == list(qa.get("tied_engines") or [])
         ):
-            if new_tied is not None:
-                qa["tied_engines"] = new_tied
+            # Neither the engine nor the tie changes: no Move and no write.
             return
         removed = current not in committed_engines
         # One rule for every reality-check pass (move_ledger contract 1.1): an

@@ -43,6 +43,30 @@ Version History:
   handler's ``normalize_cache_owners`` (an assignment written before #296
   with ElastiCache owners); Track L PR3 records it as ``cache_owner_normalize``.
   The customer gate and the post-schema router follow in later changes.
+- 1.2 (2026-10-14, #616, #786): No schema change. The remaining writers
+  record Moves, and ``src.agents.referee.move_ledger`` is the only module
+  that sets ``assigned_engine`` (ADR-031 Amendment 3, an AST guard). The
+  cache owner normalisation writes ``cache_owner_normalize`` /
+  ``cache.legacy_owner`` (the owner's shared-scorer score, runner-up,
+  candidate ladder, and the tie rule in ``evidence.tie_rule`` when an exact
+  tie picked it), in the reality check's version (first, so it replays from
+  the stored input), in the customer gate's version, and appended in memory
+  to a version synthesis or the edit surface reads. The customer gate writes
+  ``customer_pick`` (rule ``customer.pick``, actor ``customer``, the shared
+  scorer's score on both engines) for an engine change or a settled tie, and
+  ``customer_group_propagation`` (the group's ``group_key``) for each
+  co-dependent query moved with a pick. A cache owner
+  picked because the customer asked to cache a legacy owner is
+  ``cache_owner_normalize`` with actor ``customer``. The post-schema router
+  is the one writer left (#489 Track L PR4).
+- 1.3 (2026-10-14, #616): Added ``ReasonCode.GROUP_CUSTOMER_PROPAGATION``
+  (``group.customer_propagation``), the rule of a ``customer_group_propagation``
+  Move: the query moved with a co-dependent query the customer re-routed, and
+  was not picked by the customer (additive; 1.2 records still load). Customer
+  Moves (``customer_pick``, ``customer_group_propagation``) also carry the
+  runner-up: the best-scoring other engine that may own the query. ``tied_engines``
+  is owned by the ledger too: ``MoveLedger.tied`` holds each query's current
+  tie, and the first assignment builds v1's ties from it.
 """
 
 from __future__ import annotations
@@ -104,6 +128,9 @@ class ReasonCode(str, Enum):
     SWEEP_ORPHAN = "sweep.orphan"
     FLAG_CAPABILITY_GAP = "flag.capability_gap"
     CUSTOMER_PICK = "customer.pick"
+    # A query moved with a co-dependent query the customer re-routed (Decision 4);
+    # the customer did not pick it themselves.
+    GROUP_CUSTOMER_PROPAGATION = "group.customer_propagation"
     CACHE_LEGACY_OWNER = "cache.legacy_owner"
 
 

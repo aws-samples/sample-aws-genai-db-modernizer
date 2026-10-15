@@ -86,6 +86,17 @@ Version History:
   version replays from the normalized input. The customer gate and the
   post-schema router (and its rollback) still start their version with an
   empty list until they record their own.
+- 1.12 (2026-10-14, #616): No schema change. The customer gate's version
+  (``source = customer_gate``) holds its own Moves: ``customer_pick`` (actor
+  ``customer``) for each engine the customer changed or tie they settled,
+  ``customer_group_propagation`` for each co-dependent query moved with it,
+  and ``cache_owner_normalize`` (rule ``cache.legacy_owner``) for each
+  ElastiCache owner of a version written before #296. The reality check's
+  version records that normalisation too, before its own Moves, so both
+  versions replay from the stored input version (1.11's exception is
+  closed), and both writers refuse a version that does not. Only the
+  post-schema router (and its rollback) still start their version with an
+  empty list (#489 Track L PR4).
 """
 
 from datetime import datetime
@@ -450,9 +461,10 @@ class Assignment(BaseModel):
             "that produced this version, in seq order, never a copy of an earlier "
             "version's. Replaying v1's moves rebuilds v1's assigned_engine and "
             "tied_engines; v1 plus each later version's own moves rebuilds that version. "
-            "The first assignment and the reality check record Moves: the customer gate "
-            "and post-schema router (and its rollback) write an empty list until they "
-            "record their own (later #616 changes). Empty for artifacts written before 1.10."
+            "The first assignment, the reality check and the customer gate record Moves "
+            "(their cache owner normalisation included); the post-schema router (and its "
+            "rollback) writes an empty list until it records its own (a later #616 "
+            "change). Empty for artifacts written before 1.10."
         ),
     )
 
