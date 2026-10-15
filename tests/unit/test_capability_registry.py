@@ -157,8 +157,9 @@ class TestCanEngineServeCapability:
     def test_documentdb_has_multi_doc_acid(self):
         assert can_engine_serve_capability("documentdb", ["multi_doc_acid"]) is True
 
-    def test_dynamodb_lacks_multi_doc_acid(self):
-        assert can_engine_serve_capability("dynamodb", ["multi_doc_acid"]) is False
+    def test_dynamodb_has_multi_doc_acid(self):
+        """ADR-031 Decision 3: DynamoDB supports ACID transactions (#493)."""
+        assert can_engine_serve_capability("dynamodb", ["multi_doc_acid"]) is True
 
     def test_multiple_capabilities_all_required(self):
         """Engine must have ALL required capabilities, not just one."""

@@ -151,8 +151,9 @@ def compute_query_confidence(
 #   engines" step in ``build_anti_pattern_map`` never penalises those engines (#477,
 #   #480). The sets are ``src.shared.engine_capabilities``'s, read from the same files.
 # - ``CAPABILITY_REDESIGN_PENALTIES``: the reduced penalty for an engine that lacks the
-#   capability but has a documented, bounded redesign (``redesign`` entries; DynamoDB's
-#   ``TransactWriteItems`` for ``acid-transactions``, #477).
+#   capability but has a documented, bounded redesign (``redesign`` entries; none today:
+#   DynamoDB's transactions are native since ADR-031 Decision 3 is applied by shape, and a
+#   write too wide for one transaction is the ``wide-transaction`` anti-pattern, #493).
 # - ``CAPABILITY_REDESIGN_NOTES`` / ``CAPABILITY_EXEMPT_NOTES``: the decision-trace
 #   sentences for a reduced penalty and for an exemption (``{engine}`` is the engine's
 #   display name). ``acid-transactions`` has no exemption note: that exemption stays

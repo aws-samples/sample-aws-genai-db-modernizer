@@ -24,7 +24,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 
 | Pattern | DynamoDB | DocumentDB | OpenSearch | ElastiCache | Aurora PostgreSQL | Aurora MySQL | Neptune (future) | Keyspaces (future) | Penalty | Capability | Triage signal | Detectors |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| [`acid-transactions`](#acid-transactions) | redesign -10 | native | anti 0.6, no | no | native | native | future | future | 20 | acid_transactions | - | 1 |
+| [`acid-transactions`](#acid-transactions) | native | native | anti 0.6, no | no | native | native | future | future | 20 | acid_transactions | - | 1 |
 | [`adjacency-list`](#adjacency-list) | fit 60 | - | - | - | - | - | future | future | - | - | self_referential_fk | 1 |
 | [`aggregation-analytics`](#aggregation-analytics) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | aggregations | 1 |
 | [`aggregation-pipeline`](#aggregation-pipeline) | - | fit 75 | - | - | - | - | future | future | - | - | - | 1 |
@@ -98,7 +98,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.4 | anti 0.4 | future | future | - | - | - | 1 |
 | [`upsert-conflict`](#upsert-conflict) | - | - | - | - | fit 80 | - | future | future | - | - | - | 1 |
 | [`upsert-duplicate-key`](#upsert-duplicate-key) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
-| [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | future | future | - | - | - | none |
+| [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | future | future | 10 | - | - | 1 |
 | [`wildcard-search`](#wildcard-search) | **no** | native | fit 80 | **no** | native | native | future | future | 40 | text_search | text_search | 1 |
 | [`window-function`](#window-function) | - | - | - | - | fit 90 | - | future | future | - | - | - | 1 |
 | [`window-functions`](#window-functions) | - | anti 0.5 | - | - | - | - | future | future | - | - | - | 1 |
@@ -110,9 +110,8 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 ### acid-transactions
 
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
-Redesign note: Uses transactions: moving it to {engine} needs a redesign \({engine} transactions, up to 100 items, or retry-safe steps\)
 
-- DynamoDB, redesign -10: TransactWriteItems \(no interactive BEGIN/COMMIT, up to 100 items and 4 MB, 2x write capacity\) or retry-safe steps: a bounded redesign, not a native transaction.
+- DynamoDB, native: TransactWriteItems/TransactGetItems are ACID across up to 100 items, and a conditional write is ACID on one item; a wider write is scored by its shape \(wide-transaction\).
 - DocumentDB, native: Multi-document ACID transactions are native \(engine 4.0 or later, one-minute limit per transaction\).
 - OpenSearch, anti 0.6, no (os-ap-02): Frequent UPDATE/DELETE operations \(&gt; 1 CPS\) indicate mutable data with ACID transactional requirements. OpenSearch is optimized for immutable, append-only workloads.
 - Aurora PostgreSQL, native: Multi-statement, multi-table ACID transactions \(BEGIN/COMMIT/ROLLBACK\) are native.
@@ -738,9 +737,9 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 ### wide-transaction
 
-No analysis reports this pattern today.
+Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
-- DynamoDB, anti 0.3 (dynamodb-ap-04): Transactions spanning many items or tables. DynamoDB TransactWriteItems supports up to 100 items across tables, but at higher latency and cost.
+- DynamoDB, anti 0.3 (dynamodb-ap-04): A write wider than one transaction: more than 100 items, or rows a range, join, subquery or unkeyed predicate picks. DynamoDB TransactWriteItems holds up to 100 items across tables.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 

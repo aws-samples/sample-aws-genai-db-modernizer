@@ -171,15 +171,13 @@ def test_a_cross_engine_detected_pattern_no_longer_causes_disagreement():
 
 
 def test_a_capability_exemption_no_longer_causes_disagreement():
-    """DynamoDB's own analysis self-detects an ``acid-transactions``
-    anti-pattern for q1 -- DynamoDB has no native capability for it
-    (``CAPABILITY_SIGNAL_ENGINES``), only a reduced "needs a redesign"
-    penalty (``CAPABILITY_REDESIGN_PENALTIES``, #477), so its table
-    confidence (90) drops by only 10, to 80 -- just short of Aurora
-    PostgreSQL's own, unpenalized 85. The old ``_engine_fit_score`` had no
-    equivalent redesign-penalty mechanism and no analysis-anti-pattern
-    penalty at all, so it would have scored DynamoDB's full, unpenalized
-    table average (90) against Aurora's 85 and picked DynamoDB instead.
+    """DynamoDB's own analysis self-detects a ``wide-transaction`` anti-pattern
+    for q1 -- a write one DynamoDB transaction cannot hold, scored by its shape
+    (ADR-031 Decision 3, #493) -- so its table confidence (90) drops by 10, to
+    80 -- just short of Aurora PostgreSQL's own, unpenalized 85. The old
+    ``_engine_fit_score`` had no analysis-anti-pattern penalty at all, so it
+    would have scored DynamoDB's full, unpenalized table average (90) against
+    Aurora's 85 and picked DynamoDB instead.
     """
     analysis = {
         "dynamodb": {
@@ -188,9 +186,9 @@ def test_a_capability_exemption_no_longer_causes_disagreement():
                 "patterns_detected": [],
                 "anti_patterns_detected": [
                     {
-                        "anti_pattern_type": "acid-transactions",
+                        "anti_pattern_type": "wide-transaction",
                         "query_ids": ["q1"],
-                        "description": "Needs multi-row transactions",
+                        "description": "A write wider than one transaction",
                     }
                 ],
             },

@@ -727,8 +727,10 @@ class TestCapabilityScopedCrossEnginePenalty:
         assert penalty == 20
         assert note is None
 
-    def test_acid_transactions_gives_dynamodb_a_reduced_redesign_penalty(self):
-        """DynamoDB can redesign around transactions at a smaller, visible cost (#477)."""
+    def test_acid_transactions_does_not_penalize_dynamodb(self):
+        """ADR-031 Decision 3 (#493): DynamoDB supports ACID transactions, so the
+        capability signal exempts it like the other transactional engines. A write
+        too wide for one transaction is scored by shape instead (wide-transaction)."""
         resolver = AssignmentResolver()
         triage = _make_triage(["opensearch", "dynamodb"])
         collector = _make_collector(["q1"])
@@ -740,36 +742,42 @@ class TestCapabilityScopedCrossEnginePenalty:
         result = resolver.resolve(triage, analysis, collector)
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
         assert q1.assigned_engine == "dynamodb"
-        # 69 - 10 (reduced redesign penalty, half of the full 20) = 59
-        assert q1.confidence == 59
-        assert "DynamoDB needs a redesign" in q1.assignment_reason
+        assert q1.confidence == 69  # unpenalized
+        assert "redesign" not in q1.assignment_reason
 
-    def test_self_detected_acid_transactions_also_gets_redesign_penalty_for_dynamodb(self):
-        """The capability check applies the same way whether the penalty is
-
-        self-detected or cross-engine (#477): if DynamoDB's own analysis ever
-        flags its own query as needing transactions, it should still get the
-        reduced redesign penalty, not the full "wrong engine" one.
-        """
-        resolver = AssignmentResolver()
-        triage = _make_triage(["dynamodb"])
-        collector = _make_collector(["q1"])
-        analysis = {
+    def _dynamodb_self_detected(self, anti_pattern_type: str) -> dict:
+        return {
             "dynamodb": {
                 "table_recommendations": [{"table_id": "db.users", "confidence_score": 69}],
                 "workload_analysis": {
                     "patterns_detected": [],
                     "anti_patterns_detected": [
-                        {"anti_pattern_type": "acid-transactions", "query_ids": ["q1"]}
+                        {"anti_pattern_type": anti_pattern_type, "query_ids": ["q1"]}
                     ],
                 },
             },
         }
 
-        result = resolver.resolve(triage, analysis, collector)
+    def test_self_detected_acid_transactions_does_not_penalize_dynamodb_either(self):
+        """The capability check applies the same way whether the signal is
+        self-detected or cross-engine (#477): no penalty on DynamoDB (#493)."""
+        result = AssignmentResolver().resolve(
+            _make_triage(["dynamodb"]),
+            self._dynamodb_self_detected("acid-transactions"),
+            _make_collector(["q1"]),
+        )
         q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
-        assert q1.assigned_engine == "dynamodb"
-        assert q1.confidence == 59
+        assert q1.confidence == 69
+
+    def test_a_wide_transaction_costs_dynamodb_its_shape_penalty(self):
+        """A write one transaction cannot hold loses the wide-transaction penalty (#493)."""
+        result = AssignmentResolver().resolve(
+            _make_triage(["dynamodb"]),
+            self._dynamodb_self_detected("wide-transaction"),
+            _make_collector(["q1"]),
+        )
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.confidence == 69 - 10
 
     def test_dynamodb_keeps_the_full_complex_aggregation_penalty_regardless_of_order(self):
         """A bigger, unscoped penalty on the same query always wins (#477).

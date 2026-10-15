@@ -5,13 +5,14 @@ detectors = [
 ]
 capability = "acid_transactions"
 penalty = 20
-redesign_note = "Uses transactions: moving it to {engine} needs a redesign ({engine} transactions, up to 100 items, or retry-safe steps)"
 
+# ADR-031 Decision 3 (#493): DynamoDB supports ACID transactions, so a transaction is
+# never a capability it lacks. A write too wide for one transaction is scored by its
+# shape instead: wide-transaction.toml.
 [engines.dynamodb]
-kind = "redesign"
+kind = "native"
 supported = true
-penalty = 10
-why = "TransactWriteItems (no interactive BEGIN/COMMIT, up to 100 items and 4 MB, 2x write capacity) or retry-safe steps: a bounded redesign, not a native transaction."
+why = "TransactWriteItems/TransactGetItems are ACID across up to 100 items, and a conditional write is ACID on one item; a wider write is scored by its shape (wide-transaction)."
 
 [engines.documentdb]
 kind = "native"

@@ -470,7 +470,9 @@ class TestSanitySweep:
         query_map = _query_map(*(qa["query_id"] for qa in assignments))
         ctx = ScoringContext(
             analysis_outputs={"dynamodb": {"table_recommendations": []}},
-            query_capabilities={"g1": ["multi_doc_acid"]},
+            # DynamoDB lacks aggregation, so g1 keeps DocumentDB (it has transactions
+            # since ADR-031 Decision 3, #493, so multi_doc_acid no longer pins it).
+            query_capabilities={"g1": ["aggregation"]},
         )
         ledger = ledger_for(assignments)
 

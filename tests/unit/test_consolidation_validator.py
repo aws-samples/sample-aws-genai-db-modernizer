@@ -188,8 +188,9 @@ class TestSanitySweepOrphanRemoval:
     def test_a_query_with_no_serviceable_committed_engine_keeps_the_whole_engine(
         self, capsys
     ) -> None:
-        # g1 needs multi_doc_acid; the only other committed engine
-        # (dynamodb) does not have it, so g1 has nowhere else to go.
+        # g1 needs aggregation; the only other committed engine
+        # (dynamodb) does not have it, so g1 has nowhere else to go. (Not
+        # multi_doc_acid: DynamoDB has transactions, ADR-031 Decision 3, #493.)
         # Decision 7's removal check fails for the WHOLE engine -- g2 is
         # never moved either, even though g2 alone would have somewhere to
         # go on dynamodb. dynamodb carries 6 queries (above the threshold)
@@ -201,7 +202,7 @@ class TestSanitySweepOrphanRemoval:
         query_map = _query_map("g1", "g2", *(f"z{i}" for i in range(6)))
         scoring_context = ScoringContext(
             analysis_outputs={"dynamodb": {"table_recommendations": []}},
-            query_capabilities={"g1": ["multi_doc_acid"]},
+            query_capabilities={"g1": ["aggregation"]},
         )
 
         updated, consolidations, _ = sanity_sweep(
@@ -215,7 +216,7 @@ class TestSanitySweepOrphanRemoval:
         captured = capsys.readouterr()
         assert "g1" in captured.out
         assert "DocumentDB" in captured.out  # display name, never the raw engine id alone
-        assert "lacks multi_doc_acid" in captured.out  # names the SPECIFIC missing capability
+        assert "lacks aggregation" in captured.out  # names the SPECIFIC missing capability
 
     def test_tied_engines_restricts_the_candidate_pool_per_decision_12(self) -> None:
         # Round 2 review's exact repro: tied_engines = [documentdb,
@@ -339,7 +340,7 @@ class TestSanitySweepOrphanRemoval:
         query_map = _query_map("j1", "j2", *(f"y{i}" for i in range(6)))
         scoring_context = ScoringContext(
             analysis_outputs={"dynamodb": {"table_recommendations": []}},
-            query_capabilities={"j1": ["multi_doc_acid"]},
+            query_capabilities={"j1": ["aggregation"]},
         )
 
         updated, consolidations, _ = sanity_sweep(
@@ -352,7 +353,7 @@ class TestSanitySweepOrphanRemoval:
         assert consolidations == []
         captured = capsys.readouterr()
         assert "co-dependency group" in captured.out
-        assert "lacks multi_doc_acid" in captured.out
+        assert "lacks aggregation" in captured.out
 
     def test_the_old_count_rule_would_have_protected_the_biggest_small_engine(self):
         # documentdb (3 queries) is the biggest sub-threshold engine here --
@@ -435,7 +436,7 @@ class TestSanitySweepDecisions:
         query_map = _query_map("g1", "g2", *(f"z{i}" for i in range(6)))
         scoring_context = ScoringContext(
             analysis_outputs={"dynamodb": {"table_recommendations": []}},
-            query_capabilities={"g1": ["multi_doc_acid"]},
+            query_capabilities={"g1": ["aggregation"]},
         )
 
         _, consolidations, sweep_decisions = sanity_sweep(
@@ -449,7 +450,7 @@ class TestSanitySweepDecisions:
         assert decision["decision"] == "kept"
         assert decision["blocking_query_ids"] == ["g1"]
         assert decision["blocking_rule"] == "no_serviceable_engine"
-        assert "lacks multi_doc_acid" in decision["reason"]
+        assert "lacks aggregation" in decision["reason"]
         assert "DynamoDB" in decision["reason"]  # display name, never the raw engine id
 
     def test_a_kept_engine_blocked_by_a_signal_override_names_that_rule(self) -> None:
@@ -516,7 +517,7 @@ class TestSanitySweepDecisions:
         query_map = _query_map("s1", "s2", *(f"y{i}" for i in range(6)))
         scoring_context = ScoringContext(
             analysis_outputs={"dynamodb": {"table_recommendations": []}},
-            query_capabilities={"s2": ["multi_doc_acid"]},
+            query_capabilities={"s2": ["aggregation"]},
         )
 
         _, consolidations, sweep_decisions = sanity_sweep(

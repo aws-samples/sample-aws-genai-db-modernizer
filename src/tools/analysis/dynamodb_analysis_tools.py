@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from src.agents.referee.transaction_shape import transaction_shape
 from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
@@ -25,6 +26,7 @@ from src.contracts.analysis_output import (
     WorkloadAnalysis,
 )
 from src.tools.analysis.dynamodb_pattern_catalog import (
+    ANTI_PATTERN_BY_ID,
     DYNAMODB_ANTI_PATTERNS,
     DYNAMODB_PATTERNS,
     DYNAMODB_SCORE_WEIGHTS,
@@ -965,6 +967,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     frequent_scan_queries: list[dict] = []
     complex_agg_queries: list[dict] = []
     unbounded_queries: list[dict] = []
+    wide_transaction_queries: list[dict] = []
 
     for q in queries:
         facts = query_facts(q.get("query_text", ""))
@@ -1059,6 +1062,14 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         if qt == "SELECT" and rows_avg > 10000 and not facts.limit_word:
             unbounded_queries.append(q)
 
+        # Wide transaction (ADR-031 Decision 3, #493): DynamoDB runs a write of up to
+        # 100 items as one transaction; only a write whose shape one transaction
+        # cannot hold (more items, or a set the statement does not bound) needs a
+        # redesign. The shape is the engine-neutral fact in transaction_shape.
+        shape = transaction_shape(q)
+        if shape is not None and shape.needs_redesign:
+            wide_transaction_queries.append(q)
+
         # Low-frequency reads — catch-all for SELECTs below frequency thresholds
         # that didn't match key-value, range, metadata, or session patterns
         if qt == "SELECT" and cps < 0.1:
@@ -1087,6 +1098,7 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
             (DYNAMODB_ANTI_PATTERNS[0], frequent_scan_queries),  # frequent-full-scan
             (DYNAMODB_ANTI_PATTERNS[1], complex_agg_queries),  # complex-aggregation
             (DYNAMODB_ANTI_PATTERNS[2], unbounded_queries),  # unbounded-result-set
+            (ANTI_PATTERN_BY_ID["dynamodb-ap-04"], wide_transaction_queries),
         ]
     )
 
@@ -1485,14 +1497,17 @@ def build_decision_trace(
     query_matches = []
     for q in queries:
         qid = q.get("query_id", "")
-        query_matches.append(
-            {
-                "query_id": qid,
-                "query_text_preview": (q.get("query_text") or "")[:120],
-                "matched_patterns": query_pattern_map.get(qid, []),
-                "matched_anti_patterns": query_anti_pattern_map.get(qid, []),
-            }
-        )
+        match = {
+            "query_id": qid,
+            "query_text_preview": (q.get("query_text") or "")[:120],
+            "matched_patterns": query_pattern_map.get(qid, []),
+            "matched_anti_patterns": query_anti_pattern_map.get(qid, []),
+        }
+        # Which transaction shape a write matched and why (ADR-031 Decision 3).
+        shape = transaction_shape(q)
+        if shape is not None:
+            match["transaction_shape"] = shape.as_trace()
+        query_matches.append(match)
 
     # Per-pattern summaries
     from src.tools.analysis.dynamodb_pattern_catalog import PATTERN_BY_ID

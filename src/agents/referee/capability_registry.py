@@ -44,7 +44,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 ENGINE_CAPABILITIES: dict[str, set[str]] = {
-    "dynamodb": {"strong_consistency"},
+    # TransactWriteItems/TransactGetItems are ACID across up to 100 items (ADR-031
+    # Decision 3): a transaction is never a capability DynamoDB lacks. A write too
+    # wide for one transaction is scored by its shape (transaction_shape, #493).
+    "dynamodb": {"multi_doc_acid", "strong_consistency"},
     # $regex (LIKE/regex-equivalent) and $text are both native query
     # operators; a leading-wildcard $regex runs unindexed, the same scan
     # cost Aurora MySQL's LIKE pays below -- so inverted_index is a

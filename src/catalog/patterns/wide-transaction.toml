@@ -1,17 +1,25 @@
 # Pattern wide-transaction. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "wide-transaction"
-detectors = []
-penalty = 0
+detectors = [
+    "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
+]
+# ADR-031 Decision 3 (#493): the score reflects the transaction's shape
+# (src/agents/referee/transaction_shape.py). A write of at most 100 items fits one
+# TransactWriteItems call and costs nothing here; a write that changes more items, or a
+# set the statement does not bound, needs a redesign on DynamoDB. It loses 10 points: the
+# reduced redesign penalty acid-transactions.toml gave every DynamoDB transaction before
+# (half of the full 20), now applied only to the shape that needs the redesign.
+penalty = 10
 
-# Detection signals: multi_table_write_in_transaction, high_affected_row_count
+# Detection signal: transaction_shape(...).shape == "unbounded" on a write
 [engines.dynamodb]
 kind = "anti_pattern"
 supported = true
 catalog = "dynamodb"
 catalog_id = "dynamodb-ap-04"
 severity = 0.3
-why = "Transactions spanning many items or tables. DynamoDB TransactWriteItems supports up to 100 items across tables, but at higher latency and cost."
-guidance = "Transactions up to 100 items work well. Larger scopes need saga pattern or eventual consistency design."
+why = "A write wider than one transaction: more than 100 items, or rows a range, join, subquery or unkeyed predicate picks. DynamoDB TransactWriteItems holds up to 100 items across tables."
+guidance = "Writes of up to 100 known items run as one TransactWriteItems call. A wider write needs batches of at most 100 items or a retry-safe multi-step flow."
 
 [engines.documentdb]
 kind = "unscored"

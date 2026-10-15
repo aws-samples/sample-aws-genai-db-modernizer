@@ -157,11 +157,9 @@ CAPABILITY_REDESIGN_HINTS: dict[str, dict[str, str]] = {
             "field or a materialized path), or compute it in the application."
         ),
     },
+    # DynamoDB has multi_doc_acid (ADR-031 Decision 3, #493): a write too wide for one
+    # transaction is the wide-transaction anti-pattern, whose guidance says how to split it.
     "multi_doc_acid": {
-        "dynamodb": (
-            "fit the write into one TransactWriteItems call (up to 100 items), or make it an "
-            "idempotent multi-step flow with compensating writes."
-        ),
         "opensearch": (
             "OpenSearch is not the system of record: keep the transaction on the engine that "
             "owns the data and sync the result into the index."

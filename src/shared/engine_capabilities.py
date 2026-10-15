@@ -26,7 +26,7 @@ out to be a capability statement too.
 
 ``ACID_TRANSACTION_ENGINES`` below intentionally mirrors
 ``capability_registry.ENGINE_CAPABILITIES``'s ``multi_doc_acid`` set (same
-three engines) rather than importing it: ``src.shared`` must not depend on
+four engines) rather than importing it: ``src.shared`` must not depend on
 ``src.agents`` (the dependency runs the other way everywhere else in this
 codebase), and ``tests/unit/test_capability_registry.py`` asserts the two sets
 agree so they cannot drift apart silently.
@@ -59,17 +59,13 @@ from src.shared.catalog.patterns import capability_engines
 #   - documentdb: multi-document ACID transactions, but bounded -- only on
 #     engine version 4.0 or later, and every transaction has a hard one-minute
 #     limit (longer-running multi-document writes need to be batched).
-#   - dynamodb is deliberately NOT included: ``TransactWriteItems`` has no
-#     interactive BEGIN/COMMIT (the whole set of writes is one API call), can
-#     reference the same item at most once per transaction, is bounded (<=100
-#     items, <=4 MB, one AWS account and Region), and costs 2x the write
-#     capacity of the equivalent non-transactional writes. That reshapes the
-#     write into DynamoDB's own API rather than "already having" a SQL-shaped
-#     transaction -- using it, or an idempotent multi-step flow instead, is a
-#     redesign with a real cost, not a pre-existing capability. See
-#     ``CAPABILITY_REDESIGN_PENALTIES`` in ``query_scoring`` for how
-#     that cost stays visible instead of collapsing to either "no penalty" or
-#     "wrong engine".
+#   - dynamodb: ``TransactWriteItems``/``TransactGetItems`` are ACID across up to
+#     100 items (4 MB, one AWS account and Region), and a conditional write is
+#     ACID on its own item (ADR-031 Decision 3). A transaction is therefore not a
+#     capability DynamoDB lacks; what can need a redesign is a write wider than
+#     one transaction, and that is scored by its shape
+#     (``src.agents.referee.transaction_shape``, the ``wide-transaction``
+#     pattern), never by this set (#493).
 #   - opensearch / elasticache: neither is a system of record for
 #     transactional data (opensearch is a read model, elasticache is a cache
 #     -- ``migration_wave_engines.NON_OWNER_ENGINES``), and neither has ACID
@@ -110,9 +106,9 @@ ACID_TRANSACTION_ENGINES: frozenset[str] = capability_engines("acid_transactions
 # Does NOT cover ``fuzzy-search``: see ``FUZZY_SEARCH_ENGINES`` below, a
 # narrower, separate set.
 #
-# Deliberately the same three engines as ACID_TRANSACTION_ENGINES, but a
-# second, independent fact, not inferred from it: a future engine could gain
-# one capability without the other.
+# ACID_TRANSACTION_ENGINES plus DynamoDB's absence here show these are two
+# independent facts, never inferred from each other: DynamoDB has transactions
+# but no text search.
 #
 # #485 (fixed): the HARD capability gate
 # (``capability_registry.ENGINE_CAPABILITIES``'s ``inverted_index``, checked

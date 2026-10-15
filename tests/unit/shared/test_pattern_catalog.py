@@ -479,18 +479,19 @@ class TestConstantsAreTheCatalogsView:
             "no-relational-need": 20,
             "single-access-pattern-table": 15,
             "high-volume-text-search": 35,
+            "wide-transaction": 10,
         }
         assert query_scoring.CAPABILITY_SIGNAL_ENGINES == {
-            "acid-transactions": search,
+            "acid-transactions": search | {"dynamodb"},
             "wildcard-search": search,
             "full-text-search": search,
             "regex-search": search,
             "fuzzy-search": {"aurora_postgresql"},
         }
-        assert query_scoring.CAPABILITY_REDESIGN_PENALTIES == {
-            "acid-transactions": {"dynamodb": 10}
-        }
-        assert set(query_scoring.CAPABILITY_REDESIGN_NOTES) == {"acid-transactions"}
+        # ADR-031 Decision 3 (#493): DynamoDB's transactions are native; a write too
+        # wide for one is the wide-transaction anti-pattern above, not a redesign.
+        assert query_scoring.CAPABILITY_REDESIGN_PENALTIES == {}
+        assert query_scoring.CAPABILITY_REDESIGN_NOTES == {}
         assert set(query_scoring.CAPABILITY_EXEMPT_NOTES) == {
             "wildcard-search",
             "full-text-search",
@@ -501,7 +502,8 @@ class TestConstantsAreTheCatalogsView:
 
     def test_engine_capability_sets(self) -> None:
         search = {"aurora_postgresql", "aurora_mysql", "documentdb"}
-        assert engine_capabilities.ACID_TRANSACTION_ENGINES == search
+        # ADR-031 Decision 3 (#493): DynamoDB's transactions are native.
+        assert engine_capabilities.ACID_TRANSACTION_ENGINES == search | {"dynamodb"}
         assert engine_capabilities.TEXT_SEARCH_ENGINES == search
         assert engine_capabilities.FUZZY_SEARCH_ENGINES == {"aurora_postgresql"}
 
@@ -548,7 +550,6 @@ DETECTOR_MODULES = {
 # Catalog entries no analysis emits today (kept so the catalog says so out loud):
 # three catalog-only anti-patterns, and two penalty keys no analysis reports.
 UNDETECTED = {
-    "wide-transaction",
     "unbounded-array-growth",
     "high-frequency-small-updates",
     "text_search",
@@ -559,10 +560,9 @@ UNDETECTED = {
 # The hard capability gate's name for each pattern ``capability`` it backs. The gate has
 # no fuzzy-match capability, so ``fuzzy_search`` is not gate-backed.
 GATE_CAPABILITY = {"acid_transactions": "multi_doc_acid", "text_search": "inverted_index"}
-# (pattern, engine) pairs where the catalog and the gate disagree on purpose:
-# DynamoDB runs transactions as TransactWriteItems (ADR-031 Decision 3); the gate's
-# missing multi_doc_acid for DynamoDB is what #493 fixes.
-GATE_DISAGREEMENTS = {("acid-transactions", "dynamodb")}
+# (pattern, engine) pairs where the catalog and the gate disagree on purpose. None since
+# #493 gave DynamoDB multi_doc_acid (ADR-031 Decision 3: TransactWriteItems is ACID).
+GATE_DISAGREEMENTS: set[tuple[str, str]] = set()
 
 
 class TestSupportedMatchesTheCapabilityGate:

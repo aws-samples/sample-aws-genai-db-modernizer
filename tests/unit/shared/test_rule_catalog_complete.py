@@ -364,6 +364,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"CHEAPER_ENGINE_MIN_SAVING_SHARE", "CHEAPER_ENGINE_MIN_SAVING_MONTHLY"}),
         _THRESHOLD,
     ),
+    "src/agents/referee/transaction_shape.py": (
+        frozenset({"TRANSACTION_MAX_ITEMS"}),
+        _DETECTION + ": DynamoDB's 100-item transaction quota bounds the shape (#493)",
+    ),
     "src/shared/cache_engines.py": (frozenset({"HOT_READ_MIN_CALLS_PER_SECOND"}), _THRESHOLD),
     "src/tools/analysis/aurora_common_pattern_catalog.py": (
         frozenset(
