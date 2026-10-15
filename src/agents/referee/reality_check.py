@@ -30,9 +30,6 @@ The eligibility gate, engine costs and tie-break all passes share live in
 ``reality_check_rules``. This module runs the steps in order and re-exports
 their names, so callers keep importing from ``reality_check``.
 
-After validation corrections bring back a removed engine, the same review runs
-again (``resettle_after_corrections``, ADR-031 Decision 7).
-
 The output is a revised assignment (new version) plus architectural recommendations
 that feed into synthesis.
 """
@@ -40,8 +37,6 @@ that feed into synthesis.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable
-from copy import deepcopy
 
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.move_ledger import MoveLedger, ledger_for
@@ -136,7 +131,6 @@ __all__ = [
     "patterns_for_assignment",
     "reconcile_consolidations",
     "refresh_patterns_and_recommendations",
-    "resettle_after_corrections",
     "run_reality_check",
 ]
 
@@ -148,20 +142,12 @@ def run_reality_check(
     collector_output: dict,
     query_capabilities: dict[str, list[str]] | None = None,
     source_engine: str | None = None,
-    held_query_ids: Iterable[str] = (),
     ledger: MoveLedger | None = None,
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
 
     ``source_engine`` is the source database engine (e.g. ``"mysql"``); it picks
     the Aurora engine when both are committed. Defaults to the collector's.
-
-    ``held_query_ids`` (#588) are queries that stay on their current engine:
-    they keep that engine committed and are never moved, the same protection
-    a signal override gets in Phase 1 and Phase 2, but they do not make the
-    engine "mandatory" for the justification floors. Used by
-    ``resettle_after_corrections`` for the queries a validation correction
-    placed.
 
     ``ledger`` (#616) is the move ledger every engine change of this check is
     recorded on (Phase 1/2 and the justification floors, through
@@ -244,10 +230,8 @@ def run_reality_check(
         if qa["query_id"] in mandatory_query_ids:
             mandatory_committed_engines.add(qa["assigned_engine"])
 
-    # Queries that never move (#588): the signal overrides above plus any
-    # held query. Only the signal overrides make an engine mandatory.
-    held = set(held_query_ids)
-    fixed_query_ids = mandatory_query_ids | held
+    # Queries that never move: the signal overrides above (ADR #296).
+    fixed_query_ids = mandatory_query_ids
 
     # Re-run the resolver once, with a trace attached, so Phase 1 and Phase
     # 2 read the IDENTICAL per-query scores (#502 review: Phase 1 judging
@@ -349,7 +333,6 @@ def run_reality_check(
         tie_unresolved_qids,
         settled_counts,
         tied_engines_by_qid,
-        held_query_ids=held,
         ledger=ledger,
     )
     lightweight_recommendations: list[dict] = []
@@ -362,7 +345,6 @@ def run_reality_check(
         committed_engines=committed_engines,
         engine_queries=engine_queries,
         mandatory_committed_engines=mandatory_committed_engines,
-        held=held,
         fixed_query_ids=fixed_query_ids,
         total_queries=len(query_assignments),
         query_map=query_map,
@@ -415,20 +397,6 @@ def run_reality_check(
         unique_value_assessment,
     )
 
-    # #502 review: Phase 1+2 above replace the old Aurora-absorption pass
-    # (a small engine Aurora can serve is just one case the general
-    # settle-then-place design already covers) -- this key stays, reporting
-    # the same facts in the general case rather than fabricating an
-    # Aurora-specific mechanism that no longer runs.
-    final_counts: dict[str, int] = defaultdict(int)
-    for qa in revised:
-        final_counts[qa["assigned_engine"]] += 1
-    source_aurora_engine = SOURCE_ENGINE_TO_AURORA.get(resolved_source_engine)
-    aurora_engine_name = (
-        source_aurora_engine
-        if source_aurora_engine in committed_engines
-        else next((e for e in AURORA_ENGINES if e in committed_engines), "")
-    )
     return {
         "revised_assignments": revised,
         "consolidations": consolidations,
@@ -437,62 +405,4 @@ def run_reality_check(
         "unique_value_assessment": unique_value_assessment,
         "lightweight_recommendations": lightweight_recommendations,
         "move_ledger": ledger,
-        "aurora_absorption": {
-            "aurora_engine": aurora_engine_name,
-            "engines_eliminated": sorted(set(engine_queries) - committed_engines),
-            "engines_reduced": sorted(
-                e
-                for e in committed_engines
-                if final_counts.get(e, 0) < len(engine_queries.get(e, []))
-            ),
-            "absorbed_count": sum(
-                c["query_count"] for c in consolidations if c["to_engine"] == aurora_engine_name
-            ),
-        },
     }
-
-
-def resettle_after_corrections(
-    revised_assignments: list[dict],
-    triage: dict,
-    analysis_outputs: dict[str, dict],
-    collector_output: dict,
-    source_engine: str | None = None,
-    held_query_ids: Iterable[str] = (),
-) -> tuple[list[dict], list[dict]]:
-    """Settle the engines again after validation corrections (#166, #588).
-
-    A correction can bring back an engine the reality check removed, so the
-    committed set it settled against has changed. This runs the same review
-    again on the corrected assignment (``run_reality_check``: Phase 1 settle,
-    Phase 2 placement and the justification floors), so an engine is removed
-    when the committed engines can serve its queries, and each moved query
-    goes to its highest-scoring remaining engine, by the same per-query
-    scores and eligibility gate as the first run (ADR-031 Decision 7). It
-    replaces the Aurora-only absorption pass and its own thresholds.
-
-    ``held_query_ids`` are the corrected queries: they stay where the
-    correction put them, so the engine a correction restored is not removed
-    again. The customer's own picks (``customer_override``) are handled the
-    way the first run handles them (``run_reality_check_deterministic``):
-    left out of the review and put back unchanged afterwards, so a pick
-    never commits an engine that other queries could then move onto.
-    ``source_engine`` defaults to the collector's source database engine.
-
-    Note this can move queries that were not corrected onto the engine a
-    correction brought back, when it scores them higher.
-
-    Returns (updated_assignments, new_consolidations). Assignments are copied.
-    """
-    candidates = [qa for qa in revised_assignments if not qa.get("customer_override")]
-    result = run_reality_check(
-        {"query_assignments": deepcopy(candidates)},
-        triage,
-        analysis_outputs,
-        collector_output,
-        source_engine=source_engine,
-        held_query_ids=held_query_ids,
-    )
-    revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
-    updated = [revised_by_id.get(qa["query_id"]) or deepcopy(qa) for qa in revised_assignments]
-    return updated, result["consolidations"]

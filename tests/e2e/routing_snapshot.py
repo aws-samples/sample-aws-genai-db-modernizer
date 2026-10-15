@@ -97,10 +97,10 @@ MAX_QUERIES_SHOWN = 30
 # assignment_reason strings and the reality check's, which both describe
 # which mechanism picked the engine: a signal/utility override, a
 # co-dependency group, a plain score comparison (possibly tied), a fallback
-# with no score at all, or one of the reality check's three consolidation
-# mechanisms -- Aurora absorption, the justification floor, or "no unique
-# value" -- each kept as its own category so a change in one is never masked
-# by "nothing changed" in another).
+# with no score at all, or one of the reality check's consolidation
+# mechanisms -- the justification floor or "no unique value" -- each kept as
+# its own category so a change in one is never masked by "nothing changed" in
+# another; the Aurora absorption pass and its category are gone, #588, #616).
 # ---------------------------------------------------------------------------
 
 
@@ -108,8 +108,6 @@ def categorize(reason: str) -> str:
     """A short, stable category for an ``assignment_reason`` string."""
     if "utility/metadata statement" in reason:
         return "utility_pin"
-    if "reality check: absorbed from" in reason:
-        return "reality_check_aurora_absorption"
     if "justification floor" in reason:
         return "reality_check_justification_floor"
     if "no unique value" in reason:

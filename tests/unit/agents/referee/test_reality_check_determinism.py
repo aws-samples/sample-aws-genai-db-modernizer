@@ -444,7 +444,7 @@ class TestAuroraChoiceFollowsTheSource:
 
 
 # #588: ``TestAuroraAbsorptionFollowsTheSource`` tested which Aurora engine the
-# deleted Aurora absorption pass absorbed into. The post-correction re-settle
+# deleted Aurora absorption pass absorbed into. The shared reality-check rule
 # that replaces it places each query by the shared per-query scores and the
 # ADR-031 tie-break instead; its source-dialect case is in
-# ``test_reality_check_resettle.py``.
+# ``test_reality_check_shared_rule.py``.

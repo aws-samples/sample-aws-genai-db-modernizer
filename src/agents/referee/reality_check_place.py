@@ -102,7 +102,6 @@ def _place_settled_queries(
     tie_unresolved_qids: set[str] | None = None,
     settled_counts: Mapping[str, int] | None = None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
-    held_query_ids: set[str] | None = None,
     ledger: MoveLedger | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
@@ -150,10 +149,6 @@ def _place_settled_queries(
     newly tying for the top score during consolidation) is recorded too,
     not silently dropped because it was never tied before.
 
-    ``held_query_ids`` (#588) are already part of ``mandatory_query_ids``
-    here (they never move either); this set only names them correctly in a
-    partial consolidation's ``retention_reason``.
-
     Every engine change goes through ``move_ledger.apply_to_assignment`` on
     ``ledger`` (#616; a fresh one from ``query_assignments`` when ``None``):
     pass ``settle`` when Phase 1 removed the query's engine, ``place`` when
@@ -164,7 +159,6 @@ def _place_settled_queries(
     """
     tie_unresolved_qids = tie_unresolved_qids or set()
     tied_engines_by_qid = tied_engines_by_qid or {}
-    held_query_ids = held_query_ids or set()
     revised = deepcopy(query_assignments)
     if ledger is None:
         ledger = ledger_for(revised)
@@ -450,10 +444,7 @@ def _place_settled_queries(
         retained_qids = (
             [] if is_full else sorted(set(native_qids_by_engine.get(frm, [])) - moved_from[frm])
         )
-        retained_held = [q for q in retained_qids if q in held_query_ids]
-        retained_mandatory = [
-            q for q in retained_qids if q in mandatory_query_ids and q not in held_query_ids
-        ]
+        retained_mandatory = [q for q in retained_qids if q in mandatory_query_ids]
         retained_other = [q for q in retained_qids if q not in mandatory_query_ids]
         n_tie_unresolved = tie_unresolved_moves.get((frm, to), 0)
         consolidations.append(
@@ -480,10 +471,6 @@ def _place_settled_queries(
                         r
                         for r, present in (
                             ("Mandatory signal queries stay on their engine", retained_mandatory),
-                            (
-                                "Corrected queries stay where the correction placed them",
-                                retained_held,
-                            ),
                             (
                                 "No remaining engine scores these queries as well as this "
                                 "one does",

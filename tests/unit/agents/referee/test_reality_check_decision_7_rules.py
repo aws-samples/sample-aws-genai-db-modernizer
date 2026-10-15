@@ -9,7 +9,7 @@ actually justified. One class per rule.
 from __future__ import annotations
 
 from src.agents.referee.query_scoring import ScoringContext
-from src.agents.referee.reality_check import resettle_after_corrections
+from src.agents.referee.reality_check import run_reality_check
 from src.agents.referee.reality_check_floors import _find_best_absorber_for_query
 from src.agents.referee.reality_check_patterns import _build_recommendations
 from src.agents.referee.reality_check_place import _place_settled_queries
@@ -132,9 +132,10 @@ def _resettle_documentdb_into_dynamodb() -> tuple[list[dict], list[dict]]:
             ]
         }
     }
-    return resettle_after_corrections(
-        assignments, {}, analysis, collector, source_engine="postgresql"
+    result = run_reality_check(
+        {"query_assignments": assignments}, {}, analysis, collector, source_engine="postgresql"
     )
+    return result["revised_assignments"], result["consolidations"]
 
 
 class TestRemovedEnginesAndMovedQueriesAreReported:

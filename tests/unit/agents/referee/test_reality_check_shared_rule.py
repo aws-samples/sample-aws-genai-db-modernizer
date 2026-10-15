@@ -1,28 +1,31 @@
-"""The post-correction re-settle uses the shared consolidation rule (#588).
+"""The reality check settles engines with one shared rule (ADR-031 Decision 7).
 
-When a validation correction brings back an engine the reality check had
-removed, the committed set the reality check settled against has changed, so
-the engines are settled again. ADR-031 Decision 7 says this uses the same
-rule as the first reality check: remove an engine when the committed engines
-can serve its queries, judged with the shared per-query scores and the shared
-eligibility gate, and move each query to its highest-scoring remaining engine.
+An engine is removed when the committed engines can serve its queries, judged
+with the shared per-query scores and the shared eligibility gate, and each
+moved query goes to its highest-scoring remaining engine. These tests drive
+``run_reality_check`` itself.
 
-It replaces the old Aurora absorption pass, which had its own decision rule:
-only engines under 10 queries (5 for a signal-pinned one) were considered,
-Aurora had to score at least 50, a specialist 30 points ahead kept its query,
-and every absorbed query went to Aurora. Each test below would have decided
-differently under that rule.
+The rule replaced the old Aurora absorption pass, which had its own decision
+rule: only engines under 10 queries (5 for a signal-pinned one) were
+considered, Aurora had to score at least 50, a specialist 30 points ahead kept
+its query, and every absorbed query went to Aurora. Each test below would have
+decided differently under that rule. The post-correction re-settle (#588,
+``resettle_after_corrections`` and its held queries) ran this same rule a
+second time after validation corrections; since model flags re-route only
+among the engines the check kept and never re-settle (ADR-031 Amendment 2,
+#647) nothing called it, so it was deleted (#616) and these tests moved here.
 """
 
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 
 import pytest
 
 import src.agents.referee.reality_check as reality_check
-from src.agents.referee.reality_check import UNIQUE_DELTA_THRESHOLD, resettle_after_corrections
+from src.agents.referee.reality_check import UNIQUE_DELTA_THRESHOLD, run_reality_check
 
 # reality_check.py and the step modules it is split into (#617).
 REALITY_CHECK_SOURCES = sorted(Path(reality_check.__file__).parent.glob("reality_check*.py"))
@@ -59,6 +62,24 @@ def _analysis(scores: dict[str, dict[str, int]]) -> dict:
     }
 
 
+def _settle(
+    assignments: list[dict],
+    triage: dict,
+    analysis: dict,
+    collector: dict,
+    source_engine: str | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """``run_reality_check`` on ``assignments``: (revised assignments, records)."""
+    result = run_reality_check(
+        {"query_assignments": assignments},
+        triage,
+        analysis,
+        collector,
+        source_engine=source_engine,
+    )
+    return result["revised_assignments"], result["consolidations"]
+
+
 def _engine_of(revised: list[dict]) -> dict[str, str]:
     return {qa["query_id"]: qa["assigned_engine"] for qa in revised}
 
@@ -93,7 +114,52 @@ class TestTheAuroraOnlyRuleIsGone:
         assert defined & gone == set()
 
 
-class TestResettleUsesTheSharedRule:
+class TestNoPassThatDecidesNothingRemains:
+    """#616: a pass that decides nothing for any input is deleted, not kept."""
+
+    def test_the_post_correction_resettle_is_gone(self):
+        """Nothing called ``resettle_after_corrections`` once model flags
+        stopped re-settling (ADR-031 Amendment 2), and holding a query was
+        only ever its input."""
+        assert not hasattr(reality_check, "resettle_after_corrections")
+        assert "held_query_ids" not in inspect.signature(run_reality_check).parameters
+
+    def test_no_code_records_a_reserved_pass(self):
+        """``candidates``, ``heterogeneous_choice`` and ``resettle`` are reserved
+        names kept in the contract (``src/contracts/move_ledger.py``): no writer
+        records a Move with them."""
+        src = Path(reality_check.__file__).parents[2]
+        reserved = ("MovePass.CANDIDATES", "MovePass.HETEROGENEOUS_CHOICE", "MovePass.RESETTLE")
+        users = [
+            f"{path.relative_to(src)}: {name}"
+            for path in src.rglob("*.py")
+            for name in reserved
+            if name in path.read_text()
+        ]
+        assert users == []
+
+    def test_no_aurora_absorption_summary_is_reported(self):
+        """The ``aurora_absorption`` block summarised the old absorption pass;
+        nothing read it, and the moves it counted are the consolidation records."""
+        tables = {f"a{i}": "db.main" for i in range(10)} | {"d1": "db.docs"}
+        analysis = _analysis(
+            {"aurora_postgresql": {"db.main": 80, "db.docs": 70}, "documentdb": {"db.docs": 60}}
+        )
+        assignments = _assignments(
+            {"aurora_postgresql": [f"a{i}" for i in range(10)], "documentdb": ["d1"]}
+        )
+
+        result = run_reality_check(
+            {"query_assignments": assignments}, {}, analysis, _collector(tables)
+        )
+
+        assert "aurora_absorption" not in result
+        assert [(c["from_engine"], c["to_engine"]) for c in result["consolidations"]] == [
+            ("documentdb", "aurora_postgresql")
+        ]
+
+
+class TestTheSharedRule:
     def test_an_engine_with_ten_or_more_queries_is_still_removed(self):
         """No size cut-off: 12 DocumentDB queries, each scored 5 points below
         Aurora's own score for it, have no unique value (the old pass never
@@ -108,7 +174,7 @@ class TestResettleUsesTheSharedRule:
         )
         assignments = _assignments({"aurora_postgresql": list(tables)[:20], "documentdb": doc_ids})
 
-        revised, consolidations = resettle_after_corrections(
+        revised, consolidations = _settle(
             assignments, {}, analysis, _collector(tables), source_engine="postgresql"
         )
 
@@ -132,7 +198,7 @@ class TestResettleUsesTheSharedRule:
             {"aurora_postgresql": [f"a{i}" for i in range(10)], "documentdb": ["d1", "d2"]}
         )
 
-        revised, _ = resettle_after_corrections(
+        revised, _ = _settle(
             assignments, {}, analysis, _collector(tables), source_engine="postgresql"
         )
 
@@ -162,7 +228,7 @@ class TestResettleUsesTheSharedRule:
             }
         )
 
-        revised, consolidations = resettle_after_corrections(
+        revised, consolidations = _settle(
             assignments, {}, analysis, _collector(tables), source_engine="postgresql"
         )
 
@@ -188,42 +254,11 @@ class TestResettleUsesTheSharedRule:
             {"aurora_postgresql": [f"a{i}" for i in range(10)], "documentdb": ["d1"]}
         )
 
-        revised, consolidations = resettle_after_corrections(
+        revised, consolidations = _settle(
             assignments, {}, analysis, _collector(tables), source_engine="postgresql"
         )
 
         assert _engine_of(revised)["d1"] == "documentdb"
-        assert consolidations == []
-
-    def test_held_queries_stay_where_the_correction_put_them(self):
-        """The corrected queries sit on the restored Aurora and score higher on
-        DynamoDB; held, they stay, so Aurora is not removed a second time."""
-        tables = {f"k{i}": "db.kv" for i in range(10)} | {"j1": "db.joins", "j2": "db.joins"}
-        analysis = _analysis(
-            {
-                "aurora_mysql": {"db.kv": 50, "db.joins": 60},
-                "dynamodb": {"db.kv": 90, "db.joins": 80},
-            }
-        )
-        assignments = _assignments(
-            {"dynamodb": [f"k{i}" for i in range(10)], "aurora_mysql": ["j1", "j2"]}
-        )
-
-        unheld, _ = resettle_after_corrections(
-            assignments, {}, analysis, _collector(tables), source_engine="mysql"
-        )
-        held, consolidations = resettle_after_corrections(
-            assignments,
-            {},
-            analysis,
-            _collector(tables),
-            source_engine="mysql",
-            held_query_ids={"j1", "j2"},
-        )
-
-        assert _engine_of(unheld)["j1"] == "dynamodb"  # what the scores alone decide
-        assert _engine_of(held)["j1"] == "aurora_mysql"
-        assert _engine_of(held)["j2"] == "aurora_mysql"
         assert consolidations == []
 
     def test_assignments_are_copied(self):
@@ -235,9 +270,7 @@ class TestResettleUsesTheSharedRule:
             {"aurora_postgresql": [f"a{i}" for i in range(10)], "documentdb": ["d1"]}
         )
 
-        resettle_after_corrections(
-            assignments, {}, analysis, _collector(tables), source_engine="postgresql"
-        )
+        _settle(assignments, {}, analysis, _collector(tables), source_engine="postgresql")
 
         assert _engine_of(assignments)["d1"] == "documentdb"
 
@@ -265,7 +298,7 @@ class TestResettleUsesTheSharedRule:
         collector = _collector({"m1": "tm", "m2": "tm", "p1": "tp", "p2": "tp", "d1": "t"})
         collector["metadata"] = {"source_database": {"engine": source}}
 
-        revised, _ = resettle_after_corrections(assignments, {}, analysis, collector)
+        revised, _ = _settle(assignments, {}, analysis, collector)
 
         assert _engine_of(revised)["d1"] == expected
         assert _engine_of(revised)["m1"] == "aurora_mysql"
@@ -289,158 +322,6 @@ class TestResettleUsesTheSharedRule:
         collector = _collector({"m1": "t", "m2": "t", "p1": "t", "d1": "t"})
         collector["metadata"] = {"source_database": {"engine": source}}
 
-        revised, _ = resettle_after_corrections(assignments, {}, analysis, collector)
+        revised, _ = _settle(assignments, {}, analysis, collector)
 
         assert _engine_of(revised) == dict.fromkeys(("m1", "m2", "p1", "d1"), expected)
-
-    def test_a_partial_move_names_the_held_queries_as_corrected(self):
-        """Aurora keeps its two held queries and loses the one DynamoDB scores
-        higher; the record says why the two stayed, not "mandatory signal"."""
-        tables = (
-            {f"k{i}": "db.kv" for i in range(10)}
-            | {"j1": "db.joins", "j2": "db.joins"}
-            | {"x1": "db.kv"}
-        )
-        analysis = _analysis(
-            {
-                "aurora_mysql": {"db.kv": 50, "db.joins": 80},
-                "dynamodb": {"db.kv": 90, "db.joins": 40},
-            }
-        )
-        assignments = _assignments(
-            {"dynamodb": [f"k{i}" for i in range(10)], "aurora_mysql": ["j1", "j2", "x1"]}
-        )
-
-        revised, consolidations = resettle_after_corrections(
-            assignments,
-            {},
-            analysis,
-            _collector(tables),
-            source_engine="mysql",
-            held_query_ids={"j1", "j2"},
-        )
-
-        assert _engine_of(revised)["x1"] == "dynamodb"
-        [record] = consolidations
-        assert (record["from_engine"], record["to_engine"], record["action"]) == (
-            "aurora_mysql",
-            "dynamodb",
-            "partial",
-        )
-        assert record["queries_retained"] == ["j1", "j2"]
-        assert record["retention_reason"] == (
-            "Corrected queries stay where the correction placed them"
-        )
-
-
-class TestHeldQueries:
-    """What holding a query does, and what it must not do (#588 review)."""
-
-    def test_a_held_query_on_a_floor_failing_engine_is_not_moved_by_the_floor(self):
-        """OpenSearch's three signal-pinned queries fail its justification
-        floor (no search depth, no traffic) and move to Aurora; the held query
-        on OpenSearch fails the same floor but stays where it was put."""
-        os_ids = ["os1", "os2", "os3"]
-        tables = {f"a{i}": "db.main" for i in range(10)} | {q: "db.posts" for q in [*os_ids, "h1"]}
-        analysis = _analysis(
-            {
-                "aurora_mysql": {"db.main": 90, "db.posts": 70},
-                "opensearch": {"db.main": 10, "db.posts": 75},
-            }
-        )
-        assignments = _assignments({"aurora_mysql": [f"a{i}" for i in range(10)]}) + [
-            {
-                "query_id": qid,
-                "assigned_engine": "opensearch",
-                "assignment_reason": "signal override: text_search",
-                "signal_override": "text_search",
-            }
-            for qid in os_ids
-        ]
-        assignments.append(
-            {"query_id": "h1", "assigned_engine": "opensearch", "assignment_reason": "corrected"}
-        )
-        triage = {
-            "signals": [{"signal": "text_search", "query_ids": [*os_ids, "h1"]}],
-            "query_capabilities": {q: ["inverted_index"] for q in [*os_ids, "h1"]},
-        }
-
-        revised, _ = resettle_after_corrections(
-            assignments,
-            triage,
-            analysis,
-            _collector(tables),
-            source_engine="mysql",
-            held_query_ids={"h1"},
-        )
-
-        engine_of = _engine_of(revised)
-        assert {engine_of[q] for q in os_ids} == {"aurora_mysql"}
-        assert engine_of["h1"] == "opensearch"
-
-    def test_a_held_query_does_not_make_its_engine_mandatory(self):
-        """A held query on DocumentDB keeps DocumentDB committed, but does not
-        put it under the cost-share floor (which applies to signal-pinned
-        engines only): DocumentDB serves 2 of 42 queries at $200/mo, which
-        would fail that floor and move ``u1``, the query it scores best."""
-        tables = {f"a{i}": "db.main" for i in range(40)} | {"h1": "db.docs"} | {"u1": "db.docs"}
-        analysis = _analysis(
-            {
-                "aurora_mysql": {"db.main": 90, "db.docs": 50},
-                "documentdb": {"db.main": 30, "db.docs": 90},
-            }
-        )
-        assignments = _assignments(
-            {"aurora_mysql": [f"a{i}" for i in range(40)], "documentdb": ["h1", "u1"]}
-        )
-
-        revised, consolidations = resettle_after_corrections(
-            assignments,
-            {},
-            analysis,
-            _collector(tables),
-            source_engine="mysql",
-            held_query_ids={"h1"},
-        )
-
-        assert _engine_of(revised)["h1"] == "documentdb"
-        assert _engine_of(revised)["u1"] == "documentdb"
-        assert consolidations == []
-
-    def test_a_customer_pick_is_left_out_not_held(self):
-        """The reviewer's repro, in small: the first run removed DocumentDB
-        (its 8 queries score 5 points better there than on Aurora, not
-        enough to earn its place). The customer then pins one other query to
-        DocumentDB. Re-settling must leave the pick out, as the first run
-        does, so it never commits DocumentDB and pulls the 8 back."""
-        doc_ids = [f"d{i}" for i in range(8)]
-        tables = (
-            {f"a{i}": "db.main" for i in range(20)}
-            | {qid: "db.docs" for qid in doc_ids}
-            | {"c1": "db.main"}
-        )
-        analysis = _analysis(
-            {
-                "aurora_mysql": {"db.main": 90, "db.docs": 70},
-                "documentdb": {"db.main": 30, "db.docs": 75},
-            }
-        )
-        assignments = _assignments({"aurora_mysql": [f"a{i}" for i in range(20)] + doc_ids})
-        assignments.append(
-            {
-                "query_id": "c1",
-                "assigned_engine": "documentdb",
-                "assignment_reason": "customer override",
-                "customer_override": True,
-            }
-        )
-
-        revised, consolidations = resettle_after_corrections(
-            assignments, {}, analysis, _collector(tables), source_engine="mysql"
-        )
-
-        engine_of = _engine_of(revised)
-        assert {engine_of[q] for q in doc_ids} == {"aurora_mysql"}
-        assert engine_of["c1"] == "documentdb"
-        assert consolidations == []
-        assert [qa["query_id"] for qa in revised] == [qa["query_id"] for qa in assignments]

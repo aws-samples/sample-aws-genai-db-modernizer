@@ -20,6 +20,16 @@ Scores are the shared scorer's values at the moment of the move
 A score is ``None`` only when the engine was gated or never scored, and the
 gate is then in ``evidence``.
 
+Reserved pass names (#616): three ``MovePass`` values are never written by any
+code and are kept only because removing an enum value is a MAJOR contract
+change (a removal proposal is filed separately). ``candidates``: the candidate
+step is recorded on every first Move's ``evidence.candidates``, not as a Move
+of its own. ``heterogeneous_choice``: the Aurora engine choice (ADR-031
+Decision 6) moves no query; it is recorded on
+``Assignment.aurora_engine_choice``. ``resettle``: the post-correction
+re-settle it named was deleted (#616), since a model flag never re-settles
+(ADR-031 Amendment 2). No writer may record a Move with these passes.
+
 Version History:
 - 1.0 (2026-10-14, #616): Initial version. Only the first assignment
   (``AssignmentResolver.resolve``) writes Moves; the reality check, customer

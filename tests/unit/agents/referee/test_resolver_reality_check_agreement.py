@@ -221,8 +221,8 @@ class TestAbsorptionBehaviorChanges:
     2 Step 4's score (not Step 2's gate) is supposed to express. So none of
     them is added back as a hard capability; the two tests below pin the
     resulting, intentional absorption changes through the real entry points
-    (``resettle_after_corrections`` -- #588, it replaced the Aurora absorption
-    pass -- and ``_find_best_absorber_for_query``),
+    (``run_reality_check`` -- the shared rule that replaced the Aurora
+    absorption pass, #588 -- and ``_find_best_absorber_for_query``),
     not just a per-engine score comparison, so they fail for a behavioural
     reason, not a changed signature.
 
@@ -261,12 +261,12 @@ class TestAbsorptionBehaviorChanges:
         Neither signal maps to a hard capability, so it protects nothing: the
         shared rule removes DynamoDB (no query scores
         ``UNIQUE_DELTA_THRESHOLD`` above Aurora) and its queries move to
-        Aurora. #588: this goes through ``resettle_after_corrections``, the
+        Aurora. #588: this goes through ``run_reality_check``, the
         shared rule that replaced the Aurora absorption pass this test used to
         call; the pass's tiny signal-pinned case is now the justification
         floors' job, so these queries are plain, not signal-pinned.
         """
-        from src.agents.referee.reality_check import resettle_after_corrections
+        from src.agents.referee.reality_check import run_reality_check
 
         for signal in ("session_store", "leaderboard_pattern"):
             revised_assignments = [
@@ -303,9 +303,13 @@ class TestAbsorptionBehaviorChanges:
             }
             triage = {"signals": [{"signal": signal, "query_ids": ["s1", "s2"]}]}
 
-            revised, consolidations = resettle_after_corrections(
-                revised_assignments, triage, analysis_outputs, collector_output
+            result = run_reality_check(
+                {"query_assignments": revised_assignments},
+                triage,
+                analysis_outputs,
+                collector_output,
             )
+            revised, consolidations = result["revised_assignments"], result["consolidations"]
 
             engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in revised}
             assert engine_of["s1"] == "aurora_mysql", signal
@@ -322,10 +326,10 @@ class TestAbsorptionBehaviorChanges:
         bonus any more (``leaderboard_pattern`` is not an anti-pattern or
         capability signal), so the real gap is 10 points, below
         ``UNIQUE_DELTA_THRESHOLD``: DynamoDB has no unique value and its
-        queries move to Aurora. #588: through ``resettle_after_corrections``,
+        queries move to Aurora. #588: through ``run_reality_check``,
         the shared rule that replaced the Aurora absorption pass.
         """
-        from src.agents.referee.reality_check import resettle_after_corrections
+        from src.agents.referee.reality_check import run_reality_check
 
         revised_assignments = [
             {"query_id": f"aq{i}", "assigned_engine": "aurora_postgresql"} for i in range(30)
@@ -360,9 +364,10 @@ class TestAbsorptionBehaviorChanges:
         }
         triage = {"signals": [{"signal": "leaderboard_pattern", "query_ids": ["k1", "k2", "k3"]}]}
 
-        revised, consolidations = resettle_after_corrections(
-            revised_assignments, triage, analysis_outputs, collector_output
+        result = run_reality_check(
+            {"query_assignments": revised_assignments}, triage, analysis_outputs, collector_output
         )
+        revised, consolidations = result["revised_assignments"], result["consolidations"]
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in revised}
         assert engine_of["k1"] == "aurora_postgresql"

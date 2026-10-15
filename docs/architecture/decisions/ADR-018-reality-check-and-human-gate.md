@@ -68,7 +68,7 @@ Each decision names the guard test that fails when the code stops following it. 
 
 | Decision | Enforced by |
 |---|---|
-| 1. Reality Check Agent (CTO-Level Engine Consolidation) | `tests/contract/test_reality_check_output.py`<br>`tests/unit/agents/referee/test_reality_check_resettle.py`<br>`tests/unit/test_reality_check.py::TestAbsorptionAppliedToAssignments`<br>superseded by ADR-031 Decision 7 (own scoring logic replaced) |
+| 1. Reality Check Agent (CTO-Level Engine Consolidation) | `tests/contract/test_reality_check_output.py`<br>`tests/unit/agents/referee/test_reality_check_shared_rule.py`<br>`tests/unit/test_reality_check.py::TestAbsorptionAppliedToAssignments`<br>superseded by ADR-031 Decision 7 (own scoring logic replaced) |
 | 2. Human Approval Gate (Assignment Review Phase) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_schema_design_blocked_before_approval`<br>`tests/unit/api/test_local_execution_status.py::TestWaitingStatus::test_assignment_approval_gate_reports_waiting`<br>superseded -- #701 (the task-token pause is gone; the gate is the `ASSIGNMENT_REVIEW` phase in `src/orchestrator/`) |
 | 3. Signal-Driven Assignment Resolution | `tests/unit/test_assignment_resolver.py::TestSignalOverrides`<br>`tests/unit/test_assignment_resolver.py::TestAntiPatternPenalties` |
 | 4. Group Splitting for Schema Design | superseded -- #701 (groups are capped at 20 queries, not 20 tables, `src/agents/schema_design/group_splitter.py`) |

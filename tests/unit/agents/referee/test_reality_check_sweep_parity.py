@@ -13,7 +13,7 @@ These tests drive the real deterministic core through a real local store,
 with the main consolidation pass (``run_reality_check``) stubbed to a
 controlled result, so the only engine-level change left for the test to
 observe comes from the sanity sweep itself -- isolating the regression from
-unrelated consolidation/resettle behavior already covered elsewhere.
+unrelated consolidation behavior already covered elsewhere.
 """
 
 from __future__ import annotations

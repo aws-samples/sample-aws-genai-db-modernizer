@@ -320,7 +320,6 @@ def _apply_justification_floors(
     committed_engines: set[str],
     engine_queries: dict[str, list[dict]],
     mandatory_committed_engines: set[str],
-    held: set[str],
     fixed_query_ids: set[str],
     total_queries: int,
     query_map: dict[str, dict],
@@ -398,12 +397,7 @@ def _apply_justification_floors(
             verdicts = {
                 qa["query_id"]: (cost_reason is None, cost_reason or "") for qa in current_qas
             }
-        # A held query (#588) stays where it is even when it fails the floor.
-        to_move_qas = [
-            qa
-            for qa in current_qas
-            if not verdicts[qa["query_id"]][0] and qa["query_id"] not in held
-        ]
+        to_move_qas = [qa for qa in current_qas if not verdicts[qa["query_id"]][0]]
         if not to_move_qas:
             continue
 

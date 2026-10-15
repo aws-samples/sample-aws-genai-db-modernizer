@@ -13,7 +13,7 @@ rather than rewritten against a function that no longer exists.
 #588: the Aurora absorption pass and its own thresholds are deleted too, so
 ``TestAuroraAbsorptionPass`` and ``TestTinyMandatoryAbsorption`` (which called
 it directly) are removed. The rule that replaces it is covered by
-``tests/unit/agents/referee/test_reality_check_resettle.py``; a tiny
+``tests/unit/agents/referee/test_reality_check_shared_rule.py``; a tiny
 signal-pinned engine is judged by the justification floors
 (``TestOpenSearchJustificationFloor`` below and
 ``test_mandatory_engine_cost_share_floor.py``).
@@ -649,8 +649,6 @@ class TestAuroraAbsorptionIntegration:
 
         # DocumentDB is kept -- its 17-point edge on db.docs is genuine
         # unique value under the one rule every engine is judged by now.
-        aurora_info = result.get("aurora_absorption", {})
-        assert "documentdb" not in aurora_info.get("engines_eliminated", [])
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert {engine_of[qid] for qid in doc_query_ids} == {"documentdb"}
 
@@ -693,8 +691,8 @@ class TestAuroraAbsorptionIntegration:
         )
 
         # DynamoDB should NOT be absorbed (delta = 95-40 = 55, well above threshold of 30)
-        aurora_info = result.get("aurora_absorption", {})
-        assert "dynamodb" not in aurora_info.get("engines_eliminated", [])
+        engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
+        assert {engine_of[qid] for qid in ("ddb1", "ddb2", "ddb3")} == {"dynamodb"}
 
 
 class TestAbsorptionAppliedToAssignments:
@@ -760,7 +758,10 @@ class TestAbsorptionAppliedToAssignments:
 
     def test_partial_absorption_moves_absorbed_queries(self):
         result = self._run_partial_scenario()
-        assert result["aurora_absorption"]["engines_reduced"] == ["documentdb"]
+        # DocumentDB is reduced, not removed: one partial record.
+        assert [
+            (c["from_engine"], c["to_engine"], c["action"]) for c in result["consolidations"]
+        ] == [("documentdb", "aurora_postgresql", "partial")]
 
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in result["revised_assignments"]}
         assert [engine_of[f"dq{i}"] for i in range(1, 6)] == ["aurora_postgresql"] * 5
