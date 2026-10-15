@@ -234,7 +234,7 @@ version to install when `$CLAUDE_BIN` is missing, default pinned to
 deliberately), `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or*
 `CLAUDE_CODE_USE_BEDROCK` + `AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default
 3600), `E2E_LLM_MAX_TURNS` (default 200) and `E2E_LLM_MAX_BUDGET_USD`
-(default 20), each only passed if the CLI's own `--help` mentions the flag,
+(default 50: a discourse run costs about $18-20, plus $3-5 when the DynamoDB merge needs a fix round), each only passed if the CLI's own `--help` mentions the flag,
 `E2E_LLM_ARTIFACT_ROOT` (dry-run only, default `$REPO_ROOT/artifacts`; see
 below), `E2E_OUTPUT` (as in `e2e.sh`).
 

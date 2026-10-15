@@ -19,7 +19,8 @@
 #                            --help mentions that flag (see "CLI flag
 #                            feature-detection" below). Default: 200.
 #   E2E_LLM_MAX_BUDGET_USD - only passed as --max-budget-usd if --help mentions
-#                            it. Default: 20.
+#                            it. Default: 50 (a discourse run costs about $18-20, plus
+#                            $3-5 when the DynamoDB merge needs a fix round).
 #   CLAUDE_BIN             - the claude CLI to invoke. Default: claude.
 #   CLAUDE_CODE_VERSION    - npm version to install when $CLAUDE_BIN is missing.
 #                            Default: 2.1.288 (pinned; bump deliberately).
@@ -229,7 +230,7 @@ else
       "--max-budget-usd (if supported) and the ${E2E_LLM_TIMEOUT:-3600}s wall-clock timeout" >&2
   fi
   if grep -q -- '--max-budget-usd' <<<"$HELP_TEXT"; then
-    CLAUDE_FLAGS+=(--max-budget-usd "${E2E_LLM_MAX_BUDGET_USD:-20}")
+    CLAUDE_FLAGS+=(--max-budget-usd "${E2E_LLM_MAX_BUDGET_USD:-50}")
   fi
   if grep -q -- '--setting-sources' <<<"$HELP_TEXT"; then
     CLAUDE_FLAGS+=(--setting-sources project)
