@@ -10669,6 +10669,13 @@
                   "type": "string"
                 }
               },
+              "removal_saving_claimed": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "boolean"
+                }
+              },
               "retention_reason": {
                 "required": false,
                 "schema": {
@@ -11235,8 +11242,8 @@
         }
       }
     },
-    "schema_hash": "50305ee505744935d927470b878ba1345c58d1b31fc43a5dc662053363682b21",
-    "version": "1.11"
+    "schema_hash": "f8afa93ea5ac4f2daab36a2dfeb1b9c640a4d417e797afadd0305ed05e58d641",
+    "version": "1.12"
   },
   "referee_input.RefereeInput": {
     "fields": {

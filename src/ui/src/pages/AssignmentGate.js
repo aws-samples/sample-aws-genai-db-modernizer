@@ -360,11 +360,6 @@ const AssignmentGatePage = memo(() => {
     [survivingAfterDist],
   );
 
-  // Total savings
-  const totalSavings = useMemo(() => {
-    return consolidations.reduce((sum, c) => sum + (c.saved_cost_estimate || 0), 0);
-  }, [consolidations]);
-
   // Table count from collector
   const tableCount = useMemo(() => {
     const tables = collectorData?.database_schema?.tables || collectorData?.schema?.tables || [];

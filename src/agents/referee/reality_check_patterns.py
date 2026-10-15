@@ -280,9 +280,47 @@ def _build_recommendations(
                 "plus traffic-or-result-size floor a standing deployment needs, so no "
                 "infrastructure cost was ever justified for it."
             )
-        elif saved:
+        elif c.get("removal_saving_claimed", bool(saved)):
             real_cost = engine_infra_cost.get(source)
-            if real_cost:
+            siblings = [
+                r
+                for r in consolidations
+                if r["from_engine"] == source and r.get("action") == "full"
+            ]
+            # #793: the saving belongs to retiring the engine (all its moves). The
+            # first move states it, with the figure first (the deck clips a card's
+            # detail at 170 characters); later moves refer back and never repeat it.
+            if len(siblings) > 1 and c is not siblings[0]:
+                outcome = f"Part of retiring {source_name}" + (
+                    " (saving counted on its first move)." if real_cost else "."
+                )
+            elif len(siblings) > 1:
+                moves = ", ".join(
+                    [
+                        f"{_queries(siblings[0]['query_count'])} to "
+                        f"{display_engine(siblings[0]['to_engine'])}",
+                        *(
+                            f"{r['query_count']} to {display_engine(r['to_engine'])}"
+                            for r in siblings[1:]
+                        ),
+                    ]
+                )
+                if real_cost:
+                    outcome = (
+                        f"Removes ${real_cost:,.2f}/mo by retiring {source_name} ({moves}), "
+                        f"{source_name}'s own analysed infrastructure estimate before removal, "
+                        "plus a qualitative reduction in operational overhead -- one fewer "
+                        "engine's worth of team expertise, monitoring, backups and failover to "
+                        f"maintain -- by avoiding a dedicated {source_name} cluster."
+                    )
+                else:
+                    outcome = (
+                        f"Retiring {source_name} ({moves}) avoids running a dedicated "
+                        f"{source_name} cluster: one fewer engine's worth of team expertise, "
+                        "monitoring, backups and failover to maintain. No specific "
+                        f"infrastructure-cost figure is available for {source_name} to show here."
+                    )
+            elif real_cost:
                 # #380 review: name the figure plainly instead of pointing at an
                 # internal field name (``tco_analysis``'s ``cost_breakdown``) --
                 # the number itself (``engine_infra_cost``, the same one

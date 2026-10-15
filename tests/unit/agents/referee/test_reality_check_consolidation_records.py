@@ -265,7 +265,9 @@ class TestReconcile:
                 qa["assigned_engine"] = "aurora_mysql"
         records.append(_record("opensearch", "aurora_mysql", 3, saved=450))
 
-        final = reconcile_consolidations(before, revised, records)
+        final = reconcile_consolidations(
+            before, revised, records, engine_costs={"opensearch": 450, "documentdb": 500}
+        )
 
         _assert_invariant(before, revised, final)
         assert _distribution(revised) == {"dynamodb": 18, "aurora_mysql": 10, "elasticache": 3}
@@ -277,7 +279,7 @@ class TestReconcile:
     def test_unrecorded_move_gets_a_record(self) -> None:
         before = [_qa("a", "aurora_mysql"), _qa("b", "aurora_mysql"), _qa("c", "opensearch")]
         after = [_qa("a", "dynamodb"), _qa("b", "aurora_mysql"), _qa("c", "aurora_mysql")]
-        final = reconcile_consolidations(before, after, [])
+        final = reconcile_consolidations(before, after, [], engine_costs={"opensearch": 240.96})
         _assert_invariant(before, after, final)
         am = next(c for c in final if c["from_engine"] == "aurora_mysql")
         assert am["query_count"] == 1 and am["action"] == "partial"
@@ -292,7 +294,7 @@ class TestReconcile:
             _record("documentdb", "dynamodb", 5, saved=500),
             _record("opensearch", "documentdb", 1, saved=450),
         ]
-        final = reconcile_consolidations(before, after, records)
+        final = reconcile_consolidations(before, after, records, engine_costs={"documentdb": 500})
         _assert_invariant(before, after, final)
         assert [(c["from_engine"], c["query_count"]) for c in final] == [("documentdb", 2)]
         assert final[0]["saved_cost_estimate"] == 500
@@ -304,13 +306,15 @@ class TestReconcile:
             _record("documentdb", "dynamodb", 1, saved=500),
             _record("documentdb", "aurora_mysql", 1, saved=500),
         ]
-        final = reconcile_consolidations(before, after, records)
+        final = reconcile_consolidations(before, after, records, engine_costs={"documentdb": 500})
         assert sum(c["saved_cost_estimate"] for c in final) == 500
 
     def test_out_of_scope_leftovers_do_not_keep_an_engine(self) -> None:
         before = [_qa("a", "documentdb"), _qa("b", "documentdb", in_scope=False)]
         after = [_qa("a", "dynamodb"), _qa("b", "documentdb", in_scope=False)]
-        final = reconcile_consolidations(before, after, [_record("documentdb", "dynamodb", 1, 500)])
+        final = reconcile_consolidations(
+            before, after, [_record("documentdb", "dynamodb", 1, 500)], {}, {"documentdb": 500}
+        )
         assert final[0]["action"] == "full" and final[0]["saved_cost_estimate"] == 500
 
     def test_customer_override_left_on_an_emptied_engine_keeps_it(self) -> None:

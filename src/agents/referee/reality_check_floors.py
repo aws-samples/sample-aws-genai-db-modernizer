@@ -25,7 +25,6 @@ from src.agents.referee.reality_check_records import _queries
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
     ENGINE_BASE_COST,
-    EXTRA_ENGINE_BURDEN_MONTHLY,
     _group_eligible_engines,
     _move_scores_text,
     _query_has_join,
@@ -627,7 +626,7 @@ def _apply_justification_floors(
         floor_entry_reason = (
             f"{display_engine(engine)} does not meet its justification floor — {floor_reason}"
         )
-        for i, (target_engine, placed) in enumerate(floor_placement.items()):
+        for target_engine, placed in floor_placement.items():
             # moved_queries() (reality_check_request.py) recomputes membership
             # from (from_engine, to_engine) alone, so two consolidation records
             # for the same pair would double-count the same queries. Merge into
@@ -649,10 +648,6 @@ def _apply_justification_floors(
                     f"{existing['reason']} | {_queries(len(placed))} of these also move "
                     f"because {floor_entry_reason}"
                 )
-                if is_full and i == 0:
-                    existing["saved_cost_estimate"] = existing.get("saved_cost_estimate", 0) + (
-                        ENGINE_BASE_COST.get(engine, 0) + EXTRA_ENGINE_BURDEN_MONTHLY
-                    )
                 continue
             consolidations.append(
                 {
@@ -660,11 +655,8 @@ def _apply_justification_floors(
                     "to_engine": target_engine,
                     "query_count": len(placed),
                     "reason": floor_entry_reason,
-                    "saved_cost_estimate": (
-                        (ENGINE_BASE_COST.get(engine, 0) + EXTRA_ENGINE_BURDEN_MONTHLY)
-                        if is_full and i == 0
-                        else 0
-                    ),
+                    # The saving is set by reconcile_consolidations (#793).
+                    "saved_cost_estimate": 0,
                     "action": "full" if is_full else "partial",
                     "queries_retained": (
                         [qa["query_id"] for qa in floor_unplaced] if floor_unplaced else []

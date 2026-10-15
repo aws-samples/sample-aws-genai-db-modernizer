@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from src.agents.referee.reality_check_rules import ENGINE_BASE_COST, EXTRA_ENGINE_BURDEN_MONTHLY
 from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import display_engine
 
@@ -24,6 +23,7 @@ def reconcile_consolidations(
     after_assignments: list[dict],
     consolidations: list[dict],
     unique_value_assessment: dict[str, dict] | None = None,
+    engine_costs: dict[str, float] | None = None,
 ) -> list[dict]:
     """Make the consolidation records describe the net per-query moves (#218).
 
@@ -53,6 +53,15 @@ def reconcile_consolidations(
     floor's reason attached to a 119-query record and to a 29-query record
     neither of which the floor had any part in).
 
+    ``engine_costs`` (optional, #793) maps each engine to its own analysed
+    ``cost_estimate.monthly_cost_usd``: the single saving figure a removed engine
+    carries, the same one ``tco_analysis.eliminated_engine_costs`` publishes. It is
+    stored once, on the engine's first record (ADR-031 Decision 7: counted once),
+    and every record of that engine sets ``removal_saving_claimed`` so wording can
+    attribute the saving to removing the engine, not to one of its moves. An engine
+    without an analysed cost claims the removal but carries no dollar figure (0);
+    the flat ``ENGINE_BASE_COST`` placeholder is never shown as a saving.
+
     Record order is kept; new records follow. Inputs are not mutated.
     """
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
@@ -73,7 +82,6 @@ def reconcile_consolidations(
             moves[(src, dst)] = moves.get((src, dst), 0) + 1
             moved_qids[(src, dst)].add(qa["query_id"])
 
-    recorded_saving: dict[str, float] = {}
     first_record: dict[tuple[str, str], dict] = {}
     # Engine-level ``workload_justified`` verdict (#475 review round 2,
     # finding A), read off whichever input record for that ``from_engine``
@@ -85,7 +93,6 @@ def reconcile_consolidations(
     workload_justified_by_engine: dict[str, bool | None] = {}
     for c in consolidations:
         src = c["from_engine"]
-        recorded_saving[src] = max(recorded_saving.get(src, 0), c.get("saved_cost_estimate") or 0)
         first_record.setdefault((src, c["to_engine"]), c)
         if src not in workload_justified_by_engine and "workload_justified" in c:
             workload_justified_by_engine[src] = c["workload_justified"]
@@ -153,16 +160,16 @@ def reconcile_consolidations(
         # to make for this engine, and this field also reaches the
         # handler's own log line and the context graph
         # (``src/graph/populators.py``) directly, not only that prose.
-        if full and src not in savings_claimed and not never_justified:
+        claimed = full and not never_justified
+        if claimed and src not in savings_claimed:
             savings_claimed.add(src)
-            saved = recorded_saving.get(src) or (
-                ENGINE_BASE_COST.get(src, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
-            )
+            saved = float((engine_costs or {}).get(src) or 0.0)
         record.update(
             {
                 "query_count": count,
                 "action": action,
                 "saved_cost_estimate": saved,
+                "removal_saving_claimed": claimed,
                 "queries_retained": retained,
                 "retention_reason": record.get("retention_reason") if retained else None,
                 # Copied from the engine-level verdict, not just whatever
@@ -178,3 +185,32 @@ def reconcile_consolidations(
         )
         reconciled.append(record)
     return reconciled
+
+
+def removal_log_lines(consolidations: list[dict]) -> list[str]:
+    """The run-log lines for the final records: each move, then one line per engine.
+
+    The saving is an engine-level figure (#793), so it is logged once per removed
+    engine, not per move; a move line carries no dollar amount.
+    """
+    lines: list[str] = []
+    by_engine: dict[str, list[dict]] = {}
+    for c in consolidations:
+        lines.append(
+            f"Consolidated {c['query_count']} queries: {c['from_engine']} → {c['to_engine']}"
+        )
+        if c.get("action", "full") == "full":
+            by_engine.setdefault(c["from_engine"], []).append(c)
+    for engine, records in by_engine.items():
+        saving = sum(r.get("saved_cost_estimate") or 0 for r in records)
+        if not records[0].get("removal_saving_claimed", bool(saving)):
+            lines.append(f"Removed {engine}: no saving claimed (never justified by the workload)")
+        elif saving:
+            moves = f"{len(records)} move{'s' if len(records) != 1 else ''}"
+            lines.append(
+                f"Removed {engine}: saves ~${saving:,.2f}/mo "
+                f"(its analysed cost, counted once across {moves})"
+            )
+        else:
+            lines.append(f"Removed {engine}: no analysed cost estimate to quote as a saving")
+    return lines

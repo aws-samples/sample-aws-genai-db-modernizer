@@ -14,8 +14,6 @@ from src.agents.referee.move_ledger import (
     ledger_for,
 )
 from src.agents.referee.reality_check_rules import (
-    ENGINE_BASE_COST,
-    EXTRA_ENGINE_BURDEN_MONTHLY,
     _group_eligible_engines,
     _move_scores_text,
     _pick_winner,
@@ -487,17 +485,8 @@ def _place_settled_queries(
             }
         )
 
-    # Set the saved-cost estimate on the first full-removal record for an
-    # engine that ends this run owning nothing at all (matches the existing
-    # convention: the figure belongs to the engine being eliminated, counted
-    # once, not once per destination it was split across).
-    saved_for: dict[str, float] = {}
-    for c in consolidations:
-        if c["action"] == "full" and c["from_engine"] not in saved_for:
-            saved_for[c["from_engine"]] = (
-                ENGINE_BASE_COST.get(c["from_engine"], 100) + EXTRA_ENGINE_BURDEN_MONTHLY
-            )
-            c["saved_cost_estimate"] = saved_for[c["from_engine"]]
+    # No saving figure is set here (#793): ``reconcile_consolidations`` stores each
+    # removed engine's analysed cost, once, on the engine's first record.
 
     # #502 review round 3: Phase 1 and Phase 2 must agree on eligibility --
     # verified here, not just assumed, since the earlier draft's two

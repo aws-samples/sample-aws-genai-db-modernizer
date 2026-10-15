@@ -323,7 +323,7 @@ def main():
             for c in cons:
                 print(
                     f"    {c['from_engine']} → {c['to_engine']}: "
-                    f"{c['query_count']} queries moved (saves ~${c['saved_cost_estimate']}/mo)"
+                    f"{c['query_count']} queries moved"
                 )
         else:
             print("\n  No consolidations — all engines provide unique value")

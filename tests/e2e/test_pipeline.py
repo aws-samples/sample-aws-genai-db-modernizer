@@ -270,3 +270,30 @@ def test_dynamodb_check_costs_on_a_real_split_group(run: PipelineResult, tmp_pat
     assert code == 1
     assert finalize["status"] == "error"
     assert "--merge" in finalize["message"]
+
+
+@pytest.mark.deterministic
+def test_a_removed_engines_saving_is_its_analysed_cost_everywhere(run: PipelineResult) -> None:
+    """#793: the consolidation records carry the same saving the TCO publishes.
+
+    Per removed engine the records sum to exactly ``tco_analysis.eliminated_engine_costs``
+    (wordpress: DocumentDB $367.39, counted once across its two moves), never the flat
+    $500 placeholder, and an engine the first assignment never justified claims nothing.
+    """
+    report = json.loads(
+        sorted((run.job_dir() / "synthesis").glob("v*/report.json"))[-1].read_text()
+    )
+    records = report["reality_check"]["consolidations"]
+    eliminated = {
+        row["database"]: row["monthly_cost_usd"]
+        for row in report["tco_analysis"].get("eliminated_engine_costs") or []
+    }
+    saved: dict[str, float] = {}
+    for c in records:
+        saved[c["from_engine"]] = saved.get(c["from_engine"], 0) + c["saved_cost_estimate"]
+        assert c["saved_cost_estimate"] != 500.0
+    for engine, total in saved.items():
+        assert round(total, 2) == round(eliminated.get(engine, 0), 2), (engine, total, eliminated)
+    if run.db == "wordpress":
+        assert eliminated == {"documentdb": 367.39}
+        assert [c["saved_cost_estimate"] for c in records] == [367.39, 0.0]

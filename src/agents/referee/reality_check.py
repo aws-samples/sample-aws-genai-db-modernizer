@@ -396,6 +396,7 @@ def run_reality_check(
         revised,
         consolidations,
         unique_value_assessment,
+        _engine_infra_cost(analysis_outputs),
     )
 
     # Pass 3: Detect architectural patterns

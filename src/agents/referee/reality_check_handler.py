@@ -34,10 +34,12 @@ from src.agents.referee.query_scoring import ScoringContext, score_query_for_eng
 from src.agents.referee.reality_check import (
     AURORA_ENGINES,
     _build_query_signals,
+    _engine_infra_cost,
     reconcile_consolidations,
     refresh_patterns_and_recommendations,
     run_reality_check,
 )
+from src.agents.referee.reality_check_records import removal_log_lines
 from src.agents.referee.reality_check_request import (
     build_reality_check_request,
     query_signal_map,
@@ -376,12 +378,8 @@ def run_reality_check_handler(
     print(f"[reality-check] Before: {det['before_distribution']}")
     print(f"[reality-check] After:  {det['after_distribution']}")
 
-    for c in det["consolidations"]:
-        print(
-            f"[reality-check] Consolidated {c['query_count']} queries: "
-            f"{c['from_engine']} → {c['to_engine']} "
-            f"(saves ~${c['saved_cost_estimate']}/mo)"
-        )
+    for line in removal_log_lines(det["consolidations"]):
+        print(f"[reality-check] {line}")
 
     for p in det["architectural_patterns"]:
         print(f"[reality-check] Pattern: {p['name']}")
@@ -793,6 +791,7 @@ def _settle_records(result: dict) -> None:
         result["revised_assignments"],
         result["consolidations"],
         result.get("unique_value_assessment"),
+        _engine_infra_cost(result.get("analysis_outputs")),
     )
     refresh_patterns_and_recommendations(result)
 

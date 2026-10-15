@@ -226,9 +226,13 @@ class TestSavingsAreClaimedOnlyForAJustifiedEngine:
         before = self._qas("opensearch")
         after = [{**qa, "assigned_engine": "aurora_postgresql"} for qa in before]
         records = reconcile_consolidations(
-            before, after, [_record("opensearch", "aurora_postgresql", justified=True)]
+            before,
+            after,
+            [_record("opensearch", "aurora_postgresql", justified=True)],
+            engine_costs={"opensearch": 240.96},
         )
-        assert records[0]["saved_cost_estimate"] == 450
+        # The engine's analysed cost, not the 450 placeholder on the input record (#793).
+        assert records[0]["saved_cost_estimate"] == 240.96
         text = _build_recommendations([], records, [], {}, {"opensearch": 240.96})[0]
         assert "$240.96" in text
 

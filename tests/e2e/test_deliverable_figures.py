@@ -100,6 +100,7 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req = {"risks:total", *(f"risks:{s}" for s in SEVERITIES)} if exp["risks:total"] else set()
     req |= {k for k in exp if k.startswith("cached_reads:")}
     req |= {"removed"} if exp["removed"] else set()
+    req |= {"removal_savings"} if "removal_savings" in exp else set()
     return req
 
 

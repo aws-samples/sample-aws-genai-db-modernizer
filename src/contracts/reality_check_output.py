@@ -60,11 +60,21 @@ Version History:
   empty list, so an artifact written before this version, or a run with no
   model, reads as having no flags. Also ``model_flags_rejected``: how many
   model entries failed the ``ModelFlag`` contract and were dropped whole.
+- 1.12 (2026-10-15, #793): Added ``Consolidation.removal_saving_claimed``: whether
+  removing ``from_engine`` claims an infrastructure saving (the engine is fully
+  removed and its first assignment justified it, ADR-031 Decision 7). It is set on
+  every record of that engine, so wording attributes the saving to removing the
+  engine, not to one move. ``saved_cost_estimate`` now holds the engine's own
+  analysed cost (the figure ``tco_analysis.eliminated_engine_costs`` publishes),
+  counted once on the engine's first record, instead of the flat
+  ``ENGINE_BASE_COST + EXTRA_ENGINE_BURDEN_MONTHLY`` placeholder. Defaults to
+  ``False``, except that a record without the flag and with a positive
+  ``saved_cost_estimate`` (written before 1.12) reads as claimed.
 """
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .model_flag import FlagReason
 
@@ -141,7 +151,17 @@ class Consolidation(BaseModel):
     query_count: int = Field(..., ge=1, description="Number of queries moved")
     reason: str = Field(..., description="Why these queries were consolidated")
     saved_cost_estimate: float = Field(
-        ..., ge=0, description="Estimated monthly cost savings in USD"
+        ..., ge=0, description="Removed engine's analysed monthly cost in USD, counted once"
+    )
+    removal_saving_claimed: bool = Field(
+        default=False,
+        description=(
+            "True on every record of an engine whose full removal claims a saving "
+            "(its first assignment justified it, ADR-031 Decision 7); the dollar "
+            "figure, the engine's analysed cost, is counted once in saved_cost_estimate. "
+            "A record written before 1.12 has no flag: a positive saved_cost_estimate "
+            "reads as claimed"
+        ),
     )
     action: str = Field(default="full", description="Consolidation type: 'full' or 'partial'")
     queries_retained: list[str] = Field(
@@ -161,6 +181,13 @@ class Consolidation(BaseModel):
             "is not an infrastructure saving to claim (#475)"
         ),
     )
+
+    @model_validator(mode="after")
+    def _old_records_claim_what_they_saved(self) -> "Consolidation":
+        """Before 1.12 a positive saving was the claim: keep reading it that way."""
+        if "removal_saving_claimed" not in self.model_fields_set and self.saved_cost_estimate > 0:
+            self.removal_saving_claimed = True
+        return self
 
 
 class SweepDecision(BaseModel):
@@ -268,7 +295,7 @@ class RealityCheckOutputContract(BaseModel):
     which get consolidated, and what architectural patterns emerge.
     """
 
-    contract_version: str = Field(default="1.11", description="Contract version")
+    contract_version: str = Field(default="1.12", description="Contract version")
     source_assignment_version: int = Field(
         ..., ge=1, description="Base assignment version this check was run against"
     )

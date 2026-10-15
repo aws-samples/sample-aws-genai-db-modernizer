@@ -894,12 +894,8 @@ def sanity_sweep(
                         "each with a serviceable committed engine; "
                         f"{moved} scored best on {display_engine(to_engine)}"
                     ),
-                    # Split proportionally across every destination rather
-                    # than crediting one record with the whole estimate by
-                    # some other pick (e.g. its query share) -- which would
-                    # be exactly the count-keyed bias #579 removed, one
-                    # field over.
-                    "saved_cost_estimate": round(500.0 * moved / count, 2),
+                    # The saving is set by reconcile_consolidations (#793).
+                    "saved_cost_estimate": 0,
                     "action": "full" if single_destination else "partial",
                     "queries_retained": [],
                     "retention_reason": None,

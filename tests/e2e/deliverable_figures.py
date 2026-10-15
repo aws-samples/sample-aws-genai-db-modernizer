@@ -46,6 +46,14 @@ for _eid, _name in ENGINE_DISPLAY_NAMES.items():
 _NAMES_RE = "|".join(re.escape(n) for n in sorted(_NAME_TO_ENGINE, key=len, reverse=True))
 
 
+_REMOVES_RE = re.compile(r"Removes \$([\d,]+\.\d\d)/mo")
+
+
+def removal_savings(text: str) -> frozenset[float]:
+    """Every "Removes $X/mo" saving a deliverable's text states (#793)."""
+    return frozenset(_usd(m) for m in _REMOVES_RE.findall(text))
+
+
 def engine_id(name: str) -> str:
     """Engine id for a display name or raw id; the input unchanged if unknown."""
     return _NAME_TO_ENGINE.get(name.strip(), name.strip())
@@ -209,6 +217,16 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
     for sev in SEVERITIES:
         exp[f"risks:{sev}"] = counts.get(sev, 0)
     exp["risks:total"] = len(risks)
+
+    # #793: the removal saving of every retired engine, stated in each deliverable's
+    # reality-check lines as "Removes $X/mo ...".
+    savings = frozenset(
+        round(float(row["monthly_cost_usd"]), 2)
+        for row in tco.get("eliminated_engine_costs") or []
+        if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
+    )
+    if savings:
+        exp["removal_savings"] = savings
 
     exp["tied"] = len([t for t in report.get("tied_queries") or [] if isinstance(t, dict)])
     exp["engine_count"] = len(final_architecture(report))
@@ -502,6 +520,7 @@ def decision_figures(page: Any) -> Figures:
             .inner_text()
         )
 
+    f.add("removal_savings", removal_savings(norm(page.locator("body").inner_text())), "page text")
     f.add("cost:total", _usd(tile("Projected monthly")), "Projected monthly tile")
     f.add("engine_count", _int(tile("Engines")), "Engines tile")
     f.add("tables_migrate", _int(tile("Tables migrate")), "Tables migrate tile")
@@ -623,6 +642,11 @@ def analysis_figures(page: Any) -> Figures:
             ".stat-card", has=page.locator(f".stat-label:text-is('{label}')")
         ).locator(".stat-value")
 
+    f.add(
+        "removal_savings",
+        removal_savings(norm(page.locator("#tradeoffs-container").text_content() or "")),
+        "trade-offs tab",
+    )
     m = re.match(r"^\$([\d,.]+)/mo$", norm(stat("Projected Cost").inner_text()))
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Projected Cost stat")
     badges = stat("Target Engines").locator("[data-engine]").all()
@@ -736,6 +760,7 @@ def engineering_figures(md_text: str) -> Figures:
 
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
+    f.add("removal_savings", removal_savings(plain), "Migration trade-offs")
     removed: set[str] = set()
     m = re.search(r"^- Already removed from this comparison: (.+)$", plain, re.M)
     if m:
@@ -856,6 +881,7 @@ def deck_figures(slides: list[str], label: str) -> Figures:
     shapes, or the PDF drawn from them: one extractor reads both)."""
     f = Figures(label)
     text = " ".join(slides)
+    f.add("removal_savings", removal_savings(text), "Reality Check Decisions slide")
 
     m = re.search(r"([\d,]+) source tables? migrate\b", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Assessment Summary tile")
