@@ -1042,6 +1042,31 @@ class TestOpenSearchJustificationFloor:
         assert re.search(r"DynamoDB scores \d+(\.\d+)?", reason), reason
         assert "n/a" not in reason
 
+    def test_a_floor_move_names_the_target_engine_by_its_display_name(self):
+        """#761: the individual-query reason prints "DynamoDB", never the engine id."""
+        from src.tools.validation.customer_text_guard import scan_text
+
+        result = self._run(
+            "SELECT * FROM wp_users WHERE wp_usermeta.meta_value LIKE ?",
+            0.07,
+            query_capabilities={},
+        )
+        reason = next(
+            qa["assignment_reason"]
+            for qa in result["revised_assignments"]
+            if qa["query_id"] == "search"
+        )
+        assert "DynamoDB can serve this pattern" in reason, reason
+        assert "dynamodb" not in reason, reason
+        assert [f for f in scan_text(reason) if f.kind == "engine_id"] == []
+
+    def test_the_customer_text_guard_catches_a_raw_engine_id_in_that_reason(self):
+        """#761: the guard flags the pre-fix sentence, so a regression cannot ship unseen."""
+        from src.tools.validation.customer_text_guard import scan_text
+
+        findings = scan_text("fit=80, dynamodb can serve this pattern; OpenSearch scores 0.0")
+        assert [(f.kind, f.text) for f in findings] == [("engine_id", "dynamodb")]
+
     def test_plain_join_with_no_search_predicate_is_dropped(self):
         """The Action Scheduler shape: a join with no text predicate at all.
 

@@ -815,7 +815,7 @@ def _find_best_absorber_for_query(
         reason = (
             f"fit={fit}, data synced for {', '.join(sorted(overlap))}"
             if overlap
-            else f"fit={fit}, {target_engine} can serve this pattern"
+            else f"fit={fit}, {display_engine(target_engine)} can serve this pattern"
         )
 
         candidate_scores[target_engine] = result.score
