@@ -106,6 +106,7 @@ and `ci/e2e-llm.sh` build it for you.
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 
 - Python change in `src/` or `scripts/`: `make lint` and `make test`.
+- A `tests/e2e` test that works only on the deterministic job (it skips when `run.external`) needs `@pytest.mark.deterministic`, or `e2e-llm` fails on `--fail-on-skip`; `tests/unit/ci/test_e2e_deterministic_markers.py` enforces it.
 - Pipeline output or `src/report/`: add `make e2e` (or
   `uv run pytest tests/e2e/test_pipeline.py -p no:xdist -q` for a quick pass);
   after a UI report change run `uv run python scripts/sync_report_template.py --check`.
