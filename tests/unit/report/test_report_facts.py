@@ -538,6 +538,163 @@ def test_546_a_removed_engine_still_lists_with_its_reasons() -> None:
 
 
 # --------------------------------------------------------------------------
+# #861: a partial consolidation, or one a customer pin kept, is not "reversed"
+# --------------------------------------------------------------------------
+
+
+MOVED_TO_AURORA = ["a1", "a2", "a3"]
+MOVED_TO_DYNAMODB = ["d1", "d2", "d3"]
+
+
+def _pin_kept_report(moved_back: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The wordpress shape with two DocumentDB queries pinned by the customer
+    before the reality check (#852 review): the check moved DocumentDB's other
+    queries off, the pins stayed, and the sanity sweep kept DocumentDB for
+    them. The check's own revision is the effective assignment, so DocumentDB
+    is in its ``after_distribution``: nothing was moved back after it.
+
+    ``moved_back``: the moved queries a later customer edit put back on
+    DocumentDB (synthesis records them per consolidation, #861)."""
+    report = _readded_report()
+    report["trade_offs"][0]["description"] = (
+        "Consolidated 3 queries from DocumentDB → Aurora MySQL: Partial consolidation: "
+        "3 queries moved to Aurora MySQL; DocumentDB stays for 2 queries."
+    )
+    report["trade_offs"][1]["description"] = (
+        "Consolidated 3 queries from DocumentDB → DynamoDB: Partial consolidation: "
+        "3 queries moved to DynamoDB; DocumentDB stays for 2 queries."
+    )
+    report["trade_offs"].append(
+        {
+            "description": "DocumentDB kept: not every query can leave it: the customer "
+            "chose DocumentDB for q1; the customer chose DocumentDB for q2",
+            "impact": "same",
+            "engine": "reality-check",
+            "query_ids": ["q1", "q2"],
+        }
+    )
+    rc = report["reality_check"]
+    for c, moved in zip(rc["consolidations"], (MOVED_TO_AURORA, MOVED_TO_DYNAMODB), strict=True):
+        c.update(
+            action="partial",
+            queries_retained=["q1", "q2"],
+            moved_query_ids=list(moved),
+            moved_back_query_ids=[q for q in moved if q in moved_back],
+        )
+    rc["after_distribution"] = {"aurora_mysql": 63, "dynamodb": 42, "documentdb": 2}
+    rc["sweep_decisions"] = [
+        {
+            "engine": "documentdb",
+            "decision": "kept",
+            "reason": "not every query can leave it: the customer chose DocumentDB for q1",
+            "blocking_query_ids": ["q1", "q2"],
+            "blocking_rule": "customer_pin",
+        }
+    ]
+    return report
+
+
+def test_861_a_consolidation_the_check_itself_kept_partial_is_not_reversed() -> None:
+    facts = _with_facts(_pin_kept_report())["facts"]
+    assert not any(t["reversed"] for t in facts["reality_check_trade_offs"])
+    assert facts["removed_engines"] == []
+    assert facts["trade_off_count"] == 4
+    kinds = [(d["kind"], d["engine"]) for d in facts["reality_check_decisions"]]
+    assert kinds == [
+        ("consolidation", "documentdb"),
+        ("consolidation", "documentdb"),
+        ("pattern", None),
+        ("kept", "documentdb"),
+    ]
+
+
+def test_861_every_deliverable_shows_the_partial_consolidation() -> None:
+    report = _with_facts(_pin_kept_report())
+    md = render_engineering_report_md(report)
+    assert "moved queries back" not in md
+    assert "Reversed by a later assignment edit" not in md
+    assert "## Migration trade-offs (4)" in md
+    assert "DocumentDB stays for 2 queries" in md
+    html = render_decision_report_html(report)
+    assert "DocumentDB stays for 2 queries" in html
+    assert 'data-decision="0"' in html and 'data-decision="1"' in html
+    assert "the customer chose DocumentDB" in html
+    derived = pptx_report.derive(report, {})
+    assert derived["n_tradeoffs"] == 4
+    assert [d["index"] for d in derived["rc_decisions"]] == [0, 1, 2, 3]
+
+
+def test_861_a_customer_edit_after_the_check_still_reverses_it() -> None:
+    """#546 stays: the check removed DocumentDB (not in its after_distribution)
+    and a later edit put queries back on it. A report without the per-query
+    record falls back to the engine rule."""
+    report = _pin_kept_report()
+    rc = report["reality_check"]
+    rc["after_distribution"] = {"aurora_mysql": 63, "dynamodb": 44}
+    for c in rc["consolidations"]:
+        del c["moved_query_ids"], c["moved_back_query_ids"]
+    facts = _with_facts(report)["facts"]
+    assert [t["from_engine"] for t in facts["reality_check_trade_offs"] if t["reversed"]] == [
+        "documentdb",
+        "documentdb",
+    ]
+
+
+def test_861_an_edit_that_undoes_a_partial_consolidation_reverses_it() -> None:
+    """The #891 review's wordpress case: the check kept DocumentDB partial (the
+    pins), then a customer edit moved every moved query back. Per query, both
+    lines are undone, so no deliverable states them (ADR-032 Decision 6)."""
+    report = _with_facts(_pin_kept_report(moved_back=(*MOVED_TO_AURORA, *MOVED_TO_DYNAMODB)))
+    facts = report["facts"]
+    rows = facts["reality_check_trade_offs"]
+    assert [
+        (t["reversed"], t["queries_moved_back"], t["queries_still_moved"]) for t in rows[:2]
+    ] == [
+        (True, 3, 0),
+        (True, 3, 0),
+    ]
+    assert [d["kind"] for d in facts["reality_check_decisions"]] == ["pattern", "kept"]
+    assert facts["trade_off_count"] == 2
+    md = render_engineering_report_md(report)
+    current = md.split("## Migration trade-offs", 1)[1].split("### Reversed", 1)[0]
+    assert "moved to DynamoDB" not in current and "moved to Aurora MySQL" not in current
+    assert "### Reversed by a later assignment edit" in md
+    html = render_decision_report_html(report)
+    assert "moved to DynamoDB" not in html
+    assert pptx_report.derive(report, {})["n_tradeoffs"] == 2
+
+
+def test_861_an_edit_that_undoes_part_of_it_states_what_stayed_moved() -> None:
+    """Two of the three DynamoDB moves undone: the line now says one query
+    stays moved, in every deliverable, never the check's original three."""
+    report = _with_facts(_pin_kept_report(moved_back=("d1", "d2")))
+    facts = report["facts"]
+    rows = facts["reality_check_trade_offs"]
+    assert (rows[1]["reversed"], rows[1]["queries_moved_back"], rows[1]["queries_still_moved"]) == (
+        False,
+        2,
+        1,
+    )
+    now = rows[1]["description_now"]
+    assert now.startswith("Consolidated 1 query from DocumentDB → DynamoDB")
+    assert "a later assignment edit moved 2 back to DocumentDB" in now
+    assert rows[0]["description_now"] is None  # nothing on that line was undone
+    decision = next(d for d in facts["reality_check_decisions"] if d["index"] == 1)
+    assert decision["title"] == "Consolidated 1 query from DocumentDB → DynamoDB"
+    md = render_engineering_report_md(report)
+    assert "Consolidated 1 query from DocumentDB → DynamoDB" in md
+    assert "3 queries moved to DynamoDB" not in md
+    html = render_decision_report_html(report)
+    assert "Consolidated 1 query from DocumentDB → DynamoDB" in html
+    assert "3 queries moved to DynamoDB" not in html
+    deck = pptx_report.derive(report, {})
+    assert any(
+        d["title"] == "Consolidated 1 query from DocumentDB → DynamoDB"
+        for d in deck["rc_decisions"]
+    )
+
+
+# --------------------------------------------------------------------------
 # #595: reality-check trade-offs in every deliverable
 # --------------------------------------------------------------------------
 

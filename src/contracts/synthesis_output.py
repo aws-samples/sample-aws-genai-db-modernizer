@@ -272,6 +272,11 @@ Version History:
   ``pattern``: every query routed to a pattern-only engine (OpenSearch) matches
   one of that engine's detected patterns, which ``routed_confidence`` has
   produced since #475 (synthesis failed validation on it). Backward compatible.
+- 1.22 (2026-10-15, #861): ``facts.reality_check_trade_offs`` entries gain
+  ``queries_moved_back``, ``queries_still_moved`` and ``description_now``: a
+  consolidation line is reversed per query (every query it moved is back on
+  the engine it left), and a line an edit undid only in part is restated for
+  what stayed moved. Backward compatible -- every new field has a default.
 """
 
 from datetime import datetime
@@ -789,8 +794,22 @@ class RealityCheckTradeOff(BaseModel):
     reversed: bool = Field(
         False,
         description=(
-            "A later assignment edit moved queries back onto from_engine: the line no "
-            "longer describes the architecture and no deliverable states it as current"
+            "A later assignment edit moved queries back onto from_engine (every query the "
+            "line moved, when the report records them per query): the line no longer "
+            "describes the architecture and no deliverable states it as current"
+        ),
+    )
+    queries_moved_back: int = Field(
+        0, ge=0, description="Queries the line moved that a later edit put back on from_engine"
+    )
+    queries_still_moved: int | None = Field(
+        None, ge=0, description="Queries the line moved that stay moved; None when not recorded"
+    )
+    description_now: str | None = Field(
+        None,
+        description=(
+            "The line restated for what stayed moved, when a later edit undid only part "
+            "of it; every deliverable shows this instead of the original line"
         ),
     )
 
@@ -970,7 +989,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.21",
+        default="1.22",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

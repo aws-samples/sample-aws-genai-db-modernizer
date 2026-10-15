@@ -99,6 +99,14 @@ test('drops the reality-check lines a later assignment edit reversed (#546)', ()
   expect(currentTradeOffs(synthesis).map(t => t.description)).toEqual(['a', 'c']);
 });
 
+test('restates a reality-check line an edit undid in part (#861)', () => {
+  const synthesis = {
+    trade_offs: [{ description: 'a', impact: 'a' }, { description: 'old', impact: 'old' }],
+    facts: { reality_check_trade_offs: [{ index: 1, reversed: false, description_now: 'now' }] },
+  };
+  expect(currentTradeOffs(synthesis).map(t => [t.description, t.impact])).toEqual([['a', 'a'], ['now', 'now']]);
+});
+
 // ADR-032 Decision 7: the results page's "Reality check" tab under
 // "Trade-offs and design decisions".
 describe('results page Reality check tab (ADR-032 Decision 7)', () => {

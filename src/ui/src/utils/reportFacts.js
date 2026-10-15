@@ -89,12 +89,17 @@ export function realityCheckDecisions(synthesis) {
 }
 
 // The report's trade-offs without the reality-check lines a later assignment
-// edit reversed (#546): those no longer describe the architecture.
+// edit reversed (#546): those no longer describe the architecture. A line an
+// edit undid only in part reads as the facts layer restates it, for what
+// stayed moved (#861, `description_now`).
 export function currentTradeOffs(synthesis) {
   const all = (synthesis && synthesis.trade_offs) || [];
   const rc = (synthesis && synthesis.facts && synthesis.facts.reality_check_trade_offs) || [];
   const reversed = new Set(rc.filter(t => t.reversed).map(t => t.index));
-  return all.filter((t, i) => !reversed.has(i));
+  const restated = new Map(rc.filter(t => t.description_now && !t.reversed).map(t => [t.index, t.description_now]));
+  return all
+    .map((t, i) => (restated.has(i) ? { ...t, description: restated.get(i), impact: restated.get(i) } : t))
+    .filter((t, i) => !reversed.has(i));
 }
 
 // The results page's "Trade-offs and design decisions" tabs (ADR-032 Decision 7):

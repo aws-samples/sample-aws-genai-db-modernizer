@@ -314,7 +314,10 @@ def run_synthesis_deterministic(
     reality_check_summary = None
     if reality_check_output:
         reality_check_summary = {
-            "consolidations": reality_check_output.get("consolidations", []),
+            # #861: each with the queries it moved and those an edit put back.
+            "consolidations": consolidation_query_moves(
+                store, database_name, job_id, reality_check_output, data.assignment
+            ),
             "architectural_patterns": reality_check_output.get("architectural_patterns", []),
             "recommendations": reality_check_output.get("recommendations", []),
             "before_distribution": reality_check_output.get("before_distribution", {}),
@@ -604,6 +607,45 @@ def apply_synthesis_llm_output(
 # ---------------------------------------------------------------------------
 # Writer helper — shared by run_synthesis
 # ---------------------------------------------------------------------------
+
+
+def consolidation_query_moves(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    reality_check_output: dict,
+    effective: dict | None,
+) -> list[dict]:
+    """The reality check's consolidations, each with the queries it moved (#861).
+
+    ``moved_query_ids``: the queries on ``from_engine`` in the version the
+    check read and on ``to_engine`` in the version it wrote.
+    ``moved_back_query_ids``: those of them the effective assignment has put
+    back on ``from_engine`` since (a later edit). Copies; a consolidation is
+    returned as it is when the check wrote no revision or a version is
+    missing.
+    """
+    from src.storage.assignment_versioning import assignment_artifact_path
+
+    records = [dict(c) for c in reality_check_output.get("consolidations") or []]
+    source = reality_check_output.get("source_assignment_version")
+    output = reality_check_output.get("output_assignment_version")
+    if not (isinstance(source, int) and isinstance(output, int)):
+        return records
+    try:
+        before = _engine_of(
+            store.read_json(assignment_artifact_path(database_name, job_id, source))
+        )
+        after = _engine_of(store.read_json(assignment_artifact_path(database_name, job_id, output)))
+    except Exception:  # noqa: BLE001 -- a missing version leaves the records as they are
+        return records
+    now = _engine_of(effective)
+    for record in records:
+        src, dst = record.get("from_engine"), record.get("to_engine")
+        moved = sorted(q for q, e in after.items() if e == dst and before.get(q) == src)
+        record["moved_query_ids"] = moved
+        record["moved_back_query_ids"] = [q for q in moved if now.get(q) == src]
+    return records
 
 
 def _engine_of(assignment: dict | None) -> dict[str, str]:

@@ -12891,6 +12891,22 @@
                     "items": {
                       "kind": "object",
                       "properties": {
+                        "description_now": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
                         "from_engine": {
                           "required": false,
                           "schema": {
@@ -12913,6 +12929,31 @@
                             "kind": "scalar",
                             "minimum": 0,
                             "type": "integer"
+                          }
+                        },
+                        "queries_moved_back": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "queries_still_moved": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "reversed": {
@@ -16011,8 +16052,8 @@
         }
       }
     },
-    "schema_hash": "f8677bccaddc6a5e8a119db0e35a717f7c36e9cb25f833ad134c5e7d95c05824",
-    "version": "1.21"
+    "schema_hash": "dbe604b0e63399cdda6373949614a36979e2e365ae83189adafe1b14c178383c",
+    "version": "1.22"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

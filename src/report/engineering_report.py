@@ -285,18 +285,28 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     """Engineering Report "Migration trade-offs" section.
 
     #546: a reality-check line a later assignment edit reversed (the facts
-    layer's ``reality_check_trade_offs[].reversed``: its engine is back in the
-    architecture) is not listed as a current trade-off -- it would still say
-    the engine "leaves the architecture" and what removing it saves. It is
-    named once under "Reversed by a later assignment edit" instead, so the
-    audit trail stays without claiming the removal.
+    layer's ``reality_check_trade_offs[].reversed``: an edit put every query
+    it moved back, #861) is not listed as a current trade-off -- it would
+    still say what the check moved, and for a removed engine that it "leaves
+    the architecture" and what removing it saves. It is named once under
+    "Reversed by a later assignment edit" instead, so the audit trail stays
+    without claiming the removal. A line an edit undid only in part is listed
+    as the facts layer restates it (``description_now``), for what stayed
+    moved.
     """
     all_trade_offs = report.get("trade_offs") or []
     reversed_at = {
         t["index"]: t for t in facts.get("reality_check_trade_offs") or [] if t.get("reversed")
     }
+    restated = {
+        t["index"]: t["description_now"]
+        for t in facts.get("reality_check_trade_offs") or []
+        if t.get("description_now") and not t.get("reversed")
+    }
     current = [
-        t for i, t in enumerate(all_trade_offs) if isinstance(t, dict) and i not in reversed_at
+        {**t, "description": restated[i], "impact": restated[i]} if i in restated else t
+        for i, t in enumerate(all_trade_offs)
+        if isinstance(t, dict) and i not in reversed_at
     ]
     if not current and not reversed_at:
         return []

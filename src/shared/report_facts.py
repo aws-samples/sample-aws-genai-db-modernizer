@@ -627,17 +627,58 @@ def _trade_off_engines(desc: str) -> tuple[str | None, str | None, bool]:
     return src, dst, bool(elim)
 
 
+def _query_count(n: int) -> str:
+    return f"{n} {'query' if n == 1 else 'queries'}"
+
+
+def _restated_consolidation(desc: str, moved: int, back: int) -> str:
+    """A consolidation line restated for what stayed moved after an edit (#861)."""
+    m = CONSOLIDATED_FROM_TO_RE.match(desc)
+    src_name, dst_name = (m.group(1), m.group(2)) if m else ("its engine", "another engine")
+    still = moved - back
+    return (
+        f"Consolidated {_query_count(still)} from {src_name} → {dst_name}: {still} of the "
+        f"{_query_count(moved)} the reality check moved to {dst_name} "
+        f"{'stays' if still == 1 else 'stay'} there; a later assignment edit moved "
+        f"{back} back to {src_name}."
+    )
+
+
 def reality_check_trade_off_facts(report: dict[str, Any], final: set[str]) -> list[dict[str, Any]]:
     """Every reality-check trade-off, with the engines it names and whether a
     later assignment edit reversed it (#546).
 
     The reality check writes its consolidation lines once, against the
     assignment it settled. A customer edit can then move queries back onto
-    an engine it removed; the line still says that engine "leaves the
-    architecture" and what removing it saves. ``reversed`` is true for a
-    consolidation line whose source engine is back in the final architecture:
-    no deliverable states it as a current decision.
+    the engine they left; the line still says what the check moved, and for
+    an engine it removed, that the engine "leaves the architecture" and what
+    removing it saves. No deliverable states such a line as current.
+
+    Per query (#861): synthesis records, for each consolidation, the queries
+    it moved (``moved_query_ids``) and those the effective assignment has put
+    back on the source engine since (``moved_back_query_ids``). A line is
+    ``reversed`` when every query it moved is back; when only some are, it
+    stays current and ``description_now`` restates it for what stayed moved
+    (``queries_moved_back`` / ``queries_still_moved``). A partial
+    consolidation, or an engine a customer pin keeps (#852), with nothing
+    moved back is current as written.
+
+    A report without that record falls back to the engine: a line is
+    reversed when its source engine is back in the final architecture and the
+    check itself left it without a query (absent from its
+    ``after_distribution``), or -- for a report with no distributions either
+    -- when the source engine is in the final architecture at all.
     """
+    rc = report.get("reality_check") or {}
+    after = rc.get("after_distribution") if isinstance(rc, dict) else None
+    kept_by_check = {e for e, n in after.items() if n} if isinstance(after, dict) else set()
+    has_after = isinstance(after, dict) and bool(after)
+    # The consolidation record behind each line, in order, by (from, to).
+    records: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for c in (rc.get("consolidations") if isinstance(rc, dict) else None) or []:
+        if isinstance(c, dict):
+            key = (str(c.get("from_engine") or ""), str(c.get("to_engine") or ""))
+            records.setdefault(key, []).append(c)
     out: list[dict[str, Any]] = []
     for i, t in enumerate(report.get("trade_offs") or []):
         if not isinstance(t, dict):
@@ -648,14 +689,30 @@ def reality_check_trade_off_facts(report: dict[str, Any], final: set[str]) -> li
         # reality check's consolidation lines: recognised by their own shape.
         if t.get("engine") != "reality-check" and not (t.get("engine") is None and src):
             continue
-        out.append(
-            {
-                "index": i,
-                "from_engine": src,
-                "to_engine": dst,
-                "reversed": bool(src and src in final),
-            }
-        )
+        pending = records.get((src or "", dst or "")) if src and dst else None
+        record = pending.pop(0) if pending else None
+        moved_ids = record.get("moved_query_ids") if record else None
+        row: dict[str, Any] = {
+            "index": i,
+            "from_engine": src,
+            "to_engine": dst,
+            "queries_moved_back": 0,
+            "queries_still_moved": None,
+            "description_now": None,
+        }
+        if record is not None and isinstance(moved_ids, list) and moved_ids:
+            moved = {str(q) for q in moved_ids}
+            back = moved & {str(q) for q in record.get("moved_back_query_ids") or []}
+            row["queries_moved_back"] = len(back)
+            row["queries_still_moved"] = len(moved) - len(back)
+            row["reversed"] = not row["queries_still_moved"]
+            if back and row["queries_still_moved"]:
+                row["description_now"] = _restated_consolidation(desc, len(moved), len(back))
+        else:
+            row["reversed"] = bool(
+                src and src in final and not (has_after and src in kept_by_check)
+            )
+        out.append(row)
     return out
 
 
@@ -688,7 +745,7 @@ def reality_check_decision_facts(
         if t["reversed"]:
             continue
         entry = rows[t["index"]]
-        desc = str(entry.get("description") or "").strip()
+        desc = str(t.get("description_now") or entry.get("description") or "").strip()
         consolidated = CONSOLIDATED_FROM_TO_RE.match(desc)
         kept = _KEPT_RE.match(desc)
         if consolidated:
