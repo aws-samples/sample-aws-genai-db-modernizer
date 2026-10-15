@@ -372,18 +372,24 @@ def _place_settled_queries(
             group_tie_relevant = bool(group_original_tied) or tie_kind == "tie_unresolved"
             for member_qid, member_engine in members:
                 member_qa = revised_by_id[member_qid]
+                # The group's verdict placed every member (#845): a member that
+                # carries a tie of its own gets the group's tie (none when the
+                # score decided), never its earlier one, even when the trigger
+                # member had no tie.
+                member_tied = list(member_qa.get("tied_engines") or [])
+                member_tie_relevant = group_tie_relevant or bool(member_tied)
                 _record(
                     member_qa,
                     winner,
                     eligible,
                     tie_kind,
                     group_seed,
-                    tie_relevant=group_tie_relevant,
+                    tie_relevant=member_tie_relevant,
                     score_before=group_info["scores"].get(member_engine),
                     group=group_info,
                 )
                 if member_engine == winner:
-                    if group_tie_relevant:
+                    if member_tie_relevant:
                         member_qa["assignment_reason"] = _phase2_reason(
                             member_engine,
                             winner,
@@ -391,7 +397,7 @@ def _place_settled_queries(
                             tie_kind,
                             moved=False,
                             group=True,
-                            original_tied=group_original_tied,
+                            original_tied=group_original_tied or member_tied,
                         )
                     continue
                 member_qa["assignment_reason"] = _phase2_reason(
@@ -401,7 +407,7 @@ def _place_settled_queries(
                     tie_kind,
                     moved=True,
                     group=True,
-                    original_tied=group_original_tied,
+                    original_tied=group_original_tied or member_tied,
                     before_score=group_info["scores"].get(member_engine),
                 )
             continue
@@ -425,8 +431,8 @@ def _place_settled_queries(
     moves = engine_changes(phase_moves)
     # An engine change an unresolved exact tie decided: its destination is the
     # placeholder pick (``evidence.tie_rule`` a ``tie.placeholder.*`` rule).
-    # Not ``tied_engines``: a group moved by score keeps a member's own
-    # earlier tie on its Move without a tie deciding anything.
+    # Not ``tied_engines``: a Move's tie is the tie it leaves, while this
+    # counts the moves a tie decided (#845 clears a score-placed group's ties).
     tie_unresolved_moves = Counter(
         (m.from_engine, m.to_engine)
         for m in phase_moves

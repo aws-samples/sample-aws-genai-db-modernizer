@@ -212,11 +212,11 @@ class TestFlagMovesByQuery:
 class TestPlacementTieCount:
     """Phase 2's "N of them tied on score" counts the Moves an exact tie decided."""
 
-    def test_a_score_decided_group_member_keeping_its_tie_is_not_counted(self) -> None:
+    def test_a_score_decided_group_member_with_an_old_tie_is_not_counted(self) -> None:
         """Review of #836: a co-dependency group whose trigger member has no tie
-        moves by score; a member that already carried a tie keeps it on its Move
-        (``tied_engines`` unchanged). Only ``x1``, placed by an unresolved tie
-        (``evidence.tie_rule`` a placeholder rule), counts."""
+        moves by score; a member that already carried a tie has it cleared on
+        its Move (#845), and no tie decided that move. Only ``x1``, placed by an
+        unresolved tie (``evidence.tie_rule`` a placeholder rule), counts."""
         from src.agents.referee.reality_check_place import _place_settled_queries
 
         qas: list[dict] = [
@@ -254,7 +254,8 @@ class TestPlacementTieCount:
         )
 
         moves = {m.query_id: m for m in ledger.moves}
-        assert moves["m2"].tied_engines == ["documentdb", "dynamodb"]  # kept, not decided
+        assert moves["m2"].tied_engines == []  # the group's score decided, #845
+        assert moves["m2"].evidence.previous_tied_engines == ["documentdb", "dynamodb"]
         assert moves["m2"].evidence.tie_rule is None
         tied_notes = [r["reason"] for r in records if "tied on score" in r["reason"]]
         assert len(tied_notes) == 1, [r["reason"] for r in records]

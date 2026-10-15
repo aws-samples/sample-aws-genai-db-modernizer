@@ -961,3 +961,70 @@ class TestOneQueryMovedTwiceInOneRun:
         ]
         assert q1[0].seq < q1[1].seq
         _assert_replays(before, revised, ledger)
+
+
+class TestAGroupPlacedByScoreClearsEveryMembersTie:
+    """#845: a co-dependency group placed by score (no tie at group level)
+    leaves no member reading an earlier tie, whichever member triggered the
+    group. ``tied_engines`` describes the decision that placed the query, and
+    the Move that clears it keeps the earlier tie in evidence."""
+
+    _GROUP_QAS: list[dict[str, Any]] = [
+        {"query_id": "m1", "assigned_engine": "documentdb"},
+        {
+            "query_id": "m2",
+            "assigned_engine": "documentdb",
+            "tied_engines": ["documentdb", "dynamodb"],
+        },
+    ]
+
+    def _group_trace(self, scores: dict[str, float]) -> dict:
+        group = {"key": "abc123abc123", "scores": dict(scores)}
+        return _trace({"m1": dict(scores), "m2": dict(scores)}, {"m1": group, "m2": group})
+
+    def test_a_group_moved_by_score_clears_a_members_old_tie(self) -> None:
+        qas = [dict(qa) for qa in self._GROUP_QAS]
+        trace = self._group_trace({"documentdb": 60, "dynamodb": 80, "aurora_mysql": 70})
+
+        revised, ledger = _place(qas, {"dynamodb", "aurora_mysql"}, trace)
+
+        by_id = {qa["query_id"]: qa for qa in revised}
+        assert {q: qa["assigned_engine"] for q, qa in by_id.items()} == {
+            "m1": "dynamodb",
+            "m2": "dynamodb",
+        }
+        assert by_id["m2"]["tied_engines"] == []
+        moves = {m.query_id: m for m in ledger.moves}
+        assert moves["m2"].tied_engines == []
+        assert moves["m2"].evidence.previous_tied_engines == ["documentdb", "dynamodb"]
+        assert moves["m2"].evidence.tie_rule is None
+        assert moves["m2"].reason_code is ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE
+        assert "tied" not in by_id["m2"]["assignment_reason"]
+        _assert_replays(qas, revised, ledger)
+
+    def test_a_group_kept_by_score_clears_a_members_old_tie(self) -> None:
+        qas = [{**qa, "assigned_engine": "dynamodb"} for qa in self._GROUP_QAS]
+        trace = self._group_trace({"documentdb": 60, "dynamodb": 80, "aurora_mysql": 70})
+
+        revised, ledger = _place(qas, {"dynamodb", "aurora_mysql"}, trace)
+
+        (move,) = ledger.moves
+        assert move.query_id == "m2"
+        assert move.from_engine == move.to_engine == "dynamodb"
+        assert move.reason_code is ReasonCode.TIE_CLEARED
+        assert move.tied_engines == []
+        assert move.evidence.previous_tied_engines == ["documentdb", "dynamodb"]
+        m2 = next(qa for qa in revised if qa["query_id"] == "m2")
+        assert m2["tied_engines"] == []
+        assert "resolved" in m2["assignment_reason"]
+        _assert_replays(qas, revised, ledger)
+
+    def test_a_group_tie_left_unresolved_is_every_members_tie(self) -> None:
+        qas = [dict(qa) for qa in self._GROUP_QAS]
+        trace = self._group_trace({"documentdb": 60, "dynamodb": 80, "aurora_mysql": 80})
+
+        revised, ledger = _place(qas, {"dynamodb", "aurora_mysql"}, trace)
+
+        for qa in revised:
+            assert qa["tied_engines"] == ["aurora_mysql", "dynamodb"]
+        _assert_replays(qas, revised, ledger)
