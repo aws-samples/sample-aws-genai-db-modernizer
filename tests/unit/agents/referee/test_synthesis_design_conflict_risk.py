@@ -223,7 +223,7 @@ def _posts_drafts() -> list[dict]:
 
 def test_real_merge_overlap_becomes_a_risk_with_only_its_own_queries() -> None:
     merged = merge_group_drafts(_posts_drafts(), "dynamodb")
-    assert [t["table_name"] for t in merged["table_definitions"]] == ["WpPosts", "wp_posts"]
+    assert sorted(t["table_name"] for t in merged["table_definitions"]) == ["WpPosts", "wp_posts"]
 
     data = _data(merged)
     risks = build_risk_assessment(data)["risks"]

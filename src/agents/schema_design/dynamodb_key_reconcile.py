@@ -26,11 +26,12 @@ keeping apart (one whose ``source_tables`` include the source table and whose
    unknown or mixed source type, or a prefixed PK template still fail.
 1. **Item collections meant as one table** (the same name, or an entity for
    the same rows -- same source table and partition-key template -- with the
-   same PK type) take the earlier draft's key-attribute names when the types
-   match. An entity for the same rows takes the earlier entity's
-   ``entity_type`` and templates when its sort-key template uses the same
-   source columns (only the static text differs, e.g. ``PROFILE`` vs
-   ``USER``). Template tokens are compared by the source column they copy, so
+   same PK type, and transitively) take one key-attribute name per key and
+   type. Entities for the same rows take one ``entity_type`` and pair of
+   templates when their sort-key templates use the same source columns (only
+   the static text differs, e.g. ``PROFILE`` vs ``USER``). Each is the one
+   most of the tables use, then the longer one, then alphabetical (never the
+   draft order). Template tokens are compared by the source column they copy, so
    ``{ID}`` and ``{post_id}`` (an attribute copying ``ID``) are the same.
 2. **Single-entity tables for the same rows** (same base source table) name a
    key or GSI-key attribute that copies the same source column the same way:
@@ -73,9 +74,10 @@ keeping apart (one whose ``source_tables`` include the source table and whose
    so the merge combines them; its access patterns get the collection's SK
    condition. When the folded table had writes into an existing entity, a
    trade-off says writes must carry the union of the attributes.
-5. **GSIs with the same name and different keys** in tables that will merge:
-   the later draft's GSI is renamed (``<name>_g<group>``), unless a GSI with
-   those exact keys and projection already exists (then it is reused).
+5. **GSIs with the same name and different keys** in tables that will merge
+   (same name, or the same rows): the keys most of those tables give the name
+   keep it (then fewer key attributes), every other GSI of that name is
+   renamed after its own keys (``<name>_<KeyAttributes>``).
 
 Finally :func:`dedupe_gsis` keeps one GSI per key schema on each merged table.
 Mechanical changes (names, labels, folds without writes, renamed or combined
@@ -418,30 +420,59 @@ def _same_collection(a: dict, b: dict) -> bool:
     return any(_rows(e) in rows for e in _dicts(b.get("entities")))
 
 
-def _align_collections(drafts: _Drafts) -> None:
-    """Align each item collection to the first one, in an earlier draft, meant as the same table."""
+def _collection_clusters(drafts: _Drafts) -> list[list[_Ref]]:
+    """Item collections from different drafts meant as one table.
+
+    Two collections are meant as one table when they have the same name or
+    hold the same rows (:func:`_same_collection`); clusters are the transitive
+    closure of that, so the result does not depend on which one comes first.
+    """
     collections = [r for r in drafts.refs() if _shape(r.table) == "item_collection"]
+    parent = list(range(len(collections)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, a in enumerate(collections):
+        for j in range(i + 1, len(collections)):
+            b = collections[j]
+            if a.pos != b.pos and (a.name == b.name or _same_collection(a.table, b.table)):
+                parent[find(j)] = find(i)
+    clusters: dict[int, list[_Ref]] = {}
     for i, ref in enumerate(collections):
-        earlier = [c for c in collections[:i] if c.pos != ref.pos]
-        first = next((c for c in earlier if c.name == ref.name), None) or next(
-            (c for c in earlier if _same_collection(c.table, ref.table)), None
-        )
-        if first is None:
-            continue
-        renames: dict[str, str] = {}
-        own_keys = {n for n in _table_key(ref.table) if n}
+        clusters.setdefault(find(i), []).append(ref)
+    return [c for c in clusters.values() if len({r.pos for r in c}) > 1]
+
+
+def _align_collections(drafts: _Drafts) -> None:
+    """Give item collections meant as one table the same key names and entity labels.
+
+    Each choice is a vote across the cluster (see :func:`_vote_order`): the
+    name or label most of its tables use, then the longer one, then
+    alphabetical -- never the draft order.
+    """
+    for cluster in _collection_clusters(drafts):
         for key_field in ("partition_key", "sort_key"):
-            want, have = first.table.get(key_field), ref.table.get(key_field)
-            want_name, have_name = _key_name(want), _key_name(have)
-            if not want_name or not have_name or want_name == have_name:
-                continue
-            if _key_type(want) != _key_type(have):
-                continue
-            if want_name in own_keys or want_name in _entity_names(ref.table):
-                continue  # the name means something else in this table
-            renames[have_name] = want_name
-        _rename_attributes(drafts, ref, renames)
-        _align_entities(drafts, first, ref)
+            votes: dict[str, dict[str, int]] = {}  # attribute type -> name -> tables
+            for ref in cluster:
+                key = ref.table.get(key_field)
+                if _key_name(key):
+                    names = votes.setdefault(_key_type(key), {})
+                    names[str(_key_name(key))] = names.get(str(_key_name(key)), 0) + 1
+            canonical = {t: sorted(n.items(), key=_vote_order)[0][0] for t, n in votes.items()}
+            for ref in cluster:
+                have = ref.table.get(key_field)
+                have_name, want_name = _key_name(have), canonical.get(_key_type(have))
+                if not have_name or not want_name or have_name == want_name:
+                    continue
+                own_keys = {n for n in _table_key(ref.table) if n}
+                if want_name in own_keys or want_name in _entity_names(ref.table):
+                    continue  # the name means something else in this table
+                _rename_attributes(drafts, ref, {have_name: want_name})
+        _align_entities(drafts, cluster)
 
 
 def canon_template(template: str, entity: dict) -> str:
@@ -458,49 +489,80 @@ def canon_template(template: str, entity: dict) -> str:
     return _TOKEN_RE.sub(column, template)
 
 
-def _align_entities(drafts: _Drafts, first: _Ref, ref: _Ref) -> None:
-    """Give ``ref``'s entities the first table's label and templates for the same rows.
+def _entity_bucket(entity: dict) -> tuple[tuple[str, str], tuple[str, ...]]:
+    """(rows, sort-key columns): entities in one bucket are the same rows, keyed alike."""
+    sk = canon_template(str(entity.get("sk_template") or ""), entity)
+    return _rows(entity), tuple(_TOKEN_RE.findall(sk))
+
+
+def _align_entities(drafts: _Drafts, cluster: list[_Ref]) -> None:
+    """Give entities for the same rows one label and one pair of templates.
 
     Same rows = same source table and the same partition-key template (tokens
-    compared by the source column they copy). The sort-key template is taken
-    over when it is the same, or when both are static, or when both use the
-    same columns behind different static text (``PROFILE`` vs ``USER``,
-    ``META#{meta_id}`` vs ``M#{meta_id}``); different columns stay a conflict.
+    compared by the source column they copy). The sort-key templates must use
+    the same columns: the same template, both static, or the same columns
+    behind different static text (``PROFILE`` vs ``USER``, ``META#{meta_id}``
+    vs ``M#{meta_id}``); different columns stay a conflict. The label and
+    templates kept are the ones most tables use, then the longer label, then
+    alphabetical. Only when every table has at most one entity for those rows:
+    a table that stores one row as several items (``PROFILE`` and ``STATS``)
+    gives no single label to align to, so nothing is relabelled and the merge
+    reports the disagreement.
     """
-    targets = _dicts(first.table.get("entities"))
-    used = {e.get("entity_type") for e in _dicts(ref.table.get("entities"))}
-    for entity in _dicts(ref.table.get("entities")):
-        source = normalize_table_name(str(entity.get("source_table") or ""))
-        pk = canon_template(str(entity.get("pk_template") or ""), entity)
-        same_rows = [
-            t
-            for t in targets
-            if normalize_table_name(str(t.get("source_table") or "")) == source
-            and canon_template(str(t.get("pk_template") or ""), t) == pk
-        ]
-        same_type = [t for t in same_rows if t.get("entity_type") == entity.get("entity_type")]
-        candidates = same_type or same_rows
-        if len(candidates) != 1:
-            continue
-        target = candidates[0]
-        old_sk, new_sk = str(entity.get("sk_template") or ""), str(target.get("sk_template") or "")
-        old_cols = _TOKEN_RE.findall(canon_template(old_sk, entity))
-        new_cols = _TOKEN_RE.findall(canon_template(new_sk, target))
-        if old_cols != new_cols:
-            continue
-        label = target.get("entity_type")
-        if label != entity.get("entity_type") and label in used:
-            continue
-        used.discard(entity.get("entity_type"))
-        used.add(label)
-        entity["entity_type"] = label
-        entity["pk_template"] = target.get("pk_template")
-        entity["sk_template"] = new_sk
-        old_head, new_head = old_sk.split("{", 1)[0], new_sk.split("{", 1)[0]
-        if old_head and old_head != new_head:
-            for ap in drafts.patterns(ref):
-                if old_head in str(ap.get("key_condition") or ""):
-                    _note(ap, f"sort key '{old_head}' is '{new_head}'")
+    votes: dict[tuple, dict[tuple[str, str, str], int]] = {}
+    ambiguous: set[tuple] = set()
+    for ref in cluster:
+        seen: set[tuple] = set()
+        in_table: set[tuple] = set()
+        for entity in _dicts(ref.table.get("entities")):
+            bucket = _entity_bucket(entity)
+            if not _known(bucket[0][0]):
+                continue
+            if bucket in in_table:
+                ambiguous.add(bucket)  # one row stored as several items: no single label
+            in_table.add(bucket)
+            variant = (
+                str(entity.get("entity_type") or ""),
+                str(entity.get("pk_template") or ""),
+                str(entity.get("sk_template") or ""),
+            )
+            if (bucket, variant) not in seen:
+                seen.add((bucket, variant))
+                counts = votes.setdefault(bucket, {})
+                counts[variant] = counts.get(variant, 0) + 1
+    canonical = {
+        bucket: sorted(counts.items(), key=lambda v: (-v[1], -len(v[0][0]), v[0]))[0][0]
+        for bucket, counts in votes.items()
+        if len(counts) > 1 and bucket not in ambiguous
+    }
+    if not canonical:
+        return
+    for ref in cluster:
+        used = {e.get("entity_type") for e in _dicts(ref.table.get("entities"))}
+        for entity in _dicts(ref.table.get("entities")):
+            target = canonical.get(_entity_bucket(entity))
+            if target is None:
+                continue
+            label, pk_tpl, new_sk = target
+            if label != entity.get("entity_type") and label in used:
+                continue
+            old_sk = str(entity.get("sk_template") or "")
+            if (label, pk_tpl, new_sk) == (
+                entity.get("entity_type"),
+                entity.get("pk_template"),
+                old_sk,
+            ):
+                continue
+            used.discard(entity.get("entity_type"))
+            used.add(label)
+            entity["entity_type"] = label
+            entity["pk_template"] = pk_tpl
+            entity["sk_template"] = new_sk
+            old_head, new_head = old_sk.split("{", 1)[0], new_sk.split("{", 1)[0]
+            if old_head and old_head != new_head:
+                for ap in drafts.patterns(ref):
+                    if old_head in str(ap.get("key_condition") or ""):
+                        _note(ap, f"sort key '{old_head}' is '{new_head}'")
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1187,8 @@ def _fold_targets(single: _Ref, collections: list[_Ref], base: str) -> list[_Fol
 
     An entity of a collection with ``single``'s own name, then a new entity in
     that collection (see :func:`_new_entity`), then entities of other
-    collections, each in draft order.
+    collections: the collection name the most drafts use first, then by
+    collection name and entity (never the draft order).
     """
     attrs = _attributes(single.table)
     pk, sk = _table_key(single.table)
@@ -1139,11 +1202,27 @@ def _fold_targets(single: _Ref, collections: list[_Ref], base: str) -> list[_Fol
     collections = [c for c in collections if _key_type(c.table.get("partition_key")) == pk_type]
     same_name = [c for c in collections if c.name == single.name and c.pos != single.pos]
     others = [c for c in collections if c.name != single.name and c.pos != single.pos]
+    used = {c.name: len({r.pos for r in collections if r.name == c.name}) for c in collections}
+
+    def rank(fold: _Fold) -> tuple:
+        entity = fold.entity
+        return (
+            -used[fold.collection.name],
+            fold.collection.name,
+            str(entity.get("entity_type") or ""),
+            str(entity.get("sk_template") or ""),
+            fold.collection.pos,
+        )
+
     found: list[_Fold] = []
     for group in (same_name, None, others):
         if group is None:
-            found += [f for f in (_new_entity(single, c, base, pk_col) for c in same_name) if f]
+            found += sorted(
+                (f for f in (_new_entity(single, c, base, pk_col) for c in same_name) if f),
+                key=rank,
+            )
             continue
+        matches: list[_Fold] = []
         for coll in group:
             for entity in _dicts(coll.table.get("entities")):
                 if normalize_table_name(str(entity.get("source_table") or "")) != base:
@@ -1157,7 +1236,8 @@ def _fold_targets(single: _Ref, collections: list[_Ref], base: str) -> list[_Fol
                 static = sk_col is None and not sk_tokens and sk_head
                 ranged = sk_col is not None and sk_tokens == [sk_col] and sk_head and not sk_tail
                 if static or ranged:
-                    found.append(_Fold(coll, entity, sk_head))
+                    matches.append(_Fold(coll, entity, sk_head))
+        found += sorted(matches, key=rank)
     return found
 
 
@@ -1324,7 +1404,10 @@ def _merge_clusters(refs: list[_Ref]) -> list[list[_Ref]]:
                 and _known(_base_entity(a.table))
                 and _table_key(a.table) == _table_key(b.table)
             )
-            if a.name == b.name or same_rows:
+            same_collection = _shape(a.table) == _shape(b.table) == "item_collection" and (
+                _same_collection(a.table, b.table)
+            )
+            if a.name == b.name or same_rows or same_collection:
                 parent[find(j)] = find(i)
     clusters: dict[int, list[_Ref]] = {}
     for i, ref in enumerate(refs):
@@ -1333,23 +1416,41 @@ def _merge_clusters(refs: list[_Ref]) -> list[list[_Ref]]:
 
 
 def _reconcile_gsi_names(drafts: _Drafts) -> None:
-    """Rename a later draft's GSI whose name another table in its cluster uses for other keys."""
+    """Rename a GSI whose name another table in its cluster uses for other keys.
+
+    The keys most of the cluster's tables give that name keep it (then fewer
+    key attributes, then the keys' text; never the draft order); every other
+    GSI of that name is renamed ``<name>_<its key attributes>`` (for example
+    ``OptionsByAutoload_AutoloadOptionId``), so no group number reaches a
+    GSI name.
+    """
     for cluster in _merge_clusters(drafts.refs()):
-        by_name: dict[str, tuple] = {}
-        first_pos = cluster[0].pos
+        votes: dict[str, dict[tuple, int]] = {}
+        for ref in cluster:
+            for gsi in _dicts(ref.table.get("gsis")):
+                sigs = votes.setdefault(str(gsi.get("gsi_name") or ""), {})
+                sig = _gsi_signature(gsi)
+                sigs[sig] = sigs.get(sig, 0) + 1
+        keeps = {
+            name: sorted(sigs.items(), key=lambda s: (-s[1], sum(map(len, s[0])), repr(s[0])))[0][0]
+            for name, sigs in votes.items()
+            if len(sigs) > 1
+        }
+        taken = set(votes)
         for ref in cluster:
             for gsi in list(_dicts(ref.table.get("gsis"))):
                 name = str(gsi.get("gsi_name") or "")
-                sig = _gsi_signature(gsi)
-                if ref.pos != first_pos and name in by_name and by_name[name] != sig:
-                    new = _unique_gsi_name(f"{name}_g{ref.group}", set(by_name))
-                    drafts.rename_gsi(ref, name, new)
-                    drafts.notes.append(
-                        f"{ref.name}: group {ref.group}'s GSI {name} renamed {new} (another "
-                        "group's GSI of that name has other keys)"
-                    )
-                    name = new
-                by_name.setdefault(name, sig)
+                if name not in keeps or _gsi_signature(gsi) == keeps[name]:
+                    continue
+                pk_names, sk_names = _gsi_key_names(gsi)
+                suffix = "".join(_pascal(n) for n in (*pk_names, *sk_names)) or "Keys"
+                new = _unique_gsi_name(f"{name}_{suffix}", taken)
+                taken.add(new)
+                drafts.rename_gsi(ref, name, new)
+                drafts.notes.append(
+                    f"{ref.name}: group {ref.group}'s GSI {name} renamed {new} (another "
+                    "group's GSI of that name has other keys)"
+                )
 
 
 # ---------------------------------------------------------------------------

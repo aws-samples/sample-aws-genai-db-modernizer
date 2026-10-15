@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.agents.schema_design import dynamodb_merge
 from src.agents.schema_design.group_merger import (
     MERGE_FAILURE_PREFIX,
     OVERLAP_PREFIX,
@@ -298,7 +299,11 @@ class TestDynamoDBOverlappingDesigns:
         """Run-3 shape: WpTerms (group 0) and wp_terms_taxonomy (group 1)."""
         g0 = _ddb(
             [_collection("WpTerms", "term_id", "record_key", TERM, TAXONOMY, TERM_META, items=30)],
-            [_ap("DDB-AP-13", "WpTerms", "wordpress.wp_terms")],
+            # Two patterns on WpTerms, one on wp_terms_taxonomy: WpTerms is the name kept.
+            [
+                _ap("DDB-AP-13", "WpTerms", "wordpress.wp_terms"),
+                _ap("DDB-AP-14", "WpTerms", "wordpress.wp_termmeta"),
+            ],
         )
         taxonomy_with_name = {
             **TAXONOMY,
@@ -385,6 +390,7 @@ class TestDynamoDBOverlappingDesigns:
             [],
         )
         g1["table_definitions"][0]["item_size_bytes"] = 400
+        g0["access_patterns"] = [_ap("DDB-AP-1", "WpTerms")]  # WpTerms is the home
 
         [table] = merge_group_drafts([g0, g1], "dynamodb")["table_definitions"]
 
@@ -438,7 +444,10 @@ class TestDynamoDBOverlappingDesigns:
     def test_independent_homes_from_different_groups_are_a_warning(self):
         result = merge_group_drafts(self._posts_drafts(), "dynamodb")
 
-        assert [t["table_name"] for t in result["table_definitions"]] == ["WpPosts", "wp_posts"]
+        assert sorted(t["table_name"] for t in result["table_definitions"]) == [
+            "WpPosts",
+            "wp_posts",
+        ]
         assert result["validation_passed"] is True
         assert merge_failures(result) == []
         [warning] = merge_warnings(result)
@@ -448,7 +457,7 @@ class TestDynamoDBOverlappingDesigns:
         assert "wp_posts (group 1; PK post_name)" in warning
         assert "choose one write path or keep copies in sync — review before migration" in warning
         [note] = [t for t in result["trade_offs"] if t["description"] == warning]
-        assert note["target_tables"] == ["WpPosts", "wp_posts"]
+        assert sorted(note["target_tables"]) == ["WpPosts", "wp_posts"]
         assert note["source_tables"] == ["wp_posts"]
         assert note["engine"] == "dynamodb"
 
@@ -541,20 +550,24 @@ class TestDynamoDBOverlappingDesigns:
 
         result = merge_group_drafts([_ddb([users], []), _ddb([posts], [])], "dynamodb")
 
-        assert [t["table_name"] for t in result["table_definitions"]] == ["Users", "Posts"]
+        assert sorted(t["table_name"] for t in result["table_definitions"]) == ["Posts", "Users"]
         assert merge_failures(result) == [] and merge_warnings(result) == []
 
     def test_single_entity_tables_for_the_same_entity_merge(self):
         a = _single("Users", "wp_users", "id")
         b = _single("wp_users", "wp_users", "id")
         b["attributes"].append(_attr("user_login", "wp_users"))
+        drafts = [
+            _ddb([a], [_ap("X", "Users"), _ap("Y", "Users")]),
+            _ddb([b], [_ap("Z", "wp_users")]),
+        ]
 
-        result = merge_group_drafts([_ddb([a], []), _ddb([b], [_ap("X", "wp_users")])], "dynamodb")
+        result = merge_group_drafts(drafts, "dynamodb")
 
         [table] = result["table_definitions"]
-        assert table["table_name"] == "Users"
-        assert [a["name"] for a in table["attributes"]] == ["id", "user_login"]
-        assert result["access_patterns"][0]["table_name"] == "Users"
+        assert table["table_name"] == "Users"  # the name more access patterns use
+        assert sorted(a["name"] for a in table["attributes"]) == ["id", "user_login"]
+        assert {ap["table_name"] for ap in result["access_patterns"]} == {"Users"}
         assert result["validation_passed"] is True
 
     def test_conflicting_entity_definitions_are_not_merged(self):
@@ -595,12 +608,27 @@ class TestDynamoDBOverlappingDesigns:
 
     def test_conflicting_gsi_definitions_are_not_merged(self):
         other_gsi = {**BY_TAXONOMY, "partition_key": [_key("slug")]}
+        a = _collection("A", "term_id", "record_key", TERM, gsis=[BY_TAXONOMY])
+        b = _collection("B", "term_id", "record_key", TERM, gsis=[other_gsi])
+
+        assert dynamodb_merge._merge_conflict(a, b) == "GSI TermsByTaxonomy is defined differently"
+
+    def test_same_gsi_name_with_other_keys_is_renamed_so_the_collections_merge(self):
+        """Collections for the same rows: one GSI name, two key schemas (#809)."""
+        other_gsi = {**BY_TAXONOMY, "partition_key": [_key("slug")]}
         g0 = _ddb([_collection("A", "term_id", "record_key", TERM, gsis=[BY_TAXONOMY])], [])
         g1 = _ddb([_collection("B", "term_id", "record_key", TERM, gsis=[other_gsi])], [])
 
-        result = merge_group_drafts([g0, g1], "dynamodb")
+        result = merge_group_drafts([g0, g1], "dynamodb", group_indices=[0, 1])
 
-        assert len(result["table_definitions"]) == 2
+        [table] = result["table_definitions"]
+        # The tie (one table each) keeps the name with the keys that sort first;
+        # the other GSI is renamed after its own keys, never after a group number.
+        assert {g["gsi_name"]: g["partition_key"][0]["attribute_name"] for g in table["gsis"]} == {
+            "TermsByTaxonomy": "slug",
+            "TermsByTaxonomy_TaxonomyTermName": "taxonomy",
+        }
+        assert merge_failures(result) == []
 
     def test_same_table_name_with_different_designs_fails_validation(self):
         g0 = _ddb([_single("Main", "users", "id")], [])
@@ -661,7 +689,10 @@ class TestDynamoDBPatternIds:
 
         result = merge_group_drafts([g0, g1], "dynamodb")
 
-        assert [ap["pattern_id"] for ap in result["access_patterns"]] == ["DDB-AP-7", "DDB-AP-2"]
+        assert sorted(ap["pattern_id"] for ap in result["access_patterns"]) == [
+            "DDB-AP-2",
+            "DDB-AP-7",
+        ]
 
     def test_single_draft_ids_are_not_touched(self):
         draft = _ddb([_single("A", "users", "id")], [_ap("DDB-AP-1", "A"), _ap("DDB-AP-1", "A")])

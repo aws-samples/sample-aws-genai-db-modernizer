@@ -144,8 +144,10 @@ def merge_group_drafts(
         group_indices = list(range(len(drafts)))
 
     if engine == "dynamodb":
-        # Renumber pattern IDs and re-point absorbed tables per draft, before
-        # the drafts are combined (see dynamodb_merge).
+        # Content order first, so draft order and group numbering never change
+        # the design (#809). Then renumber pattern IDs and re-point absorbed
+        # tables per draft, before the drafts are combined (see dynamodb_merge).
+        drafts, group_indices = dynamodb_merge.canonical_draft_order(drafts, group_indices)
         drafts, reconciliation, drafts_passed = dynamodb_merge.prepare_drafts(
             drafts, group_indices, unique_keys=unique_keys, notes=notes, column_types=column_types
         )

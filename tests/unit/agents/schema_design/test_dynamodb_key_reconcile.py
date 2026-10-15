@@ -10,6 +10,8 @@ merge failure for the fix round. No model is called anywhere here.
 
 from __future__ import annotations
 
+import json
+
 from src.agents.schema_design.dynamodb_key_reconcile import GSI_LIMIT
 from src.agents.schema_design.group_merger import (
     merge_failures,
@@ -127,6 +129,13 @@ def _draft(tables: list[dict], aps: list[dict], trade_offs: list[dict] | None = 
         "validation_passed": True,
         "validation_failures": [],
     }
+
+
+def _pattern(merged: dict, operation: str) -> dict:
+    """The one merged access pattern with ``operation`` (draft order is not the merge order)."""
+    found: list[dict] = [ap for ap in merged["access_patterns"] if ap["operation"] == operation]
+    assert len(found) == 1, found
+    return found[0]
 
 
 def _by_name(merged: dict) -> dict[str, dict]:
@@ -332,7 +341,7 @@ class TestDifferentKeySchemas:
         [table] = merged["table_definitions"]
         assert _keys(table) == ("group_id", "user_id")
         assert table["gsis"] == []
-        delete = merged["access_patterns"][2]
+        delete = _pattern(merged, "DeleteItem")
         assert delete["gsi_name"] is None and "PK group_id, SK user_id" in delete["key_condition"]
 
     def test_a_query_on_the_other_partition_key_needs_the_gsi(self):
@@ -525,7 +534,7 @@ class TestNoRowCollapse:
         [table] = merged["table_definitions"]
         assert _keys(table) == ("email", None)  # user_id would lose the uniqueness check
         assert merge_failures(merged) == []
-        put = merged["access_patterns"][2]
+        put = _pattern(merged, "PutItem")
         assert put["key_condition"] == "PK=email, condition attribute_not_exists(email)"
 
     def test_conditional_writes_on_two_different_keys_stay_a_conflict(self):
@@ -685,11 +694,11 @@ class TestOrderAndNoise:
         merged = merge_group_drafts([g0, g1], "dynamodb")
 
         [table] = merged["table_definitions"]
-        assert [(g["gsi_name"], g["projection"]) for g in table["gsis"]] == [
-            ("UsersByUsernameLower", "ALL")
-        ]
-        assert {ap["gsi_name"] for ap in merged["access_patterns"]} == {"UsersByUsernameLower"}
-        assert merged["hot_partition_analysis"][-1]["gsi_name"] == "UsersByUsernameLower"
+        [gsi] = table["gsis"]
+        assert gsi["gsi_name"] in ("UsersByUsernameLower", "UsersByUsername")
+        assert gsi["projection"] == "ALL"  # the wider projection is kept
+        assert {ap["gsi_name"] for ap in merged["access_patterns"]} == {gsi["gsi_name"]}
+        assert [h["gsi_name"] for h in merged["hot_partition_analysis"]] == [gsi["gsi_name"]]
 
     def test_hot_partitions_move_only_for_patterns_that_moved(self):
         drafts = TestDifferentKeySchemas()._two_groups()
@@ -797,7 +806,7 @@ class TestKeyAttributeNames:
         [users] = merged["table_definitions"]
         assert _keys(users) == ("user_id", None)
         assert _gsi_keys(users) == {"AdminUsers": (("admin",), ("user_id",))}
-        assert [a["name"] for a in users["attributes"]] == ["user_id", "username", "admin"]
+        assert sorted(a["name"] for a in users["attributes"]) == ["admin", "user_id", "username"]
         assert merge_failures(merged) == [] and merge_warnings(merged) == []
         moved = next(ap for ap in merged["access_patterns"] if ap["pattern_id"] == "DDB-AP-2")
         assert moved["table_name"] == "users" and moved["gsi_name"] is None
@@ -817,7 +826,10 @@ class TestKeyAttributeNames:
 
         merged = merge_group_drafts([g0, g1], "dynamodb")
 
-        assert [t["table_name"] for t in merged["table_definitions"]] == ["WpActionSchedulerGroups"]
+        # One group each, one pattern each: an exact tie, alphabetical ignoring case.
+        assert [t["table_name"] for t in merged["table_definitions"]] == [
+            "wp_actionscheduler_groups"
+        ]
         assert merge_warnings(merged) == []
         _assert_every_pattern_is_served(merged)
 
@@ -873,7 +885,7 @@ class TestGsiNames:
         assert (("autoload",), ("option_name",)) in keys.values()
         assert len(keys) == 2
         assert merge_failures(merged) == []
-        second = merged["access_patterns"][1]
+        [second] = [ap for ap in merged["access_patterns"] if "begins_with" in ap["key_condition"]]
         assert keys[second["gsi_name"]] == (("autoload",), ("option_name",))
         _assert_every_pattern_is_served(merged)
 
@@ -940,8 +952,13 @@ class TestItemCollections:
         merged = merge_group_drafts([g0, g1], "dynamodb")
 
         [table] = merged["table_definitions"]
-        assert _keys(table) == ("post_id", "sk")
-        assert [e["entity_type"] for e in table["entities"]] == ["POST", "POST_META", "TERM_REL"]
+        # One name each: the most tables, then the longer name (never the draft order).
+        assert _keys(table) == ("post_id", "entity_key")
+        assert sorted(e["entity_type"] for e in table["entities"]) == [
+            "POST",
+            "POST_META",
+            "TERM_REL",
+        ]
         assert merge_failures(merged) == []
         _assert_every_pattern_is_served(merged)
 
@@ -1107,7 +1124,7 @@ class TestMoreItemCollectionShapes:
             "USER_EMAIL": "EMAIL#{id}",
         }
         assert merge_failures(merged) == []
-        get = merged["access_patterns"][0]
+        get = _pattern(merged, "GetItem")
         assert "sk='USERS'" in get["key_condition"]
         _assert_every_pattern_is_served(merged)
 
@@ -1148,7 +1165,8 @@ class TestMoreItemCollectionShapes:
 
         merged = merge_group_drafts([g0, g1], "dynamodb")
 
-        assert [t["table_name"] for t in merged["table_definitions"]] == ["WpTerms"]
+        # One group each, one pattern each: an exact tie, alphabetical ignoring case.
+        assert [t["table_name"] for t in merged["table_definitions"]] == ["WpTermMeta"]
         assert merge_failures(merged) == [] and merge_warnings(merged) == []
         _assert_every_pattern_is_served(merged)
 
@@ -1366,6 +1384,271 @@ class TestDeterminism:
         assert run() == run()
 
 
+def _every_order(drafts: list[dict]):
+    """``merge_group_drafts`` over every order of ``drafts``, each keeping its group index."""
+    import copy
+    import itertools
+
+    for order in itertools.permutations(range(len(drafts))):
+        yield (
+            order,
+            merge_group_drafts(
+                [copy.deepcopy(drafts[i]) for i in order], "dynamodb", group_indices=list(order)
+            ),
+        )
+
+
+class TestDraftOrder:
+    """Draft order and group numbering never decide the merged design (#809)."""
+
+    def _custom_field_drafts(self) -> list[dict]:
+        """Groups 0, 1 and 3 agree on a custom-field sort key; group 2 does not."""
+        fields = "discourse.user_custom_fields"
+
+        def users(sk: str) -> dict:
+            return _collection(
+                "discourse_users",
+                "user_id",
+                "sk",
+                _entity("USER", USERS, "{id}", "PROFILE", _attr("id", USERS)),
+                _entity(
+                    "USER_CUSTOM_FIELD",
+                    fields,
+                    "{user_id}",
+                    sk,
+                    _attr("user_id", fields),
+                    _attr("id", fields),
+                    _attr("name", fields, type_="S"),
+                ),
+            )
+
+        return [
+            _draft(
+                [users(sk)],
+                [_ap(f"DDB-AP-{g}", "discourse_users", "Query", "PK=user_id", source=fields)],
+            )
+            for g, sk in enumerate(
+                ["CUSTOM_FIELD#{id}"] * 2 + ["CUSTOM_FIELD#{name}", "CUSTOM_FIELD#{id}"]
+            )
+        ]
+
+    def test_the_design_most_groups_agree_on_is_kept(self):
+        for order, merged in _every_order(self._custom_field_drafts()):
+            [failure] = merge_failures(merged)
+            assert "group 0/1/3 and group 2" in failure, order
+            [table] = merged["table_definitions"]
+            sks = {e["entity_type"]: e["sk_template"] for e in table["entities"]}
+            assert sks["USER_CUSTOM_FIELD"] == "CUSTOM_FIELD#{id}", order
+
+    def test_entity_labels_are_aligned_across_every_collection_for_the_same_rows(self):
+        """Group 0 labels links, tags and solved topics one way, group 1 another, group 2 has
+        only two of them: whatever the order, the three collections become one table."""
+        links, tags, solved = "discourse.topic_links", "discourse.topic_tags", "discourse.solved"
+
+        def items(name: str, sk: str, link: str | None, tag: str, done: str) -> dict:
+            entities = [_entity(done, solved, "{topic_id}", "SOLVED", _attr("topic_id", solved))]
+            if link:
+                entities.append(
+                    _entity(link, links, "{topic_id}", "LINK#{id}", _attr("topic_id", links))
+                )
+            entities.append(
+                _entity(
+                    tag,
+                    tags,
+                    "{topic_id}",
+                    "TAG#{tag_id}",
+                    _attr("topic_id", tags),
+                    _attr("tag_id", tags),
+                )
+            )
+            return _collection(name, "topic_id", sk, *entities)
+
+        drafts = [
+            _draft(
+                [items("discourse_topics", "sk", "TOPIC_LINK", "TOPIC_TAG", "SOLVED_TOPIC")], []
+            ),
+            _draft([items("discourse_topic_items", "sk", "LINK", "TAG", "SOLVED")], []),
+            _draft([items("discourse_topic_items", "record_key", None, "TOPIC_TAG", "SOLVED")], []),
+        ]
+
+        for order, merged in _every_order(drafts):
+            assert merge_failures(merged) == [], order
+            [table] = merged["table_definitions"]
+            assert table["table_name"] == "discourse_topic_items", order
+            assert _keys(table) == ("topic_id", "sk"), order
+            assert sorted(e["entity_type"] for e in table["entities"]) == [
+                "SOLVED",
+                "TOPIC_LINK",
+                "TOPIC_TAG",
+            ], order
+
+    def test_a_gsi_name_stays_with_the_keys_most_groups_give_it(self):
+        src = "wordpress.wp_options"
+        attrs = [_attr(c, src, type_="S") for c in ("option_name", "autoload", "option_id")]
+
+        def options(sort_key: list[str] | None) -> dict:
+            gsi = _gsi("OptionsByAutoload", ["autoload"], sort_key)
+            t = _single("WpOptions", src, "option_name", attrs=attrs, gsis=[gsi])
+            t["partition_key"] = _key("option_name", "S")
+            return t
+
+        drafts = [
+            _draft([options(["option_id"])], []),
+            _draft([options(None)], []),
+            _draft([options(["option_id"])], []),
+        ]
+
+        for order, merged in _every_order(drafts):
+            [table] = merged["table_definitions"]
+            assert _gsi_keys(table) == {
+                "OptionsByAutoload": (("autoload",), ("option_id",)),
+                "OptionsByAutoload_Autoload": (("autoload",), ()),
+            }, order
+
+    def test_two_items_per_row_are_never_relabelled_onto_each_other(self):
+        """Group 0 stores a user as two items (PROFILE and STATS); group 1 has only PROFILE,
+        group 2 only STATS. Group 1's read of SK=PROFILE must never be pointed at STATS:
+        the labels are ambiguous, so the disagreement stays a reported conflict."""
+
+        def users(*entities: tuple[str, str]) -> dict:
+            return _collection(
+                "users",
+                "user_id",
+                "sk",
+                *(_entity(t, USERS, "{id}", sk, _attr("id", USERS)) for t, sk in entities),
+            )
+
+        drafts = [
+            _draft([users(("USER_PROFILE", "PROFILE"), ("USER_STATS", "STATS"))], []),
+            _draft(
+                [users(("USER", "PROFILE"))],
+                [
+                    _ap(
+                        "DDB-AP-1",
+                        "users",
+                        "GetItem",
+                        "PK=user_id AND SK=PROFILE",
+                        source=USERS,
+                    )
+                ],
+            ),
+            _draft([users(("USER_STATS", "STATS"))], []),
+        ]
+
+        for order, merged in _every_order(drafts):
+            read = _pattern(merged, "GetItem")
+            assert "STATS" not in read["key_condition"], order
+            assert any("PROFILE" in f for f in merge_failures(merged)), order
+            for table in merged["table_definitions"]:
+                by_type = {e["entity_type"]: e["sk_template"] for e in table.get("entities") or []}
+                assert by_type.get("USER", "PROFILE") == "PROFILE", order
+                assert by_type.get("USER_PROFILE", "PROFILE") == "PROFILE", order
+
+    def test_the_table_name_most_groups_use_survives(self):
+        """Five groups say posts, three say discourse_posts: posts, in every order."""
+        src = "discourse.posts"
+
+        def posts(name: str) -> dict:
+            return _single(name, src, "post_id", attrs=[_attr("post_id", src, "id")])
+
+        names = ["posts"] * 3 + ["discourse_posts"] * 2
+        drafts = [
+            _draft([posts(n)], [_ap("DDB-AP-1", n, "GetItem", "PK=post_id", source=src)])
+            for n in names
+        ]
+
+        for order, merged in _every_order(drafts):
+            assert [t["table_name"] for t in merged["table_definitions"]] == ["posts"], order
+            assert {ap["table_name"] for ap in merged["access_patterns"]} == {"posts"}, order
+
+    def test_table_names_are_voted_case_insensitively(self):
+        """badges (2 groups) beats Badges (1); api_keys (2) beats ApiKeys (1)."""
+        badges, keys = "discourse.badges", "discourse.api_keys"
+
+        def draft(badge_name: str, key_name: str) -> dict:
+            return _draft(
+                [
+                    _single(
+                        badge_name, badges, "badge_id", attrs=[_attr("badge_id", badges, "id")]
+                    ),
+                    _single(key_name, keys, "api_key_id", attrs=[_attr("api_key_id", keys, "id")]),
+                ],
+                [
+                    _ap("DDB-AP-1", badge_name, "GetItem", "PK=badge_id", source=badges),
+                    _ap("DDB-AP-2", key_name, "GetItem", "PK=api_key_id", source=keys),
+                ],
+            )
+
+        drafts = [
+            draft("Badges", "ApiKeys"),
+            draft("badges", "api_keys"),
+            draft("badges", "api_keys"),
+        ]
+
+        for order, merged in _every_order(drafts):
+            assert sorted(t["table_name"] for t in merged["table_definitions"]) == [
+                "api_keys",
+                "badges",
+            ], order
+
+    def test_exact_name_ties_are_alphabetical_ignoring_case(self):
+        src = "discourse.badges"
+        drafts = [
+            _draft([_single(n, src, "badge_id", attrs=[_attr("badge_id", src, "id")])], [])
+            for n in ("Discourse_badges", "badges")
+        ]
+
+        for order, merged in _every_order(drafts):
+            assert [t["table_name"] for t in merged["table_definitions"]] == ["badges"], order
+
+    def test_fold_notes_name_the_final_table(self):
+        """A table folded into a collection that the merge then renames: the note says where
+        the pattern really runs."""
+        src = "discourse.user_stats"
+        stats = _single("user_stats", src, "user_id", attrs=[_attr("user_id", src)])
+        get = _ap("DDB-AP-1", "user_stats", "GetItem", "PK=user_id", source=src)
+
+        def items(name: str, *more: dict) -> dict:
+            user = _entity("USER", USERS, "{id}", "PROFILE", _attr("id", USERS))
+            return _collection(name, "user_id", "sk", user, *more)
+
+        drafts = [
+            _draft([stats], [get]),
+            _draft(
+                [
+                    items(
+                        "user_items",
+                        _entity("USER_STATS", src, "{user_id}", "STATS", _attr("user_id", src)),
+                    )
+                ],
+                [],
+            ),
+            *(_draft([items("users")], []) for _ in range(3)),
+        ]
+
+        for order, merged in _every_order(drafts):
+            [table] = merged["table_definitions"]
+            assert table["table_name"] == "users", order
+            read = _pattern(merged, "GetItem")
+            assert read["table_name"] == "users", order
+            assert "in users as USER_STATS" in read["key_condition"], (order, read)
+
+    def test_pattern_ids_do_not_follow_draft_order(self):
+        """Every group numbers from DDB-AP-1: each query keeps one merged ID in every order."""
+        drafts = self._custom_field_drafts()
+        for d in drafts:
+            d["access_patterns"][0]["pattern_id"] = "DDB-AP-1"
+
+        numbering = {
+            json.dumps(
+                sorted((ap["query_ids"][0], ap["pattern_id"]) for ap in merged["access_patterns"])
+            )
+            for _, merged in _every_order(drafts)
+        }
+
+        assert len(numbering) == 1
+
+
 class TestMergeTrace:
     def _store(self, tmp_path, collector: dict | None):
         from src.storage.local_store import LocalArtifactStore
@@ -1577,7 +1860,9 @@ class TestPartitionKeyTypeFromTheSource:
         merged = _merge_with_columns([g0, g1], DISCOURSE_COLUMNS)
 
         [failure] = merge_failures(merged)
-        assert "key attribute types differ (sk S vs N)" in failure
+        assert "key attribute types differ (sk N vs S)" in failure or (
+            "key attribute types differ (sk S vs N)" in failure
+        )
 
     def test_an_unknown_source_type_stays_a_failure(self):
         unknown = _collector_columns((TOPICS, [("title", "string", "character varying")]))

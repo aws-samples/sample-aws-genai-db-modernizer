@@ -9,9 +9,14 @@ the drafts into one coherent design.
 Merge rule
 ==========
 
+0. **Draft order.** The drafts are first sorted by their content
+   (:func:`canonical_draft_order`: the query IDs they cover, then their JSON),
+   and every choice below breaks ties by content, never by draft position or
+   group number (#809). The same drafts in any order give byte-identical
+   output; renumbering the groups changes only the group labels in messages.
 1. **Pattern IDs.** When ``access_patterns[].pattern_id`` collide across drafts,
    every draft is renumbered *before* the drafts are combined:
-   ``DDB-AP-1..N`` in draft order. Each draft's old -> new map is applied to
+   ``DDB-AP-1..N`` in that sorted order. Each draft's old -> new map is applied to
    every ``DDB-AP-<n>`` mention in that draft's text (justifications,
    trade-offs, migration notes, hot-partition entries) and in its design trace,
    so references keep pointing at the same pattern.
@@ -23,7 +28,7 @@ Merge rule
     single-entity table folded into the item collection that holds its rows.
     Its trade-offs record each change. The rules below then apply.
 2. **Compatible tables merge.** Tables that share a source table (or a table
-   name) are merged into the first one when they have the same partition/sort
+   name) are merged into one when they have the same partition/sort
    key names and types, the same shape (both item collections, or both
    single-entity tables) and nothing conflicts: item collections must share at
    least one identical entity (type, source table, PK/SK templates; not needed
@@ -39,7 +44,10 @@ Merge rule
    of the draft whose table was absorbed are re-pointed, so another group's
    unrelated table with the same name keeps its own references. The merged
    table's ``hot_partition_analysis`` load is re-aggregated per
-   (table, GSI, operation), and a trade-off records the merge.
+   (table, GSI, operation), and a trade-off records the merge. Tables are
+   taken in :func:`_table_order`: the design the most other groups' tables
+   can merge with comes first, so it is the one that survives (with its name)
+   and the one a disagreeing design is reported against.
 3. **True conflicts fail validation** (``validation_failures`` entries with
    prefix :data:`MERGE_FAILURE_PREFIX`, ``validation_passed=false``): one table
    name used for two different designs that rule 1a could not reconcile, the
@@ -61,6 +69,7 @@ Merge rule
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -173,6 +182,39 @@ def _groups_label(groups: list[int] | set[int]) -> str:
 def _union_by(items: list[dict], extra: list[dict], key: str) -> list[dict]:
     seen = {i.get(key) for i in items}
     return items + [i for i in extra if i.get(key) not in seen]
+
+
+# ---------------------------------------------------------------------------
+# 0. Draft order (#809)
+# ---------------------------------------------------------------------------
+
+
+def _draft_order_key(draft: dict, group: int) -> tuple[list[str], str, int]:
+    queries = sorted(
+        {
+            str(q)
+            for ap in _dicts(draft.get("access_patterns"))
+            for q in ap.get("query_ids") or []
+            if isinstance(q, (str, int))
+        }
+    )
+    return queries, json.dumps(draft, sort_keys=True, default=str), group
+
+
+def canonical_draft_order(
+    drafts: list[dict], group_indices: list[int]
+) -> tuple[list[dict], list[int]]:
+    """``drafts`` (with their group indices) in an order set by their content alone.
+
+    Sorted by the query IDs each draft covers, then by the draft's JSON, so
+    neither the order the drafts arrive in nor how the splitter numbered the
+    groups changes the merged design (the group index only breaks a tie
+    between identical drafts).
+    """
+    pairs = sorted(
+        zip(drafts, group_indices, strict=True), key=lambda p: _draft_order_key(p[0], p[1])
+    )
+    return [d for d, _ in pairs], [g for _, g in pairs]
 
 
 # ---------------------------------------------------------------------------
@@ -355,84 +397,220 @@ class TableReconciliation:
     trade_offs: list[dict]
 
 
+def _table_order(drafts: list[dict]) -> list[tuple[int, int, dict]]:
+    """Every draft's tables as ``(draft position, index, table)``, in merge order.
+
+    First the table that the most tables of other drafts could merge with
+    (same name or a shared source table, and no conflict); then the one whose
+    name fewer other designs use for something else; then the one more access
+    patterns run on; then the one that holds more source tables' rows; then
+    by table name and content. So the design most groups agree on becomes the
+    home the others merge into (or conflict with), whatever the draft order or
+    group numbering. Its name is voted afterwards (:func:`_voted_name`).
+    """
+    items = [
+        (pos, i, table)
+        for pos, draft in enumerate(drafts)
+        for i, table in enumerate(_dicts(draft.get("table_definitions")))
+    ]
+    sources = [set(_designed_sources(t)) for _, _, t in items]
+    support = [0] * len(items)
+    contested = [0] * len(items)
+    for a, (pos_a, _, table_a) in enumerate(items):
+        for b in range(a + 1, len(items)):
+            pos_b, _, table_b = items[b]
+            if pos_a == pos_b:
+                continue
+            same_name = table_a.get("table_name") == table_b.get("table_name")
+            if not same_name and not sources[a] & sources[b]:
+                continue
+            if _merge_conflict(table_a, table_b) is None:
+                support[a] += 1
+                support[b] += 1
+            elif same_name:
+                contested[a] += 1
+                contested[b] += 1
+    patterns = [
+        sum(
+            1
+            for ap in _dicts(drafts[pos].get("access_patterns"))
+            if ap.get("table_name") == table.get("table_name")
+        )
+        for pos, _, table in items
+    ]
+    order = sorted(
+        range(len(items)),
+        key=lambda k: (
+            -support[k],
+            contested[k],
+            -patterns[k],
+            -len(_primary_sources(items[k][2])),
+            str(items[k][2].get("table_name") or "").casefold(),
+            json.dumps(items[k][2], sort_keys=True, default=str),
+            items[k][0],
+            items[k][1],
+        ),
+    )
+    return [items[k] for k in order]
+
+
+@dataclass
+class _Member:
+    pos: int
+    name: str
+    group: int
+    sources: set[str]
+    patterns: int = 0
+
+
+def _voted_name(members: list[_Member], taken: set[str]) -> str | None:
+    """The table name the most groups use (case-insensitively), not in ``taken``.
+
+    Then the spelling most of those groups use. When groups are tied, the name
+    more access patterns use; an exact tie goes to the alphabetically first
+    name, ignoring case.
+    """
+    groups: dict[str, dict[str, set[int]]] = {}
+    patterns: dict[str, int] = {}
+    for m in members:
+        if m.name:
+            groups.setdefault(m.name.casefold(), {}).setdefault(m.name, set()).add(m.pos)
+            patterns[m.name] = patterns.get(m.name, 0) + m.patterns
+
+    def rank(item: tuple[str, dict[str, set[int]]]) -> tuple:
+        folded, spellings = item
+        used = len(set().union(*spellings.values()))
+        return -used, -sum(patterns[n] for n in spellings), folded
+
+    for _, spellings in sorted(groups.items(), key=rank):
+        by_spelling = sorted(spellings.items(), key=lambda s: (-len(s[1]), -patterns[s[0]], s[0]))
+        for name, _ in by_spelling:
+            if name not in taken:
+                return name
+    return None
+
+
 def reconcile_tables(drafts: list[dict], group_indices: list[int]) -> TableReconciliation:
-    """Merge compatible tables across ``drafts`` (rule 2) and flag name conflicts."""
+    """Merge compatible tables across ``drafts`` (rule 2) and flag name conflicts.
+
+    Tables are taken in :func:`_table_order`; each merged table then takes the
+    name most of its groups use (:func:`_voted_name`). The merged tables are
+    listed in the drafts' order (the first table that went into each).
+    """
     homes: list[_Home] = []
+    members: list[list[_Member]] = []
+    dropped_into: list[list[tuple[int, str]]] = []
+    first_seen: list[tuple[int, int]] = []
     renames: list[dict[str, str]] = [{} for _ in drafts]
     failures: list[str] = []
     trade_offs: list[dict] = []
-
-    for pos, (draft, group) in enumerate(zip(drafts, group_indices, strict=True)):
-        ap_queries: dict[str, list[str]] = {}
+    ap_queries: list[dict[str, list[str]]] = []
+    for draft in drafts:
+        queries: dict[str, list[str]] = {}
         for ap in _dicts(draft.get("access_patterns")):
-            ap_queries.setdefault(str(ap.get("table_name")), []).extend(
+            queries.setdefault(str(ap.get("table_name")), []).extend(
                 q for q in ap.get("query_ids") or [] if isinstance(q, str)
             )
-        for table in _dicts(draft.get("table_definitions")):
-            name = table.get("table_name")
-            sources = set(_designed_sources(table))
-            target: int | None = None
-            dropped = False
-            for i, home in enumerate(homes):
-                other = home.table
-                same_name = other.get("table_name") == name
-                if not same_name and not sources & set(_designed_sources(other)):
-                    continue
-                conflict = _merge_conflict(other, table)
-                if conflict is None:
-                    target = i
-                    break
-                if same_name:
-                    failures.append(
-                        f"{MERGE_FAILURE_PREFIX}table '{name}' is designed differently in "
-                        f"{_groups_label(home.groups)} and group {group} ({conflict}); the merge "
-                        f"kept the {_groups_label(home.groups)} design. Give the tables different "
-                        "names or reconcile them into one design."
-                    )
-                    dropped = True
-                    break
-            if dropped:
-                continue
-            if target is None:
-                home = _Home(table=table, groups=[group])
-                home.add_primary(table, group)
-                homes.append(home)
-                continue
+        ap_queries.append(queries)
 
-            home = homes[target]
-            survivor_name = str(home.table.get("table_name"))
-            home.table = _absorb(home.table, table)
-            home.absorbed = True
-            home.add_primary(table, group)
-            if group not in home.groups:
-                home.groups.append(group)
-            if name and name != survivor_name:
-                renames[pos][name] = survivor_name
-                shared = [
-                    s
-                    for s in home.table.get("source_tables") or []
-                    if normalize_table_name(s) in sources
-                ]
-                verb = "has" if len(shared) == 1 else "have"
-                trade_offs.append(
-                    {
-                        "description": (
-                            f"Group designs {survivor_name} ({_groups_label(home.groups[:1])}) and "
-                            f"{name} (group {group}) both model {', '.join(shared)} with the same "
-                            f"keys ({_describe_keys(home.table)}); the merge combines them into "
-                            f"{survivor_name}."
-                        ),
-                        "impact": (
-                            f"{', '.join(shared)} {verb} one DynamoDB home, {survivor_name}; "
-                            f"access patterns designed against {name} run against {survivor_name}."
-                        ),
-                        "source_tables": shared,
-                        "target_tables": [survivor_name],
-                        "query_ids": list(dict.fromkeys(ap_queries.get(name, []))),
-                        "engine": "dynamodb",
-                    }
+    def ap_count(pos: int, name: str) -> int:
+        return sum(
+            1 for ap in _dicts(drafts[pos].get("access_patterns")) if ap.get("table_name") == name
+        )
+
+    for pos, index, table in _table_order(drafts):
+        group = group_indices[pos]
+        name = str(table.get("table_name") or "")
+        sources = set(_designed_sources(table))
+        target: int | None = None
+        dropped = False
+        for i, home in enumerate(homes):
+            other = home.table
+            same_name = other.get("table_name") == name
+            if not same_name and not sources & set(_designed_sources(other)):
+                continue
+            conflict = _merge_conflict(other, table)
+            if conflict is None:
+                target = i
+                break
+            if same_name:
+                failures.append(
+                    f"{MERGE_FAILURE_PREFIX}table '{name}' is designed differently in "
+                    f"{_groups_label(home.groups)} and group {group} ({conflict}); the merge "
+                    f"kept the {_groups_label(home.groups)} design. Give the tables different "
+                    "names or reconcile them into one design."
                 )
-    return TableReconciliation(homes, renames, failures, trade_offs)
+                dropped_into[i].append((pos, name))
+                dropped = True
+                break
+        if dropped:
+            continue
+        if target is None:
+            home = _Home(table=table, groups=[group])
+            home.add_primary(table, group)
+            homes.append(home)
+            members.append([_Member(pos, name, group, sources, ap_count(pos, name))])
+            dropped_into.append([])
+            first_seen.append((pos, index))
+            continue
+
+        home = homes[target]
+        first_seen[target] = min(first_seen[target], (pos, index))
+        home.table = _absorb(home.table, table)
+        home.absorbed = True
+        home.add_primary(table, group)
+        members[target].append(_Member(pos, name, group, sources, ap_count(pos, name)))
+        if group not in home.groups:
+            home.groups.append(group)
+
+    # Name every merged table by vote; never give two merged tables one name.
+    order = sorted(range(len(homes)), key=lambda i: (-len(members[i]), first_seen[i]))
+    for i in order:
+        others = {m.name for j in range(len(homes)) if j != i for m in members[j]}
+        home = homes[i]
+        final = _voted_name(members[i], others) or str(home.table.get("table_name"))
+        home.table = {**home.table, "table_name": final}
+        for pos, name in [(m.pos, m.name) for m in members[i]] + dropped_into[i]:
+            if name and name != final:
+                renames[pos][name] = final
+        final_groups = [m.group for m in members[i] if m.name == final]
+        for m in members[i]:
+            if not m.name or m.name == final:
+                continue
+            shared = [
+                s
+                for s in home.table.get("source_tables") or []
+                if normalize_table_name(s) in m.sources
+            ]
+            verb = "has" if len(shared) == 1 else "have"
+            designs = (
+                f"Group designs {final} ({_groups_label(final_groups)}) and {m.name}"
+                if final_groups
+                else f"The group design {m.name}"
+            )
+            trade_offs.append(
+                {
+                    "description": (
+                        f"{designs} (group {m.group}) both model {', '.join(shared)} with the "
+                        f"same keys ({_describe_keys(home.table)}); the merge combines them into "
+                        f"{final}."
+                        if final_groups
+                        else f"{designs} (group {m.group}) models {', '.join(shared)} with the "
+                        f"same keys as other groups' tables ({_describe_keys(home.table)}); the "
+                        f"merge combines them into {final}."
+                    ),
+                    "impact": (
+                        f"{', '.join(shared)} {verb} one DynamoDB home, {final}; "
+                        f"access patterns designed against {m.name} run against {final}."
+                    ),
+                    "source_tables": shared,
+                    "target_tables": [final],
+                    "query_ids": list(dict.fromkeys(ap_queries[m.pos].get(m.name, []))),
+                    "engine": "dynamodb",
+                }
+            )
+    listed = sorted(range(len(homes)), key=lambda i: first_seen[i])
+    return TableReconciliation([homes[i] for i in listed], renames, failures, trade_offs)
 
 
 def _renamed(name: Any, renames: dict[str, str]) -> Any:
@@ -445,11 +623,27 @@ def _renamed(name: Any, renames: dict[str, str]) -> Any:
     return f"{renames[table]}.{rest}" if dot and table in renames else name
 
 
+def _renamed_note(ap: Any, renames: dict[str, str]) -> Any:
+    """Point a ``(merged design: in <table> as ...)`` note at the table's final name."""
+    text = ap.get("key_condition") if isinstance(ap, dict) else None
+    if not isinstance(text, str) or "(merged design:" not in text:
+        return ap
+    head, marker, notes = text.partition("(merged design:")
+    for old, new in renames.items():
+        notes = notes.replace(f"in {old} as ", f"in {new} as ")
+    return {**ap, "key_condition": head + marker + notes}
+
+
 def apply_renames(draft: dict, renames: dict[str, str]) -> dict:
     """Re-point one draft's references to tables the merge absorbed."""
     if not renames:
         return draft
     result = dict(draft)
+    if isinstance(draft.get("access_patterns"), list):
+        draft = {
+            **draft,
+            "access_patterns": [_renamed_note(ap, renames) for ap in draft["access_patterns"]],
+        }
     for list_field in ("access_patterns", "hot_partition_analysis"):
         if isinstance(draft.get(list_field), list):
             result[list_field] = [
