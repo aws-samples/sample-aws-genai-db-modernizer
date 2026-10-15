@@ -32,7 +32,7 @@ from src.agents.referee.synthesis_grounding import (
     ground_risks,
     recommends_engine,
 )
-from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
@@ -601,6 +601,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     Leo's query classification approach.
     """
     source_queries = {q["query_id"]: q for q in data.source_queries}
+    source_scope = SourceScope.from_collector(data.collector)
     groups: dict[str, dict] = {}
 
     # Reason text repeats far more than it varies (#478): a consolidation
@@ -645,7 +646,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                 # branch below already uses for exactly this fact.
                 group_name = (
                     UTILITY_GROUP_LABEL
-                    if is_utility_statement(ap.get("sql_text"), source_tables)
+                    if is_utility_statement(ap.get("sql_text"), source_tables, source_scope)
                     else UNRESOLVED_TABLE_GROUP_LABEL
                 )
             else:
@@ -778,7 +779,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             if clean_tables:
                 group_name = ", ".join(clean_tables)
             elif is_utility_statement(
-                src_query.get("query_text") if src_query else None, raw_tables
+                src_query.get("query_text") if src_query else None, raw_tables, source_scope
             ):
                 group_name = UTILITY_GROUP_LABEL
             else:

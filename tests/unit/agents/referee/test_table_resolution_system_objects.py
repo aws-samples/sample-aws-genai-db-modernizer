@@ -80,3 +80,91 @@ class TestOneSystemTableRule:
         assert is_engine_system_object('"pg_catalog"."pg_class"') is True
         assert is_engine_system_object("[sys].[objects]") is True
         assert is_engine_system_object("Public.PG_STAT_ACTIVITY") is True
+
+
+class TestCollectedDatabaseNameIsNotASchema:
+    """#835: ``<database>.<table>`` ids lead with the collected database's own
+    name, so a database literally named ``sys`` or ``mysql`` is not a system
+    schema. Only a real system-schema position for the engine is."""
+
+    def test_a_database_named_sys_holds_application_tables(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        source = SourceScope(name="sys", engine="postgresql")
+        assert is_engine_system_object("sys.public.orders", source) is False
+        assert is_engine_system_object("sys.orders", SourceScope("sys", "mysql")) is False
+        assert is_engine_system_object("mysql.users", SourceScope("mysql", "mysql")) is False
+        performance = SourceScope("performance_schema", "mysql")
+        assert is_engine_system_object("performance_schema.t", performance) is False
+
+    def test_the_real_system_schema_inside_that_database_is_still_system(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        assert is_engine_system_object("sys.sys.objects", SourceScope("sys", "sqlserver")) is True
+        assert is_engine_system_object("shop.sys.objects", SourceScope("shop", "sqlserver")) is True
+        assert is_engine_system_object("shop.mysql.user", SourceScope("shop", "mysql")) is True
+        assert is_engine_system_object("mysql.user", SourceScope("shop", "mysql")) is True
+        assert is_engine_system_object("sys.public.pg_stat_statements", SourceScope("sys")) is True
+        info = SourceScope("sys", "postgresql")
+        assert is_engine_system_object("sys.information_schema.tables", info) is True
+
+    def test_only_the_engines_own_system_schemas_count(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        pg = SourceScope("shop", "postgresql")
+        assert is_engine_system_object("shop.sys.orders", pg) is False
+        assert is_engine_system_object("shop.mysql.orders", pg) is False
+        assert is_engine_system_object("shop.pg_catalog.pg_class", pg) is True
+        mysql = SourceScope("shop", "mysql")
+        assert is_engine_system_object("shop.pg_catalog.pg_class", mysql) is False
+
+    def test_a_pg_named_table_behind_the_database_prefix_stays_an_application_table(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        assert (
+            is_engine_system_object("shop.pg_style_settings", SourceScope("shop", "mysql")) is False
+        )
+
+    def test_no_source_keeps_the_old_rule(self) -> None:
+        assert is_engine_system_object("sys.public.orders") is True
+        assert is_engine_system_object("sys.public.orders", None) is True
+
+    def test_scope_reads_the_collector_output(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        scope = SourceScope.from_collector(
+            {"metadata": {"source_database": {"engine": "PostgreSQL", "database_name": "sys"}}}
+        )
+        assert (scope.name, scope.engine) == ("sys", "postgresql")
+        assert SourceScope.from_collector({}) == SourceScope(None, None)
+
+    def test_every_pg_schema_is_a_postgresql_system_schema(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        pg = SourceScope("shop", "postgresql")
+        assert is_engine_system_object("shop.pg_toast.pg_toast_1", pg) is True
+        assert is_engine_system_object("shop.pg_temp_3.t", pg) is True
+        assert is_engine_system_object("shop.pg_toast_temp_3.t", pg) is True
+        assert is_engine_system_object("shop.pg_toast.t", SourceScope("shop", "mysql")) is False
+
+    def test_oracle_and_db2_have_their_own_system_schemas(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        oracle = SourceScope("orcl", "oracle")
+        assert is_engine_system_object("orcl.system.logmnr_uid$", oracle) is True
+        assert is_engine_system_object("orcl.xdb.t", oracle) is True
+        assert is_engine_system_object("orcl.mysql.t", oracle) is False
+        assert is_engine_system_object("orcl.pg_catalog.t", oracle) is False
+        db2 = SourceScope("sample", "db2")
+        assert is_engine_system_object("sample.syscat.tables", db2) is True
+        assert is_engine_system_object("sample.sysibm.sysdummy1", db2) is True
+        assert is_engine_system_object("sample.sys.orders", db2) is False
+
+    def test_scope_normalizes_its_fields(self) -> None:
+        from src.agents.referee.table_resolution import SourceScope
+
+        scope = SourceScope(name="  ", engine="PostgreSQL")
+        assert (scope.name, scope.engine) == (None, "postgresql")
+        assert (
+            is_engine_system_object("shop.sys.orders", SourceScope("shop", "PostgreSQL")) is False
+        )

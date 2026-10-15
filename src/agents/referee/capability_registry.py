@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
 from src.shared.unsupported_pattern import is_dedup_only_group_by
 
@@ -282,7 +283,10 @@ SIGNAL_TO_CAPABILITY: dict[str, str] = {
 
 
 def detect_required_capabilities(
-    query_text: str, signals: list[str], tables_accessed: Iterable[str] | None = None
+    query_text: str,
+    signals: list[str],
+    tables_accessed: Iterable[str] | None = None,
+    source: SourceScope | None = None,
 ) -> list[str]:
     """Detect hard capability requirements from query text and triage signals.
 
@@ -292,6 +296,7 @@ def detect_required_capabilities(
     (#327): those need "sql_admin", which only the Aurora engines have, so
     the reality check's serviceability gate keeps them there instead of
     letting them follow the normal confidence-scoring path onto DynamoDB.
+    ``source`` is the collected database (#835), see :func:`is_utility_statement`.
     """
     required: set[str] = set()
 
@@ -316,7 +321,7 @@ def detect_required_capabilities(
 
     # 3. Utility/metadata statements (#327) -- only Aurora understands DDL,
     # session variables and transaction control.
-    if is_utility_statement(query_text, tables_accessed):
+    if is_utility_statement(query_text, tables_accessed, source):
         required.add("sql_admin")
 
     return sorted(required)

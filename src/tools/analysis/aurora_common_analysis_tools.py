@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from src.agents.referee.query_shape import RELATIONAL, single_table_access_shape
+from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.analysis_output import (
     AntiPattern,
@@ -115,7 +116,7 @@ def _is_single_row_pk_lookup(query: dict) -> bool:
 # --------------------------------------------------------------------------
 
 
-def _is_admin_statement(query: Mapping) -> bool:
+def _is_admin_statement(query: Mapping, source: SourceScope | None = None) -> bool:
     """SHOW/DESCRIBE/EXPLAIN/SET (``SKIP_QUERY_TYPES``) or a utility statement
     (``utility_statements.is_utility_statement``): not application data access.
 
@@ -126,7 +127,7 @@ def _is_admin_statement(query: Mapping) -> bool:
     so (``BEGIN``, ``COMMIT``, ``SET``, ``CREATE``, ...)."""
     query_type = str(query.get("query_type") or "").upper()
     return query_type in SKIP_QUERY_TYPES or is_utility_statement(
-        query.get("query_text"), query.get("tables_accessed")
+        query.get("query_text"), query.get("tables_accessed"), source
     )
 
 
@@ -146,6 +147,7 @@ def analyze_aurora_common_use_cases(
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
     tables_schema = (collector_output.get("database_schema") or {}).get("tables") or []
     total_query_count = len(queries)
+    source = SourceScope.from_collector(collector_output)
 
     # --- Accumulators for patterns ---
     # aurora-common-01: complex-join
@@ -223,7 +225,7 @@ def analyze_aurora_common_use_cases(
         # utility statement. An OTHER-typed query (WITH ..., REFRESH, EXEC,
         # one that opens with a comment or "(") is application access, the
         # same rule the anti-05 and anti-06 loops below use (#733).
-        if _is_admin_statement(q):
+        if _is_admin_statement(q, source):
             continue
         join_count = int(q.get("join_count") or 0)
         rows_avg = float(q.get("rows_returned_avg") or 0.0)
@@ -514,13 +516,15 @@ def analyze_aurora_common_use_cases(
         table_qs = [
             q
             for q in queries
-            if tid in (q.get("tables_accessed") or []) and not _is_admin_statement(q)
+            if tid in (q.get("tables_accessed") or []) and not _is_admin_statement(q, source)
         ]
         if not table_qs:
             continue
         # Step 1: per query.
         primary_key = table.get("primary_key") or []
-        shapes = [single_table_access_shape(q, primary_key=primary_key) for q in table_qs]
+        shapes = [
+            single_table_access_shape(q, primary_key=primary_key, source=source) for q in table_qs
+        ]
         # Step 2: the table-level complement, only on top of step 1.
         if RELATIONAL in shapes:
             continue
@@ -556,7 +560,7 @@ def analyze_aurora_common_use_cases(
     # sequence) is not a table it can hold for.
     app_queries_per_table: dict[str, list[dict]] = {}
     for q in queries:
-        if _is_admin_statement(q):
+        if _is_admin_statement(q, source):
             continue
         for tid in dict.fromkeys(q.get("tables_accessed") or []):
             app_queries_per_table.setdefault(tid, []).append(q)
@@ -572,7 +576,9 @@ def analyze_aurora_common_use_cases(
             continue
         # Step 1: per query.
         primary_key = table.get("primary_key") or []
-        shapes = [single_table_access_shape(q, primary_key=primary_key) for q in table_qs]
+        shapes = [
+            single_table_access_shape(q, primary_key=primary_key, source=source) for q in table_qs
+        ]
         # Step 2: the table-level complement, only on top of step 1.
         if RELATIONAL in shapes:
             continue

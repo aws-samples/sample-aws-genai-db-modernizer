@@ -54,7 +54,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from src.agents.referee.table_resolution import PSEUDO_TABLES, is_engine_system_object
+from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, is_engine_system_object
 from src.shared.sql_comments import (
     strip_comments,
     strip_leading_comments,
@@ -287,17 +287,21 @@ def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
     return all(str(t).upper() in pseudo for t in tables)
 
 
-def _all_tables_are_system_catalog(tables_accessed: Iterable[str] | None) -> bool:
+def _all_tables_are_system_catalog(
+    tables_accessed: Iterable[str] | None, source: SourceScope | None = None
+) -> bool:
     """True when ``tables_accessed`` names a system catalog table and nothing but
     system catalog and pseudo tables."""
     pseudo = {p.upper() for p in PSEUDO_TABLES}
     tables = [str(t).strip() for t in (tables_accessed or []) if t]
     real = [t for t in tables if t.upper() not in pseudo]
-    return bool(real) and all(is_engine_system_object(t) for t in real)
+    return bool(real) and all(is_engine_system_object(t, source) for t in real)
 
 
 def is_utility_statement(
-    query_text: str | None, tables_accessed: Iterable[str] | None = None
+    query_text: str | None,
+    tables_accessed: Iterable[str] | None = None,
+    source: SourceScope | None = None,
 ) -> bool:
     """Whether ``query_text`` is a utility/metadata/DDL statement, not workload traffic.
 
@@ -324,6 +328,10 @@ def is_utility_statement(
     a statement one treats as administration the others do too (#778). Its
     one exception, ``REFRESH MATERIALIZED VIEW`` as application access (#733),
     is ``_APPLICATION_ACCESS_RE``.
+
+    ``source`` (the collected database's name and engine, #835) keeps a database
+    named ``sys`` or ``mysql`` from reading as that system schema in
+    ``tables_accessed``.
     """
     heads = _statement_heads(query_text)
     if _APPLICATION_ACCESS_RE.match(heads[0]):
@@ -333,7 +341,7 @@ def is_utility_statement(
     text = heads[0]
     if _CATALOG_RE.search(text):
         return True
-    if _all_tables_are_system_catalog(tables_accessed):
+    if _all_tables_are_system_catalog(tables_accessed, source):
         return True
     unquoted = _blank_string_literals(text)
     if (

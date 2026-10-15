@@ -52,6 +52,7 @@ from src.agents.referee.capability_registry import (
     detect_required_capabilities,
     requires_aggregation_capability,
 )
+from src.agents.referee.table_resolution import SourceScope
 
 logger = logging.getLogger(__name__)
 
@@ -594,6 +595,7 @@ def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str
     queries = co.get("queries", {}).get("query_patterns", [])
     if not queries:
         return {}
+    source = SourceScope.from_collector(co)
 
     # Build signal map: query_id → list of signal names
     query_signal_map: dict[str, list[str]] = defaultdict(list)
@@ -606,7 +608,7 @@ def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str
         qid = q.get("query_id", "")
         query_text = q.get("query_text", "")
         sigs = query_signal_map.get(qid, [])
-        caps = detect_required_capabilities(query_text, sigs, q.get("tables_accessed"))
+        caps = detect_required_capabilities(query_text, sigs, q.get("tables_accessed"), source)
         if caps:
             result[qid] = caps
 

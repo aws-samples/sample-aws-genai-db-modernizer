@@ -144,6 +144,7 @@ from src.agents.referee.migration_wave_tables import (
 )
 from src.agents.referee.table_resolution import (
     PSEUDO_TABLES,
+    SourceScope,
     TableNameResolver,
     is_engine_system_object,
 )
@@ -173,6 +174,7 @@ def build_migration_waves(
     source_version: Any = None,
     mapped_tables: set[str] | list[str] | None = None,
     aurora_engine_choice: dict[str, Any] | None = None,
+    source: SourceScope | None = None,
 ) -> list[dict[str, Any]] | None:
     """The incremental migration roadmap for this report, or ``None`` with no assignment.
 
@@ -215,6 +217,9 @@ def build_migration_waves(
     set, after it has resolved out model-written noise) -- see
     :func:`_aurora_wave` for the explanatory sentence it adds to wave 1's
     rationale (it never narrows wave 1's own table list).
+
+    ``source`` (#835) is the collected database's name and engine: a database named
+    ``sys`` or ``mysql`` is not read as that system schema in ``known_tables``.
 
     ``aurora_engine_choice`` (#381) is ``Assignment.aurora_engine_choice`` (as a
     dict), when the caller has it, used only for wave 1's cross-engine rationale --
@@ -262,7 +267,7 @@ def build_migration_waves(
     known: set[str] | None = (
         None
         if known_tables is None
-        else {str(t) for t in known_tables if not is_engine_system_object(str(t))}
+        else {str(t) for t in known_tables if not is_engine_system_object(str(t), source)}
     )
     mapped: set[str] | None = None if mapped_tables is None else {str(t) for t in mapped_tables}
     resolver = None if known is None else TableNameResolver.from_known_ids(known)

@@ -71,7 +71,7 @@ from src.agents.referee.query_scoring import (
 from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.routing_trace import RoutingTrace
 from src.agents.referee.table_assignments import derive_table_assignments, retained_engine_for
-from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.referee.table_resolution import SourceScope, TableNameResolver
 from src.agents.referee.tie_break import (
     TIE_KIND_SOURCE_COMPATIBLE,
     TIE_KIND_STABILITY,
@@ -173,6 +173,7 @@ class AssignmentResolver:
         # a justification-gated signal override by the same source engine the
         # #326 justification floor itself keys off.
         source_engine = source_database_engine(collector_output)
+        source_scope = SourceScope.from_collector(collector_output)
 
         # Step 1: Build signal-based overrides from triage
         signal_overrides = self._build_signal_overrides(
@@ -677,7 +678,9 @@ class AssignmentResolver:
         utility_qids = [
             query["query_id"]
             for query in queries
-            if is_utility_statement(query.get("query_text"), query.get("tables_accessed"))
+            if is_utility_statement(
+                query.get("query_text"), query.get("tables_accessed"), source_scope
+            )
         ]
         # #550 review: the pre-tie ``settled_counts`` snapshot (Critical 2), never a
         # fresh recount of ``assigned``, which by now also folds in Step 6b's own

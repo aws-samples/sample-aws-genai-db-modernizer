@@ -61,6 +61,7 @@ def _latest(job_dir: Path, sub: str, name: str) -> Path:
 def measure(job_dir: Path) -> dict[str, Any]:
     """The routing shape of one job (see module docstring)."""
     from src.agents.referee.assignment_resolver import retained_engine_for
+    from src.agents.referee.table_resolution import SourceScope
     from src.agents.referee.utility_statements import is_utility_statement
     from src.report.renderers import resolve_migration_waves
 
@@ -106,6 +107,7 @@ def measure(job_dir: Path) -> dict[str, Any]:
         and is_utility_statement(
             query_by_id.get(qa["query_id"], {}).get("query_text"),
             query_by_id.get(qa["query_id"], {}).get("tables_accessed"),
+            SourceScope.from_collector(collector),
         )
     ]
 

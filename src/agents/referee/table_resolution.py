@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from src.agents.schema_design.scope import normalize_table_name
 
@@ -43,6 +44,86 @@ PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
 SYSTEM_SCHEMAS = frozenset(
     {"information_schema", "pg_catalog", "performance_schema", "mysql", "sys"}
 )
+# The system schemas each source engine really has (#835). PostgreSQL also
+# reserves every ``pg_``-prefixed schema name (``pg_toast``, ``pg_temp_3``), see
+# ``_is_system_schema``. An engine not listed falls back to the union above.
+_ENGINE_SYSTEM_SCHEMAS: dict[str, frozenset[str]] = {
+    "mysql": frozenset({"information_schema", "performance_schema", "mysql", "sys"}),
+    "mariadb": frozenset({"information_schema", "performance_schema", "mysql", "sys"}),
+    "postgresql": frozenset({"information_schema", "pg_catalog"}),
+    "sqlserver": frozenset({"information_schema", "sys"}),
+    "oracle": frozenset(
+        {
+            "sys",
+            "system",
+            "sysman",
+            "xdb",
+            "mdsys",
+            "ctxsys",
+            "audsys",
+            "outln",
+            "dbsnmp",
+            "lbacsys",
+            "ordsys",
+            "ordplugins",
+            "orddata",
+            "wmsys",
+            "dvsys",
+            "ojvmsys",
+            "appqossys",
+            "olapsys",
+            "exfsys",
+            "gsmadmin_internal",
+        }
+    ),
+    "db2": frozenset(
+        {
+            "sysibm",
+            "syscat",
+            "sysstat",
+            "sysfun",
+            "sysproc",
+            "systools",
+            "sysibmadm",
+            "sysibminternal",
+            "sysibmts",
+            "syspublic",
+        }
+    ),
+}
+
+
+def _is_system_schema(part: str, engine: str | None, schemas: frozenset[str]) -> bool:
+    return part in schemas or (engine == "postgresql" and part.startswith("pg_"))
+
+
+@dataclass(frozen=True)
+class SourceScope:
+    """The collected source database: its own name and engine (#835).
+
+    Collected table ids lead with the database (``<database>.<table>``,
+    ``<database>.<schema>.<table>``), so a database literally named ``sys`` or
+    ``mysql`` must not read as that system schema. Both fields are optional:
+    ``SourceScope()`` (or ``None``) keeps the engine-agnostic rule.
+    """
+
+    name: str | None = None
+    engine: str | None = None
+
+    def __post_init__(self) -> None:
+        # Frozen, so normalize through object.__setattr__: the engine compares
+        # lower-cased, and a blank name or engine means "unknown".
+        object.__setattr__(self, "name", str(self.name or "").strip() or None)
+        object.__setattr__(self, "engine", str(self.engine or "").strip().lower() or None)
+
+    @classmethod
+    def from_collector(cls, collector_output: Mapping | None) -> SourceScope:
+        source = ((collector_output or {}).get("metadata") or {}).get("source_database") or {}
+        name = str(source.get("database_name") or "").strip()
+        engine = str(source.get("engine") or "").strip().lower()
+        return cls(name or None, engine or None)
+
+
 # Specific engine-internal objects a monitoring/stats extension installs
 # (typically in ``public``, so no system schema name to catch them by). Not
 # an exhaustive list of every such object any engine could ever expose --
@@ -64,13 +145,20 @@ _SYSTEM_OBJECT_NAMES = frozenset(
 _IDENTIFIER_QUOTES_RE = re.compile(r'["`\[\]]')
 
 
-def is_engine_system_object(table_id: str) -> bool:
+def is_engine_system_object(table_id: str, source: SourceScope | None = None) -> bool:
     """True when ``table_id`` names a database-engine-internal object, never
     a real application table (#380 review).
 
     The one system-table rule (#778): migration waves, routing's utility rule
     (``utility_statements.is_utility_statement``) and Aurora schema design all
     use it. Quotes and case are ignored.
+
+    ``source`` (the collected database's name and engine, #835): a leading
+    part equal to the database's own name is the database, never a schema, so
+    ``sys.public.orders`` in a database named ``sys`` is an application table
+    while ``sys.sys.objects`` and ``shop.sys.objects`` still name the system
+    schema; and only the engine's own system schemas count (``sys`` is not a
+    PostgreSQL system schema). Without it every known system schema name counts.
 
     Two cases: a system catalog schema (``information_schema.tables``), or a
     monitoring/stats extension's own object regardless of schema
@@ -98,8 +186,16 @@ def is_engine_system_object(table_id: str) -> bool:
     if not name:
         return False
     parts = name.split(".")
+    qualified = len(parts) > 1
+    schemas = SYSTEM_SCHEMAS
+    if source is not None:
+        schemas = _ENGINE_SYSTEM_SCHEMAS.get(source.engine or "", SYSTEM_SCHEMAS)
+        database = _IDENTIFIER_QUOTES_RE.sub("", source.name or "").strip().lower()
+        if database and qualified and parts[0] == database:
+            parts = parts[1:]
     # A system schema at any qualifier: ``mysql.user``, ``db.sys.objects``.
-    if any(part in SYSTEM_SCHEMAS for part in parts[:-1]):
+    engine = source.engine if source is not None else None
+    if any(_is_system_schema(part, engine, schemas) for part in parts[:-1]):
         return True
     bare = parts[-1]
     if bare in _SYSTEM_OBJECT_NAMES:
@@ -107,7 +203,7 @@ def is_engine_system_object(table_id: str) -> bool:
     # Unqualified, PostgreSQL resolves a ``pg_*`` name to its catalog
     # (``pg_class``); a ``pg_*`` table in an application schema
     # (``shop.pg_style_settings``) is an application table (#778).
-    return len(parts) == 1 and (bare.startswith("pg_") or bare == "information_schema")
+    return not qualified and (bare.startswith("pg_") or bare == "information_schema")
 
 
 class TableNameResolver:

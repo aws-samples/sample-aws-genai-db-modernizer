@@ -19,10 +19,7 @@ from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.migration_waves import build_migration_waves
-from src.agents.referee.summary_input_budget import (
-    apply_summary_input_budget,
-    table_query_weights,
-)
+from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import (
     build_effective_architecture,
@@ -55,7 +52,7 @@ from src.agents.referee.synthesis_report import (
     source_database_label,
     source_table_count,
 )
-from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
+from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -237,6 +234,7 @@ def run_synthesis_deterministic(
         co_dependency_groups=assignment.get("co_dependency_groups") or [],
         cache_overlay=cache_overlay,
         source_engine=source_database_engine(data.collector),
+        source=SourceScope.from_collector(data.collector),
         # #225: scope waves to tables/views the collector actually saw, so a parser
         # artifact (CTE alias, keyword, system catalog name) never reaches a wave.
         # The upstream noise in table_assignments itself is #316.

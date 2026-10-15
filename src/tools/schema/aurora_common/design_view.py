@@ -17,6 +17,7 @@ import json
 import re
 from collections import defaultdict
 
+from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
 from src.contracts.schema_design_input import (
     AgentAnalysisInput,
@@ -81,7 +82,9 @@ def _load(q) -> float:
     return _qps(q) * float(q.execution_time_ms_avg or 0.0)
 
 
-def _designable(q: AgentQueryPattern, table_keys: set[str]) -> bool:
+def _designable(
+    q: AgentQueryPattern, table_keys: set[str], source: SourceScope | None = None
+) -> bool:
     """Whether a query can inform a schema decision.
 
     Dropped: every utility statement, by routing's own definition
@@ -97,7 +100,7 @@ def _designable(q: AgentQueryPattern, table_keys: set[str]) -> bool:
     (#831 review).
     """
     tables = q.tables_accessed or []
-    if is_utility_statement(q.query_text, tables):
+    if is_utility_statement(q.query_text, tables, source):
         return False
     return any(_key(str(t)) in table_keys for t in tables)
 
@@ -137,7 +140,8 @@ def _hot_queries(
     A slow query called rarely and a fast query called constantly can both need
     an index, so neither ranking alone is enough. Ordered by load.
     """
-    patterns = [q for q in collector.queries.query_patterns if _designable(q, table_keys)]
+    source = SourceScope.from_collector(raw_collector)
+    patterns = [q for q in collector.queries.query_patterns if _designable(q, table_keys, source)]
     by_load = sorted(patterns, key=_load, reverse=True)
     by_qps = sorted(patterns, key=_qps, reverse=True)
     chosen: dict[str, AgentQueryPattern] = {}

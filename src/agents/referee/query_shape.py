@@ -24,6 +24,7 @@ import re
 from collections.abc import Mapping, Sequence
 
 from src.agents.referee.capability_registry import detect_required_capabilities
+from src.agents.referee.table_resolution import SourceScope
 from src.shared.unsupported_pattern import non_scalar_function_names, strip_comments_and_literals
 
 __all__ = [
@@ -464,14 +465,20 @@ def _has_key_predicate(where: str) -> bool:
 
 
 def is_single_table_crud(
-    query: Mapping, primary_key: Sequence[str] | None = None, limit_value: int | None = None
+    query: Mapping,
+    primary_key: Sequence[str] | None = None,
+    limit_value: int | None = None,
+    source: SourceScope | None = None,
 ) -> bool:
     """Whether ``query`` is single-table CRUD (:func:`single_table_access_shape` is ``CRUD``)."""
-    return single_table_access_shape(query, primary_key, limit_value) == CRUD
+    return single_table_access_shape(query, primary_key, limit_value, source) == CRUD
 
 
 def single_table_access_shape(
-    query: Mapping, primary_key: Sequence[str] | None = None, limit_value: int | None = None
+    query: Mapping,
+    primary_key: Sequence[str] | None = None,
+    limit_value: int | None = None,
+    source: SourceScope | None = None,
 ) -> str:
     """``CRUD``, ``ORDERED_ONE_TO_MANY`` or ``RELATIONAL`` for ``query``.
 
@@ -512,6 +519,9 @@ def single_table_access_shape(
     (``OFFSET m``, ``LIMIT m, n``), ``TOP n PERCENT`` or ``WITH TIES``. ``RELATIONAL`` for
     everything else.
 
+    ``source`` is the collected database (#835), see
+    :func:`~src.agents.referee.utility_statements.is_utility_statement`.
+
     Comments and string literals are stripped first, so a ``<`` or a function
     call inside a quoted value never changes the verdict. A locking clause
     (``FOR UPDATE``, ``LOCK IN SHARE MODE``, ``WITH (UPDLOCK)``, ``NOWAIT``
@@ -528,7 +538,7 @@ def single_table_access_shape(
     if len(tables) != 1 or query.get("has_joins"):
         return RELATIONAL
     text = str(query.get("query_text") or "")
-    if detect_required_capabilities(text, [], tables):
+    if detect_required_capabilities(text, [], tables, source):
         return RELATIONAL
     if non_scalar_function_names(text):
         return RELATIONAL
