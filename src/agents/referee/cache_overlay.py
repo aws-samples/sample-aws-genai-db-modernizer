@@ -43,6 +43,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src.agents.referee.query_shape import locking_clause
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.utility_statements import is_sequence_fetch
 from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
@@ -119,7 +120,6 @@ _SESSION_TOKEN_PREFIXES = frozenset(
 )
 _SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
 _WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
-_LOCKING_RE = re.compile(r"\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b", re.IGNORECASE)
 
 # Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
 # many as the statement opens with, are stripped first (review of #303: a
@@ -221,14 +221,20 @@ def is_write_query(query: Mapping) -> bool:
 
 
 def is_locking_read(query: Mapping) -> bool:
-    """True for a ``SELECT ... FOR UPDATE``/``FOR SHARE``/``LOCK IN SHARE MODE`` read.
+    """True for a read that takes a row lock (``query_shape.locking_clause``).
 
     A locking read takes a row lock as part of a transaction -- the same
     consistency guarantee a write needs -- so a non-system-of-record engine
     cannot serve it either (review of #303), even though it is not itself a
-    write and :func:`is_write_query` says False.
+    write and :func:`is_write_query` says False. The lock is read by the one
+    definition the shape check records (#799, #838): ``FOR UPDATE``, ``FOR NO
+    KEY UPDATE``, ``FOR SHARE``, ``FOR KEY SHARE``, MySQL ``LOCK IN SHARE
+    MODE`` and a SQL Server ``WITH (UPDLOCK | HOLDLOCK | XLOCK |
+    SERIALIZABLE)`` hint, matched after comments, literals and quoted
+    identifiers are removed. The UI engine picker runs the same rule
+    (``src/ui/src/utils/sqlLocking.js``, held to the same cases).
     """
-    return bool(_LOCKING_RE.search(str(query.get("query_text") or "")))
+    return locking_clause(str(query.get("query_text") or "")) is not None
 
 
 def can_own(engine: str, query: Mapping | None = None) -> bool:
@@ -274,7 +280,7 @@ def cache_pattern(query: Mapping) -> str | None:
     so the overlay is re-evaluated identically wherever only the collector is at hand.
     """
     text = str(query.get("query_text") or "")
-    if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or _LOCKING_RE.search(text):
+    if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or locking_clause(text):
         return None
     # A sequence fetch returns a new value on every call: a cached answer is wrong (#654).
     if is_sequence_fetch(text):

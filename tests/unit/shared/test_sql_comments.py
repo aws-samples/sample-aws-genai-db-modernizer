@@ -210,14 +210,17 @@ class TestNestedBlockComments:
 
 def test_the_ui_scanner_uses_pythons_whitespace():
     """#814 review: ``sqlComments.js`` lists exactly the characters ``str.isspace()``
-    accepts (JS's ``\\s`` differs on U+001C-U+001F, U+0085 and U+FEFF)."""
+    accepts (JS's ``\\s`` differs on U+001C-U+001F, U+0085 and U+FEFF). The same
+    list is Python's regex ``\\s`` in ``sqlLocking.js`` (#838)."""
     import re
 
     js = (Path(__file__).parents[3] / "src/ui/src/utils/sqlComments.js").read_text()
-    block = js[js.index("const PY_SPACE = new Set(") : js.index("].map(")]
+    start = js.index("export const PY_SPACE_CODES = [")
+    block = js[start : js.index("];", start)]
     listed = {int(h, 16) for h in re.findall(r"0x([0-9a-f]+)", block)}
     python = {c for c in range(0x110000) if chr(c).isspace()}
     assert listed == python
+    assert python == {c for c in range(0x110000) if re.match(r"\s", chr(c))}
 
 
 class TestMySqlExecutableComments:

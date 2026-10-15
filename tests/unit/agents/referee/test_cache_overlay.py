@@ -10,7 +10,9 @@ for hot reads only.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -42,6 +44,7 @@ from src.agents.referee.cache_overlay import (
     safety_net_note,
     write_heavy_tables,
 )
+from src.agents.referee.query_shape import locking_clause
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.triage import triage
 from src.contracts.assignment_models import (
@@ -51,6 +54,7 @@ from src.contracts.assignment_models import (
 )
 from src.contracts.move_ledger import ReasonCode
 from src.tools.validation.customer_text_guard import scan_text
+from tests.unit.tools.sql._timing import assert_linear
 
 
 def _q(
@@ -359,6 +363,108 @@ class TestOwnership:
         """A literal containing the word "update" must not false-positive."""
         query = _q("w", "SELECT * FROM t WHERE note = 'please update later'", "OTHER")
         assert not is_write_query(query)
+
+
+# The same cases run against the UI's engine picker (src/ui/src/utils/sqlLocking.js).
+LOCKING_CASES = json.loads((Path(__file__).parent / "locking_clause_cases.json").read_text())[
+    "cases"
+]
+
+
+class TestOwnershipGateUsesTheLockingClause:
+    """#838: the ownership gate (ADR-031 Decision 2 step 3) reads a locking read
+
+    with ``query_shape.locking_clause``, the one definition the shape check uses
+    (#799/#840), not a private regex: ``FOR NO KEY UPDATE``, ``FOR KEY SHARE``
+    and SQL Server lock hints are locks, and a lock word in a string literal,
+    a comment or a quoted identifier is not.
+    """
+
+    @pytest.mark.parametrize(
+        "case", LOCKING_CASES, ids=[repr(c["text"])[:80] for c in LOCKING_CASES]
+    )
+    def test_gate_agrees_with_the_shared_cases(self, case):
+        read = _q("r", case["text"], "SELECT")
+        locked = case["clause"] is not None
+        assert locking_clause(case["text"]) == case["clause"]
+        assert is_locking_read(read) is locked
+        assert can_own("opensearch", read) is not locked
+        assert can_own("dynamodb", read)
+        assert can_own("aurora_postgresql", read)
+
+    def test_the_shared_cases_are_loaded(self):
+        assert len(LOCKING_CASES) > 40
+        assert any(c["clause"] is None for c in LOCKING_CASES)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE id = $1 FOR NO KEY UPDATE",
+            "SELECT * FROM t WHERE id = $1 FOR KEY SHARE",
+            "SELECT * FROM orders ORDER BY id LIMIT 1 FOR NO KEY UPDATE",
+            "SELECT * FROM [t] WITH (UPDLOCK) WHERE [id] = @p",
+            "SELECT * FROM [t] WITH (HOLDLOCK) WHERE [id] = @p",
+            "SELECT * FROM [t] WITH (XLOCK) WHERE [id] = @p",
+            "SELECT * FROM [t] WITH (SERIALIZABLE) WHERE [id] = @p",
+        ],
+    )
+    def test_forms_the_old_regex_missed_are_not_ownable_by_opensearch(self, text):
+        read = _q("r", text, "SELECT")
+        assert is_locking_read(read)
+        assert not can_own("opensearch", read)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE note = 'FOR UPDATE' AND id = $1",
+            "SELECT * FROM t WHERE id = $1 -- FOR UPDATE",
+            "SELECT * FROM t WHERE id = $1 /* LOCK IN SHARE MODE */",
+            'SELECT "for share" FROM t WHERE id = $1',
+        ],
+    )
+    def test_a_lock_word_that_is_not_a_lock_keeps_opensearch(self, text):
+        read = _q("r", text, "SELECT")
+        assert not is_locking_read(read)
+        assert can_own("opensearch", read)
+
+    @pytest.mark.parametrize(
+        "unit",
+        [
+            "[",
+            "`",
+            '"',
+            "'",
+            "'\\",
+            '"\\',
+            "/*",
+            "*/",
+            "--",
+            "'[",
+            '["',
+            "FOR UPDATE OF a,",
+            "WITH (",
+            "(",
+        ],
+    )
+    def test_the_gate_is_linear(self, unit):
+        """#871 review: the gate runs on every ``can_own`` call and in the UI picker,
+
+        so it must stay linear on any input: a run of unterminated ``[`` took
+        3.1s at 100k characters when quoted identifiers had their own regex.
+        """
+        prefix = "SELECT * FROM t WHERE a[1] = 1 FOR UPDATE "
+        assert_linear(
+            lambda n: prefix + unit * (n // len(unit)),
+            lambda t: is_locking_read({"query_text": t, "query_type": "SELECT"}),
+        )
+
+    def test_cache_pattern_reads_the_same_lock(self):
+        """A locking read is never cached; a lock word in a literal does not block it."""
+        assert cache_pattern(_q("q", "SELECT * FROM t WHERE id = $1 FOR NO KEY UPDATE")) is None
+        assert cache_pattern(_q("q", "SELECT * FROM [t] WITH (UPDLOCK) WHERE [id] = @p")) is None
+        assert cache_pattern(_q("q", "SELECT * FROM t WHERE id = $1 AND note = 'FOR UPDATE'")) == (
+            "point_lookup"
+        )
 
 
 # ---------------------------------------------------------------------------

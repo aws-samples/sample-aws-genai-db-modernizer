@@ -175,9 +175,12 @@ _TRAILING_LIMIT_RES = (
 #
 # The lock is recorded on its own, as a transactional need
 # (:func:`locking_clause`), never as relational evidence and never as a score:
-# DynamoDB supports transactions (ADR-031 Decision 3), and the ownership gate
-# that keeps a locking read off an engine that is not a system of record
-# (``cache_overlay.is_locking_read``) is a separate rule, unchanged here (#838).
+# DynamoDB supports transactions (ADR-031 Decision 3). The ownership gate that
+# keeps a locking read off an engine that is not a system of record
+# (``cache_overlay.is_locking_read``, Decision 2 step 3) is a separate rule, but
+# it reads the lock with this same function (#838), and the UI engine picker
+# runs a JavaScript copy (``src/ui/src/utils/sqlLocking.js``) held to the same
+# cases (``tests/unit/agents/referee/locking_clause_cases.json``).
 #
 # The forms read: PostgreSQL/MySQL ``FOR UPDATE`` / ``FOR NO KEY UPDATE`` /
 # ``FOR SHARE`` / ``FOR KEY SHARE`` (each with an optional ``OF <tables>``,
@@ -234,9 +237,82 @@ _LOCKING_HINTS = frozenset({"UPDLOCK", "HOLDLOCK", "XLOCK", "SERIALIZABLE"})
 _ROW_SKIPPING_HINTS = frozenset({"READPAST"})
 
 
+# The openers :func:`_normalized_sql` looks for. Whichever opens first wins, so
+# a quote inside a comment or a literal never pairs with one outside it (review
+# of #871: ``'5"' FOR UPDATE /* "audit" */`` hid the lock).
+_SPAN_OPENER_RE = re.compile(r"/\*|--|['\"`\[]")
+# What can end or escape inside each quoted span: ``'`` literals take backslash
+# escapes, ``"`` identifiers do not.
+_QUOTED_SPAN_STOPS = {"'": re.compile(r"['\\]"), '"': re.compile('"')}
+_SPAN_CLOSERS = {"`": "`", "[": "]", "/*": "*/"}
+
+
+def _quoted_span_end(text: str, start: int, quote: str) -> int:
+    """End (exclusive) of the ``quote``-quoted span opening at ``start``, or -1.
+
+    A doubled quote is an escaped quote, and in a ``'`` literal so is ``\\``
+    followed by any character. Same answer as the regex
+    ``'(?:[^'\\]|\\.|'')*'`` (``"(?:[^"]|"")*"`` without backslash): when the
+    text ends inside the span, the span closes at the first quote of its last
+    doubled pair, as the regex does when it backtracks; with no pair it is
+    unterminated.
+    """
+    stops = _QUOTED_SPAN_STOPS[quote]
+    k = start + 1
+    last_pair = -1
+    while True:
+        stop = stops.search(text, k)
+        if stop is None:
+            return last_pair + 1 if last_pair >= 0 else -1
+        pos = stop.start()
+        if text[pos] == "\\":
+            if pos + 1 >= len(text):
+                return last_pair + 1 if last_pair >= 0 else -1
+            k = pos + 2
+        elif text.startswith(quote * 2, pos):
+            last_pair = pos
+            k = pos + 2
+        else:
+            return pos + 1
+
+
 def _normalized_sql(text: str) -> str:
-    """``text`` with quoted identifiers replaced by ``ident``, then comments and literals blanked."""
-    return strip_comments_and_literals(_QUOTED_IDENT_RE.sub(" ident ", text))
+    """``text`` with comments and literals blanked and quoted identifiers made ``ident``.
+
+    One left-to-right pass in linear time (review of #871): at each step the
+    span that opens first -- a ``/* */`` or ``--`` comment, a ``'...'``
+    literal (``''`` and backslash escapes), or a ``"..."`` / `` `...` `` /
+    ``[...]`` identifier -- is replaced whole, so a quote inside one never
+    pairs with a quote outside it. An opener with no closer is plain text, and
+    once one kind has no closer left, every later opener of that kind is
+    skipped at once instead of rescanning the rest of the text.
+    """
+    out: list[str] = []
+    unclosed: set[str] = set()
+    last = i = 0
+    while (match := _SPAN_OPENER_RE.search(text, i)) is not None:
+        start, opener = match.start(), match.group()
+        end = -1
+        if opener not in unclosed:
+            if opener == "--":
+                newline = text.find("\n", start)
+                end = len(text) if newline < 0 else newline
+            elif opener in _SPAN_CLOSERS:
+                closer = _SPAN_CLOSERS[opener]
+                found = text.find(closer, start + len(opener))
+                end = found + len(closer) if found >= 0 else -1
+            else:
+                end = _quoted_span_end(text, start, opener)
+            if end < 0:
+                unclosed.add(opener)
+        if end < 0:
+            i = start + 1
+            continue
+        out.append(text[last:start])
+        out.append(" " if opener in ("--", "/*", "'") else " ident ")
+        last = i = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _hint_names(hints: str) -> list[str]:

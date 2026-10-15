@@ -22,6 +22,7 @@
  */
 import { ownerDistribution, formatCacheLayerLine } from './cacheLayer';
 import { stripLeadingComments } from './sqlComments';
+import { isLockingRead } from './sqlLocking';
 
 // Fallback used when no `t` is supplied, so the function stays safe to call
 // without react-i18next (e.g. a caller that forgets to wire it up). It mirrors
@@ -231,8 +232,8 @@ const WRITE_QUERY_TYPES = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UP
 // leading-comment scans as its _leading_comment_readings, #814, #825).
 const DML_KEYWORD_RE = /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b/i;
 const LEADING_WRITE_VERB_RE = /^\s*(call|truncate|copy)\b/i;
-// Same as cache_overlay.py's _LOCKING_RE.
-const LOCKING_RE = /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i;
+// A locking read is read by sqlLocking.js, the copy of query_shape.py's
+// locking_clause that cache_overlay.py's is_locking_read uses (#838).
 
 function isWriteQuery(queryType, queryText) {
   const qtype = String(queryType || '').toUpperCase();
@@ -255,10 +256,6 @@ function isWriteQuery(queryType, queryText) {
   const nestedText = strip(true);
   const readings = nestedText.length > plain.length ? [plain] : [plain, nestedText];
   return readings.some((text) => DML_KEYWORD_RE.test(text) || LEADING_WRITE_VERB_RE.test(text));
-}
-
-function isLockingRead(queryText) {
-  return LOCKING_RE.test(String(queryText || ''));
 }
 
 /**

@@ -1201,6 +1201,39 @@ class TestOwnershipGateBlocksCustomerPicks:
             "system of record."
         )
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE id = $1 FOR NO KEY UPDATE",
+            "SELECT * FROM t WHERE id = $1 FOR KEY SHARE",
+            "SELECT * FROM [t] WITH (UPDLOCK, ROWLOCK) WHERE [id] = @p",
+        ],
+    )
+    def test_every_locking_form_is_rejected_as_a_locking_read(self, text: str) -> None:
+        """#838: the gate reads a lock with ``query_shape.locking_clause``."""
+        store = self._seed({"q1": ("SELECT", text)}, joined=False)
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+            )
+        self._assert_nothing_written(store)
+        assert "it is a locking read" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t WHERE note = 'FOR UPDATE' AND id = $1",
+            "SELECT * FROM t WHERE id = $1 -- FOR UPDATE",
+        ],
+    )
+    def test_a_lock_word_in_a_literal_or_comment_is_not_gated(self, text: str) -> None:
+        store = self._seed({"q1": ("SELECT", text)}, joined=False)
+        apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+        )
+        v2 = store.read_json(f"{DB}/{JOB}/assignment/v2/assignment.json")
+        assert [qa["assigned_engine"] for qa in v2["query_assignments"]] == ["opensearch"]
+
     def test_a_write_group_mate_blocks_the_whole_group_move(self) -> None:
         store = self._seed(
             {
