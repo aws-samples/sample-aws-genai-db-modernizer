@@ -178,6 +178,8 @@ ID_FIELD_PATHS = frozenset(
         ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
+        ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)
+        ("engine_pairs", "alternative"),  # ReportFacts.close_calls.engine_pairs[] (#730)
         ("unresolved_names", "names"),  # UnresolvedNames.names, report.json's own key
         ("unresolved_table_names", "names"),  # UnresolvedNames.names, assignment.json's own key
         # table_mappings and the per-engine schema_designs projection
@@ -249,6 +251,10 @@ ID_FIELD_PATHS = frozenset(
         ("outscored_by", "basis"),  # TraceOutscored.basis
         ("outscored_by", "decided_by_rule"),  # TraceOutscored.decided_by_rule (ReasonCode)
         ("unlisted_rules", "rule"),  # TraceRuleCount.rule (ReasonCode rule id)
+        # query_traces.close_calls (CloseCall, #730): engine ids and the basis code.
+        ("close_calls", "engine"),  # CloseCall.engine
+        ("close_calls", "alternative"),  # CloseCall.alternative
+        ("close_calls", "basis"),  # CloseCall.basis (query / group_mean)
     }
 )
 

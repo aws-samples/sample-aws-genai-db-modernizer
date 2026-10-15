@@ -28,6 +28,7 @@ from pydantic import ValidationError
 
 from src.contracts.move_ledger import CandidateScore, Move, ReasonCode
 from src.contracts.query_trace import (
+    CloseCall,
     QueryTraceDigest,
     QueryTraceEntry,
     QueryTraceListing,
@@ -50,7 +51,13 @@ from src.shared.move_reasons import (
     render_trace_summary,
     rule_label,
 )
-from src.shared.report_facts import TRACE_FULL_CAP, is_listed, trace_kinds, trace_order
+from src.shared.report_facts import (
+    TRACE_FULL_CAP,
+    is_close_call,
+    is_listed,
+    trace_kinds,
+    trace_order,
+)
 
 # One decimal, like every score the trace shows: a co-dependency group's
 # mean (80.1340206185567) is stored as 80.1, never next to a whole-number score.
@@ -156,6 +163,20 @@ _TIE_RULES = frozenset(
         ReasonCode.TIE_CLEARED,
     }
 )
+
+
+def _is_settled_tie(trace: QueryTraceResponse, moves: list[tuple[int, Move]]) -> bool:
+    """A close call that is an exact tie a routing rule settled (#730): the
+    runner-up scores the same as the final engine and a tie rule decided the
+    query (a tie Move or a Move's ``evidence.tie_rule``), not just a gap that
+    rounds to 0."""
+    runner = trace.runner_up
+    return (
+        runner is not None
+        and runner.gap == 0
+        and runner.score == runner.final_score
+        and _latest_tie_rule(moves) is not None
+    )
 
 
 def _deciding_step(final_engine: str, moves: list[tuple[int, Move]]) -> tuple[int, Move]:
@@ -410,6 +431,8 @@ def query_trace_digest(
     pinned by a listed rule) are ordered most notable first (``trace_order``);
     the first ``TRACE_FULL_CAP`` keep their full trace, the rest only why they
     are listed. The others are counted by their first assignment's rule.
+    Every query whose runner-up ``is_close_call`` is recorded in
+    ``close_calls`` too, listed or not (#730).
     """
     qas = [qa for qa in effective.get("query_assignments") or [] if qa.get("query_id")]
     by_query = ledger_moves(assignment_lineage(read, effective_version))
@@ -417,12 +440,27 @@ def query_trace_digest(
     texts = query_texts or {}
     listed: list[tuple[dict[str, Any], QueryTraceEntry]] = []
     rules: dict[ReasonCode, int] = {}
+    close: list[CloseCall] = []
     for qa in qas:
         qid = str(qa["query_id"])
         trace = build_query_trace(
             qid, by_query.get(qid, []), qa.get("assigned_engine"), plan, effective_version
         )
-        kinds = trace_kinds(trace.model_dump(mode="json", by_alias=True))
+        dumped = trace.model_dump(mode="json", by_alias=True)
+        kinds = trace_kinds(dumped)
+        if trace.runner_up is not None and trace.final_engine and is_close_call(dumped):
+            close.append(
+                CloseCall(
+                    query_id=qid,
+                    engine=trace.final_engine,
+                    alternative=trace.runner_up.engine,
+                    score=trace.runner_up.final_score,
+                    alternative_score=trace.runner_up.score,
+                    gap=float(trace.runner_up.gap or 0.0),
+                    basis=trace.runner_up.basis,
+                    settled_tie=_is_settled_tie(trace, by_query.get(qid, [])),
+                )
+            )
         if is_listed(kinds):
             entry = QueryTraceEntry(
                 **trace.model_dump(by_alias=True),
@@ -444,4 +482,5 @@ def query_trace_digest(
             TraceRuleCount(rule=code, label=rule_label(code), query_count=n)
             for code, n in sorted(rules.items(), key=lambda kv: (-kv[1], kv[0].value))
         ],
+        close_calls=sorted(close, key=lambda c: (c.engine, c.alternative, c.gap, c.query_id)),
     )

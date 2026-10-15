@@ -16,6 +16,7 @@ from .architecture import (
     architecture_svg,
 )
 from .cache_layer import _cache_note, cache_layer_text
+from .close_calls import close_calls_html
 from .engine_choices import (
     _reality_check_decisions_html,
     _reroutes_html,
@@ -322,6 +323,7 @@ def render_decision_report_html(
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
     out += _tied_queries_html(report)
+    out += close_calls_html(report)
     out += _reroutes_html(report)
     out += _why_engines_were_dropped_html(report)
     out += _reality_check_decisions_html(report)

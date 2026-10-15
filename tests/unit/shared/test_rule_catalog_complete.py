@@ -430,7 +430,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _BUDGET,
     ),
     "src/shared/query_trace.py": (frozenset({"_PLACES", "EXCERPT_CHARS"}), _BUDGET),
-    "src/shared/report_facts.py": (frozenset({"TRACE_FULL_CAP"}), _BUDGET),
+    "src/shared/report_facts.py": (
+        frozenset({"TRACE_FULL_CAP", "CLOSE_CALL_IDS_SHOWN", "CLOSE_CALL_MARGIN"}),
+        _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",
+    ),
     "src/tools/analysis/llm_advisor_base.py": (
         frozenset({"MAX_LLM_QUERIES", "MAX_RETRIES", "BASE_BACKOFF_SECONDS"}),
         _BUDGET,

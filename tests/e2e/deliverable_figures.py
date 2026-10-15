@@ -229,6 +229,12 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         exp["removal_savings"] = savings
 
     exp["tied"] = len([t for t in report.get("tied_queries") or [] if isinstance(t, dict)])
+    # #730: the close calls and the settled ties, counted from query_traces.close_calls.
+    digest = report.get("query_traces") or {}
+    if isinstance(digest.get("close_calls"), list):
+        rows = [r for r in digest["close_calls"] if isinstance(r, dict)]
+        exp["close_calls"] = sum(1 for r in rows if not r.get("settled_tie"))
+        exp["settled_ties"] = sum(1 for r in rows if r.get("settled_tie"))
     exp["engine_count"] = len(final_architecture(report))
     exp["removed"] = frozenset(removed_engines(report))
     # A pointer to the decision report's "Engines not used" section must have
@@ -509,6 +515,18 @@ def _other_targets(summary: str) -> set[str]:
     return out
 
 
+_CLOSE_CALLS_TITLE = re.compile(
+    r"Close calls \(([\d,]+) quer(?:y|ies)\)(?:, plus ([\d,]+) exact ties? a rule settled)?"
+)
+
+
+def _close_calls(f: Figures, text: str | None, where: str) -> None:
+    """The close-call figures of one "Close calls (N queries), plus T ..." title (#730)."""
+    m = _CLOSE_CALLS_TITLE.search(text or "")
+    f.add("close_calls", _int(m.group(1)) if m else 0, where)
+    f.add("settled_ties", _int(m.group(2)) if m and m.group(2) else 0, where)
+
+
 def decision_figures(page: Any) -> Figures:
     """Figures the decision report shows, read from the rendered page."""
     f = Figures("decision report")
@@ -601,6 +619,9 @@ def decision_figures(page: Any) -> Figures:
             f.name(engines_in(li.inner_text()), "Pending engine choices")
     else:
         f.add("tied", 0, "no Pending engine choices section")
+
+    close = page.locator("[data-figure=close-calls] h2")
+    _close_calls(f, norm(close.inner_text()) if close.count() else None, "Close calls heading")
 
     removed: set[str] = set()
     summary = page.locator("p.exec")
@@ -706,6 +727,9 @@ def analysis_figures(page: Any) -> Figures:
         m = re.search(r"\(([\d,]+) quer(?:y|ies), [\d.]+%\)$", norm(label.text_content() or ""))
         f.add(f"queries:{eng}", _int(m.group(1)) if m else UNREADABLE, "Query Flow label")
 
+    close = page.locator("[data-figure=close-calls] .section-header")
+    _close_calls(f, norm(close.inner_text()) if close.count() else None, "Close calls section")
+
     summary = page.locator(".section-body").first
     f.add("removed", frozenset(_other_targets(norm(summary.inner_text()))), "summary")
     return f
@@ -793,6 +817,9 @@ def engineering_figures(md_text: str) -> Figures:
             for x in re.findall(r"Consolidated [\d,]+ quer(?:y|ies) from (\w+) →", md_plain(body)):
                 if engine_id(x) not in targets:
                     removed.add(engine_id(x))
+    _close_calls(
+        f, next((h for h in h2 if h.startswith("Close calls (")), None), "Close calls heading"
+    )
     if "Unresolved engine ties" not in " ".join(h2):
         f.add("tied", 0, "no Unresolved engine ties section")
     f.add("removed", frozenset(removed), "Already removed line and Migration trade-offs")
@@ -904,6 +931,7 @@ def deck_figures(slides: list[str], label: str) -> Figures:
         f.add(f"cached_reads:{engine_id(m.group(1))}", _int(m.group(2)), "Workload Coverage")
         f.name(engine_id(m.group(1)), "Workload Coverage")
 
+    _close_calls(f, text, "Open Decisions close-call card")
     m = re.search(r"Pick the engine for tied queries\? ([\d,]+) quer(?:y|ies)", text)
     f.add("tied", _int(m.group(1)) if m else 0, "Open Decisions tied-queries card")
     m = re.search(r"Scores tie between (.+?); no routing rule", text)

@@ -118,6 +118,7 @@ const GUARDED_UI_FILES = [
   'components/SummaryFallbackNotice.js',
   'components/QueryDecisionTrace.js',
   'components/QueryRoutingTable.js',
+  'components/CloseCallCallout.js',
   'utils/queryRouting.js',
 ];
 

@@ -19,6 +19,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from src.contracts.query_trace import (
+    CloseCall,
     QueryTraceEntry,
     QueryTraceListing,
     QueryTraceResponse,
@@ -45,6 +46,7 @@ TRACE_MODELS: dict[type[BaseModel], tuple[str, ...]] = {
     TraceRunnerUp: ("runner_up",),
     TraceOutscored: ("outscored_by",),
     TraceRuleCount: ("unlisted_rules",),
+    CloseCall: ("close_calls",),
 }
 # Display names and the reason renderer's sentences: scanned like any prose.
 SCANNED = frozenset(

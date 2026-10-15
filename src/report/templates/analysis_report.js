@@ -760,6 +760,49 @@
       container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
     }
 
+    // #730: the close calls -- the same facts, sentences and override path as
+    // the decision and engineering reports (src/report/close_calls.py).
+    const CLOSE_CALL_OVERRIDE_TEXT = "To move any of them, change its engine in the assignment review (a query in a co-dependency group moves with its group); that writes a new assignment version and redesigns only the engines it touches. The results page's Why this engine trace shows both scores for each query.";
+    function buildCloseCalls() {
+      const container = document.getElementById('close-calls-container');
+      if (!container) return;
+      const cc = DATA.results && DATA.results.synthesis && DATA.results.synthesis.facts && DATA.results.synthesis.facts.close_calls;
+      if (!cc || !Array.isArray(cc.engine_pairs) || cc.engine_pairs.length === 0) { container.innerHTML = ''; return; }
+      const pick = (n, one, many) => (n === 1 ? one : many);
+      const num = v => String(Number(Number(v).toFixed(1)));
+      const points = v => num(v) + ' ' + pick(v, 'point', 'points');
+      const name = e => ENGINE_LABELS[e] || e;
+      let title = 'Close calls (' + cc.close_call_query_count + ' ' + pick(cc.close_call_query_count, 'query', 'queries') + ')';
+      if (cc.settled_tie_count) title += ', plus ' + cc.settled_tie_count + ' exact ' + pick(cc.settled_tie_count, 'tie', 'ties') + ' a rule settled';
+      const margin = points(cc.margin_points);
+      let html = '<div class="section" data-figure="close-calls">';
+      html += '<div class="section-header">' + escapeHtml(title) + '</div>';
+      html += '<p class="section-desc">' + escapeHtml('These queries went to an engine that scores less than ' + margin + ' above another engine the plan keeps, which could serve them too. The assessment decides for you; you can move them yourself.') + '</p>';
+      html += '<ul>';
+      cc.engine_pairs.forEach(p => {
+        const n = p.pair_query_count || 0;
+        const ties = p.exact_tie_count || 0;
+        const tieNoun = ties + ' exact ' + pick(ties, 'tie', 'ties');
+        const gap = p.min_gap === p.max_gap ? 'a gap of ' + points(p.max_gap) : 'a gap of ' + num(p.min_gap) + ' to ' + points(p.max_gap);
+        let text;
+        if (n) {
+          text = n + ' ' + pick(n, 'query', 'queries') + ' went to ' + name(p.engine) + ' by less than ' + margin + ' over ' + name(p.alternative) + ' (' + gap + ')';
+          if (ties) text += '; ' + name(p.engine) + ' also won ' + tieNoun + ' with ' + name(p.alternative) + ' that a routing rule settled';
+        } else {
+          text = tieNoun + ' between ' + name(p.engine) + ' and ' + name(p.alternative) + ' went to ' + name(p.engine) + ' by a routing rule';
+        }
+        const group = p.group_mean_count || 0;
+        if (group) text += '; ' + group + ' ' + pick(group, 'is', 'are') + ' compared on ' + pick(group, 'its', 'their') + " co-dependency group's mean score and " + pick(group, 'moves', 'move') + ' with the group';
+        const one = n && ties ? 'every one of them' : pick(n || ties, 'it', 'every one of them');
+        text += '. ' + name(p.alternative) + ' can serve ' + one + '.';
+        html += '<li>' + escapeHtml(text) + '</li>';
+      });
+      html += '</ul>';
+      html += '<p class="section-desc">' + escapeHtml(CLOSE_CALL_OVERRIDE_TEXT) + '</p>';
+      html += '</div>';
+      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()
+    }
+
     function waveFacts(wave) {
       const rows = DATA.results?.synthesis?.facts?.waves || [];
       return rows.find(r => r.wave === wave.wave) || null;
@@ -1129,6 +1172,7 @@
     document.addEventListener('DOMContentLoaded', () => {
       allPatterns = extractPatterns();
       buildPostSchemaReroutes();
+      buildCloseCalls();
       buildMigrationRoadmap();
       buildCostBreakdown();
       buildRiskAssessment();

@@ -101,6 +101,8 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {k for k in exp if k.startswith("cached_reads:")}
     req |= {"removed"} if exp["removed"] else set()
     req |= {"removal_savings"} if "removal_savings" in exp else set()
+    # #730: every deliverable states the close calls (and the settled ties).
+    req |= {"close_calls", "settled_ties"} & set(exp)
     return req
 
 

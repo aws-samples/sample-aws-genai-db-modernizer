@@ -143,3 +143,12 @@ export function routingHistoryRecorded(synthesis) {
   const qt = factsOf(synthesis) && factsOf(synthesis).query_trace;
   return Boolean(qt && qt.has_ledger);
 }
+
+// #730: the queries an engine won by less than the close-call margin over
+// another engine the plan keeps (facts.close_calls), or null when there are
+// none or the report predates them. Every figure is the facts layer's.
+export function closeCallsOf(synthesis) {
+  const cc = factsOf(synthesis) && factsOf(synthesis).close_calls;
+  if (!cc || !Array.isArray(cc.engine_pairs) || cc.engine_pairs.length === 0) return null;
+  return cc;
+}

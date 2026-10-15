@@ -1152,6 +1152,49 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
+  script += '    // #730: the close calls -- the same facts, sentences and override path as\n';
+  script += '    // the decision and engineering reports (src/report/close_calls.py).\n';
+  script += '    const CLOSE_CALL_OVERRIDE_TEXT = "To move any of them, change its engine in the assignment review (a query in a co-dependency group moves with its group); that writes a new assignment version and redesigns only the engines it touches. The results page\'s Why this engine trace shows both scores for each query.";\n';
+  script += '    function buildCloseCalls() {\n';
+  script += '      const container = document.getElementById(\'close-calls-container\');\n';
+  script += '      if (!container) return;\n';
+  script += '      const cc = DATA.results && DATA.results.synthesis && DATA.results.synthesis.facts && DATA.results.synthesis.facts.close_calls;\n';
+  script += '      if (!cc || !Array.isArray(cc.engine_pairs) || cc.engine_pairs.length === 0) { container.innerHTML = \'\'; return; }\n';
+  script += '      const pick = (n, one, many) => (n === 1 ? one : many);\n';
+  script += '      const num = v => String(Number(Number(v).toFixed(1)));\n';
+  script += '      const points = v => num(v) + \' \' + pick(v, \'point\', \'points\');\n';
+  script += '      const name = e => ENGINE_LABELS[e] || e;\n';
+  script += '      let title = \'Close calls (\' + cc.close_call_query_count + \' \' + pick(cc.close_call_query_count, \'query\', \'queries\') + \')\';\n';
+  script += '      if (cc.settled_tie_count) title += \', plus \' + cc.settled_tie_count + \' exact \' + pick(cc.settled_tie_count, \'tie\', \'ties\') + \' a rule settled\';\n';
+  script += '      const margin = points(cc.margin_points);\n';
+  script += '      let html = \'<div class="section" data-figure="close-calls">\';\n';
+  script += '      html += \'<div class="section-header">\' + escapeHtml(title) + \'</div>\';\n';
+  script += '      html += \'<p class="section-desc">\' + escapeHtml(\'These queries went to an engine that scores less than \' + margin + \' above another engine the plan keeps, which could serve them too. The assessment decides for you; you can move them yourself.\') + \'</p>\';\n';
+  script += '      html += \'<ul>\';\n';
+  script += '      cc.engine_pairs.forEach(p => {\n';
+  script += '        const n = p.pair_query_count || 0;\n';
+  script += '        const ties = p.exact_tie_count || 0;\n';
+  script += '        const tieNoun = ties + \' exact \' + pick(ties, \'tie\', \'ties\');\n';
+  script += '        const gap = p.min_gap === p.max_gap ? \'a gap of \' + points(p.max_gap) : \'a gap of \' + num(p.min_gap) + \' to \' + points(p.max_gap);\n';
+  script += '        let text;\n';
+  script += '        if (n) {\n';
+  script += '          text = n + \' \' + pick(n, \'query\', \'queries\') + \' went to \' + name(p.engine) + \' by less than \' + margin + \' over \' + name(p.alternative) + \' (\' + gap + \')\';\n';
+  script += '          if (ties) text += \'; \' + name(p.engine) + \' also won \' + tieNoun + \' with \' + name(p.alternative) + \' that a routing rule settled\';\n';
+  script += '        } else {\n';
+  script += '          text = tieNoun + \' between \' + name(p.engine) + \' and \' + name(p.alternative) + \' went to \' + name(p.engine) + \' by a routing rule\';\n';
+  script += '        }\n';
+  script += '        const group = p.group_mean_count || 0;\n';
+  script += '        if (group) text += \'; \' + group + \' \' + pick(group, \'is\', \'are\') + \' compared on \' + pick(group, \'its\', \'their\') + " co-dependency group\'s mean score and " + pick(group, \'moves\', \'move\') + \' with the group\';\n';
+  script += '        const one = n && ties ? \'every one of them\' : pick(n || ties, \'it\', \'every one of them\');\n';
+  script += '        text += \'. \' + name(p.alternative) + \' can serve \' + one + \'.\';\n';
+  script += '        html += \'<li>\' + escapeHtml(text) + \'</li>\';\n';
+  script += '      });\n';
+  script += '      html += \'</ul>\';\n';
+  script += '      html += \'<p class="section-desc">\' + escapeHtml(CLOSE_CALL_OVERRIDE_TEXT) + \'</p>\';\n';
+  script += '      html += \'</div>\';\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
   // #615: a wave's table figures, read from synthesis.facts.waves (served,
   // moving, kept in sync; wave 1's tables and views). Formats only: both
   // callers' data carry facts (the /results API and the report exporter fill
@@ -1565,6 +1608,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    document.addEventListener(\'DOMContentLoaded\', () => {\n';
   script += '      allPatterns = extractPatterns();\n';
   script += '      buildPostSchemaReroutes();\n';
+  script += '      buildCloseCalls();\n';
   script += '      buildMigrationRoadmap();\n';
   script += '      buildCostBreakdown();\n';
   script += '      buildRiskAssessment();\n';
@@ -1817,6 +1861,7 @@ export const generateHTMLReport = (data) => {
     </div>
 
     <div id="post-schema-reroutes-container"></div>
+    <div id="close-calls-container"></div>
 
     <div class="section">
       <div class="section-header">Migration Roadmap</div>

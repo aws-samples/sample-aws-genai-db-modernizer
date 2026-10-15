@@ -277,6 +277,15 @@ Version History:
   consolidation line is reversed per query (every query it moved is back on
   the engine it left), and a line an edit undid only in part is restated for
   what stayed moved. Backward compatible -- every new field has a default.
+- 1.23 (2026-10-15, #730): ``query_traces.close_calls`` (``CloseCall``): every
+  query whose runner-up -- a kept engine that can take it -- is less than
+  ``report_facts.CLOSE_CALL_MARGIN`` points behind its final engine, with
+  both scores, the gap, its basis and whether it is an exact tie a rule
+  settled; and ``facts.close_calls`` (``CloseCallFacts``), the same queries
+  by engine and alternative, the settled ties counted apart, so every
+  deliverable says which queries went to an engine on a small margin and
+  where the customer can move them. Backward compatible: ``close_calls``
+  defaults to empty, ``facts.close_calls`` to None.
 """
 
 from datetime import datetime
@@ -890,6 +899,43 @@ class QueryTraceFacts(BaseModel):
     )
 
 
+class CloseCallPair(BaseModel):
+    """The queries one engine won by less than the close-call margin over another (#730)."""
+
+    engine: str = Field(..., description="The engine the queries went to (id)")
+    alternative: str = Field(..., description="The kept engine that can take every one (id)")
+    pair_query_count: int = Field(
+        ..., ge=0, description="Close calls: queries won by more than 0 and less than the margin"
+    )
+    exact_tie_count: int = Field(
+        0, ge=0, description="Exact ties a rule settled for the engine, apart from the close calls"
+    )
+    group_mean_count: int = Field(
+        0, ge=0, description="Of them, compared on a co-dependency group's mean (move as a group)"
+    )
+    min_gap: float = Field(0.0, ge=0, description="The close calls' smallest gap, in points")
+    max_gap: float = Field(0.0, ge=0, description="The close calls' largest gap, in points")
+    query_ids: list[str] = Field(
+        default_factory=list, description="The closest of them, at most CLOSE_CALL_IDS_SHOWN"
+    )
+    more_query_count: int = Field(0, ge=0, description="The ones query_ids does not name")
+
+
+class CloseCallFacts(BaseModel):
+    """Queries a kept engine could serve almost as well (#730), from ``query_traces.close_calls``."""
+
+    margin_points: float = Field(
+        ..., ge=0, description="A close call's runner-up is less than this many points behind"
+    )
+    close_call_query_count: int = Field(
+        0, ge=0, description="Close calls with a gap above 0 (the settled ties are apart)"
+    )
+    settled_tie_count: int = Field(0, ge=0, description="Exact ties a routing rule settled")
+    engine_pairs: list[CloseCallPair] = Field(
+        default_factory=list, description="By engine and alternative, largest first"
+    )
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -945,6 +991,13 @@ class ReportFacts(BaseModel):
             "query_traces"
         ),
     )
+    close_calls: CloseCallFacts | None = Field(
+        None,
+        description=(
+            "Queries whose runner-up is a kept engine less than the margin behind (#730); "
+            "None when query_traces predates close_calls"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -989,7 +1042,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.22",
+        default="1.23",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

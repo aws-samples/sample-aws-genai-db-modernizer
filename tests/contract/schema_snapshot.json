@@ -12281,6 +12281,130 @@
             {
               "kind": "object",
               "properties": {
+                "close_calls": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "close_call_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "engine_pairs": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "alternative": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "exact_tie_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "group_mean_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "max_gap": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "min_gap": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "more_query_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "pair_query_count": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "query_ids": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "margin_points": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "settled_tie_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "critical_high_risk_count": {
                   "required": false,
                   "schema": {
@@ -13872,6 +13996,95 @@
             {
               "kind": "object",
               "properties": {
+                "close_calls": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "alternative": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "alternative_score": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        },
+                        "basis": {
+                          "required": false,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "group_mean",
+                              "query"
+                            ]
+                          }
+                        },
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "gap": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "number"
+                          }
+                        },
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "score": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        },
+                        "settled_tie": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
                 "effective_version": {
                   "required": false,
                   "schema": {
@@ -16052,8 +16265,8 @@
         }
       }
     },
-    "schema_hash": "dbe604b0e63399cdda6373949614a36979e2e365ae83189adafe1b14c178383c",
-    "version": "1.22"
+    "schema_hash": "38b450cbf16bd03ca0d4027f8a8009672b12ab50ed7ac910a421832cb480a565",
+    "version": "1.23"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

@@ -4,6 +4,7 @@
  * for a report synthesized before them.
  */
 import {
+  closeCallsOf,
   currentTradeOffs,
   mappedTableCountOf,
   openRiskCountAt,
@@ -163,4 +164,15 @@ describe('the counts the deliverables print are facts (#748)', () => {
     expect(tradeOffCountOf(undefined, [{}])).toBe(1);
     expect(mappedTableCountOf({ facts: {} }, [{}, {}])).toBe(2);
   });
+});
+
+// #730: the close calls the callout formats are the stored facts, and a report
+// without any (or written before them) has no callout at all.
+test('closeCallsOf returns the stored close calls, or null without any', () => {
+  const cc = { margin_points: 5, close_call_query_count: 2, engine_pairs: [{ engine: 'dynamodb', alternative: 'aurora_mysql', pair_query_count: 2 }] };
+  expect(closeCallsOf({ facts: { close_calls: cc } })).toBe(cc);
+  expect(closeCallsOf({ facts: { close_calls: { ...cc, engine_pairs: [] } } })).toBeNull();
+  expect(closeCallsOf({ facts: { close_calls: null } })).toBeNull();
+  expect(closeCallsOf({ facts: {} })).toBeNull();
+  expect(closeCallsOf(null)).toBeNull();
 });

@@ -41,6 +41,7 @@ import ChartSankey from "../components/ChartSankey-01";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import QueryRoutingTable from "../components/QueryRoutingTable";
+import CloseCallCallout from "../components/CloseCallCallout";
 import { buildQueryRoutingRows } from "../utils/queryRouting";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -2058,6 +2059,16 @@ const AnalysisResultsPage = memo(() => {
                 />
               </Container>
             )}
+
+            {/* Close calls (#730): queries a kept engine could serve almost
+                as well, with the way into each one's decision trace and the
+                assignment review that moves them. */}
+            <CloseCallCallout
+              synthesis={resultsData?.synthesis}
+              jobId={jobId}
+              onOpen={fetchQueryJourney}
+              t={t}
+            />
 
             {/* Query routing (#822): every query, and the way into its
                 journey and decision trace without schema design. */}

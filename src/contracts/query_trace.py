@@ -230,6 +230,30 @@ class TraceRuleCount(BaseModel):
     query_count: int = Field(..., ge=0)
 
 
+class CloseCall(BaseModel):
+    """A query its final engine won by less than the close-call margin (#730).
+
+    ``alternative`` is the trace's runner-up: an engine the final assignment
+    keeps that can take the query, ``gap`` points behind on the ``basis``
+    scale (``report_facts.is_close_call`` selects the rows, below
+    ``report_facts.CLOSE_CALL_MARGIN``). The customer can move the query
+    there in the assignment review.
+    """
+
+    query_id: str
+    engine: str = Field(..., description="The final engine (id)")
+    alternative: str = Field(..., description="The runner-up engine (id) that can take it")
+    score: float | None = Field(None, description="The final engine's score on the basis")
+    alternative_score: float | None = Field(None, description="The runner-up's score")
+    gap: float = Field(..., ge=0, description="score minus alternative_score, one decimal")
+    basis: TraceBasis = Field(
+        "query", description="query: the query's own scores; group_mean: its group's means"
+    )
+    settled_tie: bool = Field(
+        False, description="An exact tie a routing rule settled (gap 0, tied at some step)"
+    )
+
+
 class QueryTraceDigest(BaseModel):
     """The decision traces synthesis writes into report.json (``query_traces``, #339).
 
@@ -266,4 +290,11 @@ class QueryTraceDigest(BaseModel):
     unlisted_rules: list[TraceRuleCount] = Field(
         default_factory=list,
         description="The queries not listed, by the rule of their first assignment",
+    )
+    close_calls: list[CloseCall] = Field(
+        default_factory=list,
+        description=(
+            "Every query, listed or not, whose runner-up is a kept engine less than the "
+            "close-call margin behind (#730), by engine, alternative, gap and query id"
+        ),
     )

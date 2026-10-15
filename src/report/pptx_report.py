@@ -70,6 +70,7 @@ from src.shared.risk_severity import severity_of as _severity
 from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL, fit_phrase
 
 from .architecture import _architecture_engines, _mapping_split, _n_tables_mapped
+from .close_calls import CLOSE_CALL_DECK_ACTION, close_calls_title
 from .engine_choices import REROUTE_OVERRIDE_TEXT, reroute_summary
 from .facts import report_facts, wave_facts_for
 from .renderers import (
@@ -1227,6 +1228,25 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": ORANGE,
                 "against": reroute_summary(rep) or "",
                 "action": REROUTE_OVERRIDE_TEXT,
+            }
+        )
+
+    # #730: the same close calls the decision and engineering reports state
+    # ("Close calls"), with the same override path.
+    close = facts.get("close_calls") or {}
+    if close.get("close_call_query_count") or close.get("settled_tie_count"):
+        n_close = int(close.get("close_call_query_count") or 0)
+        decisions.append(
+            {
+                "question": "Move close-call queries?",
+                "badge": f"{n_close} {plural_noun(n_close, 'query', 'queries')}",
+                "accent": BLUE,
+                "against": (
+                    f"{close_calls_title(close)}; each scores less than "
+                    f"{fmt_num(close.get('margin_points'), 1)} points above another kept "
+                    "engine that can serve it."
+                ),
+                "action": CLOSE_CALL_DECK_ACTION,
             }
         )
 

@@ -960,6 +960,109 @@ def query_trace_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Close calls (#730)
+# ---------------------------------------------------------------------------
+
+# A query is a close call when its runner-up -- an engine the final
+# assignment keeps that can take the query (the "Why this engine" trace's
+# runner-up; a gated one has no gap) -- scores less than this many points
+# below its final engine. Chosen from the runner-up gaps of the three samples
+# (#730). Per point from 0 to 9, discourse has 214, 137, 97, 174, 142, 41, 96,
+# 127, 42, 23 queries: a real dip at 5. Wordpress (5, 18, 9, 5, 3, 1, 3, 0, 0,
+# 0) only falls off, and trailgear (0, 1, 10, 3, 1, 2, 7, 0, 5, 1) is too
+# small to show a shape, so only discourse supports 5 specifically; neither
+# contradicts it. The reality check's unique-value line (15 points, ADR-031
+# Decision 7) answers another question, whether an engine is worth running at
+# all: as a per-query line it would call 75% of discourse's queries close.
+CLOSE_CALL_MARGIN = 5.0
+
+# Each engine pair names at most this many of its queries (the closest close
+# calls first, then the settled ties); report.json's
+# ``query_traces.close_calls`` lists every one.
+CLOSE_CALL_IDS_SHOWN = 5
+
+
+def is_close_call(trace: Mapping[str, Any]) -> bool:
+    """Whether a query's decision trace (``QueryTraceResponse`` as JSON) is a close call.
+
+    Its runner-up is less than ``CLOSE_CALL_MARGIN`` points behind the final
+    engine (a gated runner-up has no gap, so it never is); an exact tie a
+    routing rule settled is selected too, and counted apart
+    (``CloseCall.settled_tie``, set from the Moves' tie rule). A tie still open at the end is not: it is a
+    pending choice, listed as one (``tied_queries``). Synthesis selects the
+    ``query_traces.close_calls`` rows with this, the facts layer groups them.
+    """
+    if trace.get("tied_engines"):
+        return False
+    runner = trace.get("runner_up")
+    if not isinstance(runner, Mapping):
+        return False
+    gap = runner.get("gap")
+    return (
+        isinstance(gap, (int, float)) and not isinstance(gap, bool) and 0 <= gap < CLOSE_CALL_MARGIN
+    )
+
+
+def close_call_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The close calls by engine and alternative (``CloseCallFacts``), or None.
+
+    None for a report whose ``query_traces`` predates ``close_calls``.
+    ``close_call_query_count`` counts the real close calls (a gap above 0);
+    the exact ties a rule settled are ``settled_tie_count``, stated apart so
+    the headline stays the queries a few points decided. Each pair says how
+    many of each its engine won over the alternative, how many were compared
+    on a co-dependency group's mean (they move with their group), the close
+    calls' gap range, and the first ``CLOSE_CALL_IDS_SHOWN`` query ids
+    (closest close calls first, then the ties). Largest pair first.
+    """
+    digest = report.get("query_traces")
+    if not isinstance(digest, dict) or not isinstance(digest.get("close_calls"), list):
+        return None
+    rows = [
+        r
+        for r in digest["close_calls"]
+        if isinstance(r, dict)
+        and r.get("query_id")
+        and r.get("engine")
+        and r.get("alternative")
+        and isinstance(r.get("gap"), (int, float))
+    ]
+    by_pair: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in rows:
+        by_pair.setdefault((str(r["engine"]), str(r["alternative"])), []).append(r)
+    pairs: list[dict[str, Any]] = []
+    for (engine, alternative), members in by_pair.items():
+        members.sort(
+            key=lambda r: (bool(r.get("settled_tie")), float(r["gap"]), str(r["query_id"]))
+        )
+        gaps = [float(r["gap"]) for r in members if not r.get("settled_tie")]
+        ties = sum(1 for r in members if r.get("settled_tie"))
+        pairs.append(
+            {
+                "engine": engine,
+                "alternative": alternative,
+                "pair_query_count": len(gaps),
+                "exact_tie_count": ties,
+                "group_mean_count": sum(1 for r in members if r.get("basis") == "group_mean"),
+                "min_gap": min(gaps) if gaps else 0.0,
+                "max_gap": max(gaps) if gaps else 0.0,
+                "query_ids": [str(r["query_id"]) for r in members[:CLOSE_CALL_IDS_SHOWN]],
+                "more_query_count": max(len(members) - CLOSE_CALL_IDS_SHOWN, 0),
+            }
+        )
+    pairs.sort(
+        key=lambda p: (-p["pair_query_count"], -p["exact_tie_count"], p["engine"], p["alternative"])
+    )
+    ties = sum(1 for r in rows if r.get("settled_tie"))
+    return {
+        "margin_points": CLOSE_CALL_MARGIN,
+        "close_call_query_count": len(rows) - ties,
+        "settled_tie_count": ties,
+        "engine_pairs": pairs,
+    }
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -1076,4 +1179,6 @@ def compute_report_facts(
         ),
         # #339: the per-query decision traces' figures.
         "query_trace": query_trace_facts(report),
+        # #730: the queries a kept engine could serve almost as well.
+        "close_calls": close_call_facts(report),
     }

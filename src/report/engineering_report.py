@@ -15,6 +15,7 @@ from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT
 from . import escaping
 from .architecture import _architecture_engines, _mapping_split
 from .cache_layer import _cache_layer_md, cache_layer_text
+from .close_calls import close_calls_md
 from .engine_choices import _reroutes_md, _tied_queries_md
 from .engine_roles import _RELATIONAL_ENGINES
 from .facts import report_facts
@@ -454,6 +455,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out.append("")
 
     out += _tied_queries_md(report)
+    out += close_calls_md(report)
     out += _reroutes_md(report)
     out += _cache_layer_md(report)
     out += _roadmap_md(report)
