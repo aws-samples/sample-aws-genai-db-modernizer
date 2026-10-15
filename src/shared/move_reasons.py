@@ -23,6 +23,7 @@ from src.agents.referee.query_scoring import (
     GATE_KIND_CAPABILITY,
     GATE_KIND_HARD_EXCLUSION,
     GATE_KIND_MODEL_FLAG,
+    GATE_KIND_WRITE,
 )
 from src.contracts.move_ledger import GroupGate, Move, MoveActor, ReasonCode
 from src.shared.engine_names import display_engine
@@ -43,7 +44,7 @@ __all__ = [
 
 # The ladder's gate for an engine that may not own the query (a write on a
 # cache or a search index): the score is kept, the engine cannot take it.
-WRITE_GATE = "write_gate"
+WRITE_GATE = GATE_KIND_WRITE
 
 # The trace's gate for an engine that cannot own every query of a
 # co-dependency group (it is missing from the group's mean scores).

@@ -37,6 +37,7 @@ from src.agents.referee.cache_overlay import (
     no_serviceable_candidate_reason,
     normalize_cache_owners,
     overlay_summary,
+    owner_decision,
     refresh_cache_overlay,
     safety_net_note,
     write_heavy_tables,
@@ -48,6 +49,7 @@ from src.contracts.assignment_models import (
     AssignmentStatus,
     QueryAssignment,
 )
+from src.contracts.move_ledger import ReasonCode
 from src.tools.validation.customer_text_guard import scan_text
 
 
@@ -1133,3 +1135,54 @@ def test_deck_and_triage_name_the_same_top_n_spellings():
     signal = next(s for s in result.signals if s.signal == "leaderboard_pattern")
     assert "ORDER BY + LIMIT, TOP or FETCH" in signal.evidence
     assert "ORDER BY + LIMIT, TOP or FETCH" in pptx_report.SIGNAL_LABEL["leaderboard_pattern"]
+
+
+class TestOwnerDecisionNeverTiesAGatedEngine:
+    """#812: with no analysis to score with, every owner candidate is tied,
+    but only the ones the shared scorer's gates let serve the query (ADR-031
+    Decision 2 steps 2-3, Decision 12): a gated engine is never listed as tied."""
+
+    _AGGREGATION = "SELECT customer_id, COUNT(*) FROM orders GROUP BY customer_id"
+
+    def test_a_capability_gated_engine_is_left_out_of_the_tie(self):
+        query = _q("q", text=self._AGGREGATION, tables=["orders"])
+        triage = {"query_capabilities": {"q": ["aggregation"]}}
+        decision = owner_decision(
+            query,
+            {"documentdb", "dynamodb", "opensearch"},
+            triage=triage,
+            collector=None,
+        )
+        assert decision.tied_engines == ["documentdb", "opensearch"]
+        assert decision.owner in {"documentdb", "opensearch"}
+        assert decision.gates == {"dynamodb": "capability"}
+
+    def test_a_hard_excluded_engine_is_left_out_of_the_tie(self):
+        query = _q("q", text="SELECT id FROM posts WHERE title LIKE '%term%'", tables=["posts"])
+        decision = owner_decision(
+            query, {"documentdb", "dynamodb"}, triage={"query_capabilities": {}}, collector=None
+        )
+        assert (decision.owner, decision.tied_engines) == ("documentdb", [])
+        assert decision.gates == {"dynamodb": "hard_exclusion"}
+
+    def test_an_empty_analysis_is_no_analysis_and_still_gated(self):
+        query = _q("q", text=self._AGGREGATION, tables=["orders"])
+        decision = owner_decision(
+            query,
+            {"documentdb": {}, "dynamodb": {}},
+            triage={"query_capabilities": {"q": ["aggregation"]}},
+            collector=None,
+        )
+        assert (decision.owner, decision.tied_engines) == ("documentdb", [])
+
+    def test_every_candidate_gated_is_the_no_score_fallback(self):
+        query = _q("q", text=self._AGGREGATION, tables=["orders"])
+        decision = owner_decision(
+            query,
+            {"dynamodb"},
+            source_engine="mysql",
+            triage={"query_capabilities": {"q": ["aggregation"]}},
+            collector=None,
+        )
+        assert (decision.owner, decision.tied_engines) == ("aurora_mysql", [])
+        assert decision.fallback_rule == ReasonCode.FALLBACK_NO_SCORE

@@ -402,10 +402,11 @@ def _candidate_scores(
     gate and synthesis); a plain engine-name iterable, or a candidate with no
     analysis, still works. ``None`` here -- rather than a
     partial score for whichever candidates happen to have analysis and a
-    silent exclusion for the rest -- means every remaining candidate is
-    treated as tied (:func:`fallback_owner`), which is the honest answer
-    when there is no fitness signal to compare them with, never a stand-in
-    for "the engine with no analysis loses."
+    silent exclusion for the rest -- means every remaining candidate that
+    passes the scorer's gates is treated as tied (:func:`fallback_owner`;
+    the gates need no analysis, :func:`_gate_kinds`, #812), which is the
+    honest answer when there is no fitness signal to compare them with,
+    never a stand-in for "the engine with no analysis loses."
     """
     scored = _score_candidates(query, candidates, engines, triage, collector, ctx)
     return None if scored is None else scored[0]
@@ -427,22 +428,57 @@ def _score_candidates(
     """
     if not isinstance(engines, Mapping):
         return None
-    from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
+    from src.agents.referee.query_scoring import ScoringContext
 
+    if any(not isinstance(engines.get(e), Mapping) or not engines.get(e) for e in candidates):
+        return None
     if ctx is None:
         ctx = ScoringContext.from_pipeline(engines, triage, collector)
+    return _scored_and_gated(query, candidates, ctx)
+
+
+def _scored_and_gated(
+    query: Mapping, candidates: list[str], ctx: ScoringContext
+) -> tuple[dict[str, float], dict[str, str]]:
+    """Each candidate's shared-scorer score, or its gate kind when the scorer gates it.
+
+    The one loop :func:`_score_candidates` and :func:`_gate_kinds` share, so
+    the scored and the no-analysis branches gate the same way (#812).
+    """
+    from src.agents.referee.query_scoring import score_query_for_engine
+
     scores: dict[str, float] = {}
     gates: dict[str, str] = {}
     for engine in candidates:
-        analysis = engines.get(engine)
-        if not isinstance(analysis, Mapping) or not analysis:
-            return None
         result = score_query_for_engine(query, engine, ctx)
         if result.score is not None:
             scores[engine] = result.score
         else:
             gates[engine] = result.gate_kind or "gated"
     return scores, gates
+
+
+def _gate_kinds(
+    query: Mapping,
+    candidates: list[str],
+    engines: Iterable[str] | Mapping[str, Mapping],
+    triage: Mapping | None,
+    collector: Mapping | None,
+    ctx: ScoringContext | None = None,
+) -> dict[str, str]:
+    """The shared scorer's gate kind for every ``candidate`` it gates, with no analysis needed.
+
+    The hard exclusion and capability gates read only the query and its
+    required capabilities (``triage``'s, else detected from ``collector``),
+    never an engine's analysis, so :func:`owner_decision` can apply them when
+    there is nothing to score with (#812).
+    """
+    from src.agents.referee.query_scoring import ScoringContext
+
+    if ctx is None:
+        analysis = engines if isinstance(engines, Mapping) else {}
+        ctx = ScoringContext.from_pipeline(analysis, triage, collector)
+    return _scored_and_gated(query, candidates, ctx)[1]
 
 
 # Customer-facing reason for fallback_owner's "no serviceable candidate"
@@ -495,7 +531,9 @@ def fallback_owner(
     and ``collector`` the same way ``AssignmentResolver.resolve()`` would, or
     against ``ctx`` directly when the caller already built one): the highest
     wins outright. An exact tie, or no score at all (``engines`` has no real
-    per-engine analysis to score with), goes through
+    per-engine analysis to score with: then every candidate that passes the
+    hard exclusion and capability gates, which need no analysis, is tied;
+    a gated one never is, #812), goes through
     :func:`src.agents.referee.tie_break.break_tie`, the one shared ADR-031
     tie-break every other routing call site uses: the source-compatible
     engine wins ONLY an exact tie that includes it (ADR-031 Decision 2 says
@@ -511,7 +549,8 @@ def fallback_owner(
 
     When there is no candidate at all, or every candidate fails the
     exclusion/capability gate (``_candidate_scores`` returns ``{}``, not
-    ``None``), there is no serviceable owner -- this is never a tie to
+    ``None``; or, with no analysis, :func:`_gate_kinds` gates every one),
+    there is no serviceable owner -- this is never a tie to
     resolve among engines already known unable to serve the query. Both
     cases fall back through the one shared rule,
     :func:`src.agents.referee.aurora_choice.fallback_aurora_engine` (#786):
@@ -603,12 +642,27 @@ def owner_decision(
         _score_candidates(query, candidates, engines, triage, collector, ctx) if query else None
     )
     scores, gates = scored if scored is not None else (None, {})
+    if scores is None and query:
+        # No analysis to score with, but the scorer's gates need none: a
+        # candidate the hard exclusion or capability gate rules out is never
+        # tied (ADR-031 Decision 2 steps 2-3, Decision 12; #812).
+        gates = _gate_kinds(query, candidates, engines, triage, collector, ctx)
+        if len(gates) == len(candidates):
+            return OwnerDecision(
+                default,
+                [],
+                fallback_reason,
+                candidates,
+                None,
+                gates,
+                fallback_rule=ReasonCode.FALLBACK_NO_SCORE,
+            )
     if scores is None:
         # No fitness signal available at all (no real analysis to score
-        # with): every original candidate is tied -- break_tie still
+        # with): every serviceable candidate is tied -- break_tie still
         # resolves it deterministically, rather than this function picking
         # one by name.
-        tied = candidates
+        tied = [e for e in candidates if e not in gates]
     elif not scores:
         # Every candidate failed the exclusion/capability gate: there is no
         # serviceable owner among them, so this is not a tie either.

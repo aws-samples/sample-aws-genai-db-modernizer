@@ -14,6 +14,7 @@ from collections.abc import Iterable, Mapping
 
 from src.agents.referee.cache_overlay import can_own
 from src.agents.referee.capability_registry import can_engine_serve_capability
+from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.tie_break import (
     TIE_KIND_SOURCE_COMPATIBLE,
     TIE_KIND_STABILITY,
@@ -132,7 +133,7 @@ def _trace_ladder(trace_by_query: dict[str, dict], qid: str) -> list[CandidateSc
     ladder: list[CandidateScore] = []
     for engine, value in sorted((trace_by_query.get(qid) or {}).get("engines", {}).items()):
         if isinstance(value, dict) and value.get("gate"):
-            used = value.get("used") if value["gate"] == "write_gate" else None
+            used = value.get("used") if value["gate"] == GATE_KIND_WRITE else None
             ladder.append(
                 CandidateScore(
                     engine=engine,

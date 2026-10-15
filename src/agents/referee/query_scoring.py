@@ -467,6 +467,11 @@ GATE_KIND_MODEL_FLAG = "model_flag"
 # imports it instead of retyping the strings -- a new gate kind added below
 # is then picked up automatically, with no second edit anywhere else.
 GATE_KINDS: tuple[str, ...] = (GATE_KIND_HARD_EXCLUSION, GATE_KIND_CAPABILITY, GATE_KIND_MODEL_FLAG)
+# The ownership gate (ADR-031 Decision 2 step 3, ``cache_overlay.can_own``): an
+# engine that is not a system of record owns no write and no locking read. It is
+# not an ``EngineScore.gate_kind`` (the score is kept); candidate ladders and the
+# customer gate record it under this name (#812).
+GATE_KIND_WRITE = "write_gate"
 
 
 @dataclass(frozen=True)

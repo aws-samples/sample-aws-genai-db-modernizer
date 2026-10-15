@@ -35,6 +35,7 @@ import logging
 from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any
 
+from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.contracts.move_ledger import (
     CandidateScore,
     EngineScore,
@@ -362,7 +363,7 @@ def candidate_ladder(
             ladder.append(CandidateScore(engine=engine, score=None, gate=gate))
         elif engine in write_gated_set:
             ladder.append(
-                CandidateScore(engine=engine, score=scores.get(engine), gate="write_gate")
+                CandidateScore(engine=engine, score=scores.get(engine), gate=GATE_KIND_WRITE)
             )
         else:
             ladder.append(CandidateScore(engine=engine, score=scores.get(engine)))

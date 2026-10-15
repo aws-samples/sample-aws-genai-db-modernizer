@@ -63,6 +63,7 @@ from src.agents.referee.move_ledger import (
     state_of,
 )
 from src.agents.referee.query_scoring import (
+    GATE_KIND_WRITE,
     ScoringContext,
     compute_query_confidence,
     score_query_for_engine,
@@ -380,7 +381,7 @@ class AssignmentResolver:
             for engine in sorted(analysis_outputs):
                 for qid in sorted(group):
                     if not can_own(engine, query_by_id.get(qid)):
-                        gate = "write_gate"
+                        gate = GATE_KIND_WRITE
                     elif _score(qid, engine) is None:
                         gate = gates_by_query.get(qid, {}).get(engine) or "gated"
                     else:
@@ -753,7 +754,7 @@ class AssignmentResolver:
                     adj = used - max(0, base - penalty)
                     if not can_own(engine, query):
                         entry: dict[str, object] = {
-                            "gate": "write_gate",
+                            "gate": GATE_KIND_WRITE,
                             "base": base,
                             "used": used,
                         }

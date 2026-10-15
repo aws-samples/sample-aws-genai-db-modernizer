@@ -1112,3 +1112,178 @@ class TestCapabilityGateBlocksCustomerPicks:
         assert str(exc.value) == (
             "DocumentDB can't run query q1: it is a utility or DDL statement."
         )
+
+
+class TestOwnershipGateBlocksCustomerPicks:
+    """#812: the customer gate holds every pick to the ownership gate too
+    (ADR-031 Decision 2 step 3: an engine that is not a system of record owns
+    no write and no locking read), up front, with the same batch semantics and
+    display-name message as the capability gate (#801), instead of the
+    validator's late rejection with a raw engine id. Groups move as one unit."""
+
+    _JOIN = "SELECT o.id FROM orders o JOIN items i ON i.order_id = o.id WHERE o.id = ?"
+    _WRITE = "UPDATE orders o JOIN items i ON i.order_id = o.id SET o.total = ? WHERE o.id = ?"
+    _LOCKING = (
+        "SELECT o.id FROM orders o JOIN items i ON i.order_id = o.id WHERE o.id = ? FOR UPDATE"
+    )
+
+    def _seed(self, statements: dict[str, tuple[str, str]], *, joined: bool = True) -> _MemStore:
+        """``statements``: query_id -> (query_type, SQL), all on Aurora PostgreSQL."""
+        store = _MemStore()
+        tables = ["t.orders", "t.items"]
+        qas = [_qa(q, "aurora_postgresql", tables) for q in statements]
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=qas,
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": q,
+                            "query_type": qtype,
+                            "query_text": text,
+                            "tables_accessed": tables if joined else [f"t.{q}"],
+                            "has_joins": joined,
+                            "join_count": 2 if joined else 0,
+                        }
+                        for q, (qtype, text) in statements.items()
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("aurora_postgresql", "opensearch", "dynamodb"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+        return store
+
+    def _assert_nothing_written(self, store: _MemStore) -> None:
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_a_write_picked_onto_opensearch_is_rejected_up_front(self) -> None:
+        store = self._seed({"q1": ("UPDATE", self._WRITE)}, joined=False)
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+            )
+        self._assert_nothing_written(store)
+        assert [(e.query_id, e.engine, e.gate_kind) for e in exc.value.excluded] == [
+            ("q1", "opensearch", "write_gate")
+        ]
+        assert str(exc.value) == (
+            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
+            "system of record."
+        )
+
+    def test_a_locking_read_picked_onto_opensearch_is_rejected(self) -> None:
+        store = self._seed({"q1": ("SELECT", self._LOCKING)}, joined=False)
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+            )
+        self._assert_nothing_written(store)
+        assert str(exc.value) == (
+            "OpenSearch can't own query q1: it is a locking read, and OpenSearch is not a "
+            "system of record."
+        )
+
+    def test_a_write_group_mate_blocks_the_whole_group_move(self) -> None:
+        store = self._seed(
+            {
+                "q1": ("SELECT", self._JOIN),
+                "q2": ("UPDATE", self._WRITE),
+                "q3": ("SELECT", self._JOIN),
+            }
+        )
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+            )
+        self._assert_nothing_written(store)
+        assert [(e.query_id, e.engine, e.gate_kind) for e in exc.value.excluded] == [
+            ("q2", "opensearch", "write_gate")
+        ]
+        assert str(exc.value) == (
+            "Can't move q1's group to OpenSearch: query q2 in that group is a write, and "
+            "OpenSearch is not a system of record."
+        )
+
+    def test_every_gated_query_in_the_batch_is_reported(self) -> None:
+        """An ownership gap and a hard exclusion in one batch, one per line."""
+        store = self._seed(
+            {
+                "q1": ("UPDATE", "UPDATE t.q1 SET a = ? WHERE id = ?"),
+                "q2": ("SELECT", "SELECT id FROM t.q2 WHERE title LIKE '%term%'"),
+            },
+            joined=False,
+        )
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="opensearch"),
+                    QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                ],
+            )
+        self._assert_nothing_written(store)
+        assert str(exc.value) == (
+            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
+            "system of record.\n"
+            "DynamoDB can't run query q2: it uses a leading-wildcard search (LIKE '%...')."
+        )
+
+    def test_a_read_picked_onto_opensearch_is_accepted(self) -> None:
+        store = self._seed({"q1": ("SELECT", "SELECT id FROM t.q1 WHERE id = ?")}, joined=False)
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="opensearch")]
+        )
+        (qa,) = result.assignment.query_assignments
+        assert qa.assigned_engine == "opensearch"
+        assert store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestOwnershipGateWithoutAScoringContext:
+    """#827 review: with no scoring context (no analysis mapping to build one
+    from) only the hard exclusions and the ownership gate can be checked; the
+    ownership gate still applies, after the hard exclusion."""
+
+    def test_a_write_on_opensearch_is_gated(self) -> None:
+        from src.agents.referee.assignment_overrides import _gate_failure
+
+        query = {"query_type": "UPDATE", "query_text": "UPDATE t SET a = ? WHERE id = ?"}
+        assert _gate_failure("q1", query, "opensearch", None) == (
+            "write_gate",
+            "is a write, and OpenSearch is not a system of record",
+        )
+
+    def test_the_hard_exclusion_comes_first(self) -> None:
+        from src.agents.referee.assignment_overrides import _gate_failure
+
+        query = {
+            "query_type": "UPDATE",
+            "query_text": "UPDATE t SET a = ? WHERE title LIKE '%term%'",
+        }
+        gated = _gate_failure("q1", query, "dynamodb", None)
+        assert gated is not None and gated[0] == "hard_exclusion"
+
+    def test_a_read_on_opensearch_passes(self) -> None:
+        from src.agents.referee.assignment_overrides import _gate_failure
+
+        query = {"query_type": "SELECT", "query_text": "SELECT id FROM t WHERE id = ?"}
+        assert _gate_failure("q1", query, "opensearch", None) is None

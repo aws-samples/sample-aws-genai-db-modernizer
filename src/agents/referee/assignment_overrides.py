@@ -29,6 +29,8 @@ from src.agents.referee.cache_overlay import (
     CUSTOMER_UNCACHE_REASON,
     available_cache_engine,
     can_own,
+    is_locking_read,
+    is_write_query,
     normalize_cache_owners,
     overlay_summary,
     owner_decision,
@@ -47,6 +49,7 @@ from src.agents.referee.move_ledger import (
     ledger_for,
     state_of,
 )
+from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
 from src.contracts.assignment_models import (
@@ -153,15 +156,16 @@ class LosingAuroraEngineOverride(AssignmentOverrideError):
 @dataclass
 class ExcludedOverride:
     """One override in a batch that lands a query on an engine that cannot
-    run it -- a hard exclusion (#548) or a missing required capability
-    (#801) -- with the fully rendered, customer-facing sentence for it.
+    run it -- a hard exclusion (#548), a missing required capability
+    (#801) or an engine that may not own it (#812) -- with the fully rendered, customer-facing sentence for it.
 
     ``query_id`` is the query actually blocked -- for a direct override that
     is the query the customer named; for a co-dependency group move it is the
     group-mate whose own gate blocks the whole group's move, which may
     differ from the query the customer explicitly overrode. ``gate_kind`` is
     the scorer's ``EngineScore.gate_kind`` for it (``"hard_exclusion"`` or
-    ``"capability"``).
+    ``"capability"``), or ``GATE_KIND_WRITE`` (``"write_gate"``) for the
+    ownership gate (#812).
     """
 
     query_id: str
@@ -185,7 +189,9 @@ def _gate_failure(
     names only the capabilities ``engine`` lacks, phrased by
     ``capability_gap_phrase`` ("needs aggregation", "is a utility or DDL
     statement"). Without a scoring context
-    only the hard exclusions can be checked.
+    only the hard exclusions can be checked. Past both, the ownership gate
+    (Decision 2 step 3, :func:`_ownership_failure`, #812) is checked with or
+    without one.
     """
     from src.agents.referee.query_scoring import (
         GATE_KIND_CAPABILITY,
@@ -196,7 +202,9 @@ def _gate_failure(
     query_text = (query or {}).get("query_text", "")
     if ctx is None:
         exclusion = check_exclusions(query_id, query_text, engine)
-        return (GATE_KIND_HARD_EXCLUSION, exclusion.customer_message) if exclusion else None
+        if exclusion:
+            return GATE_KIND_HARD_EXCLUSION, exclusion.customer_message
+        return _ownership_failure(query, engine)
     result = score_query_for_engine({**(query or {}), "query_id": query_id}, engine, ctx)
     if result.gate_kind == GATE_KIND_HARD_EXCLUSION:
         exclusion = check_exclusions(query_id, query_text, engine)
@@ -207,15 +215,33 @@ def _gate_failure(
         return GATE_KIND_CAPABILITY, capability_gap_phrase(missing)
     # The model-flag gate is skipped on purpose: a customer may override a
     # model's flag (ADR-031 Decision 11, Amendment 2).
-    return None
+    return _ownership_failure(query, engine)
 
 
-def _direct_exclusion_message(query_id: str, engine: str, reason: str) -> str:
+def _ownership_failure(query: Mapping | None, engine: str) -> tuple[str, str] | None:
+    """``(GATE_KIND_WRITE, reason)`` when ``engine`` may not own the query, else ``None``.
+
+    ADR-031 Decision 2 step 3, the same ``can_own`` every routing stage and
+    the assignment validator apply: an engine that is not a system of record
+    owns no write and no locking read (#812). The gate kind is the one the
+    move ledger's candidate ladders record for it (``write_gate``).
+    """
+    if query is None or can_own(engine, query):
+        return None
+    kind = "a locking read" if is_locking_read(query) and not is_write_query(query) else "a write"
+    return GATE_KIND_WRITE, f"is {kind}, and {display_engine(engine)} is not a system of record"
+
+
+def _direct_exclusion_message(
+    query_id: str, engine: str, reason: str, gate_kind: str = "hard_exclusion"
+) -> str:
     """ "DynamoDB can't run query q1: it ..." (round-2 review: the query id
     must be in the message so a batch failure names its row; round-3 review:
     one "query" and one colon, not "Query q1: DynamoDB can't run this
-    query: ...")."""
-    return f"{display_engine(engine)} can't run query {query_id}: it {reason}."
+    query: ..."). For the ownership gate it is "can't own" (#827 review): the
+    engine could serve the statement, it just may not own it."""
+    verb = "own" if gate_kind == GATE_KIND_WRITE else "run"
+    return f"{display_engine(engine)} can't {verb} query {query_id}: it {reason}."
 
 
 def _group_exclusion_message(
@@ -237,7 +263,8 @@ class ExcludedEngineOverride(AssignmentOverrideError):
     as a co-dependency group-mate carried along with one -- onto an engine a
     hard exclusion rules out for it (#548) or that lacks a capability the
     query requires (#801, ADR-031 Decision 2 step 2: the same gate the scorer
-    applies). A pick among a query's tied engines never trips this: every
+    applies), or that may not own it (#812, Decision 2 step 3: a write or a
+    locking read on an engine that is not a system of record). A pick among a query's tied engines never trips this: every
     tied engine scored, so it passed the gate (Decision 12).
 
     Rejected up front, before validation runs, the same way the #381
@@ -494,7 +521,9 @@ def apply_assignment_overrides(
         ExcludedEngineOverride: a direct override, or a co-dependency
             group-mate it would carry along, would land on an engine a hard
             exclusion rules out for it (#548) or that lacks a capability it
-            requires (#801); every such violation in the batch is reported
+            requires (#801), or that may not own it (a write or a locking
+            read on an engine that is not a system of record, #812); every
+            such violation in the batch is reported
             together.
         AssignmentValidationFailed: the result has hard validation errors (the
             new version is NOT written in that case).
@@ -606,9 +635,10 @@ def apply_assignment_overrides(
             override.assigned_engine is not None
             and override.assigned_engine not in CACHE_OVERLAY_ENGINES
         ):
-            # #548/#801: reject a re-route onto an engine that cannot run this
-            # exact query (a hard exclusion or a missing capability), up
-            # front, the same way the #381 losing-Aurora-engine check above
+            # #548/#801/#812: reject a re-route onto an engine that cannot
+            # run or own this exact query (a hard exclusion, a missing
+            # capability, or a write or locking read on an engine that is not
+            # a system of record), up front, the same way the #381 losing-Aurora-engine check above
             # does -- never silently move it to a different engine on the
             # customer's behalf. Collected, not raised immediately, so the
             # rest of the batch is still checked (round 2 review) -- nothing
@@ -626,7 +656,7 @@ def apply_assignment_overrides(
                         query_id=override.query_id,
                         engine=override.assigned_engine,
                         message=_direct_exclusion_message(
-                            override.query_id, override.assigned_engine, gated[1]
+                            override.query_id, override.assigned_engine, gated[1], gated[0]
                         ),
                         gate_kind=gated[0],
                     )
@@ -680,9 +710,10 @@ def apply_assignment_overrides(
     )
     excluded.extend(group_excluded)
 
-    # #548 round 2, #801: reject the whole batch -- nothing written -- when
-    # any override, direct or propagated, lands on an engine that cannot run
-    # the query (a hard exclusion or a missing capability). Checked once
+    # #548 round 2, #801, #812: reject the whole batch -- nothing written --
+    # when any override, direct or propagated, lands on an engine that cannot
+    # run or own the query (a hard exclusion, a missing capability, or the
+    # ownership gate). Checked once
     # here, after both the direct loop and group propagation above have had
     # a chance to find every violation, so the customer sees all of them in
     # one round trip rather than one at a time.
@@ -847,8 +878,9 @@ def _propagate_codependent_overrides(
 
     A group moves as one unit (#548 round 2): before a group-mate is actually
     moved, it is checked against the same gate a direct override is
-    (:func:`_gate_failure`: the hard exclusions and, given ``ctx``, the
-    capability gate, #801). A group-mate the target engine cannot run at all is never
+    (:func:`_gate_failure`: the hard exclusions, given ``ctx`` the
+    capability gate (#801), and the ownership gate (#812)). A group-mate the
+    target engine cannot run or own is never
     silently left behind on its old engine either -- the group is moving as a
     unit, so a member that cannot make the move blocks the whole move, which
     the caller enforces by rejecting the batch when ``excluded`` is non-empty.

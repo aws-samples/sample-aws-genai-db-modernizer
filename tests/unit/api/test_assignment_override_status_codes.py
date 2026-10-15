@@ -220,3 +220,67 @@ class TestCapabilityGateOverrideStatusCode:
         assert response.status_code == 400
         assert response.json()["detail"] == "DynamoDB can't run query q1: it needs aggregation."
         assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+
+class TestOwnershipGateOverrideStatusCode:
+    """#812: a write picked onto an engine that is not a system of record is
+    rejected by the customer gate like the capability case (#801): HTTP 400
+    with the display-name reason in ``detail``, not the validator's late 422."""
+
+    def test_returns_400_with_the_customer_facing_reason(self, tmp_path):
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        qa = QueryAssignment(
+            query_id="q1",
+            assigned_engine="aurora_postgresql",
+            confidence=80,
+            source_tables=["t.comments"],
+            assignment_reason="test",
+        )
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=[qa],
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_type": "UPDATE",
+                            "query_text": "UPDATE t.comments SET body = ? WHERE id = ?",
+                            "tables_accessed": ["t.comments"],
+                        }
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("aurora_postgresql", "opensearch"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+        assignments.artifact_store = store
+        try:
+            response = client.put(
+                f"/api/v1/assessments/{JOB}/assignments?database_name={DB}",
+                json={"overrides": [{"query_id": "q1", "assigned_engine": "opensearch"}]},
+            )
+        finally:
+            assignments.artifact_store = None
+        assert response.status_code == 400
+        assert response.json()["detail"] == (
+            "OpenSearch can't own query q1: it is a write, and OpenSearch is not a "
+            "system of record."
+        )
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")

@@ -35,7 +35,11 @@ from src.agents.referee.move_ledger import (
     group_key,
     ledger_for,
 )
-from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
+from src.agents.referee.query_scoring import (
+    GATE_KIND_WRITE,
+    ScoringContext,
+    score_query_for_engine,
+)
 from src.agents.referee.reality_check import (
     _current_for_eligibility,
     _group_eligible_engines,
@@ -355,7 +359,7 @@ def scorer_ladder(query: Mapping, scoring_context: ScoringContext) -> list[Candi
                 CandidateScore(engine=engine, score=None, gate=result.gate_kind or "gate")
             )
         elif not can_own(engine, query):
-            ladder.append(CandidateScore(engine=engine, score=result.score, gate="write_gate"))
+            ladder.append(CandidateScore(engine=engine, score=result.score, gate=GATE_KIND_WRITE))
         else:
             ladder.append(CandidateScore(engine=engine, score=result.score))
     return ladder
