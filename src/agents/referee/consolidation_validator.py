@@ -28,6 +28,7 @@ from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrus
 from src.agents.referee.assignment_resolver import RoutingTrace
 from src.agents.referee.aurora_choice import AURORA_ENGINES
 from src.agents.referee.cache_overlay import can_own
+from src.agents.referee.co_dependency import group_engine_scores
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply_to_assignment,
@@ -386,23 +387,20 @@ def _group_serviceable_scores(
     never scored as a 0 that could let the group "win" an engine that
     structurally cannot serve one of its own members.
     """
-    scores: dict[str, float] = {}
     reasons: list[str] = []
-    for candidate in candidates:
-        member_scores: list[float] = []
-        blocked_reason: str | None = None
-        for mqid in member_qids:
-            query = query_map.get(mqid) or {"query_id": mqid}
+
+    def member_score(mqid: str, candidate: str) -> float | None:
+        query = query_map.get(mqid) or {"query_id": mqid}
+        result = score_query_for_engine(query, candidate, scoring_context)
+        if result.score is None:
             required_caps = scoring_context.query_capabilities.get(mqid, [])
-            result = score_query_for_engine(query, candidate, scoring_context)
-            if result.score is None:
-                blocked_reason = _format_gate(candidate, result.gate_kind, required_caps)
-                break
-            member_scores.append(result.score)
-        if blocked_reason is not None:
-            reasons.append(blocked_reason)
-            continue
-        scores[candidate] = sum(member_scores) / len(member_scores)
+            reasons.append(_format_gate(candidate, result.gate_kind, required_caps))
+        return result.score
+
+    # ADR-031 Decision 4, Amendment 4 (#727): the one group rule; it stops
+    # at a candidate's first gated member, so each blocked candidate adds
+    # exactly one reason.
+    scores = group_engine_scores(member_qids, candidates, member_score)
     return scores, reasons
 
 

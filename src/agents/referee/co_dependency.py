@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+
 # ---------------------------------------------------------------------------
 # Co-dependency detection (Task 4.2)
 # ---------------------------------------------------------------------------
@@ -85,3 +87,41 @@ def build_co_dependency_groups(
 
     # Only return groups with 2+ queries
     return [g for g in groups.values() if len(g) >= 2]
+
+
+# ---------------------------------------------------------------------------
+# A group's engine (ADR-031 Decision 4, Amendment 4, #727)
+# ---------------------------------------------------------------------------
+
+
+def group_engine_scores(
+    members: Iterable[str],
+    candidates: Iterable[str],
+    member_score: Callable[[str, str], float | None],
+) -> dict[str, float]:
+    """A co-dependency group's score on each candidate engine that can serve
+    every member: the mean of the members' own scores there.
+
+    ``member_score(query_id, engine)`` is the caller's shared-scorer score for
+    one member, or ``None`` when that member cannot be served there (a hard or
+    capability gate, or an engine that may not own it). One ``None`` drops the
+    engine for the whole group: the group flies as one, so an engine that
+    strands a member is never a candidate, however well it scores for the rest.
+    Members are scored in the order given, and scoring an engine stops at its
+    first ``None``. Candidates keep their order; no engine serving every member
+    gives ``{}``.
+    """
+    member_ids = list(members)
+    out: dict[str, float] = {}
+    if not member_ids:
+        return out
+    for engine in candidates:
+        total = 0.0
+        for qid in member_ids:
+            score = member_score(qid, engine)
+            if score is None:
+                break
+            total += score
+        else:
+            out[engine] = total / len(member_ids)
+    return out

@@ -52,7 +52,11 @@ from src.agents.referee.aurora_choice import (
     source_database_engine,
 )
 from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
-from src.agents.referee.co_dependency import build_co_dependency_groups, is_significant_join
+from src.agents.referee.co_dependency import (
+    build_co_dependency_groups,
+    group_engine_scores,
+    is_significant_join,
+)
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply,
@@ -416,13 +420,16 @@ class AssignmentResolver:
             # excluded it for any member -- the group moves as one unit
             # (Decision 4), so an engine that cannot run one member cannot host
             # the group, and never joins its tie at a gated score of 0.
-            candidates = [
-                e
-                for e in analysis_outputs
-                if all(
-                    can_own(e, query_by_id.get(qid)) and _score(qid, e) is not None for qid in group
-                )
-            ]
+            # ADR-031 Decision 4, Amendment 4 (#727): the group's score on
+            # each such engine is the mean of its members' own scores
+            # (``co_dependency.group_engine_scores``, the one rule every pass
+            # that places a group uses).
+            group_score = group_engine_scores(
+                group,
+                analysis_outputs,
+                lambda qid, e: _score(qid, e) if can_own(e, query_by_id.get(qid)) else None,
+            )
+            candidates = list(group_score)
             if not candidates:
                 # No engine can serve every member (#787): the reason, set once
                 # the fallback engine is known, names the gates, and so does the
@@ -437,10 +444,6 @@ class AssignmentResolver:
                     handled.add(qid)
                     assigned_confidence[qid] = 0
                 continue
-            group_score = {
-                e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group)
-                for e in candidates
-            }
             if routing_trace is not None:
                 routing_trace.record_group(group, group_score)
             top = max(group_score.values())

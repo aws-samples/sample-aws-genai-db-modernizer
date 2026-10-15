@@ -15,6 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src.agents.referee.co_dependency import group_engine_scores
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply_to_assignment,
@@ -440,24 +441,51 @@ def _apply_justification_floors(
                     # where it is rather than split it.
                     floor_unplaced.extend(member_qas)
                     continue
+                # ADR-031 Decision 4, Amendment 4 (#727): only an engine
+                # that can serve every member may take the group. The floor
+                # moves the mandatory members themselves, so they count here
+                # (Phase 1 and 2 leave a mandatory member out because it
+                # stays put).
+                # A tied member counts every tied engine as current
+                # (ADR-031 Decision 12, paragraph 4), as Phase 1 and 2 do.
                 eligible = _group_eligible_engines(
                     qid,
                     trace_by_query,
                     current_engine_by_qid,
                     floor_candidates,
-                    fixed_query_ids,
+                    fixed_query_ids - set(members),
                     query_signals,
                     query_map,
                     query_capabilities,
+                    {
+                        m: list(to_move_by_id[m]["tied_engines"])
+                        for m in members
+                        if to_move_by_id[m].get("tied_engines")
+                    },
                 )
-                if not eligible:
+                # The group's mean score, the one the resolver recorded, or
+                # the same rule over the members' resolver scores for an
+                # engine it has none for -- never one member's own score.
+                # (Defensive: the resolver records a mean for every engine
+                # that may own and is not gated for any member, and the
+                # eligibility above requires both, so ``computed`` is empty
+                # on a trace the resolver wrote.)
+                recorded = group_info["scores"]
+
+                def _member_score(m: str, e: str) -> float | None:
+                    return _resolver_score(trace_by_query, m, e)
+
+                computed = group_engine_scores(
+                    members, [e for e in eligible if e not in recorded], _member_score
+                )
+                group_scores = {
+                    e: recorded[e] if e in recorded else computed[e]
+                    for e in eligible
+                    if e in recorded or e in computed
+                }
+                if not group_scores:
                     floor_unplaced.extend(member_qas)
                     continue
-
-                group_scores = {
-                    e: group_info["scores"].get(e, _resolver_score(trace_by_query, qid, e)) or 0
-                    for e in eligible
-                }
                 top_group_score = max(group_scores.values())
                 tied_group = sorted(e for e, s in group_scores.items() if s == top_group_score)
                 tie_note = ""
@@ -484,8 +512,13 @@ def _apply_justification_floors(
                         else " (tie: source-compatible engine)"
                     )
                 winner_fit = round(group_scores[winner])
-                before = group_info["scores"].get(
-                    engine, _resolver_score(trace_by_query, qid, engine)
+                # The group's score on the engine it leaves (the Move's
+                # ``score_before``): its mean there, none when that engine
+                # cannot serve every member.
+                before = (
+                    recorded[engine]
+                    if engine in recorded
+                    else group_engine_scores(members, [engine], _member_score).get(engine)
                 )
                 reason = (
                     f"fit={winner_fit}, co-dependency group moves together; "
