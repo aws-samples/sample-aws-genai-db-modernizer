@@ -46,9 +46,11 @@ keeping apart (one whose ``source_tables`` include the source table and whose
      with fewer columns would make writes overwrite each other's rows;
    - no other group has a conditional write (``attribute_not_exists`` and the
      like) on its own, replaced key: the condition would check another item.
-     Conditions are found by matching the pattern's ``key_condition`` and
-     ``description`` text, so a condition described only in other words is
-     missed;
+     A write is conditional when its ``condition_expression`` is set (#810).
+     When the field is null or missing (a draft written before it existed),
+     its ``key_condition`` and ``description`` text is matched as well: that
+     can only keep more keys. The text match misses a condition described
+     only in other words, which is why the field exists;
    - no pattern that would have to go through a GSI needs a strongly
      consistent read or a transaction, which a GSI cannot give.
 
@@ -808,10 +810,19 @@ _ITEM_OPERATIONS = frozenset(
 )
 
 
-def _conditional(ap: dict) -> bool:
-    """A write guarded by a condition on the item (uniqueness, existence, version)."""
+def conditional_write(ap: dict) -> bool:
+    """A write guarded by a condition on the item (uniqueness, existence, version).
+
+    A set ``condition_expression`` is taken at its word (#810). When it is
+    null or missing (a draft written before the field existed), the
+    ``key_condition`` and ``description`` text is still matched: a null field
+    is no proof that the write is unconditional, and a false match only keeps
+    a key, never drops a guarantee.
+    """
     if ap.get("operation") not in _WRITES:
         return False
+    if str(ap.get("condition_expression") or "").strip():
+        return True
     text = f"{ap.get('key_condition') or ''} {ap.get('description') or ''}"
     return bool(_CONDITIONAL_RE.search(text))
 
@@ -820,7 +831,7 @@ def _needs_strong(ap: dict) -> bool:
     """A pattern a GSI lookup cannot serve: strong reads, conditions, transactions."""
     return (
         bool(ap.get("strongly_consistent"))
-        or _conditional(ap)
+        or conditional_write(ap)
         or ap.get("operation") in _TRANSACTIONS
     )
 
@@ -908,7 +919,7 @@ def _plan(
         for ap in drafts.patterns(ref):
             if ap.get("gsi_name"):
                 continue
-            if _conditional(ap):
+            if conditional_write(ap):
                 blocked = (
                     f"{ap.get('pattern_id')} is a conditional write on "
                     f"{_describe(*_table_key(ref.table))}"

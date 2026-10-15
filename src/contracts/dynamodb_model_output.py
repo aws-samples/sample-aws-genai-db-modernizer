@@ -5,6 +5,10 @@ Version History:
 - 1.0 (2026-03-23): Initial version — access-pattern-first design output contract
                     with full attribute-level migration lineage (join, calculation,
                     transformation specs) for ETL pipeline consumption.
+- 1.1 (2026-10-15): AccessPattern.condition_expression (optional): the
+                    ConditionExpression a write carries, so the group-draft
+                    merge reads conditional writes from a field instead of
+                    matching words in the pattern's text (#810).
 """
 
 from typing import Annotated, Literal
@@ -514,6 +518,15 @@ class AccessPattern(BaseModel):
     )
     item_size_bytes: int = Field(..., ge=1)
     strongly_consistent: bool = Field(default=False)
+    condition_expression: str | None = Field(
+        None,
+        description="The DynamoDB ConditionExpression this write carries, e.g. "
+        "'attribute_not_exists(email)' for a uniqueness guard or 'version = :expected' for "
+        "optimistic locking. Set it on every conditional PutItem, UpdateItem, DeleteItem or "
+        "TransactWriteItems, even when key_condition or description already says it in words; "
+        "null for an unconditional write and for reads. The group-draft merge never replaces "
+        "the table key a conditional write depends on.",
+    )
     in_scope: bool = Field(default=True)
     out_of_scope_reason: str | None = Field(None, description="Required when in_scope=False.")
 
@@ -574,7 +587,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.0",
+        default="1.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

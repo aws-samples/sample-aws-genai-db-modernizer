@@ -6745,6 +6745,22 @@
                   ]
                 }
               },
+              "condition_expression": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
               "design_rps": {
                 "required": true,
                 "schema": {
@@ -9085,8 +9101,8 @@
         }
       }
     },
-    "schema_hash": "4b7429134b6bdf3fb88060a389511c3265ca9b828d13804e55168f150d68e17c",
-    "version": "1.0"
+    "schema_hash": "6c8366c465250e38c9a8e6f9dfa1c6ec3beebe5af26718382b13b4b70c1480fd",
+    "version": "1.1"
   },
   "elasticache_model_output.ElastiCacheModelOutputContract": {
     "fields": {

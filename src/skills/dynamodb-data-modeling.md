@@ -129,7 +129,7 @@ When a table has multiple unique non-PK attributes (detected via `indexes` where
 Use one unique attribute as the table's partition key (e.g. `user_id`) and add a GSI on the most-queried secondary unique attribute (e.g. `email`). For other unique attributes that are not queried for lookups, enforce uniqueness at the application layer. Add a trade-off note: "Uniqueness for [attribute] is enforced at the application layer rather than the database layer. If strict database-level enforcement is required, a dedicated lookup table with TransactWriteItems can be added."
 
 **When to use the purist approach — dedicated lookup tables:**
-Only use `TransactWriteItems` with dedicated lookup tables when write patterns on that table show high `errors` (indicating uniqueness collisions are actively occurring in production) AND the business requires strict database-level enforcement of multiple unique attributes simultaneously. In this case, create one lookup table per unique attribute with `ConditionExpression: attribute_not_exists(key)`.
+Only use `TransactWriteItems` with dedicated lookup tables when write patterns on that table show high `errors` (indicating uniqueness collisions are actively occurring in production) AND the business requires strict database-level enforcement of multiple unique attributes simultaneously. In this case, create one lookup table per unique attribute with `ConditionExpression: attribute_not_exists(key)`, and put that expression in each such write's `condition_expression`.
 
 Always document the choice and its trade-off in `trade_offs`.
 
@@ -173,6 +173,8 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 - `operation`: map the SQL query_type and shape to the correct `DynamoDBOperation`
 - `table_name`: the DynamoDB table this pattern executes against
 - `key_condition`: concise expression, e.g. `"PK=discussion_id AND SK begins_with 'POST#'"`
+- `condition_expression`: for a write that must fail unless a condition holds, the DynamoDB `ConditionExpression` itself: uniqueness `attribute_not_exists(<key attribute>)`, existence `attribute_exists(<key attribute>)`, optimistic locking `version = :expected`. Set it on every conditional `PutItem`, `UpdateItem`, `DeleteItem` or `TransactWriteItems`, even when `key_condition` or `description` already says it in words ("rejected when the email is already taken"); `null` for unconditional writes and for reads. The group-draft merge relies on this field, not the prose, to keep the table key a condition depends on
+- `strongly_consistent`: `true` for a read that must see the latest write (read-after-write, a balance or stock check); a GSI cannot serve it
 - `design_rps`: copy from `design_metrics.queries`; for a pattern with several `query_ids`, the sum of theirs
 - `avg_items_returned`: `rows_returned_avg ?? 1` for reads; `null` for writes
 - `item_size_bytes`: estimated bytes per item returned/written
