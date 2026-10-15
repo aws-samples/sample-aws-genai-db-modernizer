@@ -948,3 +948,167 @@ class TestGroupMoveRejectsOnAnExcludedMember:
             "Can't move q1's group to DynamoDB: query q2 in that group uses a "
             "leading-wildcard search (LIKE '%...')."
         )
+
+
+class TestCapabilityGateBlocksCustomerPicks:
+    """#801: the customer gate holds every pick to the same capability gate
+    the scorer uses (ADR-031 Decision 2 step 2), not only to the hard
+    exclusions (#548). Groups move as one unit (Decision 4), so a group-mate
+    the target engine is structurally unable to run blocks the whole batch.
+    A pick among a query's tied engines is never blocked (Decision 12): every
+    tied engine scored, so it passed the gate. This is the #800 review's repro:
+    three JOIN queries on Aurora PostgreSQL, q2 a GROUP BY aggregation."""
+
+    _JOIN = "SELECT o.id FROM orders o JOIN items i ON i.order_id = o.id WHERE o.id = ?"
+    _AGGREGATION = (
+        "SELECT o.customer_id, COUNT(*) FROM orders o JOIN items i ON i.order_id = o.id "
+        "GROUP BY o.customer_id"
+    )
+
+    def _seed_join_group(self, *, q2_tied: list[str] | None = None) -> _MemStore:
+        store = _MemStore()
+        tables = ["t.orders", "t.items"]
+        q2 = _qa("q2", "aurora_postgresql", tables)
+        if q2_tied:
+            q2 = q2.model_copy(update={"tied_engines": q2_tied})
+        qas = [_qa("q1", "aurora_postgresql", tables), q2, _qa("q3", "aurora_postgresql", tables)]
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=qas,
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        texts = {"q1": self._JOIN, "q2": self._AGGREGATION, "q3": self._JOIN}
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": q,
+                            "query_text": texts[q],
+                            "tables_accessed": tables,
+                            "has_joins": True,
+                            "join_count": 2,
+                        }
+                        for q in ("q1", "q2", "q3")
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("aurora_postgresql", "dynamodb", "documentdb"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+        return store
+
+    def _assert_nothing_written(self, store: _MemStore) -> None:
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_picking_another_member_onto_a_gated_engine_rejects_the_whole_batch(self) -> None:
+        store = self._seed_join_group()
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="dynamodb")]
+            )
+        self._assert_nothing_written(store)
+        # The gated group-mate (q2), not the query the customer picked (q1).
+        assert [(e.query_id, e.engine, e.gate_kind) for e in exc.value.excluded] == [
+            ("q2", "dynamodb", "capability")
+        ]
+        assert str(exc.value) == (
+            "Can't move q1's group to DynamoDB: query q2 in that group needs aggregation."
+        )
+
+    def test_picking_the_aggregation_itself_onto_a_gated_engine_is_rejected(self) -> None:
+        store = self._seed_join_group()
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q2", assigned_engine="dynamodb")]
+            )
+        self._assert_nothing_written(store)
+        assert [(e.query_id, e.engine, e.gate_kind) for e in exc.value.excluded] == [
+            ("q2", "dynamodb", "capability")
+        ]
+        assert str(exc.value) == "DynamoDB can't run query q2: it needs aggregation."
+
+    def test_a_pick_among_the_querys_tied_engines_is_accepted(self) -> None:
+        store = self._seed_join_group(q2_tied=["aurora_postgresql", "documentdb"])
+        result = apply_assignment_overrides(
+            store, DB, JOB, [QueryOverrideInput("q2", assigned_engine="documentdb")]
+        )
+        by_id = {qa.query_id: qa for qa in result.assignment.query_assignments}
+        assert {q: by_id[q].assigned_engine for q in by_id} == {
+            "q1": "documentdb",
+            "q2": "documentdb",
+            "q3": "documentdb",
+        }
+        assert by_id["q2"].tied_engines == []
+        assert result.propagated_query_ids == ["q1", "q3"]
+        # The accepted moves still go through the ledger (#616), with scores.
+        moves = {(m.query_id, m.reason_code) for m in result.assignment.moves}
+        assert moves == {
+            ("q2", "customer.pick"),
+            ("q1", "group.customer_propagation"),
+            ("q3", "group.customer_propagation"),
+        }
+        assert all(m.score_after is not None for m in result.assignment.moves)
+
+    def test_every_gated_query_in_the_batch_is_reported(self) -> None:
+        # One exclusion (#548) and one capability gap (#801) in the same batch
+        # are reported together, one per line.
+        store = _MemStore()
+        _seed(
+            store,
+            [
+                _qa("q1", "aurora_postgresql", ["t.posts"]),
+                _qa("q2", "aurora_postgresql", ["t.comments"]),
+            ],
+            engines=["aurora_postgresql", "dynamodb"],
+            query_texts={
+                "q1": "SELECT id FROM t.posts WHERE title LIKE '%term%'",
+                "q2": "SELECT post_id, COUNT(*) FROM t.comments GROUP BY post_id",
+            },
+        )
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store,
+                DB,
+                JOB,
+                [
+                    QueryOverrideInput("q1", assigned_engine="dynamodb"),
+                    QueryOverrideInput("q2", assigned_engine="dynamodb"),
+                ],
+            )
+        assert str(exc.value) == (
+            "DynamoDB can't run query q1: it uses a leading-wildcard search (LIKE '%...').\n"
+            "DynamoDB can't run query q2: it needs aggregation."
+        )
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")
+
+    def test_a_utility_statement_reads_as_one_not_as_needing_one(self) -> None:
+        # Round 2 review: "it needs a utility or DDL statement" misread the
+        # query; the query is the statement.
+        store = _MemStore()
+        _seed(
+            store,
+            [_qa("q1", "aurora_postgresql", ["t.posts"])],
+            engines=["aurora_postgresql", "documentdb"],
+            query_texts={"q1": "ALTER TABLE posts ADD COLUMN x int"},
+        )
+        with pytest.raises(ExcludedEngineOverride) as exc:
+            apply_assignment_overrides(
+                store, DB, JOB, [QueryOverrideInput("q1", assigned_engine="documentdb")]
+            )
+        assert str(exc.value) == (
+            "DocumentDB can't run query q1: it is a utility or DDL statement."
+        )

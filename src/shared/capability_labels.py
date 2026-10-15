@@ -23,6 +23,8 @@ changes.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 CAPABILITY_DISPLAY_NAMES: dict[str, str] = {
     "aggregation": "aggregation",
     "complex_joins": "multi-table joins",
@@ -39,3 +41,33 @@ def capability_label(name: str) -> str:
     their name with underscores turned to spaces, same fallback shape as
     ``src.shared.signal_labels.signal_noun``."""
     return CAPABILITY_DISPLAY_NAMES.get(name, name.replace("_", " "))
+
+
+# How a query that requires a capability reads after "it" in a customer-facing
+# rejection (#801 review): "it is a utility or DDL statement", never "it needs
+# a utility or DDL statement". A capability not listed here reads as "needs
+# <capability_label>", which is right for every noun-shaped label.
+_CAPABILITY_GAP_CLAUSES: dict[str, str] = {
+    "sql_admin": "is a utility or DDL statement",
+    "computed_join": "joins on a computed expression",
+    "scan_engine": "uses a window function or a recursive query",
+}
+
+
+def _join_and(items: list[str]) -> str:
+    """``[a]`` -> ``a``; ``[a, b]`` -> ``a and b``; ``[a, b, c]`` -> ``a, b and c``."""
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def capability_gap_phrase(names: Iterable[str]) -> str:
+    """The capabilities a query requires, as a verb phrase that reads after
+    "it" or "query q2 in that group": ``["aggregation", "complex_joins"]`` ->
+    ``needs aggregation and multi-table joins``; ``["sql_admin"]`` -> ``is a
+    utility or DDL statement``. Clauses come in sorted capability order,
+    needs last, joined with ", and "."""
+    unique = sorted(set(names))
+    clauses = [_CAPABILITY_GAP_CLAUSES[n] for n in unique if n in _CAPABILITY_GAP_CLAUSES]
+    needs = [capability_label(n) for n in unique if n not in _CAPABILITY_GAP_CLAUSES]
+    if needs:
+        clauses.append(f"needs {_join_and(needs)}")
+    return ", and ".join(clauses)

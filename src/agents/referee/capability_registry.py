@@ -28,6 +28,7 @@ __all__ = [
     "SIGNAL_TO_CAPABILITY",
     "detect_required_capabilities",
     "can_engine_serve_capability",
+    "missing_capabilities",
     "suggest_lightweight_alternative",
     "is_dedup_only_group_by",
     "requires_aggregation_capability",
@@ -321,6 +322,15 @@ def detect_required_capabilities(
     return sorted(required)
 
 
+def missing_capabilities(engine: str, required: Iterable[str]) -> list[str]:
+    """The ``required`` capabilities ``engine`` lacks, sorted (empty: it can
+    serve them all). The one fact :func:`can_engine_serve_capability` tests,
+    so a caller naming WHICH capability is missing (the customer gate's
+    rejection, #801) never re-derives it from ``ENGINE_CAPABILITIES``."""
+    engine_caps = ENGINE_CAPABILITIES.get(engine, set())
+    return sorted({cap for cap in required if cap not in engine_caps})
+
+
 def can_engine_serve_capability(engine: str, required: list[str]) -> bool:
     """Check if an engine can serve ALL required capabilities.
 
@@ -328,11 +338,7 @@ def can_engine_serve_capability(engine: str, required: list[str]) -> bool:
     - The query has no required capabilities (any engine can serve it), OR
     - The engine has ALL required capabilities in its capability set.
     """
-    if not required:
-        return True
-
-    engine_caps = ENGINE_CAPABILITIES.get(engine, set())
-    return all(cap in engine_caps for cap in required)
+    return not missing_capabilities(engine, required)
 
 
 def suggest_lightweight_alternative(capability: str) -> dict[str, str] | None:

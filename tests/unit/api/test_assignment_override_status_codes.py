@@ -158,3 +158,65 @@ class TestExcludedEngineOverrideStatusCode:
         assert response.json()["detail"] == (
             "DynamoDB can't run query q1: it uses a leading-wildcard search (LIKE '%...')."
         )
+
+
+class TestCapabilityGateOverrideStatusCode:
+    """#801: a pick onto an engine that fails the capability gate is rejected
+    the same way as a hard exclusion (#548): HTTP 400 with the plain reason in
+    ``detail``, which the UI's ``errorFromResponse`` shows as-is."""
+
+    def test_returns_400_with_the_customer_facing_reason(self, tmp_path):
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+        qa = QueryAssignment(
+            query_id="q1",
+            assigned_engine="aurora_postgresql",
+            confidence=80,
+            source_tables=["t.comments"],
+            assignment_reason="test",
+        )
+        assignment = Assignment(
+            job_id=JOB,
+            version=1,
+            status=AssignmentStatus.AUTO_GENERATED,
+            source=AssignmentSource.ASSIGNMENT_RESOLUTION,
+            timestamp=datetime.now(UTC),
+            query_assignments=[qa],
+            table_assignments=[],
+            co_dependency_groups=[],
+            validation_warnings=[],
+        )
+        store.write_json(
+            f"{DB}/{JOB}/assignment/v1/assignment.json", assignment.model_dump(mode="json")
+        )
+        store.write_json(
+            f"{DB}/{JOB}/collector/output.json",
+            {
+                "queries": {
+                    "query_patterns": [
+                        {
+                            "query_id": "q1",
+                            "query_text": (
+                                "SELECT post_id, COUNT(*) FROM t.comments GROUP BY post_id"
+                            ),
+                            "tables_accessed": ["t.comments"],
+                        }
+                    ]
+                },
+                "database_schema": {"tables": []},
+            },
+        )
+        for engine in ("aurora_postgresql", "dynamodb"):
+            store.write_json(
+                f"{DB}/{JOB}/analysis-{engine}/analysis.json", {"workload_analysis": {}}
+            )
+        assignments.artifact_store = store
+        try:
+            response = client.put(
+                f"/api/v1/assessments/{JOB}/assignments?database_name={DB}",
+                json={"overrides": [{"query_id": "q1", "assigned_engine": "dynamodb"}]},
+            )
+        finally:
+            assignments.artifact_store = None
+        assert response.status_code == 400
+        assert response.json()["detail"] == "DynamoDB can't run query q1: it needs aggregation."
+        assert not store.exists(f"{DB}/{JOB}/assignment/v2/assignment.json")

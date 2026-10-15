@@ -37,6 +37,7 @@ from src.agents.referee.cache_overlay import (
     refresh_cache_overlay,
     write_heavy_tables,
 )
+from src.agents.referee.capability_registry import missing_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.move_ledger import (
     MoveLedger,
@@ -57,6 +58,7 @@ from src.contracts.assignment_models import (
     ValidationResult,
 )
 from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
+from src.shared.capability_labels import capability_gap_phrase
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
@@ -150,19 +152,62 @@ class LosingAuroraEngineOverride(AssignmentOverrideError):
 
 @dataclass
 class ExcludedOverride:
-    """One override in a batch that lands a query on an engine a hard
-    exclusion rules out for it (#548), with the fully rendered,
-    customer-facing sentence for it.
+    """One override in a batch that lands a query on an engine that cannot
+    run it -- a hard exclusion (#548) or a missing required capability
+    (#801) -- with the fully rendered, customer-facing sentence for it.
 
     ``query_id`` is the query actually blocked -- for a direct override that
     is the query the customer named; for a co-dependency group move it is the
-    group-mate whose own exclusion blocks the whole group's move, which may
-    differ from the query the customer explicitly overrode.
+    group-mate whose own gate blocks the whole group's move, which may
+    differ from the query the customer explicitly overrode. ``gate_kind`` is
+    the scorer's ``EngineScore.gate_kind`` for it (``"hard_exclusion"`` or
+    ``"capability"``).
     """
 
     query_id: str
     engine: str
     message: str
+    gate_kind: str = "hard_exclusion"
+
+
+def _gate_failure(
+    query_id: str, query: Mapping | None, engine: str, ctx: ScoringContext | None
+) -> tuple[str, str] | None:
+    """``(gate_kind, reason)`` when ``engine`` cannot run the query at all, else
+    ``None``. ``reason`` is a plain verb phrase ("uses a leading-wildcard
+    search ...", "needs aggregation") that reads after "it" or "query q2 in
+    that group".
+
+    The decision is the shared scorer's (``score_query_for_engine``, the same
+    hard exclusion then capability gate every routing stage uses, ADR-031
+    Decision 2 steps 2-3), never a private copy (#801). A hard exclusion
+    quotes the exclusion's own ``customer_message`` (#548); a capability gap
+    names only the capabilities ``engine`` lacks, phrased by
+    ``capability_gap_phrase`` ("needs aggregation", "is a utility or DDL
+    statement"). Without a scoring context
+    only the hard exclusions can be checked.
+    """
+    from src.agents.referee.query_scoring import (
+        GATE_KIND_CAPABILITY,
+        GATE_KIND_HARD_EXCLUSION,
+        score_query_for_engine,
+    )
+
+    query_text = (query or {}).get("query_text", "")
+    if ctx is None:
+        exclusion = check_exclusions(query_id, query_text, engine)
+        return (GATE_KIND_HARD_EXCLUSION, exclusion.customer_message) if exclusion else None
+    result = score_query_for_engine({**(query or {}), "query_id": query_id}, engine, ctx)
+    if result.gate_kind == GATE_KIND_HARD_EXCLUSION:
+        exclusion = check_exclusions(query_id, query_text, engine)
+        if exclusion:
+            return GATE_KIND_HARD_EXCLUSION, exclusion.customer_message
+    if result.gate_kind == GATE_KIND_CAPABILITY:
+        missing = missing_capabilities(engine, ctx.query_capabilities.get(query_id, []))
+        return GATE_KIND_CAPABILITY, capability_gap_phrase(missing)
+    # The model-flag gate is skipped on purpose: a customer may override a
+    # model's flag (ADR-031 Decision 11, Amendment 2).
+    return None
 
 
 def _direct_exclusion_message(query_id: str, engine: str, reason: str) -> str:
@@ -190,7 +235,10 @@ def _group_exclusion_message(
 class ExcludedEngineOverride(AssignmentOverrideError):
     """One or more overrides in a batch tried to move a query -- directly, or
     as a co-dependency group-mate carried along with one -- onto an engine a
-    hard exclusion rules out for it (#548).
+    hard exclusion rules out for it (#548) or that lacks a capability the
+    query requires (#801, ADR-031 Decision 2 step 2: the same gate the scorer
+    applies). A pick among a query's tied engines never trips this: every
+    tied engine scored, so it passed the gate (Decision 12).
 
     Rejected up front, before validation runs, the same way the #381
     losing-Aurora-engine override is: the customer's own pick is a real
@@ -446,8 +494,9 @@ def apply_assignment_overrides(
             engine for a heterogeneous source.
         ExcludedEngineOverride: a direct override, or a co-dependency
             group-mate it would carry along, would land on an engine a hard
-            exclusion rules out for it (#548); every such violation in the
-            batch is reported together.
+            exclusion rules out for it (#548) or that lacks a capability it
+            requires (#801); every such violation in the batch is reported
+            together.
         AssignmentValidationFailed: the result has hard validation errors (the
             new version is NOT written in that case).
     """
@@ -558,23 +607,29 @@ def apply_assignment_overrides(
             override.assigned_engine is not None
             and override.assigned_engine not in CACHE_OVERLAY_ENGINES
         ):
-            # #548: reject a re-route onto an engine a hard exclusion rules out
-            # for this exact query, up front, the same way the #381
-            # losing-Aurora-engine check above does -- never silently move it
-            # to a different engine on the customer's behalf. Collected, not
-            # raised immediately, so the rest of the batch is still checked
-            # (round 2 review) -- nothing is written while any violation is
-            # outstanding (checked once, below, after the whole batch runs).
-            query_text = (query_by_id.get(override.query_id) or {}).get("query_text", "")
-            exclusion = check_exclusions(override.query_id, query_text, override.assigned_engine)
-            if exclusion:
+            # #548/#801: reject a re-route onto an engine that cannot run this
+            # exact query (a hard exclusion or a missing capability), up
+            # front, the same way the #381 losing-Aurora-engine check above
+            # does -- never silently move it to a different engine on the
+            # customer's behalf. Collected, not raised immediately, so the
+            # rest of the batch is still checked (round 2 review) -- nothing
+            # is written while any violation is outstanding (checked once,
+            # below, after the whole batch runs).
+            gated = _gate_failure(
+                override.query_id,
+                query_by_id.get(override.query_id),
+                override.assigned_engine,
+                ctx,
+            )
+            if gated:
                 excluded.append(
                     ExcludedOverride(
                         query_id=override.query_id,
                         engine=override.assigned_engine,
                         message=_direct_exclusion_message(
-                            override.query_id, override.assigned_engine, exclusion.customer_message
+                            override.query_id, override.assigned_engine, gated[1]
                         ),
+                        gate_kind=gated[0],
                     )
                 )
             else:
@@ -616,15 +671,22 @@ def apply_assignment_overrides(
     # of silently splitting. A cache request is not a re-route.
     owner_overrides = [o for o in overrides if o.assigned_engine not in CACHE_OVERLAY_ENGINES]
     propagated_query_ids, group_excluded = _propagate_codependent_overrides(
-        qa_map, owner_overrides, query_by_id, collector_output, ledger=ledger, scores=scores
+        qa_map,
+        owner_overrides,
+        query_by_id,
+        collector_output,
+        ledger=ledger,
+        scores=scores,
+        ctx=ctx,
     )
     excluded.extend(group_excluded)
 
-    # #548 round 2: reject the whole batch -- nothing written -- when any
-    # override, direct or propagated, lands on an engine a hard exclusion
-    # rules out. Checked once here, after both the direct loop and group
-    # propagation above have had a chance to find every violation, so the
-    # customer sees all of them in one round trip rather than one at a time.
+    # #548 round 2, #801: reject the whole batch -- nothing written -- when
+    # any override, direct or propagated, lands on an engine that cannot run
+    # the query (a hard exclusion or a missing capability). Checked once
+    # here, after both the direct loop and group propagation above have had
+    # a chance to find every violation, so the customer sees all of them in
+    # one round trip rather than one at a time.
     if excluded:
         raise ExcludedEngineOverride(excluded)
 
@@ -767,6 +829,7 @@ def _propagate_codependent_overrides(
     *,
     ledger: MoveLedger,
     scores: Callable[[str, str, str], dict] | None = None,
+    ctx: ScoringContext | None = None,
 ) -> tuple[list[str], list[ExcludedOverride]]:
     """Move a customer-re-routed query's co-dependent group-mates with it.
 
@@ -784,8 +847,9 @@ def _propagate_codependent_overrides(
     ``customer_override``) so it is distinguishable from the customer's own picks.
 
     A group moves as one unit (#548 round 2): before a group-mate is actually
-    moved, it is checked against ``check_exclusions`` the same way a direct
-    override is. A group-mate the target engine cannot run at all is never
+    moved, it is checked against the same gate a direct override is
+    (:func:`_gate_failure`: the hard exclusions and, given ``ctx``, the
+    capability gate, #801). A group-mate the target engine cannot run at all is never
     silently left behind on its old engine either -- the group is moving as a
     unit, so a member that cannot make the move blocks the whole move, which
     the caller enforces by rejecting the batch when ``excluded`` is non-empty.
@@ -828,16 +892,14 @@ def _propagate_codependent_overrides(
             qa = qa_map.get(qid)
             if qa is None or not qa.in_scope:
                 continue
-            query_text = (query_by_id.get(qid) or {}).get("query_text", "")
-            exclusion = check_exclusions(qid, query_text, target)
-            if exclusion:
+            gated = _gate_failure(qid, query_by_id.get(qid), target, ctx)
+            if gated:
                 excluded.append(
                     ExcludedOverride(
                         query_id=qid,
                         engine=target,
-                        message=_group_exclusion_message(
-                            anchor, qid, target, exclusion.customer_message
-                        ),
+                        message=_group_exclusion_message(anchor, qid, target, gated[1]),
+                        gate_kind=gated[0],
                     )
                 )
                 continue

@@ -16,7 +16,7 @@ from __future__ import annotations
 from src.agents.referee.assignment_resolver import build_co_dependency_groups
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, can_own
 from src.contracts.assignment_models import Assignment, ValidationResult
-from src.shared.engine_names import PLACEHOLDER_ENGINES
+from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine
 
 
 class AssignmentValidator:
@@ -72,7 +72,8 @@ class AssignmentValidator:
                 )
             elif not can_own(qa.assigned_engine, query_by_id.get(qa.query_id)):
                 errors.append(
-                    f"ERROR: Query {qa.query_id} is a write owned by '{qa.assigned_engine}', "
+                    f"ERROR: Query {qa.query_id} is a write owned by "
+                    f"{display_engine(qa.assigned_engine)}, "
                     "which is not a system of record for its tables."
                 )
 

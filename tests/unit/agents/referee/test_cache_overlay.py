@@ -1095,7 +1095,7 @@ class TestValidator:
             self._assignment("opensearch"), _collector([write]), {"opensearch": {}}
         )
         assert not result.valid
-        assert any("is a write owned by 'opensearch'" in e for e in result.errors)
+        assert any("is a write owned by OpenSearch," in e for e in result.errors)
 
     def test_opensearch_read_is_still_valid(self):
         result = AssignmentValidator().validate(
