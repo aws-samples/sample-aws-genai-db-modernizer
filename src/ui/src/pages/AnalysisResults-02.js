@@ -40,6 +40,8 @@ import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import QueryDecisionTrace from "../components/QueryDecisionTrace";
+import QueryRoutingTable from "../components/QueryRoutingTable";
+import { buildQueryRoutingRows } from "../utils/queryRouting";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -53,12 +55,16 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
-import { openRiskCountAt, resolvedRiskCountOf, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { openRiskCountAt, resolvedRiskCountOf, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
 // Constants
 // ============================================
+
+// GET /assessments/{job_id}/query-journeys returns at most 200 a page (#822).
+const JOURNEY_PAGE_SIZE = 200;
+const JOURNEY_MAX_PAGES = 50;
 
 const ENGINE_BADGE_COLORS = {
   dynamodb: 'blue',
@@ -229,6 +235,9 @@ const AnalysisResultsPage = memo(() => {
   // #339: the journey's "Why this engine" section (graph/queries/{id}/trace)
   const [queryTrace, setQueryTrace] = useState({ data: null, error: null });
   const [selectedQueryId, setSelectedQueryId] = useState(null);
+  // #822: every query's journey (the query-journeys list), for the query
+  // routing table that opens a trace without schema design.
+  const [queryJourneyList, setQueryJourneyList] = useState({ items: [], loading: true, error: null, truncated: false });
 
   // Ace editor state
   const [ace, setAce] = useState(null);
@@ -280,6 +289,41 @@ const AnalysisResultsPage = memo(() => {
 
   useEffect(() => { fetchData(); }, [jobId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // #822: the query routing table's rows. The list endpoint returns at most
+  // JOURNEY_PAGE_SIZE journeys a page, so the remaining pages are read too.
+  useEffect(() => {
+    if (!jobId) return undefined;
+    let cancelled = false;
+    const listPath = page => `assessments/${jobId}/query-journeys?page=${page}&page_size=${JOURNEY_PAGE_SIZE}`;
+    const load = async () => {
+      setQueryJourneyList({ items: [], loading: true, error: null, truncated: false });
+      try {
+        const apiManager = new ApiManager();
+        const first = (await apiManager.execute([{ id: 'p1', path: listPath(1), method: 'GET', params: {} }]))['p1'];
+        if (!first?.success) throw new Error(first?.error?.message || t('analysis-results-v2.query-routing.empty'));
+        let items = first.items || [];
+        const totalPages = Number(first.total_pages) || 1;
+        const pages = Math.min(totalPages, JOURNEY_MAX_PAGES);
+        if (pages > 1) {
+          const calls = [];
+          for (let page = 2; page <= pages; page += 1) {
+            calls.push({ id: `p${page}`, path: listPath(page), method: 'GET', params: {} });
+          }
+          const rest = await apiManager.execute(calls);
+          calls.forEach(({ id }) => {
+            if (!rest[id]?.success) throw new Error(rest[id]?.error?.message || t('analysis-results-v2.query-routing.empty'));
+            items = items.concat(rest[id].items || []);
+          });
+        }
+        if (!cancelled) setQueryJourneyList({ items, loading: false, error: null, truncated: totalPages > pages });
+      } catch (error) {
+        if (!cancelled) setQueryJourneyList({ items: [], loading: false, error: error.message, truncated: false });
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [jobId, t]);
+
   // Load Ace editor
   useEffect(() => {
     const loadAce = async () => {
@@ -299,6 +343,10 @@ const AnalysisResultsPage = memo(() => {
   // ---- Derived data ----
 
   const synthesis = resultsData?.synthesis || {};
+  const queryRoutingRows = useMemo(
+    () => buildQueryRoutingRows(queryJourneyList.items, routingKindsById(resultsData?.synthesis), ENGINE_LABELS),
+    [queryJourneyList.items, resultsData],
+  );
   const realityCheck = synthesis?.reality_check || {};
   // #296 cache overlay: a top-level synthesis.cache_overlay signals that
   // ElastiCache is a cache layer here, not an owner -- defensively strip it
@@ -2011,6 +2059,18 @@ const AnalysisResultsPage = memo(() => {
               </Container>
             )}
 
+            {/* Query routing (#822): every query, and the way into its
+                journey and decision trace without schema design. */}
+            <QueryRoutingTable
+              rows={queryRoutingRows}
+              loading={queryJourneyList.loading}
+              error={queryJourneyList.error}
+              hasLedger={routingHistoryRecorded(resultsData?.synthesis)}
+              truncated={queryJourneyList.truncated}
+              onOpen={fetchQueryJourney}
+              t={t}
+            />
+
             {/* Cost Breakdown */}
             {costBreakdown.length > 0 && (
               <Container header={<Header variant="h2" description={t('analysis-results-v2.cost-breakdown.description')}>{t('analysis-results-v2.cost-breakdown.title')}</Header>}>
@@ -2560,7 +2620,13 @@ const AnalysisResultsPage = memo(() => {
                                             <SpaceBetween direction="horizontal" size="xxs">
                                               {tradeOff.query_ids.map((qid, qi) => (
                                                 <span key={qi}
+                                                  role="button"
+                                                  tabIndex={0}
+                                                  aria-label={t('analysis-results-v2.query-routing.open-label', { id: qid })}
                                                   onClick={() => fetchQueryJourney(qid)}
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fetchQueryJourney(qid); }
+                                                  }}
                                                   style={{
                                                     display: 'inline-block',
                                                     padding: '1px 4px',
@@ -2573,6 +2639,8 @@ const AnalysisResultsPage = memo(() => {
                                                   }}
                                                   onMouseEnter={e => { e.target.style.backgroundColor = '#0972d3'; e.target.style.color = '#fff'; }}
                                                   onMouseLeave={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
+                                                  onFocus={e => { e.target.style.backgroundColor = '#0972d3'; e.target.style.color = '#fff'; }}
+                                                  onBlur={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
                                                   title={`View query journey for ${qid}`}
                                                 >
                                                   {qid}

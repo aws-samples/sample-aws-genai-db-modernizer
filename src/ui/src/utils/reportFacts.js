@@ -115,3 +115,26 @@ export function tradeOffTabLabel(tab, count, t, engineLabels) {
     : (engineLabels[tab] || tab);
   return `${name} (${count})`;
 }
+
+// #822: why each listed query's routing has a story (facts.query_trace's
+// listed_queries: moved, tied, an open tie, a customer or design-review pick,
+// a pinning rule), by query id. A query the facts do not list stayed where its
+// first assignment put it. Empty for a report without the facts block.
+export function routingKindsById(synthesis) {
+  const qt = factsOf(synthesis) && factsOf(synthesis).query_trace;
+  const listed = (qt && qt.listed_queries) || [];
+  return new Map(listed.filter(q => q && q.query_id).map(q => [q.query_id, {
+    moved: Boolean(q.moved),
+    tied: Boolean(q.tied),
+    openTie: Boolean(q.open_tie),
+    overridden: Boolean(q.overridden),
+    pinned: Boolean(q.pinned),
+  }]));
+}
+
+// Whether the report records each query's routing steps (the move ledger):
+// facts.query_trace.has_ledger. Without it the routing table claims nothing.
+export function routingHistoryRecorded(synthesis) {
+  const qt = factsOf(synthesis) && factsOf(synthesis).query_trace;
+  return Boolean(qt && qt.has_ledger);
+}

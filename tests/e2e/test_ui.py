@@ -22,6 +22,7 @@ default; a bare visit fetches `.../analysis/null` and 404s).
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 from playwright.sync_api import Page
@@ -218,3 +219,73 @@ def test_pattern_analysis_page_renders_for_a_selected_engine(
         assert "patterns detected for dynamodb" in text, (r.db, "pattern analysis body missing")
         assert "Key Value Lookups" in text, (r.db, "expected signal missing")
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _moved_query_trace(r: PipelineResult) -> dict | None:
+    """The full decision trace (report.json ``query_traces``) of the first query whose
+    engine moved, or None when no query moved (a real run may move none)."""
+    report = json.loads((r.artifact_root / r.report["report"]).read_text())
+    listed = ((report.get("facts") or {}).get("query_trace") or {}).get("listed_queries") or []
+    traces = {q["query_id"]: q for q in (report.get("query_traces") or {}).get("queries") or []}
+    moved = [q["query_id"] for q in listed if q.get("moved") and q["query_id"] in traces]
+    trace: dict | None = traces[moved[0]] if moved else None
+    return trace
+
+
+OPEN_TRACE = "Open the journey and decision trace for query "
+
+
+def test_a_querys_trace_opens_from_the_routing_table(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#822: the results page's query routing table opens a query's journey and its
+    "Why this engine" trace from the keyboard, with no schema design in the run.
+
+    On the deterministic wordpress sample (or an external job) it opens a moved
+    query and checks the move; on a run where no query moved it opens the first
+    query and checks the trace renders.
+    """
+    r = next((x for x in all_runs if x.db == "wordpress"), all_runs[0])
+    if not r.external:
+        assert not list(r.job_dir().glob("schema-*")), "the deterministic run has no schema design"
+        assert _moved_query_trace(r) is not None, "the wordpress sample moves queries"
+    trace = _moved_query_trace(r)
+
+    ev = _watch(page)
+    page.goto(f"{ui}/analysis/results-v2/{r.job_id}")
+    page.wait_for_load_state("networkidle")
+    section = page.locator("#query-routing-section")
+    section.get_by_role("table", name="Query routing").wait_for()
+    if not r.external:  # wordpress lists 107 queries: more than one page of 25
+        section.get_by_role("button", name="Next page").wait_for()
+        section.get_by_role("button", name="Previous page").wait_for()
+    if trace is not None:
+        qid = trace["query_id"]
+        section.get_by_role("button", name="Routing changed or decided").click()
+        section.get_by_label("Filter queries").fill(qid[:16])
+        opener = section.get_by_role("button", name=f"{OPEN_TRACE}{qid}")
+    else:
+        opener = section.get_by_role("button", name=re.compile(f"^{OPEN_TRACE}")).first
+        qid = (opener.get_attribute("aria-label") or "")[len(OPEN_TRACE) :]
+    opener.focus()
+    page.keyboard.press("Enter")
+
+    modal = page.get_by_role("dialog")
+    modal.get_by_text(f"Query Journey: {qid}").wait_for()
+    modal.get_by_role("tab", name="Why this engine").click()
+    modal.get_by_test_id("query-trace-final").first.wait_for()
+    first = modal.get_by_test_id("query-trace-first")
+    no_ledger = modal.get_by_test_id("query-trace-no-ledger")
+    assert (
+        first.count() + no_ledger.count() == 1
+    ), "neither the first assignment nor the no-ledger note"
+    text = modal.inner_text()
+    if trace is not None:
+        move = next(
+            m for m in trace["moves"] if m["from_engine"] and m["from_engine"] != m["to_engine"]
+        )
+        modal.get_by_test_id("query-trace-moves").get_by_text(move["explanation"]).wait_for()
+        assert trace["final_engine_name"] in text, (r.db, "final engine missing from the trace")
+        assert "No later routing step changed this query." not in text
+    assert "undefined" not in text and "NaN" not in text
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)

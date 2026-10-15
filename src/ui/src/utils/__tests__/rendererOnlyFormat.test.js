@@ -117,6 +117,8 @@ const GUARDED_UI_FILES = [
   'components/ChartSankey-01.js',
   'components/SummaryFallbackNotice.js',
   'components/QueryDecisionTrace.js',
+  'components/QueryRoutingTable.js',
+  'utils/queryRouting.js',
 ];
 
 function figureFields(schema, out) {
