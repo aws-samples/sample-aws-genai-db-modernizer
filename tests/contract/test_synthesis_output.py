@@ -387,7 +387,7 @@ class TestSynthesisOutputContract:
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
         # #339: query_traces and facts.query_trace added
-        assert output.contract_version == "1.19"
+        assert output.contract_version == "1.20"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

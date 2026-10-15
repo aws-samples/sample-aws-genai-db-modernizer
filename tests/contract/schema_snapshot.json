@@ -14167,6 +14167,7 @@
                                         "consolidate.no_unique_value",
                                         "consolidate.source_compatible_survives",
                                         "customer.pick",
+                                        "fallback.no_group_owner",
                                         "fallback.no_owner",
                                         "fallback.no_score",
                                         "flag.capability_gap",
@@ -14525,6 +14526,7 @@
                                       "consolidate.no_unique_value",
                                       "consolidate.source_compatible_survives",
                                       "customer.pick",
+                                      "fallback.no_group_owner",
                                       "fallback.no_owner",
                                       "fallback.no_score",
                                       "flag.capability_gap",
@@ -14717,6 +14719,7 @@
                                       "consolidate.no_unique_value",
                                       "consolidate.source_compatible_survives",
                                       "customer.pick",
+                                      "fallback.no_group_owner",
                                       "fallback.no_owner",
                                       "fallback.no_score",
                                       "flag.capability_gap",
@@ -15028,6 +15031,7 @@
                               "consolidate.no_unique_value",
                               "consolidate.source_compatible_survives",
                               "customer.pick",
+                              "fallback.no_group_owner",
                               "fallback.no_owner",
                               "fallback.no_score",
                               "flag.capability_gap",
@@ -15982,8 +15986,8 @@
         }
       }
     },
-    "schema_hash": "6759d56ad6ef612c9e8794d959aad7789aad5e1692c4bcb409e4cba21590dc7e",
-    "version": "1.19"
+    "schema_hash": "3f8e029f2f8dc78c8a35b11c9e975981621151ca1c4e45817271488a482b2590",
+    "version": "1.20"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

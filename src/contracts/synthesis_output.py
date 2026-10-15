@@ -265,6 +265,9 @@ Version History:
   ``facts.query_trace`` (``QueryTraceFacts``), their figures. A group-mean
   runner-up's scores are on one scale, rounded to one decimal. None for a
   report synthesized before these fields existed. Backward compatible.
+- 1.20 (2026-10-15, #787): The trace reason codes gain
+  ``fallback.no_group_owner`` (a co-dependency group no analyzed engine can
+  serve as a whole), from the move ledger 1.5 enum. Backward compatible.
 """
 
 from datetime import datetime
@@ -959,7 +962,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.19",
+        default="1.20",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
