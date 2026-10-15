@@ -1,0 +1,14 @@
+# Amazon Aurora MySQL-Compatible Edition.
+id = "aurora_mysql"
+display_name = "Aurora MySQL"
+display_order = 6
+ui_picker_order = 8
+status = "active"
+role = "relational"
+system_of_record = true
+
+[colors]
+ui = "#9c5700"
+ui_badge = "green"
+report_badge = "#9c5700"
+deck = "#FF5C85"

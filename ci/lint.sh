@@ -6,3 +6,4 @@ log "black"; uv run black --check --line-length=100 src/ tests/
 log "isort"; uv run isort --profile=black --line-length=100 --check-only src/ tests/
 log "mypy";  uv run mypy src/
 log "commands"; uv run python scripts/validate_skills.py
+log "catalog"; uv run python scripts/render_catalog.py --check

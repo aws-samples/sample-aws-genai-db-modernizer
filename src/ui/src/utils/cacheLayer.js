@@ -22,9 +22,11 @@
  * shape is in play.
  */
 
-// Mirrors src/shared/cache_engines.py (#398); tests/unit/shared/test_cache_engines.py
-// keeps the two in step.
-export const CACHE_ENGINES = new Set(['elasticache']);
+import { CACHE_ENGINE_IDS } from './engineCatalog.generated';
+
+// The same set as src/shared/cache_engines.py (#398): both come from the engine
+// catalog's role = "cache" (src/catalog/engines, #492).
+export const CACHE_ENGINES = new Set(CACHE_ENGINE_IDS);
 
 export const isCacheEngine = (engine) => CACHE_ENGINES.has(engine);
 

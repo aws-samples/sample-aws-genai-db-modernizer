@@ -22,18 +22,21 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from src.shared import catalog
+
 # CACHE_ENGINES: engines that can only ever be a cache layer, never a system of
 # record (#296), declared once in src.shared.cache_engines (#398).
 from src.shared.cache_engines import CACHE_ENGINES as CACHE_ENGINES
 
+# Each bucket is the active engines with that catalog ``role`` (src/catalog/engines, #492).
 # Key-value / point-lookup engine, Wave 2.
-KV_ENGINES: frozenset[str] = frozenset({"dynamodb"})
+KV_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="key_value")
 # Read-model engines: they index data synced from an owner, never own it (#303).
-SEARCH_ENGINES: frozenset[str] = frozenset({"opensearch"})
+SEARCH_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="search")
 # Document-shaped data, kept as an owner engine.
-DOCUMENT_ENGINES: frozenset[str] = frozenset({"documentdb"})
+DOCUMENT_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="document")
 # The source-compatible relational core, retained and carried over 1:1.
-RELATIONAL_ENGINES: frozenset[str] = frozenset({"aurora_mysql", "aurora_postgresql"})
+RELATIONAL_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
 
 # Every engine the sequencing rule names explicitly; anything else falls into
 # "any other direct migration target" (step 3 of the rule).
@@ -46,8 +49,12 @@ NAMED_ENGINES: frozenset[str] = (
 # real owner (``SEARCH_ENGINES``, #303). A table's ``primary_engine`` must
 # always be a system-of-record owner. Single source of truth for the resolver
 # (``table_assignments.derive_table_assignments``) and the wave builder's own
-# ``migration_wave_tables._durable_owner``.
-NON_OWNER_ENGINES: frozenset[str] = CACHE_ENGINES | SEARCH_ENGINES
+# ``migration_wave_tables._durable_owner``. The active engines the catalog marks
+# ``system_of_record = false``; the catalog loader rejects a cache or search engine that
+# claims to own, so this is always ``CACHE_ENGINES | SEARCH_ENGINES``.
+NON_OWNER_ENGINES: frozenset[str] = catalog.engine_ids(
+    status=catalog.ACTIVE, system_of_record=False
+)
 
 
 def cache_front_description(

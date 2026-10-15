@@ -55,6 +55,7 @@ from pptx.util import Inches, Pt
 # ``plural_noun`` is the one place every count+noun string in this deck and in
 # the decision/engineering reports agrees on English count agreement
 # (issue #206).
+from src.shared import catalog
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.migration_wave_engines import RELATIONAL_ENGINES, SEARCH_ENGINES
 from src.shared.ranking import confidence_text, engine_confidence, is_signal_only
@@ -114,13 +115,13 @@ PINK = RGBColor(0xFF, 0x5C, 0x85)  # accent4
 ORANGE = RGBColor(0xFF, 0x69, 0x3C)  # accent5
 YELLOW = RGBColor(0xFB, 0xD3, 0x32)  # accent6
 
+# Each engine's accent is its catalog ``colors.deck`` (src/catalog/engines, #492): one of the
+# template's accents above (aurora_postgresql BLUE, elasticache PURPLE, documentdb GREEN,
+# dynamodb YELLOW, opensearch ORANGE, aurora_mysql PINK).
 ENGINE_COLOR = {
-    "aurora_postgresql": BLUE,
-    "elasticache": PURPLE,
-    "documentdb": GREEN,
-    "dynamodb": YELLOW,
-    "opensearch": ORANGE,
-    "aurora_mysql": PINK,
+    e.id: RGBColor.from_string(e.colors.deck[1:])
+    for e in catalog.engines()
+    if e.colors.deck is not None
 }
 # Alias, not a copy: display names are the shared source of truth in
 # src.shared.engine_names (#221 follow-up). Restricted to the six engines this deck

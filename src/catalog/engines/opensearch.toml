@@ -1,0 +1,15 @@
+# Amazon OpenSearch Service. A search read model: it indexes data synced from the
+# engine that owns each table and never owns a write (#303).
+id = "opensearch"
+display_name = "OpenSearch"
+display_order = 3
+ui_picker_order = 3
+status = "active"
+role = "search"
+system_of_record = false
+
+[colors]
+ui = "#2ea597"
+ui_badge = "grey"
+report_badge = "#0e7c86"
+deck = "#FF693C"

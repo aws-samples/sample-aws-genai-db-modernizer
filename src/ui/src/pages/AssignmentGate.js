@@ -41,6 +41,7 @@ import {
   engineOptionsForQuery,
   survivingDistribution,
 } from "../utils/assignmentSummary";
+import { ENGINE_STYLES } from "../utils/engineColors";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
@@ -53,17 +54,8 @@ import './AssignmentGate.css';
 // Constants
 // ============================================
 
-const ENGINE_COLORS = {
-  dynamodb: { bg: '#3184e8', badge: 'blue', label: 'DynamoDB' },
-  documentdb: { bg: '#1d8102', badge: 'green', label: 'DocumentDB' },
-  opensearch: { bg: '#2ea597', badge: 'grey', label: 'OpenSearch' },
-  elasticache: { bg: '#d13212', badge: 'red', label: 'ElastiCache' },
-  neptune: { bg: '#7d2105', badge: 'red', label: 'Neptune' },
-  keyspaces: { bg: '#8b6ccb', badge: 'blue', label: 'Keyspaces' },
-  aurora: { bg: '#ec7211', badge: 'green', label: 'Aurora' },
-  aurora_mysql: { bg: '#9c5700', badge: 'green', label: 'Aurora MySQL' },
-  aurora_postgresql: { bg: '#9c5700', badge: 'green', label: 'Aurora PostgreSQL' },
-};
+// Colour, badge colour and label per engine, from the engine catalog (#492).
+const ENGINE_COLORS = ENGINE_STYLES;
 
 // #296: ElastiCache is a cache layer, never an owner, so it is not an engine
 // option; each row has a "Cache with ElastiCache" toggle instead.

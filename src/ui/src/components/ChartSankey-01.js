@@ -1,29 +1,19 @@
 import { useMemo, useState, useEffect } from 'react';
 import { sankey, sankeyCenter, sankeyLinkHorizontal } from 'd3-sankey';
 import { displayEngine } from '../utils/engineNames';
+import { ENGINE_HEX } from '../utils/engineCatalog.generated';
 import { isCacheEngine } from '../utils/cacheLayer';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
 
-// Color palette for different nodes
-const NODE_COLORS = {
+// Node colours: the source node's grey, then every engine's live UI colour from the
+// engine catalog (colors.ui, src/catalog/engines, #492). Aurora MySQL and Aurora
+// PostgreSQL both carry #9c5700 there (#476): before that, their node ids missed this
+// map and fell back to the default blue (#0972D3), which read as DynamoDB's #3184e8.
+export const NODE_COLORS = {
   patterns: '#5f6b7a',      // Gray for source
-  dynamodb: '#3184e8',      // Blue
-  documentdb: '#1d8102',    // Green
-  elasticache: '#d13212',   // Red
-  opensearch: '#2ea597',    // Teal
-  neptune: '#7d2105',       // Dark red
-  keyspaces: '#8b6ccb',     // Purple
-  // The pipeline emits aurora_mysql / aurora_postgresql, never a bare "aurora",
-  // so both used to miss this map and fall back to the default blue (#0972D3) --
-  // close enough to DynamoDB's #3184e8 that Aurora read as DynamoDB even though
-  // it owns most queries. #9c5700 is the colour the live UI already gives these
-  // two engines (AssignmentGate.js ENGINE_COLORS), so the Sankey now matches the
-  // rest of the page instead of the exported report's own indigo shades.
-  aurora_mysql: '#9c5700',        // Aurora MySQL
-  aurora_postgresql: '#9c5700',   // Aurora PostgreSQL
-  aurora: '#ec7211'         // Orange
+  ...ENGINE_HEX,
 };
 
 const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {

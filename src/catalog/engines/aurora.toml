@@ -1,0 +1,13 @@
+# Generic "aurora": the engine id reports used before Aurora split into aurora_mysql and
+# aurora_postgresql. Kept so those reports still render; routing never emits it.
+id = "aurora"
+display_name = "Aurora"
+display_order = 9
+ui_picker_order = 7
+status = "legacy"
+role = "relational"
+system_of_record = true
+
+[colors]
+ui = "#ec7211"
+ui_badge = "green"

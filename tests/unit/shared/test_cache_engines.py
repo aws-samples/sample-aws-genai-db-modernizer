@@ -22,6 +22,7 @@ from src.tools.analysis.scoring import TableProfile
 
 ROOT = Path(__file__).resolve().parents[3]
 JS_PATH = ROOT / "src" / "ui" / "src" / "utils" / "cacheLayer.js"
+GENERATED_JS = ROOT / "src" / "ui" / "src" / "utils" / "engineCatalog.generated.js"
 
 
 def test_python_consumers_share_one_set() -> None:
@@ -32,9 +33,13 @@ def test_python_consumers_share_one_set() -> None:
 
 
 def _js_cache_engines() -> set[str]:
-    js = JS_PATH.read_text(encoding="utf-8")
-    match = re.search(r"export const CACHE_ENGINES = new Set\(\[(.*?)\]\);", js, re.S)
-    assert match is not None, "could not parse CACHE_ENGINES in cacheLayer.js"
+    # cacheLayer.js builds CACHE_ENGINES from the catalog's generated id list (#492).
+    assert "export const CACHE_ENGINES = new Set(CACHE_ENGINE_IDS);" in JS_PATH.read_text(
+        encoding="utf-8"
+    )
+    js = GENERATED_JS.read_text(encoding="utf-8")
+    match = re.search(r"export const CACHE_ENGINE_IDS = \[(.*?)\];", js, re.S)
+    assert match is not None, "could not parse CACHE_ENGINE_IDS in engineCatalog.generated.js"
     return set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
 
 

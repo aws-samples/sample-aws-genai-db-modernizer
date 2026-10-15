@@ -1,0 +1,14 @@
+# Amazon DocumentDB. Engine-wide facts only (ADR-031 Decision 8); fields: src/shared/catalog/engines.py.
+id = "documentdb"
+display_name = "DocumentDB"
+display_order = 2
+ui_picker_order = 2
+status = "active"
+role = "document"
+system_of_record = true
+
+[colors]
+ui = "#1d8102"
+ui_badge = "green"
+report_badge = "#0c7838"
+deck = "#00E500"

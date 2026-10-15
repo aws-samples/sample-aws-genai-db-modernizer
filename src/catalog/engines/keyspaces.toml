@@ -1,0 +1,15 @@
+# Amazon Keyspaces (for Apache Cassandra): a future enhancement, not modelled yet
+# (ADR-031 Decision 9, #495). Named so contracts, the UI and reports can talk about it;
+# never a routing candidate.
+id = "keyspaces"
+display_name = "Keyspaces"
+display_order = 8
+ui_picker_order = 6
+status = "future"
+role = "wide_column"
+system_of_record = true
+
+[colors]
+ui = "#8b6ccb"
+ui_badge = "blue"
+report_badge = "#8250df"

@@ -34,6 +34,7 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
@@ -58,9 +59,10 @@ ROLES = (RETAINED, MIGRATION_TARGET, CACHE_LAYER, SEARCH_READ_MODEL, EVALUATED, 
 # Search engines are read models (#303): their data is synced from the engine
 # that owns each table, so they never hold system-of-record data, never need a
 # "data migration", and come after their owners in the wave plan.
-SEARCH_ENGINES = frozenset({"opensearch"})
-# Only a relational engine can be the retained, source-compatible core.
-RELATIONAL_ENGINES = frozenset({"aurora", "aurora_mysql", "aurora_postgresql"})
+SEARCH_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="search")
+# Only a relational engine can be the retained, source-compatible core. Legacy ids count
+# too (the generic ``aurora`` older reports carry).
+RELATIONAL_ENGINES = catalog.engine_ids(status=catalog.REPORTABLE, role="relational")
 
 
 def engine_role(

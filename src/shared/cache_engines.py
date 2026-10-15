@@ -13,7 +13,10 @@ tracked separately (#401); today ElastiCache stays cache-only.
 
 from __future__ import annotations
 
-CACHE_ENGINES: frozenset[str] = frozenset({"elasticache"})
+from src.shared import catalog
+
+# The active engines whose catalog ``role`` is ``cache`` (src/catalog/engines, #492).
+CACHE_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="cache")
 
 # Hot-read floor (calls/s), inclusive: a read at exactly this rate qualifies.
 # Starting value from #296; tune with data. On the two reference samples every

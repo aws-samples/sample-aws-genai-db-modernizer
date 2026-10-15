@@ -1,0 +1,15 @@
+# Amazon ElastiCache. A cache layer that fronts hot reads and owns no query (#296, #398);
+# whether a durable ElastiCache can be a system of record is tracked in #401.
+id = "elasticache"
+display_name = "ElastiCache"
+display_order = 4
+ui_picker_order = 4
+status = "active"
+role = "cache"
+system_of_record = false
+
+[colors]
+ui = "#d13212"
+ui_badge = "red"
+report_badge = "#c62f25"
+deck = "#AD5CFF"

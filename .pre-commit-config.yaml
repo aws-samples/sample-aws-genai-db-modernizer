@@ -223,6 +223,16 @@ repos:
         files: '(\.claude/commands/.*\.md|\.claude/skills/.*\.md|scripts/run_.*\.py|src/contracts/.*\.py|src/skills/.*\.md)'
         pass_filenames: false
 
+  # The UI's engine tables are generated from the engine catalog (#492)
+  - repo: local
+    hooks:
+      - id: render-catalog
+        name: Engine catalog generated UI module is fresh
+        entry: uv run python scripts/render_catalog.py --check
+        language: system
+        files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js)'
+        pass_filenames: false
+
 # Configuration
 default_language_version:
   python: python3

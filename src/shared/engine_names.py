@@ -24,24 +24,19 @@ because other modules and tests still import it directly (#239).
 
 from __future__ import annotations
 
-ENGINE_DISPLAY_NAMES: dict[str, str] = {
-    "dynamodb": "DynamoDB",
-    "documentdb": "DocumentDB",
-    "opensearch": "OpenSearch",
-    "elasticache": "ElastiCache",
-    "aurora_postgresql": "Aurora PostgreSQL",
-    "aurora_mysql": "Aurora MySQL",
-    "neptune": "Neptune",
-    "keyspaces": "Keyspaces",
-    "aurora": "Aurora",
-}
+from src.shared import catalog
+
+# Built from the engine catalog (``src/catalog/engines/*.toml``, ADR-031 Decision 8, #492),
+# in its ``display_order``; the UI's copy is generated from the same files.
+ENGINE_DISPLAY_NAMES: dict[str, str] = {e.id: e.display_name for e in catalog.engines()}
 
 
-# ADR-031 Decision 9: engines that exist in the catalog only as future placeholders. They are
-# named so contracts, the UI and reports can talk about them, but they are never a routing
-# candidate: not ownable, not scored, not a reality-check absorber, whatever an analysis
-# output says. Every routing entry point drops them via ``without_placeholder_engines``.
-PLACEHOLDER_ENGINES: frozenset[str] = frozenset({"neptune", "keyspaces"})
+# ADR-031 Decision 9: engines that exist in the catalog only as future placeholders
+# (``status = "future"``). They are named so contracts, the UI and reports can talk about
+# them, but they are never a routing candidate: not ownable, not scored, not a
+# reality-check absorber, whatever an analysis output says. Every routing entry point
+# drops them via ``without_placeholder_engines``.
+PLACEHOLDER_ENGINES: frozenset[str] = catalog.engine_ids(status="future")
 
 
 def without_placeholder_engines(analysis_outputs: dict[str, dict]) -> dict[str, dict]:

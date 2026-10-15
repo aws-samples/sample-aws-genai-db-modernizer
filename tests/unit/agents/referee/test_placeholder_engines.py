@@ -15,9 +15,9 @@ Decision 9 is held by layers, each tested below:
 3. The analysis and schema-design handlers write empty "not implemented" placeholders.
 4. A scan of ``src/`` fails when a new module (or a new use in a pinned module) names one.
 
-#495 adds the placeholder catalog entries as ``engines/*.toml`` files, which the ``.py`` scan
-here never reads. #495 should extend this file to cover its ``status = "future"`` exclusion
-(and derive ``PLACEHOLDER_ENGINES`` from it) rather than leave two lists.
+5. The engine catalog (``src/catalog/engines/*.toml``, #492) marks them ``status = "future"``,
+   and ``PLACEHOLDER_ENGINES`` is derived from that, so there is one list, not two. Their
+   display names and colours live in those files, which the ``.py`` scan here never reads.
 
 To make Neptune or Keyspaces a real engine: change ADR-031 Decision 9 (or supersede it)
 first, then update this file in the same PR.
@@ -40,6 +40,7 @@ from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.reality_check import run_reality_check
 from src.agents.referee.triage import DEFERRED, TriageSignal, _select_agents
 from src.agents.schema_design.handler import run_schema_design
+from src.shared import catalog
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine
 from src.storage.local_store import LocalArtifactStore
 
@@ -57,12 +58,6 @@ NAMING_ALLOWLIST: dict[str, tuple[int, int, str]] = {
     "src/contracts/analysis_input.py": (2, 2, "TargetDatabase enum members"),
     "src/contracts/analysis_output.py": (2, 2, "TargetDatabase enum members"),
     "src/contracts/referee_output.py": (2, 2, "TargetEngine enum members"),
-    "src/shared/engine_names.py": (
-        6,
-        0,
-        "display names (2 ids, 2 names) and PLACEHOLDER_ENGINES (2 ids)",
-    ),
-    "src/report/decision_report.py": (2, 0, "chart colour per engine"),
     "src/agents/entrypoint.py": (2, 0, "agent types the entrypoint accepts"),
     "src/agents/referee/triage.py": (
         8,
@@ -201,6 +196,13 @@ EMPTY_PLACEHOLDER_ANALYSIS = {
 class TestPlaceholdersAreOnlyNamed:
     def test_the_set_is_the_two_engines(self):
         assert PLACEHOLDER_ENGINES == PLACEHOLDERS
+
+    def test_the_set_is_the_catalogs_future_engines(self):
+        future = {e.id: e for e in catalog.engines() if e.status == "future"}
+        assert set(future) == PLACEHOLDERS
+        assert PLACEHOLDER_ENGINES == catalog.engine_ids(status="future")
+        # A future engine is in no active role set, so nothing that routes reads it.
+        assert not PLACEHOLDERS & catalog.engine_ids(status=catalog.ACTIVE)
 
     def test_only_the_pinned_modules_name_a_placeholder_engine(self):
         found = _counts()

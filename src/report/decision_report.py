@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
 
@@ -98,15 +99,9 @@ footer { margin-top:2.5rem; padding:1.2rem 0 3rem; border-top:1px solid #e5e7eb;
 # "color-contrast" flagged the un-darkened "aurora" orange at 2.14:1 and the
 # un-darkened "elasticache" red at a razor-thin 4.52:1 that flipped pass/fail
 # between browsers).
+# The values live in the engine catalog (``colors.report_badge``, src/catalog/engines, #492).
 _ENGINE_BADGE = {
-    "dynamodb": "#3b48cc",
-    "documentdb": "#0c7838",
-    "aurora_postgresql": "#9c5700",
-    "aurora_mysql": "#9c5700",
-    "elasticache": "#c62f25",
-    "opensearch": "#0e7c86",
-    "neptune": "#7048e8",
-    "keyspaces": "#8250df",
+    e.id: e.colors.report_badge for e in catalog.engines() if e.colors.report_badge is not None
 }
 
 

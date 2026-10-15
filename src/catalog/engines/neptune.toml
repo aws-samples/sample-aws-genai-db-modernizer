@@ -1,0 +1,14 @@
+# Amazon Neptune: a future enhancement, not modelled yet (ADR-031 Decision 9, #495).
+# Named so contracts, the UI and reports can talk about it; never a routing candidate.
+id = "neptune"
+display_name = "Neptune"
+display_order = 7
+ui_picker_order = 5
+status = "future"
+role = "graph"
+system_of_record = true
+
+[colors]
+ui = "#7d2105"
+ui_badge = "red"
+report_badge = "#7048e8"

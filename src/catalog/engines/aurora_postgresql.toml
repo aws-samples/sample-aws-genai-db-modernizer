@@ -1,0 +1,14 @@
+# Amazon Aurora PostgreSQL-Compatible Edition.
+id = "aurora_postgresql"
+display_name = "Aurora PostgreSQL"
+display_order = 5
+ui_picker_order = 9
+status = "active"
+role = "relational"
+system_of_record = true
+
+[colors]
+ui = "#9c5700"
+ui_badge = "green"
+report_badge = "#9c5700"
+deck = "#41B3FF"

@@ -1,0 +1,14 @@
+# Amazon DynamoDB. Engine-wide facts only (ADR-031 Decision 8); fields: src/shared/catalog/engines.py.
+id = "dynamodb"
+display_name = "DynamoDB"
+display_order = 1
+ui_picker_order = 1
+status = "active"
+role = "key_value"
+system_of_record = true
+
+[colors]
+ui = "#3184e8"
+ui_badge = "blue"
+report_badge = "#3b48cc"
+deck = "#FBD332"
