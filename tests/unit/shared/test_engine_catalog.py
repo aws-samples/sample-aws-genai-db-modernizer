@@ -13,8 +13,9 @@ status and role are written down. This file guards that:
 - the constants that used to be hand-kept copies are now exactly the catalog's view;
 - the UI's generated module is fresh (``scripts/render_catalog.py --check``).
 
-This is a partial guard for Decision 8: the pattern files, their per-engine entries and
-the "no routing rule outside the catalog" check are #639's.
+One of Decision 8's guards: the pattern files are guarded by ``test_pattern_catalog.py``,
+their per-engine completeness and the "no routing rule outside the catalog" check by
+``test_rule_catalog_complete.py`` (#639).
 """
 
 from __future__ import annotations
@@ -152,6 +153,18 @@ class TestEveryKnownEngineHasACatalogFile:
         # The ATX orchestrator keys its table by a short name (``aurora_pg``); the engine
         # id it dispatches is ``target_database``.
         assert {e.target_database for e in atx_core._ANALYSIS_ENGINES.values()} == ACTIVE_IDS
+
+    def test_the_container_entrypoint_accepts_every_catalog_engine(self) -> None:
+        """``entrypoint.ANALYSIS_AGENTS`` (read by AST: importing the entrypoint builds an
+        artifact store)."""
+        source = (ROOT / "src" / "agents" / "entrypoint.py").read_text(encoding="utf-8")
+        (value,) = [
+            node.value
+            for node in ast.parse(source).body
+            if isinstance(node, ast.Assign)
+            and [getattr(t, "id", None) for t in node.targets] == ["ANALYSIS_AGENTS"]
+        ]
+        assert set(ast.literal_eval(value)) == IDS
 
     def test_triage_names_only_catalog_engines(self) -> None:
         assert triage.DEFERRED == catalog.engine_ids(status="future")

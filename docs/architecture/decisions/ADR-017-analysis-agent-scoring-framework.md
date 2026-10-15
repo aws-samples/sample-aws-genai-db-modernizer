@@ -105,7 +105,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | Decision | Enforced by |
 |---|---|
 | 1. Queries are the atomic unit of analysis | `tests/unit/test_assignment_resolver.py::TestOpenSearchScoresTheQueryNotTheTable`<br>`tests/unit/test_assignment_resolver.py::TestComputeQueryConfidence::test_pattern_match_on_a_table_outside_the_querys_own_tables_has_no_effect` |
-| 2. Specialist-curated pattern catalogs drive scoring | superseded -- #707 (ADR-031 Decision 8 replaces per-engine catalogs with one engine-neutral catalog; its guard is #639) |
+| 2. Specialist-curated pattern catalogs drive scoring | superseded -- #707 (ADR-031 Decision 8 replaces per-engine catalogs with one engine-neutral catalog; its guard is `tests/unit/shared/test_rule_catalog_complete.py`) |
 | 3. Decision trace is a required output | `tests/unit/agents/analysis/test_decision_trace_completeness_properties.py`<br>`tests/unit/agents/analysis/test_decision_trace_artifact.py` |
 | 4. Score weights are per-target configurable | `tests/unit/agents/referee/test_cost_dimension.py::test_an_engine_may_weight_cost_differently_but_keeps_the_same_four_dimensions`<br>`tests/unit/agents/analysis/test_score_weights_per_target.py`<br>superseded -- #701 (the weights table does not match the code, `src/tools/analysis/dynamodb_pattern_catalog.py`) |
 | 5. Workload segments are per-pattern groupings | `tests/unit/agents/analysis/test_workload_segment_per_pattern.py`<br>none yet -- #720 (Aurora emits `aurora-common-10` once per table) |

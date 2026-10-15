@@ -368,3 +368,17 @@ def profile_pattern_types(profile: Profile) -> frozenset[str]:
         for support in entry.engines.values()
         if support.kind == "fit" and support.profile == profile
     )
+
+
+def missing_engine_entries(entries: Iterable[PatternEntry], engines: Iterable[str]) -> list[str]:
+    """Every ``<pattern>.toml: [engines.<id>]`` table missing for ``engines``, sorted.
+
+    The completeness rule (ADR-031 Decision 8, #639): adding an engine or a pattern
+    must write a decision for every pair down, never default one to "unsupported".
+    """
+    wanted = set(engines)
+    return sorted(
+        f"{entry.id}.toml: [engines.{engine}]"
+        for entry in entries
+        for engine in wanted - set(entry.engines)
+    )
