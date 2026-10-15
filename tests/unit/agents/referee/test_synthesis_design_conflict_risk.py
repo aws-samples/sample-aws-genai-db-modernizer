@@ -201,8 +201,9 @@ def _ddb(tables: list[dict], aps: list[dict], trade_offs: list[dict] | None = No
 
 def _posts_drafts() -> list[dict]:
     """``WpPosts`` (group 0, item collection) and ``wp_posts`` (group 1, single-entity)
-    both give ``wp_posts`` its own entity -- different shapes, so the merge cannot
-    consolidate them and records the overlap instead (#426's trigger).
+    both give ``wp_posts`` its own entity -- different shapes, and keys that do not
+    map onto each other (``post_name`` is not the POST entity's ``{ID}``), so the
+    merge cannot consolidate them and records the overlap instead (#426's trigger).
     """
     posts = _entity("POST", "wp_posts", "{ID}", "POST")
     g0 = _ddb(
@@ -214,7 +215,9 @@ def _posts_drafts() -> list[dict]:
             _ap("DDB-AP-5", "WpPosts", "wp_users"),
         ],
     )
-    g1 = _ddb([_single("wp_posts", "wp_posts", "id")], [_ap("DDB-AP-2", "wp_posts", "wp_posts")])
+    g1 = _ddb(
+        [_single("wp_posts", "wp_posts", "post_name")], [_ap("DDB-AP-2", "wp_posts", "wp_posts")]
+    )
     return [g0, g1]
 
 

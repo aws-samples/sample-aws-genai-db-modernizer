@@ -106,7 +106,12 @@ def _dedupe_by_name(items: list[dict], key: str) -> list[dict]:
 
 
 def merge_group_drafts(
-    drafts: list[dict], engine: str, group_indices: list[int] | None = None
+    drafts: list[dict],
+    engine: str,
+    group_indices: list[int] | None = None,
+    unique_keys: dict[str, list[frozenset[str]]] | None = None,
+    notes: list[str] | None = None,
+    column_types: dict[str, dict[str, str]] | None = None,
 ) -> dict:
     """Merge multiple group drafts into a single schema draft.
 
@@ -115,6 +120,14 @@ def merge_group_drafts(
         engine: Target engine name (dynamodb, documentdb, opensearch).
         group_indices: Group index of each draft, used in DynamoDB merge
             messages (defaults to the draft's position).
+        unique_keys: DynamoDB only: the source tables' unique column sets
+            (``dynamodb_key_reconcile.unique_keys_from_collector``), so a key
+            holding one can be kept when groups disagree (#772).
+        notes: DynamoDB only: receives the merge's mechanical reconciliation
+            notes (names, labels, folds) for the merge trace.
+        column_types: DynamoDB only: integer/text source columns
+            (``dynamodb_key_reconcile.column_types_from_collector``), so an
+            N-vs-S partition-key disagreement takes the source column's type.
 
     Returns:
         Merged schema draft dict.
@@ -133,7 +146,9 @@ def merge_group_drafts(
     if engine == "dynamodb":
         # Renumber pattern IDs and re-point absorbed tables per draft, before
         # the drafts are combined (see dynamodb_merge).
-        drafts, reconciliation, drafts_passed = dynamodb_merge.prepare_drafts(drafts, group_indices)
+        drafts, reconciliation, drafts_passed = dynamodb_merge.prepare_drafts(
+            drafts, group_indices, unique_keys=unique_keys, notes=notes, column_types=column_types
+        )
 
     # Use first draft as base for scalar fields
     merged = dict(drafts[0])
@@ -175,7 +190,7 @@ def merge_group_drafts(
     merged["validation_passed"] = all(d.get("validation_passed", True) for d in drafts)
 
     if engine == "dynamodb":
-        merged = dynamodb_merge.finish_merge(merged, reconciliation, drafts_passed)
+        merged = dynamodb_merge.finish_merge(merged, reconciliation, drafts_passed, notes)
 
     return merged
 
@@ -198,12 +213,18 @@ def _sum_token_usage(group_traces: list[dict]) -> dict[str, int] | None:
 
 
 def _consolidate_design_traces(
-    store: ArtifactStore, base_key: str, pattern_maps: dict[int, dict[str, str]]
+    store: ArtifactStore,
+    base_key: str,
+    pattern_maps: dict[int, dict[str, str]],
+    merge_notes: list[str] | None = None,
 ) -> None:
     """Combine ``design_trace_group_<n>.json`` into ``design_trace.json``.
 
     Group traces are left as written; the combined trace gets each group's
     pattern-ID renumbering (DynamoDB, #229) so it matches the merged output.
+    ``merge_notes`` (DynamoDB, #772): the merge's mechanical reconciliation
+    notes, written as ``merge_reconciliation`` on every merge (an empty list
+    when there are none, so an earlier attempt's notes never linger).
     """
     # List the version directory, not a file-name prefix: the local store only
     # lists directory prefixes, so ``design_trace_group_`` matched nothing there.
@@ -220,12 +241,14 @@ def _consolidate_design_traces(
             logger.debug("Skipping unreadable trace artifact: %s", key)
             continue
         group_traces.append(rewrite_pattern_ids(trace, pattern_maps.get(idx, {})))
-    if group_traces:
+    if group_traces or merge_notes:
         combined: dict = {"total_groups": len(group_traces), "groups": group_traces}
         total = _sum_token_usage(group_traces)
         if total is not None:
             combined["token_usage"] = total
             logger.info("schema-merge usage over %d groups | %s", len(group_traces), total)
+        if merge_notes is not None:
+            combined["merge_reconciliation"] = merge_notes
         store.write_json(f"{base_key}/design_trace.json", combined)
 
 
@@ -301,8 +324,41 @@ def merge_schema_groups(
     if not drafts:
         raise ValueError(f"No group drafts found to merge for {engine}")
 
-    # Merge
-    merged = merge_group_drafts(drafts, engine, group_indices=indices)
+    # Merge. DynamoDB reads the source tables' unique keys (#772) so the
+    # reconciliation can keep a key that provably identifies every row; its
+    # mechanical notes go into design_trace.json (merge_reconciliation).
+    unique_keys = None
+    column_types = None
+    notes: list[str] = []
+    if engine == "dynamodb":
+        from src.agents.schema_design.dynamodb_key_reconcile import (
+            column_types_from_collector,
+            unique_keys_from_collector,
+        )
+
+        collector_key = f"{database_name}/{job_id}/collector/output.json"
+        try:
+            collector = store.read_json(collector_key)
+        except Exception as exc:
+            # Safe direction (only superset keys are kept, so more conflicts and
+            # never collapsed rows), but say so: it explains surprise conflicts.
+            logger.warning(
+                "DynamoDB merge: no collector output at %s (%s); merging without the "
+                "source tables' unique keys",
+                collector_key,
+                exc,
+            )
+            collector = None
+        unique_keys = unique_keys_from_collector(collector)
+        column_types = column_types_from_collector(collector)
+    merged = merge_group_drafts(
+        drafts,
+        engine,
+        group_indices=indices,
+        unique_keys=unique_keys,
+        notes=notes,
+        column_types=column_types,
+    )
 
     # Carry the manifest's excluded_queries (--split's "not designed: no source
     # table" list, #276/#369) into the final output, so a query that never
@@ -316,7 +372,12 @@ def merge_schema_groups(
     store.write_json(f"{base_key}/schema_output.json", merged)
 
     maps = pattern_id_maps(drafts) if engine == "dynamodb" else []
-    _consolidate_design_traces(store, base_key, dict(zip(indices, maps, strict=False)))
+    _consolidate_design_traces(
+        store,
+        base_key,
+        dict(zip(indices, maps, strict=False)),
+        notes if engine == "dynamodb" else None,
+    )
 
     print(
         f"[schema-merge/{engine}] Merged {len(drafts)} group drafts"

@@ -419,13 +419,19 @@ class TestDynamoDBOverlappingDesigns:
         assert entry["contributing_patterns"] == ["q1", "q2"]
 
     def _posts_drafts(self) -> list[dict]:
+        """Two homes for wp_posts whose keys do not map onto each other.
+
+        (A single-entity table keyed by ``ID`` would fold into the POST entity,
+        see test_dynamodb_key_reconcile; one keyed by ``post_name`` cannot.)
+        """
         posts = _entity("POST", "wp_posts", "{ID}", "POST")
         g0 = _ddb(
             [_collection("WpPosts", "post_id", "record_key", posts)],
             [_ap("DDB-AP-4", "WpPosts", "wp_posts")],
         )
         g1 = _ddb(
-            [_single("wp_posts", "wp_posts", "id")], [_ap("DDB-AP-2", "wp_posts", "wp_posts")]
+            [_single("wp_posts", "wp_posts", "post_name")],
+            [_ap("DDB-AP-2", "wp_posts", "wp_posts")],
         )
         return [g0, g1]
 
@@ -439,7 +445,7 @@ class TestDynamoDBOverlappingDesigns:
         assert warning.startswith(OVERLAP_PREFIX)
         assert "modelled independently by design groups" in warning
         assert "WpPosts (group 0; PK post_id, SK record_key)" in warning
-        assert "wp_posts (group 1; PK id)" in warning
+        assert "wp_posts (group 1; PK post_name)" in warning
         assert "choose one write path or keep copies in sync — review before migration" in warning
         [note] = [t for t in result["trade_offs"] if t["description"] == warning]
         assert note["target_tables"] == ["WpPosts", "wp_posts"]

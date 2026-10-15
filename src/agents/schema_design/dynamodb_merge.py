@@ -15,11 +15,19 @@ Merge rule
    every ``DDB-AP-<n>`` mention in that draft's text (justifications,
    trade-offs, migration notes, hot-partition entries) and in its design trace,
    so references keep pointing at the same pattern.
+1a. **Shared tables are reconciled** (#772): after renumbering, before anything is
+    combined, :mod:`dynamodb_key_reconcile` rewrites the drafts so that tables
+    parallel groups designed for the same rows agree where that is
+    deterministic -- key-attribute names, entity labels, GSI names, one key
+    schema per single-entity table (another group's key becomes a GSI), and a
+    single-entity table folded into the item collection that holds its rows.
+    Its trade-offs record each change. The rules below then apply.
 2. **Compatible tables merge.** Tables that share a source table (or a table
    name) are merged into the first one when they have the same partition/sort
    key names and types, the same shape (both item collections, or both
    single-entity tables) and nothing conflicts: item collections must share at
-   least one identical entity (type, source table, PK/SK templates) and may not
+   least one identical entity (type, source table, PK/SK templates; not needed
+   when they have the same table name) and may not
    reuse an entity type, a static SK prefix or a GSI name for different data;
    single-entity tables must store the same base entity (the source table of
    the partition-key attribute). Entities, attributes, GSIs and source tables
@@ -34,9 +42,10 @@ Merge rule
    (table, GSI, operation), and a trade-off records the merge.
 3. **True conflicts fail validation** (``validation_failures`` entries with
    prefix :data:`MERGE_FAILURE_PREFIX`, ``validation_passed=false``): one table
-   name used for two different designs, and the same entity type for the same
-   source table with contradictory PK/SK templates in tables from different
-   groups.
+   name used for two different designs that rule 1a could not reconcile, the
+   same entity type for the same source table with contradictory PK/SK
+   templates (tokens compared by source column) in tables from different
+   groups, and a merged table with more GSIs than DynamoDB allows by default.
 4. **Independent homes are warnings.** When a source table is the *primary
    entity* (its own entity in an item collection, or the base entity of a
    single-entity table) of two or more tables designed by different groups,
@@ -230,8 +239,16 @@ def renumber_draft(draft: dict, mapping: dict[str, str]) -> dict:
 
 
 def _merge_conflict(a: dict, b: dict) -> str | None:
-    """Why ``b`` cannot be merged into ``a`` (``None`` when it can)."""
+    """Why ``b`` cannot be merged into ``a`` (``None`` when it can).
+
+    Item collections with the same table name need not share an entity: two
+    groups that named the same table designed it as one table.
+    """
     if _key_schema(a) != _key_schema(b):
+        pairs = list(zip(_key_schema(a), _key_schema(b), strict=True))
+        if all((x and y and x[0] == y[0]) or (x is None and y is None) for x, y in pairs):
+            types = ", ".join(f"{x[0]} {x[1]} vs {y[1]}" for x, y in pairs if x and y and x != y)
+            return f"key attribute types differ ({types})"
         return f"key schemas differ ({_describe_keys(a)} vs {_describe_keys(b)})"
     shape = _shape(a)
     if shape != _shape(b):
@@ -240,7 +257,8 @@ def _merge_conflict(a: dict, b: dict) -> str | None:
         a_entities = {e.get("entity_type"): e for e in _dicts(a.get("entities"))}
         b_entities = _dicts(b.get("entities"))
         a_sigs = {_entity_signature(e) for e in a_entities.values()}
-        if not any(_entity_signature(e) in a_sigs for e in b_entities):
+        same_name = a.get("table_name") == b.get("table_name")
+        if not same_name and not any(_entity_signature(e) in a_sigs for e in b_entities):
             return "the item collections share no identical entity"
         a_prefixes = {_sk_prefix(e): e for e in a_entities.values()}
         for entity in b_entities:
@@ -527,9 +545,19 @@ def entity_conflicts(homes: list[_Home]) -> list[str]:
             sig = _entity_signature(entity)
             if _known(sig[1]):
                 seen.setdefault(sig[:2], []).append((i, entity))
+    from src.agents.schema_design.dynamodb_key_reconcile import canon_template
+
     failures: list[str] = []
     for (entity_type, _), defs in seen.items():
-        variants = {_entity_signature(e)[2:] for _, e in defs}
+        # Tokens compared by the source column they copy: {ID} and {post_id}
+        # (an attribute copying ID) are the same key.
+        variants = {
+            (
+                canon_template(str(e.get("pk_template") or ""), e),
+                canon_template(str(e.get("sk_template") or ""), e),
+            )
+            for _, e in defs
+        }
         tables = [homes[i] for i, _ in defs]
         one_group = len({g for h in tables for g in h.groups}) == 1
         if len(variants) < 2 or one_group:
@@ -677,30 +705,54 @@ def _without_stale(draft: dict) -> dict:
 
 
 def prepare_drafts(
-    drafts: list[dict], group_indices: list[int]
+    drafts: list[dict],
+    group_indices: list[int],
+    unique_keys: dict[str, list[frozenset[str]]] | None = None,
+    notes: list[str] | None = None,
+    column_types: dict[str, dict[str, str]] | None = None,
 ) -> tuple[list[dict], TableReconciliation, bool]:
     """Renumber, reconcile tables and re-point references, per draft, before combining.
 
     Returns the prepared drafts (ready for list concatenation), the table
     reconciliation, and whether all drafts passed their own validation.
+    ``unique_keys``, ``notes`` and ``column_types`` are passed to rule 1a
+    (:func:`dynamodb_key_reconcile.reconcile_shared_tables`).
     """
+    from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
+
     passed = all(_draft_passed(d) for d in drafts)
     cleaned = [_without_stale(d) for d in drafts]
     renumbered = [
         renumber_draft(d, m) for d, m in zip(cleaned, pattern_id_maps(cleaned), strict=True)
     ]
+    renumbered, key_trade_offs = reconcile_shared_tables(
+        renumbered, group_indices, unique_keys=unique_keys, notes=notes, column_types=column_types
+    )
     reconciliation = reconcile_tables(renumbered, group_indices)
+    reconciliation.trade_offs[:0] = key_trade_offs
     prepared = [
         apply_renames(d, r) for d, r in zip(renumbered, reconciliation.renames, strict=True)
     ]
     return prepared, reconciliation, passed
 
 
-def finish_merge(merged: dict, reconciliation: TableReconciliation, passed: bool) -> dict:
-    """Apply rules 2-4 to the combined design (tables, conflicts, review notes)."""
+def finish_merge(
+    merged: dict,
+    reconciliation: TableReconciliation,
+    passed: bool,
+    notes: list[str] | None = None,
+) -> dict:
+    """Apply rules 2-4 to the combined design (tables, conflicts, review notes).
+
+    GSIs with the same keys on one merged table are combined first (one GSI per
+    key schema, the wider projection kept).
+    """
+    from src.agents.schema_design.dynamodb_key_reconcile import dedupe_gsis, gsi_limit_failures
+
     homes = reconciliation.homes
     if "table_definitions" in merged or homes:
         merged["table_definitions"] = [h.table for h in homes]
+        dedupe_gsis(merged, notes)
     if "hot_partition_analysis" in merged:
         merged["hot_partition_analysis"] = aggregate_hot_partitions(
             merged["hot_partition_analysis"],
@@ -711,7 +763,11 @@ def finish_merge(merged: dict, reconciliation: TableReconciliation, passed: bool
     if "trade_offs" in merged or trade_offs:
         merged["trade_offs"] = trade_offs
 
-    failures = reconciliation.failures + entity_conflicts(homes)
+    failures = (
+        reconciliation.failures
+        + entity_conflicts(homes)
+        + gsi_limit_failures([h.table for h in homes], MERGE_FAILURE_PREFIX)
+    )
     existing = [f for f in merged.get("validation_failures") or [] if isinstance(f, str)]
     if "validation_failures" in merged or failures:
         merged["validation_failures"] = existing + failures
