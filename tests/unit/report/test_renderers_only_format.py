@@ -89,8 +89,14 @@ INPUT_KEYS = frozenset(
         "post_schema_reroutes",
         "ranking",
         "trade_offs",
+        "query_traces",
     }
 )
+# report.json inputs that are records of lists (#339 review): every field read
+# off one, at any depth, is owned too -- ``report["query_traces"]["queries"]``,
+# and ``digest["queries"]`` after ``digest = report.get("query_traces")`` --
+# so a renderer cannot recount the listed traces behind ``facts.query_trace``.
+RECORD_INPUT_KEYS = frozenset({"query_traces"})
 # The architecture rows ``architecture._architecture_engines`` builds from facts.
 ROW_KEYS = frozenset({"migrates", "workload", "cost", "cached_queries", "cached_call_share"})
 # Facts fields whose name renderers also use for an unrelated value, so owning
@@ -210,11 +216,34 @@ def _is_facts(node: ast.AST, facts_names: set[str]) -> bool:
 
 
 _FACTS_NAMES: set[str] = set()
+_RECORD_NAMES: set[str] = set()
+
+
+def _is_record(node: ast.AST) -> bool:
+    """A record input (``RECORD_INPUT_KEYS``), a field of one, or a name bound to either."""
+    if isinstance(node, ast.Name):
+        return node.id in _RECORD_NAMES
+    if isinstance(node, ast.BoolOp):
+        return _is_record(node.values[0])
+    if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+        return node.slice.value in RECORD_INPUT_KEYS or _is_record(node.value)
+    if (
+        isinstance(node, ast.Call)
+        and _call_name(node) == "get"
+        and isinstance(node.func, ast.Attribute)
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    ):
+        return node.args[0].value in RECORD_INPUT_KEYS or _is_record(node.func.value)
+    return False
 
 
 def _is_source(node: ast.AST, tainted: set[str]) -> bool:
     if isinstance(node, ast.Name):
         return node.id in tainted
+    # Any field read off a record input, at any depth (#339 review).
+    if isinstance(node, (ast.Subscript, ast.Call)) and _is_record(node):
+        return True
     # Any field read straight off the facts block is a fact.
     if isinstance(node, ast.Subscript) and _is_facts(node.value, _FACTS_NAMES):
         return True
@@ -324,6 +353,19 @@ def _taint(fn: ast.AST) -> set[str]:
             if isinstance(n, ast.Name)
         )
         if len(_FACTS_NAMES) == before:
+            break
+    _RECORD_NAMES.clear()
+    while True:
+        before = len(_RECORD_NAMES)
+        _RECORD_NAMES.update(
+            n.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Assign) and _is_record(node.value)
+            for t in node.targets
+            for n in ast.walk(t)
+            if isinstance(n, ast.Name)
+        )
+        if len(_RECORD_NAMES) == before:
             break
     _LIST_NAMES.clear()
     _LIST_NAMES.update(
@@ -583,6 +625,12 @@ def render(report, w, costs, param_list, rep):
     n_copy_engines = len(copy["engines"])
     ranking = rep.get("ranking")
     n_ranked = len(ranking)
+    traces = rep.get("query_traces") or {}
+    n_full = len(rep["query_traces"]["queries"])
+    n_digest = len(traces["queries"])
+    by_id = {t["query_id"]: t for t in traces.get("queries") or []}
+    n_moved = sum(1 for t in by_id.values() if t.get("moves"))
+    shown_trace = by_id.get("q1")
     bar = len(risks) / 4  # facts: presentation (bar width)
     bare = len(risks)  # facts: presentation
     return a, b, c, n, total, d, highs, by_sev, diff, sev, sev2, shown, more, label, bar, bare
@@ -633,6 +681,9 @@ def test_the_guard_flags_every_counting_shape(tmp_path: Path) -> None:
         line_of('len(stored["engines"])'),
         line_of('len(copy["engines"])'),
         line_of("n_ranked = len(ranking)"),
+        line_of('n_full = len(rep["query_traces"]["queries"])'),
+        line_of('n_digest = len(traces["queries"])'),
+        line_of("n_moved = sum(1 for t in by_id.values()"),
     }
     assert flagged == expected, sorted(flagged ^ expected)
 
@@ -650,6 +701,28 @@ def test_a_helper_handed_the_facts_block_is_guarded(tmp_path: Path) -> None:
     sample.write_text(source.replace(needle, needle + '    n_engines = len(facts["engines"])\n', 1))
     found = _violations(sample)
     assert len(found) == 1 and "len(facts['engines'])" in found[0], found
+
+
+def test_a_recount_of_the_listed_traces_is_caught(tmp_path: Path) -> None:
+    """#339 review: the appendix renderer passes, and each way of recounting the
+    listed traces behind ``facts.query_trace`` planted into it is flagged."""
+    from src.report import query_traces
+
+    source = Path(query_traces.__file__).read_text()
+    assert _violations(Path(query_traces.__file__)) == []
+    needle = '    listed = int(facts.get("listed_query_count") or 0)\n'
+    assert needle in source
+    plants = [
+        '    n_full = len(report["query_traces"]["queries"])\n',
+        '    n_digest = len(digest["queries"])\n',
+        '    n_moved = sum(1 for t in by_id.values() if t.get("moves"))\n',
+    ]
+    for plant in plants:
+        sample = tmp_path / "query_traces.py"
+        sample.write_text(source.replace(needle, needle + plant, 1))
+        found = _violations(sample)
+        line = source[: source.index(needle)].count("\n") + 2
+        assert [v.split(":")[1] for v in found] == [str(line)], (plant, found)
 
 
 JS_GUARD = REPO / "src" / "ui" / "src" / "utils" / "__tests__" / "rendererOnlyFormat.test.js"

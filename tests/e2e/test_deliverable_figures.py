@@ -30,6 +30,7 @@ mismatches below are specific to the no-LLM samples.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -329,3 +330,29 @@ def test_pdf_shows_what_the_deck_shows(run: PipelineResult) -> None:
 
     assert values(pdf) == values(deck)
     assert set(pdf.engines) == set(deck.engines)
+
+
+def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult) -> None:
+    """#339 review: the appendix says "unresolved" only for ties still open, so
+    its "(N still open)" is the "Unresolved engine ties (N)" count (trailgear:
+    8 tied at some step, 3 still open), and every listed tie that was settled
+    reads "was tied"."""
+    report = _report_json(run)
+    trace = (report.get("facts") or {}).get("query_trace") or {}
+    if not trace.get("listed_query_count"):
+        pytest.skip("this sample lists no query trace")
+    md = run.deliverable(".md").read_text()
+    appendix = md[md.index("## Appendix: per-query routing decisions") :]
+    open_ties = int((report.get("facts") or {}).get("tied_query_count") or 0)
+    assert trace["open_tie_query_count"] == open_ties
+    m = re.search(r"Unresolved engine ties \((\d+) quer", md)
+    assert (int(m.group(1)) if m else 0) == open_ties
+    if trace["ever_tied_query_count"]:
+        assert f"{trace['ever_tied_query_count']} tied at some step ({open_ties} still open)" in (
+            appendix
+        )
+    rows = [r for r in trace["listed_queries"] if r["in_full"]]
+    assert appendix.count("(unresolved tie") + appendix.count(", unresolved tie") == sum(
+        1 for r in rows if r["open_tie"]
+    )
+    assert "left in an unresolved tie" not in md

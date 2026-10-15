@@ -28,6 +28,7 @@ from .formatting import (
     fmt_num,
     plural_noun,
 )
+from .query_traces import query_traces_md
 from .risks import (
     _repeats,
     _risk_engine_and_body,
@@ -668,6 +669,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out.append("")
 
     out += _trade_offs_md(report, facts)
+    out += query_traces_md(report)
 
     out += [
         "---",

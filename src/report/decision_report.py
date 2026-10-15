@@ -35,6 +35,7 @@ from .formatting import (
     plural_noun,
     plural_verb,
 )
+from .query_traces import query_traces_pointer_html
 from .risks import NO_OPEN_RISKS_CAVEAT, _severity_counts_text, filtered_risks
 from .roadmap import _roadmap_html
 
@@ -324,6 +325,7 @@ def render_decision_report_html(
     out += _reroutes_html(report)
     out += _why_engines_were_dropped_html(report)
     out += _reality_check_decisions_html(report)
+    out += query_traces_pointer_html(report)
     out += _roadmap_html(report)
 
     risks = filtered_risks(report)

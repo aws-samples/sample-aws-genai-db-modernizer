@@ -254,6 +254,17 @@ Version History:
   each cut list path with its full and kept item counts. None when nothing
   was cut, for ``--llm-mode none`` (no request is built), and for a report
   synthesized before this field existed. Backward compatible.
+- 1.19 (2026-10-15, #339): Added optional ``query_traces``
+  (``QueryTraceDigest``, ``src.contracts.query_trace``): the per-query
+  decision traces from the move ledger, in full for the queries whose engine
+  changed after their first assignment, that were tied at some step, were
+  overridden or were pinned by a listed rule (at most
+  ``report_facts.TRACE_FULL_CAP`` in full, the rest in ``more_listed``),
+  each with its tables, an excerpt of its SQL, its own step numbers and its
+  group mean, the rest counted by their first assignment's rule; and
+  ``facts.query_trace`` (``QueryTraceFacts``), their figures. A group-mean
+  runner-up's scores are on one scale, rounded to one decimal. None for a
+  report synthesized before these fields existed. Backward compatible.
 """
 
 from datetime import datetime
@@ -267,6 +278,7 @@ from src.contracts.assignment_models import (  # re-exported, see docstring belo
     UnresolvedNames,
 )
 
+from .query_trace import QueryTraceDigest, QueryTraceListing
 from .schema_design_output import TradeOff
 
 
@@ -807,6 +819,47 @@ class TableBasis(BaseModel):
     )
 
 
+class QueryTraceFactRow(QueryTraceListing):
+    """One listed query, and whether report.json carries its full trace."""
+
+    in_full: bool = Field(False, description="Its full trace is in query_traces.queries")
+
+
+class TraceRuleFact(BaseModel):
+    """How many of the queries not listed one first-assignment rule placed."""
+
+    rule: str = Field(..., description="The rule (machine id)")
+    label: str = Field(..., description="The rule as a short plain-English label")
+    rule_query_count: int = Field(..., ge=0)
+
+
+class QueryTraceFacts(BaseModel):
+    """The figures of the per-query decision traces (#339), from ``query_traces``."""
+
+    has_ledger: bool = Field(
+        False, description="False for an assignment written before the move ledger"
+    )
+    traced_query_count: int = Field(0, ge=0, description="Queries of the effective assignment")
+    listed_query_count: int = Field(0, ge=0, description="Queries listed (in full or not)")
+    full_trace_cap: int = Field(0, ge=0, description="At most this many carry their full trace")
+    full_trace_count: int = Field(0, ge=0, description="Listed queries with their full trace")
+    not_in_full_count: int = Field(0, ge=0, description="Listed queries beyond the cap")
+    moved_query_count: int = Field(0, ge=0)
+    ever_tied_query_count: int = Field(0, ge=0, description="Tied at some step")
+    open_tie_query_count: int = Field(0, ge=0, description="Still tied at the end")
+    overridden_query_count: int = Field(0, ge=0, description="Placed by a customer or a review")
+    pinned_query_count: int = Field(0, ge=0, description="Pinned by a listed rule")
+    unlisted_query_count: int = Field(
+        0, ge=0, description="Queries that stayed where their first assignment put them"
+    )
+    listed_queries: list[QueryTraceFactRow] = Field(
+        default_factory=list, description="Every listed query, most notable first"
+    )
+    unlisted_rules: list[TraceRuleFact] = Field(
+        default_factory=list, description="The queries not listed, by their first rule"
+    )
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -855,6 +908,13 @@ class ReportFacts(BaseModel):
     post_schema_reroute_count: int = Field(
         0, ge=0, description="Queries moved after approval (#629, post_schema_reroutes)"
     )
+    query_trace: QueryTraceFacts | None = Field(
+        None,
+        description=(
+            "The per-query decision traces' figures (#339); None when the report has no "
+            "query_traces"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -899,7 +959,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.18",
+        default="1.19",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -990,6 +1050,15 @@ class SynthesisOutputContract(BaseModel):
             "so the decision report and the engineering report can list the same "
             "queries the approval gate does. Empty list when none; None for a report "
             "synthesized before this field existed."
+        ),
+    )
+    query_traces: QueryTraceDigest | None = Field(
+        None,
+        description=(
+            "Per-query decision traces from the move ledger (#339): in full for the "
+            "queries whose engine changed after their first assignment, that were left "
+            "tied or were overridden; the rest counted by their first rule. None for a "
+            "report synthesized before this field existed."
         ),
     )
     facts: ReportFacts | None = Field(

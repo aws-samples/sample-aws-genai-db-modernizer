@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
 
 from pydantic import ValidationError
 
@@ -13,6 +12,7 @@ from src.contracts.move_ledger import Move
 from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
 from src.shared.engine_names import display_engine
+from src.shared.query_trace import assignment_lineage
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -279,27 +279,6 @@ def populate_from_moves(assignment: dict, store: GraphStore) -> int:
         {"rows": rows},
     )
     return len(moves)
-
-
-def assignment_lineage(read: Callable[[int], dict | None], effective_version: int) -> list[dict]:
-    """The assignment versions the effective one descends from, oldest first.
-
-    Follows ``previous_version`` from ``effective_version`` back to the first
-    assignment (``previous_version`` None), so a version from an abandoned
-    lineage (an earlier resolution the effective one does not derive from)
-    is never part of the history. ``read(v)`` returns version ``v`` or None.
-    """
-    chain: list[dict] = []
-    seen: set[int] = set()
-    version: int | None = effective_version
-    while isinstance(version, int) and version >= 1 and version not in seen:
-        seen.add(version)
-        assignment = read(version)
-        if not assignment:
-            break
-        chain.append({**assignment, "version": assignment.get("version") or version})
-        version = assignment.get("previous_version")
-    return list(reversed(chain))
 
 
 def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore) -> None:

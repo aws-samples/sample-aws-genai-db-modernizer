@@ -117,6 +117,16 @@ def test_the_reason_is_still_scanned_and_the_explanation_is_not():
 # A read of the key in renderer code: a quoted key or an attribute access.
 _EXPLANATION_READ = re.compile(r"""["']explanation["']|\.explanation\b""")
 
+# The per-query decision trace's sentences (#339) are also called
+# ``explanation``: deterministic text from src/shared/move_reasons.py
+# (display names, numbers, fixed phrases), which the guard scans like any other
+# field -- only a flag decision's ``explanation`` is exempt. These renderers
+# read the trace's, and never touch a flag decision.
+_TRACE_RENDERERS = {
+    "src/report/query_traces.py",
+    "src/ui/src/components/QueryDecisionTrace.js",
+}
+
 
 def test_no_renderer_reads_the_explanation():
     """The guard exempts ``explanation`` only because nothing renders it. If a
@@ -137,7 +147,9 @@ def test_no_renderer_reads_the_explanation():
         for p in sources
         if p.is_file() and _EXPLANATION_READ.search(p.read_text(encoding="utf-8"))
     ]
-    assert readers == []
+    assert sorted(set(readers) - _TRACE_RENDERERS) == []
+    for path in _TRACE_RENDERERS:
+        assert "flag_decision" not in (REPO / path).read_text(encoding="utf-8"), path
 
 
 def test_the_id_fields_are_exempt_only_under_flag_decisions():

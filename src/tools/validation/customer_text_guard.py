@@ -119,6 +119,7 @@ ID_FIELDS = frozenset(
         "write_engines",  # (symmetry with read_engines; no current producer)
         "target_engines",  # EVENT_SOURCING pattern applies_to.target_engines
         "tied_engines",  # QueryAssignment.tied_engines, TiedQuery.tied_engines
+        "final_engine",  # QueryTraceResponse.final_engine (query_trace.py, #339)
         "moves_from",  # MigrationWave.moves_from
         "serves_from",  # MigrationWave.serves_from
         "eliminated_engines",  # RealityCheckOutputContract.eliminated_engines
@@ -147,6 +148,7 @@ ID_FIELDS = frozenset(
         "co_dependency_groups",  # Assignment.co_dependency_groups
         "query_text",  # collector query shape -- the customer's own SQL
         "source_query",  # OpenSearch UnsupportedPattern.source_query -- also the customer's own SQL
+        "query_excerpt",  # QueryTraceEntry.query_excerpt (#339) -- the start of the customer's SQL
         # Job/database identifiers (also the Markdown frontmatter keys scan_markdown
         # strips before scanning -- listed here too for a caller that reads
         # report.json's own ``job_id``/``database_name`` fields directly).
@@ -229,6 +231,22 @@ ID_FIELD_PATHS = frozenset(
         ("evidence", "replaced_engine"),  # MoveEvidence.replaced_engine
         ("evidence", "tie_rule"),  # MoveEvidence.tie_rule (ReasonCode rule id)
         ("evidence", "previous_tied_engines"),  # MoveEvidence.previous_tied_engines (engine ids)
+        # report.json query_traces (QueryTraceDigest, src/contracts/query_trace.py,
+        # #339): each trace's steps are Moves (the ("moves", ...) entries above
+        # cover them), its first step is ``first_assignment``; the machine
+        # fields of the runner-up and the outscored engines are codes. Every
+        # ``explanation``/``summary``/``gate_text``/``rule``/``label`` is the
+        # reason renderer's sentence and is still scanned.
+        ("first_assignment", "pass"),  # TraceStep.pass_ (MovePass code)
+        ("first_assignment", "reason_code"),  # TraceStep.reason_code (ReasonCode rule id)
+        ("first_assignment", "group_key"),  # TraceStep.group_key (12-hex hash)
+        ("first_assignment", "actor"),  # TraceStep.actor (MoveActor code)
+        ("runner_up", "gate"),  # TraceRunnerUp.gate (gate kind code)
+        ("runner_up", "basis"),  # TraceRunnerUp.basis (query / group_mean)
+        ("outscored_by", "engine"),  # TraceOutscored.engine
+        ("outscored_by", "basis"),  # TraceOutscored.basis
+        ("outscored_by", "decided_by_rule"),  # TraceOutscored.decided_by_rule (ReasonCode)
+        ("unlisted_rules", "rule"),  # TraceRuleCount.rule (ReasonCode rule id)
     }
 )
 

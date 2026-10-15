@@ -175,8 +175,8 @@ class TestMigrationWaves:
         result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        # #762: summary_input_budget added
-        assert report["contract_version"] == "1.18"
+        # #339: query_traces and facts.query_trace added
+        assert report["contract_version"] == "1.19"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
 
@@ -197,6 +197,64 @@ class TestMigrationWaves:
         # Wave 1 carries the whole schema: 3 tables, no views here.
         assert (facts["waves"][0]["tables_only"], facts["waves"][0]["views"]) == (3, 0)
         assert facts["source_table_count"] == report["source_table_count"] == 3
+
+    def test_written_report_carries_the_query_traces(self, store):
+        """#339: the lineage's ledger, traced; the moved query listed in full."""
+        from src.agents.referee.synthesis_handler import _write_synthesis_report
+
+        def move(seq, qid, to, frm=None, code="highest_score", pss="score"):
+            return {
+                "seq": seq,
+                "query_id": qid,
+                "pass": pss,
+                "from_engine": frm,
+                "to_engine": to,
+                "score_before": 60.0 if frm else None,
+                "score_after": 80.0,
+                "reason_code": code,
+                "actor": "rule",
+            }
+
+        v1 = {**ASSIGNMENT, "version": 1, "previous_version": None}
+        v1["query_assignments"] = [
+            {
+                **qa,
+                "assigned_engine": (
+                    "aurora_mysql" if qa["query_id"] == "kv2" else qa["assigned_engine"]
+                ),
+            }
+            for qa in ASSIGNMENT["query_assignments"]
+        ]
+        v1["moves"] = [
+            move(i, qa["query_id"], qa["assigned_engine"])
+            for i, qa in enumerate(v1["query_assignments"], start=1)
+        ]
+        v2 = {
+            **ASSIGNMENT,
+            "previous_version": 1,
+            "moves": [
+                move(1, "kv2", "dynamodb", "aurora_mysql", "consolidate.no_unique_value", "settle")
+            ],
+        }
+        store.write_json(f"{DB}/{JOB}/assignment/v1/assignment.json", v1)
+        store.write_json(f"{DB}/{JOB}/assignment/v2/assignment.json", v2)
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        _write_synthesis_report(store, result, assignment_version=2)
+        report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+        traces = report["query_traces"]
+        assert traces["has_ledger"] is True
+        assert traces["query_count"] == len(ASSIGNMENT["query_assignments"])
+        assert [t["query_id"] for t in traces["queries"]] == ["kv2"]
+        kv2 = traces["queries"][0]
+        assert [
+            (s["version"], s["to_engine"]) for s in [kv2["first_assignment"], *kv2["moves"]]
+        ] == [
+            (1, "aurora_mysql"),
+            (2, "dynamodb"),
+        ]
+        facts = report["facts"]["query_trace"]
+        assert (facts["listed_query_count"], facts["moved_query_count"]) == (1, 1)
+        assert facts["unlisted_query_count"] == traces["query_count"] - 1
 
 
 @pytest.fixture

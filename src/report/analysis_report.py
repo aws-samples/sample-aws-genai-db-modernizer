@@ -611,6 +611,10 @@ def build_export_data(
     # same fix applied to the standalone HTML export's own DATA
     # (``utils/ExportReport.js``'s ``withoutLlmOriginalText``).
     report = _without_llm_original_text(report)
+    # #339: the per-query decision traces are the engineering report's
+    # appendix; the client code renders none of them, so they are not
+    # embedded (their figures stay in synthesis.facts.query_trace).
+    report = {k: v for k, v in report.items() if k != "query_traces"}
     if report.get("query_groups"):
         report = {
             **report,

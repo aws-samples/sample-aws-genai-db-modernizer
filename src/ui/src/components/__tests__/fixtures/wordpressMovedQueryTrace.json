@@ -1,0 +1,127 @@
+{
+  "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+  "has_ledger": true,
+  "first_assignment": {
+    "version": 1,
+    "seq": 27,
+    "step": 1,
+    "pass": "score",
+    "actor": "rule",
+    "reason_code": "highest_score",
+    "rule": "highest score",
+    "from_engine": null,
+    "from_engine_name": null,
+    "to_engine": "documentdb",
+    "to_engine_name": "DocumentDB",
+    "score_before": null,
+    "score_after": 77.0,
+    "runner_up": {
+      "engine": "dynamodb",
+      "engine_name": "DynamoDB",
+      "score": 69.0
+    },
+    "tied_engines": [],
+    "tied_engine_names": [],
+    "group_key": null,
+    "candidates": [
+      {
+        "engine": "aurora_mysql",
+        "engine_name": "Aurora MySQL",
+        "score": 54.0,
+        "gate": null,
+        "gate_text": null
+      },
+      {
+        "engine": "documentdb",
+        "engine_name": "DocumentDB",
+        "score": 77.0,
+        "gate": null,
+        "gate_text": null
+      },
+      {
+        "engine": "dynamodb",
+        "engine_name": "DynamoDB",
+        "score": 69.0,
+        "gate": null,
+        "gate_text": null
+      },
+      {
+        "engine": "elasticache",
+        "engine_name": "ElastiCache",
+        "score": 38.0,
+        "gate": "write_gate",
+        "gate_text": "cannot own a query that writes data (not a system of record)"
+      },
+      {
+        "engine": "opensearch",
+        "engine_name": "OpenSearch",
+        "score": 0.0,
+        "gate": "write_gate",
+        "gate_text": "cannot own a query that writes data (not a system of record)"
+      }
+    ],
+    "explanation": "DocumentDB scored highest for this query (77), ahead of DynamoDB (69)."
+  },
+  "moves": [
+    {
+      "version": 2,
+      "seq": 2,
+      "step": 2,
+      "pass": "settle",
+      "actor": "rule",
+      "reason_code": "consolidate.no_unique_value",
+      "rule": "engine consolidated away",
+      "from_engine": "documentdb",
+      "from_engine_name": "DocumentDB",
+      "to_engine": "dynamodb",
+      "to_engine_name": "DynamoDB",
+      "score_before": 77.0,
+      "score_after": 69.0,
+      "runner_up": {
+        "engine": "aurora_mysql",
+        "engine_name": "Aurora MySQL",
+        "score": 54.0
+      },
+      "tied_engines": [],
+      "tied_engine_names": [],
+      "group_key": null,
+      "candidates": [],
+      "explanation": "Moved from DocumentDB to DynamoDB (77 to 69): the reality check removed DocumentDB, which adds too little over the engines kept to justify running another engine."
+    }
+  ],
+  "final_engine": "dynamodb",
+  "final_engine_name": "DynamoDB",
+  "final_version": 2,
+  "effective_version": 2,
+  "final_score": 69.0,
+  "tied_engines": [],
+  "tied_engine_names": [],
+  "runner_up": {
+    "engine": "aurora_mysql",
+    "engine_name": "Aurora MySQL",
+    "score": 54.0,
+    "final_score": 69.0,
+    "basis": "query",
+    "gap": 15.0,
+    "gate": null,
+    "explanation": "Aurora MySQL was next at 54, 15 points behind DynamoDB (69)."
+  },
+  "outscored_by": [
+    {
+      "engine": "documentdb",
+      "engine_name": "DocumentDB",
+      "score": 77.0,
+      "final_score": 69.0,
+      "basis": "query",
+      "in_plan": false,
+      "decided_by_version": 2,
+      "decided_by_seq": 2,
+      "decided_by_step": 2,
+      "decided_by_rule": "consolidate.no_unique_value",
+      "left_it": true,
+      "explanation": "DocumentDB scored higher (77 against 69), but the query left it in version 2 (engine consolidated away), and it is not part of the final plan."
+    }
+  ],
+  "final_group_mean": null,
+  "summary": "Ends on DynamoDB (69) after 2 routing steps. Aurora MySQL was next at 54, 15 points behind DynamoDB (69)."
+}

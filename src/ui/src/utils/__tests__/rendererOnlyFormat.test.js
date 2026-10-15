@@ -72,7 +72,7 @@ const INPUT_KEYS = new Set([
   'table_count', 'table_owners', 'owned_counts_by_engine', 'table_counts_by_engine',
   'cost_breakdown', 'monthly_cost_usd', 'workload_percent', 'cache_overlay_queries',
   'cache_call_share_percent', 'tied_queries', 'risks', 'resolved_risks',
-  'table_mappings', 'post_schema_reroutes', 'ranking', 'trade_offs',
+  'table_mappings', 'post_schema_reroutes', 'ranking', 'trade_offs', 'query_traces',
 ]);
 // Facts fields whose name the UI also uses for an unrelated value (a wave's
 // engine ids, a wave object, its number, a list position). Read off the facts block itself they
@@ -116,6 +116,7 @@ const GUARDED_UI_FILES = [
   'utils/summaryFallback.js',
   'components/ChartSankey-01.js',
   'components/SummaryFallbackNotice.js',
+  'components/QueryDecisionTrace.js',
 ];
 
 function figureFields(schema, out) {

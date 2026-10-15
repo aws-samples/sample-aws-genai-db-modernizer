@@ -615,6 +615,39 @@ def _engine_of(assignment: dict | None) -> dict[str, str]:
     }
 
 
+def _query_traces(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    assignment: dict,
+    version: int,
+    collector: dict | None = None,
+) -> dict:
+    """``report.json``'s ``query_traces`` (#339): the effective lineage's decision traces.
+
+    The collected SQL of each query gives its listing an excerpt to recognise it by.
+    """
+    from src.shared.query_trace import query_trace_digest
+    from src.storage.assignment_versioning import assignment_artifact_path
+
+    def _read(v: int) -> dict | None:
+        if v == version:
+            return assignment
+        try:
+            return store.read_json(assignment_artifact_path(database_name, job_id, v))
+        except Exception:  # noqa: BLE001 -- a missing version ends the lineage
+            return None
+
+    patterns = ((collector or {}).get("queries") or {}).get("query_patterns") or []
+    texts = {
+        str(q["query_id"]): str(q.get("query_text") or "")
+        for q in patterns
+        if isinstance(q, dict) and q.get("query_id")
+    }
+    digest = query_trace_digest(assignment, _read, version, texts)
+    return digest.model_dump(mode="json", by_alias=True)
+
+
 def _write_synthesis_report(
     store: ArtifactStore,
     result: dict,
@@ -675,6 +708,17 @@ def _write_synthesis_report(
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]
+    # #339: the per-query decision traces from the move ledger, for the
+    # engineering report's appendix (before the facts, which count them).
+    if data.assignment and assignment_version > 0:
+        output_data["query_traces"] = _query_traces(
+            store,
+            result["database_name"],
+            result["job_id"],
+            data.assignment,
+            assignment_version,
+            data.collector,
+        )
     # #615 (ADR-032): every customer-facing figure, computed once from the
     # fields above; the deliverables only format it. The collected views let
     # wave 1 state its tables and views apart (#578).

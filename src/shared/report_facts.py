@@ -794,6 +794,115 @@ def removed_engine_facts(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Per-query decision traces (#339)
+# ---------------------------------------------------------------------------
+
+# The rules that pin a query by a listed rule rather than by its score:
+# full-text search. Deterministic, so counted apart from a customer's pick,
+# its group propagation and a design review's flag (recognised by actor).
+_PINNING_RULES = frozenset({"override.text_search"})
+
+# At most this many listed queries carry their full trace in report.json and
+# the engineering report's appendix (each is about 3.4 KB and 9 lines); the
+# rest say only why they are listed (#339 review).
+TRACE_FULL_CAP = 200
+
+
+def trace_kinds(trace: Mapping[str, Any]) -> dict[str, bool]:
+    """Why a query's decision trace is listed (``QueryTraceListing``).
+
+    ``moved``: a later step changed its engine (even if a still later one
+    moved it back); ``tied``: it was tied at some step, settled or not;
+    ``open_tie``: the tie is still unresolved at the end; ``overridden``: a
+    customer or a design review (actor ``model_flag``) placed it; ``pinned``:
+    a listed rule (full-text search) placed it. ``trace`` is a
+    ``QueryTraceResponse`` as JSON. Synthesis selects the queries
+    ``query_traces`` lists with this, and the facts layer counts them with
+    it, so the two never disagree.
+    """
+    first = trace.get("first_assignment")
+    later = [m for m in trace.get("moves") or [] if isinstance(m, dict)]
+    steps = ([first] if isinstance(first, dict) else []) + later
+    open_tie = bool(trace.get("tied_engines"))
+    return {
+        "moved": any(
+            m.get("from_engine") and m.get("from_engine") != m.get("to_engine") for m in later
+        ),
+        "tied": open_tie or any(s.get("tied_engines") for s in steps),
+        "open_tie": open_tie,
+        "overridden": any(s.get("actor") not in (None, "rule") for s in steps),
+        "pinned": any(s.get("reason_code") in _PINNING_RULES for s in steps),
+    }
+
+
+def is_listed(kinds: Mapping[str, bool]) -> bool:
+    """Whether a query with these ``trace_kinds`` is listed."""
+    return any(kinds.get(k) for k in ("moved", "tied", "overridden", "pinned"))
+
+
+def trace_order(row: Mapping[str, Any]) -> tuple[bool, bool, bool, bool, str]:
+    """Most notable first: overridden, an open tie, pinned, moved, then by query id."""
+    return (
+        not row.get("overridden"),
+        not row.get("open_tie"),
+        not row.get("pinned"),
+        not row.get("moved"),
+        str(row.get("query_id")),
+    )
+
+
+_KIND_KEYS = ("moved", "tied", "open_tie", "overridden", "pinned")
+
+
+def query_trace_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The figures of ``report["query_traces"]`` (``QueryTraceFacts``), or None without it."""
+    digest = report.get("query_traces")
+    if not isinstance(digest, dict):
+        return None
+    full = [t for t in digest.get("queries") or [] if isinstance(t, dict) and t.get("query_id")]
+    rows: list[dict[str, Any]] = [
+        {"query_id": str(t["query_id"]), **trace_kinds(t), "in_full": True} for t in full
+    ]
+    rows += [
+        {
+            "query_id": str(m["query_id"]),
+            **{k: bool(m.get(k)) for k in _KIND_KEYS},
+            "in_full": False,
+        }
+        for m in digest.get("more_listed") or []
+        if isinstance(m, dict) and m.get("query_id")
+    ]
+    rows.sort(key=trace_order)
+    total = digest.get("query_count")
+    total = total if isinstance(total, int) and not isinstance(total, bool) else len(rows)
+    in_full = sum(1 for row in rows if row["in_full"])
+    return {
+        "has_ledger": bool(digest.get("has_ledger")),
+        "traced_query_count": total,
+        "listed_query_count": len(rows),
+        "full_trace_cap": TRACE_FULL_CAP,
+        "full_trace_count": in_full,
+        "not_in_full_count": len(rows) - in_full,
+        "moved_query_count": sum(1 for row in rows if row["moved"]),
+        "ever_tied_query_count": sum(1 for row in rows if row["tied"]),
+        "open_tie_query_count": sum(1 for row in rows if row["open_tie"]),
+        "overridden_query_count": sum(1 for row in rows if row["overridden"]),
+        "pinned_query_count": sum(1 for row in rows if row["pinned"]),
+        "unlisted_query_count": max(total - len(rows), 0),
+        "listed_queries": rows,
+        "unlisted_rules": [
+            {
+                "rule": str(r.get("rule")),
+                "label": str(r.get("label") or r.get("rule")),
+                "rule_query_count": int(r.get("query_count") or 0),
+            }
+            for r in digest.get("unlisted_rules") or []
+            if isinstance(r, dict)
+        ],
+    }
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -908,4 +1017,6 @@ def compute_report_facts(
         "post_schema_reroute_count": sum(
             1 for r in report.get("post_schema_reroutes") or [] if isinstance(r, dict)
         ),
+        # #339: the per-query decision traces' figures.
+        "query_trace": query_trace_facts(report),
     }

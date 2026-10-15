@@ -39,6 +39,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey-01";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
+import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -225,6 +226,8 @@ const AnalysisResultsPage = memo(() => {
   const [showQueryJourneyModal, setShowQueryJourneyModal] = useState(false);
   const [queryJourneyData, setQueryJourneyData] = useState(null);
   const [queryJourneyLoading, setQueryJourneyLoading] = useState(false);
+  // #339: the journey's "Why this engine" section (graph/queries/{id}/trace)
+  const [queryTrace, setQueryTrace] = useState({ data: null, error: null });
   const [selectedQueryId, setSelectedQueryId] = useState(null);
 
   // Ace editor state
@@ -963,12 +966,23 @@ const AnalysisResultsPage = memo(() => {
     setShowQueryJourneyModal(true);
     setQueryJourneyLoading(true);
     setQueryJourneyData(null);
+    setQueryTrace({ data: null, error: null });
 
     try {
       const apiManager = new ApiManager();
       const result = await apiManager.execute([
-        { id: 'query-journey', path: `assessments/${jobId}/query-journeys/${queryId}`, method: 'GET', params: {} }
+        { id: 'query-journey', path: `assessments/${jobId}/query-journeys/${queryId}`, method: 'GET', params: {} },
+        { id: 'query-trace', path: `assessments/${jobId}/graph/queries/${queryId}/trace`, method: 'GET', params: {} }
       ]);
+
+      // The decision trace is its own request: a failure there leaves the
+      // journey's other tabs as they are and shows the error in its tab only.
+      const trace = result['query-trace'];
+      if (trace?.success) {
+        setQueryTrace({ data: trace, error: null });
+      } else {
+        setQueryTrace({ data: null, error: trace?.error?.message || t('analysis-results-v2.query-trace.empty') });
+      }
 
       if (result['query-journey']?.success) {
         setQueryJourneyData(result['query-journey']);
@@ -983,11 +997,12 @@ const AnalysisResultsPage = memo(() => {
     } finally {
       setQueryJourneyLoading(false);
     }
-  }, [jobId]);
+  }, [jobId, t]);
 
   const handleCloseQueryJourneyModal = useCallback(() => {
     setShowQueryJourneyModal(false);
     setQueryJourneyData(null);
+    setQueryTrace({ data: null, error: null });
     setSelectedQueryId(null);
   }, []);
 
@@ -2964,6 +2979,18 @@ const AnalysisResultsPage = memo(() => {
                           }))
                         : [{ label: 'No characteristics data', value: '—' }]
                     }
+                  />
+                )
+              },
+              {
+                id: 'why-this-engine',
+                label: t('analysis-results-v2.query-trace.tab'),
+                content: (
+                  <QueryDecisionTrace
+                    trace={queryTrace.data}
+                    error={queryTrace.error}
+                    loading={queryJourneyLoading}
+                    t={t}
                   />
                 )
               },

@@ -244,7 +244,11 @@ class TestQueryTrace:
         move = next(m for m in sample["v1"]["moves"] if m["query_id"] == qid)
         trace = query_trace(traced, qid)
         assert trace.runner_up.basis == "group_mean"
-        assert trace.runner_up.final_score == move["evidence"]["group_scores"]["aurora_mysql"]
+        # #818 review: the group mean is rounded like every other score, and a
+        # runner-up with no group mean shows no score from another scale.
+        group_mean = move["evidence"]["group_scores"]["aurora_mysql"]
+        assert trace.runner_up.final_score == round(group_mean, 1) != group_mean
+        assert trace.runner_up.score is None
 
     def test_a_group_no_other_plan_engine_can_own_names_the_group_gate(self, graph_store, sample):
         # Like discourse's groups that only one engine can own: the plan's other
@@ -266,6 +270,9 @@ class TestQueryTrace:
             None,
             "group_mean",
         )
+        # One scale (#818 review): DynamoDB's own score (70) is not a group
+        # mean, so it is not set next to the group's 80.
+        assert (ru.score, ru.final_score) == (None, 80.0)
         assert ru.explanation == (
             "DynamoDB could not take the query: cannot own every query in its co-dependency group."
         )
@@ -352,6 +359,24 @@ def _main_schema_graph(path: str, sample: dict) -> GraphStore:
     populate_from_collector(sample["collector"], store)
     populate_from_assignment(sample["v2"], store)
     return store
+
+
+class TestOneImplementation:
+    def test_the_graph_and_synthesis_build_the_same_trace(self, traced, sample):
+        """#339 part B: the trace API (graph) and report.json's query_traces
+        (synthesis, straight from the assignment lineage) are one builder."""
+        from src.graph.schema import stamp_graph_meta
+        from src.shared.query_trace import query_trace_digest
+
+        stamp_graph_meta(traced, 2)  # as rebuild_graph does
+        versions = {1: sample["v1"], 2: sample["v2"]}
+        digest = query_trace_digest(sample["v2"], versions.get, 2)
+        assert digest.queries
+        for entry in digest.queries:
+            trace = QueryTraceResponse.model_validate(
+                entry.model_dump(by_alias=True, exclude={"source_tables", "query_excerpt"})
+            )
+            assert query_trace(traced, entry.query_id) == trace
 
 
 class TestGraphSavedBeforeThisChange:

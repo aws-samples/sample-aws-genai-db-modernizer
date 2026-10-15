@@ -12585,6 +12585,211 @@
                     "type": "number"
                   }
                 },
+                "query_trace": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "ever_tied_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "full_trace_cap": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "full_trace_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "has_ledger": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "boolean"
+                            }
+                          },
+                          "listed_queries": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "in_full": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "moved": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "open_tie": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "overridden": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "pinned": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "query_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "tied": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "listed_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "moved_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "not_in_full_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "open_tie_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "overridden_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "pinned_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "traced_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "unlisted_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "unlisted_rules": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "label": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "rule": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "rule_query_count": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "reality_check_decisions": {
                   "required": false,
                   "schema": {
@@ -13594,6 +13799,1269 @@
           "kind": "array"
         }
       },
+      "query_traces": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "effective_version": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "integer"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "has_ledger": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "boolean"
+                  }
+                },
+                "more_listed": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "moved": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
+                        "open_tie": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
+                        "overridden": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
+                        "pinned": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "tied": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "queries": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "effective_version": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "final_engine": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "final_engine_name": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "final_group_mean": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        },
+                        "final_score": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        },
+                        "final_version": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "first_assignment": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "object",
+                                "properties": {
+                                  "actor": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "customer",
+                                        "model_flag",
+                                        "rule"
+                                      ]
+                                    }
+                                  },
+                                  "candidates": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "engine": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "engine_name": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "gate": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "gate_text": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "score": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "number"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "explanation": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "from_engine": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "from_engine_name": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "group_key": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "pass": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "aurora_fallback",
+                                        "cache_owner_normalize",
+                                        "candidates",
+                                        "co_dependency",
+                                        "customer_group_propagation",
+                                        "customer_pick",
+                                        "floor",
+                                        "heterogeneous_choice",
+                                        "model_flag",
+                                        "place",
+                                        "post_schema_flag",
+                                        "resettle",
+                                        "score",
+                                        "settle",
+                                        "signal_override",
+                                        "sweep",
+                                        "tie",
+                                        "utility_pin"
+                                      ]
+                                    }
+                                  },
+                                  "reason_code": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "cache.legacy_owner",
+                                        "consolidate.no_unique_value",
+                                        "consolidate.source_compatible_survives",
+                                        "customer.pick",
+                                        "fallback.no_owner",
+                                        "fallback.no_score",
+                                        "flag.capability_gap",
+                                        "floor.cost_share",
+                                        "floor.opensearch",
+                                        "group.customer_propagation",
+                                        "group.mean",
+                                        "highest_score",
+                                        "override.text_search",
+                                        "override.utility",
+                                        "rollback.redesign_failed",
+                                        "sweep.orphan",
+                                        "tie.cleared",
+                                        "tie.placeholder.hash",
+                                        "tie.placeholder.settled_workload",
+                                        "tie.source_compatible",
+                                        "tie.stability"
+                                      ]
+                                    }
+                                  },
+                                  "rule": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "runner_up": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "object",
+                                          "properties": {
+                                            "engine": {
+                                              "required": true,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "engine_name": {
+                                              "required": true,
+                                              "schema": {
+                                                "kind": "scalar",
+                                                "type": "string"
+                                              }
+                                            },
+                                            "score": {
+                                              "required": false,
+                                              "schema": {
+                                                "kind": "anyOf",
+                                                "members": [
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "null"
+                                                  },
+                                                  {
+                                                    "kind": "scalar",
+                                                    "type": "number"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "score_after": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "score_before": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "seq": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "step": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 1,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "tied_engine_names": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "tied_engines": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "to_engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "to_engine_name": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "version": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "has_ledger": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
+                        "moves": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "actor": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "customer",
+                                      "model_flag",
+                                      "rule"
+                                    ]
+                                  }
+                                },
+                                "candidates": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "engine": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "engine_name": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "gate": {
+                                          "required": false,
+                                          "schema": {
+                                            "kind": "anyOf",
+                                            "members": [
+                                              {
+                                                "kind": "scalar",
+                                                "type": "null"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "gate_text": {
+                                          "required": false,
+                                          "schema": {
+                                            "kind": "anyOf",
+                                            "members": [
+                                              {
+                                                "kind": "scalar",
+                                                "type": "null"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "string"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "score": {
+                                          "required": false,
+                                          "schema": {
+                                            "kind": "anyOf",
+                                            "members": [
+                                              {
+                                                "kind": "scalar",
+                                                "type": "null"
+                                              },
+                                              {
+                                                "kind": "scalar",
+                                                "type": "number"
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "explanation": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "from_engine": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "from_engine_name": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "group_key": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "pass": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "aurora_fallback",
+                                      "cache_owner_normalize",
+                                      "candidates",
+                                      "co_dependency",
+                                      "customer_group_propagation",
+                                      "customer_pick",
+                                      "floor",
+                                      "heterogeneous_choice",
+                                      "model_flag",
+                                      "place",
+                                      "post_schema_flag",
+                                      "resettle",
+                                      "score",
+                                      "settle",
+                                      "signal_override",
+                                      "sweep",
+                                      "tie",
+                                      "utility_pin"
+                                    ]
+                                  }
+                                },
+                                "reason_code": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "cache.legacy_owner",
+                                      "consolidate.no_unique_value",
+                                      "consolidate.source_compatible_survives",
+                                      "customer.pick",
+                                      "fallback.no_owner",
+                                      "fallback.no_score",
+                                      "flag.capability_gap",
+                                      "floor.cost_share",
+                                      "floor.opensearch",
+                                      "group.customer_propagation",
+                                      "group.mean",
+                                      "highest_score",
+                                      "override.text_search",
+                                      "override.utility",
+                                      "rollback.redesign_failed",
+                                      "sweep.orphan",
+                                      "tie.cleared",
+                                      "tie.placeholder.hash",
+                                      "tie.placeholder.settled_workload",
+                                      "tie.source_compatible",
+                                      "tie.stability"
+                                    ]
+                                  }
+                                },
+                                "rule": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "runner_up": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "object",
+                                        "properties": {
+                                          "engine": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "engine_name": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "score": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "anyOf",
+                                              "members": [
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "null"
+                                                },
+                                                {
+                                                  "kind": "scalar",
+                                                  "type": "number"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "score_after": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "number"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "score_before": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "number"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "seq": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "integer"
+                                  }
+                                },
+                                "step": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  }
+                                },
+                                "tied_engine_names": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "tied_engines": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "to_engine": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "to_engine_name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "version": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "outscored_by": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "basis": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "group_mean",
+                                      "query"
+                                    ]
+                                  }
+                                },
+                                "decided_by_rule": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "cache.legacy_owner",
+                                      "consolidate.no_unique_value",
+                                      "consolidate.source_compatible_survives",
+                                      "customer.pick",
+                                      "fallback.no_owner",
+                                      "fallback.no_score",
+                                      "flag.capability_gap",
+                                      "floor.cost_share",
+                                      "floor.opensearch",
+                                      "group.customer_propagation",
+                                      "group.mean",
+                                      "highest_score",
+                                      "override.text_search",
+                                      "override.utility",
+                                      "rollback.redesign_failed",
+                                      "sweep.orphan",
+                                      "tie.cleared",
+                                      "tie.placeholder.hash",
+                                      "tie.placeholder.settled_workload",
+                                      "tie.source_compatible",
+                                      "tie.stability"
+                                    ]
+                                  }
+                                },
+                                "decided_by_seq": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "integer"
+                                  }
+                                },
+                                "decided_by_step": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minimum": 1,
+                                    "type": "integer"
+                                  }
+                                },
+                                "decided_by_version": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "integer"
+                                  }
+                                },
+                                "engine": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "engine_name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "explanation": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "final_score": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "number"
+                                  }
+                                },
+                                "in_plan": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "boolean"
+                                  }
+                                },
+                                "left_it": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "boolean"
+                                  }
+                                },
+                                "score": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "number"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "query_excerpt": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "runner_up": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "object",
+                                "properties": {
+                                  "basis": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "group_mean",
+                                        "query"
+                                      ]
+                                    }
+                                  },
+                                  "engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "engine_name": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "explanation": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "final_score": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "gap": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "gate": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "score": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "source_tables": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "summary": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "tied_engine_names": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "tied_engines": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "query_count": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "unlisted_rules": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "label": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "query_count": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "rule": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "cache.legacy_owner",
+                              "consolidate.no_unique_value",
+                              "consolidate.source_compatible_survives",
+                              "customer.pick",
+                              "fallback.no_owner",
+                              "fallback.no_score",
+                              "flag.capability_gap",
+                              "floor.cost_share",
+                              "floor.opensearch",
+                              "group.customer_propagation",
+                              "group.mean",
+                              "highest_score",
+                              "override.text_search",
+                              "override.utility",
+                              "rollback.redesign_failed",
+                              "sweep.orphan",
+                              "tie.cleared",
+                              "tie.placeholder.hash",
+                              "tie.placeholder.settled_workload",
+                              "tie.source_compatible",
+                              "tie.stability"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "ranking": {
         "required": true,
         "schema": {
@@ -14514,8 +15982,8 @@
         }
       }
     },
-    "schema_hash": "cd3fd5d84d3a0f7237b3688c428957684ef2939c3329ca68ac844f64ac28a18d",
-    "version": "1.18"
+    "schema_hash": "6759d56ad6ef612c9e8794d959aad7789aad5e1692c4bcb409e4cba21590dc7e",
+    "version": "1.19"
   },
   "triage_output.TriageOutputContract": {
     "fields": {
