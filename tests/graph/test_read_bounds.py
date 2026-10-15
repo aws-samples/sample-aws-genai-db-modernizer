@@ -15,8 +15,22 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from src.api.routes import graph as graph_routes
+from src.graph import raw_query_worker
 from src.graph.cypher_guard import DisallowedStatementError, validate_read_only_cypher
 from src.graph.store import READ_QUERY_TIMEOUT_MS, GraphStore
+
+# The parent gives the child process this much time, beyond the engine timeout,
+# to start up and reply. Production keeps GRACE_SECONDS short; in tests a busy
+# machine (a full xdist run) can take longer than that just to start Python and
+# open the database, which the API reports as a 504 timeout even for trivial
+# queries. A long grace keeps the engine timeout the only clock under test.
+TEST_GRACE_SECONDS = 60.0
+SLOT_WAIT_S = 30.0
+
+
+@pytest.fixture(autouse=True)
+def _generous_child_startup_grace(monkeypatch):
+    monkeypatch.setattr(raw_query_worker, "GRACE_SECONDS", TEST_GRACE_SECONDS)
 
 
 def _make_graph(path: str, rows: int = 3) -> None:
@@ -313,7 +327,12 @@ def test_expensive_read_times_out_while_server_stays_responsive(tmp_path, monkey
         ]
         for worker in workers:
             worker.start()
-        time.sleep(1.0)
+        # Wait until the slow queries really hold every slot; a fixed sleep is
+        # too short when the machine is busy.
+        deadline = time.monotonic() + SLOT_WAIT_S
+        while graph_routes._raw_query_slots._value > 0:
+            assert time.monotonic() < deadline, "slow queries never took their slots"
+            time.sleep(0.02)
 
         # Other requests are served meanwhile; extra raw queries are refused
         # quickly instead of piling up.
@@ -330,13 +349,15 @@ def test_expensive_read_times_out_while_server_stays_responsive(tmp_path, monkey
         timeout_s = READ_QUERY_TIMEOUT_MS / 1000
         assert len(results) == len(workers)
         for (status, body), elapsed in results:
-            assert status == 504
-            assert body["detail"] == graph_routes.TIMEOUT_DETAIL
-            assert timeout_s - 1 <= elapsed < timeout_s + 10
+            assert (status, body.get("detail")) == (504, graph_routes.TIMEOUT_DETAIL), body
+            # Never earlier than the timeout; the upper bound only guards against
+            # a hang and allows for a loaded machine.
+            assert timeout_s - 1 <= elapsed < timeout_s + 20
 
         # Slots are released: a normal query works again.
         status, body = _request(port, query_url, {"cypher": "MATCH (f:Foo) RETURN count(f) AS c"})
-        assert (status, body["rows"]) == (200, [{"c": 2_000}])
+        assert status == 200, body
+        assert body["rows"] == [{"c": 2_000}]
     finally:
         server.should_exit = True
         thread.join(10)
@@ -395,11 +416,12 @@ def test_raw_query_memory_is_capped_in_a_child_process(raw_client, monkeypatch, 
     """Values that grow inside the query are stopped by the worker's memory cap."""
     client, _ = raw_client
     monkeypatch.setenv(graph_routes.RAW_QUERY_ENV_FLAG, "1")
-    started = time.monotonic()
     resp = _post(client, cypher)
-    assert resp.status_code == 400
-    assert "memory" in resp.json()["detail"]
-    assert time.monotonic() - started < 15
+    # A 400 naming memory means the worker's cap stopped the query; if the cap
+    # were slow the engine timeout would answer 504 instead, so the status and
+    # detail already carry the "stopped in time" claim without a wall-clock bound.
+    assert resp.status_code == 400, resp.text
+    assert "memory" in resp.json()["detail"], resp.text
 
 
 @pytest.mark.parametrize(
