@@ -418,3 +418,169 @@ class TestAdminCommandFamilies:
     )
     def test_admin_word_outside_the_leading_verb_is_not_utility(self, sql):
         assert is_utility_statement(sql, ["public.orders"]) is False
+
+
+def _collected(
+    sql: str,
+    source_engine: str = "postgresql",
+    known: frozenset[str] = frozenset({"badges", "posts"}),
+) -> tuple[str, list[str]]:
+    """One query through the offline collector, as the pipeline reads it."""
+    from src.tools.database.offline_parser import _transform_queries
+
+    q = _transform_queries(
+        [{"query_text": sql}],
+        "discourse",
+        set(known),
+        {t: {"public"} for t in known},
+        source_engine=source_engine,
+    )[0]
+    return q["query_text"], q["tables_accessed"]
+
+
+class TestSequenceReads:
+    """A read of a PostgreSQL sequence's own state, or a sequence function called
+    on its own, is sequence housekeeping, not an application read or write (#783).
+
+    A sequence is a one-row relation (``last_value``, ``log_cnt``,
+    ``is_called``), and it is not a schema table: the offline collector reports
+    a sequence-state read of a relation the schema does not hold as ``unknown``,
+    and the narrow detector rule then applies only when there is no real source
+    table. So a real table that happens to be called ``invoice_seq`` stays an
+    application table, and so does any read on a non-PostgreSQL source.
+    """
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT last_value\nFROM public.badges_id_seq",
+            "SELECT last_value FROM public.web_hook_event_types_id_seq",
+            "SELECT last_value FROM badges_id_seq;",
+            'SELECT "last_value" FROM "public"."badges_id_seq"',
+            "SELECT last_value, is_called FROM public.badges_id_seq",
+            "select last_value, log_cnt, is_called from badges_id_seq",
+            "/* seed check */ SELECT last_value FROM public.badges_id_seq",
+            # The reviewer's harmless misses (#797 review).
+            "SELECT last_value FROM public.badges_id_seq -- seed check",
+            "SELECT last_value FROM public.badges_id_seq /* seed */",
+            "SELECT last_value FROM public.badges_id_seq LIMIT 1",
+            "SELECT s.last_value FROM public.badges_id_seq s",
+            "SELECT s.last_value FROM public.badges_id_seq AS s",
+            "SELECT last_value AS v FROM public.badges_id_seq",
+            "SELECT last_value FROM discourse.public.badges_id_seq",
+            # Standalone sequence calls (#654), regressions.
+            "SELECT nextval('posts_id_seq')",
+            "SELECT nextval('posts_id_seq'::regclass) AS id",
+            "SELECT currval('posts_id_seq')",
+            "SELECT setval($1, $2, $3)",
+            "SELECT setval('posts_id_seq', $1, true)",
+            "SELECT lastval()",
+        ],
+    )
+    def test_sequence_read_is_utility(self, sql):
+        text, tables = _collected(sql)
+        assert is_utility_statement(text, tables) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT last_value FROM public.badges_id_seq",
+            "SELECT last_value FROM badges_id_seq LIMIT 1 -- note",
+        ],
+    )
+    def test_the_collector_reports_a_sequence_as_no_table(self, sql):
+        """The collector output change: the sequence is not a schema table."""
+        _text, tables = _collected(sql)
+        assert tables == ["unknown"]
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT last_value FROM invoice_seq",
+            "SELECT last_value FROM public.invoice_seq",
+            "SELECT last_value FROM app.order_seq",
+            "SELECT last_value, is_called FROM order_seq LIMIT 1",
+            # PostgreSQL folds an unquoted name to lower case (#797 review).
+            "SELECT last_value FROM INVOICE_SEQ",
+            "SELECT last_value FROM Public.Invoice_Seq",
+            "SELECT last_value FROM APP.ORDER_SEQ",
+        ],
+    )
+    def test_a_schema_table_named_like_a_sequence_is_application_access(self, sql):
+        """#797 review: a real table called ``invoice_seq`` is a table, not a sequence."""
+        from src.tools.database.offline_parser import _transform_queries
+
+        q = _transform_queries(
+            [{"query_text": sql}],
+            "app",
+            {"invoice_seq", "order_seq"},
+            {"invoice_seq": {"public"}, "order_seq": {"app"}},
+            source_engine="postgresql",
+        )[0]
+        assert q["tables_accessed"] != ["unknown"]
+        assert is_utility_statement(q["query_text"], q["tables_accessed"]) is False
+
+    def test_a_quoted_name_matches_the_schema_case_sensitively(self):
+        """A quoted identifier keeps its case, so ``"INVOICE_SEQ"`` is not the
+        schema's ``invoice_seq``: it is a relation the schema does not hold."""
+        text, tables = _collected(
+            'SELECT last_value FROM "INVOICE_SEQ"', known=frozenset({"invoice_seq"})
+        )
+        assert tables == ["unknown"]
+        text, tables = _collected(
+            'SELECT last_value FROM "Invoice_Seq"', known=frozenset({"Invoice_Seq"})
+        )
+        assert tables == ["discourse.Invoice_Seq"]
+        assert is_utility_statement(text, tables) is False
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "UPDATE invoice_seq SET last_value = last_value + 1 WHERE id = $1",
+            "INSERT INTO invoice_seq (id, last_value) VALUES ($1, $2)",
+        ],
+    )
+    def test_writes_to_a_schema_table_named_like_a_sequence_stay_application_access(self, sql):
+        text, tables = _collected(sql, known=frozenset({"invoice_seq"}))
+        assert tables == ["discourse.invoice_seq"]
+        assert is_utility_statement(text, tables) is False
+
+    @pytest.mark.parametrize("source_engine", ["mysql", "sqlserver", "oracle"])
+    def test_a_non_postgresql_source_has_no_sequence_relations(self, source_engine):
+        """MySQL has no sequences; SQL Server and Oracle read them with NEXT VALUE
+        FOR / seq.NEXTVAL. ``SELECT last_value FROM x_seq`` there is a table read."""
+        text, tables = _collected(
+            "SELECT last_value FROM invoice_seq", source_engine=source_engine, known=frozenset()
+        )
+        assert tables == ["invoice_seq"]
+        assert is_utility_statement(text, tables) is False
+
+    def test_without_the_collector_a_named_relation_is_not_assumed_a_sequence(self):
+        """The detector alone cannot tell a sequence from a table it never saw."""
+        assert is_utility_statement("SELECT last_value FROM invoice_seq", ["invoice_seq"]) is False
+        assert (
+            is_utility_statement("SELECT last_value FROM app.order_seq", ["app.order_seq"]) is False
+        )
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # A sequence value used in an application write is the write.
+            "INSERT INTO posts (id, title) VALUES (nextval('posts_id_seq'), $1)",
+            "INSERT INTO posts (id, title) VALUES (posts_seq.NEXTVAL, :1)",
+            # A real table with a column called last_value.
+            "SELECT last_value FROM badges WHERE id = $1",
+            "SELECT last_value FROM badges",
+            # A sequence-named relation read with anything but its state columns.
+            "SELECT id, name FROM badges_id_seq",
+            "SELECT max(last_value) FROM badges_id_seq",
+            # A filtered or joined read is not a plain sequence-state read.
+            "SELECT last_value FROM public.badges_id_seq WHERE is_called",
+            "SELECT s.last_value FROM badges_id_seq s JOIN badges b ON b.id = s.last_value",
+            "SELECT last_value FROM badges_id_seq, badges",
+            "SELECT last_value FROM badges_id_seq LIMIT 5",
+        ],
+    )
+    def test_application_access_is_not_utility(self, sql):
+        text, tables = _collected(sql)
+        assert is_utility_statement(text, tables) is False

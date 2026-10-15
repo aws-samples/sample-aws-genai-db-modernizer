@@ -418,6 +418,43 @@ def _facade_table_ids(
     return ids, refs
 
 
+_POSTGRES_ENGINES = frozenset({"postgresql", "postgres"})
+
+
+def _is_unlisted_sequence_read(
+    query_text: str, source_engine: str, refs: TableReferences, known_table_names: set[str]
+) -> bool:
+    """Whether a PostgreSQL query reads a sequence's own state, not a schema table (#783).
+
+    ``SELECT last_value FROM public.badges_id_seq`` names the sequence as if it
+    were a table, but a sequence is not a schema table: when the relation it
+    reads is not one the collection holds, the query has no source table, so
+    its ``tables_accessed`` is ``["unknown"]`` and
+    :func:`src.agents.referee.utility_statements.is_utility_statement` counts it
+    as utility. A real table that happens to be named ``invoice_seq`` is in the
+    schema, so it stays a table, however an unquoted reference spells its case. Only a PostgreSQL source has sequence
+    relations; MySQL has none, and SQL Server and Oracle read sequences with
+    ``NEXT VALUE FOR`` / ``seq.NEXTVAL`` instead.
+    """
+    from src.agents.referee.utility_statements import is_sequence_state_read
+
+    if source_engine.lower() not in _POSTGRES_ENGINES or not refs.tables:
+        return False
+    if not is_sequence_state_read(query_text):
+        return False
+    folded = {name.lower() for name in known_table_names}
+
+    def in_schema(name: str) -> bool:
+        # PostgreSQL folds an unquoted name to lower case, so ``INVOICE_SEQ`` is
+        # the schema's ``invoice_seq``; a quoted ``"INVOICE_SEQ"`` keeps its case.
+        # The facade does not say which it read, so the query text does.
+        if f'"{name}"' in query_text:
+            return name in known_table_names
+        return name.lower() in folded
+
+    return not any(in_schema(ref.name) for ref in refs.tables)
+
+
 def _shadow_table_refs(
     shadow: TableShadow,
     query_id: str,
@@ -473,6 +510,9 @@ def _transform_queries(
     ``source_engine`` dialect (see ``_facade_table_ids``, #553). ``shadow``,
     when given, also gets the regex scan's table ids for every query (see
     ``_shadow_table_refs``); the facade's answer is the one returned either way.
+    A PostgreSQL sequence-state read of a relation the schema does not hold
+    (``SELECT last_value FROM public.badges_id_seq``) has no source table, so
+    its ``tables_accessed`` is ``["unknown"]`` (``_is_unlisted_sequence_read``, #783).
     """
     import hashlib
     import re
@@ -519,6 +559,11 @@ def _transform_queries(
                 known_table_names,
                 table_schemas or {},
             )
+
+        # After the cross-check, which compares the facade's own reading with the
+        # regex scan: a sequence is not a table either of them should know about.
+        if _is_unlisted_sequence_read(query_text, source_engine, refs, known_table_names):
+            tables_accessed = ["unknown"]
 
         patterns.append(
             {

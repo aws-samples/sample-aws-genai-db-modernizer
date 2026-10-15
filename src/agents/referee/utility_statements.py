@@ -28,7 +28,12 @@ even name a source table for them (``tables_accessed`` comes back
 ``["unknown"]``, :data:`src.agents.referee.table_resolution.PSEUDO_TABLES`).
 A catalog function or ``::reg*`` cast only counts as utility when there is no
 real source table, since a legitimate application query could in principle
-call one of these alongside a real ``FROM``. A query whose ``tables_accessed``
+call one of these alongside a real ``FROM``: ``INSERT INTO posts (id, ...)
+VALUES (nextval('posts_id_seq'), ...)`` is the application write. A read of a
+PostgreSQL sequence's own state, ``SELECT last_value FROM
+public.badges_id_seq``, is housekeeping too (#783): a sequence is not a schema
+table, so the offline collector reports it as ``unknown``, and a real table
+named ``invoice_seq`` stays an application table. A query whose ``tables_accessed``
 are *all* system catalog tables (``pg_class``, ``pg_type``, ``pg_proc``,
 ``pg_matviews``, ...) is a utility statement even without the
 ``pg_catalog.`` prefix or a catalog function call -- these are introspection
@@ -127,6 +132,31 @@ _DOT_NEXTVAL_RE = re.compile(
 _SEQUENCE_CONTEXT_RE = re.compile(r"\bfrom\s+[\"`]?dual\b|\bvalues\b", re.IGNORECASE)
 _FROM_RE = re.compile(r"\bfrom\b", re.IGNORECASE)
 
+# PostgreSQL's own read of a sequence's state (#783): a sequence is a one-row
+# relation whose only columns are ``last_value``, ``log_cnt`` and ``is_called``,
+# and a serial column's sequence is named ``<table>_<column>_seq``, e.g.
+# ``SELECT last_value FROM public.badges_id_seq`` (discourse). Only that shape
+# counts -- state columns only (optionally alias-qualified or renamed with AS),
+# one ``*_seq`` relation (up to ``db.schema.name``, optionally aliased), at most
+# ``LIMIT 1``, no WHERE or JOIN. The text alone cannot tell a sequence from a
+# table called ``invoice_seq``, so :func:`is_utility_statement` applies it only
+# when ``tables_accessed`` names no real table; the offline collector, which
+# knows the schema, reports a sequence-state read of a relation the schema does
+# not hold as ``unknown`` (:func:`is_sequence_state_read`).
+_IDENT = r'"?[A-Za-z_][\w$]*"?'
+_SEQUENCE_STATE_COLUMN = (
+    rf'(?:{_IDENT}\s*\.\s*)?"?(?:last_value|log_cnt|is_called)"?(?:\s+AS\s+{_IDENT})?'
+)
+_SEQUENCE_STATE_READ_RE = re.compile(
+    rf"^\s*SELECT\s+{_SEQUENCE_STATE_COLUMN}(?:\s*,\s*{_SEQUENCE_STATE_COLUMN})*"
+    rf'\s+FROM\s+(?:{_IDENT}\s*\.\s*){{0,2}}"?[A-Za-z_][\w$]*_seq"?'
+    rf"(?:\s+(?:AS\s+)?(?!LIMIT\b){_IDENT})?"
+    r"(?:\s+LIMIT\s+1)?\s*;?\s*$",
+    re.IGNORECASE,
+)
+# One or more trailing ``-- line`` / ``/* block */`` comments.
+_TRAILING_COMMENT_RE = re.compile(r"(?:\s*(?:--[^\n]*|/\*.*?\*/))+\s*$", re.DOTALL)
+
 # PostgreSQL's sequence functions, called by name (not schema-qualified UDFs).
 _SEQUENCE_FUNCTION_RE = re.compile(
     r"(?<![\w.])(nextval|currval|setval|lastval)\s*\(", re.IGNORECASE
@@ -183,6 +213,20 @@ def _strip_leading_comments(text: str) -> str:
     return _LEADING_COMMENT_RE.sub("", text)
 
 
+def is_sequence_state_read(query_text: str | None) -> bool:
+    """Whether ``query_text`` has the shape of a PostgreSQL sequence-state read (#783).
+
+    ``SELECT last_value [, log_cnt, is_called] FROM [db.][schema.]<name>_seq``
+    (comments and string literals ignored, an alias and ``LIMIT 1`` allowed).
+    A shape only: whether the relation is a sequence or a table that happens to
+    be named like one depends on the schema, which the caller supplies -- the
+    offline collector reports the relation as ``unknown`` when the schema does
+    not hold it, and :func:`is_utility_statement` then counts it as utility.
+    """
+    text = _blank_string_literals(_strip_leading_comments(query_text or ""))
+    return bool(_SEQUENCE_STATE_READ_RE.search(_TRAILING_COMMENT_RE.sub("", text)))
+
+
 def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
     """True when every table ``tables_accessed`` names is a pseudo table (or there are none)."""
     # Case-insensitive: the offline parser keeps the statement's own case, so
@@ -215,7 +259,9 @@ def is_utility_statement(
     verb, for a query whose ``tables_accessed`` are all system catalog tables,
     and for a catalog function call, ``::reg*`` cast or sequence fetch
     (``NEXT VALUE FOR seq``, ``seq.NEXTVAL``, #654) when ``tables_accessed``
-    names no real application table.
+    or a read of a PostgreSQL sequence's own state
+    (``SELECT last_value FROM public.badges_id_seq``, :func:`is_sequence_state_read`,
+    #783) when ``tables_accessed`` names no real application table.
     """
     text = _strip_leading_comments(query_text or "")
     if (
@@ -231,6 +277,7 @@ def is_utility_statement(
         _CATALOG_FUNCTION_RE.search(unquoted)
         or _CATALOG_CAST_RE.search(text)
         or has_sequence_reference(unquoted)
+        or is_sequence_state_read(text)
     ):
         return _has_no_real_source_table(tables_accessed)
     return False
