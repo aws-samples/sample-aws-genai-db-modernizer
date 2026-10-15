@@ -56,6 +56,7 @@ from collections.abc import Iterable
 
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, is_engine_system_object
 from src.shared.sql_comments import (
+    block_comments_nest,
     strip_comments,
     strip_leading_comments,
     strip_trailing_comments,
@@ -227,7 +228,7 @@ _CATALOG_CAST_RE = re.compile(
 )
 
 
-def _statement_heads(query_text: str | None) -> tuple[str, ...]:
+def _statement_heads(query_text: str | None, nested: bool = False) -> tuple[str, ...]:
     """How the statement starts, once its leading comments are stripped.
 
     Usually one reading. A statement that is nothing but a MySQL executable
@@ -238,14 +239,16 @@ def _statement_heads(query_text: str | None) -> tuple[str, ...]:
     (``/*! end-user search */ SELECT ...``) it is a plain comment and the
     statement is that code (#829 review: otherwise an application query would
     take the utility pin and skip aurora-anti-05's per-query check).
+
+    ``nested`` reads block comments the PostgreSQL/SQL Server way (#825).
     """
     raw = query_text or ""
-    plain = strip_leading_comments(raw, hash_comments=True)
-    head = strip_leading_comments(raw, hash_comments=True, mysql_executable=True)
+    plain = strip_leading_comments(raw, hash_comments=True, nested=nested)
+    head = strip_leading_comments(raw, hash_comments=True, mysql_executable=True, nested=nested)
     body = unwrap_executable_comment(head)
     if body == head:
         return (plain,)
-    return (strip_leading_comments(body, hash_comments=True), plain)
+    return (strip_leading_comments(body, hash_comments=True, nested=nested), plain)
 
 
 def _is_update_statistics(head: str) -> bool:
@@ -331,9 +334,12 @@ def is_utility_statement(
 
     ``source`` (the collected database's name and engine, #835) keeps a database
     named ``sys`` or ``mysql`` from reading as that system schema in
-    ``tables_accessed``.
+    ``tables_accessed``. Its engine also decides how the leading comments are read
+    (#825): PostgreSQL and SQL Server nest block comments
+    (``/* a /* b */ c */ SHOW TABLES`` is utility), MySQL and Oracle end one at its
+    first ``*/``, and with no source the first ``*/`` ends it.
     """
-    heads = _statement_heads(query_text)
+    heads = _statement_heads(query_text, block_comments_nest(source.engine if source else None))
     if _APPLICATION_ACCESS_RE.match(heads[0]):
         return False
     if any(_UTILITY_VERB_RE.search(head) or _is_update_statistics(head) for head in heads):

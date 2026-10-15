@@ -1186,3 +1186,52 @@ class TestOwnerDecisionNeverTiesAGatedEngine:
         )
         assert (decision.owner, decision.tied_engines) == ("aurora_mysql", [])
         assert decision.fallback_rule == ReasonCode.FALLBACK_NO_SCORE
+
+
+class TestWriteDetectionWithNestedComments:
+    """#825: ``is_write_query`` and its UI copy cannot know the source dialect (the
+    ownership gate ``can_own`` sees only the query), so they read the leading
+    comments both ways -- nested (PostgreSQL, SQL Server) and ending at the first
+    ``*/`` (MySQL, Oracle) -- and a write under either reading is a write."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "/* a /* b */ c */ TRUNCATE t",
+            "/* a /* b */ c */ COPY t FROM STDIN",
+            "/* a /* b */ c */ CALL proc()",
+            "/* x */ /* a /* b */ c */ -- d\nCALL proc()",
+        ],
+    )
+    def test_a_nested_leading_comment_does_not_hide_the_verb(self, text):
+        query = _q("w", text, "OTHER")
+        assert is_write_query(query)
+        assert not can_own("opensearch", query)
+
+    def test_a_nested_comment_holding_dml_text_in_a_read_is_still_a_read_when_closed_both_ways(
+        self,
+    ):
+        query = _q("r", "/* insert into x */ WITH w AS (SELECT 1) SELECT * FROM w", "OTHER")
+        assert not is_write_query(query)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "/* delete from /* x */ SELECT 1",
+            "/* insert into t /* x */ SELECT * FROM t",
+        ],
+    )
+    def test_an_unterminated_nested_comment_stays_a_read(self, text):
+        """The nested reading is ignored when it strips less than the first-close one."""
+        query = _q("r", text, "OTHER")
+        assert not is_write_query(query)
+        assert can_own("opensearch", query)
+
+    @pytest.mark.slow
+    def test_a_long_run_of_openers_stays_linear(self):
+        from tests.unit.tools.sql._timing import assert_linear
+
+        assert_linear(
+            lambda n: "/*" * (n // 2) + " CALL p()",
+            lambda text: is_write_query(_q("w", text, "OTHER")),
+        )

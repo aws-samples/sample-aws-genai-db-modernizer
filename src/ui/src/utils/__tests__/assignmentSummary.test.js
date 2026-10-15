@@ -267,11 +267,21 @@ describe('engineOptionsForQuery', () => {
     'TRUNCATE TABLE sessions',
     "COPY t FROM 'file.csv'",
     '-- a leading comment\nINSERT INTO t VALUES (?)',
+    // A nested leading comment (PostgreSQL, SQL Server) does not hide the verb (#825).
+    '/* a /* b */ c */ TRUNCATE TABLE sessions',
+    '/* a /* b */ c */ CALL some_procedure(?)',
   ])('drops OpenSearch for OTHER-typed DML: %s', (queryText) => {
     expect(engineOptionsForQuery(OPTIONS, 'OTHER', queryText)).toEqual([
       { label: 'DynamoDB', value: 'dynamodb' },
       { label: 'Aurora PostgreSQL', value: 'aurora_postgresql' },
     ]);
+  });
+
+  test.each([
+    '/* delete from /* x */ SELECT 1',
+    '/* insert into t /* x */ SELECT * FROM t',
+  ])('an unterminated nested comment stays a read: %s', (queryText) => {
+    expect(engineOptionsForQuery(OPTIONS, 'OTHER', queryText)).toEqual(OPTIONS);
   });
 
   test('returns every option unchanged for an OTHER-typed read CTE', () => {

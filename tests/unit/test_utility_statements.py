@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_sequence_state_read, is_utility_statement
 
 
@@ -748,3 +749,59 @@ class TestCommentStrippingIsLinear:
             _strip_leading_comments(text)
 
         assert_fast(run, 1.0)
+
+
+class TestNestedCommentsFollowTheSourceDialect:
+    """#825: PostgreSQL and SQL Server nest block comments, MySQL and Oracle end one
+    at its first ``*/``, so the leading-comment strip before the verb match needs
+    the source engine."""
+
+    NESTED = "/* a /* b */ c */ SHOW TABLES"
+
+    @pytest.mark.parametrize("engine", ["postgresql", "sqlserver", "PostgreSQL"])
+    def test_a_nested_comment_is_skipped(self, engine):
+        assert is_utility_statement(self.NESTED, source=SourceScope(engine=engine)) is True
+
+    @pytest.mark.parametrize("engine", ["mysql", "mariadb", "oracle", "db2"])
+    def test_the_first_close_ends_it(self, engine):
+        assert is_utility_statement(self.NESTED, source=SourceScope(engine=engine)) is False
+
+    def test_without_an_engine_the_first_close_ends_it(self):
+        assert is_utility_statement(self.NESTED) is False
+
+    def test_an_ordinary_statement_after_a_nested_comment_is_not_utility(self):
+        sql = "/* a /* b */ c */ SELECT * FROM orders"
+        assert is_utility_statement(sql, ["orders"], SourceScope(engine="postgresql")) is False
+
+    def test_the_mysql_executable_comment_forms_are_unchanged(self):
+        assert (
+            is_utility_statement("/*!40101 SET NAMES utf8 */;", source=SourceScope(engine="mysql"))
+            is True
+        )
+
+    def test_capability_gate_and_query_shape_take_the_engine_too(self):
+        from src.agents.referee.capability_registry import detect_required_capabilities
+        from src.agents.referee.query_shape import RELATIONAL, single_table_access_shape
+
+        assert "sql_admin" in detect_required_capabilities(
+            self.NESTED, [], None, SourceScope(engine="postgresql")
+        )
+        assert "sql_admin" not in detect_required_capabilities(
+            self.NESTED, [], None, SourceScope(engine="mysql")
+        )
+        query = {"query_type": "OTHER", "query_text": self.NESTED, "tables_accessed": ["t"]}
+        assert (
+            single_table_access_shape(query, source=SourceScope(engine="postgresql")) == RELATIONAL
+        )
+
+    @pytest.mark.slow
+    @pytest.mark.parametrize("engine", ["postgresql", "mysql"])
+    def test_a_long_run_of_openers_stays_linear(self, engine):
+        from tests.unit.tools.sql._timing import assert_linear
+
+        def make(n: int) -> str:
+            return "/*" * (n // 2) + " SHOW TABLES"
+
+        assert_linear(
+            make, lambda text: is_utility_statement(text, source=SourceScope(engine=engine))
+        )

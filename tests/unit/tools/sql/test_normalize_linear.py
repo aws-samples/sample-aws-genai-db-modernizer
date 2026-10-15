@@ -86,3 +86,13 @@ def test_sample_queries_get_the_same_answer(sample, dialect):
         assert _trailing_word(stripped) == _old(stripped)
         result = normalize_digest_text(query, dialect)
         assert isinstance(result.truncated, bool)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("dialect", ["postgresql", "sqlserver", "mysql"])
+def test_a_long_run_of_nested_comment_openers_normalizes_in_linear_time(dialect):
+    """#825: nesting adds one depth counter to the scan, still one forward pass."""
+    assert_linear(
+        lambda n: "SELECT 1 " + "/*" * (n // 2),
+        lambda text: normalize_digest_text(text, dialect),
+    )

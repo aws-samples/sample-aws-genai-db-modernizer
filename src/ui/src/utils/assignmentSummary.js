@@ -228,7 +228,7 @@ const WRITE_QUERY_TYPES = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UP
 // A data-modifying CTE, CALL, TRUNCATE, COPY or a comment-led statement all
 // come through the collector as query_type "OTHER" instead (same regexes as
 // cache_overlay.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE, and the same
-// leading-comment scan as its _strip_leading_comments, #814).
+// leading-comment scans as its _leading_comment_readings, #814, #825).
 const DML_KEYWORD_RE = /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b/i;
 const LEADING_WRITE_VERB_RE = /^\s*(call|truncate|copy)\b/i;
 // Same as cache_overlay.py's _LOCKING_RE.
@@ -242,11 +242,19 @@ function isWriteQuery(queryType, queryText) {
   if (qtype !== 'OTHER') {
     return false;
   }
-  const text = stripLeadingComments(String(queryText || ''), {
-    hashComments: true,
-    stripFollowingSpace: true,
-  });
-  return DML_KEYWORD_RE.test(text) || LEADING_WRITE_VERB_RE.test(text);
+  // Read both ways, as the server does (#825): the picker has only the query,
+  // not the source dialect, and a write under either the nested (PostgreSQL,
+  // SQL Server) or the first-close (MySQL, Oracle) reading is a write.
+  // The nested reading counts only when it strips at least as much as the
+  // first-close one: a shorter nested strip means an unterminated nested
+  // comment (`/* delete from /* x */ SELECT 1`), which stays a read.
+  const source = String(queryText || '');
+  const strip = (nested) =>
+    stripLeadingComments(source, { hashComments: true, stripFollowingSpace: true, nested });
+  const plain = strip(false);
+  const nestedText = strip(true);
+  const readings = nestedText.length > plain.length ? [plain] : [plain, nestedText];
+  return readings.some((text) => DML_KEYWORD_RE.test(text) || LEADING_WRITE_VERB_RE.test(text));
 }
 
 function isLockingRead(queryText) {

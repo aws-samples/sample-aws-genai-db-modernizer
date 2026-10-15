@@ -16,6 +16,8 @@ unzipped at test time:
 truth; this file covers each rule and heuristic case by case.
 """
 
+import pytest
+
 from src.tools.sql.normalize import NormalizedQuery, normalize_digest_text
 
 # ---------------------------------------------------------------------------
@@ -465,3 +467,34 @@ class TestPostgresqlPassthrough:
         result = normalize_digest_text("SELECT * FROM t WHERE x = ?", "mariadb")
         assert result.text == "SELECT * FROM t WHERE x = NULL"
         assert result.substitutions == ("bare_placeholder",)
+
+
+class TestNestedBlockComments:
+    """#825: the quote/comment scan nests block comments for PostgreSQL and SQL
+    Server, and ends one at its first ``*/`` for the MySQL family and Oracle."""
+
+    NESTED_OPEN = "SELECT 1 /* a /* b */"
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlserver"])
+    def test_an_inner_opener_keeps_the_comment_open(self, dialect):
+        assert normalize_digest_text(self.NESTED_OPEN, dialect).truncated is True
+
+    @pytest.mark.parametrize("dialect", ["mysql", "mariadb", "oracle", "db2"])
+    def test_the_first_close_ends_it(self, dialect):
+        assert normalize_digest_text(self.NESTED_OPEN, dialect).truncated is False
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlserver"])
+    def test_a_balanced_nested_comment_is_one_comment(self, dialect):
+        text = "SELECT ( 1 /* a /* ) */ ) */ )"
+        assert normalize_digest_text(text, dialect).truncated is False
+
+    def test_the_mask_covers_the_whole_nested_comment(self):
+        from src.tools.sql.normalize import quoted_mask
+
+        text = "a /* b /* c */ d */ e"
+        nested = quoted_mask(text, "postgresql")
+        flat = quoted_mask(text, "mysql")
+        assert nested[2:19] == [True] * 17
+        assert nested[19:] == [False, False]
+        assert flat[2:14] == [True] * 12
+        assert flat[14:] == [False] * 7

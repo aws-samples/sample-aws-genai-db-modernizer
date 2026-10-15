@@ -138,8 +138,32 @@ _DML_KEYWORD_RE = re.compile(
 _LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE)
 
 
-def _strip_leading_comments(text: str) -> str:
-    return strip_leading_comments(text, hash_comments=True, strip_following_space=True)
+def _strip_leading_comments(text: str, nested: bool = False) -> str:
+    return strip_leading_comments(
+        text, hash_comments=True, strip_following_space=True, nested=nested
+    )
+
+
+def _leading_comment_readings(text: str) -> tuple[str, ...]:
+    """``text`` without its leading comments, read both ways (#825).
+
+    PostgreSQL and SQL Server nest block comments, MySQL and Oracle end one at
+    its first ``*/``. The write check (:func:`is_write_query`, behind
+    :func:`can_own`, the cache overlay's write-heavy tables and schema design's
+    write scope) sees only the query, and its callers span the resolver, the
+    reality check, the validators and the override path, none of which share a
+    source engine, so the dialect is not known here. A write under either
+    reading is a write, which errs toward "write" rather than missing one.
+
+    The nested reading counts only when it strips at least as much as the
+    first-close reading. A terminated nested comment always ends at or after the
+    first ``*/``, so a nested strip that leaves more text means the comment is
+    unterminated there (``/* delete from /* x */ SELECT 1``): not valid
+    PostgreSQL or T-SQL, and a MySQL read that must stay a read.
+    """
+    plain = _strip_leading_comments(text)
+    nested = _strip_leading_comments(text, nested=True)
+    return (plain,) if len(nested) > len(plain) else (plain, nested)
 
 
 def _is_session_key_name(name: str) -> bool:
@@ -190,8 +214,10 @@ def is_write_query(query: Mapping) -> bool:
         return True
     if qtype != "OTHER":
         return False
-    text = _strip_leading_comments(str(query.get("query_text") or ""))
-    return bool(_DML_KEYWORD_RE.search(text) or _LEADING_WRITE_VERB_RE.match(text))
+    return any(
+        _DML_KEYWORD_RE.search(text) or _LEADING_WRITE_VERB_RE.match(text)
+        for text in _leading_comment_readings(str(query.get("query_text") or ""))
+    )
 
 
 def is_locking_read(query: Mapping) -> bool:

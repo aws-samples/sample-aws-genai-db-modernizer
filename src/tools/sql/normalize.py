@@ -66,6 +66,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from src.shared.sql_comments import block_comments_nest
+
 # ---------------------------------------------------------------------------
 # Public result type
 # ---------------------------------------------------------------------------
@@ -143,12 +145,18 @@ def _scan(text: str, dialect: str) -> _Scan:
     reappears.
 
     Comments are recognized for every dialect (``--`` and ``/* */``), plus
-    ``#`` for the MySQL family only. A line comment (``--``/``#``) that
+    ``#`` for the MySQL family only. A block comment nests for PostgreSQL and
+    SQL Server (``/* a /* b */ c */`` is one comment, so an inner opener leaves
+    it open) and ends at its first ``*/`` elsewhere (#825), as
+    :func:`src.shared.sql_comments.block_comments_nest` says; the depth is one
+    counter on the same forward pass. A line comment (``--``/``#``) that
     runs to the end of the text is complete by grammar (no closing token
     is required); only an unterminated ``/* ... */`` counts as a
     truncation signal, the same way an unterminated quote does.
     """
     is_mysql = dialect.lower() in _MYSQL_FAMILY_DIALECTS
+    nests = block_comments_nest(dialect)
+    comment_depth = 0
     n = len(text)
     mask = [False] * n
     comment_mask = [False] * n
@@ -175,6 +183,7 @@ def _scan(text: str, dialect: str) -> _Scan:
                 continue
             if text[i : i + 2] == "/*":
                 state = "/*"
+                comment_depth = 1
                 mask[i] = mask[i + 1] = True
                 comment_mask[i] = comment_mask[i + 1] = True
                 i += 2
@@ -211,10 +220,19 @@ def _scan(text: str, dialect: str) -> _Scan:
 
         if state == "/*":
             comment_mask[i] = True
-            if text[i : i + 2] == "*/":
+            pair = text[i : i + 2]
+            if pair == "/*" and nests:
                 mask[i + 1] = True
                 comment_mask[i + 1] = True
-                state = None
+                comment_depth += 1
+                i += 2
+                continue
+            if pair == "*/":
+                mask[i + 1] = True
+                comment_mask[i + 1] = True
+                comment_depth -= 1
+                if comment_depth == 0:
+                    state = None
                 i += 2
                 continue
             i += 1

@@ -86,6 +86,10 @@ class _Spy:
     def assert_every_call_has_the_scope(self, at_least: int = 1) -> None:
         assert len(self.scopes) >= at_least, f"expected >= {at_least} calls, saw {len(self.scopes)}"
         assert [getattr(s, "name", None) for s in self.scopes] == ["sys"] * len(self.scopes)
+        # The source dialect rides along (#825): it decides how comments nest.
+        assert [getattr(s, "engine", None) for s in self.scopes] == ["postgresql"] * len(
+            self.scopes
+        )
 
 
 def _resolver(mp: pytest.MonkeyPatch, tmp_path: Any) -> list[_Spy]:
