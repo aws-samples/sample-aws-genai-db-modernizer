@@ -38,6 +38,7 @@ _READERS = (
     _REPO / "src" / "agents" / "referee" / "triage.py",
     _REPO / "src" / "agents" / "referee" / "reality_check_floors.py",
     _REPO / "src" / "agents" / "referee" / "aurora_choice.py",
+    _REPO / "src" / "agents" / "referee" / "cache_overlay.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -262,6 +263,15 @@ class TestFacts:
                 "SELECT * FROM tree",
                 "self_referencing_recursive_cte",
             ),
+            ("SELECT * FROM t WHERE id = ?", "where_word"),
+            ("SELECT * FROM t WHERE id IN (1, 2)", "keyed_after_where"),
+            ("SELECT a, SUM(b) FROM t GROUP BY a", "aggregate_or_group_by_word"),
+            ("SELECT * FROM t WHERE a ILIKE ?", "pattern_match_or_text_search_word"),
+            (
+                "WITH w AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM w",
+                "write_statement_text",
+            ),
+            ("/* job */ TRUNCATE t", "write_statement_text"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -313,6 +323,9 @@ class TestFacts:
                 "WITH a AS (SELECT 1 UNION SELECT 2) SELECT * FROM a",
                 "self_referencing_recursive_cte",
             ),
+            ("SELECT * FROM t WHERE a > ?", "keyed_after_where"),  # a range
+            ("SELECT * FROM t WHERE a >= ?", "keyed_after_where"),
+            ("/* delete from t */ SELECT 1", "write_statement_text"),
         ],
     )
     def test_near_misses_are_not_the_fact(self, sql, fact):

@@ -37,7 +37,6 @@ the same way whenever the owner changes (Reality Check consolidation).
 
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -51,7 +50,6 @@ from src.shared.cache_engines import CACHE_ENGINES, HOT_READ_MIN_CALLS_PER_SECON
 from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import SEARCH_ENGINES
-from src.shared.sql_comments import strip_leading_comments
 from src.tools.sql.query_facts import query_facts
 
 if TYPE_CHECKING:
@@ -91,57 +89,6 @@ PATTERN_LABELS: dict[str, str] = CACHE_PATTERN_LABELS
 
 WRITE_QUERY_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT"})
 
-_WHERE_RE = re.compile(r"\bwhere\b", re.IGNORECASE)
-_KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
-_AGGREGATE_RE = re.compile(r"\bgroup\s+by\b|\b(sum|count|avg)\s*\(", re.IGNORECASE)
-_TEXT_SEARCH_RE = re.compile(
-    r"\b(i?like|regexp|rlike)\b|\bmatch\s*\(|to_tsvector|to_tsquery|@@", re.IGNORECASE
-)
-
-# Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
-# many as the statement opens with, are stripped first (review of #303: a
-# statement opening with a comment is typed ``OTHER`` by the collector because
-# the SQL verb is no longer the first token). ``src.shared.sql_comments`` does
-# it in linear time (#808).
-# A DML keyword anywhere in the statement -- not just at the start -- so a
-# data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
-# is caught too, the same way the collector's own query_type misses it.
-_DML_KEYWORD_RE = re.compile(
-    r"\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b", re.IGNORECASE
-)
-# CALL/TRUNCATE/COPY are writes but have no DML keyword of their own; anchored
-# at the start (after stripping a leading comment), since each is a statement
-# in its own right, not a clause that can appear mid-query.
-_LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE)
-
-
-def _strip_leading_comments(text: str, nested: bool = False) -> str:
-    return strip_leading_comments(
-        text, hash_comments=True, strip_following_space=True, nested=nested
-    )
-
-
-def _leading_comment_readings(text: str) -> tuple[str, ...]:
-    """``text`` without its leading comments, read both ways (#825).
-
-    PostgreSQL and SQL Server nest block comments, MySQL and Oracle end one at
-    its first ``*/``. The write check (:func:`is_write_query`, behind
-    :func:`can_own`, the cache overlay's write-heavy tables and schema design's
-    write scope) sees only the query, and its callers span the resolver, the
-    reality check, the validators and the override path, none of which share a
-    source engine, so the dialect is not known here. A write under either
-    reading is a write, which errs toward "write" rather than missing one.
-
-    The nested reading counts only when it strips at least as much as the
-    first-close reading. A terminated nested comment always ends at or after the
-    first ``*/``, so a nested strip that leaves more text means the comment is
-    unterminated there (``/* delete from /* x */ SELECT 1``): not valid
-    PostgreSQL or T-SQL, and a MySQL read that must stay a read.
-    """
-    plain = _strip_leading_comments(text)
-    nested = _strip_leading_comments(text, nested=True)
-    return (plain,) if len(nested) > len(plain) else (plain, nested)
-
 
 def has_session_keyword(text: str) -> bool:
     """Whether ``text`` is a session/token statement (``session_store``, #663):
@@ -165,10 +112,7 @@ def is_write_query(query: Mapping) -> bool:
         return True
     if qtype != "OTHER":
         return False
-    return any(
-        _DML_KEYWORD_RE.search(text) or _LEADING_WRITE_VERB_RE.match(text)
-        for text in _leading_comment_readings(str(query.get("query_text") or ""))
-    )
+    return query_facts(str(query.get("query_text") or "")).write_statement_text
 
 
 def is_locking_read(query: Mapping) -> bool:
@@ -232,7 +176,11 @@ def cache_pattern(query: Mapping) -> str | None:
     """
     text = str(query.get("query_text") or "")
     facts = query_facts(text)
-    if _AGGREGATE_RE.search(text) or _TEXT_SEARCH_RE.search(text) or locking_clause(text):
+    if (
+        facts.aggregate_or_group_by_word
+        or facts.pattern_match_or_text_search_word
+        or locking_clause(text)
+    ):
         return None
     # A sequence fetch returns a new value on every call: a cached answer is wrong (#654).
     if is_sequence_fetch(text):
@@ -243,10 +191,9 @@ def cache_pattern(query: Mapping) -> str | None:
         return CACHE_HINT_SIGNALS["session_store"]
     if facts.top_n_shape:
         return "top_n" if float(query.get("rows_returned_avg") or 0) > 1 else "point_lookup"
-    parts = _WHERE_RE.split(text, maxsplit=1)
-    if len(parts) == 2:
+    if facts.where_word:
         # A keyed read: an equality or IN predicate (a range scan is not a lookup).
-        return "point_lookup" if _KEYED_RE.search(parts[1]) else None
+        return "point_lookup" if facts.keyed_after_where else None
     # No WHERE: a full read, cacheable only as a small reference table.
     return "reference_read"
 

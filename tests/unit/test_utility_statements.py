@@ -797,8 +797,8 @@ class TestCommentStrippingIsLinear:
         ],
     )
     def test_pathological_comments_finish_fast(self, text):
-        from src.agents.referee.cache_overlay import _strip_leading_comments
         from src.agents.referee.utility_statements import is_sequence_state_read
+        from src.tools.sql.query_facts import _strip_leading_comments
         from tests.unit.tools.sql._timing import assert_fast
 
         def run() -> None:

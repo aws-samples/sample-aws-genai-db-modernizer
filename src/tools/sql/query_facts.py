@@ -36,6 +36,7 @@ from __future__ import annotations
 import re
 from functools import cached_property, lru_cache
 
+from src.shared.sql_comments import strip_leading_comments
 from src.shared.unsupported_pattern import is_dedup_only_group_by
 from src.tools.sql.regex_facts import regex_has_subquery, regex_join_count, regex_wildcard_leading
 
@@ -852,6 +853,64 @@ def _has_recursive_cte(text: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Cache overlay shapes and the write check (moved here from
+# ``src.agents.referee.cache_overlay``, #296/#303/#663/#825). The UI engine
+# picker mirrors the write check (``src/ui/src/utils/assignmentSummary.js``).
+# ---------------------------------------------------------------------------
+
+_WHERE_RE = re.compile(r"\bwhere\b", re.IGNORECASE)
+_KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
+_AGGREGATE_RE = re.compile(r"\bgroup\s+by\b|\b(sum|count|avg)\s*\(", re.IGNORECASE)
+_TEXT_SEARCH_RE = re.compile(
+    r"\b(i?like|regexp|rlike)\b|\bmatch\s*\(|to_tsvector|to_tsquery|@@", re.IGNORECASE
+)
+
+# Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
+# many as the statement opens with, are stripped first (review of #303: a
+# statement opening with a comment is typed ``OTHER`` by the collector because
+# the SQL verb is no longer the first token). ``src.shared.sql_comments`` does
+# it in linear time (#808).
+# A DML keyword anywhere in the statement -- not just at the start -- so a
+# data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
+# is caught too, the same way the collector's own query_type misses it.
+_DML_KEYWORD_RE = re.compile(
+    r"\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b", re.IGNORECASE
+)
+# CALL/TRUNCATE/COPY are writes but have no DML keyword of their own; anchored
+# at the start (after stripping a leading comment), since each is a statement
+# in its own right, not a clause that can appear mid-query.
+_LEADING_WRITE_VERB_RE = re.compile(r"^\s*(call|truncate|copy)\b", re.IGNORECASE)
+
+
+def _strip_leading_comments(text: str, nested: bool = False) -> str:
+    return strip_leading_comments(
+        text, hash_comments=True, strip_following_space=True, nested=nested
+    )
+
+
+def _leading_comment_readings(text: str) -> tuple[str, ...]:
+    """``text`` without its leading comments, read both ways (#825).
+
+    PostgreSQL and SQL Server nest block comments, MySQL and Oracle end one at
+    its first ``*/``. The write check (:func:`is_write_query`, behind
+    :func:`can_own`, the cache overlay's write-heavy tables and schema design's
+    write scope) sees only the query, and its callers span the resolver, the
+    reality check, the validators and the override path, none of which share a
+    source engine, so the dialect is not known here. A write under either
+    reading is a write, which errs toward "write" rather than missing one.
+
+    The nested reading counts only when it strips at least as much as the
+    first-close reading. A terminated nested comment always ends at or after the
+    first ``*/``, so a nested strip that leaves more text means the comment is
+    unterminated there (``/* delete from /* x */ SELECT 1``): not valid
+    PostgreSQL or T-SQL, and a MySQL read that must stay a read.
+    """
+    plain = _strip_leading_comments(text)
+    nested = _strip_leading_comments(text, nested=True)
+    return (plain,) if len(nested) > len(plain) else (plain, nested)
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -1296,6 +1355,45 @@ class QueryFacts:
         :func:`scan_sql`'s output.
         """
         return _has_recursive_cte(self._scanned)
+
+    @cached_property
+    def _where_split(self) -> list[str]:
+        return _WHERE_RE.split(self._text, maxsplit=1)
+
+    @cached_property
+    def where_word(self) -> bool:
+        """A ``WHERE`` word anywhere in the text."""
+        return len(self._where_split) == 2
+
+    @cached_property
+    def keyed_after_where(self) -> bool:
+        """An equality (``=`` not after ``<``/``>``/``!``) or an ``IN (`` after the first
+        ``WHERE``.
+        """
+        return len(self._where_split) == 2 and bool(_KEYED_RE.search(self._where_split[1]))
+
+    @cached_property
+    def aggregate_or_group_by_word(self) -> bool:
+        """``GROUP BY`` or a ``SUM(``/``COUNT(``/``AVG(`` call."""
+        return bool(_AGGREGATE_RE.search(self._text))
+
+    @cached_property
+    def pattern_match_or_text_search_word(self) -> bool:
+        """``LIKE``/``ILIKE``/``REGEXP``/``RLIKE`` as a word, ``MATCH(``, ``to_tsvector``,
+        ``to_tsquery`` or ``@@``.
+        """
+        return bool(_TEXT_SEARCH_RE.search(self._text))
+
+    @cached_property
+    def write_statement_text(self) -> bool:
+        """After the leading comments (read both nested and first-close, #825), a DML
+        keyword anywhere (``INSERT INTO``, ``UPDATE x SET``, ``DELETE FROM``,
+        ``MERGE INTO``) or a leading ``CALL``/``TRUNCATE``/``COPY``.
+        """
+        return any(
+            _DML_KEYWORD_RE.search(reading) or _LEADING_WRITE_VERB_RE.match(reading)
+            for reading in _leading_comment_readings(self._text)
+        )
 
     @cached_property
     def top_n_shape(self) -> bool:

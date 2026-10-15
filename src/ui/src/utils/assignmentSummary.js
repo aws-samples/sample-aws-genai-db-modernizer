@@ -228,8 +228,8 @@ export function engineOptionsForAssignment(options, assignment) {
 const WRITE_QUERY_TYPES = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UPSERT'];
 // A data-modifying CTE, CALL, TRUNCATE, COPY or a comment-led statement all
 // come through the collector as query_type "OTHER" instead (same regexes as
-// cache_overlay.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE, and the same
-// leading-comment scans as its _leading_comment_readings, #814, #825).
+// src/tools/sql/query_facts.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE, and the
+// same leading-comment scans as its _leading_comment_readings, #814, #825).
 const DML_KEYWORD_RE = /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b/i;
 const LEADING_WRITE_VERB_RE = /^\s*(call|truncate|copy)\b/i;
 // A locking read is read by sqlLocking.js, the copy of query_shape.py's
