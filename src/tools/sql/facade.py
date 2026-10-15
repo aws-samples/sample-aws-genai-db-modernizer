@@ -221,7 +221,7 @@ def _fallback(
     sql: str, reason: FallbackReason, dialect: str, *, truncated: bool
 ) -> TableReferences:
     """The regex extractor's answer, labelled as a fallback."""
-    refs = [_ref_from_regex(qualifiers, table) for qualifiers, table in regex_table_refs(sql)]
+    refs = [_ref_from_regex(q, table) for q, table in regex_table_refs(sql, dialect)]
     return TableReferences(
         tables=tuple(dict.fromkeys(refs)),
         cte_names=(),

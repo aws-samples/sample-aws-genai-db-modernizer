@@ -28,28 +28,34 @@ from __future__ import annotations
 
 import re
 
+from src.shared.sql_comments import block_comments_nest, strip_leading_comments
 from src.tools.database.sql_cte import drop_cte_references
 
-# Leading ``--`` line and ``/* */`` block comments before a statement's verb.
-_LEADING_COMMENTS_RE = re.compile(r"^(?:\s*(?:--[^\n]*(?:\n|$)|/\*.*?\*/))+", re.DOTALL)
 
-
-def is_merge_statement(query_text: str) -> bool:
+def is_merge_statement(query_text: str, source_engine: str = "") -> bool:
     """Whether ``query_text`` is a MERGE (#663): its first verb, after any leading
-    comments, is MERGE, or it is a ``WITH ... AS (...) MERGE`` (a CTE feeding it)."""
-    text = _LEADING_COMMENTS_RE.sub("", query_text).lstrip()
+    comments, is MERGE, or it is a ``WITH ... AS (...) MERGE`` (a CTE feeding it).
+
+    Leading comments follow the shared comment rule (:mod:`src.shared.sql_comments`,
+    #814), nested the way ``source_engine`` nests them (PostgreSQL, SQL Server).
+    """
+    text = strip_leading_comments(
+        query_text, strip_following_space=True, nested=block_comments_nest(source_engine)
+    )
     if re.match(r"MERGE\b", text, re.I):
         return True
     return bool(re.match(r"WITH\b", text, re.I) and re.search(r"\)\s*MERGE\b", text, re.I))
 
 
-def regex_table_refs(query_text: str) -> list[tuple[list[str], str]]:
+def regex_table_refs(query_text: str, source_engine: str = "") -> list[tuple[list[str], str]]:
     """Every table reference in ``query_text`` as ``(qualifiers, table)``, in order.
 
     ``qualifiers`` holds zero, one (``schema``) or two (``database``,
     ``schema``) names. Duplicates are kept: the caller resolves and dedupes.
+    ``source_engine`` (a source engine or sqlglot dialect name) says how its
+    comments nest.
     """
-    is_merge = is_merge_statement(query_text)
+    is_merge = is_merge_statement(query_text, source_engine)
     using = r"|USING" if is_merge else ""
     table_re = re.compile(
         r"(?<![\w@$#])"

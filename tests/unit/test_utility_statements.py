@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.agents.referee.utility_statements import is_utility_statement
+from src.agents.referee.utility_statements import is_sequence_state_read, is_utility_statement
 
 
 class TestIsUtilityStatement:
@@ -468,6 +468,10 @@ class TestSequenceReads:
             "SELECT s.last_value FROM public.badges_id_seq AS s",
             "SELECT last_value AS v FROM public.badges_id_seq",
             "SELECT last_value FROM discourse.public.badges_id_seq",
+            # PostgreSQL nests block comments (#814).
+            "SELECT last_value FROM public.badges_id_seq /* a /* b */ c */",
+            "/* a /* b */ c */ SELECT last_value FROM public.badges_id_seq",
+            "SELECT last_value FROM public.badges_id_seq /* a /* b /* c */ */ */ -- d",
             # Standalone sequence calls (#654), regressions.
             "SELECT nextval('posts_id_seq')",
             "SELECT nextval('posts_id_seq'::regclass) AS id",
@@ -486,6 +490,7 @@ class TestSequenceReads:
         [
             "SELECT last_value FROM public.badges_id_seq",
             "SELECT last_value FROM badges_id_seq LIMIT 1 -- note",
+            "SELECT last_value FROM a_seq /* a /* b */ c */",
         ],
     )
     def test_the_collector_reports_a_sequence_as_no_table(self, sql):
@@ -585,6 +590,18 @@ class TestSequenceReads:
         text, tables = _collected(sql)
         assert is_utility_statement(text, tables) is False
 
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # Text after the first */ of a nested comment is still comment, and
+            # an unterminated nested comment is not a comment at all (#814).
+            "SELECT last_value FROM badges_id_seq /* a /* b */ c",
+            "SELECT last_value FROM badges_id_seq /* a /* b */",
+        ],
+    )
+    def test_nested_comment_text_is_not_a_trailing_comment(self, sql):
+        assert is_sequence_state_read(sql) is False
+
 
 class TestCommentStrippingIsLinear:
     """#808: the trailing-comment regex backtracked exponentially on a run of
@@ -594,12 +611,22 @@ class TestCommentStrippingIsLinear:
     @pytest.mark.parametrize(
         "text",
         [
-            "--" * 50_000 + "\nx",
+            # Each case puts the run after code, where only the old trailing
+            # regex reached it: a leading run was stripped by the (linear)
+            # leading regex first, so it passed on the old code too (#814).
+            "SELECT 1 " + "--" * 50_000 + "\nx",
             "SELECT last_value FROM badges_id_seq " + "--" * 50_000 + "\nx",
-            "/*" + "*//*" * 25_000 + "x",
+            "SELECT 1 /*" + "*//*" * 25_000 + "x",
             "SELECT last_value FROM badges_id_seq /*" + "*//*" * 25_000 + "x",
+            "/* lead */ SELECT 1 " + "--" * 50_000 + "\nx",
         ],
-        ids=["dashes", "dashes after a sequence read", "blocks", "blocks after a sequence read"],
+        ids=[
+            "dashes after code",
+            "dashes after a sequence read",
+            "blocks after code",
+            "blocks after a sequence read",
+            "dashes after a commented statement",
+        ],
     )
     def test_pathological_comments_finish_fast(self, text):
         import time

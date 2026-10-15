@@ -220,9 +220,14 @@ def is_sequence_state_read(query_text: str | None) -> bool:
     be named like one depends on the schema, which the caller supplies -- the
     offline collector reports the relation as ``unknown`` when the schema does
     not hold it, and :func:`is_utility_statement` then counts it as utility.
+
+    Comments are read with PostgreSQL's rule, nesting included (#814): only a
+    PostgreSQL source has sequence relations, so ``/* a /* b */ c */`` is one
+    comment wherever this shape can occur.
     """
-    text = _blank_string_literals(_strip_leading_comments(query_text or ""))
-    return bool(_SEQUENCE_STATE_READ_RE.search(strip_trailing_comments(text)))
+    text = strip_leading_comments(query_text or "", nested=True)
+    text = _blank_string_literals(text)
+    return bool(_SEQUENCE_STATE_READ_RE.search(strip_trailing_comments(text, nested=True)))
 
 
 def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
@@ -275,7 +280,7 @@ def is_utility_statement(
         _CATALOG_FUNCTION_RE.search(unquoted)
         or _CATALOG_CAST_RE.search(text)
         or has_sequence_reference(unquoted)
-        or is_sequence_state_read(text)
+        or is_sequence_state_read(query_text)
     ):
         return _has_no_real_source_table(tables_accessed)
     return False

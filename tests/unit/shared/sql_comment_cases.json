@@ -1,0 +1,26 @@
+{
+  "_comment": "Leading-comment cases shared by src/shared/sql_comments.py and src/ui/src/utils/sqlComments.js (#814), so the two scanners keep one comment rule. Options use the Python keyword names.",
+  "leading": [
+    {"text": "SELECT 1", "options": {}, "expected": "SELECT 1"},
+    {"text": "/* a */ SELECT 1", "options": {}, "expected": " SELECT 1"},
+    {"text": "  /* a */ /* b */SELECT 1", "options": {}, "expected": "SELECT 1"},
+    {"text": "-- a\nSELECT 1", "options": {}, "expected": "SELECT 1"},
+    {"text": "-- a", "options": {}, "expected": "-- a"},
+    {"text": "/* open SELECT 1", "options": {}, "expected": "/* open SELECT 1"},
+    {"text": "# a\nSELECT 1", "options": {}, "expected": "# a\nSELECT 1"},
+    {"text": "# a\n-- b\n/* c */  SELECT 1", "options": {"hash_comments": true, "strip_following_space": true}, "expected": "SELECT 1"},
+    {"text": "/* a */\n\n  SELECT 1", "options": {"hash_comments": true, "strip_following_space": true}, "expected": "SELECT 1"},
+    {"text": "/* a /* b */ c */ SELECT 1", "options": {}, "expected": " c */ SELECT 1"},
+    {"text": "/* a /* b */ c */ SELECT 1", "options": {"nested": true}, "expected": " SELECT 1"},
+    {"text": "/* a /* b */ SELECT 1", "options": {"nested": true}, "expected": "/* a /* b */ SELECT 1"},
+    {"text": "/*/ a */ SELECT 1", "options": {"nested": true}, "expected": " SELECT 1"},
+    {"text": "/**/ SELECT 1", "options": {"nested": true}, "expected": " SELECT 1"},
+    {"text": "/* a */*/ SELECT 1", "options": {"nested": true}, "expected": "*/ SELECT 1"},
+    {"text": "", "options": {"nested": true}, "expected": ""},
+    {"text": "\u0085/* a */\u0085SELECT 1", "options": {"strip_following_space": true}, "expected": "SELECT 1"},
+    {"text": "\u001c\u001f/* a */ SELECT 1", "options": {}, "expected": " SELECT 1"},
+    {"text": "/* a */\u2028\u3000SELECT 1", "options": {"strip_following_space": true}, "expected": "SELECT 1"},
+    {"text": "\ufeff/* a */ SELECT 1", "options": {}, "expected": "\ufeff/* a */ SELECT 1"},
+    {"text": "/* a */\ufeffSELECT 1", "options": {"strip_following_space": true}, "expected": "\ufeffSELECT 1"}
+  ]
+}

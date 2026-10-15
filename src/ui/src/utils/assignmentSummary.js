@@ -21,6 +21,7 @@
  * before.
  */
 import { ownerDistribution, formatCacheLayerLine } from './cacheLayer';
+import { stripLeadingComments } from './sqlComments';
 
 // Fallback used when no `t` is supplied, so the function stays safe to call
 // without react-i18next (e.g. a caller that forgets to wire it up). It mirrors
@@ -226,8 +227,8 @@ export function engineOptionsForAssignment(options, assignment) {
 const WRITE_QUERY_TYPES = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'UPSERT'];
 // A data-modifying CTE, CALL, TRUNCATE, COPY or a comment-led statement all
 // come through the collector as query_type "OTHER" instead (same regexes as
-// cache_overlay.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE/_LEADING_COMMENT_RE).
-const LEADING_COMMENT_RE = /^(\s*(--[^\n]*\n|#[^\n]*\n|\/\*[\s\S]*?\*\/)\s*)+/;
+// cache_overlay.py's _DML_KEYWORD_RE/_LEADING_WRITE_VERB_RE, and the same
+// leading-comment scan as its _strip_leading_comments, #814).
 const DML_KEYWORD_RE = /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b/i;
 const LEADING_WRITE_VERB_RE = /^\s*(call|truncate|copy)\b/i;
 // Same as cache_overlay.py's _LOCKING_RE.
@@ -241,7 +242,10 @@ function isWriteQuery(queryType, queryText) {
   if (qtype !== 'OTHER') {
     return false;
   }
-  const text = String(queryText || '').replace(LEADING_COMMENT_RE, '');
+  const text = stripLeadingComments(String(queryText || ''), {
+    hashComments: true,
+    stripFollowingSpace: true,
+  });
   return DML_KEYWORD_RE.test(text) || LEADING_WRITE_VERB_RE.test(text);
 }
 

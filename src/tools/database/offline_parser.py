@@ -477,7 +477,7 @@ def _shadow_table_refs(
     shadow.source_engine = source_engine
     try:
         regex_ids = _resolve_table_ids(
-            regex_table_refs(query_text), db_name, known_table_names, table_schemas
+            regex_table_refs(query_text, source_engine), db_name, known_table_names, table_schemas
         )
         shadow.record(query_id, query_text, regex_ids, list(facade_ids), refs)
     except Exception:  # noqa: BLE001 -- the cross-check only observes
