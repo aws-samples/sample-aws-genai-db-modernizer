@@ -420,6 +420,115 @@ class TestAdminCommandFamilies:
         assert is_utility_statement(sql, ["public.orders"]) is False
 
 
+class TestMySqlCommentForms:
+    """#780: MySQL runs the body of a ``/*! ... */`` versioned comment, ``#``
+    starts a MySQL line comment, and a ``SET`` inside a comment is not a SET
+    clause."""
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "/*!40101 SET NAMES utf8 */",
+            "/*!40101 SET NAMES utf8 */;",
+            "/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;",
+            "/*!40000 ALTER TABLE `wp_posts` DISABLE KEYS */;",
+            "/*!80016 SET @@session.default_table_encryption=0 */",
+            "/*!SET NAMES utf8mb4 */",
+            "/*! SET NAMES utf8mb4 */",
+            "/*!40103 SET TIME_ZONE='+00:00' */",
+            "/* dump header */ /*!40101 SET NAMES utf8 */",
+            "-- dump header\n/*!40014 SET UNIQUE_CHECKS=0 */",
+            # MariaDB's own executable comment
+            "/*M!100100 SET NAMES utf8mb4 */",
+        ],
+    )
+    def test_versioned_comment_body_is_read_as_the_statement(self, sql):
+        assert is_utility_statement(sql) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "# note\nVACUUM t",
+            "# a\n# b\nSHOW TABLES",
+            "#\nSET autocommit = 1",
+            "# note\n/* more */ -- and more\nOPTIMIZE TABLE wp_options",
+            "# note\n/*!40101 SET NAMES utf8 */",
+        ],
+    )
+    def test_statement_after_a_hash_comment_is_utility(self, sql):
+        assert is_utility_statement(sql) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "UPDATE STATISTICS t -- SET later",
+            "UPDATE STATISTICS dbo.Orders /* SET */",
+            "UPDATE STATISTICS dbo.Orders /* SET */ WITH FULLSCAN",
+            "UPDATE STATISTICS dbo.Orders WITH FULLSCAN -- then SET x",
+            "UPDATE STATISTICS dbo.Orders -- don't\nWITH FULLSCAN -- it's SET",
+            # T-SQL nests block comments
+            "UPDATE STATISTICS dbo.Orders /* a /* b */ SET */",
+            "UPDATE STATISTICS dbo.Orders WITH SAMPLE 50 PERCENT -- 'SET'",
+        ],
+    )
+    def test_update_statistics_with_set_only_in_a_comment_is_utility(self, sql):
+        assert is_utility_statement(sql, ["dbo.Orders"]) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # A versioned comment after the verb is a hint, not the statement.
+            "SELECT /*!40001 SQL_NO_CACHE */ * FROM wp_posts WHERE ID = ?",
+            # A versioned application read is still application access.
+            "/*!40001 SELECT * FROM wp_posts WHERE ID = ? */",
+            "/*!50000 INSERT INTO wp_posts (ID) VALUES (?) */",
+            # A hash comment, then application access.
+            "# SHOW TABLES\nSELECT * FROM wp_posts WHERE ID = ?",
+            "# note",
+            # DML on a table named statistics keeps its SET clause.
+            "UPDATE statistics SET hits = 1 -- note",
+            "UPDATE statistics /* x */ SET hits = 1",
+            "UPDATE statistics SET note = '-- not a comment' WHERE id = ?",
+            "UPDATE statistics SET note = '/* not a comment */' WHERE id = ?",
+            "UPDATE statistics SET a = 1 /* unterminated",
+        ],
+    )
+    def test_application_access_is_not_utility(self, sql):
+        assert is_utility_statement(sql, ["wp_posts"]) is False
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # #829 review: code after the closing */ means this is a plain comment
+            # (MySQL would run "end-user search SELECT ...", a syntax error), so
+            # the body is not the statement.
+            "/*! end-user search */ SELECT * FROM users WHERE id = $1",
+            "/*! set by checkout service */ SELECT * FROM users WHERE id = $1",
+            "/*!use the index */ SELECT * FROM users WHERE id = $1",
+            "/*! lock-free read */ SELECT * FROM users WHERE id = $1",
+            "/*!40101 SET NAMES utf8 */ SELECT * FROM users WHERE id = $1",
+        ],
+    )
+    def test_body_with_code_after_it_is_not_the_statement(self, sql):
+        assert is_utility_statement(sql, ["public.users"]) is False
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "/*!40101 SET NAMES utf8 */ ;",
+            "/*!40101 SET NAMES utf8 */ \n",
+            "/*M!100100 SET sql_mode='' */",
+        ],
+    )
+    def test_only_whitespace_or_semicolon_after_the_body(self, sql):
+        assert is_utility_statement(sql) is True
+
+    def test_a_plain_comment_that_starts_with_a_bang_is_still_a_comment(self):
+        """Outside MySQL ``/*! note */`` is an ordinary comment: whichever way it is
+        read, the SHOW after it stays utility."""
+        assert is_utility_statement("/*! note */ SHOW TABLES") is True
+
+
 def _collected(
     sql: str,
     source_engine: str = "postgresql",

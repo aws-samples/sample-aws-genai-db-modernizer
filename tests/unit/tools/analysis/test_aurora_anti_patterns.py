@@ -227,6 +227,22 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), _q("rel", sql)]
         assert _anti05(queries) is None
 
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "/* end-user report */ SELECT status, count(*) FROM t1 GROUP BY status",
+            "-- end-user report\nSELECT status, count(*) FROM t1 GROUP BY status",
+            "# end-user report\nSELECT status, count(*) FROM t1 GROUP BY status",
+            # #829 review: a plain comment that starts with ! is not a MySQL
+            # executable comment when code follows it.
+            "/*! end-user report */ SELECT status, count(*) FROM t1 GROUP BY status",
+        ],
+    )
+    def test_a_comment_led_aggregate_clears_the_table(self, sql):
+        """Decision 14: a comment-led query is typed OTHER, and it is still relational."""
+        queries = [_q("point", "SELECT * FROM t1 WHERE id = $1"), _q("rel", sql, "OTHER")]
+        assert _anti05(queries) is None
+
     def test_fires_when_every_query_is_crud(self):
         queries = [_q(f"q{i}", sql) for i, sql in enumerate(SINGLE_TABLE_CRUD_SQL)]
         ap = _anti05(queries)

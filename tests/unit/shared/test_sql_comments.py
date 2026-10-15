@@ -14,8 +14,10 @@ import pytest
 
 from src.shared.sql_comments import (
     block_comments_nest,
+    strip_comments,
     strip_leading_comments,
     strip_trailing_comments,
+    unwrap_executable_comment,
 )
 from tests.unit.tools.sql._timing import assert_linear
 
@@ -210,3 +212,104 @@ def test_the_ui_scanner_uses_pythons_whitespace():
     listed = {int(h, 16) for h in re.findall(r"0x([0-9a-f]+)", block)}
     python = {c for c in range(0x110000) if chr(c).isspace()}
     assert listed == python
+
+
+class TestMySqlExecutableComments:
+    """#780: MySQL runs the body of ``/*! ... */`` (and MariaDB of ``/*M! ... */``),
+    optionally gated on a server version, so it is code, not a comment."""
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("/*!40101 SET NAMES utf8 */", "/*!40101 SET NAMES utf8 */"),
+            ("/* a */ /*!40101 SET NAMES utf8 */", "/*!40101 SET NAMES utf8 */"),
+            ("# a\n/*M!100100 SET x=1 */", "/*M!100100 SET x=1 */"),
+            # an optimizer hint or an ordinary comment is still a comment
+            ("/*+ hint */ SELECT 1", "SELECT 1"),
+            ("/* ! not executable */ SELECT 1", "SELECT 1"),
+        ],
+    )
+    def test_executable_comment_ends_the_leading_run(self, text, expected):
+        assert (
+            strip_leading_comments(
+                text, hash_comments=True, strip_following_space=True, mysql_executable=True
+            )
+            == expected
+        )
+
+    def test_without_the_option_it_is_a_comment(self):
+        assert strip_leading_comments("/*!40101 SET NAMES utf8 */ x") == " x"
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("/*!40101 SET NAMES utf8 */", " SET NAMES utf8 "),
+            ("/*!40101 SET NAMES utf8 */;", " SET NAMES utf8 ;"),
+            ("  /*!SET NAMES utf8 */", "SET NAMES utf8 "),
+            ("/*! SET NAMES utf8 */", " SET NAMES utf8 "),
+            ("/*!80016 SET a=0 */", " SET a=0 "),
+            ("/*M!100100 SET a=0 */", " SET a=0 "),
+            # not an executable comment, or never closed: unchanged
+            ("/* SET a=0 */", "/* SET a=0 */"),
+            ("/*!40101 SET a=0", "/*!40101 SET a=0"),
+            ("SELECT /*!40001 SQL_NO_CACHE */ 1", "SELECT /*!40001 SQL_NO_CACHE */ 1"),
+            # only when nothing but whitespace or ; follows (#829 review)
+            ("/*! note */ SELECT 1", "/*! note */ SELECT 1"),
+            ("/*!40101 SET a=0 */ SELECT 1", "/*!40101 SET a=0 */ SELECT 1"),
+            ("/*!40101 SET a=0 */ ; \n", " SET a=0  ; \n"),
+            ("", ""),
+        ],
+    )
+    def test_unwrap_executable_comment(self, text, expected):
+        assert unwrap_executable_comment(text) == expected
+
+    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, text):
+        start = time.perf_counter()
+        strip_leading_comments(text, hash_comments=True, mysql_executable=True)
+        unwrap_executable_comment(text)
+        unwrap_executable_comment("/*!" + text)
+        assert time.perf_counter() - start < 1.0
+
+
+class TestStripComments:
+    """#780: every comment, wherever it is, with string literals kept as data."""
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("SELECT 1", "SELECT 1"),
+            ("UPDATE STATISTICS t -- SET later", "UPDATE STATISTICS t  "),
+            ("A /* x */ B -- y\nC", "A   B  \nC"),
+            ("A /* a /* b */ c */ B", "A   c */ B"),
+            ("A '-- not' B", "A '-- not' B"),
+            ("A '/* not */' B", "A '/* not */' B"),
+            ("A 'it''s -- not' B -- yes", "A 'it''s -- not' B  "),
+            ("A -- don't\nB -- it's", "A  \nB  "),
+            ("A /* open", "A /* open"),
+            ("A 'open -- x", "A 'open -- x"),
+            ("A # b", "A # b"),
+            ("", ""),
+        ],
+    )
+    def test_removes_comments_outside_literals(self, text, expected):
+        assert strip_comments(text) == expected
+
+    def test_nested(self):
+        assert strip_comments("A /* a /* b */ c */ B", nested=True) == "A   B"
+
+    def test_hash_comments(self):
+        assert strip_comments("A # b\nC", hash_comments=True) == "A  \nC"
+
+    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, text):
+        start = time.perf_counter()
+        strip_comments(text)
+        strip_comments(text, nested=True, hash_comments=True)
+        assert time.perf_counter() - start < 1.0
+
+    def test_scales_linearly(self):
+        assert_linear(lambda n: "x /* " * (n // 5), strip_comments)
+        assert_linear(lambda n: "'" + "x" * n, strip_comments)
+        assert_linear(lambda n: "x '/*' " * (n // 7), strip_comments)
+        assert_linear(lambda n: "x " + "/*" * (n // 2), lambda t: strip_comments(t, nested=True))
