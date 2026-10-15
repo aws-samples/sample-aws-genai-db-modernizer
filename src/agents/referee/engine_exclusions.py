@@ -19,18 +19,10 @@ is just adding entries to EXCLUSION_RULES.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# Pre-compiled regex patterns for SQL detection
-_RE_GROUP_BY = re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE)
-_RE_HAVING = re.compile(r"\bHAVING\b", re.IGNORECASE)
-_RE_AGG_FUNCS = re.compile(r"\b(SUM|COUNT|AVG|MIN|MAX)\s*\(", re.IGNORECASE)
-_RE_LEADING_WILDCARD = re.compile(r"LIKE\s+['\"]%", re.IGNORECASE)
-_RE_WRITE_WITH_SUBQUERY = re.compile(
-    r"\b(INSERT|UPDATE|DELETE)\b.*\bSELECT\b", re.IGNORECASE | re.DOTALL
-)
+from src.tools.sql.query_facts import query_facts
 
 
 @dataclass(frozen=True)
@@ -56,23 +48,23 @@ class ExclusionRule:
     check: Callable[[str], bool]
 
 
-def _has_aggregation(query_text: str) -> bool:
-    """Detect GROUP BY, HAVING, or aggregate functions."""
-    return bool(
-        _RE_GROUP_BY.search(query_text)
-        or _RE_HAVING.search(query_text)
-        or _RE_AGG_FUNCS.search(query_text)
-    )
+# Each check reads one engine-neutral query fact (#491,
+# ``src.tools.sql.query_facts``); the detectors live there, once each.
 
 
 def _has_leading_wildcard(query_text: str) -> bool:
     """Detect LIKE '%...' patterns (leading wildcard)."""
-    return bool(_RE_LEADING_WILDCARD.search(query_text))
+    return query_facts(query_text).leading_wildcard_like
 
 
 def _has_write_with_subquery(query_text: str) -> bool:
     """Detect INSERT/UPDATE/DELETE containing a subquery."""
-    return bool(_RE_WRITE_WITH_SUBQUERY.search(query_text))
+    return query_facts(query_text).write_with_subquery
+
+
+def _has_two_joins(query_text: str) -> bool:
+    """Detect two or more JOIN keywords."""
+    return query_facts(query_text).join_keyword_count >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +113,7 @@ EXCLUSION_RULES: list[ExclusionRule] = [
         rule_id="ec-no-complex-join",
         description="ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store",
         customer_message="joins more than one table, and a key-value store can't serve joins",
-        check=lambda q: bool(re.search(r"\bJOIN\b.*\bJOIN\b", q, re.IGNORECASE | re.DOTALL)),
+        check=_has_two_joins,
     ),
 ]
 

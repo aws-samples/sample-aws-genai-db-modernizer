@@ -16,7 +16,7 @@ reading as prose; ``tests/unit/agents/referee/
 test_synthesis_capability_pin_display_coverage.py`` asserts this dict covers
 every capability name the registry can produce). ``multi_doc_acid`` is in
 ``ENGINE_CAPABILITIES`` but ``detect_required_capabilities`` never emits it
-today (its own ``CAPABILITY_DETECTORS`` entry is an empty, structural-only
+today (its own ``CAPABILITY_FACTS`` entry is an empty, structural-only
 placeholder); kept here anyway so this never silently regresses if that
 changes.
 """

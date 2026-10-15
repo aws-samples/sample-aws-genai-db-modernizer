@@ -55,6 +55,13 @@ import sqlglot
 from sqlglot import exp
 
 from src.tools.sql.normalize import normalize_digest_text, quoted_mask
+from src.tools.sql.regex_facts import (
+    regex_has_aggregation,
+    regex_has_joins,
+    regex_has_subquery,
+    regex_join_count,
+    regex_wildcard_leading,
+)
 from src.tools.sql.regex_tables import regex_table_refs
 
 # sqlglot logs a warning for every statement it parses as a generic Command.
@@ -169,6 +176,65 @@ class TableReferences:
     truncated: bool
 
 
+@dataclass(frozen=True)
+class SqlFacts:
+    """Query-shape facts about one piece of SQL text (#796).
+
+    Read from the syntax tree, so a comment, a string literal or a column name
+    (``count``, ``user_selectable``) is never read as SQL; the regex facts
+    (:mod:`src.tools.sql.regex_facts`) when the facade falls back, so a
+    statement sqlglot can't read keeps exactly its pre-#796 answer.
+
+    Attributes:
+        join_count: Joins to another row source: every ``JOIN`` clause and
+            every further item of a ``FROM``/``USING`` list (``FROM a, b`` is
+            one join), in every statement and subquery. A join to a table
+            function of the row (``CROSS APPLY OPENJSON(...)``, ``CROSS JOIN
+            unnest(...)``, ``generate_series(...)``) reads no other table, so
+            it is not counted. ``UPDATE ... FROM`` / ``DELETE ... USING``
+            count their list's further items, not the first one, the way the
+            regex never counted them either.
+        has_joins: ``join_count > 0`` (the regex fallback keeps its own
+            `` join `` test).
+        has_aggregation: A ``GROUP BY``, or an aggregate function -- one that
+            combines many rows' values into one (``COUNT``, ``SUM``, ``AVG``,
+            ``MIN``, ``MAX``, ``GROUP_CONCAT``, ``STRING_AGG``, ``ARRAY_AGG``,
+            ...), windowed (``COUNT(*) OVER ()``) or not. The ranking and
+            offset window functions (``ROW_NUMBER``, ``RANK``, ``DENSE_RANK``,
+            ``PERCENT_RANK``, ``CUME_DIST``, ``NTILE``, ``LAG``, ``LEAD``,
+            ``FIRST_VALUE``, ``LAST_VALUE``, ``NTH_VALUE``) combine nothing,
+            so alone they are not one.
+        has_subquery: More than one ``SELECT`` in the statement: a subquery,
+            a derived table, a CTE body, a second ``UNION``/``EXCEPT`` branch
+            (the regex's meaning, without its misreads).
+        wildcard_leading: A ``LIKE``/``ILIKE`` (``NOT`` and ``ESCAPE``
+            included) whose pattern starts with ``%``: a string literal, or a
+            concatenation (``'%' || ?``, ``'%' + @t``, ``CONCAT('%', ?)``)
+            whose first part is one. A bind parameter (``LIKE ?``) is not:
+            its value is unknown.
+        parsed_by: ``"sqlglot"``, or ``"regex"`` when the facade fell back.
+        fallback_reason: Why it fell back, or None.
+        dialect: The sqlglot dialect used (``""`` is sqlglot's generic one).
+    """
+
+    join_count: int
+    has_joins: bool
+    has_aggregation: bool
+    has_subquery: bool
+    wildcard_leading: bool
+    parsed_by: ParsedBy
+    fallback_reason: FallbackReason | None
+    dialect: str
+
+
+@dataclass(frozen=True)
+class SqlReading:
+    """Everything the facade reads from one piece of SQL text, from one parse."""
+
+    tables: TableReferences
+    facts: SqlFacts
+
+
 def sqlglot_dialect(source_engine: str) -> str:
     """The sqlglot dialect for a source engine (``""`` = generic)."""
     return _DIALECTS.get((source_engine or "").strip().lower(), "")
@@ -182,14 +248,43 @@ def table_references(sql: str, source_engine: str) -> TableReferences:
     in ``fallback_reason``. Over the cap the text is not normalized either, so
     ``truncated`` is False.
     """
+    return _tables(_parse(sql, source_engine))
+
+
+def sql_facts(sql: str, source_engine: str) -> SqlFacts:
+    """The query-shape facts of ``sql`` (:class:`SqlFacts`), read with the
+    source engine's dialect; the regex facts when it falls back, exactly as
+    :func:`table_references` does. Never raises."""
+    return _facts(_parse(sql, source_engine))
+
+
+def read_sql(sql: str, source_engine: str) -> SqlReading:
+    """:func:`table_references` and :func:`sql_facts` from one parse."""
+    parsed = _parse(sql, source_engine)
+    return SqlReading(tables=_tables(parsed), facts=_facts(parsed))
+
+
+@dataclass(frozen=True)
+class _Parsed:
+    """One parse: the statements, or why there are none (the fallback reason)."""
+
+    sql: str
+    dialect: str
+    truncated: bool
+    statements: tuple[exp.Expr, ...] = ()
+    fallback_reason: FallbackReason | None = None
+
+
+def _parse(sql: str, source_engine: str) -> _Parsed:
+    """Parse ``sql`` once, or say why the regex fallback answers instead."""
     sql = sql or ""
     dialect = sqlglot_dialect(source_engine)
     if len(sql) > MAX_SQL_CHARS:
-        return _fallback(sql, "too_long", dialect, truncated=False)
+        return _Parsed(sql, dialect, truncated=False, fallback_reason="too_long")
     normalized = normalize_digest_text(sql, source_engine or "")
 
-    def fallback(reason: FallbackReason) -> TableReferences:
-        return _fallback(sql, reason, dialect, truncated=normalized.truncated)
+    def fallback(reason: FallbackReason) -> _Parsed:
+        return _Parsed(sql, dialect, truncated=normalized.truncated, fallback_reason=reason)
 
     if not normalized.text.strip():
         return fallback("empty")
@@ -210,13 +305,37 @@ def table_references(sql: str, source_engine: str) -> TableReferences:
         return fallback("command")
     if not all(isinstance(s, _STATEMENT_TYPES) for s in statements):
         return fallback("not_a_statement")
-    return _from_statements(statements, dialect, normalized.truncated)
+    return _Parsed(sql, dialect, truncated=normalized.truncated, statements=tuple(statements))
+
+
+def _tables(parsed: _Parsed) -> TableReferences:
+    if parsed.fallback_reason is not None:
+        return _fallback(
+            parsed.sql, parsed.fallback_reason, parsed.dialect, truncated=parsed.truncated
+        )
+    return _from_statements(list(parsed.statements), parsed.dialect, parsed.truncated)
+
+
+def _facts(parsed: _Parsed) -> SqlFacts:
+    if parsed.fallback_reason is not None:
+        return _regex_facts(parsed.sql, parsed.fallback_reason, parsed.dialect)
+    return _facts_from_statements(parsed.statements, parsed.dialect)
 
 
 def regex_answer(sql: str, source_engine: str, reason: FallbackReason) -> TableReferences:
     """The regex extractor's answer as a fallback with ``reason``, without
     trying sqlglot (for a caller whose :func:`table_references` call raised)."""
     return _fallback(sql or "", reason, sqlglot_dialect(source_engine), truncated=False)
+
+
+def regex_reading(sql: str, source_engine: str, reason: FallbackReason) -> SqlReading:
+    """:func:`regex_answer` and the regex facts, for a caller whose
+    :func:`read_sql` call raised."""
+    dialect = sqlglot_dialect(source_engine)
+    return SqlReading(
+        tables=_fallback(sql or "", reason, dialect, truncated=False),
+        facts=_regex_facts(sql or "", reason, dialect),
+    )
 
 
 def _fallback(
@@ -324,4 +443,94 @@ def _is_cte_reference(table: exp.Table, ref: TableRef) -> bool:
         if isinstance(owned, exp.With) and name in _cte_names(list(owned.expressions)):
             return True
         node = node.parent
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Query-shape facts (#796)
+# ---------------------------------------------------------------------------
+
+# Window functions that rank or offset rows and combine no values: sqlglot
+# models most of them as aggregate functions, but alone they aggregate nothing.
+_RANKING_WINDOW_FUNCTIONS: tuple[type[exp.Expr], ...] = (
+    exp.RowNumber,
+    exp.Rank,
+    exp.DenseRank,
+    exp.PercentRank,
+    exp.CumeDist,
+    exp.Ntile,
+    exp.Lag,
+    exp.Lead,
+    exp.FirstValue,
+    exp.LastValue,
+    exp.NthValue,
+)
+
+# Pattern-match predicates whose pattern is ``.expression``.
+_LIKE_NODES: tuple[type[exp.Expr], ...] = (exp.Like, exp.ILike)
+
+
+def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
+    """The regex facts (:mod:`src.tools.sql.regex_facts`), labelled as a fallback."""
+    return SqlFacts(
+        join_count=regex_join_count(sql),
+        has_joins=regex_has_joins(sql),
+        has_aggregation=regex_has_aggregation(sql),
+        has_subquery=regex_has_subquery(sql),
+        wildcard_leading=regex_wildcard_leading(sql),
+        parsed_by="regex",
+        fallback_reason=reason,
+        dialect=dialect,
+    )
+
+
+def _facts_from_statements(statements: tuple[exp.Expr, ...], dialect: str) -> SqlFacts:
+    """The facts of parsed statements (see :class:`SqlFacts`)."""
+    nodes = [node for statement in statements for node in statement.walk()]
+    join_count = sum(
+        1 for node in nodes if isinstance(node, exp.Join) and _joins_a_row_source(node)
+    )
+    return SqlFacts(
+        join_count=join_count,
+        has_joins=join_count > 0,
+        has_aggregation=any(_is_aggregation(node) for node in nodes),
+        has_subquery=sum(1 for node in nodes if isinstance(node, exp.Select)) > 1,
+        wildcard_leading=any(
+            isinstance(node, _LIKE_NODES) and _starts_with_wildcard(node.expression)
+            for node in nodes
+        ),
+        parsed_by="sqlglot",
+        fallback_reason=None,
+        dialect=dialect,
+    )
+
+
+def _joins_a_row_source(join: exp.Join) -> bool:
+    """Whether a join reads a stored table or a subquery, not only a table function."""
+    source = join.this
+    if isinstance(source, exp.Table):
+        return _ref_from_node(source) is not None or source.find(exp.Select) is not None
+    return source.find(exp.Select) is not None
+
+
+def _is_aggregation(node: exp.Expr) -> bool:
+    if isinstance(node, exp.Group):
+        return True
+    return isinstance(node, exp.AggFunc) and not isinstance(node, _RANKING_WINDOW_FUNCTIONS)
+
+
+def _starts_with_wildcard(pattern: exp.Expr | None) -> bool:
+    """Whether a LIKE pattern's first part is a string literal starting with ``%``."""
+    while pattern is not None:
+        if isinstance(pattern, exp.Literal):
+            return bool(pattern.is_string and str(pattern.this).startswith("%"))
+        if isinstance(pattern, exp.Paren | exp.DPipe | exp.Add):
+            pattern = pattern.this
+        elif isinstance(pattern, exp.Concat | exp.ConcatWs):
+            parts = list(pattern.expressions)
+            if isinstance(pattern, exp.ConcatWs):
+                parts = parts[1:]  # the first argument is the separator
+            pattern = parts[0] if parts else None
+        else:
+            return False
     return False

@@ -64,8 +64,10 @@ class TestOutputUnchanged:
         assert shadow.queries == len(json.loads(plain)["queries"])
 
     def test_the_facade_answer_drives_the_output(self, monkeypatch):
+        real_facts = facade.sql_facts
+
         def bogus(sql, engine):
-            return TableReferences(
+            tables = TableReferences(
                 tables=(TableRef(name="phantom"),),
                 cte_names=(),
                 parsed_by="sqlglot",
@@ -73,9 +75,10 @@ class TestOutputUnchanged:
                 dialect="postgres",
                 truncated=False,
             )
+            return facade.SqlReading(tables=tables, facts=real_facts(sql, engine))
 
         data = _collection(QUERIES)
-        monkeypatch.setattr(facade, "table_references", bogus)
+        monkeypatch.setattr(facade, "read_sql", bogus)
         plain = parse_offline_collection(json.loads(json.dumps(data)))
         assert {tuple(q["tables_accessed"]) for q in plain["queries"]} == {("phantom",)}
         shadow = TableShadow()
@@ -89,7 +92,7 @@ class TestOutputUnchanged:
             raise RuntimeError("facade bug")
 
         data = _collection(QUERIES)
-        monkeypatch.setattr(facade, "table_references", boom)
+        monkeypatch.setattr(facade, "read_sql", boom)
         shadow = TableShadow()
         parsed = parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)
         # The regex's own reading, phantoms included; every query is still

@@ -43,10 +43,10 @@ repos:
         # high-entropy hex that would otherwise need baselining one entry per
         # query. tests/contract/schema_snapshot.json (#574): same situation --
         # sha256 schema_hash values, one per contract.
-        # tests/unit/tools/sql/baselines/table_refs_snapshot.json (#557): the
-        # per-query facade snapshot, keyed by the same query ids. All excluded
-        # here rather than scanned at all.
-        exclude: (^package-lock\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$)
+        # tests/unit/tools/sql/baselines/table_refs_snapshot.json (#557) and
+        # sql_facts_snapshot.json (#796): the per-query facade snapshots, keyed
+        # by the same query ids. All excluded here rather than scanned at all.
+        exclude: (^package-lock\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
 
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves

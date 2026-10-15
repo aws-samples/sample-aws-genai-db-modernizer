@@ -271,9 +271,9 @@ def is_dedup_only_group_by(query_sql: str | None) -> bool:
     dedup, it does not assume it.
 
     ``has_aggregations`` on the collector's ``QueryPattern`` cannot be used
-    for this: it is set by a regex that treats ``GROUP BY`` itself as an
-    aggregation signal (``src/tools/database/offline_parser.py``), so it is
-    true for every dedup-only ``GROUP BY`` too.
+    for this: it treats ``GROUP BY`` itself as an aggregation signal
+    (``SqlFacts.has_aggregation`` in ``src/tools/sql/facade.py``, #796), so it
+    is true for every dedup-only ``GROUP BY`` too.
     """
     original = query_sql or ""
     for match in _QUOTED_FUNCTION_CALL_RE.finditer(original):

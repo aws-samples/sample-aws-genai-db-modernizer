@@ -7,18 +7,17 @@ into the resolved-risk text and the Aurora "Why" cell instead of reading as pros
 from __future__ import annotations
 
 from src.agents.referee.capability_registry import (
-    CAPABILITY_DETECTORS,
+    CAPABILITY_FACTS,
     SIGNAL_TO_CAPABILITY,
     detect_required_capabilities,
 )
 from src.agents.referee.synthesis_report import _CAPABILITY_PIN_DISPLAY, _capability_pin_reason
 
 # Capabilities ``detect_required_capabilities`` can actually return, exercised the same
-# way it is driven in production: via a triage signal, via a regex-detected pattern in
-# the query text, or via the dedicated aggregation/computed-join/utility-statement
-# detectors it also calls.
+# way it is driven in production: via a triage signal, via a query fact read from the
+# query text (``CAPABILITY_FACTS``), or via the utility-statement detector it also calls.
 _EMITTED_BY_SIGNAL = set(SIGNAL_TO_CAPABILITY.values())
-_EMITTED_BY_REGEX = {cap for cap, patterns in CAPABILITY_DETECTORS.items() if patterns}
+_EMITTED_BY_FACTS = {cap for cap, facts in CAPABILITY_FACTS.items() if facts}
 
 
 class TestCapabilityPinDisplayCoverage:
@@ -26,8 +25,8 @@ class TestCapabilityPinDisplayCoverage:
         for cap in _EMITTED_BY_SIGNAL:
             assert cap in _CAPABILITY_PIN_DISPLAY, f"no display string for {cap!r}"
 
-    def test_every_regex_detected_capability_has_a_display_string(self) -> None:
-        for cap in _EMITTED_BY_REGEX:
+    def test_every_fact_detected_capability_has_a_display_string(self) -> None:
+        for cap in _EMITTED_BY_FACTS:
             assert cap in _CAPABILITY_PIN_DISPLAY, f"no display string for {cap!r}"
 
     def test_text_search_capability_reads_as_prose(self) -> None:

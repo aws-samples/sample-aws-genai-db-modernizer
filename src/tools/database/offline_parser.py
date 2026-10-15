@@ -22,7 +22,7 @@ from src.tools.sql.bulk_load import is_bulk_load
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
 
 if TYPE_CHECKING:
-    from src.tools.sql.facade import TableReferences
+    from src.tools.sql.facade import SqlFacts, TableReferences
     from src.tools.sql.shadow import TableShadow
 
 logger = logging.getLogger(__name__)
@@ -71,9 +71,10 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
     Transform the flat offline JSON into the nested structure expected
     by mysql_collector's builder functions.
 
-    Every query's table references come from the sqlglot facade
-    (:func:`src.tools.sql.facade.table_references`, #553), read in the
-    collection's source-engine dialect; the regex scan is the facade's own
+    Every query's table references and its ``has_joins``/``join_count``/
+    ``has_aggregations``/``has_subqueries`` facts come from the sqlglot facade
+    (:func:`src.tools.sql.facade.read_sql`, #553, #796), read in the
+    collection's source-engine dialect; the regex scans are the facade's own
     fallback. ``shadow``, when given, also runs the regex scan on every query
     and records where it disagrees with the facade (#557). It only observes:
     the returned structure is the same with or without it.
@@ -389,34 +390,36 @@ def _facade_table_ids(
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
-) -> tuple[list[str], TableReferences]:
-    """One query's table ids from the sqlglot facade (#553).
+) -> tuple[list[str], TableReferences, SqlFacts]:
+    """One query's table ids and query-shape facts from the sqlglot facade
+    (#553, #796), from one parse.
 
     The facade picks the dialect from ``source_engine`` and falls back to the
-    regex scan itself when sqlglot can't read the statement. It never raises by
-    contract; if it does anyway, the regex answer is used, labelled
+    regex scans itself when sqlglot can't read the statement. It never raises by
+    contract; if it does anyway, the regex answers are used, labelled
     ``fallback_reason="facade_error"``, and a warning is logged, so a parser
-    bug can't fail a collection. Returns the resolved ids and the facade's
-    answer.
+    bug can't fail a collection. Returns the resolved ids, the facade's table
+    references and its facts.
     """
     from src.tools.sql import facade
 
     try:
-        refs = facade.table_references(query_text, source_engine)
+        reading = facade.read_sql(query_text, source_engine)
     except Exception:  # noqa: BLE001 -- the regex answer keeps the collection going
         logger.warning(
-            "offline_parser: sql facade failed on query %s, using the regex table scan",
+            "offline_parser: sql facade failed on query %s, using the regex scans",
             query_id,
             exc_info=True,
         )
-        refs = facade.regex_answer(query_text, source_engine, "facade_error")
+        reading = facade.regex_reading(query_text, source_engine, "facade_error")
+    refs = reading.tables
     ids = _resolve_table_ids(
         [(ref.qualifiers, ref.name) for ref in refs.tables],
         db_name,
         known_table_names,
         table_schemas,
     )
-    return ids, refs
+    return ids, refs, reading.facts
 
 
 _POSTGRES_ENGINES = frozenset({"postgresql", "postgres"})
@@ -532,7 +535,7 @@ def _transform_queries(
 
         # Table references come from the sqlglot facade (src/tools/sql/facade.py),
         # with the regex scan as its fallback, resolved to collection table ids.
-        tables_accessed, refs = _facade_table_ids(
+        tables_accessed, refs, facts = _facade_table_ids(
             str(digest),
             query_text,
             source_engine,
@@ -597,15 +600,13 @@ def _transform_queries(
                     float(r.get("lock_time_ms") or 0) / max(total_time_ms, 0.001) * 100, 2
                 ),
                 "tables_accessed": tables_accessed,
-                "has_joins": " join " in query_text.lower(),
-                "join_count": len(re.findall(r"\bjoin\b", query_text, re.I)),
+                "has_joins": facts.has_joins,
+                "join_count": facts.join_count,
                 "scan_efficiency_pct": min(
                     round(total_rows_sent / max(total_rows_examined, 1) * 100, 2), 100.0
                 ),
-                "has_aggregations": bool(
-                    re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                ),
-                "has_subqueries": query_text.lower().count("select") > 1,
+                "has_aggregations": facts.has_aggregation,
+                "has_subqueries": facts.has_subquery,
                 "errors": r.get("sum_errors") or 0,
                 "warnings": r.get("sum_warnings") or 0,
                 "first_seen": r.get("first_seen"),

@@ -127,13 +127,13 @@ def test_no_table_is_unknown():
 )
 def test_the_facade_gets_the_collection_source_engine(monkeypatch, engine, expected):
     seen: list[str] = []
-    real = facade.table_references
+    real = facade.read_sql
 
     def spy(sql, source_engine):
         seen.append(source_engine)
         return real(sql, source_engine)
 
-    monkeypatch.setattr(facade, "table_references", spy)
+    monkeypatch.setattr(facade, "read_sql", spy)
     _tables(["SELECT * FROM orders"], engine)
     assert seen == [expected]
 
@@ -155,7 +155,7 @@ def test_a_failing_facade_falls_back_to_the_regex(monkeypatch, caplog):
     def boom(sql, engine):
         raise RuntimeError("facade bug")
 
-    monkeypatch.setattr(facade, "table_references", boom)
+    monkeypatch.setattr(facade, "read_sql", boom)
     with caplog.at_level(logging.INFO, logger="src.tools.database.offline_parser"):
         tables = _tables(["SELECT * FROM posts p WHERE p.x IS DISTINCT FROM topics.id"])
     # The regex's own answer, phantom included: the run still completes.
