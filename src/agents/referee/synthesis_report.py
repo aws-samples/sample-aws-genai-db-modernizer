@@ -2628,7 +2628,9 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     source table the engine's analysis rated: the fit is then the basic baseline
     plus the signal bonus, not a measurement. A partial fit adds "partly
     signal-based" once at least a quarter of the queries lack table evidence (the
-    labels and threshold of ``src.shared.ranking``, which the deck uses too).
+    labels and threshold of ``src.shared.ranking``, which the deck uses too). A
+    ``pattern`` fit (OpenSearch, every routed query matches one of its detected
+    patterns) says so instead of a rated-table count.
     """
     fit = r.get("routed_confidence")
     if fit is None:
@@ -2639,6 +2641,10 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     evidence = r.get("routed_confidence_evidence")
     if evidence == "signal_only" or (evidence is None and not n_t):
         detail = SIGNAL_ONLY_NOTE
+    elif evidence == "pattern":
+        # #859: a pattern-only engine (OpenSearch) never scores a table, so its
+        # evidence is the query's own matched pattern, not a rated-table count.
+        detail = "matches a detected pattern" if n == 1 else "each matches a detected pattern"
     else:
         detail = _count(n_t, "rated table", "rated tables")
         if unbacked:

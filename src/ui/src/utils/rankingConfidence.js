@@ -8,9 +8,10 @@
  * the routed figure; a report written before it existed, or an engine with no
  * routed query, falls back to `confidence_score`.
  *
- * A routed confidence also carries `routed_confidence_evidence` (`table` /
+ * A routed confidence also carries `routed_confidence_evidence` (`table` / `pattern` /
  * `partial` / `signal_only`): whether a source table the engine's analysis rated
- * backs the fit. A `signal_only` fit is the basic baseline plus the signal bonus,
+ * backs the fit (`pattern`: every query routed to OpenSearch matches one of its
+ * detected patterns). A `signal_only` fit is the basic baseline plus the signal bonus,
  * never a measurement, so it is always labelled "signal only — no table-level
  * evidence" (the deck and the decision/engineering reports use the same words,
  * see `src/shared/ranking.py`); a `partial` fit is labelled "partly signal-based"

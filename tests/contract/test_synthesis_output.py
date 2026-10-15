@@ -75,6 +75,22 @@ class TestEngineRanking:
         with pytest.raises(ValidationError):
             EngineRanking(target="x", confidence_score=1, routed_confidence_evidence="guess")
 
+    def test_every_evidence_value_routed_confidence_produces_is_accepted(self):
+        """#859: a pattern-only engine (OpenSearch) whose routed queries all match
+        one of its detected patterns reports ``pattern``; synthesis must accept it."""
+        from src.agents.referee import routed_confidence as rc
+
+        for value in (
+            rc.EVIDENCE_TABLE,
+            rc.EVIDENCE_PATTERN,
+            rc.EVIDENCE_PARTIAL,
+            rc.EVIDENCE_SIGNAL_ONLY,
+        ):
+            r = EngineRanking(
+                target="opensearch", confidence_score=2, routed_confidence_evidence=value
+            )
+            assert r.routed_confidence_evidence == value
+
     def test_routed_confidence_bounds(self):
         with pytest.raises(ValidationError):
             EngineRanking(target="dynamodb", confidence_score=50, routed_confidence=101)
@@ -387,7 +403,7 @@ class TestSynthesisOutputContract:
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
         # #339: query_traces and facts.query_trace added
-        assert output.contract_version == "1.20"
+        assert output.contract_version == "1.21"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

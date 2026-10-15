@@ -268,6 +268,10 @@ Version History:
 - 1.20 (2026-10-15, #787): The trace reason codes gain
   ``fallback.no_group_owner`` (a co-dependency group no analyzed engine can
   serve as a whole), from the move ledger 1.5 enum. Backward compatible.
+- 1.21 (2026-10-15, #859): ``EngineRanking.routed_confidence_evidence`` gains
+  ``pattern``: every query routed to a pattern-only engine (OpenSearch) matches
+  one of that engine's detected patterns, which ``routed_confidence`` has
+  produced since #475 (synthesis failed validation on it). Backward compatible.
 """
 
 from datetime import datetime
@@ -315,12 +319,16 @@ class EngineRanking(BaseModel):
     routed_confidence_basis: Literal["owned_queries", "cached_reads"] | None = Field(None)
     routed_queries: int | None = Field(None, ge=0)
     routed_tables: int | None = Field(None, ge=0, description="Real source tables only")
-    routed_confidence_evidence: Literal["table", "partial", "signal_only"] | None = Field(
-        None,
-        description=(
-            "Whether a source table the engine's analysis rated backs the fit; signal_only "
-            "means the fit is the basic baseline plus the signal bonus"
-        ),
+    routed_confidence_evidence: Literal["table", "pattern", "partial", "signal_only"] | None = (
+        Field(
+            None,
+            description=(
+                "Whether a source table the engine's analysis rated backs the fit (for a "
+                "pattern-only engine such as OpenSearch, whether the query matches one of "
+                "its detected patterns: pattern); signal_only means the fit is the basic "
+                "baseline plus the signal bonus"
+            ),
+        )
     )
     routed_queries_without_table_evidence: int | None = Field(None, ge=0)
     routed_lead: str | None = Field(
@@ -962,7 +970,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.20",
+        default="1.21",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

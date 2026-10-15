@@ -212,3 +212,22 @@ class TestNoTableEvidence:
             "(1 rated table; 2 queries without table-level evidence, partly signal-based)"
             in _engine_rationale(data, dynamodb)
         )
+
+
+class TestPatternEvidence:
+    def test_a_pattern_backed_opensearch_fit_names_the_pattern_not_tables(self):
+        """#859: every query routed to OpenSearch matches one of its detected
+        patterns, so the evidence is ``pattern`` and the rationale says so instead
+        of "0 rated tables" (the scorer never reads a table for OpenSearch)."""
+        data = _data(ASSIGNMENT)
+        data.collector["queries"]["query_patterns"] = [
+            {**q, "tables_accessed": ["unknown"]} if q["query_id"] == "s1" else q for q in QUERIES
+        ]
+        data.engines["opensearch"].analysis["workload_analysis"]["patterns_detected"] = [
+            {"pattern_type": "full_text_search", "query_ids": ["s1"], "table_ids": ["posts"]}
+        ]
+        opensearch = _by_target(build_ranking(data))["opensearch"]
+        assert opensearch["routed_confidence_evidence"] == "pattern"
+        text = _engine_rationale(data, opensearch)
+        assert "(matches a detected pattern)" in text
+        assert "rated table" not in text

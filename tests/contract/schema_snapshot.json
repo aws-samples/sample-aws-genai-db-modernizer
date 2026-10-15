@@ -15290,6 +15290,7 @@
                       "kind": "enum",
                       "values": [
                         "partial",
+                        "pattern",
                         "signal_only",
                         "table"
                       ]
@@ -16010,8 +16011,8 @@
         }
       }
     },
-    "schema_hash": "3f8e029f2f8dc78c8a35b11c9e975981621151ca1c4e45817271488a482b2590",
-    "version": "1.20"
+    "schema_hash": "f8677bccaddc6a5e8a119db0e35a717f7c36e9cb25f833ad134c5e7d95c05824",
+    "version": "1.21"
   },
   "triage_output.TriageOutputContract": {
     "fields": {
