@@ -39,6 +39,7 @@ from .formatting import (
 from .query_traces import query_traces_pointer_html
 from .risks import NO_OPEN_RISKS_CAVEAT, _severity_counts_text, filtered_risks
 from .roadmap import _roadmap_html
+from .unservable import unservable_html
 
 _DECISION_CSS = """
 :root { --green:#00d563; --green-d:#00a84f; --navy:#1a1a2e; }
@@ -323,6 +324,7 @@ def render_decision_report_html(
             out.append("<p class=note>" + " ".join(note_bits) + "</p>")
 
     out += _tied_queries_html(report)
+    out += unservable_html(report)
     out += close_calls_html(report)
     out += _reroutes_html(report)
     out += _why_engines_were_dropped_html(report)

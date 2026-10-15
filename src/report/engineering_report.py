@@ -38,6 +38,7 @@ from .risks import (
     resolved_risks,
 )
 from .roadmap import _roadmap_md
+from .unservable import unservable_md
 
 
 def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
@@ -455,6 +456,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         out.append("")
 
     out += _tied_queries_md(report)
+    out += unservable_md(report)
     out += close_calls_md(report)
     out += _reroutes_md(report)
     out += _cache_layer_md(report)

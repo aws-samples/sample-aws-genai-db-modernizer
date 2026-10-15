@@ -13277,6 +13277,163 @@
                     "type": "integer"
                   }
                 },
+                "unservable": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "fallback_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "gated_everywhere_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "more_unservable_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "unservable_queries": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "blocking_gates": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "engine": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "gate": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "gate_text": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "capability_labels": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "explanation": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "kind": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "query_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "redesign_hints": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "required_capabilities": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "rule": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "unservable_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "waves": {
                   "required": false,
                   "schema": {
@@ -15334,6 +15491,141 @@
                     },
                     "kind": "array"
                   }
+                },
+                "unservable": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "blocking_gates": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "engine": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "engine_name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "gate": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "gate_text": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "engine_name": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "explanation": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "kind": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "fallback",
+                              "gated_everywhere"
+                            ]
+                          }
+                        },
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "required_capabilities": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "rule": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "cache.legacy_owner",
+                              "consolidate.no_unique_value",
+                              "consolidate.source_compatible_survives",
+                              "customer.pick",
+                              "fallback.no_group_owner",
+                              "fallback.no_owner",
+                              "fallback.no_score",
+                              "flag.capability_gap",
+                              "floor.cost_share",
+                              "floor.opensearch",
+                              "group.customer_propagation",
+                              "group.mean",
+                              "highest_score",
+                              "override.text_search",
+                              "override.utility",
+                              "rollback.redesign_failed",
+                              "sweep.orphan",
+                              "tie.cleared",
+                              "tie.placeholder.hash",
+                              "tie.placeholder.settled_workload",
+                              "tie.source_compatible",
+                              "tie.stability"
+                            ]
+                          }
+                        },
+                        "rule_label": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
                 }
               }
             },
@@ -16265,8 +16557,8 @@
         }
       }
     },
-    "schema_hash": "38b450cbf16bd03ca0d4027f8a8009672b12ab50ed7ac910a421832cb480a565",
-    "version": "1.23"
+    "schema_hash": "1a1ee1edaa32c1902a51aedc2e71e08b54233c1a9afd17bda9173d3253dd5aa1",
+    "version": "1.24"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

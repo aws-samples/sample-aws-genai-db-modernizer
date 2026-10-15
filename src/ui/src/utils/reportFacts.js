@@ -152,3 +152,11 @@ export function closeCallsOf(synthesis) {
   if (!cc || !Array.isArray(cc.engine_pairs) || cc.engine_pairs.length === 0) return null;
   return cc;
 }
+
+// #729: the queries that landed on a fallback engine because no analyzed engine fit
+// (facts.unservable), or null when there are none or the report predates them.
+export function unservableOf(synthesis) {
+  const u = factsOf(synthesis) && factsOf(synthesis).unservable;
+  if (!u || !Array.isArray(u.unservable_queries) || u.unservable_queries.length === 0) return null;
+  return u;
+}

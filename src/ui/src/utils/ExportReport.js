@@ -1152,6 +1152,34 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
   script += '    }\n';
   script += '\n';
+  script += '    // #729: the queries on a fallback engine -- the same facts, sentences and\n';
+  script += '    // re-run path as the decision and engineering reports (src/report/unservable.py).\n';
+  script += '    const FALLBACK_INTRO = "No analyzed engine could take these queries, so a routing rule placed each one on the engine shown: it runs the query, but no analysis scored it there and no design covers it. The assessment does not bring back an engine it removed. Keep each query where it landed, or redesign it for the engines that ruled it out, then re-run.";\n';
+  script += '    const FALLBACK_RERUN_TEXT = "To re-run, open the assignment review: change a query\'s engine or take it out of scope, then approve; that writes a new assignment version and redesigns only the engines it touches. A query rewritten as suggested is picked up when the assessment runs again on the updated collection.";\n';
+  script += '    function buildFallbackQueries() {\n';
+  script += '      const container = document.getElementById(\'fallback-queries-container\');\n';
+  script += '      if (!container) return;\n';
+  script += '      const u = DATA.results && DATA.results.synthesis && DATA.results.synthesis.facts && DATA.results.synthesis.facts.unservable;\n';
+  script += '      if (!u || !Array.isArray(u.unservable_queries) || u.unservable_queries.length === 0) { container.innerHTML = \'\'; return; }\n';
+  script += '      const pick = (n, one, many) => (n === 1 ? one : many);\n';
+  script += '      const name = e => ENGINE_LABELS[e] || e;\n';
+  script += '      let html = \'<div class="section" data-figure="unservable-queries">\';\n';
+  script += '      html += \'<div class="section-header">\' + escapeHtml(\'Queries on a fallback engine (\' + u.unservable_query_count + \' \' + pick(u.unservable_query_count, \'query\', \'queries\') + \')\') + \'</div>\';\n';
+  script += '      html += \'<p class="section-desc">\' + escapeHtml(FALLBACK_INTRO) + \'</p>\';\n';
+  script += '      html += \'<ul>\';\n';
+  script += '      u.unservable_queries.forEach(q => {\n';
+  script += '        const gates = (q.blocking_gates || []).map(g => name(g.engine) + \' (\' + (g.gate_text || g.gate) + \')\').join(\'; \');\n';
+  script += '        const ruledOut = gates ? \' Ruled out: \' + gates + \'.\' : \'\';\n';
+  script += '        const keep = \'Keep it on \' + name(q.engine) + \', or redesign it. \' + (q.redesign_hints || []).join(\' \');\n';
+  script += '        html += \'<li><code>\' + escapeHtml(q.query_id) + \'</code> landed on <b>\' + escapeHtml(name(q.engine)) + \'</b>: \' + escapeHtml(`${q.explanation || \'\'}${ruledOut} ${keep}`) + \'</li>\';\n';
+  script += '      });\n';
+  script += '      if (u.more_unservable_count) html += \'<li>\' + escapeHtml(u.more_unservable_count + \' more \' + pick(u.more_unservable_count, \'query\', \'queries\') + \': see the Engineering Report.\') + \'</li>\';\n';
+  script += '      html += \'</ul>\';\n';
+  script += '      html += \'<p class="section-desc">\' + escapeHtml(FALLBACK_RERUN_TEXT) + \'</p>\';\n';
+  script += '      html += \'</div>\';\n';
+  script += '      container.innerHTML = html;  // nosemgrep: insecure-innerhtml,insecure-document-method -- values HTML-escaped via escapeHtml()\n';
+  script += '    }\n';
+  script += '\n';
   script += '    // #730: the close calls -- the same facts, sentences and override path as\n';
   script += '    // the decision and engineering reports (src/report/close_calls.py).\n';
   script += '    const CLOSE_CALL_OVERRIDE_TEXT = "To move any of them, change its engine in the assignment review (a query in a co-dependency group moves with its group); that writes a new assignment version and redesigns only the engines it touches. The results page\'s Why this engine trace shows both scores for each query.";\n';
@@ -1608,6 +1636,7 @@ const generateReportScript = (data, ENGINE_LABELS) => {
   script += '    document.addEventListener(\'DOMContentLoaded\', () => {\n';
   script += '      allPatterns = extractPatterns();\n';
   script += '      buildPostSchemaReroutes();\n';
+  script += '      buildFallbackQueries();\n';
   script += '      buildCloseCalls();\n';
   script += '      buildMigrationRoadmap();\n';
   script += '      buildCostBreakdown();\n';
@@ -1861,6 +1890,7 @@ export const generateHTMLReport = (data) => {
     </div>
 
     <div id="post-schema-reroutes-container"></div>
+    <div id="fallback-queries-container"></div>
     <div id="close-calls-container"></div>
 
     <div class="section">

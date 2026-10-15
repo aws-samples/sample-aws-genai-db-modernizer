@@ -14,6 +14,7 @@ import {
   realityCheckDecisions,
   tradeOffsByTab,
   tradeOffTabLabel,
+  unservableOf,
   waveFacts,
   waveTableStats,
 } from '../reportFacts';
@@ -175,4 +176,14 @@ test('closeCallsOf returns the stored close calls, or null without any', () => {
   expect(closeCallsOf({ facts: { close_calls: null } })).toBeNull();
   expect(closeCallsOf({ facts: {} })).toBeNull();
   expect(closeCallsOf(null)).toBeNull();
+});
+
+// #729: the queries on a fallback engine are the stored facts; none (or a
+// report written before them) shows no callout.
+test('unservableOf returns the stored queries, or null without any', () => {
+  const u = { unservable_query_count: 1, unservable_queries: [{ query_id: 'q1', engine: 'aurora_mysql' }] };
+  expect(unservableOf({ facts: { unservable: u } })).toBe(u);
+  expect(unservableOf({ facts: { unservable: { ...u, unservable_queries: [] } } })).toBeNull();
+  expect(unservableOf({ facts: {} })).toBeNull();
+  expect(unservableOf(null)).toBeNull();
 });

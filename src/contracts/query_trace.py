@@ -254,6 +254,39 @@ class CloseCall(BaseModel):
     )
 
 
+class UnservableGate(BaseModel):
+    """Why one engine could not take a query that landed on a fallback engine (#729)."""
+
+    engine: str = Field(..., description="The engine ruled out (id)")
+    engine_name: str = Field(..., description="Its display name")
+    gate: str = Field(..., description="The gate kind (machine id; see gate_text)")
+    gate_text: str = Field(..., description="The gate in plain words")
+
+
+class UnservableQuery(BaseModel):
+    """A query that landed on a fallback engine because no analyzed engine fit (#729).
+
+    Its engine was decided by a fallback rule (no analyzed engine could take
+    it) or every candidate engine is gated (``report_facts.is_unservable``).
+    """
+
+    query_id: str
+    engine: str = Field(..., description="The engine it ends on (id)")
+    engine_name: str = Field(..., description="Its display name")
+    kind: Literal["fallback", "gated_everywhere"] = Field(
+        ..., description="A fallback rule placed it, or every candidate is gated"
+    )
+    rule: ReasonCode = Field(..., description="The deciding step's rule (machine id)")
+    rule_label: str = Field(..., description="The rule as a short plain-English label")
+    explanation: str = Field(..., description="The deciding step's sentence")
+    blocking_gates: list[UnservableGate] = Field(
+        default_factory=list, description="Each ruled-out engine and its gate, by engine"
+    )
+    required_capabilities: list[str] = Field(
+        default_factory=list, description="The hard capabilities triage found it needs (ids)"
+    )
+
+
 class QueryTraceDigest(BaseModel):
     """The decision traces synthesis writes into report.json (``query_traces``, #339).
 
@@ -296,5 +329,12 @@ class QueryTraceDigest(BaseModel):
         description=(
             "Every query, listed or not, whose runner-up is a kept engine less than the "
             "close-call margin behind (#730), by engine, alternative, gap and query id"
+        ),
+    )
+    unservable: list[UnservableQuery] = Field(
+        default_factory=list,
+        description=(
+            "Every query, listed or not, that landed on a fallback engine because no "
+            "analyzed engine fit (#729), by engine and query id"
         ),
     )

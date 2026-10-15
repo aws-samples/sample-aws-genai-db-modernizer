@@ -185,6 +185,10 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         _ROUTING + ": the hard capability gate (collapses into the pattern files' supported "
         "flags)",
     ),
+    "src/shared/capability_labels.py": (
+        frozenset({"CAPABILITY_REDESIGN_HINTS"}),
+        _WORDING + ": how to redesign a query a fallback rule placed (#729)",
+    ),
     "src/agents/referee/engine_exclusions.py": (
         frozenset({"EXCLUSION_RULES"}),
         _ROUTING + ": hard exclusions",
@@ -431,7 +435,9 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/shared/query_trace.py": (frozenset({"_PLACES", "EXCERPT_CHARS"}), _BUDGET),
     "src/shared/report_facts.py": (
-        frozenset({"TRACE_FULL_CAP", "CLOSE_CALL_IDS_SHOWN", "CLOSE_CALL_MARGIN"}),
+        frozenset(
+            {"TRACE_FULL_CAP", "CLOSE_CALL_IDS_SHOWN", "CLOSE_CALL_MARGIN", "UNSERVABLE_SHOWN"}
+        ),
         _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",
     ),
     "src/tools/analysis/llm_advisor_base.py": (

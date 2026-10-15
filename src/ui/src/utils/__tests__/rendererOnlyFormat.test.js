@@ -119,6 +119,7 @@ const GUARDED_UI_FILES = [
   'components/QueryDecisionTrace.js',
   'components/QueryRoutingTable.js',
   'components/CloseCallCallout.js',
+  'components/UnservableQueriesCallout.js',
   'utils/queryRouting.js',
 ];
 

@@ -121,10 +121,17 @@ _EXPLANATION_READ = re.compile(r"""["']explanation["']|\.explanation\b""")
 # ``explanation``: deterministic text from src/shared/move_reasons.py
 # (display names, numbers, fixed phrases), which the guard scans like any other
 # field -- only a flag decision's ``explanation`` is exempt. These renderers
-# read the trace's, and never touch a flag decision.
+# read the trace's, and never touch a flag decision (the #729 sections read
+# the deciding step's sentence, the same text).
 _TRACE_RENDERERS = {
     "src/report/query_traces.py",
     "src/ui/src/components/QueryDecisionTrace.js",
+    # #729: a query on a fallback engine, with its deciding step's sentence.
+    "src/report/unservable.py",
+    "src/ui/src/components/UnservableQueriesCallout.js",
+    # ... and the interactive report's fallback section (its source and generated script).
+    "src/ui/src/utils/ExportReport.js",
+    "src/report/templates/analysis_report.js",
 }
 
 

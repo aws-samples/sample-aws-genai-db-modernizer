@@ -286,6 +286,14 @@ Version History:
   deliverable says which queries went to an engine on a small margin and
   where the customer can move them. Backward compatible: ``close_calls``
   defaults to empty, ``facts.close_calls`` to None.
+- 1.24 (2026-10-15, #729): ``query_traces.unservable`` (``UnservableQuery``):
+  every query that landed on a fallback engine because no analyzed engine fit -- its
+  engine decided by a fallback rule, or every candidate engine gated -- with
+  the gate that ruled out each engine and the capabilities it needs; and
+  ``facts.unservable`` (``UnservableFacts``), the same queries with a
+  redesign hint each, so every deliverable flags them and points at the
+  assignment review to re-run. Backward compatible: ``unservable`` defaults
+  to empty, ``facts.unservable`` to None.
 """
 
 from datetime import datetime
@@ -936,6 +944,46 @@ class CloseCallFacts(BaseModel):
     )
 
 
+class UnservableGateFact(BaseModel):
+    """One engine ruled out for a query on a fallback engine (#729)."""
+
+    engine: str = Field(..., description="The engine (id)")
+    gate: str = Field(..., description="The gate kind (machine id)")
+    gate_text: str = Field("", description="The gate in plain words")
+
+
+class UnservableQueryFact(BaseModel):
+    """A query that landed on a fallback engine because no analyzed engine fit (#729)."""
+
+    query_id: str
+    engine: str = Field(..., description="The engine it ends on (id)")
+    kind: str = Field(..., description="fallback or gated_everywhere")
+    rule: str = Field("", description="The deciding step's rule (machine id)")
+    explanation: str = Field("", description="Why it sits there, the trace's own sentence")
+    blocking_gates: list[UnservableGateFact] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list, description="Capability ids")
+    capability_labels: list[str] = Field(
+        default_factory=list, description="The capabilities in plain words"
+    )
+    redesign_hints: list[str] = Field(
+        default_factory=list, description="How to redesign it, one sentence each"
+    )
+
+
+class UnservableFacts(BaseModel):
+    """Queries on a fallback engine (#729), from ``query_traces.unservable``."""
+
+    unservable_query_count: int = Field(0, ge=0)
+    fallback_query_count: int = Field(0, ge=0, description="Placed by a fallback rule")
+    gated_everywhere_query_count: int = Field(
+        0, ge=0, description="Every candidate engine gated, no fallback rule"
+    )
+    unservable_queries: list[UnservableQueryFact] = Field(
+        default_factory=list, description="At most UNSERVABLE_SHOWN, by engine then query id"
+    )
+    more_unservable_count: int = Field(0, ge=0, description="The ones not named")
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -998,6 +1046,13 @@ class ReportFacts(BaseModel):
             "None when query_traces predates close_calls"
         ),
     )
+    unservable: UnservableFacts | None = Field(
+        None,
+        description=(
+            "Queries that landed on a fallback engine because no analyzed engine fit (#729); None "
+            "when query_traces predates unservable"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -1042,7 +1097,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.23",
+        default="1.24",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

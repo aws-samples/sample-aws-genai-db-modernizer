@@ -255,6 +255,19 @@ ID_FIELD_PATHS = frozenset(
         ("close_calls", "engine"),  # CloseCall.engine
         ("close_calls", "alternative"),  # CloseCall.alternative
         ("close_calls", "basis"),  # CloseCall.basis (query / group_mean)
+        # query_traces.unservable (UnservableQuery, #729) and facts.unservable:
+        # engine ids, the kind, the rule and gate codes and the capability ids.
+        # explanation, rule_label, gate_text and the redesign hints are scanned.
+        ("unservable", "engine"),  # UnservableQuery.engine
+        ("unservable", "kind"),  # UnservableQuery.kind
+        ("unservable", "rule"),  # UnservableQuery.rule (ReasonCode rule id)
+        ("unservable", "required_capabilities"),  # capability ids
+        ("unservable_queries", "engine"),  # UnservableQueryFact.engine
+        ("unservable_queries", "kind"),  # UnservableQueryFact.kind
+        ("unservable_queries", "rule"),  # UnservableQueryFact.rule
+        ("unservable_queries", "required_capabilities"),  # capability ids
+        ("blocking_gates", "engine"),  # UnservableGate.engine / UnservableGateFact.engine
+        ("blocking_gates", "gate"),  # gate kind code
     }
 )
 

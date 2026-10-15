@@ -40,6 +40,8 @@ from src.contracts.query_trace import (
     TraceRuleCount,
     TraceRunnerUp,
     TraceStep,
+    UnservableGate,
+    UnservableQuery,
 )
 from src.shared.engine_names import display_engine
 from src.shared.move_reasons import (
@@ -55,6 +57,7 @@ from src.shared.report_facts import (
     TRACE_FULL_CAP,
     is_close_call,
     is_listed,
+    is_unservable,
     trace_kinds,
     trace_order,
 )
@@ -403,6 +406,54 @@ def build_query_trace(
     )
 
 
+def _unservable(
+    trace: QueryTraceResponse,
+    moves: list[tuple[int, Move]],
+    capabilities: Iterable[str],
+) -> UnservableQuery:
+    """The ``query_traces.unservable`` row of a query ``is_unservable`` selects (#729).
+
+    The gates are the deciding Move's own: each gated candidate, plus each
+    engine a co-dependency group's fallback ruled out (``group_gates``), once
+    per engine and gate, by engine.
+    """
+    final = trace.final_engine or moves[-1][1].to_engine
+    _, decider = _deciding_step(final, moves)
+    candidates = decider.evidence.candidates or next(
+        (m.evidence.candidates for _, m in reversed(moves) if m.evidence.candidates), []
+    )
+    pairs = {(c.engine, c.gate) for c in candidates if c.gate}
+    pairs |= {(g.engine, g.gate) for g in decider.evidence.group_gates}
+    return UnservableQuery(
+        query_id=trace.query_id,
+        engine=final,
+        engine_name=display_engine(final),
+        kind="fallback" if decider.reason_code in _FALLBACK_RULES else "gated_everywhere",
+        rule=decider.reason_code,
+        rule_label=rule_label(decider.reason_code),
+        explanation=render_move_reason(decider),
+        blocking_gates=[
+            UnservableGate(
+                engine=engine,
+                engine_name=display_engine(engine),
+                gate=gate,
+                gate_text=gate_text(gate) or "",
+            )
+            for engine, gate in sorted(pairs)
+        ],
+        required_capabilities=sorted({str(c) for c in capabilities}),
+    )
+
+
+_FALLBACK_RULES = frozenset(
+    {
+        ReasonCode.FALLBACK_NO_SCORE,
+        ReasonCode.FALLBACK_NO_OWNER,
+        ReasonCode.FALLBACK_NO_GROUP_OWNER,
+    }
+)
+
+
 # How much of a query's own SQL identifies it in a listing.
 EXCERPT_CHARS = 120
 
@@ -420,6 +471,7 @@ def query_trace_digest(
     read: Callable[[int], dict | None],
     effective_version: int,
     query_texts: Mapping[str, str] | None = None,
+    query_capabilities: Mapping[str, Iterable[str]] | None = None,
 ) -> QueryTraceDigest:
     """The decision traces synthesis writes into report.json (``query_traces``).
 
@@ -432,7 +484,9 @@ def query_trace_digest(
     the first ``TRACE_FULL_CAP`` keep their full trace, the rest only why they
     are listed. The others are counted by their first assignment's rule.
     Every query whose runner-up ``is_close_call`` is recorded in
-    ``close_calls`` too, listed or not (#730).
+    ``close_calls`` too, listed or not (#730), and every query that
+    ``is_unservable`` in ``unservable``, with the capabilities
+    ``query_capabilities`` (triage's per-query map) says it needs (#729).
     """
     qas = [qa for qa in effective.get("query_assignments") or [] if qa.get("query_id")]
     by_query = ledger_moves(assignment_lineage(read, effective_version))
@@ -441,6 +495,8 @@ def query_trace_digest(
     listed: list[tuple[dict[str, Any], QueryTraceEntry]] = []
     rules: dict[ReasonCode, int] = {}
     close: list[CloseCall] = []
+    unservable: list[UnservableQuery] = []
+    caps = query_capabilities or {}
     for qa in qas:
         qid = str(qa["query_id"])
         trace = build_query_trace(
@@ -448,6 +504,8 @@ def query_trace_digest(
         )
         dumped = trace.model_dump(mode="json", by_alias=True)
         kinds = trace_kinds(dumped)
+        if by_query.get(qid) and is_unservable(dumped):
+            unservable.append(_unservable(trace, by_query[qid], caps.get(qid) or []))
         if trace.runner_up is not None and trace.final_engine and is_close_call(dumped):
             close.append(
                 CloseCall(
@@ -483,4 +541,5 @@ def query_trace_digest(
             for code, n in sorted(rules.items(), key=lambda kv: (-kv[1], kv[0].value))
         ],
         close_calls=sorted(close, key=lambda c: (c.engine, c.alternative, c.gap, c.query_id)),
+        unservable=sorted(unservable, key=lambda u: (u.engine, u.query_id)),
     )

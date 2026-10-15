@@ -662,10 +662,12 @@ def _query_traces(
     assignment: dict,
     version: int,
     collector: dict | None = None,
+    triage: dict | None = None,
 ) -> dict:
     """``report.json``'s ``query_traces`` (#339): the effective lineage's decision traces.
 
-    The collected SQL of each query gives its listing an excerpt to recognise it by.
+    The collected SQL of each query gives its listing an excerpt to recognise it by;
+    triage's per-query capabilities say what a query on a fallback engine needs (#729).
     """
     from src.shared.query_trace import query_trace_digest
     from src.storage.assignment_versioning import assignment_artifact_path
@@ -684,7 +686,8 @@ def _query_traces(
         for q in patterns
         if isinstance(q, dict) and q.get("query_id")
     }
-    digest = query_trace_digest(assignment, _read, version, texts)
+    capabilities = (triage or {}).get("query_capabilities") or {}
+    digest = query_trace_digest(assignment, _read, version, texts, capabilities)
     return digest.model_dump(mode="json", by_alias=True)
 
 
@@ -758,6 +761,7 @@ def _write_synthesis_report(
             data.assignment,
             assignment_version,
             data.collector,
+            data.triage,
         )
     # #615 (ADR-032): every customer-facing figure, computed once from the
     # fields above; the deliverables only format it. The collected views let

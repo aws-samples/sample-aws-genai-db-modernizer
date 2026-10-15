@@ -36,6 +36,7 @@ from typing import Any
 
 from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.capability_labels import capability_label, redesign_hints
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
@@ -1063,6 +1064,108 @@ def close_call_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Queries on a fallback engine (#729)
+# ---------------------------------------------------------------------------
+
+# The rules that place a query no analyzed engine can take (ADR-031 Decision 2;
+# ``move_ledger.ReasonCode``'s fallback codes).
+FALLBACK_RULES = frozenset({"fallback.no_score", "fallback.no_owner", "fallback.no_group_owner"})
+
+# At most this many of them are named in the facts and the deliverables;
+# report.json's ``query_traces.unservable`` lists every one.
+UNSERVABLE_SHOWN = 50
+
+
+def deciding_step(trace: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The step of a decision trace (JSON) that put the query on its final engine.
+
+    The last step that changed its engine onto the final one (the first
+    assignment counts), else the last step: a later tie-only change or
+    restatement does not decide the engine. The same rule as the trace
+    builder's own ``_deciding_step``.
+    """
+    first = trace.get("first_assignment")
+    steps = ([first] if isinstance(first, Mapping) else []) + [
+        m for m in trace.get("moves") or [] if isinstance(m, Mapping)
+    ]
+    if not steps:
+        return None
+    final = trace.get("final_engine")
+    for step in reversed(steps):
+        if step.get("to_engine") == final and step.get("from_engine") != step.get("to_engine"):
+            return step
+    return steps[-1]
+
+
+def is_unservable(trace: Mapping[str, Any]) -> bool:
+    """Whether a query's decision trace (``QueryTraceResponse`` as JSON) ends
+    on a fallback engine because no analyzed engine fit it.
+
+    Its engine was decided by a fallback rule (no analyzed engine could take
+    it), or every candidate of the deciding step is gated (the final engine
+    included). Synthesis selects the ``query_traces.unservable`` rows with
+    this; the facts layer states them.
+    """
+    step = deciding_step(trace)
+    if step is None:
+        return False
+    if step.get("reason_code") in FALLBACK_RULES:
+        return True
+    candidates = [c for c in step.get("candidates") or [] if isinstance(c, Mapping)]
+    return bool(candidates) and all(c.get("gate") for c in candidates)
+
+
+def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The queries on a fallback engine (``UnservableFacts``), or None.
+
+    None for a report whose ``query_traces`` predates ``unservable``. Each
+    query keeps the trace's own sentence for why it sits where it does, the
+    gate that ruled out each engine, the capabilities it needs and a
+    redesign hint for each (``capability_labels.redesign_hints``), by engine
+    then query id; at most ``UNSERVABLE_SHOWN`` are named.
+    """
+    digest = report.get("query_traces")
+    if not isinstance(digest, dict) or not isinstance(digest.get("unservable"), list):
+        return None
+    rows = [r for r in digest["unservable"] if isinstance(r, dict) and r.get("query_id")]
+    rows.sort(key=lambda r: (str(r.get("engine") or ""), str(r["query_id"])))
+    out: list[dict[str, Any]] = []
+    for r in rows[:UNSERVABLE_SHOWN]:
+        gates = [g for g in r.get("blocking_gates") or [] if isinstance(g, dict)]
+        caps = [str(c) for c in r.get("required_capabilities") or []]
+        out.append(
+            {
+                "query_id": str(r["query_id"]),
+                "engine": str(r.get("engine") or ""),
+                "kind": str(r.get("kind") or "fallback"),
+                "rule": str(r.get("rule") or ""),
+                "explanation": str(r.get("explanation") or ""),
+                "blocking_gates": [
+                    {
+                        "engine": str(g.get("engine") or ""),
+                        "gate": str(g.get("gate") or ""),
+                        "gate_text": str(g.get("gate_text") or ""),
+                    }
+                    for g in gates
+                ],
+                "required_capabilities": sorted(set(caps)),
+                "capability_labels": [capability_label(c) for c in sorted(set(caps))],
+                "redesign_hints": redesign_hints(
+                    caps, [(str(g.get("engine") or ""), str(g.get("gate") or "")) for g in gates]
+                ),
+            }
+        )
+    fallback = sum(1 for r in rows if r.get("kind", "fallback") == "fallback")
+    return {
+        "unservable_query_count": len(rows),
+        "fallback_query_count": fallback,
+        "gated_everywhere_query_count": len(rows) - fallback,
+        "unservable_queries": out,
+        "more_unservable_count": max(len(rows) - UNSERVABLE_SHOWN, 0),
+    }
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -1181,4 +1284,6 @@ def compute_report_facts(
         "query_trace": query_trace_facts(report),
         # #730: the queries a kept engine could serve almost as well.
         "close_calls": close_call_facts(report),
+        # #729: the queries that landed on a fallback engine.
+        "unservable": unservable_query_facts(report),
     }

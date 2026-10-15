@@ -42,6 +42,7 @@ import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import QueryRoutingTable from "../components/QueryRoutingTable";
 import CloseCallCallout from "../components/CloseCallCallout";
+import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import { buildQueryRoutingRows } from "../utils/queryRouting";
 import { generateHTMLReport } from "../utils/ExportReport";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -2059,6 +2060,16 @@ const AnalysisResultsPage = memo(() => {
                 />
               </Container>
             )}
+
+            {/* Queries on a fallback engine (#729): where each landed and why,
+                its gates, a redesign hint and the assignment review that
+                re-runs. Warning first, as in both reports. */}
+            <UnservableQueriesCallout
+              synthesis={resultsData?.synthesis}
+              jobId={jobId}
+              onOpen={fetchQueryJourney}
+              t={t}
+            />
 
             {/* Close calls (#730): queries a kept engine could serve almost
                 as well, with the way into each one's decision trace and the

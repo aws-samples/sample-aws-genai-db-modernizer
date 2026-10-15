@@ -29,6 +29,8 @@ from src.contracts.query_trace import (
     TraceRuleCount,
     TraceRunnerUp,
     TraceStep,
+    UnservableGate,
+    UnservableQuery,
 )
 from src.shared.query_trace import query_trace_digest
 from src.tools.validation.customer_text_guard import ID_FIELD_PATHS, ID_FIELDS, scan_json
@@ -47,6 +49,8 @@ TRACE_MODELS: dict[type[BaseModel], tuple[str, ...]] = {
     TraceOutscored: ("outscored_by",),
     TraceRuleCount: ("unlisted_rules",),
     CloseCall: ("close_calls",),
+    UnservableQuery: ("unservable",),
+    UnservableGate: ("blocking_gates",),
 }
 # Display names and the reason renderer's sentences: scanned like any prose.
 SCANNED = frozenset(
@@ -61,6 +65,7 @@ SCANNED = frozenset(
         "label",
         "explanation",
         "summary",
+        "rule_label",
     }
 )
 

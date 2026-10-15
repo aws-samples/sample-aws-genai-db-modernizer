@@ -87,6 +87,7 @@ from .renderers import (
 )
 from .renderers import resolved_risk_label as _resolved_risk_label
 from .renderers import resolved_risks as _resolved_risks
+from .unservable import UNSERVABLE_DECK_ACTION, unservable_title
 
 logger = logging.getLogger(__name__)
 
@@ -1228,6 +1229,24 @@ def derive(rep: dict[str, Any], exp: dict[str, Any]) -> dict[str, Any]:
                 "accent": ORANGE,
                 "against": reroute_summary(rep) or "",
                 "action": REROUTE_OVERRIDE_TEXT,
+            }
+        )
+
+    # #729: the same queries on a fallback engine the decision and engineering
+    # reports state ("Queries on a fallback engine"), with the same re-run path.
+    fallback = facts.get("unservable") or {}
+    if fallback.get("unservable_query_count"):
+        n_fallback = int(fallback.get("unservable_query_count") or 0)
+        decisions.append(
+            {
+                "question": "Keep the queries on a fallback engine?",
+                "badge": f"{n_fallback} {plural_noun(n_fallback, 'query', 'queries')}",
+                "accent": ORANGE,
+                "against": (
+                    f"{unservable_title(n_fallback)}: no analyzed engine could take them, so "
+                    "each runs on the engine it landed on, with no design for it there."
+                ),
+                "action": UNSERVABLE_DECK_ACTION,
             }
         )
 

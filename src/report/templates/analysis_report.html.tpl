@@ -58,6 +58,7 @@ __BANNER__
     </div>
 
     <div id="post-schema-reroutes-container"></div>
+    <div id="fallback-queries-container"></div>
     <div id="close-calls-container"></div>
 
     <div class="section">

@@ -103,6 +103,8 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {"removal_savings"} if "removal_savings" in exp else set()
     # #730: every deliverable states the close calls (and the settled ties).
     req |= {"close_calls", "settled_ties"} & set(exp)
+    # #729: and the queries on a fallback engine.
+    req |= {"fallback_queries"} & set(exp)
     return req
 
 

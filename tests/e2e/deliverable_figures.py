@@ -235,6 +235,9 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         rows = [r for r in digest["close_calls"] if isinstance(r, dict)]
         exp["close_calls"] = sum(1 for r in rows if not r.get("settled_tie"))
         exp["settled_ties"] = sum(1 for r in rows if r.get("settled_tie"))
+    # #729: the queries on a fallback engine, from query_traces.unservable.
+    if isinstance(digest.get("unservable"), list):
+        exp["fallback_queries"] = sum(1 for r in digest["unservable"] if isinstance(r, dict))
     exp["engine_count"] = len(final_architecture(report))
     exp["removed"] = frozenset(removed_engines(report))
     # A pointer to the decision report's "Engines not used" section must have
@@ -527,6 +530,15 @@ def _close_calls(f: Figures, text: str | None, where: str) -> None:
     f.add("settled_ties", _int(m.group(2)) if m and m.group(2) else 0, where)
 
 
+_FALLBACK_TITLE = re.compile(r"Queries on a fallback engine \(([\d,]+) quer(?:y|ies)\)")
+
+
+def _fallback_queries(f: Figures, text: str | None, where: str) -> None:
+    """The count of one "Queries on a fallback engine (N queries)" title (#729)."""
+    m = _FALLBACK_TITLE.search(text or "")
+    f.add("fallback_queries", _int(m.group(1)) if m else 0, where)
+
+
 def decision_figures(page: Any) -> Figures:
     """Figures the decision report shows, read from the rendered page."""
     f = Figures("decision report")
@@ -620,6 +632,8 @@ def decision_figures(page: Any) -> Figures:
     else:
         f.add("tied", 0, "no Pending engine choices section")
 
+    fb = page.locator("[data-figure=unservable-queries] h2")
+    _fallback_queries(f, norm(fb.inner_text()) if fb.count() else None, "fallback heading")
     close = page.locator("[data-figure=close-calls] h2")
     _close_calls(f, norm(close.inner_text()) if close.count() else None, "Close calls heading")
 
@@ -727,6 +741,8 @@ def analysis_figures(page: Any) -> Figures:
         m = re.search(r"\(([\d,]+) quer(?:y|ies), [\d.]+%\)$", norm(label.text_content() or ""))
         f.add(f"queries:{eng}", _int(m.group(1)) if m else UNREADABLE, "Query Flow label")
 
+    fb = page.locator("[data-figure=unservable-queries] .section-header")
+    _fallback_queries(f, norm(fb.inner_text()) if fb.count() else None, "fallback section")
     close = page.locator("[data-figure=close-calls] .section-header")
     _close_calls(f, norm(close.inner_text()) if close.count() else None, "Close calls section")
 
@@ -819,6 +835,11 @@ def engineering_figures(md_text: str) -> Figures:
                     removed.add(engine_id(x))
     _close_calls(
         f, next((h for h in h2 if h.startswith("Close calls (")), None), "Close calls heading"
+    )
+    _fallback_queries(
+        f,
+        next((h for h in h2 if h.startswith("Queries on a fallback engine (")), None),
+        "fallback heading",
     )
     if "Unresolved engine ties" not in " ".join(h2):
         f.add("tied", 0, "no Unresolved engine ties section")
@@ -932,6 +953,7 @@ def deck_figures(slides: list[str], label: str) -> Figures:
         f.name(engine_id(m.group(1)), "Workload Coverage")
 
     _close_calls(f, text, "Open Decisions close-call card")
+    _fallback_queries(f, text, "Open Decisions fallback card")
     m = re.search(r"Pick the engine for tied queries\? ([\d,]+) quer(?:y|ies)", text)
     f.add("tied", _int(m.group(1)) if m else 0, "Open Decisions tied-queries card")
     m = re.search(r"Scores tie between (.+?); no routing rule", text)
