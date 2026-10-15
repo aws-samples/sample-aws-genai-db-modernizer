@@ -47,3 +47,13 @@ why = "Table with no foreign keys and no join participation — all queries are 
 engine_hint = "This workload has no structural relational requirement and could run on a simpler, purpose-built engine (DynamoDB for key-value, ElastiCache for hot lookups)."
 guidance = "Evaluate whether this table benefits from Aurora's relational features. If it's purely key-value access, DynamoDB offers better cost/performance. If it's a hot lookup, ElastiCache is more appropriate."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -49,3 +49,13 @@ why = "High-frequency reads of small, rarely-changing data (config, sessions, fe
 engine_hint = "ElastiCache provides microsecond latency for cached reads without database connection overhead."
 guidance = "Consider ElastiCache/Redis for session stores, config caches, and frequently read reference data."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

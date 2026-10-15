@@ -47,3 +47,13 @@ why = "~ and ~* regular-expression matching is native SQL."
 kind = "native"
 supported = true
 why = "REGEXP/RLIKE is native SQL."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

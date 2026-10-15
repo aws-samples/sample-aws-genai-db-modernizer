@@ -47,3 +47,13 @@ why = "Table accessed by at most 2 distinct query patterns, all single-table, al
 engine_hint = "This is a key-value workload wearing a relational costume — no query optimizer benefit."
 guidance = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

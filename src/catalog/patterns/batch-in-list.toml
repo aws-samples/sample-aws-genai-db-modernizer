@@ -48,3 +48,13 @@ why = "Batch lookups using WHERE column IN (...) with multiple values. Aurora op
 concerns = [
     "Very large IN-lists (>1000 values) may benefit from temporary tables or joins.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

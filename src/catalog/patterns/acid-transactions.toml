@@ -43,3 +43,13 @@ why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) ar
 kind = "native"
 supported = true
 why = "Multi-statement, multi-table ACID transactions (BEGIN/COMMIT/ROLLBACK) are native."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

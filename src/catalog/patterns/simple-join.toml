@@ -42,3 +42,13 @@ catalog = "aurora_common"
 catalog_id = "aurora-common-09"
 score = 70
 why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -42,3 +42,13 @@ why = "Aurora PostgreSQL's analysis does not report this pattern; its penalty on
 kind = "unscored"
 supported = true
 why = "Aurora MySQL's analysis does not report this pattern; its penalty only lands on an engine whose own analysis reports it."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

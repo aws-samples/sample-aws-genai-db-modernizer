@@ -18,6 +18,11 @@ Decision 9 is held by layers, each tested below:
 5. The engine catalog (``src/catalog/engines/*.toml``, #492) marks them ``status = "future"``,
    and ``PLACEHOLDER_ENGINES`` is derived from that, so there is one list, not two. Their
    display names and colours live in those files, which the ``.py`` scan here never reads.
+6. Every pattern file (``src/catalog/patterns/*.toml``, #495) carries an explicit
+   ``kind = "future"``, ``supported = false`` entry for each of them, so the decision is
+   written down, and no constant built from the pattern catalog (penalties, capability
+   sets, analysis catalogs) names either one. The comparison table labels them "future
+   enhancement".
 
 To make Neptune or Keyspaces a real engine: change ADR-031 Decision 9 (or supersede it)
 first, then update this file in the same PR.
@@ -41,6 +46,12 @@ from src.agents.referee.reality_check import run_reality_check
 from src.agents.referee.triage import DEFERRED, TriageSignal, _select_agents
 from src.agents.schema_design.handler import run_schema_design
 from src.shared import catalog
+from src.shared.catalog.patterns import (
+    anti_pattern_penalties,
+    capability_redesign_penalties,
+    capability_signal_engines,
+    patterns,
+)
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine
 from src.storage.local_store import LocalArtifactStore
 
@@ -221,6 +232,26 @@ class TestPlaceholdersAreOnlyNamed:
 
     def test_the_triage_signals_that_target_a_placeholder_are_the_known_ones(self):
         assert _triage_signals_targeting_a_placeholder() == PLACEHOLDER_SIGNALS
+
+    def test_every_pattern_file_writes_them_down_as_not_modelled(self):
+        for entry in patterns():
+            for engine in PLACEHOLDERS:
+                support = entry.engines.get(engine)
+                assert support is not None, f"{entry.id}.toml has no [engines.{engine}]"
+                assert support.kind == "future" and not support.supported, (entry.id, engine)
+                assert support.catalog is None and support.score is None, (entry.id, engine)
+
+    def test_no_constant_built_from_the_pattern_catalog_names_them(self):
+        engines_named = set().union(*capability_signal_engines().values())
+        engines_named |= {e for m in capability_redesign_penalties().values() for e in m}
+        assert not engines_named & PLACEHOLDERS
+        assert not set(anti_pattern_penalties()) & PLACEHOLDERS
+
+    def test_the_comparison_table_labels_them_future_enhancements(self):
+        text = (REPO_ROOT / "docs" / "architecture" / "rule-catalog.md").read_text()
+        for name in ("Neptune", "Keyspaces"):
+            assert f"| {name} | `{name.lower()}` | future enhancement |" in text
+            assert f" {name} (future) |" in text
 
     def test_they_are_not_cache_overlay_engines(self):
         assert not PLACEHOLDERS & set(CACHE_OVERLAY_ENGINES)

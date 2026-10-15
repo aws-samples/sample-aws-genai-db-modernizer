@@ -49,3 +49,13 @@ why = "Queries joining 3+ tables with multiple join conditions. Aurora's query o
 concerns = [
     "Very large join result sets may benefit from materialized views or denormalization.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

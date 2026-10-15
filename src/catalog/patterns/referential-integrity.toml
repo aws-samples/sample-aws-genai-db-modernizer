@@ -48,3 +48,13 @@ why = "Tables with high foreign key density (>2 FKs) and CASCADE operations. Rel
 concerns = [
     "High FK density increases migration complexity if partial migration is planned.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

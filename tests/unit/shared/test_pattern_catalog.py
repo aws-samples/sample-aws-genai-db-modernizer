@@ -225,7 +225,30 @@ class TestLoaderIsStrict:
     def test_an_unknown_engine_id_fails(self, tmp_path: Path) -> None:
         text = FIT + '\n[engines.mongodb]\nkind = "unscored"\nsupported = true\nwhy = "x"\n'
         _write(tmp_path, "example", text)
-        with pytest.raises(CatalogError, match="not an active catalog engine"):
+        with pytest.raises(CatalogError, match="not a catalog engine, or a legacy id"):
+            load_pattern_catalog(tmp_path)
+
+    def test_a_future_engine_takes_only_future_entries(self, tmp_path: Path) -> None:
+        future = '\n[engines.neptune]\nkind = "future"\nsupported = false\nwhy = "Not yet."\n'
+        _write(tmp_path, "example", FIT + future)
+        (entry,) = load_pattern_catalog(tmp_path)
+        assert entry.engines["neptune"].kind == "future"
+        _write(
+            tmp_path,
+            "example",
+            FIT + future.replace('"future"', '"unscored"').replace("false", "true"),
+        )
+        with pytest.raises(CatalogError, match="future engine only"):
+            load_pattern_catalog(tmp_path)
+        _write(tmp_path, "example", FIT + future.replace("false", "true"))
+        with pytest.raises(CatalogError, match="a future entry is never supported"):
+            load_pattern_catalog(tmp_path)
+        active = FIT.replace(
+            '[engines.documentdb]\nkind = "unscored"\nsupported = true',
+            '[engines.documentdb]\nkind = "future"\nsupported = false',
+        )
+        _write(tmp_path, "example", active)
+        with pytest.raises(CatalogError, match="future engine only"):
             load_pattern_catalog(tmp_path)
 
     def test_a_penalty_reaches_every_engine_that_cannot_run_a_fit(self, tmp_path: Path) -> None:

@@ -48,3 +48,13 @@ why = "Reporting queries with large result sets, date-range filters, and ordered
 concerns = [
     "Very heavy reporting may benefit from a dedicated analytics engine (Redshift).",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

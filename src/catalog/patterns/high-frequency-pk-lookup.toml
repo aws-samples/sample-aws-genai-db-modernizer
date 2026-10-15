@@ -49,3 +49,13 @@ why = "Single-row SELECT by primary key at very high frequency (>100 calls/secon
 engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
 guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable sub-millisecond latency at scale."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

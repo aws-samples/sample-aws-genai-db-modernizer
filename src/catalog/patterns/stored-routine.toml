@@ -42,3 +42,13 @@ concerns = [
     "Stored routines increase operational complexity and are harder to version-control.",
     "Consider migrating complex logic to application layer for testability.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

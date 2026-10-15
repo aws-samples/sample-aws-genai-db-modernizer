@@ -41,3 +41,13 @@ why = "String aggregation using GROUP_CONCAT for pivoting and denormalized outpu
 concerns = [
     "Default group_concat_max_len (1024) may truncate results; increase as needed.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

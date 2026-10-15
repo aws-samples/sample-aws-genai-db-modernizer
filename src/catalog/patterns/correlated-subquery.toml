@@ -49,3 +49,13 @@ why = "Correlated subqueries using EXISTS, NOT EXISTS, or IN (SELECT ...). Auror
 concerns = [
     "Deeply nested correlated subqueries may benefit from CTE refactoring.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

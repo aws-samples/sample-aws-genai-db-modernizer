@@ -41,3 +41,13 @@ why = "Multi-table UPDATE using MySQL's JOIN syntax (UPDATE t1 JOIN t2 SET ...).
 concerns = [
     "Large multi-table updates may hold locks for extended periods.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

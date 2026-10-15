@@ -48,3 +48,13 @@ why = "UPDATE or DELETE operations with complex WHERE clauses affecting multiple
 concerns = [
     "Large batch mutations may benefit from chunking to avoid long lock holds.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

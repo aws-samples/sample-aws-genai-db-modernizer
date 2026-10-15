@@ -48,3 +48,13 @@ why = "Append-only INSERT workload at very high rate with no complex read querie
 engine_hint = "DynamoDB or OpenSearch time-series indices are better suited for high-throughput append-only ingestion without relational query needs."
 guidance = "Consider DynamoDB (with TTL) or OpenSearch data streams for high-throughput append-only workloads that don't require complex relational queries."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -48,3 +48,13 @@ why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination 
 concerns = [
     "Deep OFFSET pagination (offset > 10000) degrades; prefer keyset pagination.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -92,6 +92,8 @@ def _cell(support: EngineSupport | None) -> str:
         return f"anti {support.severity:g}" + ("" if support.supported else ", no")
     if support.kind == "redesign":
         return f"redesign -{support.penalty}"
+    if support.kind == "future":
+        return "future"
     if support.kind == "penalized":
         return "**no**"
     if not support.supported:
@@ -100,9 +102,10 @@ def _cell(support: EngineSupport | None) -> str:
 
 
 def _engine_columns(entries: tuple[EngineEntry, ...]) -> list[EngineEntry]:
-    """The engines a pattern file has an entry for (every engine routing can target)."""
-    routable = engine_ids(status=ACTIVE)
-    return [e for e in entries if e.id in routable]
+    """The engines a pattern file has an entry for: every engine routing can target, then
+    the future-enhancement placeholders."""
+    decided = engine_ids(status=(*ACTIVE, "future"))
+    return [e for e in entries if e.id in decided]
 
 
 def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEntry, ...]) -> str:
@@ -139,12 +142,16 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
         "severity S), `native` (has the capability, never penalised), `redesign -N` "
         "(lacks it, bounded redesign, N-point penalty), **no** (cannot run it: takes the "
         "full penalty when another engine reports it as a fit), `no` (cannot run it, no "
-        "score effect; `anti S, no` for a reported anti-pattern) or `-` (no effect). "
+        "score effect; `anti S, no` for a reported anti-pattern), `-` (no effect) or "
+        "`future` (a future-enhancement placeholder: not modelled yet, never a routing "
+        "candidate). "
         "Penalty is the points lost on an engine that reports it as an anti-pattern, or "
         "on every other engine when one reports it as a fit.",
         "",
         "| Pattern | "
-        + " | ".join(md_cell(e.display_name) for e in columns)
+        + " | ".join(
+            md_cell(e.display_name + (" (future)" if e.status == "future" else "")) for e in columns
+        )
         + " | Penalty | Capability | Triage signal | Detectors |",
         "|---|" + "---|" * len(columns) + "---|---|---|---|",
     ]
@@ -171,6 +178,7 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
                 out.append(f"{label}: {md_text(note)}")
         out.append("")
         quiet: list[str] = []
+        future: list[str] = []
         for e in columns:
             support = p.engines.get(e.id)
             if support is None:
@@ -179,6 +187,9 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
             if support.kind == "unscored":
                 quiet.append(e.display_name)
                 continue
+            if support.kind == "future":
+                future.append(e.display_name)
+                continue
             ref = f" ({support.catalog_id})" if support.catalog_id else ""
             out.append(
                 f"- {md_text(e.display_name)}, {_cell(support).replace('**', '')}{ref}: "
@@ -186,6 +197,8 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
             )
         if quiet:
             out.append(f"- No effect on: {md_text(', '.join(quiet))}.")
+        if future:
+            out.append(f"- Not modelled yet (future enhancement): {md_text(', '.join(future))}.")
         out.append("")
     return "\n".join(out).rstrip("\n") + "\n"
 

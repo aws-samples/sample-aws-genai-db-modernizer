@@ -6,8 +6,11 @@ generated constants are guarded by ``test_engine_catalog.py`` and
 ``test_pattern_catalog.py``. This file holds the two checks Decision 8 adds on top:
 
 1. **Completeness.** Every pattern file has an ``[engines.<id>]`` entry for every engine
-   routing can target, so adding an engine or a pattern cannot silently default to
-   "unsupported": it fails here with the exact list of missing decisions.
+   except a ``legacy`` id (the generic ``aurora`` older reports carry): today that is every
+   engine routing can target plus the future-enhancement placeholders (#495). Stated by
+   exclusion, so an engine status added later is covered by default. Adding an engine or
+   a pattern cannot silently default to "unsupported": it fails here with the exact list
+   of missing decisions.
 2. **No routing rule outside the catalog.** The constants already moved (slices 1 and 2
    of #492) hold no engine or pattern literal any more. Everything that still could encode
    a rule is listed below, by file, with the reason it is still there: every module-level
@@ -41,22 +44,36 @@ from src.shared.catalog.patterns import (
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
 
-# The engines every pattern file must decide for: every engine routing can target.
-ROUTABLE = catalog.engine_ids(status=catalog.ACTIVE)
+# The engines every pattern file must decide for: every engine except a legacy id (today
+# the active ones plus the future-enhancement placeholders, whose decision is a written
+# "not modelled yet", #495). Stated by exclusion, so a status added later is covered.
+DECIDED = catalog.engine_ids() - catalog.engine_ids(status="legacy")
+FUTURE = catalog.engine_ids(status="future")
 
 
 class TestEveryPatternCoversEveryEngine:
     def test_the_shipped_catalog_is_complete(self) -> None:
-        missing = missing_engine_entries(patterns(), ROUTABLE)
+        missing = missing_engine_entries(patterns(), DECIDED)
         assert not missing, (
-            "These pattern files have no decision for an engine routing can target. Write "
+            "These pattern files have no decision for an engine (every engine except a legacy id needs one). Write "
             "the engine's entry (kind, supported, why) instead of letting it default: "
             f"{missing}"
         )
 
-    def test_no_pattern_file_decides_for_an_engine_routing_cannot_target(self) -> None:
+    def test_a_future_engine_is_written_down_as_not_modelled(self) -> None:
+        assert FUTURE == {"neptune", "keyspaces"}
+        for p in patterns():
+            for engine in FUTURE:
+                support = p.engines[engine]
+                assert (support.kind, support.supported, support.why) == (
+                    "future",
+                    False,
+                    "Not modelled yet (future enhancement)",
+                ), (p.id, engine)
+
+    def test_no_pattern_file_decides_for_an_engine_it_should_not(self) -> None:
         extra = sorted(
-            f"{p.id}.toml: [engines.{e}]" for p in patterns() for e in set(p.engines) - ROUTABLE
+            f"{p.id}.toml: [engines.{e}]" for p in patterns() for e in set(p.engines) - DECIDED
         )
         assert not extra
 
@@ -64,15 +81,19 @@ class TestEveryPatternCoversEveryEngine:
         """On a synthetic catalog, so a real gap in the shipped one is reported once, by the
         test above, and not blamed on the new engine here."""
         engines = "".join(
-            f'\n[engines.{e}]\nkind = "unscored"\nsupported = true\nwhy = "No effect."\n'
-            for e in sorted(ROUTABLE)
+            (
+                f'\n[engines.{e}]\nkind = "unscored"\nsupported = true\nwhy = "No effect."\n'
+                if e not in FUTURE
+                else f'\n[engines.{e}]\nkind = "future"\nsupported = false\nwhy = "Not yet."\n'
+            )
+            for e in sorted(DECIDED)
         )
         for name in ("one", "two"):
             text = f'id = "{name}"\ndetectors = []\npenalty = 0\n' + engines
             (tmp_path / f"{name}.toml").write_text(text, encoding="utf-8")
         sample = load_pattern_catalog(tmp_path)
-        assert missing_engine_entries(sample, ROUTABLE) == []
-        assert missing_engine_entries(sample, ROUTABLE | {"newdb"}) == [
+        assert missing_engine_entries(sample, DECIDED) == []
+        assert missing_engine_entries(sample, DECIDED | {"newdb"}) == [
             "one.toml: [engines.newdb]",
             "two.toml: [engines.newdb]",
         ]
@@ -84,8 +105,8 @@ class TestEveryPatternCoversEveryEngine:
         )
         (tmp_path / "new-pattern.toml").write_text(text, encoding="utf-8")
         (entry,) = load_pattern_catalog(tmp_path)
-        assert missing_engine_entries([entry], ROUTABLE) == sorted(
-            f"new-pattern.toml: [engines.{e}]" for e in ROUTABLE - {"dynamodb"}
+        assert missing_engine_entries([entry], DECIDED) == sorted(
+            f"new-pattern.toml: [engines.{e}]" for e in DECIDED - {"dynamodb"}
         )
 
     def test_every_pattern_type_an_analysis_emits_has_a_file(self) -> None:

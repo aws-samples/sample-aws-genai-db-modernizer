@@ -39,3 +39,13 @@ catalog_id = "aurora-mysql-03"
 score = 80
 why = "UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key."
 concerns = ["Auto-increment gaps may occur with ON DUPLICATE KEY UPDATE."]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

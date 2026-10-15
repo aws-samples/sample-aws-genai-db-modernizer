@@ -48,3 +48,13 @@ why = "Multi-table write operations within transaction context with FK constrain
 concerns = [
     "Long-running transactions may cause lock contention under high concurrency.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -42,3 +42,13 @@ concerns = [
     "High-volume search workloads may still benefit from dedicated OpenSearch.",
     "InnoDB FULLTEXT indexes have higher write overhead than MyISAM.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

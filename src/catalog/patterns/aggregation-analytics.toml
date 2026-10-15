@@ -49,3 +49,13 @@ why = "Aggregation queries with GROUP BY, HAVING, and aggregate functions (SUM, 
 concerns = [
     "Very large aggregation result sets may benefit from pre-computed summary tables.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

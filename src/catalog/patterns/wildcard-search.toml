@@ -47,3 +47,13 @@ why = "LIKE/ILIKE is native SQL; pg_trgm's GIN/GiST index also indexes a leading
 kind = "native"
 supported = true
 why = "LIKE is native SQL; a leading wildcard runs as an unindexed scan."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

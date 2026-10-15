@@ -47,3 +47,13 @@ why = "pg_trgm's similarity() is a native fuzzy-match operator."
 kind = "penalized"
 supported = false
 why = "Aurora MySQL cannot run this pattern: a query another engine reports it for loses 40 points on Aurora MySQL."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

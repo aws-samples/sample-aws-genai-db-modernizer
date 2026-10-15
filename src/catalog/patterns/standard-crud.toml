@@ -42,3 +42,13 @@ catalog = "aurora_common"
 catalog_id = "aurora-common-10"
 score = 60
 why = "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

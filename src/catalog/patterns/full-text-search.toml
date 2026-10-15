@@ -47,3 +47,13 @@ why = "tsvector/tsquery full-text search is native SQL."
 kind = "native"
 supported = true
 why = "FULLTEXT indexes with MATCH ... AGAINST are native SQL."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

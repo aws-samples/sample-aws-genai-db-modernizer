@@ -38,9 +38,14 @@ Engine entry fields (``[engines.<engine_id>]``, one per engine):
 - ``kind``: ``fit`` (the engine's analysis reports it as a fit), ``anti_pattern`` (as a
   concern), ``native`` (has ``capability``: never penalised), ``redesign`` (lacks it, has a
   bounded redesign: a reduced ``penalty``), ``penalized`` (cannot run it: takes the full
-  penalty when another engine reports it as a fit) or ``unscored`` (no effect).
+  penalty when another engine reports it as a fit), ``unscored`` (no effect) or ``future``
+  (the engine is a future-enhancement placeholder, ``status = "future"``: not modelled yet,
+  never a routing candidate, ADR-031 Decision 9, #495). A future engine's entries are all
+  ``future``, and only a future engine's are. The loader enforces that consistency, not
+  presence: a missing entry loads, and the completeness test
+  (``tests/unit/shared/test_rule_catalog_complete.py``) is what fails.
 - ``supported``: whether the engine can run the pattern at all. Always ``false`` for
-  ``penalized`` and always ``true`` for ``fit``/``native``/``redesign``; an
+  ``penalized`` and ``future`` and always ``true`` for ``fit``/``native``/``redesign``; an
   ``anti_pattern`` or ``unscored`` entry says so explicitly. For a pattern whose
   ``capability`` is backed by the hard capability gate
   (``capability_registry.ENGINE_CAPABILITIES``), it matches the gate engine by engine
@@ -68,11 +73,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.shared.catalog.engines import ACTIVE, CatalogError, engine_ids
+from src.shared.catalog.engines import CatalogError, engine_ids
 
 PATTERNS_DIR = Path(__file__).resolve().parents[2] / "catalog" / "patterns"
 
-PatternKind = Literal["fit", "anti_pattern", "native", "redesign", "penalized", "unscored"]
+PatternKind = Literal[
+    "fit", "anti_pattern", "native", "redesign", "penalized", "unscored", "future"
+]
 # The seven per-engine catalogs the analysis tools read (Aurora PostgreSQL and Aurora MySQL
 # share ``aurora_common``; ElastiCache's analysis builds its patterns inline).
 CatalogName = Literal[
@@ -115,6 +122,7 @@ _KIND_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "native": (frozenset(), frozenset()),
     "penalized": (frozenset(), frozenset()),
     "unscored": (frozenset(), frozenset()),
+    "future": (frozenset(), frozenset()),
 }
 
 
@@ -150,8 +158,8 @@ class EngineSupport(BaseModel):
             raise ValueError(f"a {self.kind} entry cannot carry {extra}")
         if self.kind == "fit" and (self.score is None) == (self.confidence is None):
             raise ValueError("a fit entry carries exactly one of score and confidence")
-        if self.kind == "penalized" and self.supported:
-            raise ValueError("a penalized entry is never supported")
+        if self.kind in ("penalized", "future") and self.supported:
+            raise ValueError(f"a {self.kind} entry is never supported")
         if self.kind in ("fit", "native", "redesign") and not self.supported:
             raise ValueError(f"a {self.kind} entry is always supported")
         if (self.profile is not None) != (self.kind == "fit" and self.catalog == "opensearch"):
@@ -248,7 +256,10 @@ def load_pattern_catalog(directory: Path = PATTERNS_DIR) -> tuple[PatternEntry, 
 
 def _check_across_files(entries: Iterable[PatternEntry]) -> None:
     entries = tuple(entries)
-    routable = engine_ids(status=ACTIVE)
+    # Every engine except a legacy id may (and, by the completeness test, must) have an
+    # entry; stated by exclusion so a status added later is covered.
+    decided = engine_ids() - engine_ids(status="legacy")
+    future = engine_ids(status="future")
     keys: dict[str, str] = {}
     by_catalog_id: dict[tuple[str, str], tuple[str, EngineSupport]] = {}
     capability_engines: dict[str, tuple[str, frozenset[str]]] = {}
@@ -257,8 +268,14 @@ def _check_across_files(entries: Iterable[PatternEntry]) -> None:
             if key in keys:
                 raise CatalogError(f"{entry.id}.toml: {key!r} is already used by {keys[key]}.toml")
             keys[key] = entry.id
-        if unknown := sorted(set(entry.engines) - routable):
-            raise CatalogError(f"{entry.id}.toml: not an active catalog engine: {unknown}")
+        if unknown := sorted(set(entry.engines) - decided):
+            raise CatalogError(f"{entry.id}.toml: not a catalog engine, or a legacy id: {unknown}")
+        for engine, support in entry.engines.items():
+            if (support.kind == "future") != (engine in future):
+                raise CatalogError(
+                    f"{entry.id}.toml [engines.{engine}]: kind 'future' is for a future "
+                    "engine only, and a future engine's entries are all 'future'"
+                )
         for engine, support in entry.engines.items():
             if support.catalog_id is None or support.catalog is None:
                 continue

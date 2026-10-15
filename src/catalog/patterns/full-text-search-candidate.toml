@@ -48,3 +48,13 @@ why = "Full-text search patterns using LIKE '%term%' or similar constructs."
 engine_hint = "OpenSearch provides purpose-built inverted indexes with relevance scoring, tokenization, and stemming."
 guidance = "Offload full-text search to OpenSearch for better relevance ranking and scalability. Keep Aurora as source of truth with async sync."
 guidance_names_engine = true
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

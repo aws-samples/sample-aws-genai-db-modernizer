@@ -20,90 +20,90 @@ Generated from `src/catalog/engines/*.toml` and `src/catalog/patterns/*.toml` (A
 
 ## Pattern x engine matrix
 
-Each cell is what a query showing the pattern gets on that engine: `fit N` (the engine's analysis reports it, catalog score N), `fit (level)` (reported with a confidence level instead of a score), `anti S` (reported as an anti-pattern, severity S), `native` (has the capability, never penalised), `redesign -N` (lacks it, bounded redesign, N-point penalty), **no** (cannot run it: takes the full penalty when another engine reports it as a fit), `no` (cannot run it, no score effect; `anti S, no` for a reported anti-pattern) or `-` (no effect). Penalty is the points lost on an engine that reports it as an anti-pattern, or on every other engine when one reports it as a fit.
+Each cell is what a query showing the pattern gets on that engine: `fit N` (the engine's analysis reports it, catalog score N), `fit (level)` (reported with a confidence level instead of a score), `anti S` (reported as an anti-pattern, severity S), `native` (has the capability, never penalised), `redesign -N` (lacks it, bounded redesign, N-point penalty), **no** (cannot run it: takes the full penalty when another engine reports it as a fit), `no` (cannot run it, no score effect; `anti S, no` for a reported anti-pattern), `-` (no effect) or `future` (a future-enhancement placeholder: not modelled yet, never a routing candidate). Penalty is the points lost on an engine that reports it as an anti-pattern, or on every other engine when one reports it as a fit.
 
-| Pattern | DynamoDB | DocumentDB | OpenSearch | ElastiCache | Aurora PostgreSQL | Aurora MySQL | Penalty | Capability | Triage signal | Detectors |
-|---|---|---|---|---|---|---|---|---|---|---|
-| [`acid-transactions`](#acid-transactions) | redesign -10 | native | anti 0.6, no | no | native | native | 20 | acid_transactions | - | 1 |
-| [`adjacency-list`](#adjacency-list) | fit 60 | - | - | - | - | - | - | - | self_referential_fk | 1 |
-| [`aggregation-analytics`](#aggregation-analytics) | - | - | - | - | fit 85 | fit 85 | - | - | aggregations | 1 |
-| [`aggregation-pipeline`](#aggregation-pipeline) | - | fit 75 | - | - | - | - | - | - | - | 1 |
-| [`array-operations`](#array-operations) | - | - | - | - | fit 80 | - | - | - | - | 1 |
-| [`audit-columns-only`](#audit-columns-only) | - | - | anti 0.1 | - | - | - | - | - | - | 1 |
-| [`batch-in-list`](#batch-in-list) | - | - | - | - | fit 70 | fit 70 | - | - | - | 1 |
-| [`bounded-parent-child`](#bounded-parent-child) | fit 75 | - | - | - | - | - | - | - | - | 1 |
-| [`caching`](#caching) | - | - | - | fit (high) | - | - | - | - | high_frequency_reads | 1 |
-| [`co-accessed-tables`](#co-accessed-tables) | fit 70 | - | - | - | - | - | - | - | - | 1 |
-| [`complex-aggregation`](#complex-aggregation) | anti 0.7 | - | - | - | - | - | 50 (also `complex_aggregation`) | - | aggregations | 1 |
-| [`complex-join`](#complex-join) | - | - | - | - | fit 90 | fit 90 | - | - | complex_joins | 1 |
-| [`content-management`](#content-management) | - | fit 90 | - | - | - | - | - | - | - | 1 |
-| [`correlated-subquery-joins`](#correlated-subquery-joins) | - | anti 0.7 | - | - | - | - | - | - | - | 1 |
-| [`correlated-subquery`](#correlated-subquery) | - | - | - | - | fit 80 | fit 80 | - | - | subqueries | 1 |
-| [`cte-recursive`](#cte-recursive) | - | - | - | - | fit 95 | - | - | - | - | 1 |
-| [`extended-reference`](#extended-reference) | - | fit 85 | - | - | - | - | - | - | - | 1 |
-| [`faceted-analytics`](#faceted-analytics) | - | anti 0.5 | - | - | - | - | - | - | - | 1 |
-| [`flexible-schema`](#flexible-schema) | - | fit 80 | - | - | - | - | - | - | json_columns | 1 |
-| [`frequent-full-scan`](#frequent-full-scan) | anti 0.5 | - | - | - | - | - | - | - | - | 1 |
-| [`frequent-writes`](#frequent-writes) | - | - | - | - | - | - | 15 | - | - | none |
-| [`full-text-native`](#full-text-native) | - | - | - | - | fit 75 | - | - | - | - | 1 |
-| [`full-text-search-candidate`](#full-text-search-candidate) | - | - | - | - | anti 0.6 | anti 0.6 | - | - | - | 1 |
-| [`full-text-search`](#full-text-search) | **no** | native | fit 95 | **no** | native | native | 40 | text_search | text_search | 1 |
-| [`fulltext-search`](#fulltext-search) | - | - | - | - | - | fit 80 | - | - | - | 1 |
-| [`fuzzy-search`](#fuzzy-search) | **no** | **no** | fit 85 | **no** | native | **no** | 40 | fuzzy_search | text_search | 1 |
-| [`geospatial`](#geospatial) | - | - | - | fit (medium) | - | - | - | - | - | 1 |
-| [`graph-traversal-hierarchy`](#graph-traversal-hierarchy) | - | anti 0.8 | - | - | - | - | - | - | - | 1 |
-| [`group-concat-pivot`](#group-concat-pivot) | - | - | - | - | - | fit 75 | - | - | - | 1 |
-| [`heavy-cross-collection-joins`](#heavy-cross-collection-joins) | - | anti 0.6 | - | - | - | - | - | - | - | 1 |
-| [`high-frequency-pk-lookup`](#high-frequency-pk-lookup) | - | - | - | - | anti 0.8 | anti 0.8 | 30 | - | - | 1 |
-| [`high-frequency-small-updates`](#high-frequency-small-updates) | - | anti 0.4 | - | - | - | - | - | - | - | none |
-| [`high-ingest`](#high-ingest) | - | - | fit 90 | - | - | - | - | - | - | 1 |
-| [`high-volume-text-search`](#high-volume-text-search) | - | - | - | - | anti 0.7 | anti 0.7 | 35 | - | - | 1 |
-| [`json-document-query`](#json-document-query) | - | - | - | - | - | fit 85 | - | - | - | 1 |
-| [`jsonb-operations`](#jsonb-operations) | - | - | - | - | fit 85 | - | - | - | - | 1 |
-| [`key-value-lookup`](#key-value-lookup) | fit 100 | - | - | - | - | - | - | - | key_value_lookups | 1 |
-| [`large-result-sets`](#large-result-sets) | - | - | - | anti 0.5 | - | - | - | - | - | 1 |
-| [`lateral-join`](#lateral-join) | - | - | - | - | fit 85 | - | - | - | - | 1 |
-| [`leaderboard`](#leaderboard) | - | - | - | fit (medium) | - | - | - | - | leaderboard_pattern | 1 |
-| [`low-frequency-read`](#low-frequency-read) | fit 55 | - | - | - | - | - | - | - | low_frequency_reads | 1 |
-| [`low-frequency-write`](#low-frequency-write) | fit 70 | - | - | - | - | - | - | - | low_frequency_writes | 1 |
-| [`many-to-many-junction`](#many-to-many-junction) | fit 65 | - | - | - | - | - | - | - | junction_tables | 1 |
-| [`metadata-config-store`](#metadata-config-store) | fit 90 | - | - | - | - | - | - | - | metadata_config | 1 |
-| [`multi-index-joins`](#multi-index-joins) | - | - | anti 0.8 | - | - | - | 25 | - | - | 1 |
-| [`multi-row-mutation`](#multi-row-mutation) | - | - | - | - | fit 75 | fit 75 | - | - | - | 1 |
-| [`multi-table-update`](#multi-table-update) | - | - | - | - | - | fit 80 | - | - | - | 1 |
-| [`negation-heavy-queries`](#negation-heavy-queries) | - | anti 0.4 | - | - | - | - | - | - | - | 1 |
-| [`nested-document`](#nested-document) | - | fit 85 | - | - | - | - | - | - | - | 1 |
-| [`no-relational-need`](#no-relational-need) | - | - | - | - | anti 0.6 | anti 0.6 | 20 | - | - | 1 |
-| [`pagination`](#pagination) | - | - | - | - | fit 85 | fit 85 | - | - | - | 1 |
-| [`polymorphic-data`](#polymorphic-data) | - | fit 80 | - | - | - | - | - | - | - | 1 |
-| [`product-catalog`](#product-catalog) | - | fit 85 | - | - | - | - | - | - | - | 1 |
-| [`range-query`](#range-query) | fit 90 | - | - | - | - | - | - | - | range_queries | 1 |
-| [`referential-integrity`](#referential-integrity) | - | - | - | - | fit 85 | fit 85 | - | - | - | 1 |
-| [`regex-search`](#regex-search) | **no** | native | fit 75 | **no** | native | native | 40 | text_search | text_search | 1 |
-| [`reporting-query`](#reporting-query) | - | - | - | - | fit 80 | fit 80 | - | - | - | 1 |
-| [`session-store`](#session-store) | fit 90 | - | - | fit (medium) | - | - | - | - | session_store | 2 |
-| [`simple-cache-read`](#simple-cache-read) | - | - | - | - | anti 0.7 | anti 0.7 | 25 | - | - | 1 |
-| [`simple-join`](#simple-join) | - | - | - | - | fit 70 | fit 70 | - | - | - | 1 |
-| [`single-access-pattern-table`](#single-access-pattern-table) | - | - | - | - | anti 0.5 | anti 0.5 | 15 | - | - | 1 |
-| [`standard-crud`](#standard-crud) | - | - | - | - | fit 60 | fit 60 | - | - | - | 1 |
-| [`stored-routine`](#stored-routine) | - | - | - | - | - | fit 70 | - | - | - | 1 |
-| [`text_search`](#text_search) | - | - | - | - | - | - | 40 | - | text_search | none |
-| [`time-aggregation`](#time-aggregation) | - | - | fit 90 | - | - | - | - | - | - | 1 |
-| [`time-range-query`](#time-range-query) | - | - | fit 85 | - | - | - | - | - | time_range_filters | 1 |
-| [`time-series-event-log`](#time-series-event-log) | fit 85 | - | - | - | - | - | - | - | time_series | 1 |
-| [`time-series`](#time-series) | - | - | - | fit (medium) | - | - | - | - | time_series | 1 |
-| [`transactional-write`](#transactional-write) | - | - | - | - | fit 90 | fit 90 | - | - | - | 1 |
-| [`unbounded-array-growth`](#unbounded-array-growth) | - | anti 0.7 | - | - | - | - | - | - | - | none |
-| [`unbounded-result-set`](#unbounded-result-set) | anti 0.2 | - | - | - | - | - | - | - | - | 1 |
-| [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.7 | anti 0.7 | - | - | - | 1 |
-| [`upsert-conflict`](#upsert-conflict) | - | - | - | - | fit 80 | - | - | - | - | 1 |
-| [`upsert-duplicate-key`](#upsert-duplicate-key) | - | - | - | - | - | fit 80 | - | - | - | 1 |
-| [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | - | - | - | none |
-| [`wildcard-search`](#wildcard-search) | **no** | native | fit 80 | **no** | native | native | 40 | text_search | text_search | 1 |
-| [`window-function`](#window-function) | - | - | - | - | fit 90 | - | - | - | - | 1 |
-| [`window-functions`](#window-functions) | - | anti 0.5 | - | - | - | - | - | - | - | 1 |
-| [`write-heavy-ingestion`](#write-heavy-ingestion) | fit 85 | - | - | - | - | - | - | - | write_heavy | 1 |
-| [`write-time-aggregation`](#write-time-aggregation) | - | fit 90 | - | - | - | - | - | - | - | 1 |
+| Pattern | DynamoDB | DocumentDB | OpenSearch | ElastiCache | Aurora PostgreSQL | Aurora MySQL | Neptune (future) | Keyspaces (future) | Penalty | Capability | Triage signal | Detectors |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| [`acid-transactions`](#acid-transactions) | redesign -10 | native | anti 0.6, no | no | native | native | future | future | 20 | acid_transactions | - | 1 |
+| [`adjacency-list`](#adjacency-list) | fit 60 | - | - | - | - | - | future | future | - | - | self_referential_fk | 1 |
+| [`aggregation-analytics`](#aggregation-analytics) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | aggregations | 1 |
+| [`aggregation-pipeline`](#aggregation-pipeline) | - | fit 75 | - | - | - | - | future | future | - | - | - | 1 |
+| [`array-operations`](#array-operations) | - | - | - | - | fit 80 | - | future | future | - | - | - | 1 |
+| [`audit-columns-only`](#audit-columns-only) | - | - | anti 0.1 | - | - | - | future | future | - | - | - | 1 |
+| [`batch-in-list`](#batch-in-list) | - | - | - | - | fit 70 | fit 70 | future | future | - | - | - | 1 |
+| [`bounded-parent-child`](#bounded-parent-child) | fit 75 | - | - | - | - | - | future | future | - | - | - | 1 |
+| [`caching`](#caching) | - | - | - | fit (high) | - | - | future | future | - | - | high_frequency_reads | 1 |
+| [`co-accessed-tables`](#co-accessed-tables) | fit 70 | - | - | - | - | - | future | future | - | - | - | 1 |
+| [`complex-aggregation`](#complex-aggregation) | anti 0.7 | - | - | - | - | - | future | future | 50 (also `complex_aggregation`) | - | aggregations | 1 |
+| [`complex-join`](#complex-join) | - | - | - | - | fit 90 | fit 90 | future | future | - | - | complex_joins | 1 |
+| [`content-management`](#content-management) | - | fit 90 | - | - | - | - | future | future | - | - | - | 1 |
+| [`correlated-subquery-joins`](#correlated-subquery-joins) | - | anti 0.7 | - | - | - | - | future | future | - | - | - | 1 |
+| [`correlated-subquery`](#correlated-subquery) | - | - | - | - | fit 80 | fit 80 | future | future | - | - | subqueries | 1 |
+| [`cte-recursive`](#cte-recursive) | - | - | - | - | fit 95 | - | future | future | - | - | - | 1 |
+| [`extended-reference`](#extended-reference) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
+| [`faceted-analytics`](#faceted-analytics) | - | anti 0.5 | - | - | - | - | future | future | - | - | - | 1 |
+| [`flexible-schema`](#flexible-schema) | - | fit 80 | - | - | - | - | future | future | - | - | json_columns | 1 |
+| [`frequent-full-scan`](#frequent-full-scan) | anti 0.5 | - | - | - | - | - | future | future | - | - | - | 1 |
+| [`frequent-writes`](#frequent-writes) | - | - | - | - | - | - | future | future | 15 | - | - | none |
+| [`full-text-native`](#full-text-native) | - | - | - | - | fit 75 | - | future | future | - | - | - | 1 |
+| [`full-text-search-candidate`](#full-text-search-candidate) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | - | - | - | 1 |
+| [`full-text-search`](#full-text-search) | **no** | native | fit 95 | **no** | native | native | future | future | 40 | text_search | text_search | 1 |
+| [`fulltext-search`](#fulltext-search) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
+| [`fuzzy-search`](#fuzzy-search) | **no** | **no** | fit 85 | **no** | native | **no** | future | future | 40 | fuzzy_search | text_search | 1 |
+| [`geospatial`](#geospatial) | - | - | - | fit (medium) | - | - | future | future | - | - | - | 1 |
+| [`graph-traversal-hierarchy`](#graph-traversal-hierarchy) | - | anti 0.8 | - | - | - | - | future | future | - | - | - | 1 |
+| [`group-concat-pivot`](#group-concat-pivot) | - | - | - | - | - | fit 75 | future | future | - | - | - | 1 |
+| [`heavy-cross-collection-joins`](#heavy-cross-collection-joins) | - | anti 0.6 | - | - | - | - | future | future | - | - | - | 1 |
+| [`high-frequency-pk-lookup`](#high-frequency-pk-lookup) | - | - | - | - | anti 0.8 | anti 0.8 | future | future | 30 | - | - | 1 |
+| [`high-frequency-small-updates`](#high-frequency-small-updates) | - | anti 0.4 | - | - | - | - | future | future | - | - | - | none |
+| [`high-ingest`](#high-ingest) | - | - | fit 90 | - | - | - | future | future | - | - | - | 1 |
+| [`high-volume-text-search`](#high-volume-text-search) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | 35 | - | - | 1 |
+| [`json-document-query`](#json-document-query) | - | - | - | - | - | fit 85 | future | future | - | - | - | 1 |
+| [`jsonb-operations`](#jsonb-operations) | - | - | - | - | fit 85 | - | future | future | - | - | - | 1 |
+| [`key-value-lookup`](#key-value-lookup) | fit 100 | - | - | - | - | - | future | future | - | - | key_value_lookups | 1 |
+| [`large-result-sets`](#large-result-sets) | - | - | - | anti 0.5 | - | - | future | future | - | - | - | 1 |
+| [`lateral-join`](#lateral-join) | - | - | - | - | fit 85 | - | future | future | - | - | - | 1 |
+| [`leaderboard`](#leaderboard) | - | - | - | fit (medium) | - | - | future | future | - | - | leaderboard_pattern | 1 |
+| [`low-frequency-read`](#low-frequency-read) | fit 55 | - | - | - | - | - | future | future | - | - | low_frequency_reads | 1 |
+| [`low-frequency-write`](#low-frequency-write) | fit 70 | - | - | - | - | - | future | future | - | - | low_frequency_writes | 1 |
+| [`many-to-many-junction`](#many-to-many-junction) | fit 65 | - | - | - | - | - | future | future | - | - | junction_tables | 1 |
+| [`metadata-config-store`](#metadata-config-store) | fit 90 | - | - | - | - | - | future | future | - | - | metadata_config | 1 |
+| [`multi-index-joins`](#multi-index-joins) | - | - | anti 0.8 | - | - | - | future | future | 25 | - | - | 1 |
+| [`multi-row-mutation`](#multi-row-mutation) | - | - | - | - | fit 75 | fit 75 | future | future | - | - | - | 1 |
+| [`multi-table-update`](#multi-table-update) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
+| [`negation-heavy-queries`](#negation-heavy-queries) | - | anti 0.4 | - | - | - | - | future | future | - | - | - | 1 |
+| [`nested-document`](#nested-document) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
+| [`no-relational-need`](#no-relational-need) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | 20 | - | - | 1 |
+| [`pagination`](#pagination) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
+| [`polymorphic-data`](#polymorphic-data) | - | fit 80 | - | - | - | - | future | future | - | - | - | 1 |
+| [`product-catalog`](#product-catalog) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
+| [`range-query`](#range-query) | fit 90 | - | - | - | - | - | future | future | - | - | range_queries | 1 |
+| [`referential-integrity`](#referential-integrity) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
+| [`regex-search`](#regex-search) | **no** | native | fit 75 | **no** | native | native | future | future | 40 | text_search | text_search | 1 |
+| [`reporting-query`](#reporting-query) | - | - | - | - | fit 80 | fit 80 | future | future | - | - | - | 1 |
+| [`session-store`](#session-store) | fit 90 | - | - | fit (medium) | - | - | future | future | - | - | session_store | 2 |
+| [`simple-cache-read`](#simple-cache-read) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | 25 | - | - | 1 |
+| [`simple-join`](#simple-join) | - | - | - | - | fit 70 | fit 70 | future | future | - | - | - | 1 |
+| [`single-access-pattern-table`](#single-access-pattern-table) | - | - | - | - | anti 0.5 | anti 0.5 | future | future | 15 | - | - | 1 |
+| [`standard-crud`](#standard-crud) | - | - | - | - | fit 60 | fit 60 | future | future | - | - | - | 1 |
+| [`stored-routine`](#stored-routine) | - | - | - | - | - | fit 70 | future | future | - | - | - | 1 |
+| [`text_search`](#text_search) | - | - | - | - | - | - | future | future | 40 | - | text_search | none |
+| [`time-aggregation`](#time-aggregation) | - | - | fit 90 | - | - | - | future | future | - | - | - | 1 |
+| [`time-range-query`](#time-range-query) | - | - | fit 85 | - | - | - | future | future | - | - | time_range_filters | 1 |
+| [`time-series-event-log`](#time-series-event-log) | fit 85 | - | - | - | - | - | future | future | - | - | time_series | 1 |
+| [`time-series`](#time-series) | - | - | - | fit (medium) | - | - | future | future | - | - | time_series | 1 |
+| [`transactional-write`](#transactional-write) | - | - | - | - | fit 90 | fit 90 | future | future | - | - | - | 1 |
+| [`unbounded-array-growth`](#unbounded-array-growth) | - | anti 0.7 | - | - | - | - | future | future | - | - | - | none |
+| [`unbounded-result-set`](#unbounded-result-set) | anti 0.2 | - | - | - | - | - | future | future | - | - | - | 1 |
+| [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | - | - | - | 1 |
+| [`upsert-conflict`](#upsert-conflict) | - | - | - | - | fit 80 | - | future | future | - | - | - | 1 |
+| [`upsert-duplicate-key`](#upsert-duplicate-key) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
+| [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | future | future | - | - | - | none |
+| [`wildcard-search`](#wildcard-search) | **no** | native | fit 80 | **no** | native | native | future | future | 40 | text_search | text_search | 1 |
+| [`window-function`](#window-function) | - | - | - | - | fit 90 | - | future | future | - | - | - | 1 |
+| [`window-functions`](#window-functions) | - | anti 0.5 | - | - | - | - | future | future | - | - | - | 1 |
+| [`write-heavy-ingestion`](#write-heavy-ingestion) | fit 85 | - | - | - | - | - | future | future | - | - | write_heavy | 1 |
+| [`write-time-aggregation`](#write-time-aggregation) | - | fit 90 | - | - | - | - | future | future | - | - | - | 1 |
 
 ## Patterns
 
@@ -118,6 +118,7 @@ Redesign note: Uses transactions: moving it to {engine} needs a redesign \({engi
 - Aurora PostgreSQL, native: Multi-statement, multi-table ACID transactions \(BEGIN/COMMIT/ROLLBACK\) are native.
 - Aurora MySQL, native: Multi-statement, multi-table ACID transactions \(BEGIN/COMMIT/ROLLBACK\) are native.
 - No effect on: ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### adjacency-list
 
@@ -125,6 +126,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 60 (dynamodb-07d): Hierarchical or graph-like relationship \(self-referential FK or multi-level hierarchy traversal\). Maps to DynamoDB adjacency list pattern with PK/SK design.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### aggregation-analytics
 
@@ -133,6 +135,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 85 (aurora-common-02): Aggregation queries with GROUP BY, HAVING, and aggregate functions \(SUM, COUNT, AVG\). Aurora handles analytical aggregations efficiently with parallel query execution.
 - Aurora MySQL, fit 85 (aurora-common-02): Aggregation queries with GROUP BY, HAVING, and aggregate functions \(SUM, COUNT, AVG\). Aurora handles analytical aggregations efficiently with parallel query execution.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### aggregation-pipeline
 
@@ -140,6 +143,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 75 (documentdb-05): Queries using GROUP BY with aggregate functions that map to DocumentDB's aggregation pipeline \($group, $match, $project, $sort\).
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### array-operations
 
@@ -147,6 +151,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 80 (aurora-pg-04): Array operations \(ANY, array\_agg, unnest\) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes — avoiding junction tables for simple multi-value cases.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### audit-columns-only
 
@@ -154,6 +159,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 - OpenSearch, anti 0.1 (os-ap-03): Timestamp columns \(created\_at, updated\_at, event\_time, etc.\) used only in equality checks — not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### batch-in-list
 
@@ -162,6 +168,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 70 (aurora-common-11): Batch lookups using WHERE column IN \(...\) with multiple values. Aurora optimizes IN-list queries with index range scans — more flexible than DynamoDB's BatchGetItem \(100-item limit, PK-only\).
 - Aurora MySQL, fit 70 (aurora-common-11): Batch lookups using WHERE column IN \(...\) with multiple values. Aurora optimizes IN-list queries with index range scans — more flexible than DynamoDB's BatchGetItem \(100-item limit, PK-only\).
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### bounded-parent-child
 
@@ -169,6 +176,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 75 (dynamodb-07a): Parent-child relationship where the cardinality can be reasoned about at design time. DynamoDB supports millions of items per partition — the bound is domain-driven \(e.g., order → items, user → addresses\), not a DynamoDB limitation. Large item collections may need creative sort key design for efficient range queries.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### caching
 
@@ -176,6 +184,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (high) (redis-caching-001): Detected high-frequency SELECT queries suitable for caching
 - No effect on: DynamoDB, DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### co-accessed-tables
 
@@ -183,6 +192,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 70 (dynamodb-07c): Tables frequently accessed together in the same queries \(co-access frequency &gt; 50 calls/hour\). Strong signal for denormalization into a single DynamoDB table.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### complex-aggregation
 
@@ -190,6 +200,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, anti 0.7 (dynamodb-ap-02): Complex GROUP BY / HAVING / multi-table aggregations. DynamoDB doesn't support server-side aggregation — these need to move to application layer, pre-computed aggregates, or a separate analytics store.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### complex-join
 
@@ -198,6 +209,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale.
 - Aurora MySQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### content-management
 
@@ -205,6 +217,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 90 (documentdb-01): Polymorphic content tables with variable schemas — articles, pages, media with different field sets per type. Natural fit for flexible document model.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### correlated-subquery-joins
 
@@ -212,6 +225,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.7 (documentdb-anti-08): Queries with correlated subqueries. Correlated $lookup \(let/pipeline\) needs DocumentDB 8.0.2+ on an instance-based cluster; otherwise pre-denormalize.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### correlated-subquery
 
@@ -220,6 +234,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 80 (aurora-common-06): Correlated subqueries using EXISTS, NOT EXISTS, or IN \(SELECT ...\). Aurora's optimizer can decorrelate and flatten these into efficient join plans.
 - Aurora MySQL, fit 80 (aurora-common-06): Correlated subqueries using EXISTS, NOT EXISTS, or IN \(SELECT ...\). Aurora's optimizer can decorrelate and flatten these into efficient join plans.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### cte-recursive
 
@@ -227,6 +242,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 95 (aurora-pg-01): Recursive CTEs \(WITH RECURSIVE\) for hierarchical data traversal — org charts, category trees, bill of materials. Aurora PG executes these natively; no NoSQL engine provides equivalent functionality without application-level graph walks.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### extended-reference
 
@@ -234,6 +250,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 85 (documentdb-07): Queries joining large transactional tables with small reference/lookup tables \(country, merchant, payment\_type\) just to get display names. Embed the few referenced fields directly — especially valuable in DocumentDB, where every $lookup is a read-time join.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### faceted-analytics
 
@@ -241,6 +258,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.5 (documentdb-anti-06): Multi-dimensional analytics queries. $facet needs DocumentDB 8.0.2+ on an instance-based cluster \(not 5.0 or earlier, not elastic clusters\).
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### flexible-schema
 
@@ -248,6 +266,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 80 (documentdb-06): Tables with JSON/JSONB columns or high column count with many nullable fields — data is already semi-structured and maps directly to documents.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### frequent-full-scan
 
@@ -255,12 +274,14 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, anti 0.5 (dynamodb-ap-01): Source database has queries performing full table scans at high frequency. These queries lack proper indexes or filter conditions in the source database. In DynamoDB, these must be replaced with Query operations using partition keys or GSIs — Scan operations at &gt;1/min are not acceptable.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### frequent-writes
 
 No analysis reports this pattern today.
 
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### full-text-native
 
@@ -268,6 +289,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### full-text-search-candidate
 
@@ -276,6 +298,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.6 (aurora-anti-03): Full-text search patterns using LIKE '%term%' or similar constructs.
 - Aurora MySQL, anti 0.6 (aurora-anti-03): Full-text search patterns using LIKE '%term%' or similar constructs.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### full-text-search
 
@@ -288,6 +311,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native: tsvector/tsquery full-text search is native SQL.
 - Aurora MySQL, native: FULLTEXT indexes with MATCH ... AGAINST are native SQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### fulltext-search
 
@@ -295,6 +319,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 - Aurora MySQL, fit 80 (aurora-mysql-02): Full-text search using MATCH ... AGAINST with FULLTEXT indexes. Aurora MySQL provides built-in boolean and natural language full-text modes suitable for moderate search workloads.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### fuzzy-search
 
@@ -307,6 +332,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native: pg\_trgm's similarity\(\) is a native fuzzy-match operator.
 - Aurora MySQL, no: Aurora MySQL cannot run this pattern: a query another engine reports it for loses 40 points on Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### geospatial
 
@@ -314,6 +340,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-geospatial-001): Detected geospatial query patterns
 - No effect on: DynamoDB, DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### graph-traversal-hierarchy
 
@@ -321,6 +348,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.8 (documentdb-anti-04): Self-referential FKs or recursive queries. $graphLookup needs DocumentDB 8.0 on an instance-based cluster \(not 5.0 or earlier, not elastic clusters\).
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### group-concat-pivot
 
@@ -328,6 +356,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 - Aurora MySQL, fit 75 (aurora-mysql-04): String aggregation using GROUP\_CONCAT for pivoting and denormalized output. Aurora MySQL executes this server-side, avoiding multiple round-trips for client-side aggregation.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### heavy-cross-collection-joins
 
@@ -335,6 +364,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.6 (documentdb-anti-01): Queries joining 3+ tables at high frequency. Each join becomes a $lookup stage \(correlated $lookup needs DocumentDB 8.0.2+\). Real-world: 4-7 table JOINs caused 72% I/O wait.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### high-frequency-pk-lookup
 
@@ -343,6 +373,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.8 (aurora-anti-01): Single-row SELECT by primary key at very high frequency \(&gt;100 calls/second\).
 - Aurora MySQL, anti 0.8 (aurora-anti-01): Single-row SELECT by primary key at very high frequency \(&gt;100 calls/second\).
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### high-frequency-small-updates
 
@@ -350,6 +381,7 @@ No analysis reports this pattern today.
 
 - DocumentDB, anti 0.4 (documentdb-anti-03): Frequent updates to single fields in large documents rewrites the entire document.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### high-ingest
 
@@ -357,6 +389,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 - OpenSearch, fit 90 (os-07): High-throughput INSERT workload \(&gt;= 10 calls/second per table\). OpenSearch bulk indexing API is designed for sustained high-ingest — auto-sharding and refresh interval tuning support this pattern.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### high-volume-text-search
 
@@ -365,6 +398,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.7 (aurora-anti-07): High-frequency text search patterns \(LIKE '%', tsvector, ILIKE\) on a text-heavy table \(&gt;40% text columns\).
 - Aurora MySQL, anti 0.7 (aurora-anti-07): High-frequency text search patterns \(LIKE '%', tsvector, ILIKE\) on a text-heavy table \(&gt;40% text columns\).
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### json-document-query
 
@@ -372,6 +406,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 - Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### jsonb-operations
 
@@ -379,6 +414,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries — combining document flexibility with relational joins.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### key-value-lookup
 
@@ -386,6 +422,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 100 (dynamodb-01): Single-item lookups by primary key.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### large-result-sets
 
@@ -393,6 +430,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, anti 0.5 (redis-large-results-001): Queries returning large result sets \(&gt;10k rows\) not ideal for Redis
 - No effect on: DynamoDB, DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### lateral-join
 
@@ -400,6 +438,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 85 (aurora-pg-06): LATERAL joins for correlated subqueries in the FROM clause. Aurora PG executes these efficiently — each row from the left side feeds the lateral subquery, enabling top-N-per-group patterns.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### leaderboard
 
@@ -407,6 +446,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-leaderboard-001): Detected ranking/leaderboard query patterns \(ORDER BY + LIMIT\)
 - No effect on: DynamoDB, DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### low-frequency-read
 
@@ -414,6 +454,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 55 (dynamodb-09): Infrequent read operations \(SELECT below 0.1 cps\) that don't match any specific access pattern. May include admin queries, health checks, or reporting. DynamoDB Scan or Query with GSI depending on access pattern.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### low-frequency-write
 
@@ -421,6 +462,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 70 (dynamodb-08): Infrequent write operations \(INSERT/UPDATE/DELETE below 0.5 cps\). Low frequency does not mean low importance — batch loads, admin operations, and periodic jobs are common. DynamoDB on-demand handles sporadic writes without provisioned capacity waste.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### many-to-many-junction
 
@@ -428,6 +470,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 65 (dynamodb-07b): Many-to-many relationship via a junction table with composite PK of two FK columns. Needs GSI or adjacency list pattern in DynamoDB — more design work required.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### metadata-config-store
 
@@ -435,6 +478,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 90 (dynamodb-05): Small reference tables with frequent reads. Also valid for high read+write metadata stores \(e.g., feature flags, config, lookup tables\). DynamoDB DAX or on-demand with low RCU cost.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### multi-index-joins
 
@@ -442,6 +486,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 - OpenSearch, anti 0.8 (os-ap-01): Queries joining multiple tables \(join\_count &gt;= 2\). OpenSearch does not support cross-index joins natively — these must be denormalized into a single index or handled in the application layer.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### multi-row-mutation
 
@@ -450,6 +495,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 75 (aurora-common-07): UPDATE or DELETE operations with complex WHERE clauses affecting multiple rows. Aurora handles bulk mutations with row-level locking and MVCC, maintaining consistency without full-table locks.
 - Aurora MySQL, fit 75 (aurora-common-07): UPDATE or DELETE operations with complex WHERE clauses affecting multiple rows. Aurora handles bulk mutations with row-level locking and MVCC, maintaining consistency without full-table locks.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### multi-table-update
 
@@ -457,6 +503,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:analyze_aurora_mysql
 
 - Aurora MySQL, fit 80 (aurora-mysql-06): Multi-table UPDATE using MySQL's JOIN syntax \(UPDATE t1 JOIN t2 SET ...\). Aurora MySQL executes this atomically in a single statement — no NoSQL equivalent exists.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### negation-heavy-queries
 
@@ -464,6 +511,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.4 (documentdb-anti-05): Queries with NOT IN, &lt;&gt;, \!=, NOT EXISTS. These map to $ne/$nin/$nor which cause full collection scans in DocumentDB \(no index usage\).
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### nested-document
 
@@ -471,6 +519,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 85 (documentdb-04): Parent-child FK relationships with bounded child cardinality suitable for embedding as nested arrays. Eliminates JOINs entirely.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### no-relational-need
 
@@ -479,6 +528,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation — all queries are single-table CRUD.
 - Aurora MySQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation — all queries are single-table CRUD.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### pagination
 
@@ -487,6 +537,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
 - Aurora MySQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### polymorphic-data
 
@@ -494,6 +545,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 80 (documentdb-03): Tables with sparse columns or EAV pattern indicating polymorphic entities. DocumentDB stores each variant as a document with only its relevant fields.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### product-catalog
 
@@ -501,6 +553,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 85 (documentdb-02): Product tables with many optional attributes that vary by category. Relational schemas use wide tables or EAV; DocumentDB uses flexible documents.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### range-query
 
@@ -508,6 +561,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 90 (dynamodb-02): Queries that filter on a partition key with a range condition on a sort key. Maps directly to DynamoDB Query with KeyConditionExpression.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### referential-integrity
 
@@ -516,6 +570,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement.
 - Aurora MySQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### regex-search
 
@@ -528,6 +583,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native: ~ and ~\* regular-expression matching is native SQL.
 - Aurora MySQL, native: REGEXP/RLIKE is native SQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### reporting-query
 
@@ -536,6 +592,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 80 (aurora-common-05): Reporting queries with large result sets, date-range filters, and ordered/limited aggregate results. Aurora's read replicas can offload reporting workloads without impacting transactional performance.
 - Aurora MySQL, fit 80 (aurora-common-05): Reporting queries with large result sets, date-range filters, and ordered/limited aggregate results. Aurora's read replicas can offload reporting workloads without impacting transactional performance.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### session-store
 
@@ -544,6 +601,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 - DynamoDB, fit 90 (dynamodb-06): User session data with high read/write throughput per user. TTL-based expiry is common but not required — manual deletes or application-managed cleanup are also valid patterns.
 - ElastiCache, fit (medium) (redis-session-001): Detected session or user lookup patterns
 - No effect on: DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### simple-cache-read
 
@@ -552,6 +610,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.7 (aurora-anti-02): High-frequency reads of small, rarely-changing data \(config, sessions, feature flags\).
 - Aurora MySQL, anti 0.7 (aurora-anti-02): High-frequency reads of small, rarely-changing data \(config, sessions, feature flags\).
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### simple-join
 
@@ -560,6 +619,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins.
 - Aurora MySQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### single-access-pattern-table
 
@@ -568,6 +628,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.5 (aurora-anti-06): Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter.
 - Aurora MySQL, anti 0.5 (aurora-anti-06): Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### standard-crud
 
@@ -576,6 +637,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache.
 - Aurora MySQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### stored-routine
 
@@ -583,12 +645,14 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 - Aurora MySQL, fit 70 (aurora-mysql-05): Stored procedures and functions \(CALL, CREATE PROCEDURE\). Aurora MySQL supports stored routines for encapsulating business logic server-side — reducing network round-trips for multi-step operations.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### text_search
 
 No analysis reports this pattern today.
 
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### time-aggregation
 
@@ -596,6 +660,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 - OpenSearch, fit 90 (os-06): Time-based aggregations using DATE\_TRUNC, DATE\(\), HOUR\(\), or EXTRACT\(\). OpenSearch date histogram aggregations run against pre-sorted time fields — very efficient.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### time-range-query
 
@@ -603,6 +668,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 - OpenSearch, fit 85 (os-05): Range queries on timestamp columns \(created\_at, event\_time, etc.\). OpenSearch time-series indices with date histograms excel at this access pattern.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### time-series-event-log
 
@@ -610,6 +676,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 85 (dynamodb-04): Time-ordered data with timestamp-based range reads. Maps to DynamoDB with entity ID as partition key and timestamp as sort key. TTL for automatic expiry.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### time-series
 
@@ -617,6 +684,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-timeseries-001): Detected time series aggregation patterns
 - No effect on: DynamoDB, DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### transactional-write
 
@@ -625,6 +693,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination.
 - Aurora MySQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### unbounded-array-growth
 
@@ -632,6 +701,7 @@ No analysis reports this pattern today.
 
 - DocumentDB, anti 0.7 (documentdb-anti-02): Embedded arrays that grow without limit hit the 16MB document size limit.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### unbounded-result-set
 
@@ -639,6 +709,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, anti 0.2 (dynamodb-ap-03): Queries returning large unbounded result sets without LIMIT. DynamoDB returns max 1MB per Query/Scan — pagination is required.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### unbounded-time-series-ingest
 
@@ -647,6 +718,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, anti 0.7 (aurora-anti-04): Append-only INSERT workload at very high rate with no complex read queries.
 - Aurora MySQL, anti 0.7 (aurora-anti-04): Append-only INSERT workload at very high rate with no complex read queries.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### upsert-conflict
 
@@ -654,6 +726,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 80 (aurora-pg-07): UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking — no read-modify-write cycle needed.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### upsert-duplicate-key
 
@@ -661,6 +734,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 - Aurora MySQL, fit 80 (aurora-mysql-03): UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### wide-transaction
 
@@ -668,6 +742,7 @@ No analysis reports this pattern today.
 
 - DynamoDB, anti 0.3 (dynamodb-ap-04): Transactions spanning many items or tables. DynamoDB TransactWriteItems supports up to 100 items across tables, but at higher latency and cost.
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### wildcard-search
 
@@ -680,6 +755,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native: LIKE/ILIKE is native SQL; pg\_trgm's GIN/GiST index also indexes a leading wildcard.
 - Aurora MySQL, native: LIKE is native SQL; a leading wildcard runs as an unindexed scan.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### window-function
 
@@ -687,6 +763,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 - Aurora PostgreSQL, fit 90 (aurora-pg-02): Window functions \(OVER, PARTITION BY, ROW\_NUMBER, RANK, LAG, LEAD\) for running totals, rankings, and row-level analytics. Aurora PG executes these in a single pass without self-joins.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### window-functions
 
@@ -694,6 +771,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, anti 0.5 (documentdb-anti-07): SQL window functions \(ROW\_NUMBER, RANK, running totals\). $setWindowFields needs DocumentDB 8.0.2+ on an instance-based cluster; LAG/LEAD \($shift\) is not supported on any version.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### write-heavy-ingestion
 
@@ -701,6 +779,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 - DynamoDB, fit 85 (dynamodb-03): High-throughput write workloads \(INSERT/UPDATE\).
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### write-time-aggregation
 
@@ -708,3 +787,4 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 - DocumentDB, fit 90 (documentdb-08): Complex aggregation queries \(multiple SUM/COUNT/MIN/MAX with JOINs\) that can be pre-computed at write time via CDC pipeline and stored as documents. Eliminates real-time aggregation entirely. Validated: 65x speedup in AnyCompany PoC.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.

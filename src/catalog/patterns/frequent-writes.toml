@@ -32,3 +32,13 @@ why = "No analysis reports this type, so the 15-point penalty key is inert today
 kind = "unscored"
 supported = true
 why = "No analysis reports this type, so the 15-point penalty key is inert today."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

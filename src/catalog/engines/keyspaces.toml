@@ -1,6 +1,8 @@
 # Amazon Keyspaces (for Apache Cassandra): a future enhancement, not modelled yet
 # (ADR-031 Decision 9, #495). Named so contracts, the UI and reports can talk about it;
-# never a routing candidate.
+# never a routing candidate, no analysis agent, detectors or schema-design skill. Every
+# pattern file carries an explicit `kind = "future"` entry for it, so the decision is
+# written down rather than defaulted.
 id = "keyspaces"
 display_name = "Keyspaces"
 display_order = 8

@@ -41,3 +41,13 @@ why = "JSON document queries using JSON_EXTRACT, JSON_CONTAINS, or ->> operator.
 concerns = [
     "JSON column indexes require generated columns or multi-valued index syntax.",
 ]
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
