@@ -31,6 +31,11 @@ HANDLER_ENGINES = [
     "aurora_mysql",
 ]
 REFEREE_DIR = Path(__file__).resolve().parents[4] / "src" / "agents" / "referee"
+# Modules outside the referee directory that the referee imports to read analysis output:
+# held to the same rule (#728: the access-pattern shadow's weights).
+REFEREE_READERS = (
+    Path(__file__).resolve().parents[4] / "src" / "tools" / "analysis" / "score_weights.py",
+)
 
 
 def _store(engine: str, tmp_path) -> ArtifactStore:
@@ -112,10 +117,14 @@ def test_the_referee_reads_analysis_json_not_the_trace_file() -> None:
     """
     readers = {
         p.name: [s for s in _string_pieces(p) if _could_name_the_trace_file(s)]
-        for p in REFEREE_DIR.rglob("*.py")
+        for p in (*REFEREE_DIR.rglob("*.py"), *REFEREE_READERS)
     }
     readers = {name: pieces for name, pieces in readers.items() if pieces}
     assert not readers, f"referee modules name the trace artifact: {readers}"
+
+
+def test_the_referee_readers_outside_its_directory_exist() -> None:
+    assert all(p.is_file() for p in REFEREE_READERS)
 
 
 def test_the_trace_detector_catches_a_name_built_from_parts() -> None:

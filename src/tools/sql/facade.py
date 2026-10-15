@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import sqlglot
@@ -557,3 +557,543 @@ def _starts_with_wildcard(pattern: exp.Expr | None) -> bool:
         else:
             return False
     return False
+
+
+# ---------------------------------------------------------------------------
+# Access-pattern facts (#728, ADR-031 Decision 14 Amendment 5)
+#
+# What a statement reads, per SELECT scope, as plain facts: which tables it
+# reads (by alias), which columns it pins to a value, which it bounds by a
+# range, which column pairs join two of its tables, and its order, row limit,
+# grouping and aggregates. No schema knowledge and no class: the caller
+# (``src.agents.referee.access_pattern``) adds the keys and decides the class.
+# ---------------------------------------------------------------------------
+
+StatementKind = Literal["select", "insert", "update", "delete", "merge", "other"]
+
+# Functions that are a text or similarity match, whatever the dialect calls them.
+_TEXT_SEARCH_FUNCTIONS = frozenset(
+    {
+        "to_tsvector",
+        "to_tsquery",
+        "plainto_tsquery",
+        "phraseto_tsquery",
+        "websearch_to_tsquery",
+        "ts_rank",
+        "ts_rank_cd",
+        "similarity",
+        "word_similarity",
+        "strict_word_similarity",
+        "freetext",
+        "freetexttable",
+        "containstable",
+    }
+)
+_TEXT_SEARCH_NODES: tuple[type[exp.Expr], ...] = (
+    exp.MatchAgainst,
+    exp.RegexpLike,
+    exp.RegexpILike,
+    exp.SimilarTo,
+    exp.Contains,
+)
+_RANGE_NODES: tuple[type[exp.Expr], ...] = (exp.GT, exp.GTE, exp.LT, exp.LTE)
+# T-SQL table hints that skip rows another transaction holds (like SKIP LOCKED).
+_ROW_SKIPPING_HINTS = frozenset({"READPAST"})
+
+
+@dataclass(frozen=True)
+class ColumnFact:
+    """A column as written: its qualifier (alias or table, lower-case) and name."""
+
+    qualifier: str | None
+    name: str
+
+
+@dataclass(frozen=True)
+class ScopeSource:
+    """One table a scope reads, under the alias the scope uses for it.
+
+    ``table`` is None for a derived table, a table function or a CTE; ``derived``
+    is then the index (in :attr:`AccessFacts.scopes`) of the scope that produces
+    its rows, when there is exactly one. ``optional``: the source is the
+    optional side of a ``LEFT`` or ``FULL`` join (its rows may be missing).
+    ``function``: a table function or a function of another source's row
+    (``unnest(...)``, ``CROSS APPLY OPENJSON(...)``, ``generate_series(...)``),
+    which reads no stored table.
+    """
+
+    alias: str
+    table: TableRef | None
+    derived: int | None = None
+    optional: bool = False
+    function: bool = False
+
+
+@dataclass(frozen=True)
+class ScopeFacts:
+    """The facts of one SELECT (or UPDATE/DELETE) scope.
+
+    ``equalities``: columns pinned to a value by a top-level ``AND`` term of the
+    WHERE or a JOIN condition (``col = <value>``, ``col IN (...)``, ``col =
+    ANY(...)``); the value holds no column of this scope (a literal, a
+    placeholder, a subquery or an outer column). ``ranges``: ``<``, ``<=``,
+    ``>``, ``>=``, ``BETWEEN`` and a literal-prefix ``LIKE 'abc%'``. ``joins``:
+    ``col = col`` terms over two of the scope's columns, plus ``JOIN ... USING``.
+    ``other_filters``: every other predicate term (an ``OR`` group, ``NOT IN``,
+    ``IS NULL``, a function test, ...). ``order_by``: each sort item's column,
+    or None for an expression. ``limit``: the row count as written (digits), or
+    ``"?"`` for a placeholder, ``PERCENT`` or ``WITH TIES`` (not a row count);
+    None with no limit. ``skip_locked``: ``SKIP LOCKED`` or a ``READPAST`` hint.
+    ``text_search``: in this scope's own predicates or projection (not a nested
+    query's), a ``LIKE``/``ILIKE`` whose pattern starts with a wildcard
+    (``wildcard_leading``, the same definition as :class:`SqlFacts`), a
+    regular-expression or ``SIMILAR TO`` match, ``MATCH ... AGAINST``, ``@@``,
+    ``CONTAINS`` or a full-text or similarity function. ``like_parameter``: a
+    ``LIKE``/``ILIKE`` whose whole pattern is a bind parameter (``LIKE ?``): its
+    value is unknown, so it is neither a leading wildcard nor a prefix.
+    """
+
+    sources: tuple[ScopeSource, ...]
+    equalities: tuple[ColumnFact, ...] = ()
+    ranges: tuple[ColumnFact, ...] = ()
+    joins: tuple[tuple[ColumnFact, ColumnFact], ...] = ()
+    other_filters: int = 0
+    order_by: tuple[ColumnFact | None, ...] = ()
+    limit: str | None = None
+    has_where: bool = False
+    group_by: bool = False
+    aggregate: bool = False
+    skip_locked: bool = False
+    text_search: bool = False
+    like_parameter: bool = False
+
+
+@dataclass(frozen=True)
+class AccessFacts:
+    """The access-pattern facts of one piece of SQL text.
+
+    ``kind`` is the first statement's kind (``other`` for SET, SHOW,
+    transaction control, DDL, ...). ``inserts_values``: an ``INSERT ... VALUES``
+    (or ``DEFAULT VALUES``). ``windowed_aggregate``: a window function that
+    combines values (``SUM(...) OVER``, ``COUNT(*) OVER ()``) anywhere; the
+    ranking and offset window functions (``ROW_NUMBER``, ``RANK``, ``LAG``, ...)
+    combine nothing, so alone they are not one (the ``has_aggregation``
+    definition of :class:`SqlFacts`). When the facade falls back, ``parsed_by``
+    is ``"regex"`` and ``scopes`` is empty: no fact is guessed from the text.
+    """
+
+    kind: StatementKind
+    scopes: tuple[ScopeFacts, ...]
+    inserts_values: bool
+    windowed_aggregate: bool
+    parsed_by: ParsedBy
+    fallback_reason: FallbackReason | None
+
+
+def access_facts(sql: str, source_engine: str) -> AccessFacts:
+    """The access-pattern facts of ``sql``, read with the source engine's dialect.
+
+    Never raises; text the facade cannot parse comes back with
+    ``parsed_by="regex"``, the reason and no scopes. A ``SHOW`` (which sqlglot
+    reads as a generic command) is kind ``other``.
+    """
+    parsed = _parse(sql, source_engine)
+    reason = parsed.fallback_reason
+    if reason is not None:
+        return AccessFacts(
+            kind="other" if reason == "command" else "select",
+            scopes=(),
+            inserts_values=False,
+            windowed_aggregate=False,
+            parsed_by="regex",
+            fallback_reason=reason,
+        )
+    try:
+        return _access_facts(list(parsed.statements))
+    except Exception:  # noqa: BLE001 -- a tree the walk does not expect falls back too
+        return AccessFacts("select", (), False, False, "regex", "parse_error")
+
+
+def _statement_kind(statement: exp.Expr) -> StatementKind:
+    if isinstance(statement, exp.Query):
+        return "select"
+    for node_type, kind in (
+        (exp.Insert, "insert"),
+        (exp.Update, "update"),
+        (exp.Delete, "delete"),
+        (exp.Merge, "merge"),
+    ):
+        if isinstance(statement, node_type):
+            return kind  # type: ignore[return-value]
+    return "other"
+
+
+def _access_facts(statements: list[exp.Expr]) -> AccessFacts:
+    kind = _statement_kind(statements[0])
+    scopes: list[ScopeFacts] = []
+    inserts_values = False
+    for statement in statements:
+        if isinstance(statement, exp.Insert):
+            body = statement.expression
+            inserts_values = inserts_values or body is None or isinstance(body, exp.Values)
+        roots: list[exp.Expr] = (
+            [statement] if isinstance(statement, (exp.Update, exp.Delete)) else []
+        )
+        roots.extend(statement.find_all(exp.Select))
+        index_of = {id(root): i + len(scopes) for i, root in enumerate(roots)}
+        cte_bodies = _cte_bodies(statement, index_of)
+        scopes.extend(_scope_facts(root, index_of, cte_bodies) for root in roots)
+    return AccessFacts(
+        kind=kind,
+        scopes=tuple(scopes),
+        inserts_values=inserts_values,
+        windowed_aggregate=any(
+            isinstance(node, exp.Window) and _is_aggregation(node.this)
+            for s in statements
+            for node in s.walk()
+        ),
+        parsed_by="sqlglot",
+        fallback_reason=None,
+    )
+
+
+def _cte_bodies(statement: exp.Expr, index_of: dict[int, int]) -> dict[str, int]:
+    """CTE name (lower-case) -> scope index of its body, when the body is one SELECT."""
+    bodies: dict[str, int] = {}
+    for cte in statement.find_all(exp.CTE):
+        body = cte.this
+        if isinstance(body, exp.Select) and id(body) in index_of:
+            bodies[cte.alias_or_name.lower()] = index_of[id(body)]
+    return bodies
+
+
+def _is_text_search(node: exp.Expr) -> bool:
+    if isinstance(node, _TEXT_SEARCH_NODES):
+        return True
+    if isinstance(node, _LIKE_NODES):
+        return _like_kind(node) == "leading_wildcard"
+    if isinstance(node, exp.Func):
+        name = (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).lower()
+        return name in _TEXT_SEARCH_FUNCTIONS
+    return False
+
+
+def _pattern_pieces(pattern: exp.Expr) -> list[exp.Expr]:
+    """The parts of a concatenated pattern (``||``, ``+``, ``CONCAT(...)``), in order."""
+    while isinstance(pattern, exp.Paren):
+        pattern = pattern.this
+    if isinstance(pattern, (exp.DPipe, exp.Add)):
+        return _pattern_pieces(pattern.this) + _pattern_pieces(pattern.expression)
+    if isinstance(pattern, exp.Concat):
+        return [p for e in pattern.expressions for p in _pattern_pieces(e)]
+    return [pattern]
+
+
+# A bind parameter. ``NULL`` too: the digest step writes a MySQL ``?`` as ``NULL``
+# (:mod:`src.tools.sql.normalize`), and a literal ``LIKE NULL`` matches nothing.
+_BIND_NODES: tuple[type[exp.Expr], ...] = (exp.Placeholder, exp.Parameter, exp.Null)
+
+LikeKind = Literal["leading_wildcard", "prefix", "parameter", "other"]
+
+
+def _like_kind(node: exp.Expr) -> LikeKind:
+    """How a ``LIKE``/``ILIKE`` pattern addresses rows.
+
+    ``leading_wildcard``: the pattern's first part is a literal starting with ``%``
+    (``wildcard_leading``). ``prefix``: it is anchored at its start, a range on the
+    column (``'abc%'``, ``? || '%'``). ``parameter``: the whole pattern is a bind
+    parameter, so its value is unknown. ``other``: anything else (``'_bc%'``, a
+    column).
+    """
+    pattern = node.expression
+    if _starts_with_wildcard(pattern):
+        return "leading_wildcard"
+    pieces = _pattern_pieces(pattern)
+    first, last = pieces[0], pieces[-1]
+    if isinstance(first, exp.Literal) and first.is_string:
+        text = first.this or ""
+        return "prefix" if text and text[0] not in "%_" else "other"
+    if (
+        len(pieces) > 1
+        and isinstance(last, exp.Literal)
+        and last.is_string
+        and str(last.this or "").endswith("%")
+    ):
+        return "prefix"
+    if len(pieces) == 1 and isinstance(first, _BIND_NODES):
+        return "parameter"
+    return "other"
+
+
+def _own_nodes(root: exp.Expr) -> list[exp.Expr]:
+    """``root`` and its descendants, not looking inside a nested query."""
+    found: list[exp.Expr] = []
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node is not root and isinstance(node, (exp.Select, exp.Subquery)):
+            continue
+        found.append(node)
+        stack.extend(node.iter_expressions())
+    return found
+
+
+def _scope_sources(
+    root: exp.Expr, index_of: dict[int, int], cte_bodies: dict[str, int]
+) -> tuple[list[ScopeSource], list[exp.Join]]:
+    """The tables ``root`` reads directly and every JOIN node that adds one."""
+    nodes: list[exp.Expr] = []
+    joins: list[exp.Join] = []
+    if isinstance(root, (exp.Update, exp.Delete)) and root.this is not None:
+        nodes.append(root.this)
+    from_ = root.args.get("from_")
+    if isinstance(from_, exp.From):
+        nodes.append(from_.this)
+        nodes.extend(from_.expressions or [])
+    using = root.args.get("using")
+    if isinstance(using, list):
+        nodes.extend(using)
+    for join in root.args.get("joins") or []:
+        joins.append(join)
+    sources: list[ScopeSource] = []
+    pending = [(n, False) for n in nodes] + [(j.this, _optional_side(j)) for j in joins]
+    seen: set[int] = set()
+    while pending:
+        node, optional = pending.pop(0)
+        if id(node) in seen:
+            continue
+        seen.add(id(node))
+        for join in node.args.get("joins") or []:
+            joins.append(join)
+            pending.append((join.this, _optional_side(join)))
+        source = _source(node, index_of, cte_bodies)
+        if source is not None:
+            sources.append(replace(source, optional=optional) if optional else source)
+    return sources, joins
+
+
+def _optional_side(join: exp.Join) -> bool:
+    return str(join.args.get("side") or "").upper() in ("LEFT", "FULL")
+
+
+def _source(
+    node: exp.Expr, index_of: dict[int, int], cte_bodies: dict[str, int]
+) -> ScopeSource | None:
+    alias = node.alias_or_name.lower() if hasattr(node, "alias_or_name") else ""
+    if isinstance(node, exp.Table):
+        ref = _ref_from_node(node)
+        if ref is None:
+            if isinstance(node.this, exp.Identifier) and node.name.lower() in _PSEUDO_TABLES:
+                return None
+            return ScopeSource(alias=alias or "", table=None, function=True)
+        if not ref.qualifiers and ref.name.lower() in cte_bodies and _is_cte_reference(node, ref):
+            return ScopeSource(alias=alias, table=None, derived=cte_bodies[ref.name.lower()])
+        return ScopeSource(alias=alias, table=ref)
+    if isinstance(node, exp.Subquery):
+        body = node.this
+        derived = index_of.get(id(body)) if isinstance(body, exp.Select) else None
+        return ScopeSource(alias=alias, table=None, derived=derived)
+    return ScopeSource(alias=alias, table=None, function=True)
+
+
+def _conjuncts(condition: exp.Expr | None) -> list[exp.Expr]:
+    if condition is None:
+        return []
+    if isinstance(condition, exp.Where):
+        condition = condition.this
+    while isinstance(condition, exp.Paren):
+        condition = condition.this
+    if isinstance(condition, exp.And):
+        return _conjuncts(condition.this) + _conjuncts(condition.expression)
+    return [condition]
+
+
+def _own_columns(node: exp.Expr) -> list[exp.Column]:
+    """Columns in ``node``, not looking inside a nested query."""
+    found: list[exp.Column] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, exp.Column):
+            found.append(current)
+            continue
+        if isinstance(current, (exp.Subquery, exp.Select)) and current is not node:
+            continue
+        stack.extend(current.iter_expressions())
+    return found
+
+
+def _column_fact(column: exp.Column) -> ColumnFact | None:
+    if isinstance(column.this, exp.Star) or not column.name:
+        return None
+    qualifier = column.table.lower() if column.table else None
+    return ColumnFact(qualifier=qualifier, name=column.name.lower())
+
+
+class _ScopeReader:
+    """Sorts one scope's predicate terms into the :class:`ScopeFacts` fields."""
+
+    def __init__(self, aliases: set[str]) -> None:
+        self.aliases = aliases
+        self.equalities: list[ColumnFact] = []
+        self.ranges: list[ColumnFact] = []
+        self.joins: list[tuple[ColumnFact, ColumnFact]] = []
+        self.other = 0
+
+    def _in_scope(self, column: exp.Column) -> bool:
+        qualifier = column.table.lower() if column.table else None
+        return qualifier is None or qualifier in self.aliases
+
+    def _scope_column(self, node: exp.Expr) -> ColumnFact | None:
+        """``node`` as one of this scope's columns, or None."""
+        while isinstance(node, exp.Paren):
+            node = node.this
+        if isinstance(node, exp.Column) and self._in_scope(node):
+            return _column_fact(node)
+        return None
+
+    def _is_value(self, node: exp.Expr) -> bool:
+        """Holds none of this scope's columns (a literal, placeholder, outer column, ...)."""
+        return not any(self._in_scope(c) for c in _own_columns(node))
+
+    def term(self, node: exp.Expr) -> None:
+        while isinstance(node, exp.Paren):
+            node = node.this
+        if isinstance(node, exp.Escape):
+            node = node.this
+        if isinstance(node, (exp.EQ, exp.NullSafeEQ)):
+            left, right = self._scope_column(node.this), self._scope_column(node.expression)
+            if left and right:
+                self.joins.append((left, right))
+            elif left and self._is_value(node.expression):
+                self.equalities.append(left)
+            elif right and self._is_value(node.this):
+                self.equalities.append(right)
+            else:
+                self.other += 1
+            return
+        if isinstance(node, exp.In):
+            column = self._scope_column(node.this)
+            values = list(node.expressions or [])
+            if column and all(self._is_value(v) for v in values):
+                self.equalities.append(column)
+            else:
+                self.other += 1
+            return
+        if isinstance(node, exp.Between):
+            column = self._scope_column(node.this)
+            if column:
+                self.ranges.append(column)
+            else:
+                self.other += 1
+            return
+        if isinstance(node, _RANGE_NODES):
+            column = self._scope_column(node.this) or self._scope_column(node.expression)
+            if column:
+                self.ranges.append(column)
+            else:
+                self.other += 1
+            return
+        if isinstance(node, (exp.Like, exp.ILike)) and _like_kind(node) == "prefix":
+            column = self._scope_column(node.this)
+            if column:
+                self.ranges.append(column)
+                return
+        self.other += 1
+
+    def using(self, join: exp.Join, left_aliases: list[str], right_alias: str) -> None:
+        for identifier in join.args.get("using") or []:
+            name = identifier.name.lower()
+            for alias in left_aliases:
+                self.joins.append((ColumnFact(alias, name), ColumnFact(right_alias, name)))
+
+
+def _row_limit(root: exp.Expr) -> str | None:
+    limit = root.args.get("limit")
+    if limit is None:
+        return None
+    options = limit.args.get("limit_options")
+    if options is not None and (options.args.get("percent") or options.args.get("with_ties")):
+        return "?"
+    count = limit.args.get("count") if isinstance(limit, exp.Fetch) else limit.expression
+    if count is None:
+        return "1" if isinstance(limit, exp.Fetch) else None
+    if isinstance(count, exp.Literal) and not count.is_string and str(count.this).isdigit():
+        return str(int(count.this))
+    return "?"
+
+
+def _skips_locked(root: exp.Expr, sources_nodes: list[exp.Expr]) -> bool:
+    for lock in root.args.get("locks") or []:
+        if lock.args.get("wait") is False:
+            return True
+    for node in sources_nodes:
+        for hint in node.args.get("hints") or []:
+            if isinstance(hint, exp.WithTableHint) and any(
+                h.name.upper() in _ROW_SKIPPING_HINTS for h in hint.expressions
+            ):
+                return True
+    return False
+
+
+def _has_own_aggregate(root: exp.Expr) -> bool:
+    """An aggregate function in ``root``'s own projection, HAVING or ORDER BY."""
+    parts: list[exp.Expr] = list(root.args.get("expressions") or [])
+    for key in ("having", "order"):
+        if root.args.get(key) is not None:
+            parts.append(root.args[key])
+    stack = parts
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (exp.Subquery, exp.Select, exp.Window)):
+            continue
+        if _is_aggregation(node):
+            return True
+        stack.extend(node.iter_expressions())
+    return False
+
+
+def _scope_facts(
+    root: exp.Expr, index_of: dict[int, int], cte_bodies: dict[str, int]
+) -> ScopeFacts:
+    own = _own_nodes(root)
+    sources, joins = _scope_sources(root, index_of, cte_bodies)
+    aliases = {s.alias for s in sources if s.alias}
+    aliases |= {s.table.name.lower() for s in sources if s.table is not None}
+    reader = _ScopeReader(aliases)
+    where = root.args.get("where")
+    for term in _conjuncts(where):
+        reader.term(term)
+    seen_aliases = [s.alias for s in sources[: len(sources) - len(joins)]]
+    for join in joins:
+        for term in _conjuncts(join.args.get("on")):
+            reader.term(term)
+        right = join.this.alias_or_name.lower() if hasattr(join.this, "alias_or_name") else ""
+        if join.args.get("using"):
+            reader.using(join, seen_aliases, right)
+        seen_aliases.append(right)
+    order = root.args.get("order")
+    order_by = tuple(
+        _column_fact(o.this) if isinstance(o.this, exp.Column) else None
+        for o in (order.expressions if isinstance(order, exp.Order) else [])
+    )
+    source_nodes = [j.this for j in joins]
+    if isinstance(root.args.get("from_"), exp.From):
+        source_nodes.append(root.args["from_"].this)
+    return ScopeFacts(
+        sources=tuple(sources),
+        equalities=tuple(reader.equalities),
+        ranges=tuple(reader.ranges),
+        joins=tuple(reader.joins),
+        other_filters=reader.other,
+        order_by=order_by,
+        limit=_row_limit(root),
+        has_where=where is not None,
+        group_by=root.args.get("group") is not None,
+        aggregate=_has_own_aggregate(root),
+        skip_locked=_skips_locked(root, source_nodes),
+        text_search=any(_is_text_search(n) for n in own),
+        like_parameter=any(
+            isinstance(n, (exp.Like, exp.ILike)) and _like_kind(n) == "parameter" for n in own
+        ),
+    )

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field, replace
 
 from src.agents.referee.capability_registry import can_engine_serve_capability
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.contracts.analysis_output import ScoreBreakdown
 from src.shared.capability_labels import capability_label
 from src.shared.catalog.patterns import (
     anti_pattern_penalties,
@@ -50,6 +51,7 @@ from src.shared.catalog.patterns import (
 )
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import display_engine
+from src.tools.analysis.scoring import DEFAULT_WEIGHTS, compute_confidence
 
 ANTI_PATTERN_PENALTIES: dict[str, int] = anti_pattern_penalties()
 CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = capability_signal_engines()
@@ -58,13 +60,67 @@ CAPABILITY_REDESIGN_NOTES: dict[str, str] = capability_redesign_notes()
 CAPABILITY_EXEMPT_NOTES: dict[str, str] = capability_exempt_notes()
 
 
+@dataclass(frozen=True)
+class QueryPatternModel:
+    """The per-query pattern dimension (ADR-031 Decision 14, Amendment 5, #728). Shadow only.
+
+    ``pattern_scores``: ``query_id -> engine -> pattern score`` from the query's own
+    access-pattern class (``src.shared.catalog.access_classes``). ``weights``:
+    ``(engine, table_id) -> dimension weights`` the engine's analysis used for that
+    table, read from ``analysis.json`` (``src.tools.analysis.score_weights``; the
+    referee never reads the decision trace, ADR-017 Decision 3); a missing pair uses
+    ``DEFAULT_WEIGHTS``. ``identity``: the attribution control -- every covered query
+    keeps each table's own pattern score, so only the per-query table rule differs
+    from today. Built by :mod:`src.agents.referee.access_pattern_shadow`; no
+    production routing path builds one yet, so routing is unchanged.
+    """
+
+    pattern_scores: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    weights: Mapping[tuple[str, str], Mapping[str, float]] = field(default_factory=dict)
+    identity: bool = False
+
+
+def _query_pattern_confidence(
+    query: Mapping, engine: str, analysis: Mapping, pattern_score: int, model: QueryPatternModel
+) -> int:
+    """The base score with the pattern dimension taken from the query's own class.
+
+    For each of the query's own rated tables, the table's complexity, performance
+    and cost dimensions are kept and its pattern dimension is replaced by
+    ``pattern_score``, weighted as the engine's analysis weighted that table; the
+    base is the mean over those tables. No all-tables fallback: a query with no rated
+    table of its own scores 0. A pattern-only engine (``PATTERN_ONLY_ENGINES``) whose
+    catalog gives the class no score scores 0, its existing "own pattern or 0" rule.
+    """
+    if not model.identity and engine in PATTERN_ONLY_ENGINES and pattern_score <= 0:
+        return 0
+    table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
+    scores = []
+    for table_id in query.get("tables_accessed") or []:
+        rec = table_recs.get(table_id)
+        if rec is None or not rec.get("score_breakdown"):
+            continue
+        breakdown = dict(rec["score_breakdown"])
+        if not model.identity:
+            breakdown["pattern_match_score"] = pattern_score
+        weights = dict(model.weights.get((engine, table_id)) or DEFAULT_WEIGHTS)
+        scores.append(compute_confidence(ScoreBreakdown(**breakdown), weights))
+    return int(sum(scores) / len(scores)) if scores else 0
+
+
 def compute_query_confidence(
     query_id: str,
     query: Mapping,
     engine: str,
     analysis: Mapping,
+    *,
+    pattern_model: QueryPatternModel | None = None,
 ) -> int:
     """Compute base confidence (0–100) for a query→engine pair.
+
+    With ``pattern_model`` covering ``query_id`` (shadow only, #728), the pattern
+    dimension is the query's own class score instead of its tables' patterns
+    (:func:`_query_pattern_confidence`); otherwise the rule below is unchanged.
 
     The query's own ``tables_accessed`` decide the base score (#302):
     a table-level recommendation only ever informs a query through
@@ -98,6 +154,10 @@ def compute_query_confidence(
     which says nothing about a neighboring plain lookup on the same
     table).
     """
+    if pattern_model is not None and query_id in pattern_model.pattern_scores:
+        pattern_score = int(pattern_model.pattern_scores[query_id].get(engine, 0))
+        return _query_pattern_confidence(query, engine, analysis, pattern_score, pattern_model)
+
     table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
     wa = analysis.get("workload_analysis", {})
 
@@ -306,6 +366,9 @@ class ScoringContext:
     # Empty unless a model flag was accepted (``src.agents.referee.model_flags``),
     # so a run without a model never sees it.
     flag_gaps: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # The per-query pattern dimension (#728, shadow only): ``None`` everywhere in
+    # production, so the score is today's. Only the shadow builder sets one.
+    pattern_model: QueryPatternModel | None = None
 
     def with_flag_gaps(self, gaps: Mapping[str, Iterable[str]]) -> ScoringContext:
         """A copy whose ``flag_gaps`` also carries ``gaps`` (merged per query)."""
@@ -477,6 +540,8 @@ def score_query_for_engine(query: Mapping, engine: str, ctx: ScoringContext) -> 
             gate_kind=GATE_KIND_MODEL_FLAG,
         )
     analysis = ctx.analysis_outputs.get(engine) or {}
-    base = compute_query_confidence(query_id, query, engine, analysis)
+    base = compute_query_confidence(
+        query_id, query, engine, analysis, pattern_model=ctx.pattern_model
+    )
     penalty = ctx.anti_pattern_map.get((query_id, engine), 0)
     return EngineScore(score=float(max(0, base - penalty)))

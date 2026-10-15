@@ -305,6 +305,11 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     "src/report/pptx_report.py": (frozenset({"SIGNAL_LABEL", "SIGNAL_MODIFIER"}), _WORDING),
     "src/report/waves.py": (frozenset({"_RELATIONAL_TO_SOURCE_ENGINE"}), _WORDING),
     "src/shared/signal_labels.py": (frozenset({"SIGNAL_NOUNS"}), _WORDING),
+    "src/agents/referee/access_pattern.py": (
+        frozenset({"TEXT_SEARCH"}),
+        "an access-pattern class id from src/catalog/access_classes.toml (#728) that "
+        "shares its spelling with the text_search pattern file",
+    ),
     "src/tools/schema/aurora_common/bedrock_delta.py": (frozenset({"_ENGINE_LABELS"}), _WORDING),
 }
 
@@ -335,6 +340,10 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/agents/referee/access_pattern.py": (
+        frozenset({"_LOW_CARDINALITY_SHARE"}),
+        _DETECTION + ": when an index's leading column is too coarse to be a key (#728)",
+    ),
     "src/agents/referee/aurora_choice.py": (frozenset({"MARGIN_RATIO"}), _THRESHOLD),
     "src/agents/referee/cache_overlay.py": (
         frozenset({"CACHE_MAX_ROWS_AVG", "WRITE_HEAVY_TABLE_MIN_WRITE_SHARE"}),
@@ -498,6 +507,10 @@ INLINE_ENGINE_LITERALS: dict[str, tuple[int, str]] = {
     "src/agents/referee/synthesis_handler.py": (3, _WORDING),
     "src/agents/referee/synthesis_report.py": (6, _WORDING),
     "src/agents/analysis/handler.py": (6, _PLUMBING + ": per-engine analysis dispatch"),
+    "src/tools/analysis/score_weights.py": (
+        5,
+        _PLUMBING + ": which catalog module's score weights each engine's analysis uses (#728)",
+    ),
 }
 
 

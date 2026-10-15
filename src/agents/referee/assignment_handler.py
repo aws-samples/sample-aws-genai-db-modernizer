@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 
+from src.agents.referee.access_pattern_shadow import write_access_pattern_shadow
 from src.agents.referee.assignment_resolver import AssignmentResolver
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.storage.artifact_store import ArtifactStore
@@ -91,6 +92,15 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     validation_key = f"{database_name}/{job_id}/assignment/v{version}/validation.json"
     store.write_json(validation_key, validation.model_dump(mode="json"))
     print(f"[assignment] Validation written to {validation_key}")
+
+    # --- Shadow of the per-query access-pattern score (#728) ---
+    # Observes only: it re-resolves from the same inputs into its own file and never
+    # changes the assignment written above.
+    shadow_key = write_access_pattern_shadow(
+        store, database_name, job_id, version, triage, analysis_outputs, collector_output
+    )
+    if shadow_key:
+        print(f"[assignment] Access-pattern shadow written to {shadow_key}")
 
     elapsed = time.time() - start_time
     print(f"[assignment] ✅ Complete in {elapsed:.1f}s — version {version}")

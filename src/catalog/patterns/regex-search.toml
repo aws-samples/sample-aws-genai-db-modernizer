@@ -17,7 +17,8 @@ why = "DynamoDB cannot run this pattern: a query another engine reports it for l
 [engines.documentdb]
 kind = "native"
 supported = true
-why = "$regex is a native query operator."
+why = "$regex is a native query operator. Class score (#728): 75, the same built-in text-index operator shape Aurora PostgreSQL's native full text is rated at (full-text-native, 75); not a dedicated search engine."
+class_score = 75
 
 # Detection signals: regexp, rlike, ~ , ~*
 [engines.opensearch]
@@ -41,12 +42,14 @@ why = "ElastiCache cannot run this pattern: a query another engine reports it fo
 [engines.aurora_postgresql]
 kind = "native"
 supported = true
-why = "~ and ~* regular-expression matching is native SQL."
+why = "~ and ~* regular-expression matching is native SQL. Class score (#728): 75, Aurora PostgreSQL's own native full-text rating (full-text-native, 75)."
+class_score = 75
 
 [engines.aurora_mysql]
 kind = "native"
 supported = true
-why = "REGEXP/RLIKE is native SQL."
+why = "REGEXP/RLIKE is native SQL. Class score (#728): 80, Aurora MySQL's own native full-text rating (fulltext-search, 80)."
+class_score = 80
 
 [engines.neptune]
 kind = "future"

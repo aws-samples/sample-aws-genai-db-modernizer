@@ -54,6 +54,10 @@ Engine entry fields (``[engines.<engine_id>]``, one per engine):
 - ``catalog`` / ``catalog_id``: the engine catalog and entry id (``fit``/``anti_pattern``).
 - ``score``: the specialist's base score, 0-100 (``fit``), or ``confidence`` where the
   analysis sets a confidence level instead (ElastiCache).
+- ``class_score``: on a ``native`` or ``unscored`` entry, how well the engine serves the
+  pattern although its analysis does not report it, 0-100, with the source of the number
+  in ``why``. Only the per-query access-pattern class scores read it
+  (``src/catalog/access_classes.toml``, #728), so it changes no current score.
 - ``severity``: 0.0-1.0 (``anti_pattern``); ``guidance``: what to do about it;
   ``engine_hint``: the sentence of the description that names another engine (kept apart
   so report text can drop it); ``guidance_names_engine``: the guidance is an
@@ -119,9 +123,9 @@ _KIND_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         ),
     ),
     "redesign": (frozenset({"penalty"}), frozenset({"penalty"})),
-    "native": (frozenset(), frozenset()),
+    "native": (frozenset(), frozenset({"class_score"})),
     "penalized": (frozenset(), frozenset()),
-    "unscored": (frozenset(), frozenset()),
+    "unscored": (frozenset(), frozenset({"class_score"})),
     "future": (frozenset(), frozenset()),
 }
 
@@ -137,6 +141,7 @@ class EngineSupport(BaseModel):
     catalog: CatalogName | None = None
     catalog_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]*$")
     score: int | None = Field(default=None, ge=0, le=100)
+    class_score: int | None = Field(default=None, ge=0, le=100)
     confidence: ConfidenceLevel | None = None
     severity: float | None = Field(default=None, ge=0.0, le=1.0)
     penalty: int | None = Field(default=None, ge=0)
@@ -173,6 +178,7 @@ _ALL_OPTIONAL = (
     "catalog",
     "catalog_id",
     "score",
+    "class_score",
     "confidence",
     "severity",
     "penalty",

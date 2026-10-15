@@ -1,0 +1,49 @@
+# Pattern secondary-attribute-filter. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+# Catalog-only (no detector): the access-pattern class "ad hoc filter" (#728) reads it, nothing else.
+id = "secondary-attribute-filter"
+detectors = []
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "A filter on non-key attributes is a Scan with a filter expression (the frequent-full-scan anti-pattern), so it earns no class score; it adds no cross-engine penalty."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "Filters on any field, served by single-field and compound secondary indexes, are native queries. Class score (#728): 75, the same secondary-index filter Aurora is rated at for this class (multi-row-mutation, 75)."
+class_score = 75
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "Every field is indexed (inverted index, BKD trees, doc values), so a multi-attribute filter is a native filter-context query; reads only, near real time. Class score (#728): 75, the same rating Aurora has for this class (multi-row-mutation, 75), with no evidence for a higher or lower one."
+class_score = 75
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache serves reads by key only; a filter on non-key attributes earns no class score and adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "A WHERE clause on non-key columns, served by secondary indexes, is native SQL. Class score (#728): 75, Aurora's own rating for filtered multi-row statements (multi-row-mutation, 75)."
+class_score = 75
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "A WHERE clause on non-key columns, served by secondary indexes, is native SQL. Class score (#728): 75, Aurora's own rating for filtered multi-row statements (multi-row-mutation, 75)."
+class_score = 75
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

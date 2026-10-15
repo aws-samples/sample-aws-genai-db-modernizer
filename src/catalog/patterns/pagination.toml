@@ -13,7 +13,8 @@ why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine
 [engines.documentdb]
 kind = "unscored"
 supported = true
-why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+why = "An index range scan with sort, skip and limit (find().sort().limit(), or a keyset filter on an indexed field) is native; DocumentDB's analysis does not report the pattern and it adds no cross-engine penalty. Class score (#728): 85, the same index range scan Aurora's pagination is rated at (pagination, 85)."
+class_score = 85
 
 [engines.opensearch]
 kind = "unscored"

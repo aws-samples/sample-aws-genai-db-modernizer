@@ -554,6 +554,9 @@ UNDETECTED = {
     "high-frequency-small-updates",
     "text_search",
     "frequent-writes",
+    # Catalog-only: the access-pattern class "ad hoc filter" reads it (#728); the
+    # classifier detects the class from the SQL facade's facts.
+    "secondary-attribute-filter",
 }
 
 

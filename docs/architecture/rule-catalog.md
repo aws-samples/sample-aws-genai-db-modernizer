@@ -81,6 +81,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`referential-integrity`](#referential-integrity) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
 | [`regex-search`](#regex-search) | **no** | native | fit 75 | **no** | native | native | future | future | 40 | text_search | text_search | 1 |
 | [`reporting-query`](#reporting-query) | - | - | - | - | fit 80 | fit 80 | future | future | - | - | - | 1 |
+| [`secondary-attribute-filter`](#secondary-attribute-filter) | - | - | - | - | - | - | future | future | - | - | - | none |
 | [`session-store`](#session-store) | fit 90 | - | - | fit (medium) | - | - | future | future | - | - | session_store | 2 |
 | [`simple-cache-read`](#simple-cache-read) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | 25 | - | - | 1 |
 | [`simple-join`](#simple-join) | - | - | - | - | fit 70 | fit 70 | future | future | - | - | - | 1 |
@@ -305,11 +306,11 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
-- DocumentDB, native: The $text operator runs full-text search natively.
+- DocumentDB, native: The $text operator runs full-text search natively. Class score \(#728\): 75, the same built-in text-index operator shape Aurora PostgreSQL's native full text is rated at \(full-text-native, 75\); not a dedicated search engine.
 - OpenSearch, fit 95 (os-01): Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload — tokenization, stemming, and relevance ranking are native.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
-- Aurora PostgreSQL, native: tsvector/tsquery full-text search is native SQL.
-- Aurora MySQL, native: FULLTEXT indexes with MATCH ... AGAINST are native SQL.
+- Aurora PostgreSQL, native: tsvector/tsquery full-text search is native SQL. Class score \(#728\): 75, Aurora PostgreSQL's own native full-text rating \(full-text-native, 75\).
+- Aurora MySQL, native: FULLTEXT indexes with MATCH ... AGAINST are native SQL. Class score \(#728\): 80, Aurora MySQL's own native full-text rating \(fulltext-search, 80\).
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### fulltext-search
@@ -329,7 +330,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 - DocumentDB, no: DocumentDB cannot run this pattern: a query another engine reports it for loses 40 points on DocumentDB.
 - OpenSearch, fit 85 (os-04): Fuzzy/similarity search via pg\_trgm or similarity\(\). OpenSearch fuzzy queries use Levenshtein distance natively — no extension required.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
-- Aurora PostgreSQL, native: pg\_trgm's similarity\(\) is a native fuzzy-match operator.
+- Aurora PostgreSQL, native: pg\_trgm's similarity\(\) is a native fuzzy-match operator. Class score \(#728\): 75, Aurora PostgreSQL's own native full-text rating \(full-text-native, 75\).
 - Aurora MySQL, no: Aurora MySQL cannot run this pattern: a query another engine reports it for loses 40 points on Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -577,11 +578,11 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
-- DocumentDB, native: $regex is a native query operator.
+- DocumentDB, native: $regex is a native query operator. Class score \(#728\): 75, the same built-in text-index operator shape Aurora PostgreSQL's native full text is rated at \(full-text-native, 75\); not a dedicated search engine.
 - OpenSearch, fit 75 (os-03): Regex pattern matching \(REGEXP, RLIKE, PostgreSQL ~ operator\). OpenSearch supports regexp queries with finite automaton execution, avoiding full-scan overhead.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
-- Aurora PostgreSQL, native: ~ and ~\* regular-expression matching is native SQL.
-- Aurora MySQL, native: REGEXP/RLIKE is native SQL.
+- Aurora PostgreSQL, native: ~ and ~\* regular-expression matching is native SQL. Class score \(#728\): 75, Aurora PostgreSQL's own native full-text rating \(full-text-native, 75\).
+- Aurora MySQL, native: REGEXP/RLIKE is native SQL. Class score \(#728\): 80, Aurora MySQL's own native full-text rating \(fulltext-search, 80\).
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### reporting-query
@@ -591,6 +592,13 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 80 (aurora-common-05): Reporting queries with large result sets, date-range filters, and ordered/limited aggregate results. Aurora's read replicas can offload reporting workloads without impacting transactional performance.
 - Aurora MySQL, fit 80 (aurora-common-05): Reporting queries with large result sets, date-range filters, and ordered/limited aggregate results. Aurora's read replicas can offload reporting workloads without impacting transactional performance.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
+
+### secondary-attribute-filter
+
+No analysis reports this pattern today.
+
+- No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### session-store
@@ -749,11 +757,11 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
-- DocumentDB, native: $regex expresses LIKE natively; a leading wildcard runs as an unindexed scan.
+- DocumentDB, native: $regex expresses LIKE natively; a leading wildcard runs as an unindexed scan. Class score \(#728\): 75, the same built-in text-index operator shape Aurora PostgreSQL's native full text is rated at \(full-text-native, 75\); not a dedicated search engine.
 - OpenSearch, fit 80 (os-02): LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets — no full-table scan.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
-- Aurora PostgreSQL, native: LIKE/ILIKE is native SQL; pg\_trgm's GIN/GiST index also indexes a leading wildcard.
-- Aurora MySQL, native: LIKE is native SQL; a leading wildcard runs as an unindexed scan.
+- Aurora PostgreSQL, native: LIKE/ILIKE is native SQL; pg\_trgm's GIN/GiST index also indexes a leading wildcard. Class score \(#728\): 75, Aurora PostgreSQL's own native full-text rating \(full-text-native, 75\).
+- Aurora MySQL, native: LIKE is native SQL; a leading wildcard runs as an unindexed scan. Class score \(#728\): 80, Aurora MySQL's own native full-text rating \(fulltext-search, 80\).
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### window-function

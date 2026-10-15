@@ -2325,8 +2325,13 @@ class TestRoutingTraceAdjustment:
         collector = _make_collector(["q1"])
         analysis = {"dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=70)}
 
-        def drifted(query_id, query, engine, analysis_output):
-            return compute_query_confidence(query_id, query, engine, analysis_output) + 5
+        def drifted(query_id, query, engine, analysis_output, *, pattern_model=None):
+            return (
+                compute_query_confidence(
+                    query_id, query, engine, analysis_output, pattern_model=pattern_model
+                )
+                + 5
+            )
 
         trace = RoutingTrace()
         # Step 4's used score goes through ``score_query_for_engine``

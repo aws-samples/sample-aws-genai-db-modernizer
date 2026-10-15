@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import (
@@ -68,6 +69,7 @@ from src.agents.referee.move_ledger import (
 )
 from src.agents.referee.query_scoring import (
     GATE_KIND_WRITE,
+    QueryPatternModel,
     ScoringContext,
     compute_query_confidence,
     score_query_for_engine,
@@ -149,8 +151,13 @@ class AssignmentResolver:
         collector_output: dict,
         *,
         routing_trace: RoutingTrace | None = None,
+        pattern_model: QueryPatternModel | None = None,
     ) -> Assignment:
         """Produce initial assignment based on query-level scoring.
+
+        ``pattern_model`` (shadow only, #728) scores each query's pattern dimension
+        from its own access-pattern class; ``None``, the default and the only value
+        a production caller passes, leaves every score as it is.
 
         For each query:
         1. Check if triage signals mandate a specific engine (override)
@@ -201,6 +208,8 @@ class AssignmentResolver:
         # so a gate or the penalty can never drift out of agreement between
         # this method and another caller.
         scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
+        if pattern_model is not None:
+            scoring_ctx = replace(scoring_ctx, pattern_model=pattern_model)
         anti_pattern_map = scoring_ctx.anti_pattern_map
         anti_pattern_notes = scoring_ctx.anti_pattern_notes
 
@@ -315,7 +324,9 @@ class AssignmentResolver:
             analysis = analysis_outputs[homogeneous_aurora]
             for query in queries:
                 qid = query["query_id"]
-                base_score = compute_query_confidence(qid, query, homogeneous_aurora, analysis)
+                base_score = compute_query_confidence(
+                    qid, query, homogeneous_aurora, analysis, pattern_model=pattern_model
+                )
                 penalty = anti_pattern_map.get((qid, homogeneous_aurora), 0)
                 scores.setdefault(qid, {})[homogeneous_aurora] = max(0, base_score - penalty)
                 if qid in exclusion_notes:
@@ -760,7 +771,9 @@ class AssignmentResolver:
                     if gate:
                         ladder[engine] = {"gate": gate}
                         continue
-                    base = compute_query_confidence(qid, query, engine, analysis)
+                    base = compute_query_confidence(
+                        qid, query, engine, analysis, pattern_model=pattern_model
+                    )
                     penalty = anti_pattern_map.get((qid, engine), 0)
                     used = scores.get(qid, {}).get(engine, 0)
                     adj = used - max(0, base - penalty)

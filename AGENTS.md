@@ -168,6 +168,8 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `analysis-<engine>/analysis.json` (+ `decision-trace.json`)
 - `assignment/v<N>/assignment.json`: versioned; reality check and customer
   edits write a new version, never overwrite one
+- `assignment/v<N>/access_pattern_shadow.json`: the per-query access-pattern
+  shadow (#728, ADR-031 Decision 14 Amendment 5); routing does not read it
 - `reality-check/` (`llm_input.json`, `output.json`)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus the rendered deliverables, keyed on the assignment version

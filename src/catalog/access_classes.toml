@@ -1,0 +1,61 @@
+# Access-pattern classes (ADR-031 Decision 14, Amendment 5, #728). Fields: src/shared/catalog/access_classes.py.
+#
+# Every query gets exactly one class from what it retrieves (src/agents/referee/access_pattern.py).
+# A class's pattern score on an engine is the highest rating the listed pattern files give that
+# engine (a `fit` entry's `score`, or a `native`/`unscored` entry's `class_score`), or 0 when none
+# of them rates it: the numbers stay in the pattern files (Decision 8), this file only says which
+# patterns describe each class. An anti-pattern listed here (frequent-full-scan) documents why an
+# engine gets 0, it never adds a score. Classes are listed in
+# severity order: when one statement shows several shapes, the later class wins.
+#
+# Shadow only: the scores are computed next to today's per-table scores and written per job
+# (assignment/v<N>/access_pattern_shadow.json); routing does not read them yet.
+
+[[classes]]
+id = "key_lookup"
+label = "Key lookup"
+leaning = "key-value"
+why = "One row, or a batch of rows, by its full primary or unique key; also a single row in primary-key order at any offset (#857), and an INSERT of values."
+patterns = ["key-value-lookup", "standard-crud"]
+
+[[classes]]
+id = "key_scoped"
+label = "Key-scoped 1:N read"
+leaning = "item collection"
+why = "Rows addressed by a non-unique key value, or an entity and its related rows reached by key from a key predicate: one item collection, not a relational need."
+patterns = ["bounded-parent-child", "co-accessed-tables", "nested-document", "extended-reference", "simple-join", "standard-crud"]
+
+[[classes]]
+id = "key_range"
+label = "Range or ordered read by key"
+leaning = "neutral"
+why = "A range or an order over a key with no anchoring value (BETWEEN, ORDER BY id LIMIT n, a full read with no predicate): an index range scan on a relational or document engine, a Scan on a key-value engine (no partition value)."
+patterns = ["pagination", "time-range-query", "frequent-full-scan"]
+
+[[classes]]
+id = "ad_hoc_filter"
+label = "Ad hoc filter"
+leaning = "relational, document or search"
+why = "Filters on non-key attributes with no anchoring key (a timestamp range included), and an unkeyed bulk write."
+patterns = ["secondary-attribute-filter", "standard-crud", "multi-row-mutation"]
+
+[[classes]]
+id = "unanchored_join"
+label = "Unanchored join"
+leaning = "relational"
+why = "A join in which some table is not reached by key from a key predicate."
+patterns = ["simple-join", "complex-join"]
+
+[[classes]]
+id = "aggregation"
+label = "Aggregation"
+leaning = "relational or analytics"
+why = "GROUP BY with an aggregate function, an aggregate over rows no key anchors, or a windowed aggregate."
+patterns = ["aggregation-analytics", "window-function", "reporting-query", "group-concat-pivot", "aggregation-pipeline", "time-aggregation"]
+
+[[classes]]
+id = "text_search"
+label = "Text search"
+leaning = "search"
+why = "With no key anchoring the rows: a leading-wildcard or parameterised LIKE, a regular expression, a similarity function or a full-text match."
+patterns = ["full-text-search", "wildcard-search", "fuzzy-search", "regex-search", "full-text-native", "fulltext-search"]

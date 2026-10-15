@@ -6,7 +6,8 @@
   wildcards) as a small fact model, dialect from the source engine (#557,
   #796). The offline parser's ``tables_accessed``, ``has_joins``,
   ``join_count``, ``has_aggregations`` and ``has_subqueries`` come from it
-  (#553, #796).
+  (#553, #796). It also reports each statement's access-pattern facts per
+  scope (``access_facts``, #728), with the same fact definitions.
 - :mod:`src.tools.sql.regex_tables` and :mod:`src.tools.sql.regex_facts`: the
   regex table extractor and the regex facts, the facade's fallback when
   sqlglot can't read a statement.

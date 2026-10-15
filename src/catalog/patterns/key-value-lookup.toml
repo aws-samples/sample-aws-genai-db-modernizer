@@ -19,7 +19,8 @@ concerns = ["Large item sizes (>400KB) require splitting"]
 [engines.documentdb]
 kind = "unscored"
 supported = true
-why = "DocumentDB's analysis does not report this pattern; it adds no cross-engine penalty."
+why = "A single-document read by _id or a unique index is a native indexed lookup; DocumentDB's analysis does not report the pattern and it adds no cross-engine penalty. Class score (#728): 60, the same B-tree lookup on an instance-based cluster that Aurora's single-table CRUD is rated at (standard-crud, 60)."
+class_score = 60
 
 [engines.opensearch]
 kind = "unscored"
