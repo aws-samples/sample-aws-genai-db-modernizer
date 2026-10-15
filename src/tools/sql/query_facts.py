@@ -440,6 +440,27 @@ TIME_AGG_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Cache shapes (the ElastiCache analysis's detectors, moved here from
+# ``redis_analysis_tools``): case-insensitive substring checks.
+# ---------------------------------------------------------------------------
+
+SESSION_OR_USER_KEYWORDS: tuple[str, ...] = ("session", "user_id")
+TIMESTAMP_OR_DATE_KEYWORDS: tuple[str, ...] = ("timestamp", "created_at", "updated_at", "date")
+# Spatial SQL functions or coordinate columns.
+GEOSPATIAL_KEYWORDS: tuple[str, ...] = (
+    "st_distance",
+    "st_within",
+    "st_contains",
+    "st_intersects",
+    "st_dwithin",
+    "latitude",
+    "longitude",
+    "geography",
+    "geometry",
+)
+
+
 def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
     """Whether lower-cased text contains any keyword (keywords compared as written)."""
     return any(kw in lower_text for kw in keywords)
@@ -659,7 +680,7 @@ class QueryFacts:
         """``BETWEEN`` or a word character followed by ``<``/``<=``/``>``/``>=``, and
         ``order by`` somewhere in the text.
         """
-        return bool(_RANGE_OPERATOR_WORD_RE.search(self._lower)) and "order by" in self._lower
+        return bool(_RANGE_OPERATOR_WORD_RE.search(self._lower)) and self.order_by_substring
 
     @cached_property
     def limit_word(self) -> bool:
@@ -758,6 +779,28 @@ class QueryFacts:
     def time_function_keyword(self) -> bool:
         """``date_trunc``, ``date(``, ``hour(`` or ``extract(``."""
         return _contains_any(self._lower, TIME_AGG_KEYWORDS)
+
+    @cached_property
+    def session_or_user_keyword(self) -> bool:
+        """``session`` or ``user_id`` anywhere."""
+        return _contains_any(self._lower, SESSION_OR_USER_KEYWORDS)
+
+    @cached_property
+    def order_by_substring(self) -> bool:
+        """The lower-cased text contains ``order by`` (one space)."""
+        return "order by" in self._lower
+
+    @cached_property
+    def timestamp_or_date_keyword(self) -> bool:
+        """``timestamp``, ``created_at``, ``updated_at`` or ``date`` anywhere."""
+        return _contains_any(self._lower, TIMESTAMP_OR_DATE_KEYWORDS)
+
+    @cached_property
+    def geospatial_keyword(self) -> bool:
+        """A :data:`GEOSPATIAL_KEYWORDS` substring (``st_distance``, ..., ``latitude``,
+        ``geometry``).
+        """
+        return _contains_any(self._lower, GEOSPATIAL_KEYWORDS)
 
     @property
     def needs_aggregation(self) -> bool:

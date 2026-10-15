@@ -21,6 +21,7 @@ from src.tools.analysis.scoring import (
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 
 def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
@@ -47,20 +48,8 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
     """
     queries = collector_output.get("queries", {}).get("query_patterns", [])
 
-    # Geospatial: spatial SQL functions or coordinate columns
-    _geo_keywords = (
-        "st_distance",
-        "st_within",
-        "st_contains",
-        "st_intersects",
-        "st_dwithin",
-        "latitude",
-        "longitude",
-        "geography",
-        "geometry",
-    )
-
-    # Single-pass classification: pre-compute text_lower once per query
+    # Single-pass classification. The text detectors are engine-neutral query
+    # facts (``src.tools.sql.query_facts``, #491), read once per query.
     caching_queries: list[dict] = []
     session_queries: list[dict] = []
     leaderboard_queries: list[dict] = []
@@ -69,7 +58,7 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
     large_result_queries: list[dict] = []
 
     for q in queries:
-        text_lower = q.get("query_text", "").lower()
+        facts = query_facts(q.get("query_text", ""))
 
         # Caching: hot SELECTs, at or above the overlay's inclusive floor (#398)
         if (
@@ -79,27 +68,27 @@ def analyze_redis_use_cases(collector_output: dict) -> WorkloadAnalysis:
             caching_queries.append(q)
 
         # Session store: session or user_id references
-        if "session" in text_lower or "user_id" in text_lower:
+        if facts.session_or_user_keyword:
             session_queries.append(q)
 
         # Leaderboard: ORDER BY + LIMIT
-        if "order by" in text_lower and "limit" in text_lower:
+        if facts.order_by_substring and facts.limit_word:
             leaderboard_queries.append(q)
 
         # Time series: timestamp/date keywords + GROUP BY
-        if (
-            any(kw in text_lower for kw in ("timestamp", "created_at", "updated_at", "date"))
-            and "group by" in text_lower
-        ):
+        if facts.timestamp_or_date_keyword and facts.group_by_substring:
             timeseries_queries.append(q)
 
-        # Time series: time binning functions
-        # DATE_TRUNC()
-        if any(kw in text_lower for kw in ("date_trunc")) and "group by" in text_lower:
+        # Time series: time binning functions (DATE_TRUNC()). The check this
+        # replaced read ``any(kw in text for kw in ("date_trunc"))`` -- a string,
+        # not a tuple, so it tested single letters, and every text with ``group
+        # by`` in it has one of them: it has always been a ``GROUP BY`` check,
+        # and it stays one here (#491 moves detectors, it does not change them).
+        if facts.group_by_substring:
             timeseries_queries.append(q)
 
         # Geospatial: spatial SQL functions or coordinate columns
-        if any(kw in text_lower for kw in _geo_keywords):
+        if facts.geospatial_keyword:
             geospatial_queries.append(q)
 
         # Anti-pattern: large result sets

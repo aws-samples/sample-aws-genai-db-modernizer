@@ -34,6 +34,7 @@ _READERS = (
     _REPO / "src" / "tools" / "analysis" / "dynamodb_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "documentdb_analysis_tools.py",
     _REPO / "src" / "tools" / "analysis" / "opensearch_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "redis_analysis_tools.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -229,6 +230,10 @@ class TestFacts:
             ("SELECT * FROM t WHERE event_time >= ?", "timestamp_keyword"),
             ("SELECT * FROM t WHERE event_time >= ?", "time_range_operator"),
             ("SELECT date_trunc('day', ts) FROM t", "time_function_keyword"),
+            ("SELECT * FROM t WHERE user_id = ?", "session_or_user_keyword"),
+            ("SELECT * FROM t ORDER BY a", "order_by_substring"),
+            ("SELECT * FROM t WHERE updated_at > ?", "timestamp_or_date_keyword"),
+            ("SELECT ST_Distance(a, b) FROM t", "geospatial_keyword"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
