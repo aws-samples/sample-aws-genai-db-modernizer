@@ -101,7 +101,17 @@ _LITERAL_PREFIX_LIKE_RE = re.compile(r"\bI?LIKE\s+'[^%_']", re.IGNORECASE)
 # 1:M read (ORDERED_ONE_TO_MANY): a key-value store models it, but it is not
 # a key-value lookup, so it is neither CRUD nor relational evidence. Only the
 # table's own primary key from the schema qualifies (never a hard-coded
-# ``id``), with no WHERE clause and no OFFSET.
+# ``id``), with no WHERE clause.
+#
+# The row-limit forms read (#782): ``LIMIT n``, MySQL ``LIMIT <offset>, n``,
+# ``LIMIT n OFFSET m`` / ``OFFSET m LIMIT n``, ``[OFFSET m ROW(S)] FETCH
+# FIRST|NEXT [n] ROW(S) ONLY`` (no count means 1; T-SQL requires the OFFSET
+# clause) and ``SELECT TOP n`` / ``TOP (n)`` [``PERCENT``] [``WITH TIES``].
+# Only a literal one-row limit with no skip (no offset, or a literal
+# ``OFFSET 0``) is a first-row read. A skip (``OFFSET 5``, ``OFFSET $1``,
+# ``LIMIT 5, 1``) pages through the key order, ``TOP (1) PERCENT`` is a share
+# of the table, and ``WITH TIES`` can return more than one row: all three are
+# ordered 1:M reads.
 #
 # A bind-parameter limit (``LIMIT $1``/``LIMIT ?``) counts as ``LIMIT 1`` only
 # with evidence that the bound value is 1 (``limit_value``). No collector
@@ -114,10 +124,33 @@ _ORDER_BY_ITEMS_RE = re.compile(
     r"\bORDER\s+BY\b(?P<items>.*?)(?=\b(?:LIMIT|OFFSET|FETCH)\b|$)", re.IGNORECASE | re.DOTALL
 )
 _PARAM_OR_INT = r"(?:\$\d+|\?|:\w+|@\w+|\d+)"
-_ROW_LIMIT_RE = re.compile(
-    rf"\bLIMIT\s+(?P<limit>{_PARAM_OR_INT})\s*;?\s*$"
-    rf"|\bFETCH\s+(?:FIRST|NEXT)\s+(?P<fetch>{_PARAM_OR_INT})\s+ROWS?\s+ONLY\s*;?\s*$"
-    rf"|^\s*SELECT\s+TOP\s*\(?\s*(?P<top>{_PARAM_OR_INT})\s*\)?",
+_END = r"\s*;?\s*$"
+# Each trailing row-limit clause, anchored at the end of the statement.
+_TRAILING_LIMIT_RES = (
+    # OFFSET m [ROWS] LIMIT n (PostgreSQL accepts either order; tried first,
+    # so the trailing LIMIT n is not read alone)
+    re.compile(
+        rf"\bOFFSET\s+(?P<offset>{_PARAM_OR_INT})(?:\s+ROWS?)?"
+        rf"\s+LIMIT\s+(?P<first>{_PARAM_OR_INT}){_END}",
+        re.IGNORECASE,
+    ),
+    # LIMIT n [OFFSET m [ROWS]] / MySQL LIMIT m, n
+    re.compile(
+        rf"\bLIMIT\s+(?P<first>{_PARAM_OR_INT})(?:\s*,\s*(?P<second>{_PARAM_OR_INT}))?"
+        rf"(?:\s+OFFSET\s+(?P<offset>{_PARAM_OR_INT})(?:\s+ROWS?)?)?{_END}",
+        re.IGNORECASE,
+    ),
+    # [OFFSET m ROW(S)] FETCH FIRST|NEXT [n] ROW(S) ONLY|WITH TIES -- no count means 1
+    re.compile(
+        rf"(?:\bOFFSET\s+(?P<offset>{_PARAM_OR_INT})(?:\s+ROWS?)?\s+)?"
+        rf"\bFETCH\s+(?:FIRST|NEXT)(?:\s+(?P<first>{_PARAM_OR_INT}))?\s+ROWS?"
+        rf"\s+(?:ONLY|(?P<ties>WITH\s+TIES)){_END}",
+        re.IGNORECASE,
+    ),
+)
+_TOP_RE = re.compile(
+    rf"^\s*SELECT\s+TOP\s*(?:\(\s*(?P<paren>{_PARAM_OR_INT})\s*\)|(?P<bare>{_PARAM_OR_INT}))"
+    r"(?P<percent>\s*PERCENT\b)?(?P<ties>\s*WITH\s+TIES\b)?",
     re.IGNORECASE,
 )
 _OFFSET_RE = re.compile(r"\bOFFSET\b", re.IGNORECASE)
@@ -134,24 +167,52 @@ def _unquote_identifiers(text: str) -> str:
     return _QUOTED_IDENT_RE.sub(lambda m: m.group(0)[1:-1].replace('""', '"'), text)
 
 
-def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]) -> str | None:
-    """The row limit of a read ordered by the table's own primary key, else ``None``.
+def _qualifier(match: re.Match[str]) -> str:
+    """``"PERCENT"``, ``"WITH TIES"``, both or ``""``: what makes ``n`` not a row count."""
+    groups = match.groupdict()
+    words = [
+        word for key, word in (("percent", "PERCENT"), ("ties", "WITH TIES")) if groups.get(key)
+    ]
+    return " ".join(words)
 
-    For ``SELECT ... ORDER BY <every primary_key column, in order> LIMIT n``
-    (or ``FETCH FIRST n ROWS ONLY``, or ``SELECT TOP (n)``) with no WHERE and
-    no OFFSET, returns ``n`` as written: digits for a literal, the placeholder
-    (``$1``, ``?``, ...) for a bind parameter. Each sort column may be
-    table-qualified and quoted, and may be ASC or DESC; the comparison with
-    ``primary_key`` is case-insensitive. An empty ``primary_key`` (no key in
-    the schema) never matches.
+
+def _row_limit(sql: str) -> tuple[str, str | None, str] | None:
+    """``(limit, offset, qualifier)`` of ``sql``'s row-limit clause, else ``None``.
+
+    ``limit`` and ``offset`` are as written (digits or a placeholder);
+    ``offset`` is ``None`` when there is no skip at all. A ``FETCH`` with no
+    count is a limit of ``"1"``. ``qualifier`` is ``"PERCENT"`` for ``TOP n
+    PERCENT``, ``"WITH TIES"`` for ``TOP n WITH TIES`` / ``FETCH ... WITH
+    TIES`` (both, space-separated, when both are written), else ``""``.
     """
+    top = _TOP_RE.search(sql)
+    if top:
+        if _OFFSET_RE.search(sql):
+            return None
+        return top.group("paren") or top.group("bare"), None, _qualifier(top)
+    for pattern in _TRAILING_LIMIT_RES:
+        match = pattern.search(sql)
+        if not match:
+            continue
+        first, offset = match.group("first") or "1", match.group("offset")
+        second = match.groupdict().get("second")
+        if second is not None:  # MySQL LIMIT <offset>, <count>
+            first, offset = second, first
+        return first, offset, _qualifier(match)
+    return None
+
+
+def _primary_key_ordered_row_limit(
+    query_text: str | None, primary_key: Sequence[str]
+) -> tuple[str, str | None, str] | None:
+    """:func:`_row_limit` of a read ordered by the table's own primary key, else ``None``."""
     key = [c.lower() for c in primary_key or []]
     if not key:
         return None
     sql = strip_comments_and_literals(_unquote_identifiers(query_text or "")).strip()
-    if _WHERE_WORD_RE.search(sql) or _OFFSET_RE.search(sql):
+    if _WHERE_WORD_RE.search(sql):
         return None
-    limit = _ROW_LIMIT_RE.search(sql)
+    limit = _row_limit(sql)
     order = _ORDER_BY_ITEMS_RE.search(sql)
     if not limit or not order:
         return None
@@ -163,7 +224,29 @@ def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]
         columns.append(re.split(r"\s*\.\s*", match.group("col"))[-1].lower())
     if columns != key:
         return None
-    return limit.group("limit") or limit.group("fetch") or limit.group("top")
+    return limit
+
+
+def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]) -> str | None:
+    """The row limit of a read ordered by the table's own primary key, else ``None``.
+
+    For ``SELECT ... ORDER BY <every primary_key column, in order>`` with a
+    row limit (``LIMIT n``, ``LIMIT m, n``, ``LIMIT n OFFSET m``, ``[OFFSET m
+    ROWS] FETCH FIRST|NEXT [n] ROWS ONLY|WITH TIES``, ``SELECT TOP (n) [PERCENT]
+    [WITH TIES]``) and no WHERE, returns ``n`` as written: digits for a
+    literal, the placeholder (``$1``, ``?``, ...) for a bind parameter, ``"1"``
+    for a ``FETCH`` with no count, ``"n PERCENT"`` / ``"n WITH TIES"`` when
+    ``n`` is not a plain row count. The offset is not part of
+    the answer; :func:`is_primary_key_first_row_read` reads it. Each sort
+    column may be table-qualified and quoted, and may be ASC or DESC; the
+    comparison with ``primary_key`` is case-insensitive. An empty
+    ``primary_key`` (no key in the schema) never matches.
+    """
+    limit = _primary_key_ordered_row_limit(query_text, primary_key)
+    if limit is None:
+        return None
+    n, _offset, qualifier = limit
+    return f"{n} {qualifier}" if qualifier else n
 
 
 def is_primary_key_first_row_read(
@@ -171,13 +254,21 @@ def is_primary_key_first_row_read(
 ) -> bool:
     """Whether ``query_text`` reads exactly the first row in the table's primary-key order.
 
-    :func:`primary_key_ordered_limit` with a limit of 1: a literal ``1``, or a
-    bind parameter whose bound value ``limit_value`` -- when a collector
-    supplies it -- is 1. With no evidence (``None``) a parameterised limit is
-    not a first-row read.
+    :func:`primary_key_ordered_limit` with a limit of 1 -- a literal ``1``, or a
+    bind parameter whose bound value ``limit_value`` (when a collector supplies
+    it) is 1 -- and no skip: no offset, or a literal ``OFFSET 0``. With no
+    evidence (``None``) a parameterised limit is not a first-row read; a
+    skipped-to row (``OFFSET 5``, ``OFFSET $1``: an unknown position is an
+    unknown row), ``TOP (1) PERCENT`` and ``WITH TIES`` (which can return more
+    rows than ``n``) never are. Offsets, like limits, compare as numbers
+    (``OFFSET 00`` is ``OFFSET 0``).
     """
-    n = primary_key_ordered_limit(query_text, primary_key)
-    if n is None:
+    limit = _primary_key_ordered_row_limit(query_text, primary_key)
+    if limit is None:
+        return False
+    n, offset, qualifier = limit
+    skipped = offset is not None and not (offset.isdigit() and int(offset) == 0)
+    if qualifier or skipped:
         return False
     bound = int(n) if n.isdigit() else limit_value
     return bound == 1
@@ -259,8 +350,9 @@ def single_table_access_shape(
       ordered, unkeyed read qualifies).
 
     ``ORDERED_ONE_TO_MANY`` for the same primary-key-ordered read with a limit
-    other than 1 (or a bind parameter with no evidence it is 1). ``RELATIONAL``
-    for everything else.
+    other than 1 (or a bind parameter with no evidence it is 1), a skip
+    (``OFFSET m``, ``LIMIT m, n``), ``TOP n PERCENT`` or ``WITH TIES``. ``RELATIONAL`` for
+    everything else.
 
     Comments and string literals are stripped first, so a ``<`` or a function
     call inside a quoted value never changes the verdict.

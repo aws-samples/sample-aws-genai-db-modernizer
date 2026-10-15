@@ -128,6 +128,21 @@ PK_FIRST_ROW_SQL = [
     ("SELECT * FROM t1 ORDER BY a, b LIMIT ?", ["a", "b"], 1),
     ("SELECT TOP (1) * FROM [t1] ORDER BY [ID]", ["id"], None),
     ("SELECT * FROM t1 ORDER BY id FETCH FIRST 1 ROW ONLY", ["id"], None),
+    ("SELECT TOP 1 * FROM [t1] ORDER BY [ID]", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id FETCH NEXT 1 ROWS ONLY", ["id"], None),
+    # #782: the count is optional in FETCH FIRST/NEXT ROW ONLY, and it means 1.
+    ("SELECT * FROM t1 ORDER BY id FETCH FIRST ROW ONLY", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id FETCH NEXT ROWS ONLY", ["id"], None),
+    # #782: T-SQL's only FETCH form needs an OFFSET clause; OFFSET 0 skips nothing.
+    ("SELECT * FROM [t1] ORDER BY [ID] OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id OFFSET 0 ROWS FETCH FIRST ROW ONLY", ["id"], None),
+    # #782: MySQL's LIMIT <offset>, <count>, and an explicit OFFSET 0.
+    ("SELECT * FROM `t1` ORDER BY `id` LIMIT 0, 1", ["id"], None),
+    ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 0", ["id"], None),
+    # #782 round 2: offsets compare as numbers, like limits.
+    ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 00", ["id"], None),
+    ("SELECT * FROM [t1] ORDER BY [ID] OFFSET 00 ROWS FETCH NEXT 01 ROWS ONLY", ["id"], None),
+    ("SELECT * FROM `t1` ORDER BY `id` LIMIT 00, 1", ["id"], None),
 ]
 
 ORDERED_ONE_TO_MANY_SQL = {
@@ -150,6 +165,63 @@ ORDERED_ONE_TO_MANY_SQL = {
         None,
     ),
     "top n": ("SELECT TOP (50) * FROM [t1] ORDER BY [ID] DESC", ["id"], None),
+    # Placeholder limits (no evidence the bound value is 1): already neutral before #782.
+    "question-mark limit": ("SELECT * FROM t1 ORDER BY id LIMIT ?", ["id"], None),
+    "numbered colon limit": ("SELECT * FROM t1 ORDER BY id LIMIT :1", ["id"], None),
+    "named colon limit": ("SELECT * FROM t1 ORDER BY id LIMIT :n", ["id"], None),
+    "at-sign limit": ("SELECT * FROM t1 ORDER BY id LIMIT @p", ["id"], None),
+    "parameterised top": ("SELECT TOP (@p) * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "parameterised fetch": ("SELECT * FROM t1 ORDER BY id FETCH FIRST $1 ROWS ONLY", ["id"], None),
+    # #782: TOP (1) PERCENT is a share of the table, not one row.
+    "top (1) percent": ("SELECT TOP (1) PERCENT * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "top 1 percent": ("SELECT TOP 1 PERCENT * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "top (50) percent": ("SELECT TOP (50) PERCENT * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "top(1)percent, no spaces": ("SELECT TOP(1)PERCENT * FROM [t1] ORDER BY [ID]", ["id"], None),
+    # #782 round 2: WITH TIES can return more than one row, so it is never a key lookup.
+    "top 1 with ties": ("SELECT TOP 1 WITH TIES * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "top (1) with ties": ("SELECT TOP (1) WITH TIES * FROM [t1] ORDER BY [ID]", ["id"], None),
+    "fetch first 1 rows with ties": (
+        "SELECT * FROM t1 ORDER BY id FETCH FIRST 1 ROWS WITH TIES",
+        ["id"],
+        None,
+    ),
+    "offset 0 fetch next 1 row with ties": (
+        "SELECT * FROM t1 ORDER BY id OFFSET 0 ROWS FETCH NEXT 1 ROW WITH TIES",
+        ["id"],
+        None,
+    ),
+    # #782: one row after a skip is a page of the key order, not a key lookup.
+    "offset 5 fetch 1": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET 5 ROWS FETCH NEXT 1 ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "parameterised offset fetch 1": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET @skip ROWS FETCH NEXT 1 ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "offset 0 fetch 5": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "offset 0 parameterised fetch": (
+        "SELECT * FROM [t1] ORDER BY [ID] OFFSET 0 ROWS FETCH NEXT @p ROWS ONLY",
+        ["id"],
+        None,
+    ),
+    "mysql limit 5, 1": ("SELECT * FROM `t1` ORDER BY `id` LIMIT 5, 1", ["id"], None),
+    "mysql limit 0, 5": ("SELECT * FROM `t1` ORDER BY `id` LIMIT 0, 5", ["id"], None),
+    "mysql limit ?, ?": ("SELECT * FROM `t1` ORDER BY `id` LIMIT ?, ?", ["id"], None),
+    "limit 1 offset 5": ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET 5", ["id"], None),
+    "limit 1 offset placeholder": ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1", ["id"], None),
+    "a bound limit of 1 after a skip": (
+        "SELECT * FROM t1 ORDER BY id LIMIT $1 OFFSET $2",
+        ["id"],
+        1,
+    ),
+    "offset before limit": ("SELECT * FROM t1 ORDER BY id OFFSET 5 LIMIT 1", ["id"], None),
 }
 
 RELATIONAL_ORDERED_SQL = {
@@ -167,7 +239,7 @@ RELATIONAL_ORDERED_SQL = {
     ),
     "part of a composite key": ("SELECT * FROM t1 ORDER BY a LIMIT 1", ["a", "b"], None),
     "no limit": ("SELECT * FROM t1 ORDER BY id", ["id"], None),
-    "offset": ("SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1", ["id"], None),
+    "offset, no limit": ("SELECT * FROM t1 ORDER BY id OFFSET 5 ROWS", ["id"], None),
     "filtered scan": ("SELECT * FROM t1 WHERE flag IS NULL ORDER BY id LIMIT 1", ["id"], None),
     "range then key order": ("SELECT * FROM t1 WHERE id > $1 ORDER BY id LIMIT 1", ["id"], None),
 }

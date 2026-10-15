@@ -265,6 +265,18 @@ class TestNoRelationalNeedRequiresSingleTableCrud:
         assert ap is not None
         assert ap.query_ids == ["point", "first"]
 
+    def test_a_skipped_key_order_page_neither_clears_nor_qualifies_the_table(self):
+        """#782: ``LIMIT 1 OFFSET $1`` reads an unknown position, so an unknown row --
+        not a key lookup, and not relational either: neutral, so the point read
+        next to it still takes the penalty, and the page is covered by it."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1"),
+        ]
+        ap = _anti05(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
+
     def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
         """Neutral means neutral: no relational query, so the table rule still fires (#692)."""
         queries = [
@@ -515,6 +527,18 @@ class TestSingleAccessPatternRequiresSingleTableCrud:
         ap = _anti06(queries, primary_keys={"t1": ["id"]})
         assert ap is not None
         assert ap.query_ids == ["point", "first"]
+
+    def test_a_skipped_key_order_page_neither_clears_nor_qualifies_the_table(self):
+        """#782: ``LIMIT 1 OFFSET $1`` reads an unknown position, so an unknown row --
+        not a key lookup, and not relational either: neutral, so the point read
+        next to it still takes the penalty, and the page is covered by it."""
+        queries = [
+            _q("point", "SELECT * FROM t1 WHERE id = $1"),
+            _q("page", "SELECT * FROM t1 ORDER BY id LIMIT 1 OFFSET $1"),
+        ]
+        ap = _anti06(queries, primary_keys={"t1": ["id"]})
+        assert ap is not None
+        assert ap.query_ids == ["point", "page"]
 
     def test_a_table_of_only_ordered_one_to_many_reads_is_still_flagged(self):
         """Neutral means neutral: no relational query, so the table rule still applies."""
