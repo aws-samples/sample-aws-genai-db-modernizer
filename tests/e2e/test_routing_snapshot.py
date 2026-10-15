@@ -78,6 +78,24 @@ def test_v1_assignment_replays_from_its_moves(run: PipelineResult) -> None:
     assert all(m.evidence.candidates for m in v1.moves)
 
 
+@pytest.mark.deterministic
+def test_every_group_member_carries_the_same_tie_after_the_first_assignment(
+    run: PipelineResult,
+) -> None:
+    """#833: the first assignment gives every member of a co-dependency group
+    the same engine and the same ``tied_engines``, so ``tie_break.group_tie``
+    (the one rule later passes use for a group's tie) never meets members
+    that disagree on a real run."""
+    v1 = Assignment.model_validate_json(
+        (run.job_dir() / "assignment" / "v1" / "assignment.json").read_text()
+    )
+    by_id = {qa.query_id: qa for qa in v1.query_assignments}
+    for group in v1.co_dependency_groups:
+        members = [by_id[q] for q in group if q in by_id]
+        assert len({tuple(sorted(qa.tied_engines)) for qa in members}) <= 1, group
+        assert len({qa.assigned_engine for qa in members}) <= 1, group
+
+
 def _versions(run: PipelineResult) -> dict[int, Assignment]:
     root = run.job_dir() / "assignment"
     return {

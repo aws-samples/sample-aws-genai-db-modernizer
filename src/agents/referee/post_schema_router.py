@@ -29,6 +29,7 @@ from src.agents.referee.consolidation_validator import scorer_ladder
 from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags, route_flagged_unit
 from src.agents.referee.move_ledger import group_key
 from src.agents.referee.query_scoring import ScoringContext
+from src.agents.referee.tie_break import group_tie
 from src.contracts.model_flag import FlagReason, ModelFlag
 from src.contracts.move_ledger import MoveEvidence
 from src.contracts.post_schema_router_output import QueryRouting, RouterOutput
@@ -158,7 +159,7 @@ def route_unsupported_queries(
             signals, the source database engine and the settled workload, for
             the placement rule and the shared tie-break
         tied_engines: {query_id: its unresolved tie} from the same assignment.
-            A flagged query (or group, using the tie a member carries) is
+            A flagged query (or group, using ``tie_break.group_tie``) is
             re-routed among its other tied engines first and keeps the tie
             minus the flagged engine when the scorer leaves it unresolved,
             exactly as the reality check's model-flag path does (ADR-031
@@ -237,8 +238,9 @@ def route_unsupported_queries(
             continue
         failed = set().union(*(failed_engines.get(m, set()) for m in members))
         remaining = [e for e in candidates if e not in failed]
-        # The unit's tie: the first member's that has one, the reality check's rule.
-        tie = next((list(tied_engines[m]) for m in members if tied_engines.get(m)), None)
+        # The unit's tie (#833): the engines every tied member is tied on,
+        # the reality check's rule (``tie_break.group_tie``).
+        tie = group_tie(members, tied_engines.get) or None
         routing = route_flagged_unit(
             members,
             engine,

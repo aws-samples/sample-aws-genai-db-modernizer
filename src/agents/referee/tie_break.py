@@ -63,8 +63,11 @@ burden rules apply unchanged, and standing cost can still remove it.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Mapping
+import logging
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 TieKind = str  # one of TIE_KINDS, below
 
@@ -89,6 +92,60 @@ CHEAPER_ENGINE_MIN_SAVING_SHARE = 0.40
 # ... AND saves at least this much a month (USD). Both must hold; each is
 # inclusive at its boundary.
 CHEAPER_ENGINE_MIN_SAVING_MONTHLY = 100.0
+
+
+def group_tie(
+    members: Iterable[str],
+    tie_of: Callable[[str], Iterable[str] | None],
+) -> list[str]:
+    """A co-dependency group's tie: the engines every tied member is tied on (#833).
+
+    ADR-031 Decisions 4 and 12: a group moves as one unit, so it has one tie.
+    ``tie_of(query_id)`` is a member's own unresolved tie (empty or ``None``
+    when it has none). A member with no tie adds no constraint; the group's
+    tie is the intersection of the ties its tied members carry, sorted. A tie
+    has at least two engines, so an intersection of fewer than two means the
+    group has no tie and its scores decide. The answer never depends on
+    member order. When the tied members' ties differ, a warning is logged: the
+    first assignment gives every member the same tie, so a difference means an
+    input the resolver did not write.
+
+    The reality check's placement and sanity sweep, a model's flag and the
+    post-schema reroute all take a group's tie from here.
+    """
+    ties: dict[str, frozenset[str]] = {}
+    for qid in members:
+        tie = frozenset(tie_of(qid) or ())
+        if tie:
+            ties[qid] = tie
+    if not ties:
+        return []
+    common = frozenset.intersection(*ties.values())
+    if len(common) < 2:
+        common = frozenset()
+    if len(set(ties.values())) > 1:
+        logger.warning(
+            "co-dependency group %s: members' ties disagree (%s); using their intersection (%s)",
+            ",".join(sorted(ties)),
+            "; ".join(f"{q}: {','.join(sorted(t))}" for q, t in sorted(ties.items())),
+            ",".join(sorted(common)) or "no tie",
+        )
+    return sorted(common)
+
+
+def tied_survivors_first(original_tied: Iterable[str] | None, takeable: Iterable[str]) -> list[str]:
+    """ADR-031 Decision 12: a tied query (or group) is re-resolved among its
+    tied engines first. ``takeable`` is every engine that can take the unit
+    (kept, eligible and serviceable for every member); the tied engines among
+    them come first, and only when none of them can take it does every
+    takeable engine compete (#876 review: narrowing before the eligibility
+    check could leave no destination at all). Keeps ``takeable``'s order."""
+    takeable = list(takeable)
+    tied = set(original_tied or ())
+    if not tied:
+        return takeable
+    survivors = [e for e in takeable if e in tied]
+    return survivors or takeable
 
 
 def cheaper_engine_displaces_source_compatible(

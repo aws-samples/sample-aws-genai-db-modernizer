@@ -1020,7 +1020,12 @@ class TestAGroupPlacedByScoreClearsEveryMembersTie:
         _assert_replays(qas, revised, ledger)
 
     def test_a_group_tie_left_unresolved_is_every_members_tie(self) -> None:
+        # m2's own tie covers both kept engines, so the group's tie (#833,
+        # ``tie_break.group_tie``) survives as Aurora MySQL and DynamoDB and
+        # the equal scores leave it unresolved. With m2 tied on DocumentDB and
+        # DynamoDB only, DynamoDB alone survives and settles it (Decision 12).
         qas = [dict(qa) for qa in self._GROUP_QAS]
+        qas[1]["tied_engines"] = ["aurora_mysql", "documentdb", "dynamodb"]
         trace = self._group_trace({"documentdb": 60, "dynamodb": 80, "aurora_mysql": 80})
 
         revised, ledger = _place(qas, {"dynamodb", "aurora_mysql"}, trace)

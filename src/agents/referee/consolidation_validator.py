@@ -50,7 +50,12 @@ from src.agents.referee.reality_check import (
 from src.agents.referee.reality_check_records import sweep_outcome
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
 from src.agents.referee.reality_check_rules import _move_scores_text, tie_reason_code
-from src.agents.referee.tie_break import break_tie, settled_counts
+from src.agents.referee.tie_break import (
+    break_tie,
+    group_tie,
+    settled_counts,
+    tied_survivors_first,
+)
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.model_flag import ModelFlag, parse_model_flags
 from src.contracts.move_ledger import CandidateScore, MoveEvidence, MovePass, ReasonCode
@@ -416,10 +421,7 @@ def _tied_candidate_pool(
     used, the same "survivors or everything" fallback ``_candidate_pool``
     uses.
     """
-    if not original_tied:
-        return safe_destinations
-    survivors = [e for e in original_tied if e in safe_destinations]
-    return survivors or safe_destinations
+    return tied_survivors_first(original_tied, safe_destinations)
 
 
 def _signal_override_block(members: list[str], by_id: dict[str, dict]) -> str | None:
@@ -736,11 +738,11 @@ def sanity_sweep(
                 blocked_units.append({"members": members, "rule": BLOCKING_RULE_SIGNAL_OVERRIDE})
                 continue
 
-            original_tied = next(
-                (by_id[m].get("tied_engines") for m in members if by_id[m].get("tied_engines")),
-                None,
-            )
-            pool = _tied_candidate_pool(original_tied, committed_elsewhere)
+            # The group's tie (#833): the engines every tied member is tied on.
+            original_tied = group_tie(members, lambda m: by_id[m].get("tied_engines")) or None
+            # Every safe destination is scored and checked first; the tie
+            # narrows only to engines that can take the unit (#876).
+            pool = committed_elsewhere
 
             if is_group:
                 scores, reasons = _group_serviceable_scores(
@@ -785,6 +787,8 @@ def sanity_sweep(
                 )
                 continue
             scores = {e: s for e, s in scores.items() if e in eligible}
+            # ADR-031 Decision 12: the surviving tied engines that can take it first.
+            scores = {e: scores[e] for e in _tied_candidate_pool(original_tied, list(scores))}
 
             top = max(scores.values())
             tied = sorted(e for e, s in scores.items() if s == top)

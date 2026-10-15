@@ -24,6 +24,7 @@ from src.agents.referee.reality_check_rules import (
     _trace_ladder,
     tie_reason_code,
 )
+from src.agents.referee.tie_break import group_tie, tied_survivors_first
 from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import display_engine
 
@@ -225,15 +226,6 @@ def _place_settled_queries(
             tied_engines=new_tied,
         )
 
-    def _candidate_pool(original_tied: list[str] | None) -> set[str]:
-        """The engines Phase 2 may place this query/group on: the
-        originally tied engines that are still committed, FIRST (#503) --
-        the full committed set only once none of them survive at all."""
-        if not original_tied:
-            return committed_engines
-        survivors = {e for e in original_tied if e in committed_engines}
-        return survivors or committed_engines
-
     def _place_individual(qid: str, qa: dict) -> None:
         """Place one (ungrouped, or mandatory-stripped) query on its
         highest-scoring committed, eligible engine."""
@@ -243,18 +235,20 @@ def _place_settled_queries(
             qid,
             trace_by_query,
             current_engine_by_qid,
-            _candidate_pool(original_tied),
+            committed_engines,
             mandatory_query_ids,
             query_signals,
             query_map,
             query_capabilities,
             tied_engines_by_qid,
         )
-        eligible_scores: dict[str, float] = {
+        takeable: dict[str, float] = {
             e: score
             for e in eligible_engines
             if (score := _resolver_score(trace_by_query, qid, e)) is not None
         }
+        # The surviving tied engines that can take it first (#503, #876).
+        eligible_scores = {e: takeable[e] for e in tied_survivors_first(original_tied, takeable)}
         if not eligible_scores:
             return  # nothing eligible at all; leave it where it is (should not happen)
         # A placeholder pick from an unresolved tie earns no stability credit
@@ -317,12 +311,15 @@ def _place_settled_queries(
             ]
             if not members:
                 continue
-            # A tied group's members all carry the SAME tied_engines (the
-            # resolver resolves a group's tie once, for every member --
-            # ``assignment_resolver``'s Step 6b); use the group's own
-            # trigger query's tied set as the group's.
+            # The group's tie (#833): the engines every tied member is tied
+            # on (``tie_break.group_tie``), whichever member comes first. The
+            # resolver gives every member the same tie, so this is that tie.
             group_original_tied = (
-                tied_engines_by_qid.get(qid) if qid in tie_unresolved_qids else None
+                group_tie(
+                    (mqid for mqid, _ in members),
+                    lambda m: tied_engines_by_qid.get(m) if m in tie_unresolved_qids else None,
+                )
+                or None
             )
             # The same group-aware eligibility rule Phase 1 used to decide
             # this group's current engine was safe to keep or remove (#502
@@ -333,15 +330,21 @@ def _place_settled_queries(
                 qid,
                 trace_by_query,
                 current_engine_by_qid,
-                _candidate_pool(group_original_tied),
+                committed_engines,
                 mandatory_query_ids,
                 query_signals,
                 query_map,
                 query_capabilities,
                 tied_engines_by_qid,
             )
-            eligible = {
+            takeable_group = {
                 e: s for e, s in group_info["scores"].items() if e in eligible_group_engines
+            }
+            # The surviving tied engines that can take the whole group first;
+            # every engine that can take it when none of them can (#503, #876).
+            eligible = {
+                e: takeable_group[e]
+                for e in tied_survivors_first(group_original_tied, takeable_group)
             }
             if not eligible:
                 # Should not happen: Phase 1 never removes an engine while

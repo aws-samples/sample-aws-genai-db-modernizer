@@ -51,7 +51,7 @@ from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check_records import flag_moves_by_query
 from src.agents.referee.reality_check_request import moved_queries
 from src.agents.referee.reality_check_rules import tie_reason_code
-from src.agents.referee.tie_break import TIE_KIND_UNRESOLVED, break_tie
+from src.agents.referee.tie_break import TIE_KIND_UNRESOLVED, break_tie, group_tie
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.contracts.model_flag import FlagReason, ModelFlag, parse_model_flags
 from src.contracts.move_ledger import EngineScore, MoveActor, MoveEvidence, MovePass, ReasonCode
@@ -117,7 +117,9 @@ def route_flagged_unit(
         {e for e in candidates if e != flagged_engine and e not in CACHE_OVERLAY_ENGINES}
     )
     tied_pool = [e for e in (tied_engines or []) if e != flagged_engine]
-    pool = _tied_candidate_pool(tied_pool or None, remaining)
+    # Every remaining engine is scored and checked first; the tie narrows only
+    # to engines that can take the unit (ADR-031 Decision 12, #876).
+    pool = remaining
     if len(members) > 1:
         scores, reasons = _group_serviceable_scores(members, pool, query_map, scoring_context)
     else:
@@ -145,6 +147,7 @@ def route_flagged_unit(
             ),
         )
     scores = {e: s for e, s in scores.items() if e in eligible}
+    scores = {e: scores[e] for e in _tied_candidate_pool(tied_pool or None, list(scores))}
     top = max(scores.values())
     tied = sorted(e for e, s in scores.items() if s == top)
     if len(tied) > 1:
@@ -326,10 +329,8 @@ def apply_consolidation_flags(
                 }
             )
             done.update(members)
-            tied = next(
-                (by_id[m].get("tied_engines") for m in members if by_id[m].get("tied_engines")),
-                None,
-            )
+            # The group's tie (#833): the engines every tied member is tied on.
+            tied = group_tie(members, lambda m: by_id[m].get("tied_engines")) or None
             routing = route_flagged_unit(
                 members,
                 engine,
