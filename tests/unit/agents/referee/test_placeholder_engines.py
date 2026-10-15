@@ -55,7 +55,6 @@ BASELINES = REPO_ROOT / "tests" / "e2e" / "baselines"
 # a new module. Changing a count means a reviewer looks at the new use.
 #   path: (string literals, enum names or attribute accesses, reason)
 NAMING_ALLOWLIST: dict[str, tuple[int, int, str]] = {
-    "src/contracts/analysis_input.py": (2, 2, "TargetDatabase enum members"),
     "src/contracts/analysis_output.py": (2, 2, "TargetDatabase enum members"),
     "src/contracts/referee_output.py": (2, 2, "TargetEngine enum members"),
     "src/agents/entrypoint.py": (2, 0, "agent types the entrypoint accepts"),

@@ -39,7 +39,6 @@ def run_analysis(
         case "dynamodb":
             from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDatabase
 
             print(
                 f"[analysis/{agent_type}] Running DynamoDB analysis (deterministic + LLM advisor)..."
@@ -47,7 +46,7 @@ def run_analysis(
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDatabase(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, mermaid_diagram = analyze_for_dynamodb(
                 analysis_input, llm_mode=llm_mode
@@ -81,7 +80,6 @@ def run_analysis(
         case "documentdb":
             from src.agents.analysis.documentdb_analysis_agent import analyze_for_documentdb
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDatabase
 
             print(
                 f"[analysis/{agent_type}] Running DocumentDB analysis "
@@ -90,7 +88,7 @@ def run_analysis(
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDatabase(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, mermaid_diagram = analyze_for_documentdb(
                 analysis_input, llm_mode=llm_mode
@@ -122,12 +120,11 @@ def run_analysis(
         case "opensearch":
             from src.agents.analysis.opensearch_analysis_agent import analyze_for_opensearch
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDB
 
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDB(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, _ = analyze_for_opensearch(analysis_input)
             output_json = result.model_dump_json(indent=2)
@@ -141,13 +138,12 @@ def run_analysis(
         case "elasticache":
             from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDB
 
             print(f"[analysis/{agent_type}] Running ElastiCache/Redis analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDB(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, _ = analyze_for_elasticache(analysis_input)
             output_json = result.model_dump_json(indent=2)
@@ -173,13 +169,12 @@ def run_analysis(
         case "aurora_postgresql":
             from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDB
 
             print(f"[analysis/{agent_type}] Running Aurora PostgreSQL analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDB(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, _ = analyze_for_aurora_pg(analysis_input, llm_mode=llm_mode)
             output_json = result.model_dump_json(indent=2)
@@ -205,13 +200,12 @@ def run_analysis(
         case "aurora_mysql":
             from src.agents.analysis.aurora_mysql_analysis_agent import analyze_for_aurora_mysql
             from src.contracts.analysis_input import AnalysisInput
-            from src.contracts.analysis_input import TargetDatabase as InputTargetDB
 
             print(f"[analysis/{agent_type}] Running Aurora MySQL analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
-                target_database=InputTargetDB(agent_type),
+                target_database=TargetDatabase(agent_type),
             )
             result, decision_trace, _ = analyze_for_aurora_mysql(analysis_input, llm_mode=llm_mode)
             output_json = result.model_dump_json(indent=2)

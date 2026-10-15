@@ -1,12 +1,15 @@
 """
-Unit tests for Redis Analysis Agent
+Unit tests for the ElastiCache analysis agent (Redis/Valkey use-case detection).
+
+Moved from the removed, unreachable ``redis_analysis_agent`` tests (#493): the
+same detection and scoring now run through the production entry point.
 """
 
 import time
 
 import pytest
 
-from src.agents.analysis.redis_analysis_agent import analyze_for_redis
+from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from tests.fixtures.gaming_collector_output import get_gaming_collector_output
 from tests.fixtures.generate_synthetic_collector_output import generate_collector_output
@@ -63,15 +66,15 @@ def test_redis_analysis_basic():
     analysis_input = AnalysisInput(
         job_id="test-job-123",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
 
     # Run analysis
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
 
     # Assertions
     assert result.contract_version == "2.1"
-    assert result.agent_metadata.agent_name == "redis-analysis-agent"
+    assert result.agent_metadata.agent_name == "elasticache-analysis-agent"
     assert result.agent_metadata.target_database.value == "elasticache"
     assert len(result.table_recommendations) > 0
     assert result.workload_analysis is not None
@@ -113,10 +116,10 @@ def test_redis_caching_pattern_detection():
     analysis_input = AnalysisInput(
         job_id="test-job-123",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
 
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
 
     # Should detect caching pattern
     patterns = result.workload_analysis.patterns_detected
@@ -152,10 +155,10 @@ def test_redis_session_store_detection():
     analysis_input = AnalysisInput(
         job_id="test-job-123",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
 
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
 
     # Should detect session store pattern
     patterns = result.workload_analysis.patterns_detected
@@ -190,10 +193,10 @@ def test_redis_leaderboard_detection():
     analysis_input = AnalysisInput(
         job_id="test-job-123",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
 
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
 
     # Should detect leaderboard pattern
     patterns = result.workload_analysis.patterns_detected
@@ -208,10 +211,10 @@ def test_redis_ecommerce_differentiated_scoring():
     analysis_input = AnalysisInput(
         job_id="test-ecommerce",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
 
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
     scores = {r.table_id: r.confidence_score for r in result.table_recommendations}
 
     # Scores should not all be the same
@@ -246,9 +249,9 @@ class TestRedisPatternFixtures:
         analysis_input = AnalysisInput(
             job_id=fixture["job_id"],
             collector_output=fixture,
-            target_database=TargetDatabase.elasticache,
+            target_database=TargetDatabase.ELASTICACHE,
         )
-        result = analyze_for_redis(analysis_input)
+        result = analyze_for_elasticache(analysis_input)[0]
         pattern_types = {p.pattern_type for p in result.workload_analysis.patterns_detected}
         ap_types = {
             ap.anti_pattern_type for ap in (result.workload_analysis.anti_patterns_detected or [])
@@ -303,9 +306,9 @@ def test_gaming_vertical_all_patterns():
     analysis_input = AnalysisInput(
         job_id="test-gaming",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
 
     pattern_types = {p.pattern_type for p in result.workload_analysis.patterns_detected}
     assert "caching" in pattern_types
@@ -338,10 +341,10 @@ def _run_analysis(num_tables: int, num_queries: int, seed: int = 42):
     analysis_input = AnalysisInput(
         job_id=f"bench-{num_tables}-{num_queries}",
         collector_output=collector_output,
-        target_database=TargetDatabase.elasticache,
+        target_database=TargetDatabase.ELASTICACHE,
     )
     start = time.perf_counter()
-    result = analyze_for_redis(analysis_input)
+    result = analyze_for_elasticache(analysis_input)[0]
     elapsed = time.perf_counter() - start
     return result, elapsed
 

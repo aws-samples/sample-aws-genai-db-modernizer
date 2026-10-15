@@ -65,6 +65,7 @@
         "schema": {
           "kind": "enum",
           "values": [
+            "aurora",
             "aurora_mysql",
             "aurora_postgresql",
             "documentdb",
@@ -93,8 +94,8 @@
         }
       }
     },
-    "schema_hash": "90d50e4ca74adc308c8405b807d3720306bcd4309b5d2385bc4b4dbe4d11ed12",
-    "version": "2.0"
+    "schema_hash": "7ca437effd886de81ec7ace57d4dacef69a5956a817a7980679594797e5e6d8c",
+    "version": "2.1"
   },
   "analysis_output.AnalysisOutputContract": {
     "fields": {

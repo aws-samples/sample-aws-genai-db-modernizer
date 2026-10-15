@@ -1,25 +1,16 @@
 """
 Analysis Input Contract (Pydantic Model)
 
-Version: 2.0
+Version: 2.1
 """
-
-from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# One enum for both analysis contracts (#493); re-exported here for callers
+# that build an ``AnalysisInput``.
+from src.contracts.analysis_output import TargetDatabase
 
-class TargetDatabase(str, Enum):
-    """Target database services for analysis"""
-
-    dynamodb = "dynamodb"
-    documentdb = "documentdb"
-    aurora_mysql = "aurora_mysql"
-    aurora_postgresql = "aurora_postgresql"
-    elasticache = "elasticache"
-    opensearch = "opensearch"
-    neptune = "neptune"
-    keyspaces = "keyspaces"
+__all__ = ["AnalysisInput", "AnalysisOptions", "TargetDatabase"]
 
 
 class AnalysisOptions(BaseModel):
@@ -53,10 +44,12 @@ class AnalysisInput(BaseModel):
 
     Version history:
     - 2.0: Initial version with MAJOR.MINOR versioning
+    - 2.1: ``target_database`` uses the analysis output's ``TargetDatabase``
+      (one enum, #493), which adds the ``aurora`` value
     """
 
     contract_version: str = Field(
-        default="2.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="2.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(description="Unique job identifier")
@@ -82,7 +75,7 @@ class AnalysisInput(BaseModel):
         extra="ignore",
         json_schema_extra={
             "example": {
-                "contract_version": "2.0",
+                "contract_version": "2.1",
                 "job_id": "job-123",
                 "collector_output": {
                     "job_id": "job-123",

@@ -35,16 +35,16 @@ SCORES = ScoreBreakdown(
 )
 
 TARGETS = {
-    "dynamodb": (analyze_for_dynamodb, TargetDatabase.dynamodb, DYNAMODB_SCORE_WEIGHTS),
-    "documentdb": (analyze_for_documentdb, TargetDatabase.documentdb, DOCUMENTDB_SCORE_WEIGHTS),
+    "dynamodb": (analyze_for_dynamodb, TargetDatabase.DYNAMODB, DYNAMODB_SCORE_WEIGHTS),
+    "documentdb": (analyze_for_documentdb, TargetDatabase.DOCUMENTDB, DOCUMENTDB_SCORE_WEIGHTS),
     "aurora_postgresql": (
         analyze_for_aurora_pg,
-        TargetDatabase.aurora_postgresql,
+        TargetDatabase.AURORA_POSTGRESQL,
         AURORA_PG_SCORE_WEIGHTS,
     ),
     "aurora_mysql": (
         analyze_for_aurora_mysql,
-        TargetDatabase.aurora_mysql,
+        TargetDatabase.AURORA_MYSQL,
         AURORA_MYSQL_SCORE_WEIGHTS,
     ),
 }

@@ -26,7 +26,7 @@ def _run(fixture: dict) -> tuple[set[str], set[str], AnalysisOutputContract, dic
         inp = AnalysisInput(
             job_id=fixture["job_id"],
             collector_output=fixture,
-            target_database=TargetDatabase.documentdb,
+            target_database=TargetDatabase.DOCUMENTDB,
         )
         result, trace, _mermaid = analyze_for_documentdb(inp)
     pattern_types = {p.pattern_type for p in result.workload_analysis.patterns_detected}
@@ -191,7 +191,7 @@ class TestMermaidDiagram:
             inp = AnalysisInput(
                 job_id="test",
                 collector_output=get_nested_document_fixture(),
-                target_database=TargetDatabase.documentdb,
+                target_database=TargetDatabase.DOCUMENTDB,
             )
             _, _, mermaid = analyze_for_documentdb(inp)
         assert mermaid.startswith("erDiagram")

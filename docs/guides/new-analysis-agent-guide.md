@@ -557,9 +557,9 @@ Decisions made for the analysis agent framework (March 2026):
 | `src/tools/analysis/dynamodb_analysis_tools.py` | Detection, scoring, cost estimation |
 | `src/agents/analysis/dynamodb_analysis_agent.py` | Agent entry point |
 
-### Redis implementation (legacy — ships as-is)
+### ElastiCache implementation
 
 | File | Purpose |
 |------|---------|
-| `src/agents/analysis/redis_analysis_agent.py` | Agent entry point |
+| `src/agents/analysis/elasticache_analysis_agent.py` | Agent entry point |
 | `src/tools/analysis/redis_analysis_tools.py` | Detection, scoring, cost estimation |

@@ -1411,7 +1411,7 @@ def estimate_dynamodb_costs(
             total_write_cps += cps
 
     # On-demand pricing (us-east-1)
-    # Read: $1.25 per million RRUs, Write: $1.25 per million WRUs
+    # Read: $0.125 per million RRUs, Write: $0.625 per million WRUs
     # Storage: $0.25 per GB-month
     read_units_per_month = total_read_cps * 86400 * 30
     write_units_per_month = total_write_cps * 86400 * 30

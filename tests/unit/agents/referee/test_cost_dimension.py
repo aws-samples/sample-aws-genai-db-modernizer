@@ -16,8 +16,8 @@ from src.agents.analysis.aurora_mysql_analysis_agent import analyze_for_aurora_m
 from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg
 from src.agents.analysis.documentdb_analysis_agent import analyze_for_documentdb
 from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb
+from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
 from src.agents.analysis.opensearch_analysis_agent import analyze_for_opensearch
-from src.agents.analysis.redis_analysis_agent import analyze_for_redis
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import ScoreBreakdown
@@ -107,17 +107,21 @@ ENGINE_ANALYSES = {
     "aurora_postgresql": (
         aurora_pg_analysis_tools,
         analyze_for_aurora_pg,
-        TargetDatabase.aurora_postgresql,
+        TargetDatabase.AURORA_POSTGRESQL,
     ),
     "aurora_mysql": (
         aurora_mysql_analysis_tools,
         analyze_for_aurora_mysql,
-        TargetDatabase.aurora_mysql,
+        TargetDatabase.AURORA_MYSQL,
     ),
-    "dynamodb": (dynamodb_analysis_tools, analyze_for_dynamodb, TargetDatabase.dynamodb),
-    "documentdb": (documentdb_analysis_tools, analyze_for_documentdb, TargetDatabase.documentdb),
-    "opensearch": (opensearch_analysis_tools, analyze_for_opensearch, TargetDatabase.opensearch),
-    "redis": (redis_analysis_tools, analyze_for_redis, TargetDatabase.elasticache),
+    "dynamodb": (dynamodb_analysis_tools, analyze_for_dynamodb, TargetDatabase.DYNAMODB),
+    "documentdb": (documentdb_analysis_tools, analyze_for_documentdb, TargetDatabase.DOCUMENTDB),
+    "opensearch": (opensearch_analysis_tools, analyze_for_opensearch, TargetDatabase.OPENSEARCH),
+    "elasticache": (
+        redis_analysis_tools,
+        analyze_for_elasticache,
+        TargetDatabase.ELASTICACHE,
+    ),
 }
 
 
@@ -158,7 +162,7 @@ def test_a_querys_score_is_the_confidence_the_engines_analysis_gave_its_tables()
     collector = get_ecommerce_collector_output()
     analysis = analyze_for_aurora_pg(
         AnalysisInput(
-            job_id="t", collector_output=collector, target_database=TargetDatabase.aurora_postgresql
+            job_id="t", collector_output=collector, target_database=TargetDatabase.AURORA_POSTGRESQL
         )
     )[0].model_dump()
     recs = {r["table_id"]: r["confidence_score"] for r in analysis["table_recommendations"]}

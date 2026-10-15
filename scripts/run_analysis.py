@@ -63,12 +63,12 @@ def _build_analysis_input(job_id: str, db: str, engine: str, collector_output: d
     from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 
     engine_to_target = {
-        "dynamodb": TargetDatabase.dynamodb,
-        "documentdb": TargetDatabase.documentdb,
-        "opensearch": TargetDatabase.opensearch,
-        "elasticache": TargetDatabase.elasticache,
-        "aurora_postgresql": TargetDatabase.aurora_postgresql,
-        "aurora_mysql": TargetDatabase.aurora_mysql,
+        "dynamodb": TargetDatabase.DYNAMODB,
+        "documentdb": TargetDatabase.DOCUMENTDB,
+        "opensearch": TargetDatabase.OPENSEARCH,
+        "elasticache": TargetDatabase.ELASTICACHE,
+        "aurora_postgresql": TargetDatabase.AURORA_POSTGRESQL,
+        "aurora_mysql": TargetDatabase.AURORA_MYSQL,
     }
 
     return AnalysisInput(

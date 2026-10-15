@@ -4,13 +4,11 @@ import pytest
 
 from src.agents.referee.capability_registry import (
     ENGINE_CAPABILITIES,
-    LIGHTWEIGHT_ALTERNATIVES,
     SIGNAL_TO_CAPABILITY,
     can_engine_serve_capability,
     detect_required_capabilities,
     is_dedup_only_group_by,
     requires_aggregation_capability,
-    suggest_lightweight_alternative,
 )
 from src.shared.engine_capabilities import ACID_TRANSACTION_ENGINES, TEXT_SEARCH_ENGINES
 
@@ -235,36 +233,6 @@ class TestAggregationAndJoinCapabilities:
         assert "complex_joins" in caps
         assert can_engine_serve_capability("dynamodb", caps) is False
         assert can_engine_serve_capability("aurora_mysql", caps) is True
-
-
-class TestSuggestLightweightAlternative:
-    """Tests for suggest_lightweight_alternative()."""
-
-    def test_inverted_index_suggests_opensearch_serverless(self):
-        alt = suggest_lightweight_alternative("inverted_index")
-        assert alt is not None
-        assert "OpenSearch Serverless" in alt["service"]
-
-    def test_scan_engine_suggests_athena(self):
-        alt = suggest_lightweight_alternative("scan_engine")
-        assert alt is not None
-        assert "Athena" in alt["service"]
-
-    def test_multi_doc_acid_suggests_saga(self):
-        alt = suggest_lightweight_alternative("multi_doc_acid")
-        assert alt is not None
-        assert "saga" in alt["service"].lower() or "Step Functions" in alt["pattern"]
-
-    def test_unknown_capability_returns_none(self):
-        alt = suggest_lightweight_alternative("nonexistent_cap")
-        assert alt is None
-
-    def test_all_alternatives_have_required_fields(self):
-        for _cap, alt in LIGHTWEIGHT_ALTERNATIVES.items():
-            assert "service" in alt
-            assert "pattern" in alt
-            assert "cost_profile" in alt
-            assert "limitations" in alt
 
 
 class TestSingleTableAggregates:

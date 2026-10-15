@@ -160,7 +160,7 @@ def _make_analysis_input(fixture: dict) -> AnalysisInput:
     return AnalysisInput(
         job_id=fixture.get("job_id", "test"),
         collector_output=fixture,
-        target_database=TargetDatabase.opensearch,
+        target_database=TargetDatabase.OPENSEARCH,
     )
 
 
@@ -550,7 +550,7 @@ class TestAnalyzeForOpenSearch:
         analysis_input = AnalysisInput(
             job_id="empty-test",
             collector_output=empty_fixture,
-            target_database=TargetDatabase.opensearch,
+            target_database=TargetDatabase.OPENSEARCH,
         )
         result, decision_trace, mermaid = analyze_for_opensearch(analysis_input)
 
@@ -578,7 +578,7 @@ class TestSaaSPlatformIntegration:
         analysis_input = AnalysisInput(
             job_id="saas-platform-test",
             collector_output=self.fixture,
-            target_database=TargetDatabase.opensearch,
+            target_database=TargetDatabase.OPENSEARCH,
         )
         self.contract, self.trace, _ = analyze_for_opensearch(analysis_input)
 

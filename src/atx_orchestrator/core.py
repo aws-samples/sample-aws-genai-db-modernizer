@@ -498,7 +498,7 @@ def run_collect_triage_core(
 class _AnalysisEngine(NamedTuple):
     """Per-engine knobs for :func:`run_analysis_core`.
 
-    ``target_database`` is the ``TargetDatabase`` member name, the
+    ``target_database`` is the ``TargetDatabase`` value, the
     ``analysis-<...>`` artifact prefix suffix, and the value echoed in the
     summary. ``load_analyze`` returns the engine's analyze function via a
     deferred literal import, so only the selected engine's (heavy) analysis
@@ -675,7 +675,7 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
     analysis_input = AnalysisInput(
         job_id=job_id,
         collector_output=collector_output,
-        target_database=getattr(TargetDatabase, spec.target_database),
+        target_database=TargetDatabase(spec.target_database),
     )
 
     logger.info(

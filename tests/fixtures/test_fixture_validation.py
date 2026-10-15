@@ -30,11 +30,11 @@ class TestEcommerceFixtureValidation:
         analysis_input = AnalysisInput(
             job_id="job-ecommerce-001",
             collector_output=data,
-            target_database=TargetDatabase.elasticache,
+            target_database=TargetDatabase.ELASTICACHE,
             target_region="us-east-1",
         )
 
-        assert analysis_input.target_database == TargetDatabase.elasticache
+        assert analysis_input.target_database == TargetDatabase.ELASTICACHE
         assert analysis_input.collector_output["job_id"] == "job-ecommerce-001"
 
     def test_schema_completeness(self):
@@ -172,11 +172,11 @@ class TestGamingFixtureValidation:
         analysis_input = AnalysisInput(
             job_id="job-gaming-001",
             collector_output=data,
-            target_database=TargetDatabase.elasticache,
+            target_database=TargetDatabase.ELASTICACHE,
             target_region="us-west-2",
         )
 
-        assert analysis_input.target_database == TargetDatabase.elasticache
+        assert analysis_input.target_database == TargetDatabase.ELASTICACHE
         assert analysis_input.collector_output["job_id"] == "job-gaming-001"
 
     def test_schema_completeness(self):

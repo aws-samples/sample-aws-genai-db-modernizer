@@ -119,7 +119,7 @@ def _run_agent(collector_output: dict) -> dict:
         inp = AnalysisInput(
             job_id=collector_output.get("job_id", "test"),
             collector_output=collector_output,
-            target_database=TargetDatabase.dynamodb,
+            target_database=TargetDatabase.DYNAMODB,
         )
         _, trace, _ = analyze_for_dynamodb(inp)
         return trace

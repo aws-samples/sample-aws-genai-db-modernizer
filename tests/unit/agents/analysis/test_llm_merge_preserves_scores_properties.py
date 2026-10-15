@@ -162,7 +162,7 @@ class TestLlmMergePreservesDeterministicScores:
         inp_disabled = AnalysisInput(
             job_id=data["job_id"],
             collector_output=data,
-            target_database=TargetDatabase.dynamodb,
+            target_database=TargetDatabase.DYNAMODB,
         )
         with patch.dict("os.environ", {"ENABLE_LLM_ADVISOR": "false"}):
             result_disabled, _, _ = analyze_for_dynamodb(inp_disabled)
@@ -176,7 +176,7 @@ class TestLlmMergePreservesDeterministicScores:
         inp_enabled = AnalysisInput(
             job_id=data["job_id"],
             collector_output=data,
-            target_database=TargetDatabase.dynamodb,
+            target_database=TargetDatabase.DYNAMODB,
         )
 
         with patch("src.agents.analysis.dynamodb_analysis_agent.LlmAdvisor") as MockAdvisorClass:

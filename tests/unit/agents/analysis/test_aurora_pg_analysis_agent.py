@@ -24,7 +24,7 @@ def _make_input(tables, queries):
             "database_schema": {"tables": tables},
             "queries": {"query_patterns": queries},
         },
-        target_database=TargetDatabase.aurora_postgresql,
+        target_database=TargetDatabase.AURORA_POSTGRESQL,
     )
 
 
@@ -397,7 +397,7 @@ class TestAuroraPgCostEstimation:
                 },
                 "queries": {"query_patterns": []},
             },
-            target_database=TargetDatabase.aurora_postgresql,
+            target_database=TargetDatabase.AURORA_POSTGRESQL,
         )
         inp.analysis_options.perform_cost_estimation = False
         result, _, _ = analyze_for_aurora_pg(inp)

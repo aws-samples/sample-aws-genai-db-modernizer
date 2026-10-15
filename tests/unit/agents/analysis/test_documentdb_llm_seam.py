@@ -39,7 +39,7 @@ def _make_input(fixture: dict | None = None) -> AnalysisInput:
     return AnalysisInput(
         job_id=f["job_id"],
         collector_output=f,
-        target_database=TargetDatabase.documentdb,
+        target_database=TargetDatabase.DOCUMENTDB,
     )
 
 

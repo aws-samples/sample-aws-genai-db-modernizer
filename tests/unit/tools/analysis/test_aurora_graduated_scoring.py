@@ -11,7 +11,7 @@ def _make_input(tables, queries):
             "database_schema": {"tables": tables},
             "queries": {"query_patterns": queries},
         },
-        target_database=TargetDatabase.aurora_postgresql,
+        target_database=TargetDatabase.AURORA_POSTGRESQL,
     )
 
 

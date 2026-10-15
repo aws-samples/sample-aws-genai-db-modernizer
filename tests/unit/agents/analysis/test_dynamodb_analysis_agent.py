@@ -25,7 +25,7 @@ def _run(fixture: dict) -> tuple[set[str], set[str], AnalysisOutputContract, dic
         inp = AnalysisInput(
             job_id=fixture["job_id"],
             collector_output=fixture,
-            target_database=TargetDatabase.dynamodb,
+            target_database=TargetDatabase.DYNAMODB,
         )
         result, trace, _mermaid = analyze_for_dynamodb(inp)
     pattern_types = {p.pattern_type for p in result.workload_analysis.patterns_detected}

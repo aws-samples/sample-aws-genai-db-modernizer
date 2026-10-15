@@ -26,19 +26,19 @@ from tests.fixtures.opensearch_pattern_fixtures import get_fulltext_search_fixtu
 TARGETS = {
     "dynamodb": (
         analyze_for_dynamodb,
-        TargetDatabase.dynamodb,
+        TargetDatabase.DYNAMODB,
         get_ecommerce_collector_output,
         DYNAMODB_PATTERNS,
     ),
     "documentdb": (
         analyze_for_documentdb,
-        TargetDatabase.documentdb,
+        TargetDatabase.DOCUMENTDB,
         get_ecommerce_collector_output,
         DOCUMENTDB_PATTERNS,
     ),
     "opensearch": (
         analyze_for_opensearch,
-        TargetDatabase.opensearch,
+        TargetDatabase.OPENSEARCH,
         get_fulltext_search_fixture,
         OPENSEARCH_PATTERNS,
     ),

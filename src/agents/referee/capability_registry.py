@@ -25,12 +25,10 @@ from src.shared.unsupported_pattern import is_dedup_only_group_by
 __all__ = [
     "ENGINE_CAPABILITIES",
     "CAPABILITY_DETECTORS",
-    "LIGHTWEIGHT_ALTERNATIVES",
     "SIGNAL_TO_CAPABILITY",
     "detect_required_capabilities",
     "can_engine_serve_capability",
     "missing_capabilities",
-    "suggest_lightweight_alternative",
     "is_dedup_only_group_by",
     "requires_aggregation_capability",
     "requires_computed_join_capability",
@@ -236,34 +234,6 @@ def requires_computed_join_capability(query_text: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Lightweight managed-service alternatives for small orphan sets
-# ---------------------------------------------------------------------------
-
-LIGHTWEIGHT_ALTERNATIVES: dict[str, dict[str, str]] = {
-    "scan_engine": {
-        "service": "Amazon Athena + S3",
-        "use_when": "Infrequent analytics (< daily), reporting, ad-hoc exploration",
-        "pattern": "DynamoDB export to S3 -> Athena queries on schedule or on-demand",
-        "cost_profile": "Pay-per-query ($5/TB scanned), zero idle cost",
-        "limitations": "Not real-time, seconds-to-minutes latency, read-only",
-    },
-    "inverted_index": {
-        "service": "OpenSearch Serverless",
-        "use_when": "Low-volume full-text search (< 5 queries, low RPS)",
-        "pattern": "DynamoDB Streams -> OpenSearch Serverless collection -> search API",
-        "cost_profile": "Serverless pricing, scales to zero when idle",
-        "limitations": "Higher per-request cost at scale vs provisioned OpenSearch",
-    },
-    "multi_doc_acid": {
-        "service": "Application-layer saga pattern",
-        "use_when": "Infrequent cross-entity transactions, eventual consistency acceptable",
-        "pattern": "Step Functions orchestrated writes with compensating transactions",
-        "cost_profile": "No additional database, Step Functions execution cost only",
-        "limitations": "Eventual consistency, requires idempotent operations",
-    },
-}
-
-# ---------------------------------------------------------------------------
 # Triage signal → hard capability mapping
 #
 # When a triage signal implies a hard architectural requirement, map it here.
@@ -344,11 +314,3 @@ def can_engine_serve_capability(engine: str, required: list[str]) -> bool:
     - The engine has ALL required capabilities in its capability set.
     """
     return not missing_capabilities(engine, required)
-
-
-def suggest_lightweight_alternative(capability: str) -> dict[str, str] | None:
-    """Get a lightweight managed-service alternative for a capability.
-
-    Returns None if no alternative exists for the given capability.
-    """
-    return LIGHTWEIGHT_ALTERNATIVES.get(capability)
