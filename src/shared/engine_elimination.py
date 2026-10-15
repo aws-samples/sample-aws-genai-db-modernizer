@@ -11,7 +11,7 @@ engine counted as eliminated, and two of them disagreed with the third:
   thing from the keys of ``before_distribution``/``after_distribution``,
   which count ANY query for the same reason.
 - Synthesis grounding (``synthesis_grounding.eliminated_engines``) and the
-  consolidation records (``reality_check_records.reconcile_consolidations``, #218)
+  consolidation records (``reality_check_records.consolidations_from_moves``, #218)
   already counted only in-scope queries, per the rule: "An engine is
   eliminated when no in-scope query remains on it."
 

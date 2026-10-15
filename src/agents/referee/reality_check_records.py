@@ -1,9 +1,36 @@
-"""Reality check consolidation records: fit them to the net per-query moves (#218)."""
+"""Reality check records, derived from the move ledger (#218, #616).
+
+Every engine change the reality check makes is a Move (``move_ledger.apply``),
+so its records are built from the Moves rather than counted beside them:
+
+- ``consolidations``: :func:`consolidations_from_moves` replays the check's
+  Moves on its input and fits one record to each net (from, to) move. A pass
+  still hands over its own records, for what a Move does not carry: the pass's
+  customer-facing reason text (a Move carries a rule id, not prose), the
+  queries a partial consolidation retained and why (a retained query did not
+  change, so it has no Move), and the engine's first-assignment
+  ``workload_justified`` verdict (an engine fact, taken before any Move). The
+  saving is the removed engine's analysed cost (#793, #824), an engine fact as
+  well, so it is passed in (``engine_costs``) and counted once per engine. A
+  pass's own (from, to) counts come from its Moves too (:func:`engine_changes`).
+- ``sweep_decisions``: a ``removed`` verdict and its records come from the
+  sweep's Moves (:func:`sweep_outcome`). A ``kept`` verdict is the sweep
+  deciding not to move anything, so there is no Move to derive it from: it is
+  built where the sweep decides it.
+- ``flag_decisions``: a ``moved`` verdict's destination and scores are its
+  Move's, and the records a flag re-routes out of are found from the model-flag
+  Moves (:func:`flag_moves_by_query`). A ``kept`` or ``ignored`` flag moved
+  nothing, and its model text (category, explanation) is not routing evidence
+  a Move should carry, so those stay where the flag is applied.
+"""
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
+from collections.abc import Iterable, Mapping
 
+from src.agents.referee.move_ledger import replay
+from src.contracts.move_ledger import Move, MovePass
 from src.shared.engine_elimination import in_scope_distribution
 from src.shared.engine_names import display_engine
 
@@ -18,6 +45,109 @@ def _queries(n: int, engine: str = "") -> str:
     return f"{n} {engine} {noun}" if engine else f"{n} {noun}"
 
 
+def engine_changes(moves: Iterable[Move]) -> dict[tuple[str, str], list[str]]:
+    """Each (from, to) engine pair's moved query ids, in ``seq`` order.
+
+    Only Moves that change an engine count: a first assignment (no
+    ``from_engine``) and a Move that changes only the tie (``from_engine ==
+    to_engine``) move nothing between engines.
+    """
+    pairs: dict[tuple[str, str], list[str]] = {}
+    for move in sorted(moves, key=lambda m: m.seq):
+        if move.from_engine is not None and move.from_engine != move.to_engine:
+            pairs.setdefault((move.from_engine, move.to_engine), []).append(move.query_id)
+    return pairs
+
+
+def flag_moves_by_query(moves: Iterable[Move]) -> dict[str, tuple[str, str]]:
+    """Each query a model flag re-routed: ``(the engine it left, where it went)``."""
+    return {
+        m.query_id: (m.from_engine, m.to_engine)
+        for m in sorted(moves, key=lambda m: m.seq)
+        if m.pass_ is MovePass.MODEL_FLAG and m.from_engine is not None
+    }
+
+
+def sweep_outcome(engine: str, count: int, moves: Iterable[Move]) -> tuple[list[dict], dict]:
+    """The sanity sweep's records and ``removed`` verdict for ``engine``, from its Moves.
+
+    ``moves`` are the Moves the sweep recorded while removing ``engine`` (only
+    those leaving ``engine`` count); ``count`` is how many queries the engine
+    had when the sweep evaluated it. One record per destination, in name order
+    (each destination was already decided per query, by score and tie-break).
+    """
+    moved_counts = Counter(
+        m.to_engine
+        for m in moves
+        if m.pass_ is MovePass.SWEEP and m.from_engine == engine and m.to_engine != engine
+    )
+    destinations = sorted(moved_counts)
+    single_destination = len(destinations) == 1
+    records: list[dict] = [
+        {
+            "from_engine": engine,
+            "to_engine": to_engine,
+            "query_count": moved_counts[to_engine],
+            "reason": (
+                f"Sanity sweep: {display_engine(engine)} had only {count} queries, "
+                "each with a serviceable committed engine; "
+                f"{moved_counts[to_engine]} scored best on {display_engine(to_engine)}"
+            ),
+            # The saving is set when the records are fitted to the Moves (#793).
+            "saved_cost_estimate": 0,
+            "action": "full" if single_destination else "partial",
+            "queries_retained": [],
+            "retention_reason": None,
+        }
+        for to_engine in destinations
+    ]
+    # One "removed" verdict per engine, not per destination: the
+    # per-destination split is on the records (#589).
+    dest_text = "; ".join(f"{moved_counts[d]} to {display_engine(d)}" for d in destinations)
+    decision: dict = {
+        "engine": engine,
+        "decision": "removed",
+        "reason": f"{count} queries, each with a serviceable committed engine: {dest_text}",
+        "blocking_query_ids": [],
+        "blocking_rule": None,
+    }
+    return records, decision
+
+
+def consolidations_from_moves(
+    before_assignments: list[dict],
+    moves: Iterable[Move],
+    consolidations: list[dict],
+    unique_value_assessment: Mapping[str, Mapping] | None = None,
+    engine_costs: Mapping[str, float] | None = None,
+) -> list[dict]:
+    """The consolidation records of a reality check, from its Moves (#616).
+
+    ``before_assignments`` is the assignment the check started from and
+    ``moves`` the Moves it recorded (in ``seq`` order; a Move for a query not in
+    ``before_assignments`` is ignored). Each query's final engine is the Moves
+    replayed on ``before_assignments``, so no "after" list is needed and the
+    records cannot disagree with the ledger. ``consolidations`` are the passes'
+    own records, read only for what a Move does not carry (see the module
+    docstring); the rest is :func:`reconcile_consolidations`.
+    """
+    start = {
+        qa["query_id"]: (qa["assigned_engine"], sorted(qa.get("tied_engines") or []))
+        for qa in before_assignments
+    }
+    final = replay(moves, start=start)
+    return _fit_records(
+        before_assignments,
+        [
+            (qa["query_id"], final[qa["query_id"]][0], qa.get("in_scope", True))
+            for qa in before_assignments
+        ],
+        consolidations,
+        unique_value_assessment,
+        engine_costs,
+    )
+
+
 def reconcile_consolidations(
     before_assignments: list[dict],
     after_assignments: list[dict],
@@ -26,6 +156,10 @@ def reconcile_consolidations(
     engine_costs: dict[str, float] | None = None,
 ) -> list[dict]:
     """Make the consolidation records describe the net per-query moves (#218).
+
+    The reality check calls :func:`consolidations_from_moves`, which builds
+    ``after_assignments`` from its Moves; this is the fitting step on its own,
+    for a caller that holds two assignment lists and no ledger.
 
     Pass 2, the LLM corrections, the post-correction re-settle, the sanity sweep and
     the customer-override restore each move queries and edit records on their own,
@@ -64,23 +198,46 @@ def reconcile_consolidations(
 
     Record order is kept; new records follow. Inputs are not mutated.
     """
+    return _fit_records(
+        before_assignments,
+        [
+            (qa["query_id"], qa["assigned_engine"], qa.get("in_scope", True))
+            for qa in after_assignments
+        ],
+        consolidations,
+        unique_value_assessment,
+        engine_costs,
+    )
+
+
+def _fit_records(
+    before_assignments: list[dict],
+    after: list[tuple[str, str, bool]],
+    consolidations: list[dict],
+    unique_value_assessment: Mapping[str, Mapping] | None,
+    engine_costs: Mapping[str, float] | None,
+) -> list[dict]:
+    """:func:`reconcile_consolidations`, with ``after`` as ``(query_id, engine, in_scope)``."""
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
-    after_engine = {qa["query_id"]: qa["assigned_engine"] for qa in after_assignments}
+    after_engine = {qid: engine for qid, engine, _ in after}
     # The single rule ("no in-scope query remains") lives in one place
     # (src.shared.engine_elimination, #235); ``had_in_scope`` and ``remaining``
     # are its two halves, kept as separate names here because ``remaining``'s
     # per-engine counts are also used below for the "stays for N queries" text.
     had_in_scope = set(in_scope_distribution(before_assignments))
-    remaining: dict[str, int] = defaultdict(int, in_scope_distribution(after_assignments))
+    # The same rule as ``in_scope_distribution``, on the (id, engine, in_scope) rows.
+    remaining: dict[str, int] = defaultdict(int)
+    for _qid, engine, in_scope in after:
+        if in_scope and engine:
+            remaining[engine] += 1
 
     moves: dict[tuple[str, str], int] = {}
     moved_qids: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for qa in after_assignments:
-        src = before.get(qa["query_id"])
-        dst = qa["assigned_engine"]
+    for qid, dst, _ in after:
+        src = before.get(qid)
         if src and src != dst:
             moves[(src, dst)] = moves.get((src, dst), 0) + 1
-            moved_qids[(src, dst)].add(qa["query_id"])
+            moved_qids[(src, dst)].add(qid)
 
     first_record: dict[tuple[str, str], dict] = {}
     # Engine-level ``workload_justified`` verdict (#475 review round 2,

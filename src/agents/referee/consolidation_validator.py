@@ -46,6 +46,7 @@ from src.agents.referee.reality_check import (
     _is_signal_override,
     _query_eligible_engines,
 )
+from src.agents.referee.reality_check_records import sweep_outcome
 from src.agents.referee.reality_check_request import moved_queries, moved_query_record
 from src.agents.referee.reality_check_rules import _move_scores_text, tie_reason_code
 from src.agents.referee.tie_break import break_tie, settled_counts
@@ -819,7 +820,7 @@ def sanity_sweep(
         # Every query (and every co-dependency group, as one unit) has
         # somewhere to go: remove the engine, each unit to its own
         # best-scoring serviceable committed engine.
-        moved_counts: Counter[str] = Counter()
+        first_move = len(ledger.moves)
         for members, winner, tie_kind, tied, unit_scores in resolved:
             is_group = len(members) > 1
             new_tied = sorted(tied) if tie_kind == "tie_unresolved" else []
@@ -872,56 +873,20 @@ def sanity_sweep(
                     f"{display_engine(winner)} (orphan engine with {count} queries; {basis}; "
                     f"{scores_text})"
                 )
-                moved_counts[winner] += 1
                 if tie_kind == "tie_unresolved" and routing_trace is not None:
                     routing_trace.record_tie(mqid, tie_kind)
 
-        # Name order only, for deterministic output -- every destination
-        # was already decided above, per query, by score and tie-break;
-        # this never picks a "winner" among them, so it is not the same
-        # shape as a count- or name-keyed engine pick.
-        destinations = sorted(moved_counts)
-        single_destination = len(destinations) == 1
-        for to_engine in destinations:
-            moved = moved_counts[to_engine]
-            consolidations.append(
-                {
-                    "from_engine": engine,
-                    "to_engine": to_engine,
-                    "query_count": moved,
-                    "reason": (
-                        f"Sanity sweep: {display_engine(engine)} had only {count} queries, "
-                        "each with a serviceable committed engine; "
-                        f"{moved} scored best on {display_engine(to_engine)}"
-                    ),
-                    # The saving is set by reconcile_consolidations (#793).
-                    "saved_cost_estimate": 0,
-                    "action": "full" if single_destination else "partial",
-                    "queries_retained": [],
-                    "retention_reason": None,
-                }
-            )
+        # The records and the "removed" verdict come from this engine's sweep
+        # Moves (#616), one record per destination in name order (#589).
+        records, decision = sweep_outcome(engine, count, ledger.moves[first_move:])
+        for record in records:
+            consolidations.append(record)
             print(
                 f"[reality-check] Sanity sweep: {display_engine(engine)} ({count} queries) "
-                f"→ {moved} to {display_engine(to_engine)} (best-scoring committed engine)"
+                f"→ {record['query_count']} to {display_engine(record['to_engine'])} "
+                "(best-scoring committed engine)"
             )
-
-        # #589: one "removed" verdict per engine, not per destination --
-        # the per-destination split is already on the Consolidation records
-        # above; this names the engine-level outcome the same way a "kept"
-        # verdict does.
-        dest_text = "; ".join(f"{moved_counts[d]} to {display_engine(d)}" for d in destinations)
-        sweep_decisions.append(
-            {
-                "engine": engine,
-                "decision": "removed",
-                "reason": (
-                    f"{count} queries, each with a serviceable committed engine: {dest_text}"
-                ),
-                "blocking_query_ids": [],
-                "blocking_rule": None,
-            }
-        )
+        sweep_decisions.append(decision)
 
     return revised_assignments, consolidations, sweep_decisions
 

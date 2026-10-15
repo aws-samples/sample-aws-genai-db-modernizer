@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from typing import Any
@@ -13,6 +13,7 @@ from src.agents.referee.move_ledger import (
     best_other,
     ledger_for,
 )
+from src.agents.referee.reality_check_records import engine_changes
 from src.agents.referee.reality_check_rules import (
     _group_eligible_engines,
     _move_scores_text,
@@ -25,6 +26,11 @@ from src.agents.referee.reality_check_rules import (
 )
 from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import display_engine
+
+# The rules of Decision 12's placeholder: the tie stayed unresolved.
+_PLACEHOLDER_TIE_RULES = frozenset(
+    {ReasonCode.TIE_PLACEHOLDER_SETTLED_WORKLOAD, ReasonCode.TIE_PLACEHOLDER_HASH}
+)
 
 
 def _phase2_reason(
@@ -163,8 +169,9 @@ def _place_settled_queries(
     if ledger is None:
         ledger = ledger_for(revised)
     revised_by_id = {qa["query_id"]: qa for qa in revised}
-    moves: dict[tuple[str, str], list[str]] = defaultdict(list)
-    tie_unresolved_moves: dict[tuple[str, str], int] = defaultdict(int)
+    # This phase's Moves start here on the ledger; its records are built from
+    # them (#616), not from a count kept beside them.
+    first_move = len(ledger.moves)
 
     def _record(
         qa: dict,
@@ -295,9 +302,6 @@ def _place_settled_queries(
             original_tied=original_tied,
             before_score=_resolver_score(trace_by_query, qid, current_engine),
         )
-        moves[(current_engine, winner)].append(qid)
-        if tie_kind == "tie_unresolved":
-            tie_unresolved_moves[(current_engine, winner)] += 1
 
     handled_groups: set[str] = set()
     for qid, payload in trace_by_query.items():
@@ -406,9 +410,6 @@ def _place_settled_queries(
                     original_tied=group_original_tied,
                     before_score=group_info["scores"].get(member_engine),
                 )
-                moves[(member_engine, winner)].append(member_qid)
-                if tie_kind == "tie_unresolved":
-                    tie_unresolved_moves[(member_engine, winner)] += 1
             continue
 
         _place_individual(qid, qa)
@@ -426,6 +427,19 @@ def _place_settled_queries(
     native_qids_by_engine: dict[str, list[str]] = defaultdict(list)
     for qa in query_assignments:
         native_qids_by_engine[qa["assigned_engine"]].append(qa["query_id"])
+    phase_moves = ledger.moves[first_move:]
+    moves = engine_changes(phase_moves)
+    # An engine change an unresolved exact tie decided: its destination is the
+    # placeholder pick (``evidence.tie_rule`` a ``tie.placeholder.*`` rule).
+    # Not ``tied_engines``: a group moved by score keeps a member's own
+    # earlier tie on its Move without a tie deciding anything.
+    tie_unresolved_moves = Counter(
+        (m.from_engine, m.to_engine)
+        for m in phase_moves
+        if m.evidence.tie_rule in _PLACEHOLDER_TIE_RULES
+        and m.from_engine is not None
+        and m.from_engine != m.to_engine
+    )
     moved_from: dict[str, set[str]] = defaultdict(set)
     for (frm, _to), qids in moves.items():
         moved_from[frm].update(qids)
@@ -485,7 +499,7 @@ def _place_settled_queries(
             }
         )
 
-    # No saving figure is set here (#793): ``reconcile_consolidations`` stores each
+    # No saving figure is set here (#793): ``consolidations_from_moves`` stores each
     # removed engine's analysed cost, once, on the engine's first record.
 
     # #502 review round 3: Phase 1 and Phase 2 must agree on eligibility --

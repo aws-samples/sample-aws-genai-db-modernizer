@@ -16,8 +16,8 @@ Steps, each in its own module:
      highest-scoring remaining engine
   3. Justification floors (``reality_check_floors``) — a mandatory engine must
      still earn its fixed cost
-  4. Record reconciliation (``reality_check_records``) — the consolidation
-     records describe the net per-query moves
+  4. Records (``reality_check_records``) — the consolidation records are
+     derived from the move ledger: one per net per-query move (#616)
   5. Architectural patterns and recommendations (``reality_check_patterns``)
 
 Every engine change these steps make (and the handler's cache owner
@@ -65,7 +65,11 @@ from src.agents.referee.reality_check_patterns import (
     refresh_patterns_and_recommendations,
 )
 from src.agents.referee.reality_check_place import _place_settled_queries
-from src.agents.referee.reality_check_records import _queries, reconcile_consolidations
+from src.agents.referee.reality_check_records import (
+    _queries,
+    consolidations_from_moves,
+    reconcile_consolidations,
+)
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
     ENGINE_BASE_COST,
@@ -382,18 +386,17 @@ def run_reality_check(
     # single consolidation record describes, which left a stale, orphaned
     # "aurora_mysql -> opensearch" record ``moved_queries()``
     # (``reality_check_request.py``) could never resolve back to any
-    # query (0 found for its claimed count). ``reconcile_consolidations``
-    # is designed for exactly this (Pass 2, Pass 1 and later steps all
-    # moving queries and editing records on their own, #218) -- it already
-    # ran once, later, via the handler's own ``_settle_records``, but only
-    # for the ``none``/``bedrock`` llm_mode paths that reach it; ``external``
+    # query (0 found for its claimed count). ``consolidations_from_moves``
+    # fits the records to the net moves the ledger replays to (#218, #616:
+    # ``query_assignments`` replayed with this check's Moves is ``revised``).
+    # The handler's ``_settle_records`` derives them again later, but only on
+    # the ``none``/``bedrock`` paths that reach it before writing; ``external``
     # mode writes its LLM request from this function's own return value
-    # first, so it never saw settled records before. Running it here as
-    # well is idempotent (reconciling an already-reconciled list is a
-    # no-op) and makes every mode see the same settled records.
-    consolidations = reconcile_consolidations(
+    # first. Deriving here as well is idempotent (the derived records fed
+    # back in give the same records) and makes every mode see the same ones.
+    consolidations = consolidations_from_moves(
         query_assignments,
-        revised,
+        ledger.moves,
         consolidations,
         unique_value_assessment,
         _engine_infra_cost(analysis_outputs),

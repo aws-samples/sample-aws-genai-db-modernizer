@@ -35,11 +35,13 @@ from src.agents.referee.reality_check import (
     AURORA_ENGINES,
     _build_query_signals,
     _engine_infra_cost,
-    reconcile_consolidations,
     refresh_patterns_and_recommendations,
     run_reality_check,
 )
-from src.agents.referee.reality_check_records import removal_log_lines
+from src.agents.referee.reality_check_records import (
+    consolidations_from_moves,
+    removal_log_lines,
+)
 from src.agents.referee.reality_check_request import (
     build_reality_check_request,
     query_signal_map,
@@ -711,7 +713,10 @@ def _ledger(result: dict) -> MoveLedger:
 
     ``run_reality_check_deterministic`` puts it on the result; a result built
     without one (an older caller) gets one starting from its current engines,
-    so its later steps still record their Moves.
+    so its later steps still record their Moves. The consolidation records are
+    derived from these Moves (``consolidations_from_moves``), so
+    ``_settle_records`` refuses such a result when its engines changed before it
+    got its ledger (``_check_replay``).
     """
     ledger = result.get("move_ledger")
     if not isinstance(ledger, MoveLedger):
@@ -780,15 +785,22 @@ def _run_sanity_sweep(det: dict) -> None:
 def _settle_records(result: dict) -> None:
     """Bring the records in line with the final revised assignment. Idempotent.
 
-    Restores customer overrides, fits the consolidation records to the net moves so
-    they reconcile ``before_`` with ``after_distribution`` (#218; every earlier step
-    can move queries and edit records on its own), and recomputes patterns and
-    recommendations, which were detected before the sweep and the restore.
+    Restores customer overrides, derives the consolidation records from the
+    check's Moves so they reconcile ``before_`` with ``after_distribution`` (#218,
+    #616: one record per net move the ledger replays to), and recomputes patterns
+    and recommendations, which were detected before the sweep and the restore.
     """
     _restore_customer_overrides(result)
-    result["consolidations"] = reconcile_consolidations(
+    # Derived from the ledger (#616). The records are only right when the input
+    # replayed with this check's Moves is the revised assignment, so check that
+    # first: a result whose engines changed without Moves (one built without a
+    # ledger) fails here, rather than writing empty records beside distributions
+    # that show the move.
+    moves = _ledger(result).moves
+    _check_replay(result, moves)
+    result["consolidations"] = consolidations_from_moves(
         result["assignment"].get("query_assignments", []),
-        result["revised_assignments"],
+        moves,
         result["consolidations"],
         result.get("unique_value_assessment"),
         _engine_infra_cost(result.get("analysis_outputs")),

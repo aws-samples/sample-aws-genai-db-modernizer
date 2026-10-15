@@ -126,15 +126,21 @@ def test_the_reality_check_version_replays_from_v1_plus_its_own_moves(run: Pipel
 
 
 @pytest.mark.deterministic
-def test_the_reality_check_records_agree_with_its_moves(run: PipelineResult) -> None:
-    """``consolidations``, ``sweep_decisions`` and ``flag_decisions`` keep their
-    own format (#616) and must say the same thing as the ledger: each
-    consolidation record's (from, to, count) is the ledger's net move for that
-    pair, an engine the sweep removed is exactly where its sweep Moves came
-    from, and each moved flag is one model-flag Move per query."""
+def test_the_reality_check_records_derive_from_its_moves(run: PipelineResult) -> None:
+    """``consolidations``, ``sweep_decisions`` and ``flag_decisions`` are derived
+    from the ledger (#616): the written consolidation records are exactly what
+    ``consolidations_from_moves`` builds from the version's input and its own
+    Moves (fed the written records for the reason text, the retention and the
+    engine's first-assignment verdict, which a Move does not carry, and the
+    analysed engine costs for the saving), each record's (from, to, count) is
+    the ledger's net move for that pair, an engine the sweep removed is exactly
+    where its sweep Moves came from, and each moved flag is one model-flag Move
+    per query."""
     from collections import Counter
 
     from src.agents.referee.move_ledger import replay
+    from src.agents.referee.reality_check_patterns import _engine_infra_cost
+    from src.agents.referee.reality_check_records import consolidations_from_moves
 
     versions = _versions(run)
     output = _reality_check_output(run)
@@ -149,6 +155,23 @@ def test_the_reality_check_records_agree_with_its_moves(run: PipelineResult) -> 
     for c in output["consolidations"]:
         records[(c["from_engine"], c["to_engine"])] += c["query_count"]
     assert records == net
+
+    analysis = {
+        p.name.removeprefix("analysis-"): json.loads((p / "analysis.json").read_text())
+        for p in run.job_dir().glob("analysis-*")
+        if (p / "analysis.json").exists()
+    }
+    before = [
+        qa.model_dump(mode="json") for qa in versions[revised.previous_version].query_assignments
+    ]
+    derived = consolidations_from_moves(
+        before,
+        revised.moves,
+        output["consolidations"],
+        output["unique_value_assessment"],
+        _engine_infra_cost(analysis),
+    )
+    assert derived == output["consolidations"]
 
     sweep_from = {m.from_engine for m in revised.moves if m.pass_.value == "sweep"}
     removed = {d["engine"] for d in output["sweep_decisions"] if d["decision"] == "removed"}

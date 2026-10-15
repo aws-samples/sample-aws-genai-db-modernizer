@@ -48,6 +48,7 @@ from src.agents.referee.move_ledger import (
     ledger_for,
 )
 from src.agents.referee.query_scoring import ScoringContext
+from src.agents.referee.reality_check_records import flag_moves_by_query
 from src.agents.referee.reality_check_request import moved_queries
 from src.agents.referee.reality_check_rules import tie_reason_code
 from src.agents.referee.tie_break import TIE_KIND_UNRESOLVED, break_tie
@@ -306,6 +307,9 @@ def apply_consolidation_flags(
                 gaps.setdefault(qid, set()).add(flag.flagged_engine)
 
     flagged_context = scoring_context.with_flag_gaps(gaps)
+    # This call's Moves start here; the records it re-routes queries out of
+    # are found from them (#616).
+    first_move = len(ledger.moves)
     done: set[str] = set()
     for ok_ids, flag in accepted:
         engine = flag.flagged_engine
@@ -351,13 +355,10 @@ def apply_consolidation_flags(
                 outcome.reason = _kept_reason(engine, label, routing)
                 decisions.append(outcome.as_dict())
                 continue
-            outcome.outcome = OUTCOME_MOVED
-            outcome.destination_engine = routing.destination
-            outcome.score_after = routing.score_after
-            outcome.reason = _moved_reason(engine, label, routing, len(members) > 1)
             grouped = len(members) > 1
+            unit_moves = []
             for m in members:
-                apply_to_assignment(
+                move = apply_to_assignment(
                     ledger,
                     by_id[m],
                     routing.destination,
@@ -377,16 +378,21 @@ def apply_consolidation_flags(
                     tied_engines=list(routing.tied),
                     actor=MoveActor.MODEL_FLAG,
                 )
+                unit_moves.append(move)
+            # The "moved" verdict is its Moves' (#616): every member moved as
+            # one unit, to the same engine, with the same scores.
+            moved = unit_moves[0]
+            outcome.outcome = OUTCOME_MOVED
+            outcome.destination_engine = moved.to_engine
+            outcome.score_before = moved.score_before
+            outcome.score_after = moved.score_after
+            outcome.reason = _moved_reason(engine, label, routing, grouped)
+            for m in members:
                 by_id[m]["assignment_reason"] = outcome.reason
             decisions.append(outcome.as_dict())
 
-    # query_id -> (the flagged engine it left, where it went)
-    moved_off = {
-        qid: (d["flagged_engine"], d["destination_engine"])
-        for d in decisions
-        if d["outcome"] == OUTCOME_MOVED
-        for qid in d["query_ids"] + d["moved_with_group"]
-    }
+    # query_id -> (the flagged engine it left, where it went), from the Moves
+    moved_off = flag_moves_by_query(ledger.moves[first_move:])
     return (
         revised_assignments,
         _update_consolidation_records(consolidations, moved_off, original_engine),

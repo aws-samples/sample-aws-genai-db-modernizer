@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+import pytest
+
 from src.agents.referee.model_flags import apply_consolidation_flags
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.reality_check import (
@@ -28,6 +30,7 @@ from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.contracts.model_flag import ModelFlag
 from src.report import renderers
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.referee.ledger_fakes import recorded_ledger
 
 
 def _qa(qid: str, engine: str, reason: str = "assigned", **extra) -> dict:
@@ -568,9 +571,12 @@ class TestRecommendations:
 class TestWrittenOutput:
     def test_output_records_reconcile_with_the_shipped_distributions(self, tmp_path) -> None:
         before, revised, records = _wordpress_pass2()
-        # Simulate the run-3 drift: two records lost, one overstated.
+        # Simulate the run-3 drift: two records lost, one overstated. The
+        # records are derived from the check's Moves (#616), so the result
+        # carries the ledger its engine changes were recorded on.
         records = [records[0], records[3]]
         result = {
+            "move_ledger": recorded_ledger(before, revised),
             "revised_assignments": revised,
             "consolidations": records,
             "architectural_patterns": [],
@@ -594,6 +600,33 @@ class TestWrittenOutput:
         _assert_invariant(before, revised, out["consolidations"])
 
 
+class TestAResultWithoutMovesFailsLoudly:
+    def test_engines_changed_without_a_ledger_are_refused(self, tmp_path) -> None:
+        """The records are derived from the Moves (#616): a hand-built result
+        that moved a query but carries no ledger would get empty records beside
+        distributions that show the move, so it is refused instead."""
+        before = [_qa("a", "documentdb"), _qa("b", "dynamodb")]
+        revised = [_qa("a", "dynamodb"), _qa("b", "dynamodb")]
+        result = {
+            "revised_assignments": revised,
+            "consolidations": [],
+            "architectural_patterns": [],
+            "recommendations": [],
+            "unique_value_assessment": {},
+            "executive_summary": None,
+            "before_distribution": _distribution(before),
+            "after_distribution": _distribution(revised),
+            "lightweight_recommendations": [],
+            "assignment": {"query_assignments": before},
+            "collector_output": {},
+            "analysis_outputs": {},
+        }
+        store = LocalArtifactStore(base_dir=str(tmp_path))
+
+        with pytest.raises(RuntimeError, match="without a Move"):
+            write_reality_check_result(store, "job-1", "mydb", result, 1, write_revision=False)
+
+
 class TestEliminatedEnginesField:
     """The written output's ``eliminated_engines`` is the shared in-scope rule (#235),
     not the any-query diff ``before_distribution``/``after_distribution`` give --
@@ -601,6 +634,7 @@ class TestEliminatedEnginesField:
 
     def _write(self, tmp_path, before: list[dict], revised: list[dict]) -> dict:
         result = {
+            "move_ledger": recorded_ledger(before, revised),
             "revised_assignments": revised,
             "consolidations": reconcile_consolidations(before, revised, []),
             "architectural_patterns": [],

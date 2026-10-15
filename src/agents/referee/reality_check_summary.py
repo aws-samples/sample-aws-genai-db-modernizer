@@ -214,7 +214,7 @@ def final_outcome(
     (``src.shared.engine_elimination.eliminated_engines``, #235) computed from the
     actual per-query before/after assignments, not re-derived here from
     ``consolidations``' ``action`` field -- the two already agree whenever
-    ``reconcile_consolidations`` produced ``consolidations`` (it now uses the same
+    ``consolidations_from_moves`` produced ``consolidations`` (it uses the same
     shared helper, #235), but a caller that already has the authoritative set
     should read it, not keep a second copy that could drift from it.
 

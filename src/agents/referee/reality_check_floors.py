@@ -21,7 +21,7 @@ from src.agents.referee.move_ledger import (
     best_other,
     ledger_for,
 )
-from src.agents.referee.reality_check_records import _queries
+from src.agents.referee.reality_check_records import _queries, engine_changes
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
     ENGINE_BASE_COST,
@@ -569,6 +569,8 @@ def _apply_justification_floors(
                 )
             continue
 
+        # This engine's floor Moves start here; its records count them (#616).
+        first_move = len(ledger.moves)
         for target_engine, placed in floor_placement.items():
             for qa, fit_reason, has_scores in placed:
                 _, this_reason = verdicts[qa["query_id"]]
@@ -626,7 +628,9 @@ def _apply_justification_floors(
         floor_entry_reason = (
             f"{display_engine(engine)} does not meet its justification floor — {floor_reason}"
         )
-        for target_engine, placed in floor_placement.items():
+        floor_changes = engine_changes(ledger.moves[first_move:])
+        for target_engine in floor_placement:
+            moved_here = len(floor_changes.get((engine, target_engine), []))
             # moved_queries() (reality_check_request.py) recomputes membership
             # from (from_engine, to_engine) alone, so two consolidation records
             # for the same pair would double-count the same queries. Merge into
@@ -643,9 +647,9 @@ def _apply_justification_floors(
                 None,
             )
             if existing is not None:
-                existing["query_count"] += len(placed)
+                existing["query_count"] += moved_here
                 existing["reason"] = (
-                    f"{existing['reason']} | {_queries(len(placed))} of these also move "
+                    f"{existing['reason']} | {_queries(moved_here)} of these also move "
                     f"because {floor_entry_reason}"
                 )
                 continue
@@ -653,9 +657,9 @@ def _apply_justification_floors(
                 {
                     "from_engine": engine,
                     "to_engine": target_engine,
-                    "query_count": len(placed),
+                    "query_count": moved_here,
                     "reason": floor_entry_reason,
-                    # The saving is set by reconcile_consolidations (#793).
+                    # The saving is set by consolidations_from_moves (#793).
                     "saved_cost_estimate": 0,
                     "action": "full" if is_full else "partial",
                     "queries_retained": (
