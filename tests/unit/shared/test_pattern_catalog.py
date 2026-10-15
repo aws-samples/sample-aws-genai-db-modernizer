@@ -426,7 +426,7 @@ class TestConstantsAreTheCatalogsView:
             ("aurora-anti-01", "high-frequency-pk-lookup", 0.8),
             ("aurora-anti-02", "simple-cache-read", 0.7),
             ("aurora-anti-03", "full-text-search-candidate", 0.6),
-            ("aurora-anti-04", "unbounded-time-series-ingest", 0.7),
+            ("aurora-anti-04", "unbounded-time-series-ingest", 0.4),
             ("aurora-anti-05", "no-relational-need", 0.6),
             ("aurora-anti-06", "single-access-pattern-table", 0.5),
             ("aurora-anti-07", "high-volume-text-search", 0.7),
@@ -459,7 +459,7 @@ class TestConstantsAreTheCatalogsView:
             assert ap.description.endswith(" " + hint)
             assert ap.guidance in common.CATALOG_ENGINE_GUIDANCE
         assert common.NO_RELATIONAL_NEED_ENGINE_HINT.startswith("This workload has no structural")
-        assert common.TIME_SERIES_INGEST_GUIDANCE.startswith("Consider DynamoDB (with TTL)")
+        assert common.TIME_SERIES_INGEST_GUIDANCE.startswith("Set a retention rule")
 
     def test_query_scoring_tables(self) -> None:
         search = {"aurora_postgresql", "aurora_mysql", "documentdb"}

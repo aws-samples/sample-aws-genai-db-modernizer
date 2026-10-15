@@ -37,7 +37,6 @@ from src.contracts.analysis_output import (
 )
 from src.tools.analysis.opensearch_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
-    HIGH_INGEST_CPS_THRESHOLD,
     OPENSEARCH_SEARCH_WEIGHTS,
     OPENSEARCH_TIMESERIES_WEIGHTS,
     PATTERN_BY_ID,
@@ -45,6 +44,7 @@ from src.tools.analysis.opensearch_pattern_catalog import (
     STALENESS_TABLE_KEYWORDS,
     TIMESERIES_PATTERN_TYPES,
 )
+from src.tools.analysis.pattern_catalog_base import HIGH_INGEST_CPS_THRESHOLD
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
@@ -376,7 +376,7 @@ def _is_timeseries(
 
     Criteria (ALL required):
     1. Timestamp range patterns present (time-range-query or time-aggregation).
-    2. INSERT CPS >= 10 with INSERT_CPS:UPDATE_DELETE_CPS >= 5:1.
+    2. INSERT CPS >= HIGH_INGEST_CPS_THRESHOLD with INSERT_CPS:UPDATE_DELETE_CPS >= 5:1.
     3. Staleness indicators in table or column names.
     """
     # --- Criterion 1: timestamp range patterns ---
@@ -387,7 +387,7 @@ def _is_timeseries(
     if not has_timestamp_patterns:
         return False
 
-    # --- Criterion 2: INSERT CPS >= 10, INSERT:UPDATE+DELETE >= 5:1 ---
+    # --- Criterion 2: INSERT CPS >= HIGH_INGEST_CPS_THRESHOLD, INSERT:UPDATE+DELETE >= 5:1 ---
     insert_cps = 0.0
     update_delete_cps = 0.0
     for q in table_queries:

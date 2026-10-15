@@ -371,7 +371,6 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
                 "STANDARD_CRUD_MIN_CPS",
                 "BASELINE_PATTERN_MATCH_FLOOR",
                 "HIGH_FREQUENCY_PK_LOOKUP_CPS",
-                "HIGH_INGEST_CPS_THRESHOLD",
                 "CACHE_READ_CPS_THRESHOLD",
                 "HIGH_VOLUME_TEXT_SEARCH_CPS",
                 "TEXT_COLUMN_RATIO_THRESHOLD",
@@ -390,9 +389,9 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         ),
         _DETECTION,
     ),
-    "src/tools/analysis/opensearch_pattern_catalog.py": (
+    "src/tools/analysis/pattern_catalog_base.py": (
         frozenset({"HIGH_INGEST_CPS_THRESHOLD"}),
-        _DETECTION + " (#493 unifies it with Aurora's)",
+        _DETECTION + "; one value for OpenSearch's os-07 and Aurora's anti-04 (#493)",
     ),
     "src/agents/referee/routed_confidence.py": (frozenset({"LEAD_MIN_SHARE"}), _WORDING),
     "src/shared/ranking.py": (frozenset({"PARTIAL_EVIDENCE_MIN_SHARE"}), _WORDING),

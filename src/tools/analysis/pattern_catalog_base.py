@@ -14,6 +14,16 @@ from dataclasses import dataclass, field
 
 from src.shared.catalog.patterns import CatalogName, catalog_entries
 
+# A table's summed INSERT calls per second at or above which it is a
+# high-ingest table, for every engine's detector (#493). OpenSearch's os-07
+# (high-ingest) and Aurora's aurora-anti-04 (unbounded time-series ingest) read
+# this same fact and used to compare it against 10 and 50. 10 is the value kept:
+# it is the one os-07's description states and its boundary tests pin, and it
+# fits anti-04's concern (unbounded growth with no reads: 10 inserts/s is about
+# 26 million rows a month). It is a workload fact, not an engine property, so
+# it lives here rather than in an engine file.
+HIGH_INGEST_CPS_THRESHOLD: float = 10.0
+
 
 @dataclass(frozen=True)
 class CatalogPattern:

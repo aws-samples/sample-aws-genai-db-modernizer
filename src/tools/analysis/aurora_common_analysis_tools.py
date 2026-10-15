@@ -30,7 +30,6 @@ from src.tools.analysis.aurora_common_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     CACHE_READ_CPS_THRESHOLD,
     HIGH_FREQUENCY_PK_LOOKUP_CPS,
-    HIGH_INGEST_CPS_THRESHOLD,
     HIGH_VOLUME_TEXT_SEARCH_CPS,
     PATTERN_BY_ID,
     SKIP_QUERY_TYPES,
@@ -39,6 +38,7 @@ from src.tools.analysis.aurora_common_pattern_catalog import (
     TEXT_DATA_TYPES,
     TRANSACTION_WRITE_TYPES,
 )
+from src.tools.analysis.pattern_catalog_base import HIGH_INGEST_CPS_THRESHOLD
 from src.tools.analysis.scoring import TableProfile
 from src.tools.sql.query_facts import query_facts
 

@@ -25,28 +25,38 @@ kind = "unscored"
 supported = true
 why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
 
-# Detection signals: Append-only INSERT at very high rate with no complex reads
+# Detection signals: summed INSERT rate >= HIGH_INGEST_CPS_THRESHOLD (pattern_catalog_base)
+# on a table that no join or aggregate read touches. The concern is retention, not write
+# throughput (#493): Aurora sustains this rate natively, but rows nobody reads accumulate
+# without bound (about 26 million a month at 10 INSERTs/s). A data-lifecycle task, not a
+# sign the engine is the wrong fit, so it is MEDIUM (severity below 0.7) and below every
+# other Aurora anti-pattern.
 [engines.aurora_postgresql]
 kind = "anti_pattern"
 supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-anti-04"
-severity = 0.7
-why = "Append-only INSERT workload at very high rate with no complex read queries."
-engine_hint = "DynamoDB or OpenSearch time-series indices are better suited for high-throughput append-only ingestion without relational query needs."
-guidance = "Consider DynamoDB (with TTL) or OpenSearch data streams for high-throughput append-only workloads that don't require complex relational queries."
+severity = 0.4
+why = "Append-only table: 10 or more INSERTs per second and no join or aggregate reads, so rows accumulate unread and the table grows without bound unless old rows expire."
+engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
+guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
 guidance_names_engine = true
 
-# Detection signals: Append-only INSERT at very high rate with no complex reads
+# Detection signals: summed INSERT rate >= HIGH_INGEST_CPS_THRESHOLD (pattern_catalog_base)
+# on a table that no join or aggregate read touches. The concern is retention, not write
+# throughput (#493): Aurora sustains this rate natively, but rows nobody reads accumulate
+# without bound (about 26 million a month at 10 INSERTs/s). A data-lifecycle task, not a
+# sign the engine is the wrong fit, so it is MEDIUM (severity below 0.7) and below every
+# other Aurora anti-pattern.
 [engines.aurora_mysql]
 kind = "anti_pattern"
 supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-anti-04"
-severity = 0.7
-why = "Append-only INSERT workload at very high rate with no complex read queries."
-engine_hint = "DynamoDB or OpenSearch time-series indices are better suited for high-throughput append-only ingestion without relational query needs."
-guidance = "Consider DynamoDB (with TTL) or OpenSearch data streams for high-throughput append-only workloads that don't require complex relational queries."
+severity = 0.4
+why = "Append-only table: 10 or more INSERTs per second and no join or aggregate reads, so rows accumulate unread and the table grows without bound unless old rows expire."
+engine_hint = "DynamoDB TTL or OpenSearch index lifecycle policies expire old rows automatically."
+guidance = "Set a retention rule for this table: expire old rows with DynamoDB TTL or OpenSearch index lifecycle policies, or keep it on Aurora with time partitions that are dropped or archived to Amazon S3."
 guidance_names_engine = true
 
 [engines.neptune]

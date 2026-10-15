@@ -69,12 +69,7 @@ OPENSEARCH_TIMESERIES_WEIGHTS: dict[str, float] = {
 }
 
 
-# ==========================================================================
-# Constants
-# ==========================================================================
-
-# INSERT CPS threshold for high-ingest pattern detection (per table, summed across all queries)
-HIGH_INGEST_CPS_THRESHOLD: float = 10.0
+# The high-ingest threshold is shared with every engine: pattern_catalog_base.
 
 
 # ==========================================================================

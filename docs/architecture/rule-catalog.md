@@ -95,7 +95,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`transactional-write`](#transactional-write) | - | - | - | - | fit 90 | fit 90 | future | future | - | - | - | 1 |
 | [`unbounded-array-growth`](#unbounded-array-growth) | - | anti 0.7 | - | - | - | - | future | future | - | - | - | none |
 | [`unbounded-result-set`](#unbounded-result-set) | anti 0.2 | - | - | - | - | - | future | future | - | - | - | 1 |
-| [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | - | - | - | 1 |
+| [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.4 | anti 0.4 | future | future | - | - | - | 1 |
 | [`upsert-conflict`](#upsert-conflict) | - | - | - | - | fit 80 | - | future | future | - | - | - | 1 |
 | [`upsert-duplicate-key`](#upsert-duplicate-key) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
 | [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | future | future | - | - | - | none |
@@ -715,8 +715,8 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
-- Aurora PostgreSQL, anti 0.7 (aurora-anti-04): Append-only INSERT workload at very high rate with no complex read queries.
-- Aurora MySQL, anti 0.7 (aurora-anti-04): Append-only INSERT workload at very high rate with no complex read queries.
+- Aurora PostgreSQL, anti 0.4 (aurora-anti-04): Append-only table: 10 or more INSERTs per second and no join or aggregate reads, so rows accumulate unread and the table grows without bound unless old rows expire.
+- Aurora MySQL, anti 0.4 (aurora-anti-04): Append-only table: 10 or more INSERTs per second and no join or aggregate reads, so rows accumulate unread and the table grows without bound unless old rows expire.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 

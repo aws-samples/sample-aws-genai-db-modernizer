@@ -572,7 +572,7 @@ def test_hint_rewritten_as_two_sentences_is_removed_whole(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("pattern_type", "expected"),
     [
-        ("unbounded-time-series-ingest", "write throughput"),
+        ("unbounded-time-series-ingest", "retention rule"),
         ("full-text-search-candidate", "text index and search configuration"),
         ("high-volume-text-search", "text index and search configuration"),
         ("single-access-pattern-table", "tune indexes or query plans"),

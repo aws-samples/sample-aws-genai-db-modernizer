@@ -2137,8 +2137,9 @@ def _assigned_engine_mitigation(
     name = display_name(engine)
     if recommendation == TIME_SERIES_INGEST_GUIDANCE:
         return (
-            f"Load-test the write throughput of {count} on {name} at the production insert "
-            "rate and size capacity and batching until sustained ingest stays within the target."
+            f"Set a retention rule on {name} for the rows written by {count}: partition the "
+            "table by time and drop or archive old partitions (for example to Amazon S3), and "
+            "size storage for the rows you keep."
         )
     if recommendation in (FULL_TEXT_SEARCH_GUIDANCE, HIGH_VOLUME_TEXT_SEARCH_GUIDANCE):
         return (

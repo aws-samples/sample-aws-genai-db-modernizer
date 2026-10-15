@@ -137,7 +137,7 @@ BASELINE_PATTERN_MATCH_FLOOR: int = 45
 
 # Thresholds
 HIGH_FREQUENCY_PK_LOOKUP_CPS: float = 30.0
-HIGH_INGEST_CPS_THRESHOLD: float = 50.0
+# The high-ingest threshold is shared with every engine: pattern_catalog_base.
 CACHE_READ_CPS_THRESHOLD: float = 20.0
 HIGH_VOLUME_TEXT_SEARCH_CPS: float = 10.0
 TEXT_COLUMN_RATIO_THRESHOLD: float = 0.40
