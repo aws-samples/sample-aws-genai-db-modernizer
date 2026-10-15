@@ -12,6 +12,7 @@ import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.sql_cte import drop_cte_references
+from src.tools.sql.bulk_load import bulk_load_table, copy_table
 
 logger = logging.getLogger(__name__)
 
@@ -383,10 +384,19 @@ _ORDER_COL_RE = re.compile(r"ORDER\s+BY\s+(.*?)(?:LIMIT|OFFSET|$)", re.I)
 
 def _extract_query_type(sql: str) -> str:
     m = _QUERY_TYPE_RE.match(sql)
-    return m.group(1).upper() if m else "OTHER"
+    if m:
+        return m.group(1).upper()
+    # COPY ... FROM / LOAD DATA load rows into their table: a write (#777).
+    return "INSERT" if bulk_load_table(sql) else "OTHER"
 
 
 def _extract_tables(sql: str) -> list[str]:
+    # A bulk load or a COPY <table> TO export names one table, its target; the
+    # scan below would read FROM STDIN / INTO TABLE as tables named STDIN /
+    # TABLE, or miss the export's table (#777), as the offline parser does.
+    target = copy_table(sql) or bulk_load_table(sql)
+    if target is not None:
+        return [target[1]]
     # ON CONFLICT DO UPDATE names a column, not a table. Mask it so SET/column
     # tokens are not captured by the UPDATE alternative in _TABLE_RE.
     scanned = re.sub(r"\bDO\s+UPDATE\b", " ", sql, flags=re.I)

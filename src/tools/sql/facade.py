@@ -36,7 +36,9 @@ doesn't model, e.g. ``REFRESH MATERIALIZED VIEW``) or something that is not a
 statement (an expression it read out of garbage text), or the text is empty, the
 facade returns the regex extractor's answer
 (:func:`src.tools.sql.regex_tables.regex_table_refs`) with
-``parsed_by="regex"`` and the reason. It never raises.
+``parsed_by="regex"`` and the reason. It never raises. MySQL's ``LOAD DATA
+... INTO TABLE t``, which sqlglot can't parse, takes this path; the regex
+reads its target table (:mod:`src.tools.sql.bulk_load`, #777).
 
 Resolving a reference to a collection's table id (``<database>.<table>``)
 stays with the caller: it needs the collection's table list.

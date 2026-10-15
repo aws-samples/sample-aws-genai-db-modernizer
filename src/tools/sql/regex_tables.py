@@ -22,6 +22,12 @@ A keyword must start a word and not be a parameter or variable name: T-SQL's
 FROM clause (#663). Upsert clauses that use ``UPDATE`` for a column
 assignment are skipped (#552), and ``FROM``/``JOIN`` references to a
 ``WITH``-defined CTE name are dropped (#682).
+
+A bulk load (``COPY <table> FROM ...``, ``LOAD DATA ... INTO TABLE <table>``)
+and a ``COPY <table> TO ...`` export name exactly one table, their target
+(:mod:`src.tools.sql.bulk_load`, #777): the scan would otherwise read
+``FROM STDIN`` as a table named ``STDIN`` and ``INTO TABLE`` as one named
+``TABLE``. ``COPY (<query>) TO ...`` is scanned like any other query.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ import re
 
 from src.shared.sql_comments import block_comments_nest, strip_leading_comments
 from src.tools.database.sql_cte import drop_cte_references
+from src.tools.sql.bulk_load import bulk_load_table, copy_table
 
 
 def is_merge_statement(query_text: str, source_engine: str = "") -> bool:
@@ -55,6 +62,9 @@ def regex_table_refs(query_text: str, source_engine: str = "") -> list[tuple[lis
     ``source_engine`` (a source engine or sqlglot dialect name) says how its
     comments nest.
     """
+    target = copy_table(query_text, source_engine) or bulk_load_table(query_text, source_engine)
+    if target is not None:
+        return [target]
     is_merge = is_merge_statement(query_text, source_engine)
     using = r"|USING" if is_merge else ""
     table_re = re.compile(

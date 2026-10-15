@@ -79,6 +79,34 @@ def test_copy_from_stdin_resolves_to_the_table():
     assert _tables(["COPY public.wp_posts (id, title) FROM STDIN WITH CSV"]) == [["shop.wp_posts"]]
 
 
+def _parsed(queries: list[str], engine: str) -> list[dict]:
+    queries_out: list[dict] = parse_offline_collection(_collection(queries, engine))["queries"]
+    return queries_out
+
+
+@pytest.mark.parametrize(
+    "sql,engine",
+    [
+        ("COPY wp_posts FROM STDIN", "postgresql"),
+        ("COPY public.wp_posts (id, title) FROM STDIN WITH CSV", "postgresql"),
+        ("LOAD DATA LOCAL INFILE 'x.csv' INTO TABLE wp_posts", "mysql"),
+        ("LOAD DATA INFILE ? REPLACE INTO TABLE shop.wp_posts FIELDS TERMINATED BY ?", "mysql"),
+    ],
+)
+def test_a_bulk_load_is_a_write_to_its_table_on_both_dialects(sql, engine):
+    # #777: LOAD DATA resolved to a table named TABLE, and both forms were
+    # typed OTHER. They load rows into the table, so they are writes to it.
+    (query,) = _parsed([sql], engine)
+    assert query["tables_accessed"] == ["shop.wp_posts"]
+    assert query["query_type"] == "INSERT"
+
+
+def test_a_copy_export_is_not_a_write():
+    (query,) = _parsed(["COPY wp_posts TO STDOUT"], "postgresql")
+    assert query["tables_accessed"] == ["shop.wp_posts"]
+    assert query["query_type"] == "OTHER"
+
+
 def test_a_statement_sqlglot_does_not_model_falls_back_to_the_regex():
     # REFRESH MATERIALIZED VIEW is a generic Command node in sqlglot.
     assert _tables(["REFRESH MATERIALIZED VIEW CONCURRENTLY orders"]) == [["shop.orders"]]
