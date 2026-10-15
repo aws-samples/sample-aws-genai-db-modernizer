@@ -107,6 +107,9 @@ Version History:
   version it was derived from, the rollback (from the reroute) to the version
   it restates. So every version replays from v1 plus each later version's
   own Moves.
+- 1.14 (2026-10-15, #787): No change of its own. ``Assignment.moves`` embeds
+  ``Move``, whose evidence gained ``group_gates`` and whose rule gained
+  ``fallback.no_group_owner`` (move ledger 1.5).
 """
 
 from datetime import datetime

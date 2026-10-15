@@ -114,13 +114,15 @@ def categorize(reason: str) -> str:
         return "reality_check_justification_floor"
     if "no unique value" in reason:
         return "reality_check_no_unique_value"
+    if "no analyzed engine can serve every member" in reason:
+        # #787: a co-dependency group no engine can host takes the Aurora
+        # fallback (it read "no analysis available" before).
+        return "co_dependency_fallback"
     if "co-dependency group" in reason:
         # "scores tie with" (#503): break_owner_tie's wording changed from
         # "(tie with X: ...)" to a full, honest sentence built with
         # display_engine, so the tie marker moved with it.
         return "co_dependency_tie" if "scores tie with" in reason else "co_dependency_group"
-    if "no analysis available" in reason:
-        return "fallback_no_analysis"
     if "signal override:" in reason:
         return "signal_override"
     if "highest fit for" in reason:

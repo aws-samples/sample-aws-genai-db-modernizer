@@ -85,6 +85,18 @@ Version History:
   ``group_key``. Its ``score_before`` is the undone Move's ``score_after``;
   its ``score_after`` is ``None`` because the flag still gates the engine it
   lands on (the gate is in ``evidence.candidates``, #770 option (a)).
+- 1.5 (2026-10-15, #787): Added ``GroupGate``, ``MoveEvidence.group_gates``
+  (default empty) and ``ReasonCode.FALLBACK_NO_GROUP_OWNER``
+  (``fallback.no_group_owner``); additive, 1.4 records still load. A
+  co-dependency group that no analyzed engine can serve (every engine is gated
+  for at least one member: the capability or hard-exclusion gate, or the
+  ownership gate) takes the Aurora fallback with rule
+  ``fallback.no_group_owner`` (it was ``fallback.no_owner``, which now means
+  only a single query with no owner candidate, on the cache owner
+  normalisation); each member's Move now lists,
+  per analyzed engine, the first member (by query id) that ruled it out and
+  the gate kind, so a reader can say why the group fell back even for a
+  member with real, ungated scores of its own.
 """
 
 from __future__ import annotations
@@ -136,9 +148,14 @@ class ReasonCode(str, Enum):
     OVERRIDE_TEXT_SEARCH = "override.text_search"
     OVERRIDE_UTILITY = "override.utility"
     FALLBACK_NO_SCORE = "fallback.no_score"
-    # A co-dependency group with no engine able to own every member: the
-    # resolver's "no analysis available" fallback, kept apart from no_score.
+    # A single query with no engine able to own it at all (the cache owner
+    # normalisation's "no owner candidate" fallback, #786), kept apart from
+    # no_score (every candidate gated).
     FALLBACK_NO_OWNER = "fallback.no_owner"
+    # A co-dependency group with no engine able to serve every member (each
+    # engine gated for at least one member; evidence.group_gates names them,
+    # #787).
+    FALLBACK_NO_GROUP_OWNER = "fallback.no_group_owner"
     CONSOLIDATE_NO_UNIQUE_VALUE = "consolidate.no_unique_value"
     CONSOLIDATE_SOURCE_COMPATIBLE_SURVIVES = "consolidate.source_compatible_survives"
     FLOOR_OPENSEARCH = "floor.opensearch"
@@ -191,8 +208,26 @@ class CandidateScore(BaseModel):
         None,
         description=(
             "Why the engine could not take the query: the scorer's gate kind "
-            "(exclusion, capability) or write_gate (an engine that is not a system "
+            "(hard_exclusion, capability, model_flag) or write_gate (an engine that is not a system "
             "of record cannot own a write). None when the engine was eligible"
+        ),
+    )
+
+
+class GroupGate(BaseModel):
+    """Why one engine could not host a co-dependency group (#787)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    engine: str = Field(..., description="The analyzed engine that was ruled out")
+    query_id: str = Field(
+        ..., description="The first member (by query id) the engine could not take"
+    )
+    gate: str = Field(
+        ...,
+        description=(
+            "The gate that ruled it out for that member: the scorer's gate kind "
+            "(hard_exclusion, capability, model_flag) or write_gate (not a system of record)"
         ),
     )
 
@@ -209,6 +244,14 @@ class MoveEvidence(BaseModel):
     group_scores: dict[str, float] = Field(
         default_factory=dict,
         description="For a co-dependency group: each eligible engine's mean member score",
+    )
+    group_gates: list[GroupGate] = Field(
+        default_factory=list,
+        description=(
+            "For a co-dependency group no engine can serve (rule fallback.no_group_owner): "
+            "each analyzed engine, sorted, with the member and gate that ruled it out. "
+            "Empty otherwise"
+        ),
     )
     signal: str | None = Field(None, description="The triage signal of a signal override")
     replaced_engine: str | None = Field(

@@ -24,7 +24,7 @@ from src.agents.referee.query_scoring import (
     GATE_KIND_HARD_EXCLUSION,
     GATE_KIND_MODEL_FLAG,
 )
-from src.contracts.move_ledger import Move, MoveActor, ReasonCode
+from src.contracts.move_ledger import GroupGate, Move, MoveActor, ReasonCode
 from src.shared.engine_names import display_engine
 
 __all__ = [
@@ -33,6 +33,7 @@ __all__ = [
     "WRITE_GATE",
     "format_score",
     "gate_text",
+    "render_group_gates",
     "render_move_reason",
     "render_outscored",
     "render_runner_up",
@@ -74,7 +75,8 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.OVERRIDE_TEXT_SEARCH: "full-text search",
     ReasonCode.OVERRIDE_UTILITY: "administration statement",
     ReasonCode.FALLBACK_NO_SCORE: "no engine could score it",
-    ReasonCode.FALLBACK_NO_OWNER: "no engine could own its group",
+    ReasonCode.FALLBACK_NO_OWNER: "no engine could own it",
+    ReasonCode.FALLBACK_NO_GROUP_OWNER: "no engine could serve its whole group",
     ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE: "engine consolidated away",
     ReasonCode.CONSOLIDATE_SOURCE_COMPATIBLE_SURVIVES: "source-compatible engine kept",
     ReasonCode.FLOOR_OPENSEARCH: "too little search work for OpenSearch",
@@ -99,6 +101,52 @@ _TIE_DECIDED: dict[ReasonCode, str] = {
         "a fixed, repeatable order picked an engine to hold it until the customer chooses"
     ),
 }
+
+
+# Per gate kind, how a co-dependency group's fallback names the engines that
+# gate ruled out (#787): one engine, then several. The member is "a member
+# query"; its id stays in ``MoveEvidence.group_gates``.
+_GROUP_GATE_TEXT: dict[str, tuple[str, str]] = {
+    GATE_KIND_CAPABILITY: (
+        "{engines} lacks a capability a member query needs",
+        "{engines} lack a capability a member query needs",
+    ),
+    GATE_KIND_HARD_EXCLUSION: (
+        "{engines} is ruled out for a member query",
+        "{engines} are ruled out for a member query",
+    ),
+    GATE_KIND_MODEL_FLAG: (
+        "a design review found {engines} cannot support a member query",
+        "a design review found {engines} cannot support a member query",
+    ),
+    # Not "that writes data": a cache engine owns no query at all.
+    WRITE_GATE: (
+        "{engines} cannot own a member query",
+        "{engines} cannot own a member query",
+    ),
+}
+_GROUP_GATE_OTHER = (
+    "{engines} cannot serve a member query",
+    "{engines} cannot serve a member query",
+)
+
+
+def render_group_gates(gates: Iterable[GroupGate]) -> str:
+    """Why no engine could host a co-dependency group, from ``evidence.group_gates``.
+
+    Engines ruled out by the same gate kind share one clause, in the order of
+    ``gates``: ``DocumentDB and DynamoDB lack a capability a member query
+    needs; OpenSearch cannot own a member query``. Empty when
+    there are no gates (no engine was analyzed).
+    """
+    by_gate: dict[str, list[str]] = {}
+    for g in gates:
+        by_gate.setdefault(g.gate, []).append(g.engine)
+    parts = []
+    for gate, engines in by_gate.items():
+        one, many = _GROUP_GATE_TEXT.get(gate, _GROUP_GATE_OTHER)
+        parts.append((one if len(engines) == 1 else many).format(engines=_names(engines)))
+    return "; ".join(parts)
 
 
 def format_score(score: float | None) -> str:
@@ -196,8 +244,13 @@ def _first_assignment(move: Move) -> str:
     if code == ReasonCode.FALLBACK_NO_SCORE:
         return f"No engine could score this query, so it falls back to {to}."
     if code == ReasonCode.FALLBACK_NO_OWNER:
+        return f"No analyzed engine can own this query, so it falls back to {to}."
+    if code == ReasonCode.FALLBACK_NO_GROUP_OWNER:
+        gates = render_group_gates(move.evidence.group_gates)
+        detail = f" ({gates})" if gates else ""
         return (
-            f"No engine can own every query in its co-dependency group, so it falls back to {to}."
+            "No analyzed engine can serve every query in its co-dependency group"
+            f"{detail}, so it falls back to {to}."
         )
     if code == ReasonCode.CUSTOMER_PICK:
         return f"Assigned to {to} at the customer's request."

@@ -39,7 +39,7 @@ default, that records each query's full per-engine score ladder for
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import (
@@ -87,8 +87,9 @@ from src.contracts.assignment_models import (
     CacheOverlaySummary,
     QueryAssignment,
 )
-from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
+from src.contracts.move_ledger import GroupGate, MoveEvidence, MovePass, ReasonCode
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
+from src.shared.move_reasons import render_group_gates
 from src.shared.signal_labels import signal_noun
 
 # Callers import these from here; they live in the modules imported above.
@@ -355,6 +356,7 @@ class AssignmentResolver:
             group_scores: Mapping[str, float] | None = None,
             signal: str | None = None,
             replaced_engine: str | None = None,
+            group_gates: Iterable[GroupGate] = (),
         ) -> MoveEvidence:
             """The query's candidate ladder (every analyzed engine), plus what the pass saw."""
             qid = query["query_id"]
@@ -367,9 +369,25 @@ class AssignmentResolver:
             return MoveEvidence(
                 candidates=ladder,
                 group_scores=dict(group_scores or {}),
+                group_gates=list(group_gates),
                 signal=signal,
                 replaced_engine=replaced_engine,
             )
+
+        def _group_gates(group: Iterable[str]) -> list[GroupGate]:
+            """Per analyzed engine, the first member (by id) it cannot take, and why (#787)."""
+            out: list[GroupGate] = []
+            for engine in sorted(analysis_outputs):
+                for qid in sorted(group):
+                    if not can_own(engine, query_by_id.get(qid)):
+                        gate = "write_gate"
+                    elif _score(qid, engine) is None:
+                        gate = gates_by_query.get(qid, {}).get(engine) or "gated"
+                    else:
+                        continue
+                    out.append(GroupGate(engine=engine, query_id=qid, gate=gate))
+                    break
+            return out
 
         assigned_confidence: dict[str, int] = {}
         assigned_reason: dict[str, str] = {}
@@ -382,6 +400,8 @@ class AssignmentResolver:
         # The ledger rule (and co-dependency group key) of each fallback query.
         fallback_reason: dict[str, ReasonCode] = {}
         fallback_group: dict[str, str] = {}
+        # A fallback group's gates (#787): why no engine could host it.
+        fallback_group_gates: dict[str, list[GroupGate]] = {}
         # Exact score ties, resolved once every untied query is placed:
         # source-compatible wins, otherwise reported as unresolved (#503).
         # The last item is what the tie was ranked on (the group's mean scores,
@@ -402,13 +422,18 @@ class AssignmentResolver:
                 )
             ]
             if not candidates:
+                # No engine can serve every member (#787): the reason, set once
+                # the fallback engine is known, names the gates, and so does the
+                # Move's evidence -- never "no analysis available" for a member
+                # with real scores of its own.
+                gates = _group_gates(group)
                 for qid in group:
                     fallback_qids.append(qid)
-                    fallback_reason[qid] = ReasonCode.FALLBACK_NO_OWNER
+                    fallback_reason[qid] = ReasonCode.FALLBACK_NO_GROUP_OWNER
                     fallback_group[qid] = group_key(group)
+                    fallback_group_gates[qid] = gates
                     handled.add(qid)
                     assigned_confidence[qid] = 0
-                    assigned_reason[qid] = "no analysis available"
                 continue
             group_score = {
                 e: sum(scores.get(qid, {}).get(e, 0) for qid in group) / len(group)
@@ -609,10 +634,16 @@ class AssignmentResolver:
                     pass_=MovePass.AURORA_FALLBACK,
                     reason_code=fallback_reason[qid],
                     score_after=_score(qid, aurora_fallback),
-                    evidence=_evidence(query_by_id[qid]),
+                    evidence=_evidence(
+                        query_by_id[qid], group_gates=fallback_group_gates.get(qid, ())
+                    ),
                     group_key=fallback_group.get(qid),
                     tied_engines=fallback_tied if fallback_tie_kind == "tie_unresolved" else (),
                 )
+                if qid in fallback_group_gates:
+                    assigned_reason[qid] = group_fallback_reason(
+                        aurora_fallback, fallback_group_gates[qid]
+                    )
                 if fallback_tie_kind == "tie_unresolved":
                     if routing_trace is not None:
                         routing_trace.record_tie(qid, fallback_tie_kind)
@@ -985,6 +1016,27 @@ def break_owner_tie(
         f"scores tie with {others}; no routing rule decides between them; "
         f"listed under {display_engine(winner)} pending your choice",
         tie_kind,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Co-dependency group fallback reason (#787)
+# ---------------------------------------------------------------------------
+
+
+def group_fallback_reason(engine: str, gates: Iterable[GroupGate]) -> str:
+    """The reason of a co-dependency group member that took the Aurora fallback.
+
+    The group fell back because no analyzed engine can serve every member
+    (ADR-031 Decisions 2 and 4); ``gates`` (``MoveEvidence.group_gates``) say,
+    per engine, which member and gate ruled it out. The clause comes from the
+    move ledger's renderer (:func:`src.shared.move_reasons.render_group_gates`),
+    so the assignment reason and the rendered Move word the gates the same way.
+    """
+    detail = render_group_gates(gates) or "no engine was analyzed"
+    return (
+        f"co-dependency group → {display_engine(engine)} (fallback: no analyzed engine "
+        f"can serve every member; {detail})"
     )
 
 

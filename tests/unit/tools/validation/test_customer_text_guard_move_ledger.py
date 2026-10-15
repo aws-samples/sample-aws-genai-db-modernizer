@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from src.agents.referee.move_ledger import group_key
 from src.contracts.assignment_models import Assignment
-from src.contracts.move_ledger import CandidateScore, EngineScore, Move, MoveEvidence
+from src.contracts.move_ledger import CandidateScore, EngineScore, GroupGate, Move, MoveEvidence
 from src.tools.validation.customer_text_guard import ID_FIELD_PATHS, ID_FIELDS, scan_json
 
 # Each ledger model and the JSON key the guard's walk reaches it through
@@ -29,6 +29,7 @@ LEDGER_MODELS: dict[str, type[BaseModel]] = {
     "evidence": MoveEvidence,
     "candidates": CandidateScore,
     "runner_up": EngineScore,
+    "group_gates": GroupGate,
 }
 
 
@@ -51,6 +52,10 @@ def _assignment(reason: str = "Highest fit for Amazon DynamoDB") -> dict:
                 {"engine": "opensearch", "score": None, "gate": "write_gate"},
             ],
             "group_scores": {"aurora_mysql": 40.0},
+            "group_gates": [
+                {"engine": "documentdb", "query_id": "q2", "gate": "capability"},
+                {"engine": "opensearch", "query_id": "q1", "gate": "write_gate"},
+            ],
             "signal": "text_search",
             "replaced_engine": "dynamodb",
         },
@@ -83,6 +88,27 @@ def _assignment(reason: str = "Highest fit for Amazon DynamoDB") -> dict:
 
 def test_a_moves_structured_fields_are_not_findings() -> None:
     assert scan_json(_assignment()) == []
+
+
+def test_an_all_gated_group_fallback_is_not_a_finding() -> None:
+    """#817: a co-dependency group no engine can serve records each engine's
+    gate in ``evidence.group_gates``; the resolver's own output for it (the
+    Move and the reason) passes the guard."""
+    from tests.unit.agents.referee.test_all_gated_group_reason import (
+        RECURSIVE_JOIN,
+        SELF_JOIN,
+        _query,
+        _resolve,
+    )
+
+    result = _resolve(
+        [_query("qa", SELF_JOIN), _query("qb", RECURSIVE_JOIN)],
+        ["documentdb", "dynamodb"],
+        ["documentdb", "dynamodb", "aurora_postgresql"],
+    )
+    data = result.model_dump(mode="json")
+    assert any(m["evidence"]["group_gates"] for m in data["moves"])
+    assert scan_json(data) == []
 
 
 def test_the_assignments_own_reason_is_still_scanned() -> None:
