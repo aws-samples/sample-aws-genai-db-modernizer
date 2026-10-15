@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from src.api.routes import graph as graph_routes
 from src.graph import GraphStoreCache
+from src.graph.schema import NODE_TABLES, stamp_graph_meta
 from src.graph.store import GraphStore
 
 
@@ -22,7 +23,14 @@ def _write_populated(path: str) -> None:
     store = GraphStore(path)
     store.execute("CREATE NODE TABLE Foo(id STRING PRIMARY KEY)")
     store.execute("CREATE (:Foo {id: 'a'})")
+    _stamp(store)
     store.close()
+
+
+def _stamp(store: GraphStore) -> None:
+    """Stamp the current schema revision, as rebuild_graph does (a saved graph without it is stale)."""
+    store.execute(next(ddl for ddl in NODE_TABLES if "GraphMeta" in ddl))
+    stamp_graph_meta(store)
 
 
 def _fake_rebuild(calls):
@@ -30,6 +38,7 @@ def _fake_rebuild(calls):
         calls.append(store.read_only)
         store.execute("CREATE NODE TABLE IF NOT EXISTS Foo(id STRING PRIMARY KEY)")
         store.execute("MERGE (:Foo {id: 'built'})")
+        _stamp(store)
         return {"nodes_created": 1}
 
     return _rebuild
@@ -187,3 +196,19 @@ def test_failed_rebuild_keeps_the_previous_graph(wired, monkeypatch):
     persistence.upload.assert_not_called()
     with graph_routes.graph_lease("job-1") as (store, _):
         assert _ids(store) == ["a"]
+
+
+def test_a_saved_graph_without_the_current_schema_revision_is_rebuilt(wired):
+    """A graph saved by an earlier release (no GraphMeta stamp, no MOVED) is rebuilt, not served."""
+    cache, persistence, rebuilds = wired
+    path = cache.local_path("db", "job-1")
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    old = GraphStore(path)
+    old.execute("CREATE NODE TABLE Foo(id STRING PRIMARY KEY)")
+    old.execute("CREATE (:Foo {id: 'old'})")
+    old.close()
+
+    with graph_routes.graph_lease("job-1") as (store, _):
+        assert _ids(store) == ["built"]
+    assert rebuilds == [False]
+    persistence.upload.assert_called_once()

@@ -170,6 +170,33 @@ class GraphStore:
         # row is a list.
         return self._get_all("CALL show_tables() RETURN *")
 
+    def has_table(self, name: str) -> bool:
+        """True when the graph has a node or rel table called ``name``."""
+        try:
+            return any(row[1] == name for row in self._list_tables())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def graph_meta(self) -> dict:
+        """The GraphMeta stamp: ``schema_revision`` and ``effective_version``.
+
+        A graph saved before GraphMeta existed (or never stamped) reads as
+        revision 0, so it is stale under any current revision.
+        """
+        empty = {"schema_revision": 0, "effective_version": 0}
+        if not self.has_table("GraphMeta"):
+            return empty
+        rows = self.query(
+            "MATCH (m:GraphMeta) RETURN m.schema_revision AS schema_revision, "
+            "m.effective_version AS effective_version ORDER BY m.id LIMIT 1"
+        )
+        if not rows:
+            return empty
+        return {
+            "schema_revision": int(rows[0].get("schema_revision") or 0),
+            "effective_version": int(rows[0].get("effective_version") or 0),
+        }
+
     def is_populated(self) -> bool:
         """Check if the graph has any nodes."""
         try:

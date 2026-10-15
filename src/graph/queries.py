@@ -18,11 +18,29 @@ from src.api.models.graph_responses import (
     LoadTestResultsResponse,
     ProvenanceDecision,
     QueryProvenanceResponse,
+    QueryTraceResponse,
     RiskHotspot,
     RiskHotspotsResponse,
     TableImpactResponse,
+    TraceBasis,
+    TraceCandidate,
+    TraceEngineScore,
+    TraceOutscored,
+    TraceRunnerUp,
+    TraceStep,
 )
+from src.contracts.move_ledger import CandidateScore, EngineScore, Move, MoveEvidence, ReasonCode
 from src.graph.store import GraphStore
+from src.shared.engine_names import display_engine
+from src.shared.move_reasons import (
+    GROUP_OWNER_GATE,
+    gate_text,
+    render_move_reason,
+    render_outscored,
+    render_runner_up,
+    render_trace_summary,
+    rule_label,
+)
 
 _LATENCY_PERCENTILES = ("p50", "p90", "p95", "p99", "p999", "min", "max")
 
@@ -344,10 +362,355 @@ def query_journeys(store: GraphStore) -> list[dict]:
 
 
 def query_journey(store: GraphStore, query_id: str) -> dict | None:
-    """Return one query's journey read-model, or None if the query is unknown."""
+    """Return one query's journey read-model, or None if the query is unknown.
+
+    The single-query journey also carries ``trace``: the query's decision
+    trace (:func:`query_trace`, #339). The all-queries list
+    (:func:`query_journeys`) does not, so the report's embedded journeys are
+    unchanged.
+    """
     rows = store.query(
         _JOURNEY_MATCH.replace("MATCH (q:Query) ", "MATCH (q:Query {id: $qid}) ")
         + " ORDER BY assigned_engine LIMIT 1",
         {"qid": query_id},
     )
-    return _journey_from_row(rows[0]) if rows else None
+    if not rows:
+        return None
+    journey = _journey_from_row(rows[0])
+    trace = query_trace(store, query_id)
+    journey["trace"] = trace.model_dump(mode="json", by_alias=True) if trace else None
+    return journey
+
+
+# ---------------------------------------------------------------------------
+# Query decision trace (#339): why engine X and not Y, from the MOVED edges
+# (one per Move of the move ledger, every version of the effective lineage).
+# ---------------------------------------------------------------------------
+
+
+def _move_from_edge(row: dict) -> tuple[int, Move]:
+    """Rebuild one ledger Move (and its assignment version) from a MOVED edge row."""
+    try:
+        evidence = MoveEvidence.model_validate_json(row.get("evidence_json") or "{}")
+    except ValueError:
+        evidence = MoveEvidence()
+    try:
+        tied = _json.loads(row.get("tied_engines_json") or "[]")
+    except ValueError:
+        tied = []
+    runner_engine = row.get("runner_up_engine") or None
+    move = Move(
+        seq=row["seq"],
+        query_id=row["query_id"],
+        pass_=row["pass"],
+        from_engine=row.get("from_engine") or None,
+        to_engine=row["to_engine"],
+        score_before=row.get("score_before"),
+        score_after=row.get("score_after"),
+        runner_up=(
+            EngineScore(engine=runner_engine, score=row.get("runner_up_score"))
+            if runner_engine
+            else None
+        ),
+        reason_code=row["reason_code"],
+        evidence=evidence,
+        group_key=row.get("group_key") or None,
+        tied_engines=tied if isinstance(tied, list) else [],
+        actor=row["actor"],
+    )
+    return int(row["version"]), move
+
+
+def _candidate(c: CandidateScore) -> TraceCandidate:
+    return TraceCandidate(
+        engine=c.engine,
+        engine_name=display_engine(c.engine),
+        score=c.score,
+        gate=c.gate,
+        gate_text=gate_text(c.gate),
+    )
+
+
+def _step(version: int, move: Move) -> TraceStep:
+    return TraceStep(
+        version=version,
+        seq=move.seq,
+        pass_=move.pass_,
+        actor=move.actor,
+        reason_code=move.reason_code,
+        rule=rule_label(move.reason_code),
+        from_engine=move.from_engine,
+        from_engine_name=display_engine(move.from_engine) if move.from_engine else None,
+        to_engine=move.to_engine,
+        to_engine_name=display_engine(move.to_engine),
+        score_before=move.score_before,
+        score_after=move.score_after,
+        runner_up=(
+            TraceEngineScore(
+                engine=move.runner_up.engine,
+                engine_name=display_engine(move.runner_up.engine),
+                score=move.runner_up.score,
+            )
+            if move.runner_up
+            else None
+        ),
+        tied_engines=list(move.tied_engines),
+        tied_engine_names=[display_engine(e) for e in move.tied_engines],
+        group_key=move.group_key,
+        candidates=[_candidate(c) for c in move.evidence.candidates],
+        explanation=render_move_reason(move),
+    )
+
+
+_TIE_RULES = frozenset(
+    {
+        ReasonCode.TIE_SOURCE_COMPATIBLE,
+        ReasonCode.TIE_STABILITY,
+        ReasonCode.TIE_PLACEHOLDER_SETTLED_WORKLOAD,
+        ReasonCode.TIE_PLACEHOLDER_HASH,
+        ReasonCode.TIE_CLEARED,
+    }
+)
+
+
+def _deciding_step(final_engine: str, moves: list[tuple[int, Move]]) -> tuple[int, Move]:
+    """The Move that put the query on its final engine (not a later tie-only change)."""
+    for version, move in reversed(moves):
+        if move.to_engine == final_engine and move.from_engine != move.to_engine:
+            return version, move
+    return moves[-1]
+
+
+def _latest_tie_rule(moves: list[tuple[int, Move]]) -> ReasonCode | None:
+    """The rule of the query's latest tie decision, if a tie was ever involved."""
+    for _, move in reversed(moves):
+        if move.reason_code in _TIE_RULES:
+            return move.reason_code
+        if move.evidence.tie_rule is not None:
+            return move.evidence.tie_rule
+    return None
+
+
+def _comparison(
+    final_engine: str, moves: list[tuple[int, Move]]
+) -> tuple[dict[str, float], dict[str, CandidateScore], float | None, bool]:
+    """The scores the deciding pass compared, the latest ladder, the final score, the basis.
+
+    A co-dependency group's Move compared the group's mean scores
+    (``evidence.group_scores``), so the trace compares those too; any other
+    Move compared the query's own ladder (eligible rungs only).
+    """
+    _, decider = _deciding_step(final_engine, moves)
+    ladder_list: list[CandidateScore] = decider.evidence.candidates or next(
+        (m.evidence.candidates for _, m in reversed(moves) if m.evidence.candidates), []
+    )
+    ladder = {c.engine: c for c in ladder_list}
+    if decider.evidence.group_scores:
+        scores = dict(decider.evidence.group_scores)
+        return scores, ladder, scores.get(final_engine), True
+    scores = {c.engine: float(c.score) for c in ladder_list if not c.gate and c.score is not None}
+    final = ladder.get(final_engine)
+    final_score = (
+        final.score
+        if final is not None and not final.gate
+        else (decider.score_after if decider.to_engine == final_engine else None)
+    )
+    return scores, ladder, final_score, False
+
+
+def _runner_up(
+    final_engine: str,
+    moves: list[tuple[int, Move]],
+    plan: set[str],
+) -> tuple[TraceRunnerUp | None, list[TraceOutscored]]:
+    """The runner-up (an engine of the final plan) and the engines that scored higher.
+
+    The runner-up is the best-scoring engine the final assignment still uses
+    that could take the query and did not score above the final engine, on
+    the scale the deciding pass compared (the group's means for a
+    co-dependency Move), so its gap is never negative. When every other
+    engine of the plan is gated, the gated one with the best kept score.
+    Every engine that scored higher (removed, consolidated or overridden) is
+    listed apart with the step that decided against it. A record only.
+    """
+    scores, ladder, final_score, group = _comparison(final_engine, moves)
+    basis: TraceBasis = "group_mean" if group else "query"
+    tie_rule = _latest_tie_rule(moves)
+    decider_version, decider = _deciding_step(final_engine, moves)
+
+    outscored: list[TraceOutscored] = []
+    if final_score is not None:
+        higher = sorted(
+            ((e, sc) for e, sc in scores.items() if e != final_engine and sc > final_score),
+            key=lambda es: (-es[1], es[0]),
+        )
+        for better, better_score in higher:
+            left = next(
+                (
+                    (v, m)
+                    for v, m in reversed(moves)
+                    if m.from_engine == better and m.to_engine != better
+                ),
+                None,
+            )
+            step_version, step = left or (decider_version, decider)
+            in_plan = better in plan
+            outscored.append(
+                TraceOutscored(
+                    engine=better,
+                    engine_name=display_engine(better),
+                    score=better_score,
+                    final_score=final_score,
+                    basis=basis,
+                    in_plan=in_plan,
+                    decided_by_version=step_version,
+                    decided_by_seq=step.seq,
+                    decided_by_rule=step.reason_code,
+                    left_it=left is not None,
+                    explanation=render_outscored(
+                        final_engine,
+                        final_score,
+                        better,
+                        better_score,
+                        step,
+                        step_version,
+                        left is not None,
+                        in_plan,
+                        group,
+                    ),
+                )
+            )
+
+    eligible = [
+        (e, sc)
+        for e, sc in scores.items()
+        if e != final_engine and e in plan and (final_score is None or sc <= final_score)
+    ]
+    engine: str | None = None
+    score: float | None = None
+    gate: str | None = None
+    if eligible:
+        top = max(sc for _, sc in eligible)
+        engine, score = min(e for e, sc in eligible if sc == top), top
+    elif not any(e != final_engine and e in plan for e in scores):
+        # Nobody else in the plan could take it: the closest engine that could
+        # not, with its gate. For a group, an engine missing from the group's
+        # means could not own every member (its own score is kept).
+        blocked = [
+            c
+            for e, c in ladder.items()
+            if e != final_engine and e in plan and (c.gate or (group and e not in scores))
+        ]
+        if blocked:
+            best = min(blocked, key=lambda c: (-(c.score if c.score is not None else -1), c.engine))
+            engine, score = best.engine, best.score
+            gate = best.gate or GROUP_OWNER_GATE
+    if engine is None:
+        return None, outscored
+    gap = (
+        round(final_score - score, 1)
+        if final_score is not None and score is not None and not gate
+        else None
+    )
+    runner = TraceRunnerUp(
+        engine=engine,
+        engine_name=display_engine(engine),
+        score=score,
+        final_score=final_score,
+        basis=basis,
+        gap=gap,
+        gate=gate,
+        explanation=render_runner_up(
+            final_engine, final_score, engine, score, gate, tie_rule, group
+        ),
+    )
+    return runner, outscored
+
+
+def _plan_engines(store: GraphStore) -> set[str]:
+    """The engines the effective assignment uses (its destinations)."""
+    return {
+        r["engine"]
+        for r in store.query("MATCH (d:Destination) RETURN DISTINCT d.engine AS engine")
+        if r.get("engine")
+    }
+
+
+def query_trace(store: GraphStore, query_id: str) -> QueryTraceResponse | None:
+    """The query's decision trace (#339), or None when the query is unknown.
+
+    The first assignment (with every engine's score or gate), every later
+    Move across the lineage's assignment versions with its reason, the final
+    engine, the runner-up (an engine of the final plan) with its score gap or
+    disqualifying gate, and the engines that scored higher with the step that
+    decided against each. A graph with no MOVED table (saved by an earlier
+    release) or a job written before the move ledger has no steps:
+    ``has_ledger`` is False and only the final engine is set.
+    """
+    head = store.query(
+        "MATCH (q:Query {id: $qid}) "
+        "OPTIONAL MATCH (q)-[:MIGRATES_TO]->(d:Destination) "
+        "RETURN q.id AS query_id, d.engine AS engine ORDER BY engine LIMIT 1",
+        {"qid": query_id},
+    )
+    if not head:
+        return None
+    effective = store.graph_meta()["effective_version"] or None
+    rows = (
+        store.query(
+            "MATCH (q:Query {id: $qid})-[m:MOVED]->(e:Engine) "
+            "RETURN q.id AS query_id, e.id AS to_engine, m.version AS version, m.seq AS seq, "
+            "  m.pass AS pass, m.reason_code AS reason_code, m.actor AS actor, "
+            "  m.from_engine AS from_engine, m.score_before AS score_before, "
+            "  m.score_after AS score_after, m.runner_up_engine AS runner_up_engine, "
+            "  m.runner_up_score AS runner_up_score, m.group_key AS group_key, "
+            "  m.tied_engines_json AS tied_engines_json, m.evidence_json AS evidence_json "
+            "ORDER BY version, seq",
+            {"qid": query_id},
+        )
+        if store.has_table("MOVED")
+        else []
+    )
+    moves = [_move_from_edge(r) for r in rows]
+    assigned = head[0].get("engine")
+    if not moves:
+        return QueryTraceResponse(
+            query_id=query_id,
+            has_ledger=False,
+            final_engine=assigned,
+            final_engine_name=display_engine(assigned) if assigned else None,
+            effective_version=effective,
+            summary=(
+                f"Ends on {display_engine(assigned)}; this assessment predates the "
+                "per-query decision record."
+                if assigned
+                else ""
+            ),
+        )
+    steps = [_step(v, m) for v, m in moves]
+    last_version, last = moves[-1]
+    final_engine = assigned or last.to_engine
+    final_score = last.score_after if last.to_engine == final_engine else None
+    runner_up, outscored = _runner_up(final_engine, moves, _plan_engines(store) or {final_engine})
+    return QueryTraceResponse(
+        query_id=query_id,
+        has_ledger=True,
+        first_assignment=steps[0],
+        moves=steps[1:],
+        final_engine=final_engine,
+        final_engine_name=display_engine(final_engine),
+        final_version=last_version,
+        effective_version=effective,
+        final_score=final_score,
+        tied_engines=list(last.tied_engines),
+        tied_engine_names=[display_engine(e) for e in last.tied_engines],
+        runner_up=runner_up,
+        outscored_by=outscored,
+        summary=render_trace_summary(
+            final_engine,
+            final_score,
+            len(steps),
+            runner_up.explanation if runner_up else None,
+            last,
+        ),
+    )

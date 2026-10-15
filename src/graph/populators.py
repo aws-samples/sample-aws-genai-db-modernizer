@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+from collections.abc import Callable
 
-from src.graph.schema import initialize_schema
+from pydantic import ValidationError
+
+from src.contracts.move_ledger import Move
+from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
+from src.shared.engine_names import display_engine
 from src.storage.artifact_store import ArtifactStore
+
+logger = logging.getLogger(__name__)
 
 
 def _stamp_agent(
@@ -148,8 +156,7 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
         return f"{tables[0]}-{engine}" if tables else f"unknown-{engine}"
 
     engine_rows = [
-        {"id": e, "name": f"Amazon {e.replace('_', ' ').title()}"}
-        for e in {qa["assigned_engine"] for qa in qas}
+        {"id": e, "name": display_engine(e)} for e in sorted({qa["assigned_engine"] for qa in qas})
     ]
     if engine_rows:
         store.execute(
@@ -211,6 +218,88 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
             "MERGE (q)-[:MEMBER_OF]->(g)",
             {"rows": member_rows},
         )
+
+
+def populate_from_moves(assignment: dict, store: GraphStore) -> int:
+    """Write one MOVED edge (query -> engine) per Move of one assignment version (#339).
+
+    ``assignment.moves`` holds only the Moves that produced that version
+    (#616), so calling this for every version of the lineage keeps the whole
+    history: an edge is keyed on (version, seq) and never overwritten. A Move
+    of a query the collector did not record (no Query node) is skipped.
+    Returns the number of Moves read (0 for a version written before the
+    ledger).
+    """
+    version = int(assignment.get("version") or 0)
+    moves: list[Move] = []
+    for raw in assignment.get("moves") or []:
+        try:
+            moves.append(Move.model_validate(raw))
+        except ValidationError:
+            # One unreadable record must not cost the whole graph its history.
+            logger.warning("graph: skipped an unreadable Move in assignment v%s", version)
+    if not moves or version < 1:
+        return 0
+    engine_rows = [
+        {"id": e, "name": display_engine(e)} for e in sorted({m.to_engine for m in moves})
+    ]
+    store.execute(
+        "UNWIND $rows AS r MERGE (e:Engine {id: r.id}) ON CREATE SET e.display_name = r.name",
+        {"rows": engine_rows},
+    )
+    rows = [
+        {
+            "qid": m.query_id,
+            "eng": m.to_engine,
+            "ver": version,
+            "seq": m.seq,
+            "pss": m.pass_.value,
+            "code": m.reason_code.value,
+            "actor": m.actor.value,
+            "frm": m.from_engine or "",
+            "before": m.score_before,
+            "after": m.score_after,
+            "ru_engine": m.runner_up.engine if m.runner_up else "",
+            "ru_score": m.runner_up.score if m.runner_up else None,
+            "grp": m.group_key or "",
+            "tied": json.dumps(m.tied_engines),
+            "evidence": m.evidence.model_dump_json(),
+        }
+        for m in moves
+    ]
+    # CAST: an all-null batch would otherwise type the score columns STRING.
+    store.execute(
+        "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (e:Engine {id: r.eng}) "
+        "MERGE (q)-[m:MOVED {version: r.ver, seq: r.seq}]->(e) "
+        "SET m.pass = r.pss, m.reason_code = r.code, m.actor = r.actor, "
+        "m.from_engine = r.frm, m.score_before = CAST(r.before AS DOUBLE), "
+        "m.score_after = CAST(r.after AS DOUBLE), m.runner_up_engine = r.ru_engine, "
+        "m.runner_up_score = CAST(r.ru_score AS DOUBLE), m.group_key = r.grp, "
+        "m.tied_engines_json = r.tied, m.evidence_json = r.evidence",
+        {"rows": rows},
+    )
+    return len(moves)
+
+
+def assignment_lineage(read: Callable[[int], dict | None], effective_version: int) -> list[dict]:
+    """The assignment versions the effective one descends from, oldest first.
+
+    Follows ``previous_version`` from ``effective_version`` back to the first
+    assignment (``previous_version`` None), so a version from an abandoned
+    lineage (an earlier resolution the effective one does not derive from)
+    is never part of the history. ``read(v)`` returns version ``v`` or None.
+    """
+    chain: list[dict] = []
+    seen: set[int] = set()
+    version: int | None = effective_version
+    while isinstance(version, int) and version >= 1 and version not in seen:
+        seen.add(version)
+        assignment = read(version)
+        if not assignment:
+            break
+        chain.append({**assignment, "version": assignment.get("version") or version})
+        version = assignment.get("previous_version")
+    return list(reversed(chain))
 
 
 def populate_from_analysis(analysis_output: dict, engine: str, store: GraphStore) -> None:
@@ -629,6 +718,12 @@ def rebuild_graph(
         assignment = _read_safe(assignment_artifact_path(db_name, job_id, assignment_version))
         if assignment:
             populate_from_assignment(assignment, graph_store)
+        # 4b. The move ledger of every version in the effective lineage (#339).
+        for version in assignment_lineage(
+            lambda v: _read_safe(assignment_artifact_path(db_name, job_id, v)),
+            assignment_version,
+        ):
+            populate_from_moves(version, graph_store)
 
     # 5. Reality check
     reality = _read_safe(f"{prefix}/reality-check/output.json")
@@ -660,6 +755,10 @@ def rebuild_graph(
     synthesis = _read_safe(f"{prefix}/referee-synthesis/report.json")
     if synthesis:
         populate_from_synthesis(synthesis, graph_store)
+
+    # 10. The schema revision this graph was built with (a saved graph with
+    # another revision is rebuilt before it is read) and its assignment version.
+    stamp_graph_meta(graph_store, assignment_version)
 
     duration_ms = int((time.time() - start) * 1000)
     node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]

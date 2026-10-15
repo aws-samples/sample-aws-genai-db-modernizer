@@ -203,7 +203,7 @@ The graph is populated on the API node after each pipeline stage completes. The 
 |---------------|---------------|---------------|
 | COLLECT_TRIAGE | Query, SourceTable | READS_FROM |
 | ANALYSIS | Signal | EMITS_SIGNAL |
-| ASSIGNMENT | Destination, Engine, CoDependencyGroup | MIGRATES_TO, HOSTED_ON, MEMBER_OF |
+| ASSIGNMENT | Destination, Engine, CoDependencyGroup, GraphMeta | MIGRATES_TO, HOSTED_ON, MEMBER_OF, MOVED (one per move-ledger Move of every version in the effective lineage, #339) |
 | SCHEMA_DESIGN | Decision | AFFECTS, INFORMED_BY |
 | LOAD_TEST | LoadTestRun | TESTED_IN, VALIDATES |
 | ASSIGNMENT_REVIEW | Decision (overrides) | SUPERSEDES |
@@ -218,7 +218,7 @@ For a full rebuild of a 3,500-query assessment (the largest workload tested), ex
 
 **ECS mode.** Graph stored on the API task's local volume (ephemeral storage or EFS mount). Rebuilt from S3 artifacts when needed. The graph is disposable since artifacts are the source of truth.
 
-**Rebuild.** A `rebuild_graph.py` script re-reads all S3 artifacts and regenerates the graph from scratch. Used for schema migrations, disaster recovery, or backfilling graphs for assessments that ran before this feature existed.
+**Rebuild.** A `rebuild_graph.py` script re-reads all S3 artifacts and regenerates the graph from scratch. Used for schema migrations, disaster recovery, or backfilling graphs for assessments that ran before this feature existed. Every graph carries a `GraphMeta` stamp with the schema revision it was built with (`GRAPH_SCHEMA_REVISION` in `src/graph/schema.py`); a saved graph with another revision, or none, is rebuilt from the artifacts before it is read (#339).
 
 ### Portability
 

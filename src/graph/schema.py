@@ -4,6 +4,17 @@ from __future__ import annotations
 
 from src.graph.store import GraphStore
 
+# The graph's schema revision (ADR-023: a schema change needs a rebuild). A
+# saved graph (``{db}/{job}/graph/context.lbug``) whose GraphMeta revision is
+# not this one is stale and is rebuilt from the artifacts before it is read;
+# a graph saved before GraphMeta existed reads as revision 0. Bump it whenever
+# a table or column is added, renamed or dropped, or a populator writes a new
+# kind of edge.
+# - 1 (#339): GraphMeta, and MOVED edges (the move ledger of every lineage
+#   version). Every graph saved before reads as revision 0.
+GRAPH_SCHEMA_REVISION = 1
+GRAPH_META_ID = "graph"
+
 NODE_TABLES = [
     # performance_json / characteristics_json hold the collector's nested
     # ``source.performance`` and ``source.characteristics`` blocks as JSON strings.
@@ -73,6 +84,12 @@ NODE_TABLES = [
         id STRING, name STRING, phase STRING,
         PRIMARY KEY (id)
     )""",
+    # One node (id GRAPH_META_ID): the schema revision the graph was built
+    # with and the effective assignment version it was built from (0: none).
+    """CREATE NODE TABLE IF NOT EXISTS GraphMeta (
+        id STRING, schema_revision INT64, effective_version INT64,
+        PRIMARY KEY (id)
+    )""",
 ]
 
 REL_TABLES = [
@@ -91,6 +108,19 @@ REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS IMPACTS (FROM Risk TO SourceTable)",
     "CREATE REL TABLE IF NOT EXISTS EVIDENCED_BY (FROM Risk TO Query)",
     "CREATE REL TABLE IF NOT EXISTS PART_OF (FROM Query TO AccessPattern)",
+    # One edge per Move of the move ledger (#616, #339), for every assignment
+    # version in the effective lineage: never overwritten, so the query's whole
+    # routing history stays. (version, seq) identifies the Move. Nullable
+    # scores are DOUBLE (written through CAST); evidence_json is the Move's
+    # evidence (candidate ladder, group scores, tie rule, earlier tie) and
+    # tied_engines_json its unresolved tie, both display-only JSON strings.
+    """CREATE REL TABLE IF NOT EXISTS MOVED (
+        FROM Query TO Engine,
+        version INT64, seq INT64, pass STRING, reason_code STRING, actor STRING,
+        from_engine STRING, score_before DOUBLE, score_after DOUBLE,
+        runner_up_engine STRING, runner_up_score DOUBLE, group_key STRING,
+        tied_engines_json STRING, evidence_json STRING
+    )""",
     """CREATE REL TABLE IF NOT EXISTS PRODUCED_BY (
         FROM Decision TO Agent,
         FROM Signal TO Agent,
@@ -100,6 +130,14 @@ REL_TABLES = [
         FROM Risk TO Agent
     )""",
 ]
+
+
+def stamp_graph_meta(store: GraphStore, effective_version: int = 0) -> None:
+    """Record the schema revision and the effective assignment version on the graph."""
+    store.execute(
+        "MERGE (m:GraphMeta {id: $id}) SET m.schema_revision = $rev, m.effective_version = $ver",
+        {"id": GRAPH_META_ID, "rev": GRAPH_SCHEMA_REVISION, "ver": int(effective_version)},
+    )
 
 
 def initialize_schema(store: GraphStore) -> None:

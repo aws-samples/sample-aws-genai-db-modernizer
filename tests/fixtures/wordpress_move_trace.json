@@ -1,0 +1,808 @@
+{
+ "_source": "wordpress sample, deterministic pipeline (llm-mode none), assignment v1 and v2 (reality check), trimmed to 7 queries",
+ "collector": {
+  "queries": {
+   "query_patterns": [
+    {
+     "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+     "query_text": "UPDATE `wp_woocommerce_api_keys` SET `last_access` = ? WHERE `key_id` = ?",
+     "query_type": "UPDATE",
+     "tables_accessed": [
+      "wordpress.wp_woocommerce_api_keys"
+     ],
+     "calls_per_second": 8.276493055555555
+    },
+    {
+     "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+     "query_text": "SELECT SUM ( `meta__order_total` . `meta_value` ) AS `total_sales` , SUM ( `meta__order_shipping` . `meta_value` ) AS `total_shipping` , SUM ( `meta__order_tax` . `meta_value` ) AS `total_tax` , SUM ( `meta__order_shipping_tax` . `meta_value` ) AS `total_shipping_tax` , `posts` . `post_date` AS `post_date` FROM `wp_posts` AS `posts` INNER JOIN `wp_postmeta` AS `meta__order_total` ON ( `posts` . `ID` = `meta__order_total` . `post_id` AND `meta__order_total` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_shipping` ON ( `posts` . `ID` = `meta__order_shipping` . `post_id` AND `meta__order_shipping` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_tax` ON ( `posts` . `ID` = `meta__order_tax` . `post_id` AND `meta__order_tax` . `meta_key` = ? ) INNER JOIN `wp_postmeta` AS `meta__order_shipping_tax` ON ( `posts` . `ID` = `meta__order_shipping_tax` . `post_id` AND `meta__order_shipping_tax` . `meta_key` = ? ) WHERE `posts` . `post_type` IN (...) AND `posts` . `post_status` IN (...) AND `posts` . `post_date` >= ? AND `posts` .",
+     "query_type": "SELECT",
+     "tables_accessed": [
+      "wordpress.wp_posts",
+      "wordpress.wp_postmeta"
+     ],
+     "calls_per_second": 0.03019675925925926
+    },
+    {
+     "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+     "query_text": "SELECT `a` . `action_id` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `g` . `group_id` = `a` . `group_id` WHERE ? = ? AND `g` . `slug` = ? AND `a` . `hook` = ? AND `a` . `status` IN (...) AND `a` . `claim_id` = ? AND ( `a` . `hook` LIKE ? OR ( `a` . `extended_args` IS NULL AND `a` . `args` LIKE ? ) OR `a` . `extended_args` LIKE ? ) ORDER BY `a` . `scheduled_date_gmt` ASC LIMIT ?, ...",
+     "query_type": "SELECT",
+     "tables_accessed": [
+      "wordpress.wp_actionscheduler_actions",
+      "wordpress.wp_actionscheduler_groups"
+     ],
+     "calls_per_second": 0.4547800925925926
+    },
+    {
+     "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+     "query_text": "INSERT INTO `wp_woocommerce_order_itemmeta` ( `order_item_id` , `meta_key` , `meta_value` ) VALUES (...)",
+     "query_type": "INSERT",
+     "tables_accessed": [
+      "wordpress.wp_woocommerce_order_itemmeta"
+     ],
+     "calls_per_second": 1.9222569444444444
+    },
+    {
+     "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+     "query_text": "REPLACE INTO `wp_wc_product_meta_lookup` ( `product_id` , `sku` , `virtual` , `downloadable` , `min_price` , `max_price` , `onsale` , `stock_quantity` , `stock_status` , `rating_count` , `average_rating` , `total_sales` , `tax_status` , `tax_class` ) VALUES (...)",
+     "query_type": "INSERT",
+     "tables_accessed": [
+      "wordpress.wp_wc_product_meta_lookup"
+     ],
+     "calls_per_second": 0.35648148148148145
+    },
+    {
+     "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+     "query_text": "SHOW FULL FIELDS FROM `wp_options`",
+     "query_type": "OTHER",
+     "tables_accessed": [
+      "wordpress.wp_options"
+     ],
+     "calls_per_second": 1.4360648148148147
+    },
+    {
+     "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+     "query_text": "SELECT `a` . * , `g` . `slug` AS `group` FROM `wp_actionscheduler_actions` `a` LEFT JOIN `wp_actionscheduler_groups` `g` ON `a` . `group_id` = `g` . `group_id` WHERE `a` . `action_id` = ?",
+     "query_type": "SELECT",
+     "tables_accessed": [
+      "wordpress.wp_actionscheduler_actions",
+      "wordpress.wp_actionscheduler_groups"
+     ],
+     "calls_per_second": 3.5903009259259258
+    }
+   ]
+  }
+ },
+ "v1": {
+  "job_id": "trace339",
+  "version": 1,
+  "status": "auto_generated",
+  "timestamp": "2026-10-15T04:24:27.833080Z",
+  "previous_version": null,
+  "source": "assignment_resolution",
+  "query_assignments": [
+   {
+    "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+    "assigned_engine": "dynamodb",
+    "confidence": 95,
+    "source_tables": [
+     "wordpress.wp_woocommerce_api_keys"
+    ],
+    "assignment_reason": "highest fit for DynamoDB",
+    "tied_engines": []
+   },
+   {
+    "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 81,
+    "source_tables": [
+     "wordpress.wp_posts",
+     "wordpress.wp_postmeta"
+    ],
+    "assignment_reason": "co-dependency group \u2192 Aurora MySQL | DynamoDB lacks required capability: aggregation, multi-table joins; excluded from ElastiCache: it joins more than one table, and a key-value store can't serve joins; DocumentDB lacks required capability: aggregation, multi-table joins; OpenSearch lacks required capability: aggregation, multi-table joins",
+    "tied_engines": []
+   },
+   {
+    "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+    "assigned_engine": "documentdb",
+    "confidence": 87,
+    "source_tables": [
+     "wordpress.wp_actionscheduler_actions",
+     "wordpress.wp_actionscheduler_groups"
+    ],
+    "assignment_reason": "highest fit for DocumentDB | DocumentDB runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine | DynamoDB lacks required capability: full-text or pattern search; ElastiCache lacks required capability: full-text or pattern search",
+    "tied_engines": []
+   },
+   {
+    "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 79,
+    "source_tables": [
+     "wordpress.wp_woocommerce_order_itemmeta"
+    ],
+    "assignment_reason": "highest fit for Aurora MySQL (scores tie with DocumentDB, DynamoDB; Aurora MySQL is the source-compatible relational engine)",
+    "tied_engines": []
+   },
+   {
+    "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+    "assigned_engine": "documentdb",
+    "confidence": 77,
+    "source_tables": [
+     "wordpress.wp_wc_product_meta_lookup"
+    ],
+    "assignment_reason": "highest fit for DocumentDB",
+    "tied_engines": []
+   },
+   {
+    "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 100,
+    "source_tables": [
+     "wordpress.wp_options"
+    ],
+    "assignment_reason": "utility/metadata statement \u2014 kept on source-compatible relational engine (Aurora MySQL) | DynamoDB lacks required capability: a utility or DDL statement; ElastiCache lacks required capability: a utility or DDL statement; DocumentDB lacks required capability: a utility or DDL statement; OpenSearch lacks required capability: a utility or DDL statement",
+    "tied_engines": []
+   },
+   {
+    "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+    "assigned_engine": "dynamodb",
+    "confidence": 87,
+    "source_tables": [
+     "wordpress.wp_actionscheduler_actions",
+     "wordpress.wp_actionscheduler_groups"
+    ],
+    "assignment_reason": "highest fit for DynamoDB (scores tie with DocumentDB; no routing rule decides between them; listed under DynamoDB pending your choice)",
+    "tied_engines": [
+     "documentdb",
+     "dynamodb"
+    ]
+   }
+  ],
+  "table_assignments": [],
+  "co_dependency_groups": [],
+  "validation_warnings": [],
+  "moves": [
+   {
+    "seq": 1,
+    "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+    "pass": "co_dependency",
+    "from_engine": null,
+    "to_engine": "aurora_mysql",
+    "score_before": null,
+    "score_after": 81.0,
+    "runner_up": null,
+    "reason_code": "group.mean",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 81.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "dynamodb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "elasticache",
+       "score": null,
+       "gate": "hard_exclusion"
+      },
+      {
+       "engine": "opensearch",
+       "score": null,
+       "gate": "capability"
+      }
+     ],
+     "group_scores": {
+      "aurora_mysql": 81.86666666666666
+     },
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": "e2a4aea4c024",
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 16,
+    "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+    "pass": "score",
+    "from_engine": null,
+    "to_engine": "dynamodb",
+    "score_before": null,
+    "score_after": 95.0,
+    "runner_up": {
+     "engine": "documentdb",
+     "score": 86.0
+    },
+    "reason_code": "highest_score",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 54.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 86.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 95.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 71.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": "write_gate"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 18,
+    "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+    "pass": "score",
+    "from_engine": null,
+    "to_engine": "documentdb",
+    "score_before": null,
+    "score_after": 87.0,
+    "runner_up": {
+     "engine": "aurora_mysql",
+     "score": 82.0
+    },
+    "reason_code": "highest_score",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 82.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "elasticache",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "opensearch",
+       "score": 80.0,
+       "gate": null
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 27,
+    "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+    "pass": "score",
+    "from_engine": null,
+    "to_engine": "documentdb",
+    "score_before": null,
+    "score_after": 77.0,
+    "runner_up": {
+     "engine": "dynamodb",
+     "score": 69.0
+    },
+    "reason_code": "highest_score",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 54.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 77.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 69.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 38.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": "write_gate"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 29,
+    "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+    "pass": "score",
+    "from_engine": null,
+    "to_engine": "aurora_mysql",
+    "score_before": null,
+    "score_after": 79.0,
+    "runner_up": null,
+    "reason_code": "highest_score",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 79.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "dynamodb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "elasticache",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "opensearch",
+       "score": null,
+       "gate": "capability"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 102,
+    "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+    "pass": "tie",
+    "from_engine": null,
+    "to_engine": "aurora_mysql",
+    "score_before": null,
+    "score_after": 79.0,
+    "runner_up": {
+     "engine": "documentdb",
+     "score": 79.0
+    },
+    "reason_code": "tie.source_compatible",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 79.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 79.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 79.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 79.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": "write_gate"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 106,
+    "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+    "pass": "tie",
+    "from_engine": null,
+    "to_engine": "dynamodb",
+    "score_before": null,
+    "score_after": 87.0,
+    "runner_up": {
+     "engine": "documentdb",
+     "score": 87.0
+    },
+    "reason_code": "tie.placeholder.settled_workload",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 82.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 85.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": null
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [
+     "documentdb",
+     "dynamodb"
+    ],
+    "actor": "rule"
+   },
+   {
+    "seq": 108,
+    "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+    "pass": "utility_pin",
+    "from_engine": "aurora_mysql",
+    "to_engine": "aurora_mysql",
+    "score_before": null,
+    "score_after": 79.0,
+    "runner_up": null,
+    "reason_code": "override.utility",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 79.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "dynamodb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "elasticache",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "opensearch",
+       "score": null,
+       "gate": "capability"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": "aurora_mysql",
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   }
+  ]
+ },
+ "v2": {
+  "job_id": "trace339",
+  "version": 2,
+  "status": "auto_generated",
+  "timestamp": "2026-10-15T04:24:28.180665+00:00",
+  "previous_version": 1,
+  "source": "reality_check",
+  "query_assignments": [
+   {
+    "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+    "assigned_engine": "dynamodb",
+    "confidence": 95,
+    "source_tables": [
+     "wordpress.wp_woocommerce_api_keys"
+    ],
+    "assignment_reason": "highest fit for DynamoDB",
+    "tied_engines": []
+   },
+   {
+    "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 81,
+    "source_tables": [
+     "wordpress.wp_posts",
+     "wordpress.wp_postmeta"
+    ],
+    "assignment_reason": "co-dependency group \u2192 Aurora MySQL | DynamoDB lacks required capability: aggregation, multi-table joins; excluded from ElastiCache: it joins more than one table, and a key-value store can't serve joins; DocumentDB lacks required capability: aggregation, multi-table joins; OpenSearch lacks required capability: aggregation, multi-table joins",
+    "tied_engines": []
+   },
+   {
+    "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 87,
+    "source_tables": [
+     "wordpress.wp_actionscheduler_actions",
+     "wordpress.wp_actionscheduler_groups"
+    ],
+    "assignment_reason": "reality check: consolidated from DocumentDB \u2192 Aurora MySQL (no unique value \u2014 DocumentDB scores 87.0, Aurora MySQL scores 82.0)",
+    "tied_engines": []
+   },
+   {
+    "query_id": "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 79,
+    "source_tables": [
+     "wordpress.wp_woocommerce_order_itemmeta"
+    ],
+    "assignment_reason": "highest fit for Aurora MySQL (scores tie with DocumentDB, DynamoDB; Aurora MySQL is the source-compatible relational engine)",
+    "tied_engines": []
+   },
+   {
+    "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+    "assigned_engine": "dynamodb",
+    "confidence": 77,
+    "source_tables": [
+     "wordpress.wp_wc_product_meta_lookup"
+    ],
+    "assignment_reason": "reality check: consolidated from DocumentDB \u2192 DynamoDB (no unique value \u2014 DocumentDB scores 77.0, DynamoDB scores 69.0)",
+    "tied_engines": []
+   },
+   {
+    "query_id": "a0b2ec34c29b2c00dab429d577d33da63a619325a396e80103e08ac2b5b35c0f",
+    "assigned_engine": "aurora_mysql",
+    "confidence": 100,
+    "source_tables": [
+     "wordpress.wp_options"
+    ],
+    "assignment_reason": "utility/metadata statement \u2014 kept on source-compatible relational engine (Aurora MySQL) | DynamoDB lacks required capability: a utility or DDL statement; ElastiCache lacks required capability: a utility or DDL statement; DocumentDB lacks required capability: a utility or DDL statement; OpenSearch lacks required capability: a utility or DDL statement",
+    "tied_engines": []
+   },
+   {
+    "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+    "assigned_engine": "dynamodb",
+    "confidence": 87,
+    "source_tables": [
+     "wordpress.wp_actionscheduler_actions",
+     "wordpress.wp_actionscheduler_groups"
+    ],
+    "assignment_reason": "reality check: DynamoDB is kept -- DocumentDB no longer qualifies for this query, so the earlier scores tie is resolved",
+    "tied_engines": []
+   }
+  ],
+  "table_assignments": [],
+  "co_dependency_groups": [],
+  "validation_warnings": [],
+  "moves": [
+   {
+    "seq": 1,
+    "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+    "pass": "settle",
+    "from_engine": "documentdb",
+    "to_engine": "aurora_mysql",
+    "score_before": 87.0,
+    "score_after": 82.0,
+    "runner_up": null,
+    "reason_code": "consolidate.no_unique_value",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 82.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "elasticache",
+       "score": null,
+       "gate": "capability"
+      },
+      {
+       "engine": "opensearch",
+       "score": 80.0,
+       "gate": null
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 2,
+    "query_id": "d72966f83d952df8a90f3fe081c626f33c8722f24535a4522b54f2528d12918d",
+    "pass": "settle",
+    "from_engine": "documentdb",
+    "to_engine": "dynamodb",
+    "score_before": 77.0,
+    "score_after": 69.0,
+    "runner_up": {
+     "engine": "aurora_mysql",
+     "score": 54.0
+    },
+    "reason_code": "consolidate.no_unique_value",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 54.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 77.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 69.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 38.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": "write_gate"
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": []
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   },
+   {
+    "seq": 3,
+    "query_id": "1da3b85858a9927d081eff8b87ba3c7309c5a07590628fd6de787e47ce4b792e",
+    "pass": "place",
+    "from_engine": "dynamodb",
+    "to_engine": "dynamodb",
+    "score_before": 87.0,
+    "score_after": 87.0,
+    "runner_up": null,
+    "reason_code": "tie.cleared",
+    "evidence": {
+     "candidates": [
+      {
+       "engine": "aurora_mysql",
+       "score": 82.0,
+       "gate": null
+      },
+      {
+       "engine": "documentdb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "dynamodb",
+       "score": 87.0,
+       "gate": null
+      },
+      {
+       "engine": "elasticache",
+       "score": 85.0,
+       "gate": "write_gate"
+      },
+      {
+       "engine": "opensearch",
+       "score": 0.0,
+       "gate": null
+      }
+     ],
+     "group_scores": {},
+     "signal": null,
+     "replaced_engine": null,
+     "tie_rule": null,
+     "previous_tied_engines": [
+      "documentdb",
+      "dynamodb"
+     ]
+    },
+    "group_key": null,
+    "tied_engines": [],
+    "actor": "rule"
+   }
+  ]
+ }
+}

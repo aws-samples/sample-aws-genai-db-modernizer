@@ -21,6 +21,7 @@ from src.api.models.graph_responses import (
     EngineDetailResponse,
     LoadTestResultsResponse,
     QueryProvenanceResponse,
+    QueryTraceResponse,
     RiskHotspotsResponse,
     TableImpactResponse,
 )
@@ -31,7 +32,7 @@ from src.graph.cypher_guard import DisallowedStatementError, bound_result_rows
 from src.graph.persistence import GraphPersistence
 from src.graph.populators import rebuild_graph
 from src.graph.raw_query_worker import RawQueryError, run_raw_query
-from src.graph.schema import initialize_schema
+from src.graph.schema import GRAPH_SCHEMA_REVISION, initialize_schema
 from src.graph.store import MAX_RESULT_ROWS, READ_QUERY_TIMEOUT_MS, GraphStore
 from src.storage.artifact_store import ArtifactStore
 
@@ -86,7 +87,12 @@ def _services() -> tuple[GraphStoreCache, ArtifactStore, GraphPersistence]:
 
 
 def _is_populated_file(path: str) -> bool:
-    """True when ``path`` holds a readable graph with at least one node."""
+    """True when ``path`` holds a readable, current graph with at least one node.
+
+    Current means built with this code's schema revision (``GraphMeta``): a
+    graph saved by an earlier release (no MOVED table, say) is stale, so the
+    caller rebuilds it from the artifacts instead of serving it (ADR-023).
+    """
     if not Path(path).exists():
         return False
     try:
@@ -95,7 +101,18 @@ def _is_populated_file(path: str) -> bool:
         logger.warning("graph at %s unusable: %s", path, exc)
         return False
     try:
-        return probe.is_populated()
+        if not probe.is_populated():
+            return False
+        revision = probe.graph_meta()["schema_revision"]
+        if revision != GRAPH_SCHEMA_REVISION:
+            logger.info(
+                "graph at %s has schema revision %s, not %s: rebuilding",
+                path,
+                revision,
+                GRAPH_SCHEMA_REVISION,
+            )
+            return False
+        return True
     finally:
         probe.close()
 
@@ -366,6 +383,29 @@ def graph_query_provenance(
     store, _ = graph
     with _curated_errors():
         return graph_queries.query_provenance(store, query_id)
+
+
+@router.get(
+    "/{job_id}/graph/queries/{query_id}/trace",
+    response_model=QueryTraceResponse,
+)
+def graph_query_trace(
+    query_id: str,
+    job_id: str = Depends(job_id_param),
+    graph: Any = Depends(get_graph_for_job),
+):
+    """Why a query ended on its engine and not another (#339).
+
+    Its first assignment with every engine's score or gate, each later move
+    across the assignment versions with its reason, the final engine, and the
+    runner-up with its score gap or disqualifying gate.
+    """
+    store, _ = graph
+    with _curated_errors():
+        trace = graph_queries.query_trace(store, query_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="Query not found in this assessment")
+    return trace
 
 
 @router.get("/{job_id}/graph/engines/{engine}", response_model=EngineDetailResponse)
