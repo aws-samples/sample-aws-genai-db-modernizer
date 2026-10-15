@@ -1,8 +1,9 @@
 """The regex table-reference extractor for offline collections.
 
-This is the scan ``offline_parser._transform_queries`` has always run, moved
+This is the scan ``offline_parser._transform_queries`` ran before #553, moved
 here unchanged so the sqlglot facade (:mod:`src.tools.sql.facade`) can fall
-back to exactly the same answer when it can't parse a statement (#557). It
+back to exactly the same answer when it can't parse a statement (#557), and
+so the cross-check (:mod:`src.tools.sql.shadow`) can compare the two. It
 returns references as written (``[database.]schema.table``); resolving them
 to collection table ids stays with the caller.
 

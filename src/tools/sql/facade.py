@@ -118,7 +118,11 @@ _STATEMENT_TYPES = (
 _PSEUDO_TABLES = frozenset({"dual"})
 
 ParsedBy = Literal["sqlglot", "regex"]
-FallbackReason = Literal["parse_error", "not_a_statement", "command", "empty", "too_long"]
+# ``facade_error`` is never produced here: the offline parser records it when
+# this module raises despite its contract, and it uses the regex answer.
+FallbackReason = Literal[
+    "parse_error", "not_a_statement", "command", "empty", "too_long", "facade_error"
+]
 
 
 @dataclass(frozen=True)
@@ -205,6 +209,12 @@ def table_references(sql: str, source_engine: str) -> TableReferences:
     if not all(isinstance(s, _STATEMENT_TYPES) for s in statements):
         return fallback("not_a_statement")
     return _from_statements(statements, dialect, normalized.truncated)
+
+
+def regex_answer(sql: str, source_engine: str, reason: FallbackReason) -> TableReferences:
+    """The regex extractor's answer as a fallback with ``reason``, without
+    trying sqlglot (for a caller whose :func:`table_references` call raised)."""
+    return _fallback(sql or "", reason, sqlglot_dialect(source_engine), truncated=False)
 
 
 def _fallback(

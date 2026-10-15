@@ -520,10 +520,21 @@ class TestSchemaQualifiedTableResolution:
         assert self._tables("SELECT * FROM [Audit].[LoginHistory]") == ["Audit.LoginHistory"]
 
     def test_column_reference_after_from_is_not_resolved(self):
-        # EXTRACT(EPOCH FROM topics.id): "id" is not a collected table.
+        # The regex scan (the facade's fallback) reads EXTRACT(EPOCH FROM
+        # EventLog.id) as a reference to "id" qualified by EventLog; the
+        # resolver must keep that as written, since "id" is not a collected table.
+        from src.tools.database.offline_parser import _resolve_table_ids
+
+        refs = [(["EventLog"], "id"), ([], "Product")]
+        assert _resolve_table_ids(
+            refs, "trailgear", {"EventLog", "Product"}, {"EventLog": {"Audit"}}
+        ) == ["EventLog.id", "trailgear.Product"]
+
+    def test_function_from_is_not_a_table(self):
+        # Since #553 the sqlglot facade reads the statement: EXTRACT's FROM is
+        # a function argument, not a table reference.
         assert self._tables("SELECT EXTRACT(EPOCH FROM EventLog.id) FROM Product") == [
-            "EventLog.id",
-            "trailgear.Product",
+            "trailgear.Product"
         ]
 
     def test_table_without_reported_schema_resolves(self):

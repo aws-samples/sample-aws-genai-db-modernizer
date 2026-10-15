@@ -1,10 +1,11 @@
-"""Shadow mode for the sqlglot facade (#557).
+"""The facade-vs-regex cross-check (#557, #553).
 
-The regex answer drives everything; the facade runs alongside it and every
-disagreement is recorded, never applied. These tests pin that: the parsed
-collection is identical with or without the shadow (even when the facade is
-made to disagree, or to fail), disagreements are categorised, and the
-per-job artifact is written.
+The sqlglot facade's answer drives ``tables_accessed`` (#553); the regex scan
+runs alongside it and every disagreement is recorded, never applied. These
+tests pin that: the parsed collection is identical with or without the
+shadow, the facade's answer is the one returned (even when it is made to
+disagree), a failing facade falls back to the regex, disagreements are
+categorised, and the per-job artifact is written.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ class TestOutputUnchanged:
         assert _dump(parse_offline_collection(load_sample(sample), shadow=shadow)) == plain
         assert shadow.queries == len(json.loads(plain)["queries"])
 
-    def test_a_disagreeing_facade_changes_nothing(self, monkeypatch):
+    def test_the_facade_answer_drives_the_output(self, monkeypatch):
         def bogus(sql, engine):
             return TableReferences(
                 tables=(TableRef(name="phantom"),),
@@ -74,23 +75,33 @@ class TestOutputUnchanged:
             )
 
         data = _collection(QUERIES)
-        plain = _dump(parse_offline_collection(json.loads(json.dumps(data))))
         monkeypatch.setattr(facade, "table_references", bogus)
+        plain = parse_offline_collection(json.loads(json.dumps(data)))
+        assert {tuple(q["tables_accessed"]) for q in plain["queries"]} == {("phantom",)}
         shadow = TableShadow()
-        assert _dump(parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)) == plain
+        shadowed = parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)
+        assert _dump(shadowed) == _dump(plain)
         assert shadow.agree == 0
         assert all(d["facade"] == ["phantom"] for d in shadow.disagreements)
 
-    def test_a_failing_facade_changes_nothing(self, monkeypatch):
+    def test_a_failing_facade_falls_back_to_the_regex(self, monkeypatch):
         def boom(sql, engine):
             raise RuntimeError("facade bug")
 
         data = _collection(QUERIES)
-        plain = _dump(parse_offline_collection(json.loads(json.dumps(data))))
         monkeypatch.setattr(facade, "table_references", boom)
         shadow = TableShadow()
-        assert _dump(parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)) == plain
-        assert shadow.queries == 0
+        parsed = parse_offline_collection(json.loads(json.dumps(data)), shadow=shadow)
+        # The regex's own reading, phantoms included; every query is still
+        # listed, as a facade_error fallback that agrees by construction.
+        assert parsed["queries"][1]["tables_accessed"] == ["shop.posts", "topics.id"]
+        assert shadow.queries == len(QUERIES)
+        assert shadow.disagree == 0
+        assert shadow.fallbacks == [
+            {"query_id": f"q{i}", "reason": "facade_error", "truncated": False}
+            for i in range(len(QUERIES))
+        ]
+        assert shadow.status_summary()["reasons"] == {"facade_error": len(QUERIES)}
 
 
 class TestDisagreements:
@@ -107,7 +118,7 @@ class TestDisagreements:
         assert "q0" not in {d["query_id"] for d in shadow.disagreements}
 
     @pytest.mark.parametrize(
-        "qid,current_only,facade_only,category",
+        "qid,regex_only,facade_only,category",
         [
             ("q1", ["topics.id"], [], "is_distinct_from"),
             ("q2", [], ["shop.users"], "delete_using"),
@@ -116,11 +127,9 @@ class TestDisagreements:
             ("q5", ["CURRENT_TIMESTAMP"], [], "from_in_function"),
         ],
     )
-    def test_each_disagreement_is_categorised(
-        self, shadow, qid, current_only, facade_only, category
-    ):
+    def test_each_disagreement_is_categorised(self, shadow, qid, regex_only, facade_only, category):
         row = self._row(shadow, qid)
-        assert row["current_only"] == current_only
+        assert row["regex_only"] == regex_only
         assert row["facade_only"] == facade_only
         assert row["categories"] == [category]
 
@@ -160,8 +169,9 @@ class TestDisagreements:
 
     def test_artifact_payload(self, shadow):
         payload = shadow.to_dict()
-        assert payload["mode"] == "shadow"
-        assert payload["drives_output"] == "regex"
+        assert payload["schema_version"] == 2
+        assert payload["mode"] == "cross_check"
+        assert payload["drives_output"] == "facade"
         assert payload["source_engine"] == "postgresql"
         assert payload["dialect"] == "postgres"
         assert payload["sqlglot_version"].startswith("30.")
@@ -177,6 +187,17 @@ class _Store:
         if self.fail:
             raise OSError("disk full")
         self.written[path] = data
+
+
+def test_status_summary_is_the_compact_status_line_payload():
+    shadow = TableShadow()
+    parse_offline_collection(_collection(QUERIES), shadow=shadow)
+    assert shadow.status_summary() == {
+        "regex_fallback": 1,
+        "reasons": {"command": 1},
+        "agree": 2,
+        "disagree": 5,
+    }
 
 
 def test_write_shadow_artifact():

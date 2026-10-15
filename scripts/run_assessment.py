@@ -292,6 +292,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
 
     job_id = str(uuid.uuid4())[:8]
     explicit_db = db_name  # already validated by _run() when the caller passed --db
+    table_refs: dict | None = None  # parser counts, raw collections only (#553)
 
     if is_contract:
         collector_data = input_data
@@ -330,13 +331,15 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
         from src.tools.sql.shadow import TableShadow, write_shadow_artifact
 
         try:
-            # Shadow mode (#557): the sqlglot facade reads every query's tables
-            # next to the regex and records disagreements; output is unchanged.
+            # Table references come from the sqlglot facade, with the regex as
+            # its fallback (#553); the regex also runs as a cross-check, and
+            # both counts go on the collect status line (``table_refs``).
             sql_shadow = TableShadow()
             parsed = parse_offline_collection(input_data, shadow=sql_shadow)
         except IngestionLimitError as exc:
             _error("collect", str(exc))
         write_shadow_artifact(store, db_name, job_id, sql_shadow)
+        table_refs = sql_shadow.status_summary()
 
         # Build collector contract output
         import time
@@ -416,6 +419,7 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
             "tables": len(tables),
             "queries": len(queries),
             "artifact": artifact,
+            **({"table_refs": table_refs} if table_refs is not None else {}),
         },
     )
     return job_id, db_name

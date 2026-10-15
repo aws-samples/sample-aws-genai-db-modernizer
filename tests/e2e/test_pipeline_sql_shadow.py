@@ -1,8 +1,8 @@
-"""Shadow mode for the sqlglot facade writes its per-job artifact (#557).
+"""The facade-vs-regex cross-check writes its per-job artifact (#557, #553).
 
-The facade's answer never drives the pipeline (the routing snapshot and the
-deliverable tests guard that); this only checks the collect phase leaves the
-comparison behind for #553 to read.
+The facade's answer drives ``tables_accessed`` (#553; the routing snapshot
+guards what that does to routing); this checks the collect phase leaves the
+comparison with the regex behind.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ def test_collect_writes_the_sql_shadow_artifact(run: PipelineResult) -> None:
         pytest.skip("a job produced outside the deterministic runner")
     payload = json.loads((run.job_dir() / "collector" / "sql_shadow.json").read_text())
     summary = payload["summary"]
-    assert payload["mode"] == "shadow" and payload["drives_output"] == "regex"
+    assert payload["mode"] == "cross_check" and payload["drives_output"] == "facade"
     assert summary["queries"] == run.steps["collect"]["queries"]
     assert summary["agree"] + summary["disagree"] == summary["queries"]
     assert len(payload["disagreements"]) == summary["disagree"]

@@ -93,6 +93,19 @@ def test_discourse_stdout_is_status_lines_then_log_pointer(discourse_compact):
     assert pointer["log_lines"] == len(log)
 
 
+def test_discourse_collect_line_reports_the_table_refs_parser(discourse_compact):
+    # #553: the facade's regex fallbacks and the regex cross-check, on the
+    # collect status line, so stdout and the run log both carry them.
+    from tests.unit.scripts.test_collect_table_refs_status import DISCOURSE_TABLE_REFS
+
+    tmp_path, proc = discourse_compact
+    lines = _json_lines(proc.stdout)
+    collect = next(line for line in lines if line["phase"] == "collect")
+    assert collect["table_refs"] == DISCOURSE_TABLE_REFS
+    log = (tmp_path / lines[-1]["log"]).read_text(encoding="utf-8")
+    assert '"table_refs": {"regex_fallback": 13' in log
+
+
 def test_discourse_log_has_the_progress(discourse_compact):
     tmp_path, proc = discourse_compact
     pointer = _json_lines(proc.stdout)[-1]

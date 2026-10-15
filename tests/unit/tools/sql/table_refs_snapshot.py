@@ -2,10 +2,11 @@
 
 For every query in the bundled samples (wordpress, discourse, trailgear) this
 records what the facade reports -- the resolved table ids, ``parsed_by`` and
-the fallback reason -- and whether that agrees with the regex extractor that
-drives routing today. ``test_table_refs_snapshot.py`` compares a fresh run
-with ``baselines/table_refs_snapshot.json``, so a sqlglot version bump, or a
-facade change, shows exactly which queries changed. Regenerate it (never
+the fallback reason -- and whether that agrees with the regex extractor (the
+facade's fallback; the facade's answer drives routing since #553).
+``test_table_refs_snapshot.py`` compares a fresh run with
+``baselines/table_refs_snapshot.json``, so a sqlglot version bump, or a facade
+change, shows exactly which queries changed. Regenerate it (never
 hand-merge it) with::
 
     uv run python -m tests.unit.tools.sql.table_refs_snapshot --write
@@ -69,13 +70,13 @@ class _RecordingShadow(TableShadow):
         super().__init__()
         self.facts: dict[str, dict] = {}
 
-    def record(self, query_id, query_text, current, facade, refs) -> None:  # type: ignore[no-untyped-def]
-        super().record(query_id, query_text, current, facade, refs)
+    def record(self, query_id, query_text, regex, facade, refs) -> None:  # type: ignore[no-untyped-def]
+        super().record(query_id, query_text, regex, facade, refs)
         self.facts[query_id] = {
             "tables": facade,
             "parsed_by": refs.parsed_by,
             "fallback": refs.fallback_reason,
-            "agrees": set(current) == set(facade),
+            "agrees": set(regex) == set(facade),
         }
 
 

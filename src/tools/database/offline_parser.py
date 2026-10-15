@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from src.tools.database.collection_text import extract_json_object
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
 
 if TYPE_CHECKING:
+    from src.tools.sql.facade import TableReferences
     from src.tools.sql.shadow import TableShadow
 
 logger = logging.getLogger(__name__)
@@ -68,9 +70,12 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
     Transform the flat offline JSON into the nested structure expected
     by mysql_collector's builder functions.
 
-    ``shadow``, when given, also reads every query's table references with the
-    sqlglot facade and records where it disagrees with the regex (#557). It only
-    observes: the returned structure is the same with or without it.
+    Every query's table references come from the sqlglot facade
+    (:func:`src.tools.sql.facade.table_references`, #553), read in the
+    collection's source-engine dialect; the regex scan is the facade's own
+    fallback. ``shadow``, when given, also runs the regex scan on every query
+    and records where it disagrees with the facade (#557). It only observes:
+    the returned structure is the same with or without it.
 
     Returns dict with keys: metadata, tables (list of table dicts with
     nested columns/indexes/fks/pk), views, procedures, triggers,
@@ -183,11 +188,7 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
             known_table_names,
             table_schemas=table_schemas,
             shadow=shadow,
-            source_engine=(
-                detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
-                if shadow is not None
-                else ""
-            ),
+            source_engine=detect_source_engine(metadata if isinstance(metadata, dict) else None)[0],
         ),
         "global_stats": global_stats,
         "io_stats": data.get("io_stats", {}),
@@ -380,35 +381,69 @@ def _resolve_table_ids(
     return tables_accessed or ["unknown"]
 
 
+def _facade_table_ids(
+    query_id: str,
+    query_text: str,
+    source_engine: str,
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]],
+) -> tuple[list[str], TableReferences]:
+    """One query's table ids from the sqlglot facade (#553).
+
+    The facade picks the dialect from ``source_engine`` and falls back to the
+    regex scan itself when sqlglot can't read the statement. It never raises by
+    contract; if it does anyway, the regex answer is used, labelled
+    ``fallback_reason="facade_error"``, and a warning is logged, so a parser
+    bug can't fail a collection. Returns the resolved ids and the facade's
+    answer.
+    """
+    from src.tools.sql import facade
+
+    try:
+        refs = facade.table_references(query_text, source_engine)
+    except Exception:  # noqa: BLE001 -- the regex answer keeps the collection going
+        logger.warning(
+            "offline_parser: sql facade failed on query %s, using the regex table scan",
+            query_id,
+            exc_info=True,
+        )
+        refs = facade.regex_answer(query_text, source_engine, "facade_error")
+    ids = _resolve_table_ids(
+        [(ref.qualifiers, ref.name) for ref in refs.tables],
+        db_name,
+        known_table_names,
+        table_schemas,
+    )
+    return ids, refs
+
+
 def _shadow_table_refs(
     shadow: TableShadow,
     query_id: str,
     query_text: str,
-    tables_accessed: list[str],
+    facade_ids: list[str],
+    refs: TableReferences,
     source_engine: str,
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
 ) -> None:
-    """Record the facade's table ids next to the regex's for one query (#557).
+    """Record the regex scan's table ids next to the facade's for one query.
 
-    The facade's references go through the same resolver as the regex's, so the
-    comparison is id for id. Shadow mode must never break a collection: any
-    error here is logged and the query is skipped.
+    The regex references go through the same resolver as the facade's, so the
+    comparison is id for id. The cross-check must never break a collection:
+    any error here is logged and the query is skipped.
     """
-    from src.tools.sql.facade import table_references
+    from src.tools.sql.regex_tables import regex_table_refs
 
     shadow.source_engine = source_engine
     try:
-        refs = table_references(query_text, source_engine)
-        facade_ids = _resolve_table_ids(
-            [(ref.qualifiers, ref.name) for ref in refs.tables],
-            db_name,
-            known_table_names,
-            table_schemas,
+        regex_ids = _resolve_table_ids(
+            regex_table_refs(query_text), db_name, known_table_names, table_schemas
         )
-        shadow.record(query_id, query_text, list(tables_accessed), facade_ids, refs)
-    except Exception:  # noqa: BLE001 -- shadow mode only observes
+        shadow.record(query_id, query_text, regex_ids, list(facade_ids), refs)
+    except Exception:  # noqa: BLE001 -- the cross-check only observes
         logger.warning("offline_parser: sql shadow skipped query %s", query_id, exc_info=True)
 
 
@@ -434,16 +469,16 @@ def _transform_queries(
     one query shape produced multiple rows (e.g. SQL Server literal
     variants, #386).
 
-    ``shadow`` (with the collection's ``source_engine`` for the dialect) gets
-    the regex and the sqlglot facade's table ids for every query; see
-    ``_shadow_table_refs``. The regex answer is the one returned.
+    ``tables_accessed`` comes from the sqlglot facade, read in the
+    ``source_engine`` dialect (see ``_facade_table_ids``, #553). ``shadow``,
+    when given, also gets the regex scan's table ids for every query (see
+    ``_shadow_table_refs``); the facade's answer is the one returned either way.
     """
     import hashlib
     import re
 
-    from src.tools.sql.regex_tables import regex_table_refs
-
     patterns = []
+    fallbacks: Counter[str] = Counter()
     for r in _merge_query_variants(raw):
         query_text = str(r.get("query_text") or "")
         exec_count = r.get("execution_count") or 1
@@ -452,18 +487,25 @@ def _transform_queries(
         total_rows_affected = r.get("total_rows_affected") or 0
         total_time_ms = float(r.get("total_time_ms") or 0)
 
-        # Table references come from the regex extractor
-        # (src/tools/sql/regex_tables.py), resolved to collection table ids.
-        tables_accessed = _resolve_table_ids(
-            regex_table_refs(query_text), db_name, known_table_names, table_schemas or {}
+        digest = r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16]
+
+        # Table references come from the sqlglot facade (src/tools/sql/facade.py),
+        # with the regex scan as its fallback, resolved to collection table ids.
+        tables_accessed, refs = _facade_table_ids(
+            str(digest),
+            query_text,
+            source_engine,
+            db_name,
+            known_table_names,
+            table_schemas or {},
         )
+        if refs.fallback_reason:
+            fallbacks[refs.fallback_reason] += 1
 
         # Extract query type
         type_re = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
         m = type_re.match(query_text)
         query_type = m.group(1).upper() if m else "OTHER"
-
-        digest = r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16]
 
         if shadow is not None:
             _shadow_table_refs(
@@ -471,6 +513,7 @@ def _transform_queries(
                 str(digest),
                 query_text,
                 tables_accessed,
+                refs,
                 source_engine,
                 db_name,
                 known_table_names,
@@ -516,6 +559,13 @@ def _transform_queries(
                 "first_seen": r.get("first_seen"),
                 "last_seen": r.get("last_seen"),
             }
+        )
+    if fallbacks:
+        logger.info(
+            "offline_parser: table references: %d/%d queries used the regex fallback (%s)",
+            sum(fallbacks.values()),
+            len(patterns),
+            dict(sorted(fallbacks.items())),
         )
     return patterns
 
