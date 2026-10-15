@@ -22,6 +22,12 @@ _REPO = Path(__file__).resolve().parents[4]
 _READERS = (
     _REPO / "src" / "agents" / "referee" / "capability_registry.py",
     _REPO / "src" / "agents" / "referee" / "engine_exclusions.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_common_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_common_pattern_catalog.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_mysql_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_mysql_pattern_catalog.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_pg_analysis_tools.py",
+    _REPO / "src" / "tools" / "analysis" / "aurora_pg_pattern_catalog.py",
 )
 
 # Methods that would scan query text in place: a regex match, or a substring
@@ -159,6 +165,31 @@ class TestFacts:
             ("SELECT a FROM t GROUP BY a", "dedup_only_group_by"),
             ("SELECT * FROM g JOIN u ON lower(g.name) = u.name_lower", "computed_join_key"),
             ("INSERT INTO t SELECT * FROM u", "write_with_subquery"),
+            ("SELECT a, count(*) FROM t", "aggregation_keyword"),
+            ("SELECT * FROM t WHERE NOT EXISTS (SELECT 1 FROM u)", "exists_or_in_subquery"),
+            ("SELECT * FROM t WHERE a IN ( SELECT b FROM u)", "exists_or_in_subquery"),
+            ("SELECT * FROM t LIMIT 10", "pagination_keyword"),
+            ("SELECT * FROM t FETCH FIRST 5 ROWS ONLY", "pagination_keyword"),
+            ("SELECT * FROM t WHERE id IN (1, 2)", "in_list"),
+            ("SELECT * FROM t WHERE a ILIKE '%x'", "like_percent_literal"),
+            ("SELECT * FROM t WHERE to_tsvector(a) @@ q", "text_search_keyword"),
+            ("SELECT JSON_EXTRACT(doc, '$.a') FROM t", "json_function_keyword"),
+            ("SELECT doc->'a' FROM t", "json_function_keyword"),
+            ("SELECT * FROM t WHERE MATCH (a) AGAINST ('x')", "match_against_keyword"),
+            ("INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE a = 1", "duplicate_key_upsert"),
+            ("REPLACE INTO t VALUES (1)", "duplicate_key_upsert"),
+            ("SELECT GROUP_CONCAT(a) FROM t", "group_concat_call"),
+            ("CALL refresh_stats()", "stored_routine_keyword"),
+            ("SELECT RANK() OVER (ORDER BY a) FROM t", "window_function_keyword"),
+            ("SELECT lag(a, 1) FROM t", "window_function_keyword"),
+            ("SELECT doc->>'a' FROM t", "jsonb_operation"),
+            ("SELECT * FROM t WHERE doc @> '{\"a\": 1}'", "jsonb_operation"),
+            ("SELECT * FROM t WHERE id = ANY(ARRAY[1, 2])", "array_operation"),
+            ("SELECT unnest(tags) FROM t", "array_operation"),
+            ("SELECT ts_rank(v, q) FROM t", "tsvector_search"),
+            ("SELECT * FROM t JOIN LATERAL (SELECT 1) x ON true", "lateral_join"),
+            ("INSERT INTO t VALUES (1) ON CONFLICT DO NOTHING", "on_conflict_or_returning"),
+            ("INSERT INTO t VALUES (1) RETURNING id", "on_conflict_or_returning"),
         ],
     )
     def test_each_fact_is_detected(self, sql, fact):
@@ -186,6 +217,24 @@ class TestFacts:
     )
     def test_needs_aggregation(self, sql, needs):
         assert query_facts(sql).needs_aggregation is needs
+
+    @pytest.mark.parametrize(
+        "sql,fact",
+        [
+            ("SELECT a AS returning FROM t", "on_conflict_or_returning"),
+            ("SELECT * FROM t WHERE a @> ARRAY[1]", "jsonb_operation"),
+            ("SELECT * FROM t WHERE a LIKE  '%x'", "like_percent_literal"),  # two spaces
+            ("SELECT * FROM t WHERE a = 'x'", "in_list"),
+            ("SELECT fooWITH RECURSIVE", "recursive_cte"),
+        ],
+    )
+    def test_near_misses_are_not_the_fact(self, sql, fact):
+        assert getattr(query_facts(sql), fact) is False
+
+    def test_recursive_cte_needs_a_word_boundary_before_with(self):
+        # One definition for the capability gate and the Aurora PostgreSQL
+        # recursive-CTE pattern (#491); the gate's copy had no leading \b.
+        assert query_facts("with recursive r as (select 1) select * from r").recursive_cte
 
     def test_join_keyword_count_reads_every_join_word(self):
         assert query_facts("SELECT * FROM a JOIN b ON 1=1 -- join c").join_keyword_count == 2

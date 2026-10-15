@@ -27,7 +27,6 @@ from src.contracts.analysis_output import (
 from src.tools.analysis.aurora_common_analysis_tools import (
     _apply_aurora_common_adjustments,
     _count_inbound_fks,
-    _text_contains_any,
     analyze_aurora_common_use_cases,
     assess_migration_complexity,
     build_concerns,
@@ -37,20 +36,14 @@ from src.tools.analysis.aurora_common_analysis_tools import (
 )
 from src.tools.analysis.aurora_common_pattern_catalog import AURORA_MYSQL_SCORE_WEIGHTS
 from src.tools.analysis.aurora_common_pattern_catalog import PATTERN_BY_ID as COMMON_PATTERN_BY_ID
-from src.tools.analysis.aurora_mysql_pattern_catalog import (
-    DUPLICATE_KEY_KEYWORDS,
-    FULLTEXT_MATCH_KEYWORDS,
-    GROUP_CONCAT_KEYWORDS,
-    JSON_EXTRACT_KEYWORDS,
-    MYSQL_PATTERN_BY_ID,
-    STORED_ROUTINE_KEYWORDS,
-)
+from src.tools.analysis.aurora_mysql_pattern_catalog import MYSQL_PATTERN_BY_ID
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 # ==========================================================================
 # MySQL-specific feature detection
@@ -62,22 +55,22 @@ def detect_mysql_specific_features(query_text: str) -> list[str]:
 
     Returns list of matched pattern_ids.
     """
-    text_lower = query_text.lower()
+    facts = query_facts(query_text)
     matched: list[str] = []
 
-    if _text_contains_any(text_lower, JSON_EXTRACT_KEYWORDS):
+    if facts.json_function_keyword:
         matched.append("aurora-mysql-01")
 
-    if _text_contains_any(text_lower, FULLTEXT_MATCH_KEYWORDS):
+    if facts.match_against_keyword:
         matched.append("aurora-mysql-02")
 
-    if _text_contains_any(text_lower, DUPLICATE_KEY_KEYWORDS):
+    if facts.duplicate_key_upsert:
         matched.append("aurora-mysql-03")
 
-    if _text_contains_any(text_lower, GROUP_CONCAT_KEYWORDS):
+    if facts.group_concat_call:
         matched.append("aurora-mysql-04")
 
-    if _text_contains_any(text_lower, STORED_ROUTINE_KEYWORDS):
+    if facts.stored_routine_keyword:
         matched.append("aurora-mysql-05")
 
     # aurora-mysql-06: multi-table-update (UPDATE + join detected)

@@ -26,34 +26,24 @@ from src.contracts.analysis_output import (
     ScoreBreakdown,
 )
 from src.tools.analysis.aurora_common_pattern_catalog import (
-    AGGREGATION_KEYWORDS,
     ANTI_PATTERN_BY_ID,
     CACHE_READ_CPS_THRESHOLD,
     HIGH_FREQUENCY_PK_LOOKUP_CPS,
     HIGH_INGEST_CPS_THRESHOLD,
     HIGH_VOLUME_TEXT_SEARCH_CPS,
-    IN_LIST_KEYWORDS,
-    PAGINATION_KEYWORDS,
     PATTERN_BY_ID,
     SKIP_QUERY_TYPES,
     STANDARD_CRUD_MIN_CPS,
-    SUBQUERY_RE,
     TEXT_COLUMN_RATIO_THRESHOLD,
     TEXT_DATA_TYPES,
-    TEXT_SEARCH_KEYWORDS,
     TRANSACTION_WRITE_TYPES,
 )
 from src.tools.analysis.scoring import TableProfile
+from src.tools.sql.query_facts import query_facts
 
 # ==========================================================================
 # Internal helpers
 # ==========================================================================
-
-
-def _text_contains_any(text: str, keywords: tuple[str, ...]) -> bool:
-    """Case-insensitive substring check for any keyword."""
-    lower = text.lower()
-    return any(kw in lower for kw in keywords)
 
 
 def _build_pattern(
@@ -215,8 +205,7 @@ def analyze_aurora_common_use_cases(
     for q in queries:
         qid = q.get("query_id", "")
         qt = (q.get("query_type") or "").upper()
-        text = q.get("query_text") or ""
-        text_lower = text.lower()
+        facts = query_facts(q.get("query_text") or "")
         tables = q.get("tables_accessed") or []
         cps = float(q.get("calls_per_second") or 0.0)
         has_joins = bool(q.get("has_joins", False))
@@ -238,7 +227,7 @@ def analyze_aurora_common_use_cases(
             cj_table_ids.extend(tables)
 
         # aurora-common-02: aggregation-analytics
-        if _text_contains_any(text_lower, AGGREGATION_KEYWORDS):
+        if facts.aggregation_keyword:
             ag_query_ids.append(qid)
             ag_table_ids.extend(tables)
 
@@ -248,12 +237,12 @@ def analyze_aurora_common_use_cases(
             tw_table_ids.extend(tables)
 
         # aurora-common-05: reporting-query (large result sets + aggregation or date range)
-        if rows_avg > 100 and _text_contains_any(text_lower, AGGREGATION_KEYWORDS):
+        if rows_avg > 100 and facts.aggregation_keyword:
             rp_query_ids.append(qid)
             rp_table_ids.extend(tables)
 
         # aurora-common-06: correlated-subquery
-        if SUBQUERY_RE.search(text):
+        if facts.exists_or_in_subquery:
             cs_query_ids.append(qid)
             cs_table_ids.extend(tables)
 
@@ -264,7 +253,7 @@ def analyze_aurora_common_use_cases(
                 mm_table_ids.extend(tables)
 
         # aurora-common-08: pagination
-        if _text_contains_any(text_lower, PAGINATION_KEYWORDS):
+        if facts.pagination_keyword:
             pg_query_ids.append(qid)
             pg_table_ids.extend(tables)
 
@@ -286,7 +275,7 @@ def analyze_aurora_common_use_cases(
                 crud_per_table[tid]["total_cps"] += cps
 
         # aurora-common-11: batch-in-list (WHERE col IN (...))
-        if _text_contains_any(text_lower, IN_LIST_KEYWORDS) and qt == "SELECT":
+        if facts.in_list and qt == "SELECT":
             bl_query_ids.append(qid)
             bl_table_ids.extend(tables)
 
@@ -312,7 +301,7 @@ def analyze_aurora_common_use_cases(
                 cr_table_ids.extend(tables)
 
         # aurora-anti-03: full-text-search-candidate
-        if "like '%" in text_lower or "like N'%" in text_lower or "ilike '%" in text_lower:
+        if facts.like_percent_literal:
             ft_query_ids.append(qid)
             ft_table_ids.extend(tables)
 
@@ -325,7 +314,7 @@ def analyze_aurora_common_use_cases(
                 ingest_per_table[tid]["total_cps"] += cps
 
         # aurora-anti-07: track text search volume per table
-        if _text_contains_any(text_lower, TEXT_SEARCH_KEYWORDS):
+        if facts.text_search_keyword:
             for tid in tables:
                 if tid not in text_search_per_table:
                     text_search_per_table[tid] = {"query_ids": [], "total_cps": 0.0}
@@ -336,8 +325,7 @@ def analyze_aurora_common_use_cases(
     for q in queries:
         qt = (q.get("query_type") or "").upper()
         if qt == "SELECT" and (
-            q.get("has_joins")
-            or _text_contains_any((q.get("query_text") or "").lower(), AGGREGATION_KEYWORDS)
+            q.get("has_joins") or query_facts(q.get("query_text") or "").aggregation_keyword
         ):
             for tid in q.get("tables_accessed") or []:
                 if tid in ingest_per_table:

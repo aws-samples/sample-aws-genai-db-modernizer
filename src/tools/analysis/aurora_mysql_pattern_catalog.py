@@ -28,36 +28,6 @@ MYSQL_PATTERN_BY_ID: dict[str, CatalogPattern] = {p.pattern_id: p for p in AUROR
 
 
 # ==========================================================================
-# Detection keyword tuples
+# Detection: the MySQL keyword tables live in ``src.tools.sql.query_facts``
+# (#491), one engine-neutral definition per fact.
 # ==========================================================================
-
-JSON_EXTRACT_KEYWORDS: tuple[str, ...] = (
-    "json_extract(",
-    "json_contains(",
-    "json_value(",
-    "json_set(",
-    "json_array(",
-    "json_object(",
-    "->>",
-    "->",
-)
-
-FULLTEXT_MATCH_KEYWORDS: tuple[str, ...] = (
-    "match(",
-    "match (",
-    "against(",
-    "against (",
-)
-
-DUPLICATE_KEY_KEYWORDS: tuple[str, ...] = ("on duplicate key", "replace into")
-
-GROUP_CONCAT_KEYWORDS: tuple[str, ...] = ("group_concat(",)
-
-STORED_ROUTINE_KEYWORDS: tuple[str, ...] = (
-    "call ",
-    "delimiter",
-    "create procedure",
-    "create function",
-)
-
-MULTI_TABLE_UPDATE_KEYWORDS: tuple[str, ...] = ("update",)  # combined with join detection

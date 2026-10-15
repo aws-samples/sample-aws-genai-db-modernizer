@@ -55,7 +55,11 @@ _TEXT_SEARCH_OPERATOR_RE = re.compile(r"to_tsvector|to_tsquery|@@", re.IGNORECAS
 _RANKING_WINDOW_FUNCTION_RE = re.compile(
     r"\b(ROW_NUMBER|RANK|DENSE_RANK|NTILE|LAG|LEAD)\s*\(\s*\)\s*OVER\s*\(", re.IGNORECASE
 )
-_RECURSIVE_CTE_RE = re.compile(r"WITH\s+RECURSIVE\b", re.IGNORECASE)
+# ``WITH RECURSIVE`` (the capability gate and the Aurora PostgreSQL
+# recursive-CTE pattern read this one fact). The leading ``\b`` came from the
+# PostgreSQL pattern; the gate's copy had none, which only differs when WITH is
+# glued to a preceding word character, as in no SQL statement.
+_RECURSIVE_CTE_RE = re.compile(r"\bWITH\s+RECURSIVE\b", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Aggregation (#338, #336)
@@ -144,6 +148,196 @@ _WRITE_WITH_SUBQUERY_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# Relational shape keywords (the Aurora analysis's detectors, moved here from
+# ``aurora_common_pattern_catalog``). Case-insensitive substring checks on the
+# raw text: they read comments, literals and column names too (``limit`` in
+# ``credit_limit``), which is why they are kept apart from the parsed facts.
+# ---------------------------------------------------------------------------
+
+AGGREGATION_KEYWORDS: tuple[str, ...] = (
+    "group by",
+    "having",
+    "sum(",
+    "count(",
+    "avg(",
+    "min(",
+    "max(",
+)
+
+# EXISTS (subquery), NOT EXISTS (subquery), IN (SELECT ...)
+_EXISTS_OR_IN_SUBQUERY_RE = re.compile(
+    r"""
+    \bEXISTS\s*\(               # EXISTS (subquery)
+    |
+    \bNOT\s+EXISTS\s*\(         # NOT EXISTS (subquery)
+    |
+    \bIN\s*\(\s*SELECT\b        # IN (SELECT ...)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+PAGINATION_KEYWORDS: tuple[str, ...] = (
+    "limit",
+    "offset",
+    "fetch first",
+    "fetch next",
+)
+
+IN_LIST_KEYWORDS: tuple[str, ...] = (
+    " in (",
+    " in(",
+)
+
+# Text search indicators (for the volume-based high-volume-text-search check).
+# The ``like N'%`` entry is compared with lower-cased text, so it never
+# matches; it is kept as found (#491 moves detectors, it does not change them).
+TEXT_SEARCH_KEYWORDS: tuple[str, ...] = (
+    "like '%",
+    "like N'%",
+    "ilike '%",
+    "to_tsvector",
+    "plainto_tsquery",
+    "match(",
+    "match (",
+)
+
+# ---------------------------------------------------------------------------
+# MySQL syntax (the Aurora MySQL analysis's detectors, moved here from
+# ``aurora_mysql_pattern_catalog``): case-insensitive substring checks.
+# ---------------------------------------------------------------------------
+
+JSON_FUNCTION_KEYWORDS: tuple[str, ...] = (
+    "json_extract(",
+    "json_contains(",
+    "json_value(",
+    "json_set(",
+    "json_array(",
+    "json_object(",
+    "->>",
+    "->",
+)
+
+MATCH_AGAINST_KEYWORDS: tuple[str, ...] = (
+    "match(",
+    "match (",
+    "against(",
+    "against (",
+)
+
+DUPLICATE_KEY_KEYWORDS: tuple[str, ...] = ("on duplicate key", "replace into")
+
+GROUP_CONCAT_KEYWORDS: tuple[str, ...] = ("group_concat(",)
+
+STORED_ROUTINE_KEYWORDS: tuple[str, ...] = (
+    "call ",
+    "delimiter",
+    "create procedure",
+    "create function",
+)
+
+# ---------------------------------------------------------------------------
+# PostgreSQL syntax (the Aurora PostgreSQL analysis's detectors, moved here
+# from ``aurora_pg_pattern_catalog``).
+# ---------------------------------------------------------------------------
+
+# Window functions: named window functions OR ) OVER ( OR OVER (PARTITION|ORDER BY
+_WINDOW_FUNCTION_KEYWORD_RE = re.compile(
+    r"""
+    \b(?:ROW_NUMBER|RANK|DENSE_RANK|LAG|LEAD|NTILE|FIRST_VALUE|LAST_VALUE|CUME_DIST|PERCENT_RANK)\s*\(
+    |
+    \)\s*OVER\s*\(
+    |
+    \bOVER\s*\(\s*(?:PARTITION\s+BY|ORDER\s+BY)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# JSONB operations:
+#   - ->> operator
+#   - jsonb_* function names
+#   - ::jsonb cast
+#   - @> followed by a JSON object/string literal (single-quoted, NOT ARRAY)
+_JSONB_OPERATION_RE = re.compile(
+    r"""
+    ->>
+    |
+    \bjsonb_(?:agg|build_object|build_array|each|each_text|array_elements|array_elements_text|
+               populate_record|typeof|strip|pretty|set|insert|delete|path_exists|path_query)\s*\(
+    |
+    ::jsonb\b
+    |
+    @>\s*'
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Array operations:
+#   - ANY(ARRAY[...])
+#   - array_agg(
+#   - unnest(
+#   - ARRAY[...]
+#   - @> ARRAY[...] (array containment, NOT json)
+_ARRAY_OPERATION_RE = re.compile(
+    r"""
+    \bANY\s*\(\s*ARRAY\b
+    |
+    \barray_agg\s*\(
+    |
+    \bunnest\s*\(
+    |
+    \bARRAY\s*\[
+    |
+    @>\s*ARRAY\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Full-text search: tsvector/tsquery functions and @@ operator in tsquery context
+_TSVECTOR_SEARCH_RE = re.compile(
+    r"""
+    \b(?:to_tsvector|to_tsquery|plainto_tsquery|phraseto_tsquery|websearch_to_tsquery)\s*\(
+    |
+    \btsvector\b
+    |
+    \bts_rank\s*\(
+    |
+    @@
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# LATERAL joins: requires JOIN LATERAL or comma LATERAL or LATERAL( with word boundary
+_LATERAL_JOIN_RE = re.compile(
+    r"""
+    \bJOIN\s+LATERAL\s*\(
+    |
+    ,\s*LATERAL\s*\(
+    |
+    \bLATERAL\s*\(
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Upsert: ON CONFLICT keyword OR RETURNING used as a SQL clause.
+# RETURNING as a SQL clause follows DML (not preceded by AS keyword).
+# Matches: RETURNING id, RETURNING *, RETURNING col1, col2
+# Does NOT match: AS returning FROM (alias usage)
+_ON_CONFLICT_OR_RETURNING_RE = re.compile(
+    r"""
+    \bON\s+CONFLICT\b
+    |
+    (?<!AS\s)(?<!\bAS\b)\bRETURNING\s+[\w*]
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _contains_any(lower_text: str, keywords: tuple[str, ...]) -> bool:
+    """Whether lower-cased text contains any keyword (keywords compared as written)."""
+    return any(kw in lower_text for kw in keywords)
+
+
 @dataclass(frozen=True)
 class QueryFacts:
     """The text facts of one query (see the module docstring).
@@ -172,6 +366,33 @@ class QueryFacts:
             by ``SELECT``.
         join_keyword_count: How many times the word ``join`` appears (the
             regex join count, :func:`src.tools.sql.regex_facts.regex_join_count`).
+        aggregation_keyword: An :data:`AGGREGATION_KEYWORDS` substring
+            (``group by``, ``having``, ``count(``, ...).
+        exists_or_in_subquery: ``EXISTS (``, ``NOT EXISTS (`` or ``IN (SELECT``.
+        pagination_keyword: A :data:`PAGINATION_KEYWORDS` substring (``limit``,
+            ``offset``, ``fetch first``, ``fetch next``).
+        in_list: `` in (`` or `` in(``.
+        like_percent_literal: The lower-cased text contains ``like '%`` (one
+            space, a single quote; ``ilike '%`` included).
+        text_search_keyword: A :data:`TEXT_SEARCH_KEYWORDS` substring.
+        json_function_keyword: A :data:`JSON_FUNCTION_KEYWORDS` substring
+            (``json_extract(``, ..., ``->``).
+        match_against_keyword: ``match(``, ``match (``, ``against(`` or ``against (``.
+        duplicate_key_upsert: ``on duplicate key`` or ``replace into``.
+        group_concat_call: ``group_concat(``.
+        stored_routine_keyword: A :data:`STORED_ROUTINE_KEYWORDS` substring
+            (``call ``, ``delimiter``, ``create procedure``, ``create function``).
+        window_function_keyword: A named window function call (``ROW_NUMBER(``,
+            ``RANK(``, ... ``PERCENT_RANK(``), ``) OVER (``, or ``OVER (PARTITION
+            BY``/``OVER (ORDER BY``.
+        jsonb_operation: ``->>``, a ``jsonb_*(`` function, ``::jsonb`` or ``@> '``.
+        array_operation: ``ANY(ARRAY``, ``array_agg(``, ``unnest(``,
+            ``ARRAY[`` or ``@> ARRAY``.
+        tsvector_search: A ``to_tsvector``/``*to_tsquery`` call, ``tsvector``,
+            ``ts_rank(`` or ``@@``.
+        lateral_join: ``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``.
+        on_conflict_or_returning: ``ON CONFLICT``, or ``RETURNING <column>``
+            not preceded by ``AS``.
     """
 
     leading_wildcard_like: bool
@@ -187,6 +408,23 @@ class QueryFacts:
     computed_join_key: bool
     write_with_subquery: bool
     join_keyword_count: int
+    aggregation_keyword: bool
+    exists_or_in_subquery: bool
+    pagination_keyword: bool
+    in_list: bool
+    like_percent_literal: bool
+    text_search_keyword: bool
+    json_function_keyword: bool
+    match_against_keyword: bool
+    duplicate_key_upsert: bool
+    group_concat_call: bool
+    stored_routine_keyword: bool
+    window_function_keyword: bool
+    jsonb_operation: bool
+    array_operation: bool
+    tsvector_search: bool
+    lateral_join: bool
+    on_conflict_or_returning: bool
 
     @property
     def needs_aggregation(self) -> bool:
@@ -208,6 +446,7 @@ def _has_computed_join_key(text: str) -> bool:
 def query_facts(query_text: str | None) -> QueryFacts:
     """The text facts of ``query_text`` (``None`` reads as empty text)."""
     text = query_text or ""
+    lower = text.lower()
     group_by = bool(_GROUP_BY_RE.search(text))
     return QueryFacts(
         leading_wildcard_like=regex_wildcard_leading(text),
@@ -223,4 +462,21 @@ def query_facts(query_text: str | None) -> QueryFacts:
         computed_join_key=_has_computed_join_key(text),
         write_with_subquery=bool(_WRITE_WITH_SUBQUERY_RE.search(text)),
         join_keyword_count=regex_join_count(text),
+        aggregation_keyword=_contains_any(lower, AGGREGATION_KEYWORDS),
+        exists_or_in_subquery=bool(_EXISTS_OR_IN_SUBQUERY_RE.search(text)),
+        pagination_keyword=_contains_any(lower, PAGINATION_KEYWORDS),
+        in_list=_contains_any(lower, IN_LIST_KEYWORDS),
+        like_percent_literal="like '%" in lower,
+        text_search_keyword=_contains_any(lower, TEXT_SEARCH_KEYWORDS),
+        json_function_keyword=_contains_any(lower, JSON_FUNCTION_KEYWORDS),
+        match_against_keyword=_contains_any(lower, MATCH_AGAINST_KEYWORDS),
+        duplicate_key_upsert=_contains_any(lower, DUPLICATE_KEY_KEYWORDS),
+        group_concat_call=_contains_any(lower, GROUP_CONCAT_KEYWORDS),
+        stored_routine_keyword=_contains_any(lower, STORED_ROUTINE_KEYWORDS),
+        window_function_keyword=bool(_WINDOW_FUNCTION_KEYWORD_RE.search(text)),
+        jsonb_operation=bool(_JSONB_OPERATION_RE.search(text)),
+        array_operation=bool(_ARRAY_OPERATION_RE.search(text)),
+        tsvector_search=bool(_TSVECTOR_SEARCH_RE.search(text)),
+        lateral_join=bool(_LATERAL_JOIN_RE.search(text)),
+        on_conflict_or_returning=bool(_ON_CONFLICT_OR_RETURNING_RE.search(text)),
     )

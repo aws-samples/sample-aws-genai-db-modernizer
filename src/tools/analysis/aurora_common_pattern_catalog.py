@@ -16,8 +16,6 @@ The entries live in ``src/catalog/patterns/<pattern_type>.toml`` (ADR-031 Decisi
 under the names the analysis tools import. Edit the TOML file, not this module.
 """
 
-import re
-
 from src.shared.catalog.patterns import catalog_entries
 from src.tools.analysis.pattern_catalog_base import (
     CatalogAntiPattern,
@@ -114,57 +112,12 @@ AURORA_MYSQL_SCORE_WEIGHTS: dict[str, float] = {
 
 
 # ==========================================================================
-# Detection keyword tuples
+# Detection
+#
+# The keyword tables the Aurora analysis's detectors read (aggregation,
+# subquery, pagination, IN-list and text-search keywords) live in
+# ``src.tools.sql.query_facts`` (#491): one engine-neutral definition per fact.
 # ==========================================================================
-
-JOIN_KEYWORDS: tuple[str, ...] = (
-    "join",
-    "inner join",
-    "left join",
-    "right join",
-    "full join",
-    "cross join",
-)
-
-AGGREGATION_KEYWORDS: tuple[str, ...] = (
-    "group by",
-    "having",
-    "sum(",
-    "count(",
-    "avg(",
-    "min(",
-    "max(",
-)
-
-SUBQUERY_KEYWORDS: tuple[str, ...] = (
-    "exists",
-    "not exists",
-    "in (select",
-    "in(select",
-)
-
-SUBQUERY_RE: re.Pattern = re.compile(
-    r"""
-    \bEXISTS\s*\(               # EXISTS (subquery)
-    |
-    \bNOT\s+EXISTS\s*\(         # NOT EXISTS (subquery)
-    |
-    \bIN\s*\(\s*SELECT\b        # IN (SELECT ...)
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-PAGINATION_KEYWORDS: tuple[str, ...] = (
-    "limit",
-    "offset",
-    "fetch first",
-    "fetch next",
-)
-
-IN_LIST_KEYWORDS: tuple[str, ...] = (
-    " in (",
-    " in(",
-)
 
 TRANSACTION_WRITE_TYPES: frozenset[str] = frozenset({"INSERT", "UPDATE", "DELETE"})
 
@@ -192,15 +145,4 @@ TEXT_COLUMN_RATIO_THRESHOLD: float = 0.40
 # Text data types for column ratio calculation
 TEXT_DATA_TYPES: frozenset[str] = frozenset(
     {"text", "varchar", "character varying", "longtext", "clob", "nvarchar", "citext"}
-)
-
-# Text search indicators (for volume-based high-volume-text-search detection)
-TEXT_SEARCH_KEYWORDS: tuple[str, ...] = (
-    "like '%",
-    "like N'%",
-    "ilike '%",
-    "to_tsvector",
-    "plainto_tsquery",
-    "match(",
-    "match (",
 )

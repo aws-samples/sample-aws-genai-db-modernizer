@@ -35,22 +35,14 @@ from src.tools.analysis.aurora_common_analysis_tools import (
 )
 from src.tools.analysis.aurora_common_pattern_catalog import AURORA_PG_SCORE_WEIGHTS
 from src.tools.analysis.aurora_common_pattern_catalog import PATTERN_BY_ID as COMMON_PATTERN_BY_ID
-from src.tools.analysis.aurora_pg_pattern_catalog import (
-    ARRAY_RE,
-    CTE_RECURSIVE_RE,
-    JSONB_RE,
-    LATERAL_RE,
-    PG_PATTERN_BY_ID,
-    TSVECTOR_RE,
-    UPSERT_RE,
-    WINDOW_FUNCTION_RE,
-)
+from src.tools.analysis.aurora_pg_pattern_catalog import PG_PATTERN_BY_ID
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.sql.query_facts import query_facts
 
 # ==========================================================================
 # PG-specific feature detection
@@ -58,31 +50,33 @@ from src.tools.analysis.scoring import (
 
 
 def detect_pg_specific_features(query_text: str) -> list[str]:
-    """Detect PG-specific SQL features in query text using compiled regex patterns.
+    """Detect PG-specific SQL features in query text, from its engine-neutral
+    query facts (``src.tools.sql.query_facts``, #491).
 
     Returns list of matched pattern_ids.
     """
+    facts = query_facts(query_text)
     matched: list[str] = []
 
-    if CTE_RECURSIVE_RE.search(query_text):
+    if facts.recursive_cte:
         matched.append("aurora-pg-01")
 
-    if WINDOW_FUNCTION_RE.search(query_text):
+    if facts.window_function_keyword:
         matched.append("aurora-pg-02")
 
-    if JSONB_RE.search(query_text):
+    if facts.jsonb_operation:
         matched.append("aurora-pg-03")
 
-    if ARRAY_RE.search(query_text):
+    if facts.array_operation:
         matched.append("aurora-pg-04")
 
-    if TSVECTOR_RE.search(query_text):
+    if facts.tsvector_search:
         matched.append("aurora-pg-05")
 
-    if LATERAL_RE.search(query_text):
+    if facts.lateral_join:
         matched.append("aurora-pg-06")
 
-    if UPSERT_RE.search(query_text):
+    if facts.on_conflict_or_returning:
         matched.append("aurora-pg-07")
 
     return matched
