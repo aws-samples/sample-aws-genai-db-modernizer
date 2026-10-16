@@ -3,7 +3,7 @@
 ``COPY t FROM STDIN`` (PostgreSQL) and ``LOAD DATA ... INTO TABLE t``
 (MySQL/MariaDB, also through the RDS Performance Insights path) are writes to
 ``t``: typed ``INSERT`` and attributed to ``t``, not to ``STDIN`` or ``TABLE``.
-Moving the rest of these extractors to the SQL facade is #795.
+Since #795 they read it through the SQL facade, as the offline parser does.
 """
 
 from __future__ import annotations

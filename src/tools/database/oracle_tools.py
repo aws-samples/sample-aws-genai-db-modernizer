@@ -14,7 +14,8 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
-from src.tools.database.sql_cte import drop_cte_references
+from src.tools.database import live_sql
+from src.tools.database.live_sql import LiveQueryReader
 
 logger = logging.getLogger(__name__)
 
@@ -375,9 +376,12 @@ class OracleRemoteCollector:
         """)  # nosec B608 — min_executions/limit are internal; owner from catalog
 
         patterns = []
+        reader = LiveQueryReader("oracle", "oracle_tools", empty=())
         for r in raw:
             query_text = str(r.get("query_text") or "").strip()
             calls = int(r.get("execution_count") or 1)
+            query_id = str(r.get("query_id") or _hash(query_text))
+            shape = reader.fields(query_id, query_text)
 
             total_elapsed_us = float(r.get("total_elapsed_us") or 0)
             total_cpu_us = float(r.get("total_cpu_us") or 0)
@@ -398,7 +402,7 @@ class OracleRemoteCollector:
 
             patterns.append(
                 {
-                    "query_id": str(r.get("query_id") or _hash(query_text)),
+                    "query_id": query_id,
                     "query_text": query_text,
                     "query_type": _extract_query_type(query_text),
                     "execution_count": calls,
@@ -415,15 +419,13 @@ class OracleRemoteCollector:
                     "rows_returned_p95": None,
                     "rows_affected_avg": 0,
                     "rows_examined_avg": round(avg_logical, 2),
-                    "tables_accessed": _extract_tables(query_text),
+                    "tables_accessed": shape["tables_accessed"],
                     "filter_columns": _extract_filter_columns(query_text),
                     "sort_columns": _extract_sort_columns(query_text),
-                    "has_joins": " join " in query_text.lower(),
-                    "join_count": len(re.findall(r"\bjoin\b", query_text, re.I)),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                     "has_text_search": _has_text_search(query_text),
                     "text_search_type": _text_search_type(query_text),
                     "has_time_range_filter": _has_time_range_filter(query_text),
@@ -437,6 +439,7 @@ class OracleRemoteCollector:
                     "last_seen": str(r.get("last_seen") or "").strip() or None,
                 }
             )
+        reader.log_fallbacks()
         return patterns
 
     # -------------------------------------------------------------------
@@ -521,23 +524,9 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    """Extract table names from FROM/JOIN clauses."""
-    tables: list[str] = []
-    sql = drop_cte_references(sql)
-    # Match FROM table, JOIN table (handles schema.table and "quoted")
-    for m in re.finditer(r"(?:from|join)\s+\"?(\w+)\"?(?:\.\"?(\w+)\"?)?", sql, re.I):
-        if m.group(2):
-            tables.append(f"{m.group(1).lower()}.{m.group(2).lower()}")
-        else:
-            tables.append(m.group(1).lower())
-    # Deduplicate preserving order
-    seen: set[str] = set()
-    result: list[str] = []
-    for t in tables:
-        if t not in seen:
-            seen.add(t)
-            result.append(t)
-    return result
+    """The live ``tables_accessed`` for ``sql``, read through the SQL facade (#795):
+    lower-case, schema-qualified as written, ``DUAL`` skipped, ``[]`` for none."""
+    return live_sql.extract_tables(sql, "oracle", empty=())
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:

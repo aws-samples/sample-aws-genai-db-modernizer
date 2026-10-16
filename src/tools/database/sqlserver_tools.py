@@ -15,7 +15,8 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
-from src.tools.database.sql_cte import drop_cte_references
+from src.tools.database import live_sql
+from src.tools.database.live_sql import LiveQueryReader
 
 logger = logging.getLogger(__name__)
 
@@ -409,9 +410,12 @@ class SQLServerRemoteCollector:
         """)  # nosec B608 — min_executions and limit are internal constants
 
         patterns = []
+        reader = LiveQueryReader("sqlserver", "sqlserver_tools", empty=())
         for r in raw:
             query_text = str(r.get("query_text") or "").strip()
             calls = int(r.get("execution_count") or 1)
+            query_id = str(r.get("query_id") or _hash(query_text))
+            shape = reader.fields(query_id, query_text)
 
             total_elapsed_us = float(r.get("total_elapsed_time") or 0)
             total_worker_us = float(r.get("total_worker_time") or 0)
@@ -440,7 +444,7 @@ class SQLServerRemoteCollector:
 
             patterns.append(
                 {
-                    "query_id": str(r.get("query_id") or _hash(query_text)),
+                    "query_id": query_id,
                     "query_text": query_text,
                     "query_type": _extract_query_type(query_text),
                     "execution_count": calls,
@@ -457,15 +461,13 @@ class SQLServerRemoteCollector:
                     "rows_returned_p95": _estimate_rows_p95(avg_rows, avg_ms, p95),
                     "rows_affected_avg": 0,
                     "rows_examined_avg": round(avg_logical, 2),
-                    "tables_accessed": _extract_tables(query_text),
+                    "tables_accessed": shape["tables_accessed"],
                     "filter_columns": _extract_filter_columns(query_text),
                     "sort_columns": _extract_sort_columns(query_text),
-                    "has_joins": " join " in query_text.lower(),
-                    "join_count": len(re.findall(r"\bjoin\b", query_text, re.I)),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                     "has_text_search": _has_text_search(query_text),
                     "text_search_type": _text_search_type(query_text),
                     "has_time_range_filter": _has_time_range_filter(query_text),
@@ -480,6 +482,7 @@ class SQLServerRemoteCollector:
                     "last_seen": str(r.get("last_execution_time") or "") or None,
                 }
             )
+        reader.log_fallbacks()
         return patterns
 
     # -------------------------------------------------------------------
@@ -538,27 +541,14 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    """Extract table names from FROM and JOIN clauses (best-effort regex).
+    """The live ``tables_accessed`` for ``sql``, read through the SQL facade (#795).
 
-    Skips references to system schemas (``sys``, ``INFORMATION_SCHEMA``) and
-    bare references to system pseudo-tables.
+    Every table the statement reads or writes (``FROM``/``JOIN``, ``INTO``,
+    ``UPDATE``, ``MERGE`` target and source), schema-qualified as written, in
+    first-seen order; references into ``sys``/``INFORMATION_SCHEMA`` are
+    skipped, and no table is ``[]``.
     """
-    tables = set()
-    for match in re.finditer(
-        # (?<![\w@]): a keyword, not the end of a parameter name like @From (#663).
-        r"(?<![\w@])(?:FROM|JOIN)\s+(?:\[?(\w+)\]?\.)?\[?(\w+)\]?",
-        drop_cte_references(sql),
-        re.IGNORECASE,
-    ):
-        schema, table = match.group(1), match.group(2)
-        if not table:
-            continue
-        if schema and schema.lower() in ("sys", "information_schema"):
-            continue
-        if table.lower() in ("sys", "information_schema"):
-            continue
-        tables.add(f"{schema}.{table}" if schema else table)
-    return sorted(tables)
+    return live_sql.extract_tables(sql, "sqlserver", empty=())
 
 
 def _extract_filter_columns(sql: str) -> list[str] | None:

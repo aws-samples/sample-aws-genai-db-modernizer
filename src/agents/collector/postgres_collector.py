@@ -167,6 +167,7 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     aws_queries = aws_raw.get("query_patterns", [])
     if aws_queries:
         queries = _merge_queries(queries, aws_queries)
+    _drop_unlisted_sequence_reads(queries, {t.table_name for t in tables})
 
     global_stats = schema_raw.get("global_stats", {})
     pi_counters = global_stats or aws_raw.get("pi_counters", {})
@@ -223,6 +224,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     tables = _build_tables_from_ddl(schema_raw, inp.database_name)
     aws_queries = aws_raw.get("query_patterns", [])
     queries = _build_queries_from_aws(aws_queries)
+    _drop_unlisted_sequence_reads(queries, {t.table_name for t in tables})
     pi_counters = aws_raw.get("pi_counters", {})
     cw_raw = aws_raw.get("cloudwatch", {})
     em_data = aws_raw.get("enhanced_monitoring")
@@ -520,6 +522,25 @@ def _merge_queries(live: Queries, aws_patterns: list[dict]) -> Queries:
         total_queries_analyzed=len(existing),
         query_log_source=live.query_log_source or QueryLogSource.pg_stat_statements,
     )
+
+
+def _drop_unlisted_sequence_reads(queries: Queries, known_table_names: set[str]) -> None:
+    """Give a sequence-state read of a relation the schema doesn't hold no table (#797).
+
+    ``SELECT last_value FROM public.badges_id_seq`` names a sequence, not a
+    schema table. The offline parser reports it as ``["unknown"]``, so it
+    counts as a utility statement
+    (:func:`src.tools.database.offline_parser.is_unlisted_sequence_read`); the
+    live path applies the same check once it has the collected table list, so
+    a live and an offline collection of the query agree.
+    """
+    from src.tools.database.offline_parser import is_unlisted_sequence_read
+    from src.tools.sql import facade
+
+    for p in queries.query_patterns:
+        refs = facade.table_references(p.query_text, "postgresql")
+        if is_unlisted_sequence_read(p.query_text, "postgresql", refs, known_table_names):
+            p.tables_accessed = ["unknown"]
 
 
 def _enrich_table_scans(queries: Queries, raw_tables: list[dict]):

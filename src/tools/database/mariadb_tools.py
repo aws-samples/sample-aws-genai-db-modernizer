@@ -6,8 +6,7 @@ MariaDB uses the same mysql CLI, performance_schema, and INFORMATION_SCHEMA
 but has different version numbering and feature availability.
 """
 
-import re
-
+from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.mysql_tools import MySQLRemoteCollector, _version_gte
 
 
@@ -58,7 +57,6 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
             _extract_filter_columns,
             _extract_query_type,
             _extract_sort_columns,
-            _extract_tables,
             _has_text_search,
             _has_time_range_filter,
             _hash,
@@ -99,16 +97,19 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         """)  # nosec B608
 
         patterns = []
+        reader = LiveQueryReader("mariadb", "mariadb_tools")
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
+            query_id = r.get("digest") or _hash(query_text)
+            shape = reader.fields(str(query_id), query_text)
             first_seen = r.get("first_seen") or r.get("FIRST_SEEN")
             last_seen = r.get("last_seen") or r.get("LAST_SEEN")
             first_seen = str(first_seen) if first_seen else None
             last_seen = str(last_seen) if last_seen else None
             patterns.append(
                 {
-                    "query_id": r.get("digest") or _hash(query_text),
+                    "query_id": query_id,
                     "query_text": query_text,
                     "query_type": _extract_query_type(query_text),
                     "execution_count": exec_count,
@@ -138,11 +139,11 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                     "queries_without_index": r.get("no_index_used") or 0,
                     "queries_with_bad_index": r.get("no_good_index_used") or 0,
                     "lock_time_ms": float(r.get("lock_time_ms") or 0),
-                    "tables_accessed": _extract_tables(query_text),
+                    "tables_accessed": shape["tables_accessed"],
                     "filter_columns": _extract_filter_columns(query_text),
                     "sort_columns": _extract_sort_columns(query_text),
-                    "has_joins": " join " in query_text.lower(),
-                    "join_count": len(re.findall(r"\bjoin\b", query_text, re.I)),
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
                     "scan_efficiency_pct": min(
                         round(
                             (r.get("total_rows_sent") or 0)
@@ -158,10 +159,8 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                         * 100,
                         2,
                     ),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                     "has_text_search": _has_text_search(query_text),
                     "text_search_type": _text_search_type(query_text),
                     "has_time_range_filter": _has_time_range_filter(query_text),
@@ -171,4 +170,5 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                     "last_seen": last_seen,
                 }
             )
+        reader.log_fallbacks()
         return patterns

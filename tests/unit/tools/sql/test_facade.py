@@ -13,7 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from src.tools.sql.facade import MAX_SQL_CHARS, TableRef, sqlglot_dialect, table_references
+from src.tools.sql.facade import (
+    MAX_SQL_CHARS,
+    TableRef,
+    sql_facts,
+    sqlglot_dialect,
+    table_references,
+)
 from tests.unit.tools.sql._timing import assert_linear
 
 
@@ -398,3 +404,28 @@ def test_only_the_facade_imports_sqlglot():
                 offenders.append(str(path.relative_to(_REPO)))
     assert offenders == []
     assert _imports_sqlglot(_FACADE.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "sql,expected",
+    [
+        # T-SQL temp tables and table variables are query-local (#924 review):
+        # the regex fallback never read them, and sqlglot's reading doesn't now.
+        ("SELECT * FROM #tmp t JOIN dbo.Orders o ON o.Id = t.Id", ["dbo.Orders"]),
+        ("SELECT * FROM [#tmp]", []),
+        ("INSERT INTO ##stage (Id) SELECT Id FROM Orders", ["Orders"]),
+        ("SELECT * INTO #t FROM Orders", ["Orders"]),
+        ("SELECT * FROM @t", []),
+    ],
+)
+def test_tsql_temp_tables_are_not_table_references(sql, expected):
+    refs = table_references(sql, "sqlserver")
+    assert refs.parsed_by == "sqlglot"
+    assert [r.written for r in refs.tables] == expected
+
+
+def test_a_join_to_a_temp_table_still_counts_as_a_join():
+    # Only the table list drops it; the query still joins two row sources.
+    assert (
+        sql_facts("SELECT * FROM #tmp t JOIN Orders o ON o.Id = t.Id", "sqlserver").join_count == 1
+    )

@@ -26,7 +26,11 @@ What counts as a table reference:
   when the CTE is recursive, i.e. ``RECURSIVE`` or a ``UNION`` in the body);
   a qualified name is never a CTE, and names compare case-insensitively;
 - not MySQL/Oracle's ``DUAL`` pseudo-table, and not a table function such as
-  ``generate_series(...)``.
+  ``generate_series(...)``;
+- not a T-SQL temp table (``#tmp``, ``##tmp``) or table variable (``@t``):
+  each is local to the session or batch, never a collected table, and the
+  regex fallback never read one either. The query-shape facts still count a
+  join to one.
 
 Size cap: text longer than ``MAX_SQL_CHARS`` is not parsed or normalized; it
 falls back with reason ``too_long``.
@@ -374,7 +378,7 @@ def _from_statements(statements: list[exp.Expr], dialect: str, truncated: bool) 
         cte_names.extend(c.alias_or_name.lower() for c in statement.find_all(exp.CTE))
         for table in statement.find_all(exp.Table):
             ref = _ref_from_node(table)
-            if ref is None or _is_cte_reference(table, ref):
+            if ref is None or _is_temp_table(table) or _is_cte_reference(table, ref):
                 continue
             found.append((_position(table), ref))
     found.sort(key=lambda item: item[0])
@@ -404,6 +408,12 @@ def _ref_from_node(table: exp.Table) -> TableRef | None:
     if not ref.qualifiers and ref.name.lower() in _PSEUDO_TABLES:
         return None
     return ref
+
+
+def _is_temp_table(table: exp.Table) -> bool:
+    """A T-SQL ``#local`` or ``##global`` temp table (sqlglot drops the ``#``)."""
+    ident = table.this
+    return bool(ident.args.get("temporary") or ident.args.get("global_"))
 
 
 def _position(table: exp.Table) -> int:

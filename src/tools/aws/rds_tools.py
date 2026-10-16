@@ -14,8 +14,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.tools.aws.credentials import AWSCredentialManager
-from src.tools.database.sql_cte import drop_cte_references
-from src.tools.sql.bulk_load import bulk_load_table, copy_table
+from src.tools.database import live_sql
+from src.tools.database.live_sql import LiveQueryReader
+from src.tools.sql.bulk_load import bulk_load_table
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +157,13 @@ def get_performance_insights_queries(
     resource_id: str,
     days: int = 7,
     max_results: int = 25,
+    source_engine: str = "",
 ) -> dict[str, Any]:
     """
     Collect per-query metrics from Performance Insights.
+
+    ``source_engine`` picks the SQL dialect each query text is read in (#795);
+    empty reads it in the facade's generic dialect.
 
     Uses:
     - describe_dimension_keys: get top SQL by db.load.avg
@@ -245,8 +250,10 @@ def get_performance_insights_queries(
         # For MySQL, we only get db.load.avg per SQL from PI.
         # performance_schema provides the detailed per-query stats for MySQL.
         query_patterns = []
+        reader = LiveQueryReader(source_engine, "rds_tools: performance insights")
         for sql_id, info in sql_map.items():
             query_text = info["query_text"]
+            shape = reader.fields(sql_id, query_text)
 
             query_patterns.append(
                 {
@@ -255,17 +262,17 @@ def get_performance_insights_queries(
                     "query_type": _extract_query_type(query_text),
                     "frequency_per_hour": 0,  # Not available from PI for MySQL
                     "calls_per_second": None,
-                    "tables_accessed": _extract_tables(query_text),
+                    "tables_accessed": shape["tables_accessed"],
                     "execution_time_ms_avg": None,
                     "db_load_contribution_percent": info["db_load_contribution_percent"],
-                    "has_joins": " join " in query_text.lower(),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                     "wait_events": wait_events,  # Global wait events (not per-SQL for MySQL)
                 }
             )
+        reader.log_fallbacks()
 
         return {
             "available": True,
@@ -433,9 +440,12 @@ def get_database_insights(
     resource_id: str,
     days: int = 7,
     limit: int = 100,
+    source_engine: str = "",
 ) -> dict[str, Any]:
     """
     Query CloudWatch Database Insights (Logs Insights on performance_insights log group).
+
+    ``source_engine`` picks the SQL dialect each query text is read in (#795).
 
     Returns top SQL with execution stats: avg latency, calls, rows affected.
     This supplements PI data with CloudWatch-native querying.
@@ -484,10 +494,12 @@ def get_database_insights(
 
         # Parse results
         query_patterns = []
+        reader = LiveQueryReader(source_engine, "rds_tools: database insights")
         for row in result.get("results", []):
             fields = {f["field"]: f["value"] for f in row}
             sql_id = fields.get("sql.id", "")
             query_text = fields.get("query_text", "")
+            shape = reader.fields(sql_id, query_text)
 
             calls_per_sec = _safe_float(fields.get("avg_calls_per_sec"))
             avg_latency_ms = _safe_float(fields.get("avg_latency_ms"))
@@ -506,14 +518,14 @@ def get_database_insights(
                         if calls_per_sec is not None and calls_per_sec > 0
                         else 0
                     ),
-                    "tables_accessed": _extract_tables(query_text),
-                    "has_joins": " join " in query_text.lower(),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "tables_accessed": shape["tables_accessed"],
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                 }
             )
+        reader.log_fallbacks()
 
         return {
             "available": True,
@@ -531,10 +543,6 @@ def get_database_insights(
 # ---------------------------------------------------------------------------
 
 _QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
-_TABLE_RE = re.compile(
-    r"(?:FROM|JOIN|INTO|UPDATE|REFRESH\s+MATERIALIZED\s+VIEW(?:\s+CONCURRENTLY)?)\s+`?(\w+)`?",
-    re.I,
-)
 
 
 def _extract_query_type(sql: str) -> str:
@@ -545,25 +553,10 @@ def _extract_query_type(sql: str) -> str:
     return "INSERT" if bulk_load_table(sql) else "OTHER"
 
 
-def _extract_tables(sql: str) -> list[str]:
-    # A bulk load or a COPY <table> TO export names one table, its target; the
-    # scan below would read FROM STDIN / INTO TABLE as tables named STDIN /
-    # TABLE, or miss the export's table (#777), as the offline parser does.
-    target = copy_table(sql) or bulk_load_table(sql)
-    if target is not None:
-        return [target[1]]
-    # ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE name a column, not a
-    # table. Mask those clauses so the following identifier (e.g. SET) is
-    # not captured by the UPDATE alternative in _TABLE_RE.
-    scanned = re.sub(
-        r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
-        " ",
-        sql,
-        flags=re.I,
-    )
-    scanned = drop_cte_references(scanned)
-    tables = list(dict.fromkeys(_TABLE_RE.findall(scanned)))
-    return tables if tables else ["unknown"]
+def _extract_tables(sql: str, source_engine: str = "") -> list[str]:
+    """The live ``tables_accessed`` for ``sql``, read through the SQL facade in
+    ``source_engine``'s dialect (#795)."""
+    return live_sql.extract_tables(sql, source_engine)
 
 
 def _safe_float(val) -> float | None:

@@ -646,6 +646,12 @@ def _parse_ddl_raw(inp, region) -> list[dict]:
     return parse_ddl(ddl_text, database_name=inp.database_name, dialect=inp.engine.value)
 
 
+def _engine_name(inp) -> str:
+    """The collection's source engine as a plain string (the SQL dialect key)."""
+    engine = getattr(inp, "engine", "")
+    return str(getattr(engine, "value", engine) or "")
+
+
 def _collect_aws_raw(inp, cred_mgr) -> dict:
     """Collect all AWS data as a single serializable dict."""
     result: dict = {}
@@ -677,14 +683,22 @@ def _collect_aws_raw(inp, cred_mgr) -> dict:
             rds_raw.get("resource_arn", inst_id) if rds_raw.get("available") else inst_id
         )
         pi_raw = get_performance_insights_queries(
-            cred_mgr, pi_resource_id, days=inp.aws_config.performance_insights_days
+            cred_mgr,
+            pi_resource_id,
+            days=inp.aws_config.performance_insights_days,
+            source_engine=_engine_name(inp),
         )
         if pi_raw.get("available"):
             pi_queries = pi_raw.get("query_patterns", [])
 
     # Database Insights (FALLBACK — only if PI returned nothing)
     if inp.aws_config.collect_database_insights and not pi_queries:
-        di_raw = get_database_insights(cred_mgr, inst_id, days=inp.aws_config.cloudwatch_days)
+        di_raw = get_database_insights(
+            cred_mgr,
+            inst_id,
+            days=inp.aws_config.cloudwatch_days,
+            source_engine=_engine_name(inp),
+        )
         if di_raw.get("available"):
             pi_queries = di_raw.get("query_patterns", [])
 

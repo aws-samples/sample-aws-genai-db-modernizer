@@ -10,8 +10,9 @@ import logging
 import re
 
 from src.tools.aws.ssm_executor import SSMExecutor
-from src.tools.database.sql_cte import drop_cte_references
-from src.tools.sql.bulk_load import bulk_load_table, copy_table
+from src.tools.database import live_sql
+from src.tools.database.live_sql import LiveQueryReader
+from src.tools.sql.bulk_load import bulk_load_table
 
 logger = logging.getLogger(__name__)
 
@@ -278,16 +279,19 @@ class MySQLRemoteCollector:
         )
 
         patterns = []
+        reader = LiveQueryReader("mysql", "mysql_tools")
         for r in raw:
             query_text = str(r.get("query_text") or "")
             exec_count = r.get("execution_count") or 1
+            query_id = r.get("digest") or _hash(query_text)
+            shape = reader.fields(str(query_id), query_text)
             first_seen = r.get("first_seen") or r.get("FIRST_SEEN")
             last_seen = r.get("last_seen") or r.get("LAST_SEEN")
             first_seen = str(first_seen) if first_seen else None
             last_seen = str(last_seen) if last_seen else None
             patterns.append(
                 {
-                    "query_id": r.get("digest") or _hash(query_text),
+                    "query_id": query_id,
                     "query_text": query_text,
                     "query_type": _extract_query_type(query_text),
                     "execution_count": exec_count,
@@ -319,11 +323,11 @@ class MySQLRemoteCollector:
                     "queries_without_index": r.get("no_index_used") or 0,
                     "queries_with_bad_index": r.get("no_good_index_used") or 0,
                     "lock_time_ms": float(r.get("lock_time_ms") or 0),
-                    "tables_accessed": _extract_tables(query_text),
+                    "tables_accessed": shape["tables_accessed"],
                     "filter_columns": _extract_filter_columns(query_text),
                     "sort_columns": _extract_sort_columns(query_text),
-                    "has_joins": " join " in query_text.lower(),
-                    "join_count": len(re.findall(r"\bjoin\b", query_text, re.I)),
+                    "has_joins": shape["has_joins"],
+                    "join_count": shape["join_count"],
                     "scan_efficiency_pct": min(
                         round(
                             (r.get("total_rows_sent") or 0)
@@ -339,10 +343,8 @@ class MySQLRemoteCollector:
                         * 100,
                         2,
                     ),
-                    "has_aggregations": bool(
-                        re.search(r"\b(count|sum|avg|min|max|group\s+by)\b", query_text, re.I)
-                    ),
-                    "has_subqueries": query_text.lower().count("select") > 1,
+                    "has_aggregations": shape["has_aggregations"],
+                    "has_subqueries": shape["has_subqueries"],
                     "has_text_search": _has_text_search(query_text),
                     "text_search_type": _text_search_type(query_text),
                     "has_time_range_filter": _has_time_range_filter(query_text),
@@ -352,6 +354,7 @@ class MySQLRemoteCollector:
                     "last_seen": last_seen,
                 }
             )
+        reader.log_fallbacks()
         return patterns
 
     # -------------------------------------------------------------------
@@ -369,7 +372,6 @@ class MySQLRemoteCollector:
 # ---------------------------------------------------------------------------
 
 _QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
-_TABLE_RE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE)\s+`?(\w+)`?", re.I)
 _WHERE_COL_RE = re.compile(r"WHERE\s+.*?`?(\w+)`?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", re.I)
 _AND_COL_RE = re.compile(r"(?:AND|OR)\s+`?(\w+)`?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", re.I)
 _ORDER_COL_RE = re.compile(r"ORDER\s+BY\s+(.*?)(?:LIMIT|$)", re.I)
@@ -384,22 +386,8 @@ def _extract_query_type(sql: str) -> str:
 
 
 def _extract_tables(sql: str) -> list[str]:
-    # A bulk load or a COPY <table> TO export names one table, its target; the
-    # scan below would read FROM STDIN / INTO TABLE as tables named STDIN /
-    # TABLE, or miss the export's table (#777), as the offline parser does.
-    target = copy_table(sql) or bulk_load_table(sql)
-    if target is not None:
-        return [target[1]]
-    # ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE name a column, not a table.
-    # Mask those clauses so the following identifier is not captured as a table.
-    scanned = re.sub(
-        r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b",
-        " ",
-        sql,
-        flags=re.I,
-    )
-    scanned = drop_cte_references(scanned)
-    return list(dict.fromkeys(_TABLE_RE.findall(scanned))) or ["unknown"]
+    """The live ``tables_accessed`` for ``sql``, read through the SQL facade (#795)."""
+    return live_sql.extract_tables(sql, "mysql")
 
 
 def _estimate_rows_p95(avg_rows: float, avg_ms: float, p95_ms: float) -> float | None:

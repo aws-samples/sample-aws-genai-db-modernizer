@@ -425,7 +425,7 @@ def _facade_table_ids(
 _POSTGRES_ENGINES = frozenset({"postgresql", "postgres"})
 
 
-def _is_unlisted_sequence_read(
+def is_unlisted_sequence_read(
     query_text: str, source_engine: str, refs: TableReferences, known_table_names: set[str]
 ) -> bool:
     """Whether a PostgreSQL query reads a sequence's own state, not a schema table (#783).
@@ -516,7 +516,7 @@ def _transform_queries(
     ``_shadow_table_refs``); the facade's answer is the one returned either way.
     A PostgreSQL sequence-state read of a relation the schema does not hold
     (``SELECT last_value FROM public.badges_id_seq``) has no source table, so
-    its ``tables_accessed`` is ``["unknown"]`` (``_is_unlisted_sequence_read``, #783).
+    its ``tables_accessed`` is ``["unknown"]`` (``is_unlisted_sequence_read``, #783).
     """
     import hashlib
     import re
@@ -572,7 +572,7 @@ def _transform_queries(
 
         # After the cross-check, which compares the facade's own reading with the
         # regex scan: a sequence is not a table either of them should know about.
-        if _is_unlisted_sequence_read(query_text, source_engine, refs, known_table_names):
+        if is_unlisted_sequence_read(query_text, source_engine, refs, known_table_names):
             tables_accessed = ["unknown"]
 
         patterns.append(
