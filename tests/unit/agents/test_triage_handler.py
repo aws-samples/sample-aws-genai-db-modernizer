@@ -455,11 +455,14 @@ class TestTriageHeterogeneousAuroraSelection:
         assert "aurora_mysql" not in result.selected
         assert "aurora_postgresql" not in result.selected
 
-    def test_no_engine_metadata_selects_neither(self):
+    def test_no_engine_metadata_selects_both_aurora_agents(self):
+        # #726: with no source engine recorded, both Aurora engines compete and
+        # the resolver picks one, as for a heterogeneous source.
         co = _co(queries=[_q("SELECT * FROM orders")])
         result = triage(co)
-        assert "aurora_mysql" not in result.selected
-        assert "aurora_postgresql" not in result.selected
+        assert "aurora_mysql" in result.selected
+        assert "aurora_postgresql" in result.selected
+        assert "No source engine recorded" in " ".join(result.selected["aurora_mysql"])
 
 
 class TestTriageSkipping:
@@ -468,12 +471,22 @@ class TestTriageSkipping:
         result = triage(co)
         assert "neptune" not in result.selected
 
-    def test_empty_collector_only_selects_aurora(self):
+    def test_empty_collector_selects_every_owning_engine(self):
+        # #726: an engine that can own a query needs no signal to be a candidate
+        # (ADR-031 Decision 2 step 1); the ElastiCache overlay still needs its own.
         co = _co(queries=[], tables=[])
         result = triage(co)
-        assert result.selected == {}
+        # No source engine metadata: both Aurora engines compete (#726).
+        assert set(result.selected) == {
+            "dynamodb",
+            "documentdb",
+            "opensearch",
+            "aurora_mysql",
+            "aurora_postgresql",
+        }
         assert "aurora" in result.baseline
-        assert len(result.skipped) == 6  # 4 NoSQL + 2 Aurora agents (no source engine metadata)
+        # Only the cache overlay, which no signal names, is skipped.
+        assert set(result.skipped) == {"elasticache"}
 
 
 # ---------------------------------------------------------------------------

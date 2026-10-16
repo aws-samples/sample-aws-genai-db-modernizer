@@ -483,7 +483,7 @@ _INLINE_ENGINE_ROUTING = (
 # path: (count, why)
 INLINE_ENGINE_LITERALS: dict[str, tuple[int, str]] = {
     "src/agents/referee/triage.py": (
-        51,
+        47,
         "triage signal targets=[...] lists and agent selection (the triage-targets step)",
     ),
     "src/agents/referee/aurora_choice.py": (10, _INLINE_ENGINE_ROUTING + ": the Aurora choice"),

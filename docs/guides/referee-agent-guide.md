@@ -33,9 +33,13 @@ pipeline diagram.
 
 ### Purpose
 
-Read collector output, classify the workload, and select which analysis
-agents should run. Not every engine runs for every workload — a key-value
-PostgreSQL workload doesn't need an OpenSearch analysis pass.
+Read collector output, classify the workload, and select the analysis
+agents to run. Every engine that can own a query is analysed and scored
+(ADR-031 Decision 2 step 1, #726), minus the future placeholders and the
+Aurora flavour the source rules out; the signals triage detects are
+evidence for scoring and reports, never a gate on which of those engines
+run. ElastiCache, a cache overlay that owns no query, is selected only
+when one of its signals fires.
 
 ### How it actually works
 
@@ -45,7 +49,7 @@ matches ten query-pattern groups (key-value lookups, range queries,
 status filters, writes, complex joins, aggregations, large scans,
 time-series, session store, metadata/config) and five schema-level signals
 (JSON columns, junction tables, high FK density, self-referential FKs, EAV
-pattern), each mapping to one or more candidate target engines:
+pattern), each naming the engines it is evidence for:
 
 ```python
 # src/agents/referee/triage.py (real code, trimmed)
@@ -101,9 +105,14 @@ names and list-of-object shapes:
 - `job_id`, `database_name`, `contract_version`, `agent_type`, `timestamp` —
   envelope fields.
 
-There is no confidence-threshold fallback to "run everything" — triage
-always selects at least the matching Aurora engine, and any workload signal
-adds its target engines deterministically.
+Triage always selects every query-owning engine in the catalog: DynamoDB,
+DocumentDB and OpenSearch, plus the Aurora engine matching the source (both
+Aurora engines for a heterogeneous source or when no source engine is
+recorded, which the resolver narrows to one). A signal adds its evidence to the reasons of the engines it names; an
+owning engine no signal names is still selected, with a reason saying so.
+ElastiCache is selected only when a key-value, high-frequency-read, session
+or leaderboard signal names it. The Aurora flavour the source rules out, and
+ElastiCache without one of its signals, are skipped.
 
 ---
 

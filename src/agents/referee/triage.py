@@ -2,8 +2,14 @@
 Referee-Triage — Workload pattern detection and analysis agent selection.
 
 Reads collector output, detects workload signals from schema and query
-patterns, and selects which analysis agents should run. Pure Python,
-no LLM — deterministic pattern matching.
+patterns, and selects the analysis agents to run. Pure Python, no LLM —
+deterministic pattern matching.
+
+Every query-owning engine is selected (ADR-031 Decision 2 step 1, #726),
+minus the future placeholders and the Aurora flavour the source rules out.
+The signals below are evidence for scoring and reports, not a gate on which
+owning engines are analysed. ElastiCache, a cache overlay that owns no
+query, is still selected only when one of its signals fires.
 
 Signals use the same pattern vocabulary as the analysis agent catalogs
 so that analysis agents can cross-reference triage signals in their
@@ -44,6 +50,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from src.agents.referee.cache_overlay import (
+    CACHE_OVERLAY_ENGINES,
     HOT_READ_MIN_CALLS_PER_SECOND,
     TOP_N_RE,
     has_session_keyword,
@@ -126,22 +133,27 @@ def triage(collector_output: dict) -> TriageResult:
     signals = _detect_schema_signals(collector_output)
     signals.extend(_detect_query_signals(collector_output))
 
+    from src.agents.referee.aurora_choice import AURORA_ENGINES  # import cycle
+
     # Determine which Aurora agent(s) compete for this source engine: its own
     # dialect when it has one; both Aurora agents when it is a known relational
-    # engine with no Aurora dialect of its own (#381); neither otherwise (no
-    # source engine recorded, or a non-relational source).
+    # engine with no Aurora dialect of its own (#381) or when no source engine is
+    # recorded (#726: the resolver picks one, as for a heterogeneous source);
+    # neither for any other (unrecognised or non-relational) source engine.
     source_engine = (
-        collector_output.get("metadata", {}).get("source_database", {}).get("engine", "")
+        (collector_output.get("metadata") or {}).get("source_database", {}).get("engine") or ""
     ).lower()
     matched_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
     if matched_aurora:
         aurora_agents = [matched_aurora]
-    elif source_engine in HETEROGENEOUS_SOURCE_ENGINES:
-        aurora_agents = sorted(ANALYSIS_AGENTS & {"aurora_mysql", "aurora_postgresql"})
+    elif source_engine in HETEROGENEOUS_SOURCE_ENGINES or not source_engine:
+        aurora_agents = sorted(ANALYSIS_AGENTS & AURORA_ENGINES)
     else:
         aurora_agents = []
 
-    result = _select_agents(signals, aurora_agents=aurora_agents)
+    result = _select_agents(
+        signals, aurora_agents=aurora_agents, no_source_engine=not source_engine
+    )
 
     # Detect hard capability requirements per query
     result.query_capabilities = detect_query_capabilities(collector_output, signals)
@@ -620,62 +632,90 @@ def detect_query_capabilities(co: dict, signals: list[TriageSignal]) -> dict[str
 # ---------------------------------------------------------------------------
 
 
-def _select_agents(
-    signals: list[TriageSignal], aurora_agents: list[str] | None = None
-) -> TriageResult:
-    """Select analysis agents based on detected signals.
+# Reason recorded for a modelled engine no triage signal names (#726).
+UNNAMED_ENGINE_REASON = "Every modelled engine is scored on every query; no triage signal names it"
 
-    Aurora signals are tracked separately in `baseline` for Synthesis —
-    orchestration only dispatches agents in `selected`.
-    Deferred agents (Phase 1) are tracked in `deferred` for reporting.
+
+def _select_agents(
+    signals: list[TriageSignal],
+    aurora_agents: list[str] | None = None,
+    *,
+    no_source_engine: bool = False,
+) -> TriageResult:
+    """Select the analysis agents to dispatch: every query-owning engine (#726).
+
+    ADR-031 Decision 2 step 1: every modelled target engine is a candidate, minus
+    any engine the source makes impossible. So every query-owning engine in
+    ``ANALYSIS_AGENTS`` is always selected, and the Aurora agent(s) the source
+    allows are added. Signals never gate an owning candidate: they are recorded
+    as evidence, as the selected engine's reasons, and scoring decides.
+
+    A cache overlay engine (``CACHE_OVERLAY_ENGINES``, ElastiCache) owns no
+    query, so it is not a routing candidate: it is selected only when one of its
+    signals names it, exactly as before #726, so the overlay is unchanged.
+
+    Aurora signals are tracked separately in `baseline` for Synthesis.
+    Deferred agents (future placeholders, ADR-031 Decision 9) are tracked in
+    `deferred` for reporting and never selected.
 
     ``aurora_agents`` is 0, 1 or 2 Aurora analysis agents: 1 when the source
     engine has its own Aurora dialect, 2 when it is a known relational engine
-    with none (#381, both compete), 0 otherwise (both skipped, pre-#381
-    behaviour).
+    with none (#381, both compete and the resolver picks one) or when no source
+    engine is recorded (``no_source_engine``, #726, the same competition), 0
+    otherwise.
     """
+    from src.agents.referee.aurora_choice import AURORA_ENGINES  # import cycle
+
     result = TriageResult(signals=signals)
 
     # Aurora baseline — always present, signals accumulated for Synthesis
     result.baseline[BASELINE] = ["Relational baseline — tables not claimed by purpose-built agents"]
 
+    aurora_agents = aurora_agents or []
+    owning = ANALYSIS_AGENTS - AURORA_ENGINES - CACHE_OVERLAY_ENGINES
+    candidates = owning | set(aurora_agents)
+
+    evidence: dict[str, list[str]] = defaultdict(list)
     for sig in signals:
         for target in sig.targets:
             if target == BASELINE:
                 result.baseline[BASELINE].append(f"{sig.signal}: {sig.evidence}")
             elif target in DEFERRED:
-                if target not in result.deferred:
-                    result.deferred[target] = []
-                result.deferred[target].append(f"{sig.signal}: {sig.evidence}")
+                result.deferred.setdefault(target, []).append(f"{sig.signal}: {sig.evidence}")
             else:
-                if target not in result.selected:
-                    result.selected[target] = []
-                result.selected[target].append(f"{sig.signal}: {sig.evidence}")
+                evidence[target].append(f"{sig.signal}: {sig.evidence}")
+    # A cache overlay engine joins only on its own signals (it owns no query).
+    candidates |= CACHE_OVERLAY_ENGINES & set(evidence)
 
-    # Always select the matching Aurora agent(s) (source engine is inherently
-    # relational). Two agents means the source has no Aurora dialect of its own
-    # (#381): both compete on the workload, and the assignment resolver picks
-    # exactly one before anything is assigned.
-    aurora_agents = aurora_agents or []
-    for agent in aurora_agents:
-        if agent not in result.selected:
-            if len(aurora_agents) > 1:
-                result.selected[agent] = [
+    for agent in sorted(candidates):
+        reasons = list(evidence.get(agent, []))
+        if agent in AURORA_ENGINES:
+            # The source engine is inherently relational. Two agents means it has
+            # no Aurora dialect of its own (#381): both compete on the workload,
+            # and the assignment resolver picks exactly one before anything is
+            # assigned.
+            if len(aurora_agents) > 1 and no_source_engine:
+                reasons.insert(
+                    0,
+                    "No source engine recorded — both Aurora engines compete on " "workload fit",
+                )
+            elif len(aurora_agents) > 1:
+                reasons.insert(
+                    0,
                     "Source engine has no Aurora dialect of its own — both Aurora "
-                    "engines compete on workload fit"
-                ]
+                    "engines compete on workload fit",
+                )
             else:
-                result.selected[agent] = [
-                    "Source engine is relational — Aurora analysis provides baseline scoring"
-                ]
+                reasons.insert(
+                    0, "Source engine is relational — Aurora analysis provides baseline scoring"
+                )
+        result.selected[agent] = reasons or [UNNAMED_ENGINE_REASON]
 
-    # An Aurora agent not selected above is skipped (never both selected and skipped)
-    non_matching_aurora = {"aurora_postgresql", "aurora_mysql"} - set(aurora_agents)
-    for agent in ANALYSIS_AGENTS:
-        if agent not in result.selected:
-            if agent in non_matching_aurora:
-                result.skipped[agent] = "Source engine does not match this Aurora variant"
-            else:
-                result.skipped[agent] = "No matching workload signals detected"
+    # Only an Aurora flavour the source rules out, or a cache overlay engine no
+    # signal names, is skipped (never both selected and skipped).
+    for agent in sorted(AURORA_ENGINES - set(aurora_agents)):
+        result.skipped[agent] = "Source engine does not match this Aurora variant"
+    for agent in sorted(CACHE_OVERLAY_ENGINES - candidates):
+        result.skipped[agent] = "No matching workload signals detected"
 
     return result
