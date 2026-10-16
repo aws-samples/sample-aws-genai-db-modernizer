@@ -5,7 +5,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { DATABASE_NAME_PATTERN, isValidDatabaseName } from '../databaseName';
+import { DATABASE_NAME_PATTERN, isValidDatabaseName, normalizeDatabaseName } from '../databaseName';
 
 test.each([
   'wordpress',
@@ -44,4 +44,23 @@ test('uses the same pattern as src/shared/database_name.py', () => {
   const match = pythonSource.match(/^DATABASE_NAME_PATTERN = r"(.*)"$/m);
   expect(match).not.toBeNull();
   expect(DATABASE_NAME_PATTERN).toBe(match[1]);
+});
+
+test.each([
+  ['  shop  ', 'shop'],
+  ['\tshop\n', 'shop'],
+  ['\ufeffshop', 'shop'],
+])('normalizes %p to %p', (name, expected) => {
+  expect(normalizeDatabaseName(name)).toBe(expected);
+});
+
+test('CreateAnalysis.js sends every database name through normalizeDatabaseName', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../pages/CreateAnalysis.js'), 'utf8');
+  // Five request fields carry the name: the online create body and its
+  // connection, and the offline prepare body, confirm query string and create body.
+  const sends = source.match(/\b(?:database_name|database)(?::\s*|=\$\{encodeURIComponent\()[^,\n)]+/g);
+  expect(sends).toHaveLength(5);
+  for (const send of sends) {
+    expect(send).toMatch(/normalizeDatabaseName\((?:formData\.databaseName|offlineDatabaseName)$/);
+  }
 });

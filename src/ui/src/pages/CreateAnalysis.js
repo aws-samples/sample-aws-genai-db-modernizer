@@ -35,7 +35,7 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
-import { isValidDatabaseName } from "../utils/databaseName";
+import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 function SourceDatabaseSection({ formData, setFormData, errors }) {
   const { t } = useTranslation();
   const rdsOptions = [
@@ -1018,7 +1018,7 @@ function DatabaseAnalysisForm() {
         path: 'assessments/prepare',
         method: 'POST',
         params: {
-          database_name: offlineDatabaseName.trim(),
+          database_name: normalizeDatabaseName(offlineDatabaseName),
           source_database_type: offlineSourceType.value,
         }
       }]);
@@ -1064,7 +1064,7 @@ function DatabaseAnalysisForm() {
       setUploadState("confirming");
       const confirmResults = await apiManager.execute([{
         id: 'confirm',
-        path: `assessments/${job_id}/uploads/confirm?database_name=${encodeURIComponent(offlineDatabaseName.trim())}`,
+        path: `assessments/${job_id}/uploads/confirm?database_name=${encodeURIComponent(normalizeDatabaseName(offlineDatabaseName))}`,
         method: 'POST',
         params: {}
       }]);
@@ -1122,7 +1122,7 @@ function DatabaseAnalysisForm() {
         params: {
           job_id: preparedJob.job_id,
           source_database_type: offlineSourceType.value,
-          database_name: offlineDatabaseName.trim(),
+          database_name: normalizeDatabaseName(offlineDatabaseName),
           collection_mode: "offline",
           offline_s3_key: preparedJob.upload_key,
           target_databases: targetDatabasesArray,
@@ -1189,7 +1189,7 @@ function DatabaseAnalysisForm() {
       const connection = {
         host: formData.host,
         port: parseInt(formData.port),
-        database: formData.databaseName.trim(),
+        database: normalizeDatabaseName(formData.databaseName),
         credentials_type: formData.credentialsType
       };
 
@@ -1229,7 +1229,7 @@ function DatabaseAnalysisForm() {
           method: 'POST',
           params: {
             source_database_type: "mysql", // TODO: Get from RDS instance or form
-            database_name: formData.databaseName.trim(),
+            database_name: normalizeDatabaseName(formData.databaseName),
             connection: connection,
             options: options,
             target_databases: targetDatabasesArray,
