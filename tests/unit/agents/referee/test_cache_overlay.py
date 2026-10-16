@@ -213,7 +213,7 @@ class TestEligibility:
             "SELECT [CustomerID], [CartJson] FROM [UserSession] WHERE [SessionToken] = @SessionToken",
             "SELECT customerId FROM carts WHERE sessionId = @sessionId",
             "SELECT [UserID] FROM [Login] WHERE [CsrfToken] = @CsrfToken",
-            "SELECT [UserID] FROM [Login] WHERE [CSRFToken] = @Token",
+            "SELECT [UserID] FROM [Login] WHERE [CSRFToken] = @p0",
             "SELECT [UserID] FROM [ApiClient] WHERE [JWTToken] = @Jwt",
             "SELECT [ClientID] FROM [ApiClient] WHERE [APIToken] = @Key",
             "SELECT [UserID] FROM [UserSession] WHERE [SessionID] = @Id",
@@ -243,6 +243,41 @@ class TestEligibility:
         ],
     )
     def test_session_or_token_name_parts_that_are_not_a_session_key(self, text):
+        assert cache_pattern(_q("q", text)) == "point_lookup"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # #742 item 4: common token columns beyond the session/auth ones.
+            "SELECT [UserID] FROM [AppUser] WHERE [ResetToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [LoginToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [RememberToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [VerificationToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [ConfirmationToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [ActivationToken] = @p0",
+            "SELECT [UserID] FROM [Invite] WHERE [InviteToken] = @p0",
+            "SELECT [UserID] FROM [Invite] WHERE [InvitationToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [MagicToken] = @p0",
+            "SELECT [UserID] FROM [OAuthGrant] WHERE [IdToken] = @p0",
+            "SELECT [UserID] FROM [OAuthGrant] WHERE [SsoToken] = @p0",
+            "SELECT [UserID] FROM [AppUser] WHERE [OtpToken] = @p0",
+            "SELECT userId FROM users WHERE resetToken = @p0",
+        ],
+    )
+    def test_common_token_columns_are_session_lookups(self, text):
+        assert cache_pattern(_q("q", text)) == "session_lookup"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A token that is not a login credential stays a plain lookup.
+            "SELECT [Last4] FROM [Card] WHERE [PaymentToken] = @p0",
+            "SELECT [UserID] FROM [Device] WHERE [DeviceToken] = @p0",
+            "SELECT [Kind] FROM [Lexeme] WHERE [ExpressionToken] = @p0",
+            "SELECT [Email] FROM [Subscriber] WHERE [UnsubscribeToken] = @p0",
+        ],
+    )
+    def test_other_token_columns_are_not_session_lookups(self, text):
         assert cache_pattern(_q("q", text)) == "point_lookup"
 
     @pytest.mark.parametrize(

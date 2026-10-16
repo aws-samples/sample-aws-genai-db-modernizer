@@ -298,12 +298,61 @@ def _merge_query_variants(raw: list[dict]) -> list[dict]:
     return merged_rows
 
 
+# Engines whose table names compare case-insensitively (#742): SQL Server's
+# default collation, PostgreSQL and Oracle unquoted names (folded to one case),
+# DB2. MySQL is not one: on Linux, RDS and Aurora its table names are
+# case-sensitive (``lower_case_table_names=0``).
+_CASE_INSENSITIVE_ENGINES = frozenset({"sqlserver", "postgresql", "postgres", "oracle", "db2"})
+# Of those, the ones where a quoted identifier keeps its case (``"Topics"`` is
+# not ``topics``), so a quoted name only matches exactly. SQL Server's
+# brackets and quotes don't change how its collation compares names.
+_QUOTED_KEEPS_CASE_ENGINES = frozenset({"postgresql", "postgres", "oracle", "db2"})
+
+
+def _case_folded_names(
+    known_table_names: set[str], source_engine: str
+) -> Mapping[str, tuple[str, ...]] | None:
+    """Lower-cased name -> the collected names that fold to it, for an engine
+    that compares table names case-insensitively; None (exact match only) for
+    any other engine."""
+    if (source_engine or "").strip().lower() not in _CASE_INSENSITIVE_ENGINES:
+        return None
+    folded: dict[str, list[str]] = {}
+    for name in sorted(known_table_names):
+        folded.setdefault(name.lower(), []).append(name)
+    return {key: tuple(names) for key, names in folded.items()}
+
+
+def _known_table_name(
+    table: str,
+    known_table_names: set[str],
+    case_folded: Mapping[str, tuple[str, ...]] | None,
+    exact_names: frozenset[str] = frozenset(),
+) -> str | None:
+    """The collected name ``table`` refers to, or None.
+
+    An exact match always wins. With ``case_folded`` (an engine that compares
+    names case-insensitively) a name matching exactly one collected table in
+    another case is that table; one matching two (``EventLog`` and
+    ``eventlog``) is no single table, so it stays unresolved. A name in
+    ``exact_names`` (written quoted where quotes keep case) only matches exactly.
+    """
+    if table in known_table_names:
+        return table
+    if case_folded is None or table in exact_names:
+        return None
+    matches = case_folded.get(table.lower(), ())
+    return matches[0] if len(matches) == 1 else None
+
+
 def _resolve_qualified_table(
     qualifiers: list[str],
     table: str,
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
+    case_folded: Mapping[str, tuple[str, ...]] | None = None,
+    exact_names: frozenset[str] = frozenset(),
 ) -> str:
     """The table id for a qualified reference ``[database.]schema.table`` (#653).
 
@@ -322,11 +371,15 @@ def _resolve_qualified_table(
     ``Archive.EventLog`` both get the id ``<database>.EventLog``, #382, so no
     single id is the right one).
 
-    Table names still match case-sensitively, the same as bare names do.
+    Table names match exactly, or case-insensitively where the engine compares
+    them that way (``case_folded``, see ``_known_table_name``, #742); the id
+    uses the collection's own spelling.
     """
     written = ".".join([*qualifiers, table])
-    if table not in known_table_names:
+    known = _known_table_name(table, known_table_names, case_folded, exact_names)
+    if known is None:
         return written
+    table = known
     if len(qualifiers) == 2:
         if qualifiers[0].lower() != db_name.lower():
             return written
@@ -351,6 +404,8 @@ def _resolve_table_ids(
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
+    case_folded: Mapping[str, tuple[str, ...]] | None = None,
+    exact_names: frozenset[str] = frozenset(),
 ) -> list[str]:
     """Resolve ``(qualifiers, table)`` references to collection table ids.
 
@@ -359,7 +414,9 @@ def _resolve_table_ids(
     collection knows becomes ``<database>.<table>``, and anything else is kept as
     written. A qualified and a bare reference to one table resolve to the same id,
     so duplicates collapse in first-seen order; no reference at all is
-    ``["unknown"]``.
+    ``["unknown"]``. ``case_folded`` (from ``_case_folded_names``) lets a name
+    match a collected table in another case (#742), except a name in
+    ``exact_names`` (``_quoted_names``).
     """
     tables_accessed: list[str] = []
     for qualifiers, table in refs:
@@ -371,16 +428,32 @@ def _resolve_table_ids(
         if qualifiers:
             tables_accessed.append(
                 _resolve_qualified_table(
-                    qualifiers, table, db_name, known_table_names, table_schemas
+                    qualifiers,
+                    table,
+                    db_name,
+                    known_table_names,
+                    table_schemas,
+                    case_folded,
+                    exact_names,
                 )
             )
         # Prefix with db_name if the bare-name table is known
-        elif table in known_table_names:
-            tables_accessed.append(f"{db_name}.{table}")
+        elif (
+            known := _known_table_name(table, known_table_names, case_folded, exact_names)
+        ) is not None:
+            tables_accessed.append(f"{db_name}.{known}")
         else:
             tables_accessed.append(table)
     tables_accessed = list(dict.fromkeys(tables_accessed))
     return tables_accessed or ["unknown"]
+
+
+def _quoted_names(refs: TableReferences, source_engine: str) -> frozenset[str]:
+    """The names written quoted in one query, where a quoted name keeps its
+    case (PostgreSQL, Oracle, DB2); empty for any other engine."""
+    if (source_engine or "").strip().lower() not in _QUOTED_KEEPS_CASE_ENGINES:
+        return frozenset()
+    return frozenset(ref.name for ref in refs.tables if ref.quoted)
 
 
 def _facade_table_ids(
@@ -390,6 +463,7 @@ def _facade_table_ids(
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
+    case_folded: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[str], TableReferences, SqlFacts]:
     """One query's table ids and query-shape facts from the sqlglot facade
     (#553, #796), from one parse.
@@ -418,6 +492,8 @@ def _facade_table_ids(
         db_name,
         known_table_names,
         table_schemas,
+        case_folded,
+        _quoted_names(refs, source_engine),
     )
     return ids, refs, reading.facts
 
@@ -469,6 +545,7 @@ def _shadow_table_refs(
     db_name: str,
     known_table_names: set[str],
     table_schemas: Mapping[str, set[str]],
+    case_folded: Mapping[str, tuple[str, ...]] | None = None,
 ) -> None:
     """Record the regex scan's table ids next to the facade's for one query.
 
@@ -481,7 +558,12 @@ def _shadow_table_refs(
     shadow.source_engine = source_engine
     try:
         regex_ids = _resolve_table_ids(
-            regex_table_refs(query_text, source_engine), db_name, known_table_names, table_schemas
+            regex_table_refs(query_text, source_engine),
+            db_name,
+            known_table_names,
+            table_schemas,
+            case_folded,
+            _quoted_names(refs, source_engine),
         )
         shadow.record(query_id, query_text, regex_ids, list(facade_ids), refs)
     except Exception:  # noqa: BLE001 -- the cross-check only observes
@@ -523,6 +605,7 @@ def _transform_queries(
 
     patterns = []
     fallbacks: Counter[str] = Counter()
+    case_folded = _case_folded_names(known_table_names, source_engine)
     for r in _merge_query_variants(raw):
         query_text = str(r.get("query_text") or "")
         exec_count = r.get("execution_count") or 1
@@ -542,6 +625,7 @@ def _transform_queries(
             db_name,
             known_table_names,
             table_schemas or {},
+            case_folded,
         )
         if refs.fallback_reason:
             fallbacks[refs.fallback_reason] += 1
@@ -568,6 +652,7 @@ def _transform_queries(
                 db_name,
                 known_table_names,
                 table_schemas or {},
+                case_folded,
             )
 
         # After the cross-check, which compares the facade's own reading with the

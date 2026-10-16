@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import sqlglot
@@ -140,11 +140,19 @@ FallbackReason = Literal[
 
 @dataclass(frozen=True)
 class TableRef:
-    """One table reference as written: ``[catalog.][schema.]name``."""
+    """One table reference as written: ``[catalog.][schema.]name``.
+
+    ``quoted`` says the name itself was a quoted identifier (``"Topics"``,
+    ``[Orders]``), which keeps its case in PostgreSQL, Oracle and DB2. It is
+    not part of the reference's identity: ``"topics"`` and ``topics`` are one
+    reference (the first one seen is kept). A regex-fallback reference is
+    never marked quoted.
+    """
 
     name: str
     schema: str | None = None
     catalog: str | None = None
+    quoted: bool = field(default=False, compare=False)
 
     @property
     def qualifiers(self) -> list[str]:
@@ -404,7 +412,12 @@ def _ref_from_node(table: exp.Table) -> TableRef | None:
     """A TableRef for a stored-table node; None for table functions and DUAL."""
     if not isinstance(table.this, exp.Identifier) or not table.name:
         return None
-    ref = TableRef(name=table.name, schema=table.db or None, catalog=table.catalog or None)
+    ref = TableRef(
+        name=table.name,
+        schema=table.db or None,
+        catalog=table.catalog or None,
+        quoted=bool(table.this.args.get("quoted")),
+    )
     if not ref.qualifiers and ref.name.lower() in _PSEUDO_TABLES:
         return None
     return ref

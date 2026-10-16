@@ -305,6 +305,64 @@ class TestSequenceLookalikes:
         assert is_utility_statement("SELECT lastval()", ["unknown"]) is True
 
 
+class TestDb2SequenceFetch:
+    """#742 item 2: DB2 reads a sequence with ``NEXT VALUE FOR`` / ``PREVIOUS
+    VALUE FOR`` (or the ``NEXTVAL FOR`` / ``PREVVAL FOR`` synonyms), either as
+    ``VALUES ...`` or from its one-row dummy table ``SYSIBM.SYSDUMMY1``."""
+
+    @pytest.mark.parametrize(
+        "sql,tables",
+        [
+            ("SELECT NEXT VALUE FOR order_seq FROM SYSIBM.SYSDUMMY1", ["SYSIBM.SYSDUMMY1"]),
+            ("SELECT PREVIOUS VALUE FOR order_seq FROM sysibm.sysdummy1", ["sysibm.sysdummy1"]),
+            ("VALUES NEXT VALUE FOR order_seq", ["unknown"]),
+            ("VALUES PREVIOUS VALUE FOR app.order_seq", ["unknown"]),
+            ("VALUES NEXTVAL FOR order_seq", ["unknown"]),
+            ("SELECT PREVVAL FOR order_seq FROM SYSIBM.SYSDUMMY1", ["SYSIBM.SYSDUMMY1"]),
+            ("SELECT NEXT VALUE FOR order_seq FROM SYSDUMMY1", ["SYSDUMMY1"]),
+        ],
+    )
+    def test_db2_sequence_fetch_is_utility(self, sql, tables):
+        assert is_utility_statement(sql, tables) is True
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT NEXT VALUE FOR order_seq FROM SYSIBM.SYSDUMMY1",
+            "VALUES PREVIOUS VALUE FOR order_seq",
+            "VALUES PREVVAL FOR order_seq",
+        ],
+    )
+    def test_through_the_parser(self, sql):
+        from src.tools.database.offline_parser import _transform_queries
+
+        q = _transform_queries([{"query_text": sql}], "shop", {"orders"}, source_engine="db2")[0]
+        assert is_utility_statement(q["query_text"], q["tables_accessed"]) is True
+
+    @pytest.mark.parametrize(
+        "sql,tables",
+        [
+            # the sequence feeds a real application write
+            ("INSERT INTO orders (id) VALUES (NEXT VALUE FOR order_seq)", ["shop.orders"]),
+            ("SELECT PREVIOUS VALUE FOR order_seq, o.id FROM orders o", ["shop.orders"]),
+            # the words inside a string literal
+            ("SELECT 'previous value for x' FROM SYSIBM.SYSDUMMY1", ["SYSIBM.SYSDUMMY1"]),
+            # a dummy-table read that is not a sequence fetch
+            ("SELECT CURRENT TIMESTAMP FROM SYSIBM.SYSDUMMY1", ["SYSIBM.SYSDUMMY1"]),
+            # a real table that only shares the name's start
+            ("SELECT NEXT VALUE FOR s FROM shop.SYSDUMMY1_archive", ["shop.SYSDUMMY1_archive"]),
+        ],
+    )
+    def test_db2_lookalikes_are_not_utility(self, sql, tables):
+        assert is_utility_statement(sql, tables) is False
+
+    def test_previous_value_is_a_sequence_reference(self):
+        from src.agents.referee.utility_statements import has_sequence_reference
+
+        assert has_sequence_reference("VALUES PREVIOUS VALUE FOR order_seq") is True
+        assert has_sequence_reference("SELECT [PreviousValue] FROM [Counter]") is False
+
+
 class TestSequencePatternIsShared:
     """aurora_choice's ``sequences`` workload feature and the utility rule read
     one detector, so they can never disagree on what a sequence reference is."""

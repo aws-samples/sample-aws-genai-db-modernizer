@@ -617,6 +617,115 @@ class TestSchemaQualifiedTableResolution:
         ]
 
 
+class TestTableNameCase:
+    """#742 item 3: a table name resolves case-insensitively where the engine
+    compares names that way (SQL Server, PostgreSQL and Oracle unquoted
+    names, DB2), as schemas already did. MySQL keeps exact names: on Linux,
+    RDS and Aurora a MySQL table name is case-sensitive. An exact match always
+    wins, and a name that matches two tables case-insensitively stays as
+    written (#382)."""
+
+    @staticmethod
+    def _tables(sql: str, engine: str, known: set[str], schemas=None) -> list[str]:
+        from src.tools.database.offline_parser import _transform_queries
+
+        rows = [{"query_text": sql}]
+        result = _transform_queries(
+            rows, "trailgear", known, table_schemas=schemas or {}, source_engine=engine
+        )
+        tables: list[str] = result[0]["tables_accessed"]
+        return tables
+
+    def test_the_facade_keeps_the_written_case(self):
+        # The facade only reads the text; resolving against the schema is the
+        # offline parser's job, so the case fold has to happen there.
+        from src.tools.sql.facade import table_references
+
+        refs = table_references("SELECT 1 FROM [Audit].[eventlog]", "sqlserver")
+        assert [(r.schema, r.name) for r in refs.tables] == [("Audit", "eventlog")]
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1 FROM [Audit].[eventlog]",
+            "SELECT 1 FROM [audit].[EVENTLOG]",
+            "SELECT 1 FROM eventlog",
+            "SELECT 1 FROM [trailgear].[Audit].[eventLog]",
+        ],
+    )
+    def test_sql_server_names_match_case_insensitively(self, sql):
+        known, schemas = {"EventLog"}, {"EventLog": {"Audit"}}
+        assert self._tables(sql, "sqlserver", known, schemas) == ["trailgear.EventLog"]
+
+    @pytest.mark.parametrize(
+        "engine,sql,known,expected",
+        [
+            ("postgresql", "SELECT * FROM Topics", {"topics"}, "trailgear.topics"),
+            ("postgresql", "SELECT * FROM public.TOPICS", {"topics"}, "trailgear.topics"),
+            ("oracle", "SELECT * FROM orders", {"ORDERS"}, "trailgear.ORDERS"),
+            ("oracle", "SELECT * FROM app.Orders", {"ORDERS"}, "trailgear.ORDERS"),
+            ("db2", "SELECT * FROM orders", {"ORDERS"}, "trailgear.ORDERS"),
+        ],
+    )
+    def test_other_case_insensitive_engines(self, engine, sql, known, expected):
+        assert self._tables(sql, engine, known) == [expected]
+
+    def test_mysql_names_stay_exact(self):
+        assert self._tables("SELECT * FROM WP_POSTS", "mysql", {"wp_posts"}) == ["WP_POSTS"]
+        assert self._tables("SELECT * FROM trailgear.WP_POSTS", "mysql", {"wp_posts"}) == [
+            "trailgear.WP_POSTS"
+        ]
+
+    def test_an_exact_match_wins(self):
+        known = {"EventLog", "eventlog"}
+        assert self._tables("SELECT 1 FROM eventlog", "sqlserver", known) == ["trailgear.eventlog"]
+
+    def test_a_name_two_tables_share_case_insensitively_stays_as_written(self):
+        known = {"EventLog", "eventlog"}
+        assert self._tables("SELECT 1 FROM EVENTLOG", "sqlserver", known) == ["EVENTLOG"]
+
+    @pytest.mark.parametrize(
+        "engine,sql,known,expected",
+        [
+            # A quoted name keeps its case in PostgreSQL, Oracle and DB2, so it
+            # only matches exactly (#925 review).
+            ("postgresql", 'SELECT * FROM "Topics"', {"topics"}, "Topics"),
+            ("postgresql", 'SELECT * FROM "public"."Topics"', {"topics"}, "public.Topics"),
+            ("postgresql", 'SELECT * FROM "topics"', {"topics"}, "trailgear.topics"),
+            ("postgresql", 'SELECT * FROM "Topics"', {"Topics", "topics"}, "trailgear.Topics"),
+            ("oracle", 'SELECT * FROM "orders"', {"ORDERS"}, "orders"),
+            ("oracle", 'SELECT * FROM app."Orders"', {"ORDERS"}, "app.Orders"),
+            ("oracle", 'SELECT * FROM "ORDERS"', {"ORDERS"}, "trailgear.ORDERS"),
+            ("db2", 'SELECT * FROM "orders"', {"ORDERS"}, "orders"),
+            # SQL Server's [brackets] and "quotes" do not change how the
+            # collation compares the name.
+            ("sqlserver", 'SELECT * FROM "eventlog"', {"EventLog"}, "trailgear.EventLog"),
+            ("sqlserver", "SELECT * FROM [eventlog]", {"EventLog"}, "trailgear.EventLog"),
+        ],
+    )
+    def test_a_quoted_name_matches_exactly_where_quotes_keep_case(
+        self, engine, sql, known, expected
+    ):
+        assert self._tables(sql, engine, known) == [expected]
+
+    def test_an_unquoted_name_next_to_its_quoted_twin_still_folds(self):
+        sql = 'SELECT * FROM "Topics" t JOIN posts p ON p.topic_id = t.id'
+        known = {"topics", "posts"}
+        assert self._tables(sql, "postgresql", known) == ["Topics", "trailgear.posts"]
+
+    @pytest.mark.parametrize("engine", ["postgresql", "oracle", "db2"])
+    def test_an_ambiguous_name_stays_as_written_outside_sql_server(self, engine):
+        known = {"Orders", "orders"}
+        assert self._tables("SELECT * FROM ORDERS", engine, known) == ["ORDERS"]
+
+    def test_the_schema_check_uses_the_matched_table(self):
+        # [Archive].[eventlog] is not the collected Audit.EventLog table.
+        known, schemas = {"EventLog"}, {"EventLog": {"Audit"}}
+        assert self._tables("SELECT 1 FROM [Archive].[eventlog]", "sqlserver", known, schemas) == [
+            "Archive.eventlog"
+        ]
+
+
 class TestTsqlTableExtractionGaps:
     """#663 (parts 3 and 4): T-SQL shapes the table regex misread."""
 

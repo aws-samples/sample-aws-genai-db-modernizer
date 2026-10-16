@@ -2033,6 +2033,22 @@ class TestDeriveTableAssignmentsNoiseFiltering:
         assert tables == []
         assert unresolved.count == 0
 
+    def test_db2_dummy_table_is_a_pseudo_table_like_dual(self):
+        # #742: DB2's one-row SYSIBM.SYSDUMMY1 names no stored data, as DUAL.
+        from src.agents.referee.table_resolution import PSEUDO_TABLES
+
+        assert "SYSIBM.SYSDUMMY1" in PSEUDO_TABLES
+        query_assignments = [_qa("q1", "aurora_postgresql", ["db.orders", "SYSIBM.SYSDUMMY1"])]
+        known_tables = TableNameResolver.from_known_ids({"db.orders"})
+        tables, unresolved = derive_table_assignments(query_assignments, known_tables=known_tables)
+        assert [t.table_id for t in tables] == ["db.orders"]
+        assert unresolved.count == 0
+        tables, unresolved = derive_table_assignments(
+            [_qa("q2", "aurora_postgresql", ["SYSIBM.SYSDUMMY1"])], known_tables=None
+        )
+        assert tables == []
+        assert unresolved.count == 0
+
     def test_view_only_table_is_kept_not_dropped(self):
         # #316 finding 2: a query touching only a view must still produce a
         # table_assignments row under the view's canonical id.

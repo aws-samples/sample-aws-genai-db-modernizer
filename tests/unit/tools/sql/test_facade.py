@@ -323,6 +323,25 @@ class TestBridgesNeverChangeTables:
         assert [t.written for t in refs.tables] == expected
 
 
+@pytest.mark.parametrize(
+    "sql,engine,quoted",
+    [
+        ('SELECT * FROM "Topics"', "postgresql", True),
+        ("SELECT * FROM Topics", "postgresql", False),
+        ("SELECT * FROM [Orders]", "sqlserver", True),
+        ('SELECT * FROM app."Orders"', "oracle", True),
+    ],
+)
+def test_a_reference_says_whether_its_name_was_quoted(sql, engine, quoted):
+    (ref,) = table_references(sql, engine).tables
+    assert ref.quoted is quoted
+
+
+def test_quoting_does_not_split_one_reference_in_two():
+    refs = table_references('SELECT * FROM "topics" a JOIN topics b ON a.id = b.id', "postgresql")
+    assert [r.name for r in refs.tables] == ["topics"]
+
+
 class TestSizeCap:
     @staticmethod
     def _insert(n: int) -> str:

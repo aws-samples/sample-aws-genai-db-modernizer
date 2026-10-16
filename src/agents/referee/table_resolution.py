@@ -31,12 +31,13 @@ from dataclasses import dataclass
 from src.agents.schema_design.scope import normalize_table_name
 
 # Pseudo "tables" a parser or the dialect itself introduces (MySQL's dummy
-# ``DUAL`` target, a column or expression a parser mistook for a table). They
+# ``DUAL`` target, DB2's ``SYSIBM.SYSDUMMY1`` (#742), a column or expression a
+# parser mistook for a table). They
 # are not source tables -- real or misspelled -- so they are silently dropped
 # wherever table names are resolved or reported, never counted as unresolved
 # noise and never claimed as a table a wave moves. Single source of truth:
 # previously duplicated between ``migration_waves`` and ``synthesis_handler``.
-PSEUDO_TABLES = frozenset({"DUAL", "unknown"})
+PSEUDO_TABLES = frozenset({"DUAL", "SYSIBM.SYSDUMMY1", "unknown"})
 
 # Schemas that hold only the database engine's own catalog/metadata, never an
 # application table (#380 review): a raw collector introspection that does

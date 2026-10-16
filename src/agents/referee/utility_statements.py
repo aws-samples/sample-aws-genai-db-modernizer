@@ -25,7 +25,9 @@ all: ``SELECT obj_description($1::regclass::oid, $2)``,
 ``SELECT $1::regtype::oid`` are Postgres catalog introspection and sequence
 housekeeping, not an application read or write, and so are SQL Server's
 ``SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq]`` and Oracle's
-``SELECT order_seq.NEXTVAL FROM DUAL`` (#654) -- the collector itself can't
+``SELECT order_seq.NEXTVAL FROM DUAL`` (#654), and DB2's ``VALUES PREVIOUS
+VALUE FOR seq`` and ``SELECT NEXT VALUE FOR seq FROM SYSIBM.SYSDUMMY1``, its
+one-row dummy table (#742) -- the collector itself can't
 even name a source table for them (``tables_accessed`` comes back
 ``["unknown"]``, :data:`src.agents.referee.table_resolution.PSEUDO_TABLES`).
 A catalog function or ``::reg*`` cast only counts as utility when there is no
@@ -144,8 +146,12 @@ _CATALOG_FUNCTION_RE = re.compile(
 # ``'next value for'`` in a label or a WHERE value never count (#654 review).
 _STRING_LITERAL_RE = re.compile(r"'(?:[^']|'')*'")
 
-# SQL Server/DB2: ``NEXT VALUE FOR`` followed by the sequence's name.
-_NEXT_VALUE_FOR_RE = re.compile(r"\bnext\s+value\s+for\s+[\[\"`]?[#\w]", re.IGNORECASE)
+# SQL Server/DB2: ``NEXT VALUE FOR`` followed by the sequence's name, and
+# DB2's ``PREVIOUS VALUE FOR`` and its ``NEXTVAL FOR`` / ``PREVVAL FOR``
+# synonyms (#742).
+_NEXT_VALUE_FOR_RE = re.compile(
+    r"\b(?:(?:next|previous)\s+value|nextval|prevval)\s+for\s+[\[\"`]?[#\w]", re.IGNORECASE
+)
 # Oracle: ``[schema.]seq.NEXTVAL`` / ``.CURRVAL``, never a function call
 # (``dbo.NextVal(...)``).
 _DOT_NEXTVAL_RE = re.compile(
@@ -193,7 +199,8 @@ def _blank_string_literals(text: str) -> str:
 def has_sequence_reference(query_text: str | None) -> bool:
     """Whether ``query_text`` reads a sequence in SQL Server/DB2 or Oracle spelling.
 
-    ``NEXT VALUE FOR <sequence>``, or ``[schema.]seq.NEXTVAL``/``.CURRVAL`` where
+    ``NEXT VALUE FOR <sequence>`` (DB2 also ``PREVIOUS VALUE FOR``, ``NEXTVAL FOR``
+    and ``PREVVAL FOR``, #742), or ``[schema.]seq.NEXTVAL``/``.CURRVAL`` where
     Oracle reads a sequence (no FROM, ``FROM DUAL`` or an INSERT's VALUES). String
     literals are ignored, and so are a column named ``nextval`` behind an alias
     and a user function named ``NextVal(...)``. The single detector for both this
@@ -281,13 +288,23 @@ def is_sequence_state_read(query_text: str | None) -> bool:
     return bool(_SEQUENCE_STATE_READ_RE.search(strip_trailing_comments(text, nested=True)))
 
 
+# DB2's one-row dummy tables (``SELECT NEXT VALUE FOR s FROM SYSIBM.SYSDUMMY1``),
+# DB2's ``DUAL`` (#742): they name no stored data.
+_DB2_DUMMY_TABLE_RE = re.compile(r"(?:sysibm\.)?sysdummy[1aeu]", re.IGNORECASE)
+
+
+def _is_pseudo_table(table: object, pseudo: set[str]) -> bool:
+    name = str(table)
+    return name.upper() in pseudo or _DB2_DUMMY_TABLE_RE.fullmatch(name) is not None
+
+
 def _has_no_real_source_table(tables_accessed: Iterable[str] | None) -> bool:
     """True when every table ``tables_accessed`` names is a pseudo table (or there are none)."""
     # Case-insensitive: the offline parser keeps the statement's own case, so
     # Oracle's dummy table comes back as ``dual`` as often as ``DUAL`` (#654 review).
     pseudo = {p.upper() for p in PSEUDO_TABLES}
     tables = list(tables_accessed or [])
-    return all(str(t).upper() in pseudo for t in tables)
+    return all(_is_pseudo_table(t, pseudo) for t in tables)
 
 
 def _all_tables_are_system_catalog(

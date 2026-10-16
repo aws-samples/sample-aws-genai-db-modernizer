@@ -114,9 +114,40 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 # (#663, kept narrow after review: ``session_store`` alone selects analysis
 # agents). ``<prefix>Token`` for these prefixes, or ``Session{Id,Key,Token}``.
 # Not ``SessionTimeout``, ``TokenCount``, ``TrainingSession``, ``ExpressionToken``
-# or ``PaymentTokenVault``: a name part alone is not a session key.
+# or ``PaymentTokenVault``: a name part alone is not a session key. The
+# prefixes name a login, session or account-access credential: the session and
+# auth ones, and the one-time tokens an account flow looks up by value
+# (``ResetToken``, ``LoginToken``, ``RememberToken``, ``VerificationToken``,
+# ``InviteToken``, ``IdToken``, ..., #742). A token that is not a credential
+# (``PaymentToken``, ``DeviceToken``, ``UnsubscribeToken``) is not one.
 _SESSION_TOKEN_PREFIXES = frozenset(
-    {"session", "csrf", "xsrf", "auth", "access", "refresh", "jwt", "api", "bearer"}
+    {
+        # session and auth
+        "session",
+        "csrf",
+        "xsrf",
+        "auth",
+        "access",
+        "refresh",
+        "jwt",
+        "api",
+        "bearer",
+        "id",
+        "sso",
+        # login and account flows
+        "login",
+        "remember",
+        "reset",
+        "verification",
+        "verify",
+        "confirmation",
+        "confirm",
+        "activation",
+        "invite",
+        "invitation",
+        "magic",
+        "otp",
+    }
 )
 _SESSION_KEY_SUFFIXES = frozenset({"id", "key", "token"})
 _WHERE_CLAUSE_RE = re.compile(r"\bwhere\b(.*)", re.IGNORECASE | re.DOTALL)
