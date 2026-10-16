@@ -160,7 +160,7 @@ _PINNED = (
 _WORDING = "wording or display, not a routing rule"
 _PLUMBING = "per-engine plumbing (dialects, schema fields, dispatch), not a routing rule"
 _CONTRACT = (
-    "a contract's engine vocabulary (Literal or field default; contract change, " "CONTRIBUTING.md)"
+    "a contract's engine vocabulary (Literal or field default; contract change, CONTRIBUTING.md)"
 )
 
 # Module-level constants (tables and single values) that name an engine id or a pattern
@@ -182,8 +182,7 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/agents/referee/capability_registry.py": (
         frozenset({"ENGINE_CAPABILITIES", "SIGNAL_TO_CAPABILITY"}),
-        _ROUTING + ": the hard capability gate (collapses into the pattern files' supported "
-        "flags)",
+        _ROUTING + ": the hard capability gate (collapses into the pattern files' supported flags)",
     ),
     "src/shared/capability_labels.py": (
         frozenset({"CAPABILITY_REDESIGN_HINTS"}),
@@ -196,13 +195,12 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     "src/agents/referee/reality_check_rules.py": (
         frozenset(
             {
-                "ENGINE_BASE_COST",
                 "AURORA_ENGINES",
                 "SPECIALIST_ABSORB_SIGNALS",
                 "SPECIALIST_ABSORB_CAPABILITIES",
             }
         ),
-        _ROUTING + ": reality-check pricing and absorption (engine-file pricing, #494)",
+        _ROUTING + ": reality-check absorption",
     ),
     "src/agents/referee/triage.py": (
         frozenset({"ANALYSIS_AGENTS", "BASELINE", "SOURCE_ENGINE_TO_AURORA", "DEFERRED"}),
@@ -332,7 +330,7 @@ SCORE_WEIGHT_TABLES: dict[str, tuple[frozenset[str], str]] = {
     "src/tools/analysis/scoring.py": (frozenset({"DEFAULT_WEIGHTS"}), _WEIGHTS),
 }
 
-_THRESHOLD = _ROUTING + ": a threshold, floor or price (engine files' floors, sizing, pricing)"
+_THRESHOLD = _ROUTING + ": a threshold or floor (engine files' floors, sizing)"
 _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
@@ -359,7 +357,7 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _THRESHOLD,
     ),
     "src/agents/referee/reality_check_rules.py": (
-        frozenset({"TARGET_ENGINE_COUNT", "EXTRA_ENGINE_BURDEN_MONTHLY", "UNIQUE_DELTA_THRESHOLD"}),
+        frozenset({"TARGET_ENGINE_COUNT", "UNIQUE_DELTA_THRESHOLD"}),
         _THRESHOLD,
     ),
     "src/agents/referee/tie_break.py": (
@@ -367,10 +365,6 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _THRESHOLD,
     ),
     "src/shared/cache_engines.py": (frozenset({"HOT_READ_MIN_CALLS_PER_SECOND"}), _THRESHOLD),
-    "src/tools/analysis/aurora_common_analysis_tools.py": (
-        frozenset({"ACU_PRICE_PER_HOUR", "STORAGE_PRICE_PER_GB_MONTH"}),
-        _THRESHOLD,
-    ),
     "src/tools/analysis/aurora_common_pattern_catalog.py": (
         frozenset(
             {

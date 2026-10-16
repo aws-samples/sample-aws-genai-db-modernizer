@@ -33,6 +33,14 @@ Fields:
   contrast under white text (optional: no badge colour means the report's grey).
 - ``colors.deck``: the executive deck's accent hex (optional: only the engines the deck
   colours).
+- ``pricing`` (optional table, #494): the engine's cost inputs. ``base_monthly`` is the
+  fixed monthly operating cost the reality check weighs (minimum cluster plus ops
+  burden); ``extra_engine_burden_monthly`` is the non-monetary burden of running this
+  engine beyond the target engine count; ``max_burden_per_unique_query`` is the cut-off
+  above which that burden per uniquely-served query makes the engine removable;
+  ``acu_price_per_hour``, ``storage_price_per_gb_month`` and ``instance_hourly`` (instance
+  type to hourly price) are the unit prices cost estimation multiplies. An engine with
+  no ``pricing`` table gets the ``EnginePricing`` defaults.
 """
 
 from __future__ import annotations
@@ -65,6 +73,21 @@ class EngineColors(BaseModel):
     deck: str | None = Field(default=None, pattern=_HEX)
 
 
+class EnginePricing(BaseModel):
+    """An engine's cost inputs (all USD; see the module docstring)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # The defaults apply to an engine whose file sets no value (and to an id the catalog
+    # does not know): the same numbers the reality check used before the catalog held them.
+    base_monthly: float = Field(default=100, ge=0)
+    extra_engine_burden_monthly: float = Field(default=300, ge=0)
+    max_burden_per_unique_query: float = Field(default=100, ge=0)
+    acu_price_per_hour: float | None = Field(default=None, ge=0)
+    storage_price_per_gb_month: float | None = Field(default=None, ge=0)
+    instance_hourly: dict[str, float] = Field(default_factory=dict)
+
+
 class EngineEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -76,6 +99,7 @@ class EngineEntry(BaseModel):
     role: EngineRole
     system_of_record: bool
     colors: EngineColors
+    pricing: EnginePricing | None = None
 
     @model_validator(mode="after")
     def _roles_that_never_own(self) -> EngineEntry:
@@ -138,6 +162,14 @@ def engine_ids(
         and (roles is None or e.role in roles)
         and (system_of_record is None or e.system_of_record is system_of_record)
     )
+
+
+def pricing(engine: str) -> EnginePricing:
+    """``engine``'s cost inputs: its ``[pricing]`` table, else the ``EnginePricing`` defaults."""
+    for e in engines():
+        if e.id == engine and e.pricing is not None:
+            return e.pricing
+    return EnginePricing()
 
 
 # Engines routing can target today: every routing-facing role set is restricted to these.

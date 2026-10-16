@@ -7,9 +7,11 @@ from src.shared.catalog.engines import (
     CatalogError,
     EngineColors,
     EngineEntry,
+    EnginePricing,
     engine_ids,
     engines,
     load_engine_catalog,
+    pricing,
 )
 
 __all__ = [
@@ -19,7 +21,9 @@ __all__ = [
     "CatalogError",
     "EngineColors",
     "EngineEntry",
+    "EnginePricing",
     "engine_ids",
     "engines",
     "load_engine_catalog",
+    "pricing",
 ]

@@ -24,7 +24,6 @@ from src.agents.referee.move_ledger import (
 from src.agents.referee.reality_check_records import _queries, engine_changes
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
-    ENGINE_BASE_COST,
     _group_eligible_engines,
     _move_scores_text,
     _moving_group_scores,
@@ -33,6 +32,7 @@ from src.agents.referee.reality_check_rules import (
     _resolver_score,
     _tie_unresolved_note,
     _trace_ladder,
+    engine_base_cost,
     may_absorb,
     tie_reason_code,
 )
@@ -69,7 +69,7 @@ def _mandatory_cost_share_reason(engine: str, qas: list[dict], total_queries: in
     Otherwise, the reason a mandatory signal override does not excuse it from
     the operational-burden review.
     """
-    cost = ENGINE_BASE_COST.get(engine, 100)
+    cost = engine_base_cost(engine)
     share = len(qas) / total_queries if total_queries else 0.0
     if cost >= MANDATORY_ENGINE_COST_FLOOR and share < MANDATORY_ENGINE_MAX_QUERY_SHARE:
         return (
@@ -287,8 +287,7 @@ def opensearch_justification(
             (source_engine or "").lower(), source_engine or ""
         )
         native_note = (
-            f"{source_name} already supports this search pattern natively "
-            "(text_search_basic), so "
+            f"{source_name} already supports this search pattern natively (text_search_basic), so "
             if native
             else ""
         )
@@ -297,7 +296,7 @@ def opensearch_justification(
             f"{len(deep_qids)} queries with real search depth is below the {floor:g} calls/s "
             f"floor (and the {total_rows_avg:.0f}-row average result size is below the "
             f"{OPENSEARCH_MIN_CORPUS_ROWS_AVG:g}-row floor) for a "
-            f"${ENGINE_BASE_COST.get('opensearch', 0):.0f}/mo standing domain"
+            f"${engine_base_cost('opensearch'):.0f}/mo standing domain"
         )
         for qid in deep_qids:
             verdicts[qid] = (False, reason)

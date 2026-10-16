@@ -25,6 +25,7 @@ from src.contracts.analysis_output import (
     Pattern,
     ScoreBreakdown,
 )
+from src.shared import catalog
 from src.tools.analysis.aurora_common_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     CACHE_READ_CPS_THRESHOLD,
@@ -696,15 +697,9 @@ def _apply_aurora_common_adjustments(
 # Cost estimation
 # ==========================================================================
 
-# Aurora Serverless v2 pricing (us-east-1)
-ACU_PRICE_PER_HOUR = 0.12
-STORAGE_PRICE_PER_GB_MONTH = 0.10  # I/O-optimized
-
-# Aurora Provisioned pricing (us-east-1)
-INSTANCE_PRICES: dict[str, dict[str, float]] = {
-    "db.r6g.large": {"postgresql": 0.24, "mysql": 0.22},
-    "db.r6g.xlarge": {"postgresql": 0.48, "mysql": 0.44},
-}
+# Unit prices (us-east-1; Serverless v2 ACU hour, I/O-optimized storage, provisioned
+# instance hour) live in the engine catalog: ``[pricing]`` in
+# ``src/catalog/engines/aurora_<engine>.toml`` (#494).
 
 
 def _estimate_acu_from_load(total_cps: float, avg_query_count: int) -> tuple[float, float]:
@@ -751,12 +746,18 @@ def estimate_aurora_costs(
     total_cps = sum(float(q.get("calls_per_second") or 0.0) for q in queries)
     query_count = len(queries)
 
+    prices = catalog.pricing(f"aurora_{engine}")
+    acu_price = prices.acu_price_per_hour
+    storage_price = prices.storage_price_per_gb_month
+    if acu_price is None or storage_price is None:
+        raise ValueError(f"aurora_{engine} has no ACU or storage unit price in the engine catalog")
+
     # --- Serverless v2 estimate ---
     min_acu, max_acu = _estimate_acu_from_load(total_cps, query_count)
     # Average ACU usage (assume 60% of max during peak, 30% during off-peak)
     avg_acu = (min_acu + max_acu) / 2.0
-    serverless_compute_monthly = avg_acu * ACU_PRICE_PER_HOUR * 24 * 30
-    serverless_storage_monthly = max(total_size_gb, 1.0) * STORAGE_PRICE_PER_GB_MONTH
+    serverless_compute_monthly = avg_acu * acu_price * 24 * 30
+    serverless_storage_monthly = max(total_size_gb, 1.0) * storage_price
     serverless_total = serverless_compute_monthly + serverless_storage_monthly
 
     # --- Provisioned estimate ---
@@ -766,9 +767,9 @@ def estimate_aurora_costs(
     else:
         instance_type = "db.r6g.large"
 
-    instance_price = INSTANCE_PRICES[instance_type][engine]
+    instance_price = prices.instance_hourly[instance_type]
     provisioned_compute_monthly = instance_price * 24 * 30
-    provisioned_storage_monthly = max(total_size_gb, 20.0) * STORAGE_PRICE_PER_GB_MONTH
+    provisioned_storage_monthly = max(total_size_gb, 20.0) * storage_price
     provisioned_total = provisioned_compute_monthly + provisioned_storage_monthly
 
     # Use the lower cost as the primary estimate
@@ -797,9 +798,9 @@ def estimate_aurora_costs(
         },
         pricing_assumptions=[
             f"Aurora {engine.title()} — {target_region}",
-            f"Serverless v2: ${ACU_PRICE_PER_HOUR}/ACU-hr, {min_acu}-{max_acu} ACU range",
+            f"Serverless v2: ${acu_price}/ACU-hr, {min_acu}-{max_acu} ACU range",
             f"Provisioned: {instance_type} at ${instance_price}/hr",
-            f"I/O-Optimized storage: ${STORAGE_PRICE_PER_GB_MONTH}/GB/month",
+            f"I/O-Optimized storage: ${storage_price}/GB/month",
             f"Total data size: {total_size_gb:.2f} GB",
             f"Total query throughput: {total_cps:.1f} calls/second",
         ],

@@ -12,14 +12,15 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 
 from src.agents.referee.reality_check_rules import (
-    ENGINE_BASE_COST,
-    EXTRA_ENGINE_BURDEN_MONTHLY,
     TARGET_ENGINE_COUNT,
     UNIQUE_DELTA_THRESHOLD,
     _group_eligible_engines,
     _moving_group_scores,
     _moving_members,
     _top_scorers,
+    engine_base_cost,
+    extra_engine_burden,
+    max_burden_per_unique_query,
 )
 from src.agents.referee.tie_break import break_tie, source_compatible_engine_survives
 
@@ -60,8 +61,8 @@ def _evaluate_engine_removal(
     unless at least one native query scores it ``UNIQUE_DELTA_THRESHOLD``
     points above every engine that could take it, and -- once more than
     ``TARGET_ENGINE_COUNT`` engines are already committed -- that unique
-    value is worth the fixed cost of keeping it (#494: unchanged, flat
-    ``EXTRA_ENGINE_BURDEN_MONTHLY`` and ``> 100`` cut-off).
+    value is worth the fixed cost of keeping it (the engine's burden and
+    per-unique-query cut-off come from its catalog pricing table, #494).
 
     ``orphaned_qas`` (#485 review) are the native queries of engines
     ALREADY removed earlier in this same settling pass -- one flat,
@@ -202,7 +203,7 @@ def _evaluate_engine_removal(
         "avg_delta": round(avg_delta, 1),
     }
 
-    total_burden = ENGINE_BASE_COST.get(engine, 100) + EXTRA_ENGINE_BURDEN_MONTHLY
+    total_burden = engine_base_cost(engine) + extra_engine_burden(engine)
     rank_key = total_burden / max(len(unique_by_score), 1)
 
     if irreplaceable or orphan_stranded:
@@ -212,9 +213,9 @@ def _evaluate_engine_removal(
         and best_rivals_by_qid
         and len(best_rivals_by_qid) == len(native_qas) - len(split)
         and source_compatible_engine_survives(
-            ENGINE_BASE_COST.get(engine, 100),
+            engine_base_cost(engine),
             (
-                [ENGINE_BASE_COST.get(rival, 100) for rival in rivals]
+                [engine_base_cost(rival) for rival in rivals]
                 for rivals in best_rivals_by_qid.values()
             ),
         )
@@ -225,7 +226,7 @@ def _evaluate_engine_removal(
         return False, assessment, 0.0
     if not unique_by_score:
         return True, assessment, rank_key
-    if committed_count > TARGET_ENGINE_COUNT and rank_key > 100:
+    if committed_count > TARGET_ENGINE_COUNT and rank_key > max_burden_per_unique_query(engine):
         return True, assessment, rank_key
     return False, assessment, 0.0
 

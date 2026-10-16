@@ -23,28 +23,41 @@ from src.agents.referee.tie_break import (
     pick_unresolved_tie_placeholder,
 )
 from src.contracts.move_ledger import CandidateScore, ReasonCode
+from src.shared import catalog
 from src.shared.engine_names import display_engine
 
 # Target engine count — the reality check tries to stay at or below this.
 # A third engine must provide genuinely unique, irreplaceable capabilities.
 TARGET_ENGINE_COUNT = 2
 
-# Per-engine operational overhead (monthly base cost + ops burden).
-# This is not just infrastructure — it includes monitoring, backups,
-# failover config, team expertise, security patching, etc.
+# Per-engine operational overhead (monthly base cost + ops burden), read from each
+# engine's ``[pricing]`` table in ``src/catalog/engines/*.toml`` (#494). It is not just
+# infrastructure: it includes monitoring, backups, failover config, team expertise,
+# security patching, etc. Engines with no pricing table are absent here and fall back to
+# the catalog default in ``engine_base_cost``.
 ENGINE_BASE_COST: dict[str, float] = {
-    "dynamodb": 0,  # Serverless, pay per use, minimal ops
-    "documentdb": 200,  # Minimum cluster + ops burden
-    "opensearch": 150,  # Minimum domain + ops burden
-    "elasticache": 50,  # Minimum node + minimal ops
-    "aurora_postgresql": 250,  # Minimum cluster (writer + reader) + ops burden
-    "aurora_mysql": 250,  # Minimum cluster (writer + reader) + ops burden
+    e.id: e.pricing.base_monthly for e in catalog.engines() if e.pricing is not None
 }
 
-# Additional operational burden for each engine beyond TARGET_ENGINE_COUNT.
-# This captures the non-monetary cost: team needs expertise in N databases,
-# N monitoring dashboards, N backup strategies, N failover runbooks, etc.
-EXTRA_ENGINE_BURDEN_MONTHLY = 300  # $/mo equivalent per extra engine
+
+def engine_base_cost(engine: str) -> float:
+    """``engine``'s fixed monthly cost (``ENGINE_BASE_COST``, else the catalog default)."""
+    cost = ENGINE_BASE_COST.get(engine)
+    return catalog.pricing(engine).base_monthly if cost is None else cost
+
+
+def extra_engine_burden(engine: str) -> float:
+    """The non-monetary monthly burden of ``engine`` beyond ``TARGET_ENGINE_COUNT``.
+
+    It captures the team needing expertise in N databases, N monitoring dashboards, N
+    backup strategies, N failover runbooks, etc.
+    """
+    return catalog.pricing(engine).extra_engine_burden_monthly
+
+
+def max_burden_per_unique_query(engine: str) -> float:
+    """The burden per uniquely-served query above which ``engine`` is removable."""
+    return catalog.pricing(engine).max_burden_per_unique_query
 
 
 # Set of Aurora engine identifiers

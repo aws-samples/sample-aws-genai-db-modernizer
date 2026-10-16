@@ -34,7 +34,13 @@ from src.atx_orchestrator import core as atx_core
 from src.contracts import analysis_input, analysis_output, referee_output
 from src.shared import catalog, report_facts
 from src.shared.cache_engines import CACHE_ENGINES
-from src.shared.catalog import CatalogError, EngineColors, EngineEntry, load_engine_catalog
+from src.shared.catalog import (
+    CatalogError,
+    EngineColors,
+    EngineEntry,
+    EnginePricing,
+    load_engine_catalog,
+)
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, PLACEHOLDER_ENGINES
 from src.shared.migration_wave_engines import (
     DOCUMENT_ENGINES,
@@ -222,10 +228,86 @@ class TestEveryCatalogFieldIsUsed:
             RENDER_SCRIPT
         ]
         read = _attribute_names(consumers)
-        fields = (set(EngineEntry.model_fields) - {"colors"}) | set(EngineColors.model_fields)
+        fields = (
+            (set(EngineEntry.model_fields) - {"colors", "pricing"})
+            | set(EngineColors.model_fields)
+            | set(EnginePricing.model_fields)
+        )
         # ``id`` and ``display_order`` are read by the loader itself (file-name check, sort).
         unused = sorted(fields - read - {"display_order"})
         assert not unused, f"catalog fields nothing reads (remove them or use them): {unused}"
+
+
+class TestPricingIsInTheCatalog:
+    """The cost inputs (#494) are pinned to their pre-catalog values: no score changes."""
+
+    def test_base_monthly_costs(self) -> None:
+        got = {e.id: e.pricing.base_monthly for e in catalog.engines() if e.pricing}
+        assert got == {
+            "dynamodb": 0,
+            "documentdb": 200,
+            "opensearch": 150,
+            "elasticache": 50,
+            "aurora_postgresql": 250,
+            "aurora_mysql": 250,
+        }
+
+    def test_every_routing_engine_states_the_burden_and_cutoff(self) -> None:
+        for e in catalog.engines():
+            if e.status == "active":
+                assert e.pricing is not None, e.id
+                assert e.pricing.extra_engine_burden_monthly == 300, e.id
+                assert e.pricing.max_burden_per_unique_query == 100, e.id
+
+    def test_unit_prices(self) -> None:
+        pg, my = catalog.pricing("aurora_postgresql"), catalog.pricing("aurora_mysql")
+        for p in (pg, my):
+            assert (p.acu_price_per_hour, p.storage_price_per_gb_month) == (0.12, 0.10)
+        assert pg.instance_hourly == {"db.r6g.large": 0.24, "db.r6g.xlarge": 0.48}
+        assert my.instance_hourly == {"db.r6g.large": 0.22, "db.r6g.xlarge": 0.44}
+
+    def test_an_engine_without_a_pricing_table_gets_the_defaults(self) -> None:
+        assert catalog.pricing("neptune") == EnginePricing()
+        assert catalog.pricing("not_an_engine").base_monthly == 100
+
+    def test_a_negative_price_is_rejected(self, tmp_path: Path) -> None:
+        src = (ROOT / "src/catalog/engines/dynamodb.toml").read_text()
+        (tmp_path / "dynamodb.toml").write_text(
+            src.replace("base_monthly = 0", "base_monthly = -1")
+        )
+        with pytest.raises(CatalogError):
+            load_engine_catalog(tmp_path)
+
+    def test_code_reads_the_catalog_not_literals(self) -> None:
+        from src.agents.referee import reality_check_rules as rules
+        from src.tools.analysis import aurora_common_analysis_tools as aurora_tools
+
+        assert rules.ENGINE_BASE_COST["documentdb"] == catalog.pricing("documentdb").base_monthly
+        assert not hasattr(rules, "EXTRA_ENGINE_BURDEN_MONTHLY")
+        assert not hasattr(aurora_tools, "ACU_PRICE_PER_HOUR")
+        assert not hasattr(aurora_tools, "INSTANCE_PRICES")
+
+    def test_cost_literals_are_gone_from_the_code_that_used_them(self) -> None:
+        forbidden = {
+            "src/tools/analysis/scoring.py": ["ENGINE_BASE_COST", "PRICE_PER", "BURDEN"],
+            "src/agents/referee/reality_check_rules.py": [
+                "= 300",
+                'dynamodb": 0',
+                '"documentdb": 200',
+            ],
+            "src/agents/referee/reality_check_settle.py": ["rank_key > 100", ", 100)"],
+            "src/agents/referee/reality_check_floors.py": [", 100)"],
+            "src/tools/analysis/aurora_common_analysis_tools.py": [
+                "= 0.12",
+                "= 0.10",
+                "0.24",
+                "0.48",
+            ],
+        }
+        for rel, needles in forbidden.items():
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            for needle in needles:
+                assert needle not in text, f"{rel} still holds a cost literal: {needle!r}"
 
 
 class TestConstantsAreTheCatalogsView:

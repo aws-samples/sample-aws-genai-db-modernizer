@@ -12,3 +12,8 @@ ui = "#1d8102"
 ui_badge = "green"
 report_badge = "#0c7838"
 deck = "#00E500"
+
+[pricing]
+base_monthly = 200
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100

@@ -12,3 +12,14 @@ ui = "#9c5700"
 ui_badge = "green"
 report_badge = "#9c5700"
 deck = "#FF5C85"
+
+[pricing]
+base_monthly = 250
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
+acu_price_per_hour = 0.12
+storage_price_per_gb_month = 0.10
+
+[pricing.instance_hourly]
+"db.r6g.large" = 0.22
+"db.r6g.xlarge" = 0.44

@@ -62,14 +62,10 @@ from src.agents.referee.reality_check_patterns import (
     refresh_patterns_and_recommendations,
 )
 from src.agents.referee.reality_check_place import _place_settled_queries
-from src.agents.referee.reality_check_records import (
-    _queries,
-    consolidations_from_moves,
-)
+from src.agents.referee.reality_check_records import _queries, consolidations_from_moves
 from src.agents.referee.reality_check_rules import (
     AURORA_ENGINES,
     ENGINE_BASE_COST,
-    EXTRA_ENGINE_BURDEN_MONTHLY,
     SPECIALIST_ABSORB_CAPABILITIES,
     SPECIALIST_ABSORB_SIGNALS,
     TARGET_ENGINE_COUNT,
@@ -98,7 +94,6 @@ __all__ = [
     "ARCHITECTURAL_PATTERNS",
     "AURORA_ENGINES",
     "ENGINE_BASE_COST",
-    "EXTRA_ENGINE_BURDEN_MONTHLY",
     "NATIVE_TEXT_SEARCH_SOURCE_ENGINES",
     "OPENSEARCH_MIN_CALLS_PER_SECOND",
     "OPENSEARCH_MIN_CORPUS_ROWS_AVG",

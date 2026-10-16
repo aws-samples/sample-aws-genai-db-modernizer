@@ -13,3 +13,8 @@ ui = "#2ea597"
 ui_badge = "grey"
 report_badge = "#0e7c86"
 deck = "#FF693C"
+
+[pricing]
+base_monthly = 150
+extra_engine_burden_monthly = 300
+max_burden_per_unique_query = 100
