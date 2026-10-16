@@ -9,6 +9,14 @@ export const DATABASE_NAME_PATTERN = '[A-Za-z0-9_-]{1,128}';
 
 const DATABASE_NAME_RE = new RegExp(`^${DATABASE_NAME_PATTERN}$`);
 
+/**
+ * The name as the form sends it, so the value validated is the value sent.
+ * JS trim() also strips U+FEFF, which the server's str.strip() keeps (#815).
+ */
+export function normalizeDatabaseName(name) {
+  return name.trim();
+}
+
 export function isValidDatabaseName(name) {
-  return typeof name === 'string' && DATABASE_NAME_RE.test(name.trim());
+  return typeof name === 'string' && DATABASE_NAME_RE.test(normalizeDatabaseName(name));
 }
