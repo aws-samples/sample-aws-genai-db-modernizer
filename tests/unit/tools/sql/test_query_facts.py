@@ -18,7 +18,7 @@ from src.agents.referee.capability_registry import detect_required_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.tools.sql import query_facts as query_facts_module
 from src.tools.sql.query_facts import QueryFacts, query_facts
-from tests.unit.tools.sql._timing import assert_fast
+from tests.unit.tools.sql._timing import assert_cost_ratio
 
 _REPO = Path(__file__).resolve().parents[4]
 # Every module whose detectors moved into ``src.tools.sql.query_facts``.
@@ -435,19 +435,43 @@ def test_a_fact_is_computed_once_per_text(monkeypatch):
     assert calls == [text]
 
 
+# The same total text (80,000 characters), as 5 long and as 80 short queries.
+_LONG_QUERY_CHARS = 16_000
+_SHORT_QUERY_CHARS = 1_000
+_SHORT_QUERIES = 5 * _LONG_QUERY_CHARS // _SHORT_QUERY_CHARS
+# Limit on long/short CPU time; see the test.
+MAX_LONG_TO_SHORT = 3.0
+
+
+def _run_steps_on(texts: list[str]) -> None:
+    query_facts_module._query_facts.cache_clear()
+    for text in texts:
+        _read_non_documentdb_facts(text)
+
+
 @pytest.mark.slow
 def test_long_queries_cost_the_steps_that_skip_documentdb_no_more_than_before():
     """Five 16,000-character queries with many uncorrelated subqueries. Before
     the facts were lazy, every step paid for the DocumentDB correlated-subquery
     scan (about 3 s per query, the #895 review measured); before #895 added it,
-    the facts these steps read took about 7.5 ms per query. The budget, 0.25 s
-    CPU for all five, keeps that within a small factor and fails the eager
-    version at once."""
-    texts = [_uncorrelated_subqueries(16_000) + f" -- {i}" for i in range(5)]
+    the facts these steps read took about 7.5 ms per query.
 
-    def run() -> None:
-        query_facts_module._query_facts.cache_clear()
-        for text in texts:
-            _read_non_documentdb_facts(text)
+    The budget is a ratio, not seconds: an absolute 0.25 s passed locally (about
+    45 ms) and failed on CI (0.26 to 0.32 s), because the runner is 5 to 7 times
+    slower. The reference is the same steps on the same text cut into 80 queries
+    of 1,000 characters, timed in this process the same way (best of up to 12
+    runs of CPU time). Facts that scale with the text read cost the same on both;
+    a scan that is super-linear in the query length costs far more on the long
+    ones. Measured long/short on a laptop: 0.78 to 0.98 for short queries of 200
+    to 2,000 characters. The limit is 3.0, three times the worst of those. The
+    eager scan from before the facts were lazy measures about 250 on the same
+    workload, and a slow fact added to a step fails it as well.
+    """
+    long_texts = [_uncorrelated_subqueries(_LONG_QUERY_CHARS) + f" -- {i}" for i in range(5)]
+    short_texts = [
+        _uncorrelated_subqueries(_SHORT_QUERY_CHARS) + f" -- {i}" for i in range(_SHORT_QUERIES)
+    ]
 
-    assert_fast(run, 0.25)
+    assert_cost_ratio(
+        lambda: _run_steps_on(long_texts), lambda: _run_steps_on(short_texts), MAX_LONG_TO_SHORT
+    )

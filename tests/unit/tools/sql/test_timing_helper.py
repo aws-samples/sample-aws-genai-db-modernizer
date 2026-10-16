@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.unit.tools.sql import _timing
-from tests.unit.tools.sql._timing import assert_fast, assert_linear
+from tests.unit.tools.sql._timing import assert_cost_ratio, assert_fast, assert_linear
 
 
 def _linear(text: str) -> int:
@@ -103,3 +103,29 @@ def test_assert_fast_fails_at_once_when_one_run_is_far_over_the_budget(monkeypat
     with pytest.raises(AssertionError, match="over 10x"):
         assert_fast(lambda: runs.append(1), 0.05)
     assert len(runs) == 1
+
+
+def test_cost_ratio_passes_work_that_scales_with_the_reference() -> None:
+    assert_cost_ratio(lambda: sum(range(300_000)), lambda: sum(range(200_000)), 3.0)
+
+
+def test_cost_ratio_fails_work_far_over_the_reference() -> None:
+    with pytest.raises(AssertionError, match="relative to the reference"):
+        assert_cost_ratio(lambda: sum(range(3_000_000)), lambda: sum(range(100_000)), 3.0, 3)
+
+
+def test_cost_ratio_passes_on_a_later_round(monkeypatch) -> None:
+    runs: list[str] = []
+    times = iter([0.1, 0.4, 0.1, 0.25])  # per round: reference, then fn (x4, then x2.5)
+    monkeypatch.setattr(_timing, "_timed", lambda fn: (fn(), next(times))[1])
+    assert_cost_ratio(lambda: runs.append("fn"), lambda: runs.append("ref"), 3.0)
+    assert runs == ["ref", "fn"] * 3  # a warm-up, then two timed rounds
+
+
+def test_cost_ratio_fails_at_once_when_one_run_is_hopeless(monkeypatch) -> None:
+    runs: list[int] = []
+    times = iter([0.01, 1.0, 0.01, 0.01])  # x100 on the first round
+    monkeypatch.setattr(_timing, "_timed", lambda fn: (fn(), next(times))[1])
+    with pytest.raises(AssertionError, match="relative to the reference"):
+        assert_cost_ratio(lambda: runs.append(1), lambda: None, 3.0)
+    assert len(runs) == 2  # the warm-up and the one timed round

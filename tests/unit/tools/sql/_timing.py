@@ -91,3 +91,43 @@ def assert_fast(fn: Callable[[], object], budget_s: float, max_rounds: int = 12)
                 f"one run took {elapsed:.3f}s CPU, over {HOPELESS_FACTOR:g}x the {budget_s}s budget"
             )
     raise AssertionError(f"best of {max_rounds} runs took {best:.3f}s CPU, budget {budget_s}s")
+
+
+def assert_cost_ratio(
+    fn: Callable[[], object],
+    reference: Callable[[], object],
+    max_ratio: float,
+    max_rounds: int = 12,
+) -> None:
+    """``fn`` costs at most ``max_ratio`` times ``reference`` (CPU time, best of
+    up to ``max_rounds`` runs each, taken in the same process).
+
+    An absolute budget measures the machine as much as the code: the same run
+    takes 43 ms on a laptop and 255 ms on a CI runner. Both workloads slow down
+    together on a slow machine, so their ratio does not. The reference is the
+    same code on input where the property under test cannot show (for example
+    short queries), so the ratio isolates the cost that grows with the input.
+
+    The reference and ``fn`` alternate, so a burst of load hits both. Sampling
+    stops as soon as the ratio of the two best times fits: more samples can only
+    lower a best time, so fast code passes in the first rounds and keeps getting
+    chances on a noisy machine, while slow code is over the limit in every
+    round. A round over HOPELESS_FACTOR times the limit fails at once.
+    """
+    reference()
+    fn()
+    t_ref = t_fn = float("inf")
+    ratio = float("inf")
+    for _ in range(max_rounds):
+        t_ref = min(t_ref, _timed(reference))
+        elapsed = _timed(fn)
+        t_fn = min(t_fn, elapsed)
+        ratio = t_fn / max(t_ref, 1e-6)
+        if ratio < max_ratio:
+            return
+        if elapsed / max(t_ref, 1e-6) > max_ratio * HOPELESS_FACTOR:
+            break
+    raise AssertionError(
+        f"took {t_fn:.3f}s CPU vs {t_ref:.3f}s for the reference "
+        f"(x{ratio:.1f}), limit x{max_ratio:g}: over budget relative to the reference"
+    )
