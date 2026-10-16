@@ -651,6 +651,11 @@ class ScopeFacts:
     ``CONTAINS`` or a full-text or similarity function. ``like_parameter``: a
     ``LIKE``/``ILIKE`` whose whole pattern is a bind parameter (``LIKE ?``): its
     value is unknown, so it is neither a leading wildcard nor a prefix.
+    ``time_bucket``: a ``GROUP BY`` item (written out, or a projection named by its
+    alias or position) that truncates or extracts a date/time: ``date_trunc``,
+    ``TRUNC``, ``DATE()``, a cast to ``date``, ``YEAR``/``MONTH``/``DAY``/...,
+    ``EXTRACT``, ``date_part``/``DATEPART``, ``to_char``/``DATE_FORMAT``,
+    ``strftime`` (#920). Grouping on a raw timestamp is not one.
     """
 
     sources: tuple[ScopeSource, ...]
@@ -666,6 +671,7 @@ class ScopeFacts:
     skip_locked: bool = False
     text_search: bool = False
     like_parameter: bool = False
+    time_bucket: bool = False
 
 
 @dataclass(frozen=True)
@@ -823,6 +829,72 @@ def _like_kind(node: exp.Expr) -> LikeKind:
     if len(pieces) == 1 and isinstance(first, _BIND_NODES):
         return "parameter"
     return "other"
+
+
+# Nodes that truncate or extract a date/time (sqlglot's names; a name a sqlglot
+# version lacks is skipped), and the functions it leaves unnamed.
+_TIME_BUCKET_NODES: tuple[type[exp.Expr], ...] = tuple(
+    node
+    for name in (
+        "DateTrunc",
+        "TimestampTrunc",
+        "DatetimeTrunc",
+        "TimeTrunc",
+        "Extract",
+        "TimeToStr",
+        "TsOrDsToDate",
+        "Date",
+        "Year",
+        "Quarter",
+        "Month",
+        "Week",
+        "WeekOfYear",
+        "Day",
+        "DayOfWeek",
+        "DayOfMonth",
+        "DayOfYear",
+        "Hour",
+        "Minute",
+    )
+    if isinstance(node := getattr(exp, name, None), type)
+)
+_TIME_BUCKET_FUNCTIONS = frozenset(
+    {"strftime", "date_part", "datepart", "trunc", "to_char", "date_format", "date_bin"}
+)
+
+
+def _is_time_bucket_node(node: exp.Expr) -> bool:
+    if isinstance(node, _TIME_BUCKET_NODES):
+        return True
+    if isinstance(node, (exp.Cast, exp.TryCast)):
+        return bool(node.to.is_type(exp.DataType.Type.DATE))
+    if isinstance(node, exp.Convert):  # T-SQL CONVERT(date, x)
+        return isinstance(node.this, exp.DataType) and bool(
+            node.this.is_type(exp.DataType.Type.DATE)
+        )
+    if isinstance(node, exp.Anonymous):
+        return node.name.lower() in _TIME_BUCKET_FUNCTIONS
+    return False
+
+
+def _has_time_bucket(root: exp.Expr) -> bool:
+    """Whether ``root``'s ``GROUP BY`` groups on a date/time truncation or extraction."""
+    group = root.args.get("group")
+    if not isinstance(group, exp.Group):
+        return False
+    projections = list(root.args.get("expressions") or [])
+    by_alias = {p.alias.lower(): p for p in projections if isinstance(p, exp.Alias)}
+    for item in group.expressions:
+        target: exp.Expr = item
+        if isinstance(item, exp.Literal) and not item.is_string and str(item.this).isdigit():
+            position = int(item.this) - 1
+            if 0 <= position < len(projections):
+                target = projections[position]
+        elif isinstance(item, exp.Column) and not item.table and item.name.lower() in by_alias:
+            target = by_alias[item.name.lower()]
+        if any(_is_time_bucket_node(n) for n in target.walk()):
+            return True
+    return False
 
 
 def _own_nodes(root: exp.Expr) -> list[exp.Expr]:
@@ -1096,4 +1168,5 @@ def _scope_facts(
         like_parameter=any(
             isinstance(n, (exp.Like, exp.ILike)) and _like_kind(n) == "parameter" for n in own
         ),
+        time_bucket=_has_time_bucket(root),
     )

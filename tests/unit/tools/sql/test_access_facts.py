@@ -191,3 +191,42 @@ class TestOneDefinitionPerFact:
 
         facts = access_facts(sql, "postgresql")
         assert facts.windowed_aggregate is sql_facts(sql, "postgresql").has_aggregation
+
+
+class TestTimeBucket:
+    """``time_bucket``: a GROUP BY over a date/time truncation or extraction (#920)."""
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ("SELECT count(*) FROM t GROUP BY date_trunc('day', created_at)", "postgresql"),
+            ("SELECT date_trunc('day', created_at) d, count(*) FROM t GROUP BY 1", "postgresql"),
+            ("SELECT created_at::date AS d, count(*) FROM t GROUP BY d", "postgresql"),
+            ("SELECT count(*) FROM t GROUP BY EXTRACT(hour FROM created_at)", "postgresql"),
+            ("SELECT count(*) FROM t GROUP BY date_part('hour', created_at)", "postgresql"),
+            ("SELECT count(*) FROM t GROUP BY to_char(created_at, 'YYYY-MM')", "postgresql"),
+            ("SELECT count(*) FROM `t` GROUP BY DATE(`created_at`)", "mysql"),
+            ("SELECT count(*) FROM `t` GROUP BY YEAR(`x`), MONTH(`x`)", "mysql"),
+            ("SELECT count(*) FROM `t` GROUP BY DATE_FORMAT(`x`, '%Y-%m')", "mysql"),
+            ("SELECT count(*) FROM t GROUP BY DATEPART(day, x)", "sqlserver"),
+            ("SELECT count(*) FROM t GROUP BY CAST(x AS date)", "sqlserver"),
+            ("SELECT count(*) FROM t GROUP BY CONVERT(date, x)", "sqlserver"),
+            ("SELECT count(*) FROM t GROUP BY strftime('%Y', x)", ""),
+            ("SELECT count(*) FROM t GROUP BY TRUNC(x, 'MM')", "oracle"),
+        ],
+    )
+    def test_a_group_by_over_a_time_truncation_or_extraction(self, sql, engine):
+        assert any(s.time_bucket for s in access_facts(sql, engine).scopes)
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT status, count(*) FROM t GROUP BY status",
+            "SELECT created_at, count(*) FROM t GROUP BY created_at",
+            "SELECT count(*) FROM t WHERE date_trunc('day', created_at) = $1",
+            "SELECT date_trunc('day', created_at) FROM t",
+            "SELECT CAST(x AS timestamp) AS d, count(*) FROM t GROUP BY d",
+        ],
+    )
+    def test_anything_else_is_not_a_time_bucket(self, sql):
+        assert not any(s.time_bucket for s in access_facts(sql, "postgresql").scopes)

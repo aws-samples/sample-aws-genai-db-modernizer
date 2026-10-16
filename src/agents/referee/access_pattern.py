@@ -211,10 +211,12 @@ def _table_keys(table: Mapping) -> TableKeys:
 
 @dataclass(frozen=True)
 class AccessClassification:
-    """A query's class and a short, plain-language reason."""
+    """A query's class, a short, plain-language reason, and the query facts a class
+    score may depend on (``time_bucket``: a GROUP BY over a date/time truncation)."""
 
     name: str
     reason: str
+    facts: frozenset[str] = frozenset()
 
     @property
     def label(self) -> str:
@@ -432,7 +434,10 @@ def classify_facts(
     if not found:
         return AccessClassification(UTILITY, "reads or writes no table data")
     name, reason = max(found, key=lambda item: _SEVERITY[item[0]])
-    return AccessClassification(name, reason)
+    query_facts = (
+        frozenset({"time_bucket"}) if any(s.time_bucket for s in facts.scopes) else frozenset()
+    )
+    return AccessClassification(name, reason, query_facts)
 
 
 def classify_query(

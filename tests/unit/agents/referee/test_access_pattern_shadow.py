@@ -75,7 +75,7 @@ class TestClassScoresComeFromThePatternCatalog:
                 "documentdb": 85,
                 "dynamodb": 0,
                 "elasticache": 0,
-                "opensearch": 85,
+                "opensearch": 0,
             },
             AD_HOC_FILTER: {
                 "aurora_mysql": 75,
@@ -99,7 +99,7 @@ class TestClassScoresComeFromThePatternCatalog:
                 "documentdb": 75,
                 "dynamodb": 0,
                 "elasticache": 0,
-                "opensearch": 90,
+                "opensearch": 0,
             },
             TEXT_SEARCH: {
                 "aurora_mysql": 80,
@@ -110,6 +110,28 @@ class TestClassScoresComeFromThePatternCatalog:
                 "opensearch": 95,
             },
         }
+
+    def test_time_aggregation_counts_only_for_a_time_bucket(self):
+        """#920: ``time-aggregation`` (90) rates date-bucket aggregations, not every one."""
+        with_bucket = class_engine_scores(frozenset({"time_bucket"}))
+        assert with_bucket[AGGREGATION] == {
+            **class_engine_scores()[AGGREGATION],
+            "opensearch": 90,
+        }
+        assert with_bucket[KEY_RANGE] == class_engine_scores()[KEY_RANGE]
+
+    def test_a_timestamp_range_pattern_is_not_in_the_range_class(self):
+        """#920: a timestamp column is never a key, so the range class never holds one."""
+        classes = {c.id: c for c in access_classes()}
+        assert "time-range-query" not in classes[KEY_RANGE].patterns
+
+    def test_a_conditional_pattern_names_a_listed_pattern_and_a_known_fact(self):
+        from src.shared.catalog.access_classes import QUERY_FACTS
+
+        for access_class in access_classes():
+            for pattern_id, fact in access_class.only_when.items():
+                assert pattern_id in access_class.patterns
+                assert fact in QUERY_FACTS
 
     def test_a_native_entry_counts_and_every_listed_one_is_rated(self):
         """DocumentDB's ``$text`` is ``native`` in full-text-search: it counts at its
@@ -568,6 +590,21 @@ class TestTheShadowArtifact:
         for row in shadow["queries"]:
             assert row["shadow"]["control_engine"]
         assert shadow["class_scores"] == class_engine_scores()
+
+    def test_a_time_bucket_aggregation_gets_its_conditional_score(self, pipeline):
+        _, analysis, collector = pipeline
+        collector["queries"]["query_patterns"].append(
+            {
+                "query_id": "tb",
+                "query_text": "SELECT date_trunc('day', status), count(*) FROM orders GROUP BY 1",
+                "query_type": "SELECT",
+                "tables_accessed": ["shop.orders"],
+            }
+        )
+        model, classes = build_pattern_model(collector, weights_from_analysis(analysis))
+        assert classes["tb"].name == AGGREGATION and "time_bucket" in classes["tb"].facts
+        assert model.pattern_scores["tb"]["opensearch"] == 90
+        assert model.pattern_scores["q3"]["opensearch"] == 0
 
     def test_the_model_covers_only_scored_classes(self, pipeline):
         triage, analysis, collector = pipeline

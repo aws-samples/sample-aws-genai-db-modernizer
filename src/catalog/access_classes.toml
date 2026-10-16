@@ -30,7 +30,7 @@ id = "key_range"
 label = "Range or ordered read by key"
 leaning = "neutral"
 why = "A range or an order over a key with no anchoring value (BETWEEN, ORDER BY id LIMIT n, a full read with no predicate): an index range scan on a relational or document engine, a Scan on a key-value engine (no partition value)."
-patterns = ["pagination", "time-range-query", "frequent-full-scan"]
+patterns = ["pagination", "frequent-full-scan"]
 
 [[classes]]
 id = "ad_hoc_filter"
@@ -52,6 +52,9 @@ label = "Aggregation"
 leaning = "relational or analytics"
 why = "GROUP BY with an aggregate function, an aggregate over rows no key anchors, or a windowed aggregate."
 patterns = ["aggregation-analytics", "window-function", "reporting-query", "group-concat-pivot", "aggregation-pipeline", "time-aggregation"]
+# time-aggregation rates date-bucket aggregations only: it counts for a query whose GROUP BY
+# truncates or extracts a date/time (the facade's time_bucket fact, #920).
+only_when = { "time-aggregation" = "time_bucket" }
 
 [[classes]]
 id = "text_search"

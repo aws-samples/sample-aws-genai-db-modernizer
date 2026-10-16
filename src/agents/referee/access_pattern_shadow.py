@@ -76,7 +76,8 @@ def build_pattern_model(
         result = classify_query(query, keys, source)
         classes[qid] = result
         if result.name in SCORED_CLASSES:
-            pattern_scores[qid] = dict(scores[result.name])
+            by_class = class_engine_scores(result.facts) if result.facts else scores
+            pattern_scores[qid] = dict(by_class[result.name])
     return QueryPatternModel(pattern_scores=pattern_scores, weights=dict(weights)), classes
 
 
@@ -149,6 +150,7 @@ def build_shadow(
                 "query_id": qid,
                 "class": result.name,
                 "reason": result.reason,
+                "facts": sorted(result.facts),
                 "tables": list(query.get("tables_accessed") or []),
                 "current": {
                     "engine": before,
