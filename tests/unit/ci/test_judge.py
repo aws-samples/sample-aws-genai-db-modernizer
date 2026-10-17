@@ -41,7 +41,7 @@ def _build_job_dir(artifact_root: Path, *, db: str = DB, job: str = JOB, version
     (folder / "engineering-report.md").write_text(
         "# Engineering Report\n\nDynamoDB. Cost: $500/mo.\n"
     )
-    (folder / "assessment.pdf").write_bytes(b"%PDF-1.4 not a real pdf")
+    (folder / "executive-report.pdf").write_bytes(b"%PDF-1.4 not a real pdf")
     return folder
 
 
@@ -491,17 +491,17 @@ def test_missing_job_directory_is_exit_code_2_with_clear_error(tmp_path: Path) -
 
 
 def test_pdf_missing_is_a_judge_error(tmp_path: Path) -> None:
-    """The PDF report is a primary deliverable (#987): a run without one did not
+    """The executive report is a primary deliverable (#987): a run without one did not
     produce what a customer reads, so the judge stops with exit 2."""
     folder = _build_job_dir(tmp_path)
-    (folder / "assessment.pdf").unlink()
+    (folder / "executive-report.pdf").unlink()
 
     result, code = judge.run_judge(
         artifact_root=str(tmp_path), db=DB, job=JOB, claude_bin=str(tmp_path / "unused.py")
     )
 
     assert code == 2, result
-    assert "assessment.pdf" in result["error"]
+    assert "executive-report.pdf" in result["error"]
 
 
 def test_pdf_present_but_pypdf_unavailable_is_a_note_not_an_error(

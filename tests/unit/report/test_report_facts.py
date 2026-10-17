@@ -26,7 +26,7 @@ from src.report.engine_choices import reroute_summary
 from src.report.engineering_report import render_engineering_report_md
 from src.report.facts import report_facts
 from src.shared.report_facts import compute_report_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import executive_text
 
 
 def _wave1(tables: list[str], views: int = 0) -> dict[str, Any]:
@@ -150,7 +150,7 @@ def test_renderers_read_the_stored_facts_not_their_own_copy() -> None:
     report = _with_facts(_merged_report())
     report["facts"]["tables_migrate"] = 42
     assert _tables_migrate(render_engineering_report_md(report)) == "42"
-    assert "42 tables migrate" in pdf_text(report)
+    assert "42 tables migrate" in executive_text(report)
 
 
 # --------------------------------------------------------------------------
@@ -462,7 +462,7 @@ def test_546_no_deliverable_claims_the_removal_or_its_saving() -> None:
     assert "## Migration trade-offs (1)" in md
     assert "### Reversed by a later assignment edit" in md
     assert "DocumentDB stays in the architecture" in md
-    text = pdf_text(report)
+    text = executive_text(report)
     assert "leaves the architecture" not in text and "Removes $" not in text
 
 
@@ -557,7 +557,7 @@ def test_861_every_deliverable_shows_the_partial_consolidation() -> None:
     assert "## Migration trade-offs (4)" in md
     assert "DocumentDB stays for 2 queries" in md
     assert "the customer chose DocumentDB" in md
-    text = pdf_text(report)
+    text = executive_text(report)
     assert "DocumentDB stays for 2 queries" in text
     assert "the customer chose DocumentDB" in text
 
@@ -597,7 +597,7 @@ def test_861_an_edit_that_undoes_a_partial_consolidation_reverses_it() -> None:
     current = md.split("## Migration trade-offs", 1)[1].split("### Reversed", 1)[0]
     assert "moved to DynamoDB" not in current and "moved to Aurora MySQL" not in current
     assert "### Reversed by a later assignment edit" in md
-    text = pdf_text(report).split("Reversed by a later assignment edit", 1)[0]
+    text = executive_text(report).split("Reversed by a later assignment edit", 1)[0]
     assert "moved to DynamoDB" not in text
 
 
@@ -621,7 +621,7 @@ def test_861_an_edit_that_undoes_part_of_it_states_what_stayed_moved() -> None:
     md = render_engineering_report_md(report)
     assert "Consolidated 1 query from DocumentDB → DynamoDB" in md
     assert "3 queries moved to DynamoDB" not in md
-    text = pdf_text(report)  # the PDF's font draws "→" as "to"
+    text = executive_text(report)  # the executive report's font draws "→" as "to"
     assert "Consolidated 1 query from DocumentDB to DynamoDB" in text
     assert "3 queries moved to DynamoDB" not in text
 
@@ -669,9 +669,9 @@ def test_595_the_facts_carry_each_reality_check_decision() -> None:
     assert decisions[0]["query_ids"] == ["q1", "q2"]
 
 
-def test_595_the_pdf_report_and_engineering_report_show_them() -> None:
+def test_595_the_executive_report_and_engineering_report_show_them() -> None:
     report = _with_facts(_kept_report())
-    text = pdf_text(report)
+    text = executive_text(report)
     assert "DocumentDB kept: 2 queries need nested-document updates" in text
     assert "Recommended pattern: Event-Driven Sync" in text
 

@@ -52,9 +52,8 @@ def resolved_risk_label(risk: dict[str, Any]) -> str:
     A resolved risk whose queries never left its own engine (the risk was
     resolved some other way -- a schema change, a different access pattern)
     used to render as ``Aurora MySQL -> Aurora MySQL``, naming the same engine
-    twice as if something moved. Shared by the PDF report
-    (``src.report.pdf_report``) and this module's own engineering report
-    section so the two agree on the same risk.
+    twice as if something moved. The engineering report's "Resolved by the
+    assignment" section prints it.
     """
     engine = str(risk.get("engine") or "")
     label = display_engine(engine) if engine else "(general)"
@@ -69,8 +68,8 @@ def resolved_risk_label(risk: dict[str, Any]) -> str:
 # The headline reminder every deliverable's no-open-risk state carries (#434
 # review): "0 open risks" must never read as "0 migration risk" when the
 # analysis never modeled production traffic, peak load or compliance in the
-# first place. The PDF (``pdf_report``) states it; the UI's no-open-risk state
-# does not yet (#996).
+# first place. The engineering report and the executive report state it; the UI's
+# no-open-risk state does not yet (#996).
 NO_OPEN_RISKS_CAVEAT = (
     "No open risks is not the same as no migration risk: this analysis reads schema and "
     "query patterns only and does not model traffic bursts, peak load or compliance "

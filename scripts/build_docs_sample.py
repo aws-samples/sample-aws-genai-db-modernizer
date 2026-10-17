@@ -15,7 +15,7 @@ touches ``<site-dir>/sample/index.html`` (#364); it only adds files
 alongside the one MkDocs already rendered there.
 
 The files are the run's ``artifacts/<db>/<job>/deliverables/`` folder, copied
-as is: the same stable names every run gets (``assessment.pdf``,
+as is: the same stable names every run gets (``executive-report.pdf``,
 ``engineering-report.md``, ... -- ``src.report.deliverables.FOLDER_ENTRIES``), so a
 link to the sample report survives a rebuild and the site lists exactly what a
 real run hands over. The engineering report, the one deliverable rendered as
@@ -24,7 +24,7 @@ in-browser reading; the ``.md`` source stays available too, for anyone who wants
 to copy it elsewhere.
 
 No preview image is generated here: the ``docs`` extra only installs mkdocs
-and mkdocs-material, neither of which can rasterize the executive summary
+and mkdocs-material, neither of which can rasterize the executive report
 PDF's first page, and adding a PDF-rasterizing dependency (e.g. PyMuPDF) just
 for one static image was judged not worth it. If that trade-off changes,
 render the preview here, deterministically, from the PDF this script already

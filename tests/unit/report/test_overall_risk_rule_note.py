@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 _NOTE = (
     "Overall risk is the highest severity among the open risks; risks the assignment "
@@ -28,10 +28,10 @@ def test_rule_is_shown_next_to_the_level() -> None:
         "severity": "MEDIUM",
         "description": "[dynamodb] aggregation: DynamoDB has no native equivalent.",
     }
-    text = pdf_text(_report([risk]))
+    text = engineering_text(_report([risk]))
     assert "Overall risk: MEDIUM" in text
     assert _NOTE in text
 
 
 def test_no_rule_note_without_open_risks() -> None:
-    assert _NOTE not in pdf_text(_report([]))
+    assert _NOTE not in engineering_text(_report([]))

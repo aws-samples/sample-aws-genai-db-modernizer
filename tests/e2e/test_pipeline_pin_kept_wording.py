@@ -58,7 +58,7 @@ def _json(path: Path) -> dict:
 def _pdf_text(paths: list[Path]) -> str:
     from tests.e2e.deliverable_figures import pdf_page_texts
 
-    pdf = next(p for p in paths if p.name == "assessment.pdf")
+    pdf = next(p for p in paths if p.name == "executive-report.pdf")
     return " ".join(pdf_page_texts(str(pdf)))
 
 

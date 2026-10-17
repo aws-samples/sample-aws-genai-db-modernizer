@@ -81,7 +81,7 @@ Analysis runs six engines from one table-driven core (`run_analysis_core` in
 `core.py`). DynamoDB and DocumentDB run the optional Bedrock LLM advisor and can
 take up to ~90 minutes on a large workload; the other four are purely
 deterministic and finish in minutes. Synthesis renders two audience-shaped
-reports (the executive PDF report and a build-team Engineering Report)
+reports (the executive report PDF and a build-team Engineering Report)
 alongside the raw report JSON, publishes all three to the WebApp Artifacts
 panel, and keeps a durable copy of each as the job's `deliverables/` folder.
 

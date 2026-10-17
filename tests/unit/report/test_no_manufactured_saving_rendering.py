@@ -16,7 +16,7 @@ from typing import Any
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.renderers import render_engineering_report_md
 from src.shared.engines_in_use import considered_not_recommended, retired_engine_savings
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_no_schema_design_report.json"
 
@@ -40,8 +40,8 @@ def _report(tco: dict[str, Any], **extra: Any) -> dict[str, Any]:
 
 
 class TestRetiredEngineSavingIsShown:
-    def test_pdf_report(self) -> None:
-        text = pdf_text(
+    def test_md_report(self) -> None:
+        text = engineering_text(
             _report(
                 {"retired_engine_savings": [{"database": "elasticache", "monthly_cost_usd": 88.5}]}
             )
@@ -63,8 +63,8 @@ class TestALegacyCandidateCostIsNeverASaving:
             {"eliminated_engine_costs": [{"database": "documentdb", "monthly_cost_usd": 367.39}]}
         )
 
-    def test_pdf_report_shows_no_retirement_line(self) -> None:
-        text = pdf_text(self._legacy())
+    def test_md_report_shows_no_retirement_line(self) -> None:
+        text = engineering_text(self._legacy())
         assert "$367.39" not in text
         assert "Already removed from this comparison" not in text
         assert "Retired by this plan" not in text
@@ -109,6 +109,6 @@ class TestOldReportsStillLoad:
             {"engine": "opensearch", "absorbed_by": None},
         ]
         assert retired_engine_savings(dumped) == []
-        for text in (pdf_text(dumped), render_engineering_report_md(dumped)):
+        for text in (engineering_text(dumped), render_engineering_report_md(dumped)):
             assert "Already removed from this comparison" not in text
             assert "Retired by this plan" not in text

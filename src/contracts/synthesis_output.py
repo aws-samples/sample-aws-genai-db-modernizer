@@ -314,6 +314,12 @@ Version History:
   filter counts stay presentation. Backward
   compatible: ``None`` for a report with no ``query_groups`` and for a facts
   block written before 1.26 (the results API recomputes it from ``query_groups``).
+- 1.27 (2026-10-17, #1020, ADR-032): ``facts.in_scope_query_count`` and
+  ``facts.moving_query_count``: the in-scope queries the owner engines serve and
+  how many of them move to a migration target or a search read model, the
+  executive report's "Queries moved" total. Backward compatible: both default to 0,
+  and a facts block written before 1.27 gains them from ``ranking`` when read
+  (``src.report.facts.report_facts`` and the results API).
 """
 
 from datetime import datetime
@@ -1061,6 +1067,17 @@ class ReportFacts(BaseModel):
     )
     engines: list[EngineFacts] = Field(default_factory=list)
     tables_migrate: int = Field(..., ge=0, description='The "Tables migrate" figure')
+    in_scope_query_count: int = Field(
+        0, ge=0, description="In-scope queries the owner engines serve; the cache layer owns none"
+    )
+    moving_query_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of them, the queries on a migration target or a search read model: they leave "
+            "the source engine (#1020)"
+        ),
+    )
     workload_total_percent: float = Field(0.0, ge=0)
     engine_cost_total_usd: float = Field(0.0, ge=0)
     table_basis: TableBasis
@@ -1160,7 +1177,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.26",
+        default="1.27",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

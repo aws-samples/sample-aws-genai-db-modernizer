@@ -15,7 +15,7 @@ from typing import Any
 
 from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 
 def _report(**overrides: Any) -> dict[str, Any]:
@@ -72,7 +72,7 @@ def test_the_pointer_leads_to_the_removed_engines_consolidation_lines() -> None:
     section = _trade_offs(md)
     assert "Consolidated 3 queries from documentdb → aurora\\_mysql" in section
     assert "documentdb leaves the architecture." in section
-    text = pdf_text(_report())
+    text = engineering_text(_report())
     assert "see Migration trade-offs below for why" in text
     assert "documentdb leaves the architecture." in text
 

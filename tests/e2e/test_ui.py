@@ -26,7 +26,7 @@ from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from tests.e2e.pipeline import PipelineResult
 from tests.placeholders import placeholder_leaks
 
-# The results page is a primary deliverable next to the PDF report (#987); its
+# The results page is a primary deliverable next to the executive report (#987); its
 # browser checks (rendering, overflow, accessibility) live here. Restrict this file
 # to Chromium only. NOTE for ci/e2e.sh: pytest-playwright implements only_browser via a
 # runtime pytest.skip() in pytest_runtest_setup (not deselection), so if this suite
@@ -349,7 +349,7 @@ def test_results_page_downloads_the_deliverables_folder(
     for r in all_runs:
         folder = r.job_dir() / DELIVERABLES_DIR
         expected = [name for name in FOLDER_FILENAMES if (folder / name).is_file()]
-        assert "assessment.pdf" in expected and "index.md" in expected, (r.db, expected)
+        assert "executive-report.pdf" in expected and "index.md" in expected, (r.db, expected)
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
         page.wait_for_load_state("networkidle")
@@ -357,7 +357,7 @@ def test_results_page_downloads_the_deliverables_folder(
         rows = section.locator("[data-deliverable]")
         rows.first.wait_for()
         assert [x.get_attribute("data-deliverable") for x in rows.all()] == expected, r.db
-        for name in ("assessment.pdf", "engineering-report.md", "index.md"):
+        for name in ("executive-report.pdf", "engineering-report.md", "index.md"):
             with page.expect_download() as info:
                 section.get_by_role("link", name=f"Download {name}").click()
             download = info.value

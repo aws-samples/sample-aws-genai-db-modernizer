@@ -33,7 +33,7 @@ class PipelineResult:
 
     def deliverable(self, filename: str) -> Path:
         """One file of the job's ``deliverables/`` folder, by its stable name
-        (``src.report.deliverables.FOLDER_FILENAMES``, e.g. ``"assessment.pdf"``)."""
+        (``src.report.deliverables.FOLDER_FILENAMES``, e.g. ``"executive-report.pdf"``)."""
         for p in self.report.get("deliverables", []):
             if p.rsplit("/", 1)[-1] == filename:
                 return Path(p)

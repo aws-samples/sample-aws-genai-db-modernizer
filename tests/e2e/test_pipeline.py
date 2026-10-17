@@ -54,8 +54,8 @@ def test_deliverables_folder_holds_exactly_the_documented_set(run: PipelineResul
     assert run.report["deliverables_dir"] == str(folder.resolve())
     assert sorted(p.name for p in folder.iterdir()) == [
         "assessment-data.json",
-        "assessment.pdf",
         "engineering-report.md",
+        "executive-report.pdf",
         "index.md",
     ]
     assert all(p.is_file() and p.stat().st_size > 0 for p in folder.iterdir())

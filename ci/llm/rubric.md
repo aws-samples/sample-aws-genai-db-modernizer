@@ -21,10 +21,17 @@ here, not in code, so adjusting them never requires touching `judge.py`.
   `eliminated_engines` (with `absorbed_by`), `reality_check` (before/after
   query distribution and each move), `tco`, `risks[]`, `mitigation_strategies`,
   `migration_waves`.
-- **`executive_pdf`**: full text of the PDF report, one `[page N: title]`
-  marker per page.
+- **`executive_pdf`**: full text of the executive report PDF, one
+  `[page N: title]` marker per page. It is a briefing: totals and reasons, and
+  no per-query detail. It leaves out every sentence or clause that names a
+  collected table, view, procedure, function, trigger or column (a name with an
+  underscore, digit or inner capital in any case and with any schema prefix; a
+  plain-word name only where it is quoted, schema-qualified or follows FROM,
+  JOIN or a kind label), any snake_case word, and any quoted SQL (backticks,
+  brackets, statement shapes, predicates such as `IS NULL` or `col = ?`,
+  `COUNT(*)`). A risk or step shortened that way is not a defect.
 - **`engineering_report`**: full engineering report (Markdown, mermaid
-  diagrams removed).
+  diagrams removed): the executive summary, every table, risk and trace.
 
 An input is cut only if the whole prompt would exceed the size ceiling. The
 real cuts are listed in the **Harness cuts** list after the deliverables and
@@ -50,12 +57,12 @@ the deliverable.
 - **Cite your evidence.** Every note names the deliverable (`facts`,
   `executive_pdf`, `engineering_report`) and the section, page or field it
   relies on, for example `engineering_report > Risk register`,
-  `executive_pdf > Migration wave plan`, or
+  `executive_pdf > Migration waves`, or
   `facts.engines[dynamodb].tables_served`.
 
 ## 1. grounded
 
-Every claim in the executive summary and the PDF report is supported by
+Every claim in the executive report and the engineering report is supported by
 `report.json` (engines, costs, table counts); no invented numbers.
 
 - **1** — Numbers in the report (engine names, costs, table/query counts) do
@@ -79,21 +86,23 @@ Each selected engine has a stated workload reason tied to query patterns.
 
 ## 3. cost
 
-The PDF report states the monthly cost/TCO, it matches `report.json`,
+The executive report states the monthly cost/TCO, it matches `report.json`,
 and no other deliverable contradicts it.
 
-- **1** — The PDF report has no monthly cost, or its figures contradict
+- **1** — The executive report has no monthly cost, or its figures contradict
   `facts.tco`, or another deliverable states a cost that contradicts it.
-- **3** — The PDF report's total matches `facts.tco`, but a per-engine
+- **3** — The executive report's total matches `facts.tco`, but a per-engine
   component is missing or doesn't reconcile with the total, or another
   deliverable presents a figure whose rounding makes it look inconsistent.
-- **5** — The PDF report states the total and a per-engine breakdown
+- **5** — The executive report states the total and a per-engine breakdown
   that match `facts.tco` and reconcile with each other, and no other
   deliverable contradicts them.
 
 ## 4. risks
 
-Risks are specific (named tables/patterns/engines), each with a mitigation.
+Risks are specific (named tables/patterns/engines), each with a mitigation. The
+executive report names engines and patterns, not identifiers (see its input
+above); the engineering report's register names the tables.
 
 - **1** — Risks are generic ("migration risk exists") with no named
   table/pattern/engine, or no mitigation is given.
@@ -133,15 +142,15 @@ Where to look when scoring each criterion (the inputs are above).
   `facts.totals` and `facts.engines`, with table placement per the
   multi-engine rule.
 
-- **justified_engines:** the engine rationale in `executive_pdf > Executive
-  summary` and `executive_pdf > Recommended engines and roles`, and the
+- **justified_engines:** the engine rationale in `executive_pdf > Why this
+  architecture` and `engineering_report > Executive summary`, and the
   per-engine schema and trade-off sections of `engineering_report`. Check them against
   `facts.engines[].assignment_reasons` and the workload split.
 
 - **cost:** `facts.tco` (`projected_monthly_cost`, `cost_breakdown`) and
-  `facts.engines[].monthly_cost_usd`, against `executive_pdf > Cost`. The
-  engineering report's Cost section states the projected total (its per-engine
-  figures are in the Target engines "Why" cells). A deliverable
+  `facts.engines[].monthly_cost_usd`, against `executive_pdf > The numbers`
+  (the cost tile and the cost by engine). The engineering report's Cost section
+  states the projected total and the same per-engine rows. A deliverable
   that states a figure that disagrees with `facts.tco` is a defect.
 
 - **risks:** `engineering_report > Risk register` (the full per-engine
@@ -150,7 +159,7 @@ Where to look when scoring each criterion (the inputs are above).
   actually run (source: `facts.source.risk_query_engines`).
 
 - **roadmap:** `facts.migration_waves` when present. Otherwise, read the waves
-  from `executive_pdf > Migration wave plan`. Check every wave's
+  from `executive_pdf > Migration waves`. Check every wave's
   engines and tables against `facts.engines[].tables_served` (multi-engine
   rule) and `facts.eliminated_engines`, and ordering rationale against
   `facts.reality_check` and the per-engine risks.

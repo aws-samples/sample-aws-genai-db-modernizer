@@ -31,20 +31,143 @@ from .formatting import (
     _retired_engine_savings_text,
     access_pattern_scope,
     clip,
+    fallback_withheld_reason,
     fmt_num,
+    label_summary_counts,
     plural_noun,
     plural_verb,
 )
 from .query_traces import query_traces_md
 from .risks import (
+    NO_OPEN_RISKS_CAVEAT,
     _repeats,
     _risk_engine_and_body,
+    _severity_counts_text,
     filtered_risks,
     resolved_risk_label,
     resolved_risks,
 )
 from .roadmap import _roadmap_md
 from .unservable import unservable_md
+
+# Stated once, after the summary: the retired decision report's closing words (#987).
+NO_MODEL_DECIDES_NOTE = (
+    "Engine and query assignments are produced deterministically \u2014 no language model "
+    "decides which engine a table or query goes to. The executive summary is written over "
+    "already-computed results and cannot change a recommendation."
+)
+# How the overall risk level is derived (#248; synthesis_report.overall_risk_level).
+RISK_RULE_NOTE = (
+    "Overall risk is the highest severity among the open risks; risks the assignment "
+    "resolved do not count."
+)
+WITHHELD_UNTRUSTED_NOTE = (
+    "The generated narrative was withheld because it referenced schema work this run "
+    "did not perform; the figures here are unaffected."
+)
+
+
+def summary_trusted(report: dict[str, Any]) -> bool:
+    """Whether the generated summary may be shown: some schema design ran."""
+    return any(r.get("schema_design_available") for r in (report.get("ranking") or []))
+
+
+def _withheld_note(report: dict[str, Any], trust: bool, summary: Any) -> str | None:
+    """Why the summary shown is not the generated one, worded as the retired decision
+    report worded it (#987): withheld because no schema design ran, or replaced by the
+    deterministic fallback for the reason synthesis recorded. A run that never generated
+    a narrative (``--llm-mode none``: the summary is the deterministic one) withheld
+    nothing, so it gets no note."""
+    if not summary:
+        return None
+    if not trust:
+        generated = report.get("summary")
+        if generated and generated != report.get("summary_deterministic"):
+            return WITHHELD_UNTRUSTED_NOTE
+        return None
+    if report.get("summary_source") == "deterministic_fallback":
+        return (
+            f"The generated narrative was withheld because it "
+            f"{fallback_withheld_reason(report)}; this summary is built from the "
+            "effective assignment."
+        )
+    return None
+
+
+def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
+    """Engineering Report "Executive summary" section (ported from the retired
+    multi-page PDF report, #1020): the summary the run wrote, why a generated one was
+    withheld, and that no language model decides an assignment."""
+    summary = report.get("summary") if trust else report.get("summary_deterministic")
+    summary = summary or report.get("summary_deterministic")
+    if summary and summary == report.get("summary_deterministic"):
+        summary = label_summary_counts(summary, report)
+    out = ["## Executive summary", ""]
+    if summary:
+        for chunk in str(summary).strip().split("\n"):
+            if chunk.strip():
+                out += [escaping.md_text(chunk.strip()), ""]
+    else:
+        out += ["No executive summary was generated for this run.", ""]
+    withheld = _withheld_note(report, trust, summary)
+    if withheld:
+        out += [f"*{escaping.md_text(withheld)}*", ""]
+    out += [f"*{escaping.md_text(NO_MODEL_DECIDES_NOTE)}*", ""]
+    return out
+
+
+def _cost_by_engine_md(report: dict[str, Any]) -> list[str]:
+    """The Cost section's per-engine rows and total, all stored figures (#1020)."""
+    engines = _architecture_engines(report)
+    if not engines:
+        return []
+    facts = report_facts(report)
+    out = ["| Engine | Role | Est. monthly |", "|---|---|---|"]
+    for e in engines:
+        out.append(
+            f"| {escaping.md_cell(display_engine(e['engine']))} "
+            f"| {escaping.md_cell(e['role'])} | {escaping.md_cell(_fmt_usd(e.get('cost')))} |"
+        )
+    out += [f"| Total | | {escaping.md_cell(_fmt_usd(facts.get('engine_cost_total_usd')))} |", ""]
+    return out
+
+
+def _risk_posture_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report "Risk posture" section: the overall level, the open and
+    resolved counts and how the level is derived, worded as the retired decision
+    report worded it (ported from the retired multi-page PDF report, #1020)."""
+    facts = report_facts(report)
+    risk = report.get("risk_assessment") or {}
+    open_count = int(facts.get("open_risk_count") or 0)
+    resolved_count = int(facts.get("resolved_risk_count") or 0)
+    out = [
+        "## Risk posture",
+        "",
+        f"- Overall risk: {escaping.md_text(risk.get('overall_risk_level', 'not assessed'))}",
+    ]
+    if filtered_risks(report):
+        sev = _severity_counts_text(facts.get("open_risks_by_severity") or {})
+        out.append(f"- Open risks: {open_count} ({escaping.md_text(sev)})")
+        if resolved_count:
+            out.append(f"- Resolved by the assignment: {resolved_count}")
+        out += ["", f"*{escaping.md_text(RISK_RULE_NOTE)}*", ""]
+    else:
+        out.append(
+            f"- No open migration risks; {resolved_count} resolved by the assignment."
+            if resolved_count
+            else "- No risks were identified in this analysis."
+        )
+        out += ["", f"*{escaping.md_text(NO_OPEN_RISKS_CAVEAT)}*", ""]
+    return out
+
+
+def _mitigation_strategies_md(report: dict[str, Any]) -> list[str]:
+    """Engineering Report "Mitigation strategies" section (#1020)."""
+    risk = report.get("risk_assessment") or {}
+    strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
+    if not strategies:
+        return []
+    return ["## Mitigation strategies", "", *[f"- {escaping.md_text(s)}" for s in strategies], ""]
 
 
 def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
@@ -361,8 +484,7 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Target engines" section: the table, the role notes and
     the fit definition.
 
-    Also the PDF report's engines section, so both print the same rows. Each
-    engine's Scope cell and the "N tables migrate" total are the facts layer's
+    Each engine's Scope cell and the "N tables migrate" total are the facts layer's
     figures (``_architecture_engines``, ``facts.tables_migrate``), in the wording
     the retired decision report used (#987).
     """
@@ -400,12 +522,21 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
             f"{plural_verb(migrated, 'migrates', 'migrate')} | |"
         )
         out.append("")
+        # #1020: the executive report's "Queries moved" tile, the same stored fact.
+        moving = int(facts.get("moving_query_count") or 0)
+        n_in = int(facts.get("in_scope_query_count") or 0)
+        out += [
+            f"Queries moved: {moving} of {n_in} {plural_noun(n_in, 'query', 'queries')} "
+            f"{plural_verb(moving, 'moves', 'move')} to a new engine (a migration target or "
+            "a search read model); the rest stay on the engine that runs them today.",
+            "",
+        ]
         notes = _engine_role_notes_md(target_engines, migrated)
         if notes:
             out += [" ".join(notes), ""]
         # First appearance of a fit figure in this report (inside "Why", e.g. "30%
         # mean fit"): the plain-language definition every deliverable states once,
-        # shared with the PDF report and the UI (bug: fit score presented as a
+        # shared with the executive report and the UI (bug: fit score presented as a
         # confidence percentage). Stated here, not under "Migration
         # map" below -- that section only renders once schema design has produced
         # table_mappings, so a report rendered with no schema design (e.g. every
@@ -448,10 +579,7 @@ def _engine_role_notes_md(engines: list[dict[str, Any]], migrated: int) -> list[
 
 
 def _risk_register_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Risk register" and "Resolved by the assignment" sections.
-
-    Also the PDF report's risks section, so both print the same entries.
-    """
+    """Engineering Report "Risk register" and "Resolved by the assignment" sections."""
     facts = report_facts(report)
     out: list[str] = []
     risks = filtered_risks(report)
@@ -504,10 +632,18 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
-def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | None = None) -> str:
-    """Build-team-facing document: migration map, per-engine target schemas,
-    query groups. Markdown with mermaid fences, which render in the tooling
-    engineers open it in (VS Code, GitHub, GitLab).
+def render_engineering_report_md(
+    report: dict[str, Any],
+    prov: dict[str, str] | None = None,
+    *,
+    trust_generated_summary: bool | None = None,
+) -> str:
+    """Build-team-facing document: the executive summary, migration map, per-engine
+    target schemas, query groups, risks and traces. Markdown with mermaid fences,
+    which render in the tooling engineers open it in (VS Code, GitHub, GitLab).
+
+    ``trust_generated_summary`` decides whether a generated summary is shown;
+    ``None`` decides it from the report (``summary_trusted``).
     """
     db = report.get("database_name", "?")
     out: list[str] = []
@@ -522,13 +658,15 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
         "# Database Modernization \u2014 Engineering Report",
         "",
         f"Source database: `{escaping.md_code(db)}`. This is the build companion to the "  # nosemgrep: string-concat-in-list -- intentional multi-line string
-        "PDF report: "
+        "executive report (`executive-report.pdf`): "
         "the source-to-target mapping, the per-engine target schemas, and the query "
         "groups.",
         "",
     ]
 
     facts = report_facts(report)
+    trust = summary_trusted(report) if trust_generated_summary is None else trust_generated_summary
+    out += _summary_md(report, trust)
     out += _target_engines_md(report)
 
     tco = report.get("tco_analysis") or {}
@@ -552,6 +690,7 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
                 "for why)."
             )
         out.append("")
+        out += _cost_by_engine_md(report)
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)
@@ -755,7 +894,9 @@ def render_engineering_report_md(report: dict[str, Any], prov: dict[str, str] | 
 
     out += _aurora_queries_by_table_md(report)
 
+    out += _risk_posture_md(report)
     out += _risk_register_md(report)
+    out += _mitigation_strategies_md(report)
 
     out += _trade_offs_md(report, facts)
     out += query_traces_md(report)

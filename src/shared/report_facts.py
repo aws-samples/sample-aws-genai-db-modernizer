@@ -1220,6 +1220,37 @@ def access_pattern_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# Roles whose queries leave the source engine: a migration target (the Aurora engine
+# a heterogeneous source moves to included) and a search read model (#1020).
+MOVING_ROLES = (MIGRATION_TARGET, SEARCH_READ_MODEL)
+
+
+def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> dict[str, int]:
+    """The in-scope queries the owner engines serve and how many of them move (#1020).
+
+    Each engine's count is its ranking entry's ``assigned_queries_in_scope``
+    (``assigned_queries`` for a report without it); the cache layer owns no query
+    (#296), and a query moves when its engine's role is one of ``MOVING_ROLES``. The
+    retained relational core keeps its queries where they run today.
+    """
+    counts: dict[str, int] = {}
+    for r in report.get("ranking") or []:
+        if not isinstance(r, dict) or not r.get("target"):
+            continue
+        n = r.get("assigned_queries_in_scope", r.get("assigned_queries"))
+        if isinstance(n, int) and not isinstance(n, bool):
+            counts[str(r["target"])] = n
+    in_scope = moving = 0
+    for e in engines:
+        if e.get("role") == CACHE_LAYER or e.get("cached_queries") is not None:
+            continue
+        n = counts.get(str(e.get("engine")), 0)
+        in_scope += n
+        if e.get("role") in MOVING_ROLES:
+            moving += n
+    return {"in_scope_query_count": in_scope, "moving_query_count": moving}
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -1319,6 +1350,8 @@ def compute_report_facts(
         "migration_wave_count": len(wave_rows),
         "engines": engines,
         "tables_migrate": tables_migrate,
+        # #1020: the executive report's "Queries moved" total.
+        **query_move_facts(report, engines),
         "workload_total_percent": _unrounded(sum(e["workload_percent"] or 0.0 for e in engines)),
         "engine_cost_total_usd": round(sum(costs), 2),
         "table_basis": table_basis(report, engines, waves),

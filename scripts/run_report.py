@@ -2,7 +2,7 @@
 """Render the customer deliverables for a completed local job.
 
 Writes the job's latest synthesis version into the customer folder
-``artifacts/<db>/<job>/deliverables/`` under stable names (the PDF report, the
+``artifacts/<db>/<job>/deliverables/`` under stable names (the executive report, the
 engineering report, the assessment data JSON) with an ``index.md``
 (``src.report.deliverables.FOLDER_ENTRIES``). Nothing is written next to the
 synthesis ``report.json``: model I/O, traces and the versioned folders stay as

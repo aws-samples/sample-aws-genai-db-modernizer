@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from src.report.formatting import label_other_targets, label_summary_counts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "wordpress_no_schema_design_report.json"
 
@@ -67,7 +67,7 @@ def test_summary_counts_labelling_includes_the_other_targets_clause() -> None:
     assert "DocumentDB (no queries assigned)" in label_summary_counts(text)
 
 
-def test_the_pdf_shows_display_names_for_a_stored_summary() -> None:
-    text = pdf_text(_fixture(), trust_generated_summary=False)
+def test_the_md_shows_display_names_for_a_stored_summary() -> None:
+    text = engineering_text(_fixture(), trust_generated_summary=False)
     assert "Other targets evaluated: DocumentDB (consolidated into Aurora MySQL" in text
     assert not re.search(r"Other targets evaluated: [^.]*\b(documentdb|aurora_mysql)\b", text)

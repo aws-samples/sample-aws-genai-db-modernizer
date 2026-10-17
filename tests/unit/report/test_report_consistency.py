@@ -118,19 +118,19 @@ class TestSharedRiskFilter:
         md = renderers.render_engineering_report_md(report)
         assert f"## Risk register ({n})" in md
 
-    def test_pdf_risk_count_matches_filtered_risks(self, report: dict) -> None:
+    def test_md_risk_count_matches_filtered_risks(self, report: dict) -> None:
         """The PDF report prints the engineering report's risk register, so it must
         count the same filtered risk list as the two text reports."""
-        from tests.unit.report.pdf_text import pdf_text
+        from tests.executive_pdf import engineering_text
 
         n = len(renderers.filtered_risks(report))
-        assert f"Risk register ({n})" in pdf_text(report)
+        assert f"Risk register ({n})" in engineering_text(report)
 
-    def test_pdf_and_engineering_reports_agree(self, report: dict) -> None:
+    def test_md_and_engineering_reports_agree(self, report: dict) -> None:
         """The regression this guards: before #201/#210 this was 9 / 9 / 12."""
-        from tests.unit.report.pdf_text import pdf_text
+        from tests.executive_pdf import engineering_text
 
-        pdf_n = int(re.search(r"Open risks: (\d+)", pdf_text(report)).group(1))
+        pdf_n = int(re.search(r"Open risks: (\d+)", engineering_text(report)).group(1))
         md_n = int(
             re.search(
                 r"## Risk register \((\d+)\)", renderers.render_engineering_report_md(report)

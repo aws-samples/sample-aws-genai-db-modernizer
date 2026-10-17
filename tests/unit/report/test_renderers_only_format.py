@@ -166,7 +166,13 @@ ARITHMETIC = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv)
 PRAGMA = re.compile(r"#\s*facts:\s*presentation\b(?:\s*\((?P<reason>[^)]*)\))?")
 
 # Every ``# facts: presentation`` exemption in use, by module and reason.
-PINNED_EXEMPTIONS: frozenset[tuple[str, str]] = frozenset()
+PINNED_EXEMPTIONS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # #1020: the executive report's architecture bar, one segment per owner
+        # engine as wide as its stored workload share.
+        ("src/report/executive_report.py", "chart geometry"),
+    }
+)
 
 
 def _call_name(node: ast.Call) -> str:

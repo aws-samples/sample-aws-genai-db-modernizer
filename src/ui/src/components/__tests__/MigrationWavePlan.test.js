@@ -1,6 +1,6 @@
 /**
  * #957: the results page's migration roadmap. It shows report.json's waves (the
- * same ones the PDF report and the engineering report show) with each
+ * same ones the executive report and the engineering report show) with each
  * wave's headline, rationale, gate and tables, and computes nothing itself
  * (ADR-032). Cloudscape components are plain DOM stand-ins (see
  * QueryRoutingTable.test.js); the component and the English strings are real.

@@ -36,7 +36,7 @@ dependencies = [
     # Template rendering (k6 script generation)
     "jinja2>=3.1.0",
 
-    # Executive Summary Report PDF — src.report.pdf_report
+    # Executive report PDF — src.report.executive_report
     "reportlab>=4.2.0",
 
     # DocumentDB load test driver — [aws] extra pulls pymongo-auth-aws for
@@ -79,7 +79,7 @@ dev = [
     "moto>=5.2.2",
     "defusedxml>=0.7",
     "pytest-split>=0.10",
-    # the PDF report tests read its text back (tests/unit/report/pdf_text.py)
+    # the executive report tests read its text back (tests/executive_pdf.py)
     "pypdf>=5.0",
 ]
 e2e = [

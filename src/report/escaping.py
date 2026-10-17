@@ -1,7 +1,7 @@
 """Centralized output escaping for customer-facing deliverables.
 
 Threat model finding R3 (``docs/security/atx-threat-model.md``): the Markdown
-deliverable (and the PDF report, which renders the same Markdown) interpolates
+deliverable (and the executive report PDF, which escapes its own paragraph markup) interpolates
 customer-derived and LLM-derived strings — table
 and column names, raw SQL ``query_text``, risk prose, trade-off text, LLM summaries.
 When escaping is applied ad hoc per field, a single missed interpolation point is an

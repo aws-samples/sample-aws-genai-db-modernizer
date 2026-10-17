@@ -36,10 +36,10 @@ def _report() -> dict[str, Any]:
     }
 
 
-def test_the_pdf_shows_each_engines_rationale() -> None:
-    from tests.unit.report.pdf_text import pdf_text
+def test_the_md_shows_each_engines_rationale() -> None:
+    from tests.executive_pdf import engineering_text
 
-    text = pdf_text(_report())
+    text = engineering_text(_report())
     for rationale in (DDB, AURORA):
         assert " ".join(rationale.split()) in text
 

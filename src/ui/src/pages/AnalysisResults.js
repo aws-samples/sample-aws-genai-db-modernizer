@@ -387,8 +387,8 @@ const AnalysisResultsPage = memo(() => {
 
   // #269: whether this synthesis summary was replaced by its deterministic
   // fallback (a grounding check rejected the generated text against the final
-  // records, #205) -- the PDF report already says so when it is
-  // (src/report/pdf_report.py); this keeps the Results page in agreement with it.
+  // records, #205) -- the engineering report already says so when it is
+  // (src/report/engineering_report.py); this keeps the Results page in agreement with it.
   const summaryFallback = summaryFallbackInfo(
     synthesis?.summary_source,
     synthesis?.summary_validation_warnings,
@@ -416,7 +416,7 @@ const AnalysisResultsPage = memo(() => {
   // #358: cost breakdown keeps the cache layer's own cost card even though it
   // owns no workload share, and the projected total is the report's own
   // tco_analysis.projected_monthly_cost -- not a sum recomputed from a
-  // filtered subset -- so it matches the PDF report and chat.
+  // filtered subset -- so it matches the executive report and chat.
   const { items: costBreakdown, total: projectedCost } = useMemo(
     () => resolveCostBreakdown(synthesis?.tco_analysis, afterDist, cacheOverlay, synthesis?.facts),
     [synthesis, afterDist, cacheOverlay]

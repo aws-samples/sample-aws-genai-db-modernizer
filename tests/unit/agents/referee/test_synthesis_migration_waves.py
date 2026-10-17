@@ -176,7 +176,7 @@ class TestMigrationWaves:
         _write_synthesis_report(store, result, assignment_version=2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
         # #729: query_traces.unservable and facts.unservable added
-        assert report["contract_version"] == "1.26"
+        assert report["contract_version"] == "1.27"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
 

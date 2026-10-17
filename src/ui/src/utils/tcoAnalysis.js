@@ -9,7 +9,7 @@
  * Since #380, `tco_analysis.current_cost_known` says which case it is.
  * `isCostBaselineUnknown` matches `src/report/formatting.py::_cost_baseline_text`
  * exactly (#334 review) -- the one rule every deliverable (the engineering
- * and PDF reports there, this UI here) shares, so none of them can disagree
+ * and executive reports there, this UI here) shares, so none of them can disagree
  * on the same report: unknown when
  * `current_cost_known` is `false`, or it is missing/`null` and
  * `current_monthly_cost` is falsy (covers a report written before

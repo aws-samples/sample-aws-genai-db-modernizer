@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from src.report import renderers
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wordpress_report.json"
 
@@ -83,14 +83,14 @@ def test_engineering_report_resolved_risks_use_display_names_for_unknown_engine(
     assert "Neptune → Unmapped Engine" in section
 
 
-def test_the_pdf_counts_resolved_risks(report: dict) -> None:
-    assert "Resolved by the assignment: 2" in pdf_text(report)
+def test_the_md_counts_resolved_risks(report: dict) -> None:
+    assert "Resolved by the assignment: 2" in engineering_text(report)
 
 
 def test_no_resolved_risks_no_section(report: dict) -> None:
     report["risk_assessment"].pop("resolved_risks")
     assert "Resolved by the assignment" not in renderers.render_engineering_report_md(report)
-    assert "resolved by the assignment" not in pdf_text(report).lower()
+    assert "resolved by the assignment" not in engineering_text(report).lower()
 
 
 def test_resolved_risk_label_kept_when_resolved_onto_its_own_engine() -> None:
@@ -119,24 +119,24 @@ def test_engineering_report_says_kept_not_the_same_engine_twice(report: dict) ->
     assert "Aurora MySQL → Aurora MySQL" not in section
 
 
-def test_the_pdf_states_resolved_count_when_no_open_risks_remain(report: dict) -> None:
+def test_the_md_states_resolved_count_when_no_open_risks_remain(report: dict) -> None:
     """#434: with no open risks the risk section must still say what the
     assignment resolved -- "overall risk LOW" with nothing else reads as "no
     migration risk"."""
     report["risk_assessment"]["risks"] = []
     report["risk_assessment"]["mitigation_strategies"] = []
-    text = pdf_text(report)
+    text = engineering_text(report)
     assert "No open migration risks; 2 resolved by the assignment." in text
     assert " ".join(renderers.NO_OPEN_RISKS_CAVEAT.split()) in text
 
 
-def test_the_pdf_says_so_with_the_caveat_when_truly_no_risks(report: dict) -> None:
+def test_the_md_says_so_with_the_caveat_when_truly_no_risks(report: dict) -> None:
     """#645: never an empty or missing section that reads as "no migration risk"."""
     report["risk_assessment"]["risks"] = []
     report["risk_assessment"]["resolved_risks"] = []
     report["risk_assessment"]["mitigation_strategies"] = []
-    text = pdf_text(report)
-    assert "Risks" in text
+    text = engineering_text(report)
+    assert "Risk posture" in text
     assert "No risks were identified in this analysis." in text
     assert " ".join(renderers.NO_OPEN_RISKS_CAVEAT.split()) in text
     assert "Mitigation strategies" not in text

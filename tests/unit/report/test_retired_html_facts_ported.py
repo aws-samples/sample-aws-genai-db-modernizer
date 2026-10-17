@@ -1,5 +1,5 @@
-"""What only the retired decision report said now lives in the PDF report and the
-engineering report (#987).
+"""What only the retired decision report said now lives in the engineering report
+and, for the engine table, the executive report (#987, #1020).
 
 The decision report HTML was retired. Before it went, every fact and section it
 showed was checked against the PDF report, the engineering report and the UI;
@@ -10,8 +10,9 @@ and the decision report's own wording:
   indexes) and the "N tables migrate" total, with the workload total;
 - the notes under the engine table: the retained relational core, the search
   read model, the tables the migration moves, and what "incl. shared" counts;
-- in the PDF: how the overall risk level is derived, that no language model
-  decides an assignment, and why a generated summary was withheld.
+- how the overall risk level is derived, that no language model decides an
+  assignment, and why a generated summary was withheld: in the retired
+  multi-page PDF report until #1020, in the engineering report since.
 """
 
 from __future__ import annotations
@@ -23,10 +24,10 @@ from typing import Any
 
 import pytest
 
-from src.report import engineering_report, pdf_report
+from src.report import engineering_report, executive_report
 from src.report.architecture import SHARED_TABLES_NOTE
 from src.report.facts import report_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text, executive_text
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -58,7 +59,7 @@ def e2e09() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def e2e09_pdf(e2e09: dict[str, Any]) -> str:
-    return pdf_text(e2e09)
+    return executive_text(e2e09)
 
 
 def _engines_section(md: str) -> str:
@@ -94,7 +95,7 @@ def test_the_total_is_the_stored_fact_not_a_recount(e2e09: dict[str, Any]) -> No
     assert "| 1 table migrates |" in section
 
 
-def test_the_pdf_engine_section_has_the_same_scope_and_total(
+def test_the_executive_engine_table_has_the_same_scope_and_total(
     e2e09: dict[str, Any], e2e09_pdf: str
 ) -> None:
     facts = report_facts(e2e09)
@@ -139,7 +140,7 @@ def test_no_engine_table_and_no_notes_without_engines() -> None:
     assert "tables migrate" not in md
 
 
-# -- PDF only: the risk rule, the determinism statement, the withheld summary --
+# -- the risk rule, the determinism statement, the withheld summary (#1020: md) --
 
 
 def _with_open_risk(report: dict[str, Any]) -> dict[str, Any]:
@@ -160,24 +161,26 @@ def _with_open_risk(report: dict[str, Any]) -> dict[str, Any]:
     return rep
 
 
-def test_the_pdf_states_how_the_overall_risk_is_derived(e2e09: dict[str, Any]) -> None:
-    assert RULE_NOTE in pdf_text(_with_open_risk(e2e09))
+def test_the_report_states_how_the_overall_risk_is_derived(e2e09: dict[str, Any]) -> None:
+    assert RULE_NOTE in engineering_text(_with_open_risk(e2e09))
+    assert RULE_NOTE in executive_text(_with_open_risk(e2e09))
 
 
 def test_the_risk_rule_is_not_stated_without_open_risks() -> None:
     rep = {"database_name": "x", "risk_assessment": {"overall_risk_level": "LOW", "risks": []}}
-    assert RULE_NOTE not in pdf_text(rep)
+    assert RULE_NOTE not in engineering_text(rep)
+    assert RULE_NOTE not in executive_text(rep)
 
 
-def test_the_pdf_says_no_language_model_decides_an_assignment(e2e09_pdf: str) -> None:
-    assert _flat(NO_MODEL_DECIDES) in e2e09_pdf
-    assert _flat(NO_MODEL_DECIDES) in pdf_text({"database_name": "x"})
+def test_the_report_says_no_language_model_decides_an_assignment(e2e09: dict[str, Any]) -> None:
+    assert _flat(NO_MODEL_DECIDES) in engineering_text(e2e09)
+    assert _flat(NO_MODEL_DECIDES) in engineering_text({"database_name": "x"})
 
 
-def test_the_pdf_says_why_a_generated_summary_was_withheld() -> None:
+def test_the_report_says_why_a_generated_summary_was_withheld() -> None:
     rep = _fixture("wordpress_no_schema_design_report.json")
     rep["summary"] = "A model narrative about schema work that never ran."
-    text = pdf_text(rep, trust_generated_summary=False)
+    text = engineering_text(rep, trust_generated_summary=False)
     assert "never ran" not in text
     assert (
         "The generated narrative was withheld because it referenced schema work this run "
@@ -189,13 +192,13 @@ def test_no_withheld_note_when_no_narrative_was_generated() -> None:
     """A deterministic run generated no narrative, so nothing was withheld."""
     rep = _fixture("wordpress_no_schema_design_report.json")
     assert rep["summary"] == rep["summary_deterministic"]
-    assert "withheld" not in pdf_text(rep, trust_generated_summary=False)
+    assert "withheld" not in engineering_text(rep, trust_generated_summary=False)
 
 
-def test_the_pdf_says_why_a_fallback_summary_replaced_the_narrative() -> None:
+def test_the_report_says_why_a_fallback_summary_replaced_the_narrative() -> None:
     rep = _fixture("wordpress_report.json")
     rep["summary_source"] = "deterministic_fallback"
-    text = pdf_text(rep, trust_generated_summary=True)
+    text = engineering_text(rep, trust_generated_summary=True)
     assert "The generated narrative was withheld because it" in text
     assert "this summary is built from the effective assignment." in text
 
@@ -204,17 +207,17 @@ def test_no_withheld_note_on_a_trusted_generated_summary() -> None:
     rep = _fixture("wordpress_report.json")
     rep["summary"] = "The model wrote this paragraph."
     rep["summary_source"] = "llm"
-    text = pdf_text(rep, trust_generated_summary=True)
+    text = engineering_text(rep, trust_generated_summary=True)
     assert "The model wrote this paragraph." in text
     assert "withheld" not in text
 
 
-def test_the_pdf_points_only_at_files_that_exist() -> None:
-    assert "decision" not in pdf_report.SEE_ALSO_NOTE.lower()
-    assert "engineering-report.md" in pdf_report.SEE_ALSO_NOTE
+def test_the_executive_report_points_only_at_files_that_exist() -> None:
+    assert "decision" not in executive_report.CLOSING_POINTER.lower()
+    assert "engineering-report.md" in executive_report.CLOSING_POINTER
 
 
-# -- PDF: the open ties and the moves after approval (#987 review) -------------
+# -- the open ties and the moves after approval (#987 review) ------------------
 
 TIED = [
     {"query_id": "q1", "tied_engines": ["documentdb", "dynamodb"], "assigned_engine": "dynamodb"},
@@ -239,22 +242,31 @@ def _with(report: dict[str, Any], **fields: Any) -> dict[str, Any]:
     return rep
 
 
-def test_the_pdf_lists_the_unresolved_engine_ties(e2e09: dict[str, Any]) -> None:
-    text = pdf_text(_with(e2e09, tied_queries=TIED))
+def test_both_reports_state_the_unresolved_engine_ties(e2e09: dict[str, Any]) -> None:
+    text = engineering_text(_with(e2e09, tied_queries=TIED))
     assert "Unresolved engine ties (1 query)" in text
     assert "pending the customer's own choice" in text
-    assert "q1 DocumentDB, DynamoDB DynamoDB" in text
+    assert "| `q1` | DocumentDB, DynamoDB | DynamoDB |" in text
+    exec_text = executive_text(_with(e2e09, tied_queries=TIED))
+    assert "Unresolved engine ties (1 query)" in exec_text
+    assert "pending the customer's own choice" in exec_text
 
 
-def test_the_pdf_lists_the_queries_moved_after_approval(e2e09: dict[str, Any]) -> None:
+def test_both_reports_state_the_queries_moved_after_approval(e2e09: dict[str, Any]) -> None:
     from src.report.engine_choices import REROUTE_OVERRIDE_TEXT
 
-    text = pdf_text(_with(e2e09, post_schema_reroutes=REROUTES))
-    assert "Moved after approval (1 query)" in text
-    assert _flat(REROUTE_OVERRIDE_TEXT) in text
+    for text in (
+        engineering_text(_with(e2e09, post_schema_reroutes=REROUTES)),
+        executive_text(_with(e2e09, post_schema_reroutes=REROUTES)),
+    ):
+        assert "Moved after approval (1 query)" in text
+        assert _flat(REROUTE_OVERRIDE_TEXT) in text
 
 
 def test_no_tie_or_move_section_without_either(e2e09: dict[str, Any]) -> None:
-    text = pdf_text(_with(e2e09, tied_queries=[], post_schema_reroutes=[]))
-    assert "Unresolved engine ties" not in text
-    assert "Moved after approval" not in text
+    for text in (
+        engineering_text(_with(e2e09, tied_queries=[], post_schema_reroutes=[])),
+        executive_text(_with(e2e09, tied_queries=[], post_schema_reroutes=[])),
+    ):
+        assert "Unresolved engine ties" not in text
+        assert "Moved after approval" not in text

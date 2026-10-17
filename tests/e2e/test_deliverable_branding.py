@@ -3,7 +3,7 @@
 No rendered deliverable may carry "ATX", "AWS Transform" or the standalone word
 "transform" in any case (``tests/branding.py``; "transformation" is ordinary
 prose). The check runs over every file of each sample's deliverables folder
-(#987): the PDF report's text and document metadata, the engineering report, the
+(#987): the executive report's text and document metadata, the engineering report, the
 assessment data JSON and the folder index.
 """
 
@@ -41,7 +41,7 @@ def test_no_deliverable_names_another_product(run: PipelineResult) -> None:
 
 def test_the_pdf_and_the_index_name_this_product(run: PipelineResult) -> None:
     assert "Database Modernizer Assessment Tool" in " ".join(
-        _texts(run.deliverable("assessment.pdf"))
+        _texts(run.deliverable("executive-report.pdf"))
     )
     assert "Database Modernizer Assessment Tool" in run.deliverable("index.md").read_text()
 

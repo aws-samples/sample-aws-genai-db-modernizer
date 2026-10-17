@@ -1,6 +1,6 @@
 """Every deliverable names one product, "Database Modernizer Assessment Tool" (#954).
 
-The guard covers each file of the deliverables folder (#987: the PDF report, the
+The guard covers each file of the deliverables folder (#987: the executive report, the
 engineering report, the assessment data JSON and the folder index), rendered from
 every saved report fixture, plus the rule itself on ordinary prose.
 """
@@ -47,7 +47,7 @@ def test_every_deliverable_names_only_this_product(fixture: Path, tmp_path: Path
     ]
     assert found == []
     assert PRODUCT in files[dl.INDEX_FILENAME].decode("utf-8")
-    assert PRODUCT in " ".join(_texts("assessment.pdf", files["assessment.pdf"]))
+    assert PRODUCT in " ".join(_texts("executive-report.pdf", files["executive-report.pdf"]))
 
 
 @pytest.mark.parametrize(

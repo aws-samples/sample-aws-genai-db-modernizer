@@ -1,7 +1,7 @@
 """Nothing in the repository points at a retired deliverable (#987).
 
 The decision report HTML, the interactive analysis report HTML and the UI's
-"Export to HTML" were retired: the PDF report and the UI results page are the
+"Export to HTML" were retired: the executive report and the UI results page are the
 primary deliverables, the engineering report and the assessment data JSON the
 supporting ones. Their renderers, templates and the template sync script are
 gone, so no tracked file (code, tests, docs, commands, CI) may name them, and
@@ -45,7 +45,11 @@ SKIPPED = {THIS, ".test_durations"}
 # The one place that may still spell a retired file's name: the list the render
 # step deletes from an older job's folder (``RETIRED_FOLDER_FILENAMES``).
 ALLOWED = {
-    "src/report/deliverables.py": ['    "decision-report.html",', '    "analysis-report.html",'],
+    "src/report/deliverables.py": [
+        '    "decision-report.html",',
+        '    "analysis-report.html",',
+        '    "assessment.pdf",',
+    ],
 }
 
 
@@ -101,7 +105,7 @@ FIXTURES = REPO / "tests" / "unit" / "report" / "fixtures"
 def test_no_rendered_deliverable_points_at_a_retired_report(name: str, tmp_path: Path) -> None:
     from src.report import deliverables as dl
     from src.storage.local_store import LocalArtifactStore
-    from tests.unit.report.pdf_text import pdf_text
+    from tests.executive_pdf import executive_text
 
     report = json.loads((FIXTURES / name).read_text())
     store = LocalArtifactStore(base_dir=str(tmp_path))
@@ -111,7 +115,7 @@ def test_no_rendered_deliverable_points_at_a_retired_report(name: str, tmp_path:
     files = {e.filename: d.content for e, d in rendered.folder_files()}
     assert set(files) == {e.filename for e in dl.FOLDER_ENTRIES}
     texts = {
-        f: (pdf_text(report) if f.endswith(".pdf") else data.decode("utf-8"))
+        f: (executive_text(report) if f.endswith(".pdf") else data.decode("utf-8"))
         for f, data in files.items()
     }
     texts[dl.INDEX_FILENAME] = dl.render_folder_index(

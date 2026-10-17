@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from . import pdf_report, renderers
+from . import executive_report, renderers
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +89,9 @@ DELIVERABLES_DIR = "deliverables"
 INDEX_FILENAME = "index.md"
 FOLDER_ENTRIES: tuple[FolderEntry, ...] = (
     FolderEntry(
-        "executive-summary-pdf",
-        "assessment.pdf",
-        "Executive summary (PDF)",
+        "executive-report",
+        "executive-report.pdf",
+        "Executive report (PDF)",
         "Executives and stakeholders deciding whether to proceed",
     ),
     FolderEntry(
@@ -112,11 +112,13 @@ FOLDER_FILENAMES: tuple[str, ...] = (
     INDEX_FILENAME,
 )
 # Files an older round wrote into the folder for deliverables since retired (#987:
-# the decision and interactive analysis HTML reports). The render step removes
-# them, so a re-rendered folder never offers a report the index no longer lists.
+# the decision and interactive analysis HTML reports; #1020: the multi-page PDF
+# report the executive report replaced). The render step removes them, so a
+# re-rendered folder never offers a report the index no longer lists.
 RETIRED_FOLDER_FILENAMES: tuple[str, ...] = (
     "decision-report.html",
     "analysis-report.html",
+    "assessment.pdf",
 )
 
 
@@ -214,6 +216,20 @@ class DeliverableSet:
         return [(e, by_name[e.name]) for e in FOLDER_ENTRIES if e.name in by_name]
 
 
+def _collector_output(store: Any, report_key: str) -> dict[str, Any] | None:
+    """The job's collector output next to its synthesis report, when the store has it:
+    the executive report keeps every collected name out of its text (#1020)."""
+    job_root = report_key.split("/synthesis/", 1)[0].split("/referee-synthesis/", 1)[0]
+    key = f"{job_root}/collector/output.json"
+    try:
+        if store.exists(key):
+            data = store.read_json(key)
+            return data if isinstance(data, dict) else None
+    except Exception as exc:  # noqa: BLE001 - the names are best-effort; the report renders
+        logger.debug("No collector output at %s: %s", key, type(exc).__name__)
+    return None
+
+
 def render_deliverables(
     store: Any,
     job_id: str,
@@ -223,8 +239,8 @@ def render_deliverables(
 ) -> DeliverableSet:
     """Render all deliverables for ``report_key``.
 
-    Raises ``FileNotFoundError`` if the report itself is missing. The PDF report
-    is optional: a failure is recorded in ``errors`` and the rest are still
+    Raises ``FileNotFoundError`` if the report itself is missing. The executive
+    report PDF is optional: a failure is recorded in ``errors`` and the rest are still
     returned.
 
     Each entry in ``errors`` is also logged here; callers should forward them,
@@ -236,7 +252,6 @@ def render_deliverables(
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
     report = store.read_json(report_key)
-    trust = any(r.get("schema_design_available") for r in (report.get("ranking") or []))
 
     def prov(artifact: str, ext: str) -> dict:
         return renderers.provenance(
@@ -271,7 +286,9 @@ def render_deliverables(
     ]
 
     try:
-        pdf = pdf_report.render_executive_summary_pdf(report, trust_generated_summary=trust)
+        pdf = executive_report.render_executive_report_pdf(
+            report, executive_report.collected_identifiers(_collector_output(store, report_key))
+        )
         out.items.append(
             # Fixed download name, unlike the other deliverables above: this is the
             # reusable executive deliverable, called the same thing in every
@@ -279,19 +296,19 @@ def render_deliverables(
             # download name too) so the panel can tell rounds apart without
             # opening the file.
             Deliverable(
-                "executive-summary-pdf",
+                "executive-report",
                 pdf,
                 "PDF",
-                f"Executive Summary Report — {database_name} (v{assignment_version})",
-                pdf_report.FILENAME,
+                f"Executive Report — {database_name} (v{assignment_version})",
+                executive_report.FILENAME,
                 publish=True,
             )
         )
     except Exception as e:  # noqa: BLE001 - optional deliverable
-        out.errors.append(f"executive-summary: {type(e).__name__}: {e}")
-        logger.debug("deliverable skipped: executive-summary", exc_info=True)
+        out.errors.append(f"executive-report: {type(e).__name__}: {e}")
+        logger.debug("deliverable skipped: executive-report", exc_info=True)
         logger.warning(
-            "deliverable skipped: executive-summary (%s at %s)",
+            "deliverable skipped: executive-report (%s at %s)",
             type(e).__name__,
             _raising_frame(e),
         )

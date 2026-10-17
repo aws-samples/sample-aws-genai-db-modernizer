@@ -49,8 +49,7 @@ from typing import Any
 RISK_TEXT_CHAR_CAP = 300
 
 MIGRATION_WAVES_ABSENT = (
-    "not in report.json; read the waves from the executive summary PDF's "
-    "Migration Sequencing slide"
+    "not in report.json; read the waves from the executive report PDF's " "Migration waves pages"
 )
 
 _RELATIONAL_ENGINES = {"aurora", "aurora_mysql", "aurora_postgresql"}

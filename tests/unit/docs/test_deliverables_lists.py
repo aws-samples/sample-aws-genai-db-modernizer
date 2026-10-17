@@ -23,7 +23,7 @@ REPO = Path(__file__).resolve().parents[3]
 
 # Spelled out on purpose (see tests/unit/scripts/test_run_report.py).
 DOCUMENTED_FILES = {
-    "assessment.pdf",
+    "executive-report.pdf",
     "engineering-report.md",
     "assessment-data.json",
     "index.md",
@@ -55,7 +55,12 @@ SCANNED = sorted(
 
 _BLOCK_RE = re.compile(r"<!-- deliverables-list -->(.*?)<!-- /deliverables-list -->", re.DOTALL)
 _FILE_RE = re.compile(r"(?<![\w/.-])([A-Za-z0-9_-]+\.(?:pdf|pptx|md|json|html))\b")
-_LEGACY = ("summary-executive-report", "executive-summary.pdf", "executive-summary.pptx")
+_LEGACY = (
+    "summary-executive-report",
+    "executive-summary.pdf",
+    "executive-summary.pptx",
+    "assessment.pdf",  # the multi-page PDF report the executive report replaced (#1020)
+)
 _VERSIONED_POINTER_RE = re.compile(r"deliverables[^.\n]*synthesis/v|synthesis/v[^.\n]*deliverables")
 
 
@@ -88,12 +93,11 @@ def test_no_surface_points_at_old_names_or_the_versioned_folder(path: str) -> No
 
 
 def test_the_pdf_points_at_real_files_in_the_deliverables_folder() -> None:
-    from src.report import pdf_report
+    from src.report import executive_report
 
-    note = pdf_report.SEE_ALSO_NOTE
-    assert "deliverables folder" in note
-    named = set(_FILE_RE.findall(note))
-    assert named and named <= DOCUMENTED_FILES, named
+    named = set(_FILE_RE.findall(executive_report.CLOSING_POINTER))
+    assert named == {"engineering-report.md", "index.md"}
+    assert named <= DOCUMENTED_FILES, named
 
 
 def test_the_assessment_data_title_matches_what_the_reports_call_it() -> None:

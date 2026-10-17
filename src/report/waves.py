@@ -35,7 +35,7 @@ def resolve_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
     when synthesis wrote one, else derived the same way from what report.json
     still has (``ranking``, ``cache_overlay``, ``table_mappings``).
 
-    Every deliverable (PDF report, engineering report, UI) calls
+    Every deliverable (executive report, engineering report, UI) calls
     this one function, so a report synthesized before this field existed still
     shows the same roadmap shape as a new one — just with less table detail,
     since the legacy path has no assignment-level table groups.

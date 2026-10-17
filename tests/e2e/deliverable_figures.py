@@ -1,6 +1,6 @@
 """Key figures of every deliverable, read back from what each one renders (#573).
 
-AGENTS.md "Deliverables agree": the engineering report and the PDF report
+AGENTS.md "Deliverables agree": the engineering report and the executive report
 render one synthesis ``report.json`` (the decision and interactive analysis
 HTML reports were retired in #987), so a figure shown in both must be the
 same figure.
@@ -11,9 +11,8 @@ computes what ``report.json`` says they should be, so
 Extraction reads fixed labels and table shapes, never free prose: the
 Markdown's tables and labels ("Projected monthly (target):", "N tables
 migrate", "Kept in sync from X: N tables", ...) and the same labels in the
-PDF's text. The one deliberate exception is the PDF summary's "Other targets
-evaluated:" clause, where it names an engine the reality check removed; it is
-a fixed label too.
+executive report's tiles and tables ("Projected monthly cost", "Removed by the
+reality check", "Open risks", ...).
 
 A figure is keyed by a short string (``"cost:dynamodb"``, ``"wave3:moving"``,
 ``"risks:HIGH"``...). Each deliverable records every observation of a key it
@@ -491,23 +490,6 @@ def report_invariant_violations(report: dict[str, Any]) -> list[tuple[str, str]]
 # Labels shared by the readers
 # --------------------------------------------------------------------------
 
-_OTHER_TARGETS = re.compile(r"Other targets evaluated: (.+?)\.(?:\s|$)")
-
-
-def _other_targets(summary: str) -> set[str]:
-    """Engines the summary's "Other targets evaluated: X (consolidated into Y
-    ...), ..." clause names as evaluated and not kept."""
-    m = _OTHER_TARGETS.search(summary)
-    if not m:
-        return set()
-    out = set()
-    # Drop the parenthesised "(consolidated into Y ...)" asides, then split.
-    for name in re.sub(r"\([^)]*\)", "", m.group(1)).split(","):
-        if name.strip():
-            out.add(engine_id(name))
-    return out
-
-
 _CLOSE_CALLS_TITLE = re.compile(
     r"Close calls \(([\d,]+) quer(?:y|ies)\)(?:, plus ([\d,]+) exact ties? a rule settled)?"
 )
@@ -677,7 +659,7 @@ def engineering_figures(md_text: str) -> Figures:
 
 
 # --------------------------------------------------------------------------
-# The PDF report
+# The executive report (PDF)
 # --------------------------------------------------------------------------
 
 
@@ -689,45 +671,49 @@ def pdf_page_texts(pdf_path: str) -> list[str]:
 
 _PDF_ROLES = "Retained|Migration target|Cache layer|Search read model|Evaluated|Assessed"
 _PDF_COST_ROW = re.compile(rf"({_NAMES_RE}) (?:{_PDF_ROLES}) \$([\d,]+\.\d\d)")
+_PDF_SEVERITY = re.compile(r"([\d,]+) (critical|high|medium|low|unrated)")
 
 
 def pdf_figures(text: str) -> Figures:
-    """Figures the PDF report shows, read from its extracted text (one string,
-    whitespace collapsed; the running header and footer may sit between two
-    halves of a table that continues on the next page)."""
+    """Figures the executive report shows, read from its extracted text (one string,
+    whitespace collapsed; the page furniture may sit between two halves of a table
+    that continues on the next page): the tiles, the cost table, the engine table's
+    total, the risk tiles and the decisions. It shows no table and no close call."""
     f = Figures("PDF")
-    m = re.search(r"Projected monthly \(target\): \$([\d,.]+\d)", text)
-    f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
-    start = text.find("Engine Role Est. monthly")
-    end = text.find("Recommended engines and roles", start)
+    m = re.search(r"\$([\d,]+\.\d\d) Projected monthly cost", text)
+    f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Projected monthly cost tile")
+    start = text.find("COST BY ENGINE Engine Role Est. monthly")
     if start != -1:
-        table = text[start : end if end != -1 else len(text)]
+        table = text[start : text.find("Total", start) + 40]
         for name, cost in _PDF_COST_ROW.findall(table):
             eng = engine_id(name)
-            f.name(eng, "Cost table")
-            f.add(f"cost:{eng}", _usd(cost), "Cost table")
+            f.name(eng, "Cost by engine")
+            f.add(f"cost:{eng}", _usd(cost), "Cost by engine")
         t = re.search(r"Total \$([\d,]+\.\d\d)", table)
-        f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost table Total")
+        f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
     m = re.search(r"Total [\d.]+% ([\d,]+) tables? migrates?", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Engines table Total")
-    m = re.search(r"Open risks: ([\d,]+) \(([^)]*)\)", text)
+    m = re.search(r"([\d,]+) Engines in the target architecture", text)
+    f.add("engine_count", _int(m.group(1)) if m else UNREADABLE, "Engines tile")
+    m = re.search(r"([\d,]+) Open risks((?: [\d,]+ (?:critical|high|medium|low|unrated),?)*)", text)
     if m:
-        f.add("risks:total", _int(m.group(1)), "Risks: Open risks")
-        sev = {s.split()[1].upper(): _int(s.split()[0]) for s in m.group(2).split(", ")}
-        for s in SEVERITIES:
-            f.add(f"risks:{s}", sev.get(s, 0), "Risks: Open risks")
-    elif "No open migration risks" in text or "No risks were identified" in text:
-        f.add("risks:total", 0, "Risks")
-    f.add("removal_savings", removal_savings(text), "Migration trade-offs")
-    removed = _other_targets(text)
-    r = re.search(r"Retired by this plan: (.+?), running today", text)
+        f.add("risks:total", _int(m.group(1)), "Open risks tile")
+        sev = {k.upper(): _int(n) for n, k in _PDF_SEVERITY.findall(m.group(2))}
+        if _int(m.group(1)):
+            for s in SEVERITIES:
+                f.add(f"risks:{s}", sev.get(s, 0), "Open risks tile")
+    f.add("removal_savings", removal_savings(text), "Reality-check decisions")
+    removed: set[str] = set()
+    r = re.search(rf"((?:{_NAMES_RE})(?:, (?:{_NAMES_RE}))*) Removed by the reality check", text)
+    if r:
+        removed |= {engine_id(x) for x in r.group(1).split(", ")}
+    r = re.search(r"Retired by this plan: ((?:\$[\d,.]+/mo \([^)]+\)(?:, )?)+)", text)
     if r:
         removed |= {engine_id(x) for x in re.findall(r"/mo \(([^)]+)\)", r.group(1))}
-    f.add("removed", frozenset(removed), "summary and Retired line")
+    f.add("removed", frozenset(removed), "Removed tile and Retired line")
     m = re.search(r"Unresolved engine ties \(([\d,]+) quer(?:y|ies)\)", text)
-    f.add("tied", _int(m.group(1)) if m else 0, "Unresolved engine ties heading")
-    _close_calls(f, text if "Close calls (" in text else None, "Close calls heading")
+    f.add("tied", _int(m.group(1)) if m else 0, "Decisions needed: Unresolved engine ties")
     _fallback_queries(
-        f, text if "Queries on a fallback engine (" in text else None, "fallback heading"
+        f, text if "Queries on a fallback engine (" in text else None, "Decisions needed"
     )
     return f

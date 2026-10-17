@@ -40,7 +40,7 @@ def _report(run: PipelineResult) -> dict[str, Any]:
 def _texts(run: PipelineResult) -> dict[str, str]:
     return {
         "engineering report": md_plain(run.deliverable("engineering-report.md").read_text()),
-        "pdf": "\n".join(pdf_page_texts(str(run.deliverable("assessment.pdf")))),
+        "pdf": "\n".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))),
     }
 
 

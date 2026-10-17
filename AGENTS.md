@@ -15,7 +15,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `src/agents/` | Pipeline agents: `collector/`, `analysis/` (one per engine), `referee/` (triage, reality check, synthesis), `schema_design/`, `load_test/`; `prompt_framing.py` |
 | `src/contracts/` | Pydantic models for every agent's input and output (contract changes: see CONTRIBUTING.md) |
 | `src/tools/` | Deterministic tools: `analysis/`, `schema/`, `validation/`, `database/`, `aws/` |
-| `src/report/` | Deliverable renderers (engineering Markdown, multi-page PDF) from one synthesis `report.json`; `escaping.py` |
+| `src/report/` | Deliverable renderers (engineering Markdown, landscape executive report PDF) from one synthesis `report.json`; `escaping.py` |
 | `src/shared/` | Cross-cutting helpers, including `engine_names.py` (engine display names) |
 | `src/catalog/` | Rule catalog (ADR-031 Decision 8): `engines/` one TOML per engine (display name, colours, status, role), `patterns/` one TOML per pattern type (per-engine fit score, anti-pattern severity, penalty, why), loaded by `src/shared/catalog/`; `scripts/render_catalog.py` generates the UI's `engineCatalog.generated.js` and `docs/architecture/rule-catalog.md` (`--check` runs in lint) |
 | `src/skills/` | Markdown prompts (data-modeling and PE-review guidance per engine) that agents and commands load |
@@ -191,7 +191,7 @@ truth.
 
 - **Assignments map queries to engines.** A table can be served by several
   engines; the single recommended engine in `table_mappings` is not ownership.
-- **Deliverables agree.** The PDF report, the engineering report and the UI
+- **Deliverables agree.** The executive report, the engineering report and the UI
   render the same `report.json`; a fact changed in one must change in all.
   Engine names come from `src/shared/engine_names.py` (`display_engine`),
   never a local copy.

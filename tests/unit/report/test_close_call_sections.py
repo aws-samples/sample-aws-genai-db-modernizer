@@ -15,7 +15,7 @@ import pytest
 
 from src.report.renderers import render_engineering_report_md
 from src.shared.report_facts import CLOSE_CALL_IDS_SHOWN, compute_report_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text, executive_text
 
 MD_HEADING = "## Close calls"
 
@@ -76,15 +76,19 @@ def _section_md(md: str) -> str:
     return md[start:] if end == -1 else md[start:end]
 
 
-def test_the_pdf_states_each_pair_and_how_to_move_them(report) -> None:
-    text = pdf_text(report)
+def test_the_engineering_report_states_each_pair_and_how_to_move_them(report) -> None:
+    text = engineering_text(report)
     # The headline is the real close calls; the settled ties are stated apart.
     assert "Close calls (3 queries), plus 2 exact ties a rule settled" in text
     assert "less than 5 points" in text
-    assert "DynamoDB Aurora MySQL 2 1 to 4 1 1" in text
-    assert "Aurora MySQL DocumentDB 0 - 1 0" in text
     assert "assignment review" in text
     assert "Why this engine" in text
+
+
+def test_the_executive_report_leaves_the_close_calls_to_the_engineering_report(report) -> None:
+    """#1020: the briefing shows totals and decisions needed; a close call is not a
+    pending choice (the assessment decided it), so it stays in the engineering report."""
+    assert "Close calls" not in executive_text(report)
 
 
 def test_the_engineering_report_tables_the_same_pairs(report) -> None:
@@ -98,7 +102,7 @@ def test_the_engineering_report_tables_the_same_pairs(report) -> None:
 
 
 def test_the_reports_agree_on_every_pair(report) -> None:
-    text = pdf_text(report)
+    text = engineering_text(report)
     md = _section_md(render_engineering_report_md(report))
     for pair in report["facts"]["close_calls"]["engine_pairs"]:
         assert f"| {pair['pair_query_count']} |" in md
@@ -120,7 +124,7 @@ def test_more_than_the_cap_names_the_closest_and_counts_the_rest() -> None:
 @pytest.mark.parametrize("rows", [None, []])
 def test_no_section_without_close_calls(rows) -> None:
     report = _report(rows)
-    assert "Close calls (" not in pdf_text(report)
+    assert "Close calls (" not in engineering_text(report)
     assert MD_HEADING not in render_engineering_report_md(report)
 
 
@@ -129,10 +133,9 @@ def test_the_renderers_print_the_stored_facts_not_their_own_count(report) -> Non
     doctored["facts"]["close_calls"]["close_call_query_count"] = 99
     doctored["facts"]["close_calls"]["settled_tie_count"] = 0
     doctored["facts"]["close_calls"]["engine_pairs"][0]["pair_query_count"] = 42
-    text = pdf_text(doctored)
+    text = engineering_text(doctored)
     md = _section_md(render_engineering_report_md(doctored))
     assert "Close calls (99 queries)" in text and md.startswith("## Close calls (99 queries)")
-    assert "DynamoDB Aurora MySQL 42" in text
     assert "| DynamoDB | Aurora MySQL | 42 |" in md
 
 

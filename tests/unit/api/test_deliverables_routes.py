@@ -36,7 +36,7 @@ client = TestClient(app)
 DB = "wordpress"
 JOB = "job-1"
 CONTENT = {
-    "assessment.pdf": b"%PDF-1.7 fake",
+    "executive-report.pdf": b"%PDF-1.7 fake",
     "engineering-report.md": b"# Engineering report\n",
     "assessment-data.json": b'{"facts": {}}',
     "index.md": b"# Database Modernizer Assessment Tool: deliverables for wordpress\n",
@@ -74,18 +74,18 @@ class TestListDeliverables:
 
     def test_each_entry_carries_its_title_audience_size_and_download_path(self, root: Path) -> None:
         by_name = {f["filename"]: f for f in _listing()["files"]}
-        pdf = by_name["assessment.pdf"]
-        entry = next(e for e in FOLDER_ENTRIES if e.filename == "assessment.pdf")
+        pdf = by_name["executive-report.pdf"]
+        entry = next(e for e in FOLDER_ENTRIES if e.filename == "executive-report.pdf")
         assert pdf["title"] == entry.title
         assert pdf["audience"] == entry.audience
-        assert pdf["size_bytes"] == len(CONTENT["assessment.pdf"])
-        assert pdf["path"] == f"assessments/{JOB}/deliverables/assessment.pdf"
+        assert pdf["size_bytes"] == len(CONTENT["executive-report.pdf"])
+        assert pdf["path"] == f"assessments/{JOB}/deliverables/executive-report.pdf"
         assert by_name[INDEX_FILENAME]["title"]
 
     def test_leaves_out_a_listed_file_that_was_not_rendered(self, root: Path) -> None:
-        (root / DB / JOB / DELIVERABLES_DIR / "assessment.pdf").unlink()
+        (root / DB / JOB / DELIVERABLES_DIR / "executive-report.pdf").unlink()
         names = [f["filename"] for f in _listing()["files"]]
-        assert "assessment.pdf" not in names
+        assert "executive-report.pdf" not in names
         assert "engineering-report.md" in names
 
     def test_never_lists_a_file_the_folder_definition_does_not_name(self, root: Path) -> None:
@@ -109,7 +109,7 @@ class TestListDeliverables:
         self, root: Path, tmp_path_factory
     ) -> None:
         outside = tmp_path_factory.mktemp("outside")
-        (outside / "assessment.pdf").write_bytes(b"secret")
+        (outside / "executive-report.pdf").write_bytes(b"secret")
         (root / DB / "job-3").mkdir()
         os.symlink(outside, root / DB / "job-3" / DELIVERABLES_DIR)
         response = client.get("/api/v1/assessments/job-3/deliverables")
@@ -129,7 +129,7 @@ class TestDownloadDeliverable:
     @pytest.mark.parametrize(
         ("name", "media"),
         [
-            ("assessment.pdf", "application/pdf"),
+            ("executive-report.pdf", "application/pdf"),
             ("engineering-report.md", "text/markdown"),
             ("assessment-data.json", "application/json"),
             ("index.md", "text/markdown"),
@@ -145,8 +145,8 @@ class TestDownloadDeliverable:
             "..%2F..%2F_meta.json",
             "..%2Fcollector%2Foutput.json",
             "%2E%2E",
-            "..%5C..%5Cassessment.pdf",
-            "assessment.pdf%00.md",
+            "..%5C..%5Cexecutive-report.pdf",
+            "executive-report.pdf%00.md",
         ],
     )
     def test_refuses_a_traversal_or_encoded_separator(self, root: Path, path: str) -> None:
@@ -170,9 +170,10 @@ class TestDownloadDeliverable:
         assert b"secret" not in response.content
 
     def test_a_listed_name_that_was_not_rendered_is_404(self, root: Path) -> None:
-        (root / DB / JOB / DELIVERABLES_DIR / "assessment.pdf").unlink()
+        (root / DB / JOB / DELIVERABLES_DIR / "executive-report.pdf").unlink()
         assert (
-            client.get(f"/api/v1/assessments/{JOB}/deliverables/assessment.pdf").status_code == 404
+            client.get(f"/api/v1/assessments/{JOB}/deliverables/executive-report.pdf").status_code
+            == 404
         )
 
     def test_refuses_a_listed_name_that_is_a_symlink_out_of_the_folder(
@@ -180,33 +181,35 @@ class TestDownloadDeliverable:
     ) -> None:
         outside = tmp_path_factory.mktemp("outside") / "secret.pdf"
         outside.write_bytes(b"secret")
-        target = root / DB / JOB / DELIVERABLES_DIR / "assessment.pdf"
+        target = root / DB / JOB / DELIVERABLES_DIR / "executive-report.pdf"
         target.unlink()
         os.symlink(outside, target)
-        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/assessment.pdf")
+        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/executive-report.pdf")
         assert response.status_code == 404
         assert b"secret" not in response.content
 
     def test_refuses_a_symlinked_deliverables_folder(self, root: Path, tmp_path_factory) -> None:
         outside = tmp_path_factory.mktemp("outside")
-        (outside / "assessment.pdf").write_bytes(b"secret")
+        (outside / "executive-report.pdf").write_bytes(b"secret")
         (root / DB / "job-3").mkdir()
         os.symlink(outside, root / DB / "job-3" / DELIVERABLES_DIR)
-        response = client.get("/api/v1/assessments/job-3/deliverables/assessment.pdf")
+        response = client.get("/api/v1/assessments/job-3/deliverables/executive-report.pdf")
         assert response.status_code == 404
         assert b"secret" not in response.content
 
     def test_serves_only_the_requested_job_s_own_folder(self, root: Path) -> None:
         other = root / DB / "job-2" / DELIVERABLES_DIR
         other.mkdir(parents=True)
-        (other / "assessment.pdf").write_bytes(b"job-2 pdf")
-        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/assessment.pdf")
-        assert response.content == CONTENT["assessment.pdf"]
-        response = client.get("/api/v1/assessments/job-2/deliverables/assessment.pdf")
+        (other / "executive-report.pdf").write_bytes(b"job-2 pdf")
+        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/executive-report.pdf")
+        assert response.content == CONTENT["executive-report.pdf"]
+        response = client.get("/api/v1/assessments/job-2/deliverables/executive-report.pdf")
         assert response.content == b"job-2 pdf"
 
     def test_an_invalid_job_id_is_422(self, root: Path) -> None:
-        response = client.get("/api/v1/assessments/..%2Fwordpress/deliverables/assessment.pdf")
+        response = client.get(
+            "/api/v1/assessments/..%2Fwordpress/deliverables/executive-report.pdf"
+        )
         assert response.status_code in (404, 422)
 
     @pytest.mark.parametrize("name", RETIRED_FOLDER_FILENAMES)
@@ -222,7 +225,7 @@ class TestDownloadDeliverable:
         assert name not in {f["filename"] for f in _listing()["files"]}
 
     def test_no_file_carries_a_sandbox_policy_any_more(self, root: Path) -> None:
-        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/assessment.pdf")
+        response = client.get(f"/api/v1/assessments/{JOB}/deliverables/executive-report.pdf")
         assert "content-security-policy" not in response.headers
 
 

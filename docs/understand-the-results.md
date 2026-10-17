@@ -21,7 +21,7 @@ Every run puts its deliverables in one folder, `artifacts/<db>/<job>/deliverable
 <!-- deliverables-list -->
 | File | What it is | Who it is for |
 | --- | --- | --- |
-| `assessment.pdf` | Executive summary (PDF): the recommendation, cost, engines and roles, migration waves and risks | Executives and stakeholders deciding whether to proceed |
+| `executive-report.pdf` | Executive report (PDF): a landscape briefing with the recommendation, the numbers, why, the migration waves, the risks, the decisions needed and the next steps; no table names, totals only | Executives and stakeholders deciding whether to proceed |
 | `engineering-report.md` | Engineering report (Markdown): the same facts with implementation detail (schemas, migration waves, risks) | The team that will build it |
 | `assessment-data.json` | Assessment Data (JSON): the complete machine-readable assessment the other files are rendered from | Tools and scripts |
 | `index.md` | This list for the run, with the assignment version the files come from | Anyone opening the folder |
@@ -51,7 +51,7 @@ Each wave lists every table its queries use, not only the tables its engine owns
 
 ## Risks
 
-The engineering report and the PDF report both carry a risk section: anything the deterministic scoring flagged as low-fit, any query that reality check had to redirect, and any assumption the model made that depends on data this tool couldn't see (traffic patterns, peak load, compliance requirements). Read it before treating the wave plan as a commitment.
+The engineering report and the executive report both carry a risk section (the engineering report names the tables): anything the deterministic scoring flagged as low-fit, any query that reality check had to redirect, and any assumption the model made that depends on data this tool couldn't see (traffic patterns, peak load, compliance requirements). Read it before treating the wave plan as a commitment.
 
 ## See it on real data
 

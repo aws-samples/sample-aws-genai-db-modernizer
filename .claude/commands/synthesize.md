@@ -78,6 +78,6 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    Set `phase_status.synthesis` = "complete"
    Tell user where the deliverables are: the `deliverables_dir` the render step printed,
    <!-- deliverables-list -->`./artifacts/{database_name}/{job_id}/deliverables/`, holds
-   `assessment.pdf` (executive summary), `engineering-report.md` (engineering report),
+   `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report),
    `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each
    file, who it is for and the assignment version<!-- /deliverables-list -->.
