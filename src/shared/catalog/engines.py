@@ -29,6 +29,8 @@ Fields:
   reads and a search read model indexes data synced from an owner; neither owns.
 - ``colors.ui``: the live UI's hex colour (Sankey nodes, assignment gate).
 - ``colors.ui_badge``: the live UI's badge colour name.
+- ``colors.deck``: the executive report's accent hex (optional: an engine without one
+  reads in the report's grey, #1020).
 - ``pricing`` (optional table, #494): the engine's cost inputs. ``base_monthly`` is the
   fixed monthly operating cost the reality check weighs (minimum cluster plus ops
   burden); ``extra_engine_burden_monthly`` is the non-monetary burden of running this
@@ -71,6 +73,7 @@ class EngineColors(BaseModel):
 
     ui: str = Field(pattern=_HEX)
     ui_badge: BadgeColor
+    deck: str | None = Field(default=None, pattern=_HEX)
 
 
 class EnginePricing(BaseModel):

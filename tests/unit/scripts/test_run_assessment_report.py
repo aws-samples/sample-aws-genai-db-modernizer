@@ -35,7 +35,7 @@ def test_phase_report_renders_the_deliverables_folder(seeded: Path, llm_mode, ca
 
     assert status["status"] == "complete", status
     folder = seeded / DB / JOB / "deliverables"
-    assert (folder / "assessment.pdf").exists()
+    assert (folder / "executive-report.pdf").exists()
     assert (folder / "index.md").exists()
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert line["phase"] == "report"

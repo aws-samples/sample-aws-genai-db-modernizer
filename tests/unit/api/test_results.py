@@ -130,6 +130,29 @@ class TestGetResults:
         assert facts["access_pattern_totals"]["owned_pattern_count"] == 1
         assert (facts["engine_count"], facts["tables_migrate"]) == (7, 3)
 
+    def test_a_facts_block_before_1_27_gains_the_query_move_counts(self, mock_services):
+        """#1020: a stored block without ``moving_query_count`` gets both query move
+        counts from ``ranking`` and its stored engine roles; the rest stays as written."""
+        stored = {
+            "engines": [
+                {"engine": "aurora_mysql", "role": "Retained", "cached_queries": None},
+                {"engine": "dynamodb", "role": "Migration target", "cached_queries": None},
+            ],
+            "engine_count": 7,
+            "access_pattern_totals": None,
+        }
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [
+                {"target": "aurora_mysql", "assigned_queries_in_scope": 70},
+                {"target": "dynamodb", "assigned_queries_in_scope": 37},
+            ],
+            "facts": stored,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        facts = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]["facts"]
+        assert (facts["in_scope_query_count"], facts["moving_query_count"]) == (107, 37)
+        assert facts["engine_count"] == 7
+
     def test_keeps_stored_access_pattern_totals(self, mock_services):
         totals = {"owned_pattern_count": 9, "cache_layer_pattern_count": 0}
         mock_services["s3"].read_synthesis.return_value = {

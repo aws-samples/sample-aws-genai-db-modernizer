@@ -150,7 +150,7 @@ export function isKeptCostEngine(database, afterDist, cacheEngine) {
  * This keeps a cost card for every owner plus the cache_overlay engine (if
  * any), and always reports the artifact's own `projected_monthly_cost` as the
  * total -- never a sum recomputed from a filtered subset -- so the figure
- * matches the PDF report and chat (one source of truth in report.json).
+ * matches the executive report and chat (one source of truth in report.json).
  * Falls back to `facts.projected_monthly_cost_usd` when
  * `projected_monthly_cost` is missing (older artifacts predating that field):
  * the facts layer sums the same kept engines once (ADR-032, #748), so this

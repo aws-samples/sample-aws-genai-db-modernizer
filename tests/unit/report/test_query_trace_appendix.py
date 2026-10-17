@@ -22,7 +22,7 @@ from src.contracts.synthesis_output import SynthesisOutputContract
 from src.report.renderers import render_engineering_report_md
 from src.shared.query_trace import query_trace_digest
 from src.shared.report_facts import compute_report_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "wordpress_move_trace.json"
 APPENDIX = "## Appendix: per-query routing decisions"
@@ -152,12 +152,12 @@ def test_the_figures_are_the_stored_facts(report) -> None:
         "6 placed by the customer or a design review, 5 pinned by a listed rule)"
     ) in md
     assert f"- {stored['unlisted_rules'][0]['label']}: 777 queries" in md
-    text = pdf_text(report)
+    text = engineering_text(report)
     assert "(42 queries)" in text and "The other 1000 queries" in text
 
 
-def test_the_pdf_carries_the_same_appendix(report) -> None:
-    text = pdf_text(report)
+def test_the_md_carries_the_same_appendix(report) -> None:
+    text = engineering_text(report)
     n = report["facts"]["query_trace"]["listed_query_count"]
     assert f"({n} queries)" in text
     for trace in report["query_traces"]["queries"]:

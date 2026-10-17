@@ -58,7 +58,7 @@ def test_render_failure_still_prints_json_error_status(tmp_path: Path, monkeypat
 # Spelled out here on purpose, not imported: renaming a customer file must be a
 # deliberate change to this test as well as to the code and the docs.
 DOCUMENTED_FILES = {
-    "assessment.pdf",
+    "executive-report.pdf",
     "engineering-report.md",
     "assessment-data.json",
     "index.md",
@@ -85,7 +85,7 @@ def test_writes_the_deliverables_folder_with_exactly_the_documented_set(tmp_path
     assert {p.name for p in folder.iterdir()} == DOCUMENTED_FILES
     assert result["deliverables_dir"] == str(folder.resolve())
     assert {Path(p).name for p in result["deliverables"]} == DOCUMENTED_FILES
-    assert (folder / "assessment.pdf").read_bytes()[:5] == b"%PDF-"
+    assert (folder / "executive-report.pdf").read_bytes()[:5] == b"%PDF-"
 
 
 def test_assessment_data_is_the_report_json(tmp_path: Path) -> None:
@@ -185,13 +185,13 @@ def test_a_rerender_drops_stale_documented_files_and_keeps_others(
     def boom(*_a, **_k):
         raise ValueError("boom")
 
-    monkeypatch.setattr("src.report.pdf_report.render_executive_summary_pdf", boom)
+    monkeypatch.setattr("src.report.executive_report.render_executive_report_pdf", boom)
     result = run_report.run(JOB, DB, str(tmp_path), assignment_version=None)
 
     assert result["status"] == "partial"
     names = {p.name for p in folder.iterdir()}
-    assert "assessment.pdf" not in names
+    assert "executive-report.pdf" not in names
     assert "my-notes.txt" in names
     index = (folder / "index.md").read_text()
-    assert "`assessment.pdf`" not in index.split("Not rendered")[0]
-    assert "assessment.pdf" in index.split("Not rendered")[1]
+    assert "`executive-report.pdf`" not in index.split("Not rendered")[0]
+    assert "executive-report.pdf" in index.split("Not rendered")[1]

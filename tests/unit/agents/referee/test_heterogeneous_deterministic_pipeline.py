@@ -132,7 +132,7 @@ class TestAdventureWorksDeliverablesRender:
         out = dl.render_deliverables(store, JOB, DB, report_key, assignment_version=version)
         assert out.errors == []
         names = {d.name for d in out.items}
-        assert names == {"engineering-report", "assessment-data", "executive-summary-pdf"}
+        assert names == {"engineering-report", "assessment-data", "executive-report"}
 
     def test_the_chosen_aurora_engine_reads_migration_target(self, pipeline_report) -> None:
         store, _, version = pipeline_report
@@ -160,5 +160,5 @@ class TestAdventureWorksDeliverablesRender:
                 store, JOB, DB, report_key, assignment_version=version
             ).items
         }
-        assert out["executive-summary-pdf"].content.startswith(b"%PDF")
+        assert out["executive-report"].content.startswith(b"%PDF")
         assert "executive-summary-pptx" not in out

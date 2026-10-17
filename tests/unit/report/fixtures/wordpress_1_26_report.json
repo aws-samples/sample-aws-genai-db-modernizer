@@ -1,0 +1,1570 @@
+{
+ "contract_version": "1.26",
+ "job_id": "e2e-word",
+ "database_name": "wordpress",
+ "agent_type": "referee-synthesis",
+ "status": "completed",
+ "timestamp": "2026-10-17T14:03:13.827975Z",
+ "needs_deeper_analysis": false,
+ "ranking": [
+  {
+   "target": "aurora_mysql",
+   "confidence_score": 50,
+   "pattern_score": null,
+   "complexity_score": null,
+   "performance_score": null,
+   "cost_score": null,
+   "migration_complexity_avg": "LOW",
+   "assigned_queries": 70,
+   "workload_percent": 65.4,
+   "analysis_confidence": 50,
+   "routed_confidence": 73,
+   "routed_confidence_basis": "owned_queries",
+   "routed_queries": 70,
+   "routed_tables": 20,
+   "routed_confidence_evidence": "partial",
+   "routed_queries_without_table_evidence": 2,
+   "routed_lead": "key_value_lookups",
+   "routed_lead_count": 23,
+   "rationale": "73% mean fit across 70 queries (20 rated tables; 2 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search and multi-table joins (35 of 70). estimated $318.80/month.",
+   "weight": 0.397,
+   "monthly_cost_usd": 318.8,
+   "tables_analyzed": 50,
+   "tables_highly_suitable": 12,
+   "tables_suitable": 7,
+   "tables_marginal": 3,
+   "tables_not_suitable": 28,
+   "patterns_detected": 8,
+   "anti_patterns_detected": 3,
+   "aggregate_count": 0,
+   "schema_design_available": false,
+   "target_tables": 0,
+   "access_patterns": 0,
+   "pattern_groups": 0,
+   "assigned_queries_in_scope": 70,
+   "assignment_reason_summary": [
+    "utility/metadata statement \u2014 kept on source-compatible relational engine (Aurora MySQL) | DocumentDB lacks required capability: a utility or DDL statement; DynamoDB lacks required capability: a utility or DDL statement; ElastiCache lacks required capability: a utility or DDL statement; OpenSearch lacks required capability: a utility or DDL statement",
+    "reality check: consolidated from DocumentDB \u2192 Aurora MySQL (no unique value \u2014 DocumentDB scores 75.0, Aurora MySQL scores 73.0)",
+    "highest fit for Aurora MySQL"
+   ]
+  },
+  {
+   "target": "dynamodb",
+   "confidence_score": 45,
+   "pattern_score": null,
+   "complexity_score": null,
+   "performance_score": null,
+   "cost_score": null,
+   "migration_complexity_avg": "LOW",
+   "assigned_queries": 37,
+   "workload_percent": 34.6,
+   "analysis_confidence": 45,
+   "routed_confidence": 86,
+   "routed_confidence_basis": "owned_queries",
+   "routed_queries": 37,
+   "routed_tables": 20,
+   "routed_confidence_evidence": "table",
+   "routed_queries_without_table_evidence": 0,
+   "routed_lead": "key_value_lookups",
+   "routed_lead_count": 14,
+   "rationale": "86% mean fit across 37 queries (20 rated tables), led by key-value lookups (14 of 37). estimated $98.41/month.",
+   "weight": 0.469,
+   "monthly_cost_usd": 98.41,
+   "tables_analyzed": 50,
+   "tables_highly_suitable": 11,
+   "tables_suitable": 4,
+   "tables_marginal": 0,
+   "tables_not_suitable": 35,
+   "patterns_detected": 5,
+   "anti_patterns_detected": 2,
+   "aggregate_count": 41,
+   "schema_design_available": false,
+   "target_tables": 0,
+   "access_patterns": 0,
+   "pattern_groups": 0,
+   "assigned_queries_in_scope": 37,
+   "assignment_reason_summary": [
+    "highest fit for DynamoDB",
+    "reality check: DynamoDB is kept -- DocumentDB no longer qualifies for this query, so the earlier scores tie is resolved",
+    "reality check: consolidated from DocumentDB \u2192 DynamoDB (no unique value \u2014 DocumentDB scores 79.0, DynamoDB scores 78.0)"
+   ]
+  },
+  {
+   "target": "elasticache",
+   "confidence_score": 47,
+   "pattern_score": null,
+   "complexity_score": null,
+   "performance_score": null,
+   "cost_score": null,
+   "migration_complexity_avg": "LOW",
+   "assigned_queries": 0,
+   "workload_percent": 0.0,
+   "analysis_confidence": 47,
+   "routed_confidence": 37,
+   "routed_confidence_basis": "cached_reads",
+   "routed_queries": 20,
+   "routed_tables": 12,
+   "routed_confidence_evidence": "table",
+   "routed_queries_without_table_evidence": 0,
+   "routed_lead": "point_lookup",
+   "routed_lead_count": 19,
+   "rationale": "Cache layer for 20 hot reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 37% mean cache fit across 20 cached reads (12 rated tables). estimated $165.55/month (185.07 calls/s combined across these reads clears the 1 calls/s hot-read floor).",
+   "weight": 0.63,
+   "monthly_cost_usd": 165.55,
+   "tables_analyzed": 50,
+   "tables_highly_suitable": 7,
+   "tables_suitable": 7,
+   "tables_marginal": 5,
+   "tables_not_suitable": 31,
+   "patterns_detected": 4,
+   "anti_patterns_detected": 0,
+   "aggregate_count": 0,
+   "schema_design_available": false,
+   "target_tables": 0,
+   "access_patterns": 0,
+   "pattern_groups": 0,
+   "assigned_queries_in_scope": 0,
+   "assignment_reason_summary": [],
+   "role": "cache_layer",
+   "cache_overlay_queries": 20,
+   "cache_call_share_percent": 83.4,
+   "cache_overlay_owners": {
+    "aurora_mysql": 16,
+    "dynamodb": 4
+   },
+   "cache_calls_per_second": 185.07,
+   "cache_min_calls_per_second": 1.0
+  }
+ ],
+ "summary": "Analyzed 50 source tables and 107 query patterns across 3 target database(s). Workload split: Aurora MySQL handles 70 queries (65.4%), DynamoDB handles 37 queries (34.6%). Cache layer: ElastiCache fronts 20 hot reads (83.4% of calls) cache-aside and owns no queries. Estimated monthly cost: $582.76. 1 open migration risk (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: wordpress.wp_postmeta, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_term_taxonomy (+2 more). Other targets evaluated: DocumentDB (consolidated into Aurora MySQL by the reality check), OpenSearch (consolidated into Aurora MySQL by the reality check).",
+ "summary_deterministic": "Analyzed 50 source tables and 107 query patterns across 3 target database(s). Workload split: Aurora MySQL handles 70 queries (65.4%), DynamoDB handles 37 queries (34.6%). Cache layer: ElastiCache fronts 20 hot reads (83.4% of calls) cache-aside and owns no queries. Estimated monthly cost: $582.76. 1 open migration risk (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: wordpress.wp_postmeta, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_term_taxonomy (+2 more). Other targets evaluated: DocumentDB (consolidated into Aurora MySQL by the reality check), OpenSearch (consolidated into Aurora MySQL by the reality check).",
+ "summary_source": "deterministic",
+ "summary_validation_warnings": [],
+ "recommended_architecture": {
+  "databases": [
+   {
+    "service": "dynamodb",
+    "table_count": 0,
+    "rationale": "86% mean fit across 37 queries (20 rated tables), led by key-value lookups (14 of 37). estimated $98.41/month.",
+    "tables": [],
+    "confidence_score": 45,
+    "routed_confidence": 86
+   },
+   {
+    "service": "elasticache",
+    "table_count": 0,
+    "rationale": "Cache layer for 20 hot reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 37% mean cache fit across 20 cached reads (12 rated tables). estimated $165.55/month (185.07 calls/s combined across these reads clears the 1 calls/s hot-read floor).",
+    "tables": [],
+    "confidence_score": 47,
+    "routed_confidence": 37
+   }
+  ],
+  "architecture_type": "HYBRID_WITH_CACHE",
+  "rationale": "Hybrid architecture: Aurora MySQL retained as the relational core (65% of queries); DynamoDB for key-value access; ElastiCache for caching hot data. Schema design was not run, so no tables are allocated yet."
+ },
+ "table_mappings": [],
+ "tco_analysis": {
+  "current_monthly_cost": 0.0,
+  "current_cost_known": false,
+  "projected_monthly_cost": 582.76,
+  "savings_percent": 0.0,
+  "cost_breakdown": [
+   {
+    "database": "aurora_mysql",
+    "monthly_cost_usd": 318.8,
+    "pricing_mode": "on-demand"
+   },
+   {
+    "database": "dynamodb",
+    "monthly_cost_usd": 98.41,
+    "pricing_mode": "on-demand"
+   },
+   {
+    "database": "elasticache",
+    "monthly_cost_usd": 165.55,
+    "pricing_mode": "on-demand"
+   }
+  ],
+  "eliminated_engine_costs": null,
+  "retired_engine_savings": null,
+  "assumptions": [
+   "On-demand capacity mode for all target databases",
+   "Region: us-east-1",
+   "Current RDS cost estimated from instance class (actual billing may differ)",
+   "Does not include data transfer, backups, or global tables"
+  ]
+ },
+ "risk_assessment": {
+  "overall_risk_level": "HIGH",
+  "risks": [
+   {
+    "severity": "HIGH",
+    "description": "[dynamodb] Schema design gap: 18 queries assigned to DynamoDB have no in-scope access pattern: UPDATE `wp_woocommerce_api_keys` SET `last_access` = ? WHERE `key_id` = ?; SELECT `key_id` , `user_id` , `permissions` , `consumer_key` , `consumer_secr...; DELETE FROM `wp_options` WHERE `option_name` = ?; and 15 more (0% of queries resolved by schema design, 18 remaining)",
+    "risk_id": "RISK-001",
+    "risk_type": "MIGRATION_COMPLEXITY",
+    "affected_tables": [
+     "wordpress.wp_actionscheduler_logs",
+     "wordpress.wp_commentmeta",
+     "wordpress.wp_comments",
+     "wordpress.wp_options",
+     "wordpress.wp_termmeta",
+     "wordpress.wp_wc_reserved_stock",
+     "wordpress.wp_wc_tax_rate_classes",
+     "wordpress.wp_woocommerce_api_keys",
+     "wordpress.wp_woocommerce_downloadable_product_permissions"
+    ],
+    "mitigation": "Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+    "query_ids": [
+     "q001",
+     "q002",
+     "q003",
+     "q004",
+     "q005",
+     "q006",
+     "q007",
+     "q008",
+     "q009",
+     "q010",
+     "q011",
+     "q012",
+     "q013",
+     "q014",
+     "q015",
+     "q016",
+     "q017",
+     "q018"
+    ],
+    "coverage_gap": true
+   }
+  ],
+  "mitigation_strategies": [
+   "RISK-001 (HIGH, DynamoDB; wordpress.wp_actionscheduler_logs, wordpress.wp_commentmeta, wordpress.wp_comments and 6 more): Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+   "Add in-scope access patterns for the 18 queries the DynamoDB schema design does not serve (RISK-001), or route them to an engine that serves them.",
+   "Use blue-green deployment with rollback for the tables behind the HIGH risks: wordpress.wp_actionscheduler_logs, wordpress.wp_commentmeta, wordpress.wp_comments, wordpress.wp_options, wordpress.wp_termmeta, wordpress.wp_wc_reserved_stock, wordpress.wp_wc_tax_rate_classes, wordpress.wp_woocommerce_api_keys, wordpress.wp_woocommerce_downloadable_product_permissions.",
+   "After wave 1 (Aurora MySQL): compare the latency of 107 queries with their source baseline (weighted average 1.21 ms) and check the engine sustains the design rate of 97.7 requests/s before starting wave 2.",
+   "After wave 2 (ElastiCache): track the cache hit rate for the 20 hot reads it fronts on Aurora MySQL (83.4% of calls, 185.1 calls/s) and compare their latency with the source before starting wave 3.",
+   "After wave 3 (DynamoDB): compare the latency of 37 queries with their source baseline."
+  ],
+  "resolved_risks": [
+   {
+    "engine": "aurora_mysql",
+    "severity": "HIGH",
+    "description": "[aurora_mysql] Moved to DynamoDB: Single-row SELECT by primary key at very high frequency (>100 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora).",
+    "affected_tables": [
+     "wordpress.wp_options"
+    ],
+    "query_ids": [
+     "q010"
+    ],
+    "resolved_on": "dynamodb",
+    "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there"
+   },
+   {
+    "engine": "aurora_mysql",
+    "severity": "MEDIUM",
+    "description": "[aurora_mysql] Kept on Aurora MySQL because of a utility or DDL statement and multi-table joins on this table.",
+    "affected_tables": [
+     "wordpress.wp_comments",
+     "wordpress.wp_termmeta",
+     "wordpress.wp_wc_product_meta_lookup"
+    ],
+    "query_ids": [
+     "q019",
+     "q020",
+     "q021"
+    ],
+    "resolved_on": "aurora_mysql",
+    "reason": "Aurora MySQL is also required for a utility or DDL statement and multi-table joins on this table, so keeping it there is a deliberate routing decision, not an open risk; revisit DynamoDB for this table's simple key-value reads in a later wave if those other queries are retired or move too"
+   },
+   {
+    "engine": "aurora_mysql",
+    "severity": "MEDIUM",
+    "description": "[aurora_mysql] Moved to DynamoDB: Table with no foreign keys and no join participation \u2014 all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it (Amazon Aurora User Guide, What is Amazon Aurora).",
+    "affected_tables": [
+     "wordpress.wp_actionscheduler_logs",
+     "wordpress.wp_commentmeta",
+     "wordpress.wp_comments",
+     "wordpress.wp_options",
+     "wordpress.wp_termmeta",
+     "wordpress.wp_wc_reserved_stock",
+     "wordpress.wp_wc_tax_rate_classes",
+     "wordpress.wp_woocommerce_api_keys",
+     "wordpress.wp_woocommerce_downloadable_product_permissions"
+    ],
+    "query_ids": [
+     "q001",
+     "q002",
+     "q003",
+     "q004",
+     "q005",
+     "q006",
+     "q007",
+     "q008",
+     "q009",
+     "q010",
+     "q011",
+     "q012",
+     "q013",
+     "q014",
+     "q015",
+     "q016",
+     "q017",
+     "q018"
+    ],
+    "resolved_on": "dynamodb",
+    "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there"
+   },
+   {
+    "engine": "aurora_mysql",
+    "severity": "MEDIUM",
+    "description": "[aurora_mysql] Kept on Aurora MySQL because of a utility or DDL statement on this table.",
+    "affected_tables": [
+     "wordpress.wp_wc_product_meta_lookup"
+    ],
+    "query_ids": [
+     "q021"
+    ],
+    "resolved_on": "aurora_mysql",
+    "reason": "Aurora MySQL is also required for a utility or DDL statement on this table, so keeping it there is a deliberate routing decision, not an open risk; revisit DynamoDB for this table's simple key-value reads in a later wave if those other queries are retired or move too"
+   },
+   {
+    "engine": "aurora_mysql",
+    "severity": "MEDIUM",
+    "description": "[aurora_mysql] Moved to DynamoDB: Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora).",
+    "affected_tables": [
+     "wordpress.wp_actionscheduler_logs",
+     "wordpress.wp_commentmeta",
+     "wordpress.wp_wc_reserved_stock",
+     "wordpress.wp_wc_tax_rate_classes",
+     "wordpress.wp_woocommerce_api_keys",
+     "wordpress.wp_woocommerce_downloadable_product_permissions"
+    ],
+    "query_ids": [
+     "q001",
+     "q002",
+     "q004",
+     "q005",
+     "q009",
+     "q012",
+     "q015"
+    ],
+    "resolved_on": "dynamodb",
+    "reason": "the Aurora MySQL analysis recommended DynamoDB for these queries and the assignment moved them there"
+   },
+   {
+    "engine": "dynamodb",
+    "severity": "HIGH",
+    "description": "[dynamodb] GROUP BY, HAVING or an aggregate over many rows. DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query).",
+    "affected_tables": [
+     "wordpress.wp_comments",
+     "wordpress.wp_postmeta",
+     "wordpress.wp_posts",
+     "wordpress.wp_term_relationships",
+     "wordpress.wp_term_taxonomy",
+     "wordpress.wp_terms",
+     "wordpress.wp_wc_admin_notes",
+     "wordpress.wp_woocommerce_order_itemmeta",
+     "wordpress.wp_woocommerce_order_items"
+    ],
+    "query_ids": [
+     "q022",
+     "q023",
+     "q024",
+     "q025",
+     "q026",
+     "q027",
+     "q028",
+     "q029",
+     "q020",
+     "q030",
+     "q031",
+     "q032",
+     "q033",
+     "q034",
+     "q035",
+     "q036",
+     "q037",
+     "q038"
+    ],
+    "resolved_on": "aurora_mysql",
+    "reason": "the queries run as SQL on Aurora MySQL"
+   }
+  ]
+ },
+ "schema_designs": {
+  "aurora_mysql": {
+   "status": "not_available"
+  },
+  "dynamodb": {
+   "status": "not_available"
+  },
+  "elasticache": {
+   "status": "not_available"
+  }
+ },
+ "trade_offs": [
+  {
+   "description": "Consolidated 23 queries from DocumentDB \u2192 Aurora MySQL: DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "impact": "Consolidated 23 queries from DocumentDB \u2192 Aurora MySQL: DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "source_tables": [],
+   "target_tables": [],
+   "query_ids": [],
+   "engine": "reality-check"
+  },
+  {
+   "description": "Consolidated 5 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+   "impact": "Consolidated 5 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+   "source_tables": [],
+   "target_tables": [],
+   "query_ids": [],
+   "engine": "reality-check"
+  },
+  {
+   "description": "Consolidated 1 query from OpenSearch \u2192 Aurora MySQL: OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL. No saving is claimed: OpenSearch was never justified by the workload -- none of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it.",
+   "impact": "Consolidated 1 query from OpenSearch \u2192 Aurora MySQL: OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL. No saving is claimed: OpenSearch was never justified by the workload -- none of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it.",
+   "source_tables": [],
+   "target_tables": [],
+   "query_ids": [],
+   "engine": "reality-check"
+  },
+  {
+   "description": "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use Aurora MySQL for all write operations and DynamoDB for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+   "impact": "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use Aurora MySQL for all write operations and DynamoDB for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+   "source_tables": [],
+   "target_tables": [],
+   "query_ids": [],
+   "engine": "reality-check"
+  },
+  {
+   "description": "Recommended pattern: Event-Driven Sync. Use database change streams or event logs to propagate changes between databases asynchronously. Each database maintains its own optimized representation of the data.",
+   "impact": "Recommended pattern: Event-Driven Sync. Use database change streams or event logs to propagate changes between databases asynchronously. Each database maintains its own optimized representation of the data.",
+   "source_tables": [],
+   "target_tables": [],
+   "query_ids": [],
+   "engine": "reality-check"
+  }
+ ],
+ "assignment_summary": {
+  "version": 2,
+  "status": "auto_generated",
+  "source": "reality_check",
+  "query_count": 107,
+  "in_scope_count": 107,
+  "co_dependency_groups": 1,
+  "tie_unresolved_count": 0,
+  "aurora_engine_choice": null
+ },
+ "cache_overlay": {
+  "engine": "elasticache",
+  "query_count": 20,
+  "calls_per_second": 185.07,
+  "call_share_percent": 83.4,
+  "owners": {
+   "aurora_mysql": 16,
+   "dynamodb": 4
+  },
+  "patterns": {
+   "point_lookup": 19,
+   "reference_read": 1
+  },
+  "min_calls_per_second": 1.0,
+  "max_rows_avg": 100.0,
+  "dropped_query_ids": [],
+  "notes": [],
+  "safety_net_notes": []
+ },
+ "considered_not_recommended": [
+  {
+   "engine": "documentdb",
+   "absorbed_by": "aurora_mysql"
+  },
+  {
+   "engine": "opensearch",
+   "absorbed_by": "aurora_mysql"
+  }
+ ],
+ "migration_waves": [
+  {
+   "wave": 1,
+   "title": "Move to Aurora MySQL",
+   "engines": [
+    "aurora_mysql"
+   ],
+   "moves_from": [
+    "mysql"
+   ],
+   "serves_from": [],
+   "fronts": null,
+   "homogeneity": "homogeneous",
+   "tables": [
+    "wordpress.wp_actionscheduler_actions",
+    "wordpress.wp_actionscheduler_claims",
+    "wordpress.wp_actionscheduler_groups",
+    "wordpress.wp_actionscheduler_logs",
+    "wordpress.wp_commentmeta",
+    "wordpress.wp_comments",
+    "wordpress.wp_links",
+    "wordpress.wp_options",
+    "wordpress.wp_postmeta",
+    "wordpress.wp_posts",
+    "wordpress.wp_term_relationships",
+    "wordpress.wp_term_taxonomy",
+    "wordpress.wp_termmeta",
+    "wordpress.wp_terms",
+    "wordpress.wp_usermeta",
+    "wordpress.wp_users",
+    "wordpress.wp_wc_admin_note_actions",
+    "wordpress.wp_wc_admin_notes",
+    "wordpress.wp_wc_category_lookup",
+    "wordpress.wp_wc_customer_lookup",
+    "wordpress.wp_wc_download_log",
+    "wordpress.wp_wc_order_addresses",
+    "wordpress.wp_wc_order_coupon_lookup",
+    "wordpress.wp_wc_order_operational_data",
+    "wordpress.wp_wc_order_product_lookup",
+    "wordpress.wp_wc_order_stats",
+    "wordpress.wp_wc_order_tax_lookup",
+    "wordpress.wp_wc_orders",
+    "wordpress.wp_wc_orders_meta",
+    "wordpress.wp_wc_product_attributes_lookup",
+    "wordpress.wp_wc_product_download_directories",
+    "wordpress.wp_wc_product_meta_lookup",
+    "wordpress.wp_wc_rate_limits",
+    "wordpress.wp_wc_reserved_stock",
+    "wordpress.wp_wc_tax_rate_classes",
+    "wordpress.wp_wc_webhooks",
+    "wordpress.wp_woocommerce_api_keys",
+    "wordpress.wp_woocommerce_attribute_taxonomies",
+    "wordpress.wp_woocommerce_downloadable_product_permissions",
+    "wordpress.wp_woocommerce_log",
+    "wordpress.wp_woocommerce_order_itemmeta",
+    "wordpress.wp_woocommerce_order_items",
+    "wordpress.wp_woocommerce_payment_tokenmeta",
+    "wordpress.wp_woocommerce_payment_tokens",
+    "wordpress.wp_woocommerce_sessions",
+    "wordpress.wp_woocommerce_shipping_zone_locations",
+    "wordpress.wp_woocommerce_shipping_zone_methods",
+    "wordpress.wp_woocommerce_shipping_zones",
+    "wordpress.wp_woocommerce_tax_rate_locations",
+    "wordpress.wp_woocommerce_tax_rates"
+   ],
+   "table_count": 50,
+   "table_groups": null,
+   "table_owners": null,
+   "table_counts_by_engine": null,
+   "owned_counts_by_engine": null,
+   "query_count": 70,
+   "cutover_query_count": 107,
+   "workload_share_percent": 65.4,
+   "share_basis": "queries",
+   "rationale": "The whole source database (MySQL 8.0.45) moves 1:1 to Aurora MySQL: same engine family. The collector reports engine and version only; feature compatibility is not assessed here. 70 queries (65.4%) remain on Aurora MySQL once later waves have moved their share; later waves move subsets of these 50 tables and views out of Aurora MySQL.",
+   "gate": "Schema and data parity validated against the source database before cutover; decommission the legacy source once replication lag is zero."
+  },
+  {
+   "wave": 2,
+   "title": "Cache hot reads with ElastiCache",
+   "engines": [
+    "elasticache"
+   ],
+   "moves_from": [],
+   "serves_from": [],
+   "fronts": "aurora_mysql",
+   "homogeneity": null,
+   "tables": [],
+   "table_count": 0,
+   "table_groups": null,
+   "table_owners": null,
+   "table_counts_by_engine": null,
+   "owned_counts_by_engine": null,
+   "query_count": 20,
+   "cutover_query_count": null,
+   "workload_share_percent": 83.4,
+   "share_basis": "calls",
+   "rationale": "20 hot reads (83.4% of calls), cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads: no data migration, fully reversible. It takes the read pressure off before the data migrations that follow. These reads belong to queries that move in wave 1 (Aurora MySQL) and wave 3 (DynamoDB); this share overlaps the owner shares, which alone sum to 100%.",
+   "gate": "Cache hit rate and invalidation verified against Aurora MySQL."
+  },
+  {
+   "wave": 3,
+   "title": "Move key-value and point-lookup queries to DynamoDB",
+   "engines": [
+    "dynamodb"
+   ],
+   "moves_from": [
+    "aurora_mysql"
+   ],
+   "serves_from": [],
+   "fronts": null,
+   "homogeneity": null,
+   "tables": [
+    "wordpress.wp_actionscheduler_actions",
+    "wordpress.wp_actionscheduler_groups",
+    "wordpress.wp_actionscheduler_logs",
+    "wordpress.wp_commentmeta",
+    "wordpress.wp_comments",
+    "wordpress.wp_options",
+    "wordpress.wp_postmeta",
+    "wordpress.wp_posts",
+    "wordpress.wp_term_relationships",
+    "wordpress.wp_term_taxonomy",
+    "wordpress.wp_termmeta",
+    "wordpress.wp_terms",
+    "wordpress.wp_usermeta",
+    "wordpress.wp_users",
+    "wordpress.wp_wc_reserved_stock",
+    "wordpress.wp_wc_tax_rate_classes",
+    "wordpress.wp_woocommerce_api_keys",
+    "wordpress.wp_woocommerce_downloadable_product_permissions",
+    "wordpress.wp_woocommerce_order_itemmeta",
+    "wordpress.wp_woocommerce_order_items"
+   ],
+   "table_count": 20,
+   "table_groups": [
+    {
+     "tables": [
+      "wordpress.wp_actionscheduler_actions",
+      "wordpress.wp_actionscheduler_groups",
+      "wordpress.wp_actionscheduler_logs",
+      "wordpress.wp_commentmeta",
+      "wordpress.wp_comments",
+      "wordpress.wp_options",
+      "wordpress.wp_postmeta",
+      "wordpress.wp_posts",
+      "wordpress.wp_term_relationships",
+      "wordpress.wp_term_taxonomy",
+      "wordpress.wp_termmeta",
+      "wordpress.wp_terms",
+      "wordpress.wp_usermeta",
+      "wordpress.wp_users",
+      "wordpress.wp_wc_reserved_stock",
+      "wordpress.wp_wc_tax_rate_classes",
+      "wordpress.wp_woocommerce_api_keys",
+      "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "wordpress.wp_woocommerce_order_itemmeta",
+      "wordpress.wp_woocommerce_order_items"
+     ],
+     "query_count": 37,
+     "kind": "independent"
+    }
+   ],
+   "table_owners": [
+    {
+     "table": "wordpress.wp_actionscheduler_actions",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_actionscheduler_groups",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_actionscheduler_logs",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_comments",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_postmeta",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_posts",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_term_relationships",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_term_taxonomy",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_terms",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_usermeta",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_users",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_wc_reserved_stock",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_woocommerce_order_itemmeta",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    },
+    {
+     "table": "wordpress.wp_woocommerce_order_items",
+     "owner": "aurora_mysql",
+     "sync": "CDC"
+    }
+   ],
+   "table_counts_by_engine": null,
+   "owned_counts_by_engine": null,
+   "query_count": 37,
+   "cutover_query_count": null,
+   "workload_share_percent": 34.6,
+   "share_basis": "queries",
+   "rationale": "37 key-value and point-lookup queries (34.6% of query patterns) across 1 table group, respecting co-dependent tables where possible: the pattern DynamoDB fits best, and the smallest-blast-radius data migration available once the cache wave has absorbed the read pressure.",
+   "gate": "Dual-write/backfill validated and query parity confirmed per table group. 3 tables (wordpress.wp_options, wordpress.wp_termmeta, wordpress.wp_woocommerce_api_keys) stay dual-read by Aurora MySQL queries, which remain on Aurora MySQL; DynamoDB owns them, so keep the Aurora MySQL copy in sync from DynamoDB via CDC. 24 queries read 15 tables (wordpress.wp_actionscheduler_actions, wordpress.wp_actionscheduler_groups, wordpress.wp_actionscheduler_logs, wordpress.wp_comments, wordpress.wp_postmeta, wordpress.wp_posts, wordpress.wp_term_relationships, wordpress.wp_term_taxonomy, wordpress.wp_terms, wordpress.wp_usermeta, wordpress.wp_users, wordpress.wp_wc_reserved_stock, wordpress.wp_woocommerce_downloadable_product_permissions, wordpress.wp_woocommerce_order_itemmeta, wordpress.wp_woocommerce_order_items) Aurora MySQL owns (wave 1) and keeps owning; keep a DynamoDB copy of them in sync via CDC."
+  }
+ ],
+ "unresolved_names": {
+  "count": 0,
+  "names": []
+ },
+ "source_table_count": 50,
+ "tied_queries": [],
+ "facts": {
+  "projected_monthly_cost_usd": 582.76,
+  "source_table_count": 50,
+  "source_view_count": 0,
+  "engine_count": 3,
+  "migration_wave_count": 3,
+  "engines": [
+   {
+    "engine": "aurora_mysql",
+    "role": "Retained",
+    "workload_percent": 65.4,
+    "cached_queries": null,
+    "cached_call_share_percent": null,
+    "engine_source_tables": null,
+    "shared_source_tables": null,
+    "target_objects": null,
+    "tables_migrate": 0,
+    "monthly_cost_usd": 318.8,
+    "rationale": "73% mean fit across 70 queries (20 rated tables; 2 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search and multi-table joins (35 of 70). estimated $318.80/month.",
+    "signal_overrides": []
+   },
+   {
+    "engine": "dynamodb",
+    "role": "Migration target",
+    "workload_percent": 34.6,
+    "cached_queries": null,
+    "cached_call_share_percent": null,
+    "engine_source_tables": 20,
+    "shared_source_tables": null,
+    "target_objects": null,
+    "tables_migrate": 5,
+    "monthly_cost_usd": 98.41,
+    "rationale": "86% mean fit across 37 queries (20 rated tables), led by key-value lookups (14 of 37). estimated $98.41/month.",
+    "signal_overrides": []
+   },
+   {
+    "engine": "elasticache",
+    "role": "Cache layer",
+    "workload_percent": null,
+    "cached_queries": 20,
+    "cached_call_share_percent": 83.4,
+    "engine_source_tables": null,
+    "shared_source_tables": null,
+    "target_objects": null,
+    "tables_migrate": 0,
+    "monthly_cost_usd": 165.55,
+    "rationale": "Cache layer for 20 hot reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 37% mean cache fit across 20 cached reads (12 rated tables). estimated $165.55/month (185.07 calls/s combined across these reads clears the 1 calls/s hot-read floor).",
+    "signal_overrides": []
+   }
+  ],
+  "tables_migrate": 5,
+  "workload_total_percent": 100.0,
+  "engine_cost_total_usd": 582.76,
+  "table_basis": {
+   "basis_table_count": 50,
+   "mapped_tables": 0,
+   "design_coverage": "none",
+   "designed_engines": [],
+   "pending_engines": [
+    "dynamodb"
+   ],
+   "mapped_tables_by_role": {}
+  },
+  "waves": [
+   {
+    "wave": 1,
+    "engines": [
+     "aurora_mysql"
+    ],
+    "migrating": false,
+    "served_tables": 50,
+    "moving_tables": null,
+    "kept_in_sync_tables": null,
+    "moving_by_engine": null,
+    "served_by_engine": null,
+    "kept_in_sync": [],
+    "shared_in_wave": [],
+    "views": 0,
+    "tables_only": 50,
+    "critical_high_risks": 0
+   },
+   {
+    "wave": 2,
+    "engines": [
+     "elasticache"
+    ],
+    "migrating": false,
+    "served_tables": 0,
+    "moving_tables": 0,
+    "kept_in_sync_tables": 0,
+    "moving_by_engine": null,
+    "served_by_engine": null,
+    "kept_in_sync": [],
+    "shared_in_wave": [],
+    "views": null,
+    "tables_only": null,
+    "critical_high_risks": 0
+   },
+   {
+    "wave": 3,
+    "engines": [
+     "dynamodb"
+    ],
+    "migrating": true,
+    "served_tables": 20,
+    "moving_tables": 5,
+    "kept_in_sync_tables": 15,
+    "moving_by_engine": {
+     "dynamodb": 5
+    },
+    "served_by_engine": {
+     "dynamodb": 20
+    },
+    "kept_in_sync": [
+     {
+      "table": "wordpress.wp_actionscheduler_actions",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_actionscheduler_groups",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_actionscheduler_logs",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_comments",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_postmeta",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_posts",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_term_relationships",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_term_taxonomy",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_terms",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_usermeta",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_users",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_wc_reserved_stock",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_woocommerce_downloadable_product_permissions",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_woocommerce_order_itemmeta",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     },
+     {
+      "table": "wordpress.wp_woocommerce_order_items",
+      "owner": "aurora_mysql",
+      "sync": "CDC"
+     }
+    ],
+    "shared_in_wave": [],
+    "views": null,
+    "tables_only": null,
+    "critical_high_risks": 1
+   }
+  ],
+  "no_migration": {
+   "engines": [
+    "aurora_mysql",
+    "elasticache"
+   ],
+   "workload_percent": 65.4,
+   "cached_call_share_percent": 83.4,
+   "critical_high_risks": 0
+  },
+  "removed_engines": [
+   {
+    "engine": "documentdb",
+    "moved_to": [
+     "aurora_mysql",
+     "dynamodb"
+    ],
+    "reasons": [
+     "Consolidated 23 queries from DocumentDB \u2192 Aurora MySQL: DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+     "Consolidated 5 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB. DocumentDB does not run today, so no saving is claimed."
+    ]
+   },
+   {
+    "engine": "opensearch",
+    "moved_to": [
+     "aurora_mysql"
+    ],
+    "reasons": [
+     "Consolidated 1 query from OpenSearch \u2192 Aurora MySQL: OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL. No saving is claimed: OpenSearch was never justified by the workload -- none of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it."
+    ]
+   }
+  ],
+  "reality_check_trade_offs": [
+   {
+    "index": 0,
+    "from_engine": "documentdb",
+    "to_engine": "aurora_mysql",
+    "reversed": false,
+    "queries_moved_back": 0,
+    "queries_still_moved": 23,
+    "description_now": null
+   },
+   {
+    "index": 1,
+    "from_engine": "documentdb",
+    "to_engine": "dynamodb",
+    "reversed": false,
+    "queries_moved_back": 0,
+    "queries_still_moved": 5,
+    "description_now": null
+   },
+   {
+    "index": 2,
+    "from_engine": "opensearch",
+    "to_engine": "aurora_mysql",
+    "reversed": false,
+    "queries_moved_back": 0,
+    "queries_still_moved": 1,
+    "description_now": null
+   },
+   {
+    "index": 3,
+    "from_engine": null,
+    "to_engine": null,
+    "reversed": false,
+    "queries_moved_back": 0,
+    "queries_still_moved": null,
+    "description_now": null
+   },
+   {
+    "index": 4,
+    "from_engine": null,
+    "to_engine": null,
+    "reversed": false,
+    "queries_moved_back": 0,
+    "queries_still_moved": null,
+    "description_now": null
+   }
+  ],
+  "reality_check_decisions": [
+   {
+    "index": 0,
+    "kind": "consolidation",
+    "engine": "documentdb",
+    "title": "Consolidated 23 queries from DocumentDB \u2192 Aurora MySQL",
+    "detail": "DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+    "query_ids": [],
+    "with_removed_engine": true
+   },
+   {
+    "index": 1,
+    "kind": "consolidation",
+    "engine": "documentdb",
+    "title": "Consolidated 5 queries from DocumentDB \u2192 DynamoDB",
+    "detail": "DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+    "query_ids": [],
+    "with_removed_engine": true
+   },
+   {
+    "index": 2,
+    "kind": "consolidation",
+    "engine": "opensearch",
+    "title": "Consolidated 1 query from OpenSearch \u2192 Aurora MySQL",
+    "detail": "OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL. No saving is claimed: OpenSearch was never justified by the workload -- none of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it.",
+    "query_ids": [],
+    "with_removed_engine": true
+   },
+   {
+    "index": 3,
+    "kind": "pattern",
+    "engine": null,
+    "title": "Recommended pattern: Command Query Responsibility Segregation (CQRS)",
+    "detail": "Use Aurora MySQL for all write operations and DynamoDB for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+    "query_ids": [],
+    "with_removed_engine": false
+   },
+   {
+    "index": 4,
+    "kind": "pattern",
+    "engine": null,
+    "title": "Recommended pattern: Event-Driven Sync",
+    "detail": "Use database change streams or event logs to propagate changes between databases asynchronously. Each database maintains its own optimized representation of the data.",
+    "query_ids": [],
+    "with_removed_engine": false
+   }
+  ],
+  "trade_off_count": 5,
+  "open_risk_count": 1,
+  "open_risks_by_severity": {
+   "HIGH": 1
+  },
+  "critical_high_risk_count": 1,
+  "critical_high_risks_by_engine": {
+   "dynamodb": 1
+  },
+  "critical_high_risk_types": [
+   "MIGRATION_COMPLEXITY"
+  ],
+  "critical_high_root_cause": "MIGRATION_COMPLEXITY",
+  "open_risks_by_type": {
+   "migration complexity": 1
+  },
+  "resolved_risk_count": 6,
+  "tied_query_count": 0,
+  "post_schema_reroute_count": 0,
+  "query_trace": {
+   "has_ledger": true,
+   "traced_query_count": 107,
+   "listed_query_count": 31,
+   "full_trace_cap": 200,
+   "full_trace_count": 31,
+   "not_in_full_count": 0,
+   "moved_query_count": 29,
+   "ever_tied_query_count": 2,
+   "open_tie_query_count": 0,
+   "overridden_query_count": 0,
+   "pinned_query_count": 0,
+   "unlisted_query_count": 76,
+   "listed_queries": [
+    {
+     "query_id": "q039",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q040",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q041",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q002",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q042",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q043",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q044",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q045",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q005",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q046",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q047",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q007",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q048",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q049",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q028",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q050",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q051",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q029",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q052",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q020",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q053",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q033",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q034",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q054",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q055",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q035",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q056",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q057",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q058",
+     "moved": true,
+     "tied": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q059",
+     "moved": false,
+     "tied": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    },
+    {
+     "query_id": "q060",
+     "moved": false,
+     "tied": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "in_full": true
+    }
+   ],
+   "unlisted_rules": [
+    {
+     "rule": "highest_score",
+     "label": "highest score",
+     "rule_query_count": 54
+    },
+    {
+     "rule": "group.mean",
+     "label": "co-dependency group",
+     "rule_query_count": 15
+    },
+    {
+     "rule": "tie.source_compatible",
+     "label": "tie settled by source compatibility",
+     "rule_query_count": 7
+    }
+   ]
+  },
+  "close_calls": {
+   "margin_points": 5.0,
+   "close_call_query_count": 16,
+   "settled_tie_count": 6,
+   "engine_pairs": [
+    {
+     "engine": "aurora_mysql",
+     "alternative": "dynamodb",
+     "pair_query_count": 12,
+     "exact_tie_count": 6,
+     "group_mean_count": 0,
+     "min_gap": 0.0,
+     "max_gap": 4.0,
+     "query_ids": [
+      "q042",
+      "q048",
+      "q044",
+      "q052",
+      "q053"
+     ],
+     "more_query_count": 13
+    },
+    {
+     "engine": "dynamodb",
+     "alternative": "aurora_mysql",
+     "pair_query_count": 4,
+     "exact_tie_count": 0,
+     "group_mean_count": 0,
+     "min_gap": 1.0,
+     "max_gap": 2.0,
+     "query_ids": [
+      "q047",
+      "q059",
+      "q050",
+      "q060"
+     ],
+     "more_query_count": 0
+    }
+   ]
+  },
+  "unservable": {
+   "unservable_query_count": 0,
+   "fallback_query_count": 0,
+   "gated_everywhere_query_count": 0,
+   "unservable_queries": [],
+   "more_unservable_count": 0
+  },
+  "access_pattern_totals": {
+   "owned_pattern_count": 0,
+   "cache_layer_pattern_count": 0,
+   "listed_pattern_count": 0
+  }
+ },
+ "post_schema_reroutes": [],
+ "reality_check": {
+  "consolidations": [
+   {
+    "from_engine": "documentdb",
+    "to_engine": "aurora_mysql",
+    "query_count": 23,
+    "reason": "DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL",
+    "saved_cost_estimate": 0.0,
+    "removal_saving_claimed": false,
+    "action": "full",
+    "queries_retained": [],
+    "retention_reason": null,
+    "workload_justified": null,
+    "moved_query_ids": [
+     "q039",
+     "q040",
+     "q041",
+     "q042",
+     "q043",
+     "q044",
+     "q045",
+     "q046",
+     "q048",
+     "q049",
+     "q028",
+     "q051",
+     "q029",
+     "q052",
+     "q020",
+     "q053",
+     "q033",
+     "q034",
+     "q054",
+     "q055",
+     "q056",
+     "q057",
+     "q058"
+    ],
+    "moved_back_query_ids": []
+   },
+   {
+    "from_engine": "documentdb",
+    "to_engine": "dynamodb",
+    "query_count": 5,
+    "reason": "DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB",
+    "saved_cost_estimate": 0.0,
+    "removal_saving_claimed": false,
+    "action": "full",
+    "queries_retained": [],
+    "retention_reason": null,
+    "workload_justified": null,
+    "moved_query_ids": [
+     "q002",
+     "q005",
+     "q047",
+     "q007",
+     "q050"
+    ],
+    "moved_back_query_ids": []
+   },
+   {
+    "from_engine": "opensearch",
+    "to_engine": "aurora_mysql",
+    "query_count": 1,
+    "reason": "OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL",
+    "saved_cost_estimate": 0.0,
+    "removal_saving_claimed": false,
+    "action": "full",
+    "queries_retained": [],
+    "retention_reason": null,
+    "workload_justified": false,
+    "moved_query_ids": [
+     "q035"
+    ],
+    "moved_back_query_ids": []
+   }
+  ],
+  "architectural_patterns": [
+   {
+    "name": "Command Query Responsibility Segregation (CQRS)",
+    "description": "Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+    "when": "One engine handles most writes and another handles reads/search/analytics",
+    "example": "DynamoDB handles all CRUD operations (writes + simple reads). OpenSearch serves as a read-optimized view for full-text search, faceted filtering, and analytics queries. Data flows from DynamoDB to OpenSearch via zero-ETL integration.",
+    "applies_to": {
+     "write_engine": "aurora_mysql",
+     "read_engines": [
+      "dynamodb"
+     ]
+    }
+   },
+   {
+    "name": "Event-Driven Sync",
+    "description": "Use database change streams or event logs to propagate changes between databases asynchronously. Each database maintains its own optimized representation of the data.",
+    "when": "Multiple engines need the same data in different shapes",
+    "example": "DynamoDB Streams captures all item changes. A Lambda function transforms and routes changes to OpenSearch (for search) and ElastiCache (for leaderboards). Each consumer shapes the data for its specific access patterns.",
+    "applies_to": {
+     "source_engine": "aurora_mysql",
+     "target_engines": [
+      "dynamodb"
+     ]
+    }
+   }
+  ],
+  "recommendations": [
+   "Consolidated 23 queries from DocumentDB \u2192 Aurora MySQL: DocumentDB provides no unique capabilities \u2014 23 queries can be served by Aurora MySQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "Consolidated 5 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities \u2014 5 queries can be served by DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+   "Consolidated 1 query from OpenSearch \u2192 Aurora MySQL: OpenSearch provides no unique capabilities \u2014 1 queries can be served by Aurora MySQL. No saving is claimed: OpenSearch was never justified by the workload -- none of its first-assignment queries clear the real-search-depth plus traffic-or-result-size floor a standing deployment needs, so no infrastructure cost was ever justified for it.",
+   "Recommended pattern: Command Query Responsibility Segregation (CQRS). Use Aurora MySQL for all write operations and DynamoDB for specialized reads. Separate write operations (commands) from read operations (queries) across different databases. The write database is optimized for transactional consistency, while the read database is optimized for query performance and flexibility.",
+   "Recommended pattern: Event-Driven Sync. Use database change streams or event logs to propagate changes between databases asynchronously. Each database maintains its own optimized representation of the data."
+  ],
+  "before_distribution": {
+   "dynamodb": 32,
+   "aurora_mysql": 46,
+   "documentdb": 28,
+   "opensearch": 1
+  },
+  "after_distribution": {
+   "dynamodb": 37,
+   "aurora_mysql": 70
+  },
+  "sweep_decisions": []
+ }
+}

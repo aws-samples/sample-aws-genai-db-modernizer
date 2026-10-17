@@ -14,7 +14,7 @@ from typing import Any
 
 from ci.llm import judge_facts
 from src.report.renderers import render_engineering_report_md, resolve_migration_waves
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 STORED_WAVES = [
     {
@@ -210,10 +210,10 @@ class TestResolveMigrationWaves:
         assert [w["wave"] for w in waves] == list(range(1, len(waves) + 1))
 
 
-class TestPdfReportRoadmap:
+class TestPortedMdRoadmap:
     def test_shows_every_wave_with_its_rationale_and_gate(self):
-        text = pdf_text(_report_with_waves())
-        assert "Migration wave plan" in text
+        text = engineering_text(_report_with_waves())
+        assert "Migration roadmap (3 waves)" in text
         assert "Wave 1: Cache hot reads with ElastiCache" in text
         assert "Wave 2: Move key-value and point-lookup queries to DynamoDB" in text
         assert "Wave 3: Keep the rest on Aurora MySQL" in text
@@ -240,7 +240,7 @@ class TestPdfReportRoadmap:
         rep["cache_overlay"] = None
         rep["ranking"] = []
         assert "## Migration roadmap" not in render_engineering_report_md(rep)
-        assert "Wave 1:" not in pdf_text(rep)
+        assert "Wave 1:" not in engineering_text(rep)
 
 
 class TestEngineeringReportRoadmap:
@@ -337,18 +337,18 @@ def _cache_section(md: str) -> str:
 class TestReviewFindings324:
     """Fixes from the independent review of PR #321's merge."""
 
-    def test_pdf_states_wave_1_share_as_the_end_state(self):
+    def test_md_states_wave_1_share_as_the_end_state(self):
         # Finding 2: wave 1's headline says the whole workload runs on
         # Aurora at cutover, and names the end-state remainder explicitly --
         # not just "5 queries (4.7%)", which reads as if only 5 queries ever
         # touch Aurora.
-        text = pdf_text(_report_aurora_first_no_schema_design())
+        text = engineering_text(_report_aurora_first_no_schema_design())
         assert "all 107 queries at cutover" in text
         assert "5 (4.7%) remain on Aurora MySQL at the end" in text
 
-    def test_pdf_says_tables_and_views_for_wave_1(self):
+    def test_md_says_tables_and_views_for_wave_1(self):
         # Finding 4: wave 1's table count includes views; say so.
-        text = pdf_text(_report_aurora_first_no_schema_design())
+        text = engineering_text(_report_aurora_first_no_schema_design())
         assert "50 source tables and views" in text
 
     def test_engineering_md_states_wave_1_share_as_the_end_state(self):
@@ -380,7 +380,7 @@ class TestReviewFindings324:
 
     def test_suggested_path_note_uses_an_em_dash_not_ascii_double_hyphen(self):
         # Finding 9.
-        text = pdf_text(_report_aurora_first_no_schema_design())
+        text = engineering_text(_report_aurora_first_no_schema_design())
         md = render_engineering_report_md(_report_aurora_first_no_schema_design())
         assert "One suggested adoption path, not the only one — to modernize" in text
         assert "One suggested adoption path, not the only one — to modernize" in md

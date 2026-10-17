@@ -385,7 +385,7 @@ describe('resolveCostBreakdown (#358 Results page "Cost breakdown" + "Projected 
       REPORT_FIXTURE.cache_overlay
     );
     expect(total).toBe(823.72);
-    // Matches the PDF report / chat total: DynamoDB + Aurora MySQL + OpenSearch + ElastiCache.
+    // Matches the executive report / chat total: DynamoDB + Aurora MySQL + OpenSearch + ElastiCache.
     expect(total).toBeCloseTo(98.41 + 318.8 + 240.96 + 165.55, 2);
   });
 

@@ -9,7 +9,7 @@ states savings.
 from __future__ import annotations
 
 from src.report.renderers import render_engineering_report_md
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import executive_text
 
 RANKING = [{"target": "aurora_mysql", "workload_percent": 100.0, "confidence_score": 80}]
 
@@ -30,7 +30,7 @@ def _report(tco: dict) -> dict:
     }
 
 
-class TestPdfReportCostBaseline:
+class TestExecutiveReportCostBaseline:
     def test_unknown_baseline_says_so_not_zero_dollars(self) -> None:
         tco = {
             "current_monthly_cost": 0.0,
@@ -39,7 +39,7 @@ class TestPdfReportCostBaseline:
             "savings_percent": 0,
             "cost_breakdown": [],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "Current monthly (source): source cost not provided" in text
         assert "Savings: not available" in text
         assert "Current monthly (source): $0.00" not in text
@@ -53,7 +53,7 @@ class TestPdfReportCostBaseline:
             "savings_percent": 75.8,
             "cost_breakdown": [],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "$500.00" in text
         assert "75.8%" in text
         assert "source cost not provided" not in text
@@ -68,7 +68,7 @@ class TestPdfReportCostBaseline:
             "savings_percent": 75.8,
             "cost_breakdown": [],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "$500.00" in text
 
     def test_missing_current_cost_known_with_a_zero_cost_is_unknown(self) -> None:
@@ -85,7 +85,7 @@ class TestPdfReportCostBaseline:
             "savings_percent": 0.0,
             "cost_breakdown": [],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "Current monthly (source): source cost not provided" in text
         assert "Savings: not available" in text
         assert "Current monthly (source): $0.00" not in text
@@ -103,7 +103,7 @@ class TestPdfReportCostBaseline:
                 {"database": "opensearch", "monthly_cost_usd": 240.96},
             ],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "$271.80/mo" in text
         assert "$240.96/mo" in text
 
@@ -114,7 +114,7 @@ class TestPdfReportCostBaseline:
             "savings_percent": 50.0,
             "cost_breakdown": [],
         }
-        text = pdf_text(_report(tco))
+        text = executive_text(_report(tco))
         assert "Retired by this plan" not in text
 
 

@@ -3,7 +3,7 @@
  * deliverable that shows the routing fit score (bug: Deliverables present a
  * fit score as a confidence percentage).
  *
- * The engineering report and the PDF report are covered by
+ * The engineering report and the executive report are covered by
  * `tests/unit/report/test_workload_fit_definition.py`; this file covers the
  * two UI surfaces: the approval gate (`AssignmentGate.js`, via its i18n
  * description), and the live React results page's query-journey detail

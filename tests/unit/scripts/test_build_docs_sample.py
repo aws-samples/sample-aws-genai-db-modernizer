@@ -49,7 +49,7 @@ def _make_job_paths(tmp_path: Path) -> list[str]:
 
     files = {
         "engineering-report.md": b"# Engineering report\n\nSome **content**.\n",
-        "assessment.pdf": b"%PDF-1.4 fake pdf bytes",
+        "executive-report.pdf": b"%PDF-1.4 fake pdf bytes",
         "assessment-data.json": b"{}",
         "index.md": b"# index",
         # Not a documented deliverable: never published even if listed.
@@ -113,7 +113,7 @@ def test_build_sample_copies_deliverables_under_stable_names(
     dest = site_dir / "sample"
     assert result["status"] == "complete"
     assert (dest / "engineering-report.md").exists()
-    assert (dest / "assessment.pdf").read_bytes() == b"%PDF-1.4 fake pdf bytes"
+    assert (dest / "executive-report.pdf").read_bytes() == b"%PDF-1.4 fake pdf bytes"
     assert (dest / "assessment-data.json").exists()
     assert (dest / "index.md").exists()
     # Only the documented set: model I/O and retired reports never reach the site.

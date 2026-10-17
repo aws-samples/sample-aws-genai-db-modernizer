@@ -31,7 +31,7 @@ def test_renders_the_three_deliverables_in_publish_order(store) -> None:
     assert [d.name for d in out.items] == [
         "engineering-report",
         "assessment-data",
-        "executive-summary-pdf",
+        "executive-report",
     ]
     assert all(d.publish for d in out.items)
 
@@ -42,13 +42,13 @@ def test_the_folder_files_are_exactly_the_folder_entries(store) -> None:
     out = dl.render_deliverables(store, JOB, DB, KEY, assignment_version=1)
 
     assert [(e.filename, d.name) for e, d in out.folder_files()] == [
-        ("assessment.pdf", "executive-summary-pdf"),
+        ("executive-report.pdf", "executive-report"),
         ("engineering-report.md", "engineering-report"),
         ("assessment-data.json", "assessment-data"),
     ]
     assert {d.name for d in out.items} == {e.name for e in dl.FOLDER_ENTRIES}
     assert dl.FOLDER_FILENAMES == (
-        "assessment.pdf",
+        "executive-report.pdf",
         "engineering-report.md",
         "assessment-data.json",
         "index.md",
@@ -59,7 +59,7 @@ def test_a_failed_render_is_absent_from_the_folder_files(store, monkeypatch) -> 
     def broken(*_a, **_k):
         raise RuntimeError("font missing")
 
-    monkeypatch.setattr("src.report.pdf_report.render_executive_summary_pdf", broken)
+    monkeypatch.setattr("src.report.executive_report.render_executive_report_pdf", broken)
     out = dl.render_deliverables(store, JOB, DB, KEY)
 
     assert [e.filename for e, _ in out.folder_files()] == [
@@ -69,16 +69,19 @@ def test_a_failed_render_is_absent_from_the_folder_files(store, monkeypatch) -> 
 
 
 def test_folder_key_is_the_jobs_deliverables_folder() -> None:
-    assert dl.folder_key(DB, JOB, "assessment.pdf") == f"{DB}/{JOB}/deliverables/assessment.pdf"
+    assert (
+        dl.folder_key(DB, JOB, "executive-report.pdf")
+        == f"{DB}/{JOB}/deliverables/executive-report.pdf"
+    )
 
 
 def test_content_types_and_filenames(store) -> None:
     out = {d.name: d for d in dl.render_deliverables(store, JOB, DB, KEY).items}
 
-    assert out["executive-summary-pdf"].content.startswith(b"%PDF")
-    assert out["executive-summary-pdf"].filename == "summary-executive-report.pdf"
+    assert out["executive-report"].content.startswith(b"%PDF")
+    assert out["executive-report"].filename == "executive-report.pdf"
     # The label still carries the round (#146); #147 tracks the download name too.
-    assert "(v1)" in out["executive-summary-pdf"].label
+    assert "(v1)" in out["executive-report"].label
     assert out["engineering-report"].content.startswith(b"---")
     assert out["engineering-report"].filename.startswith("discourse_engineering-report_job-x_")
     assert json.loads(out["assessment-data"].content)["_artifact"]["artifact"] == "assessment-data"
@@ -88,14 +91,12 @@ def test_a_failing_optional_deliverable_is_reported_not_raised(store, monkeypatc
     def broken(*_a, **_k):
         raise RuntimeError("template missing")
 
-    monkeypatch.setattr("src.report.pdf_report.render_executive_summary_pdf", broken)
+    monkeypatch.setattr("src.report.executive_report.render_executive_report_pdf", broken)
     out = dl.render_deliverables(store, JOB, DB, KEY)
 
     names = {d.name for d in out.items}
-    assert "executive-summary-pdf" not in names
-    assert any(
-        e.startswith("executive-summary: RuntimeError: template missing") for e in out.errors
-    )
+    assert "executive-report" not in names
+    assert any(e.startswith("executive-report: RuntimeError: template missing") for e in out.errors)
     assert names == {"engineering-report", "assessment-data"}
 
 
@@ -170,7 +171,7 @@ def test_render_failure_logged_without_echoing_raw_content(
     def broken(*_a, **_k):
         raise RuntimeError(f"template missing: {sentinel}")
 
-    monkeypatch.setattr("src.report.pdf_report.render_executive_summary_pdf", broken)
+    monkeypatch.setattr("src.report.executive_report.render_executive_report_pdf", broken)
     with caplog.at_level(logging.DEBUG, logger="src.report.deliverables"):
         out = dl.render_deliverables(store, JOB, DB, KEY)
 
@@ -179,7 +180,7 @@ def test_render_failure_logged_without_echoing_raw_content(
     warning_text = _text_at_or_above(caplog, logging.WARNING)
     debug_text = _text_at_or_above(caplog, logging.DEBUG)
     assert sentinel not in warning_text
-    assert "executive-summary" in warning_text
+    assert "executive-report" in warning_text
     assert "RuntimeError" in warning_text
     assert "deliverables.py" in warning_text  # the raising frame
     assert sentinel in debug_text

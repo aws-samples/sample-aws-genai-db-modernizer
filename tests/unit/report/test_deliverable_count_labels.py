@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.report import architecture, renderers
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 
 def _ap(pid: str, engine: str, in_scope: bool = True) -> dict[str, Any]:
@@ -96,9 +96,9 @@ class TestAccessPatternScope:
     def test_without_query_groups_nothing_is_labelled(self) -> None:
         assert renderers.label_in_scope_access_patterns(RUN5_SUMMARY, {}) == RUN5_SUMMARY
 
-    def test_pdf_fallback_summary_says_in_scope(self) -> None:
+    def test_md_fallback_summary_says_in_scope(self) -> None:
         rep = {**_design_report(), "summary_deterministic": RUN5_SUMMARY}
-        text = pdf_text(rep, trust_generated_summary=False)
+        text = engineering_text(rep, trust_generated_summary=False)
         assert "dynamodb: 15 target tables, 47 in-scope access patterns" in text
 
 
@@ -201,7 +201,7 @@ class TestSharedSourceTables:
         assert "| 19 source tables (21 incl. shared) |" in md
         assert "| 21 tables migrate |" in md
         assert "1921" not in md
-        assert "21 tables migrate" in pdf_text(_shared_tables_report())
+        assert "21 tables migrate" in engineering_text(_shared_tables_report())
 
 
 def _risk(rid: str, sev: str, n_queries: int, engine: str = "dynamodb") -> dict[str, Any]:
@@ -270,8 +270,8 @@ class TestUnlabelledCounts:
         md = renderers.render_engineering_report_md(rep)
         assert "## Migration map (21 tables)" in md
 
-    def test_pdf_separates_open_and_resolved_risks(self) -> None:
-        text = pdf_text(_mapped_report(), trust_generated_summary=True)
+    def test_md_separates_open_and_resolved_risks(self) -> None:
+        text = engineering_text(_mapped_report(), trust_generated_summary=True)
         # #270: only non-zero severities are named -- all 8 fixture risks are
         # MEDIUM, so "0 high" never appears.
         assert "Open risks: 8 (8 medium)" in text
@@ -327,7 +327,9 @@ class TestReviewFollowUps:
     def test_shared_tables_footnote_in_the_engine_notes(self) -> None:
         md = renderers.render_engineering_report_md(_shared_tables_report())
         assert "including tables also served by another engine" in md
-        assert "including tables also served by another engine" in pdf_text(_shared_tables_report())
+        assert "including tables also served by another engine" in engineering_text(
+            _shared_tables_report()
+        )
 
     def test_no_footnote_without_shared_tables(self) -> None:
         rep = _shared_tables_report()
@@ -457,7 +459,7 @@ class TestLabelsWrittenAtSource:
 
     def test_each_label_appears_once_in_every_deliverable(self) -> None:
         rep = _new_summary_report()
-        text = pdf_text(rep, trust_generated_summary=False)
+        text = engineering_text(rep, trust_generated_summary=False)
         for label in self.LABELS:
             assert text.count(label) == 1, (label, "PDF report")
         assert "in-scope in-scope" not in text

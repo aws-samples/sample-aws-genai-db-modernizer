@@ -11,6 +11,7 @@ system_of_record = false
 [colors]
 ui = "#2ea597"
 ui_badge = "grey"
+deck = "#FF693C"
 
 [pricing]
 base_monthly = 150

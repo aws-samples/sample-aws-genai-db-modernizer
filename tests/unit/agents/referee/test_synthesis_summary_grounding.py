@@ -534,16 +534,18 @@ class TestFallbackSummary:
         assert build_fallback_summary({"engines": []}) is None
 
 
-def test_the_pdf_notes_the_withheld_narrative(det) -> None:
-    from tests.unit.report.pdf_text import pdf_text
+def test_the_md_notes_the_withheld_narrative(det) -> None:
+    from tests.executive_pdf import engineering_text
 
     apply_synthesis_llm_output(det, {"executive_summary": "Aurora MySQL serves shop.orders."})
     store = det["_store"]
     _write_synthesis_report(store, det, 2)
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-    text = pdf_text(report, trust_generated_summary=True)
+    text = engineering_text(report, trust_generated_summary=True)
     assert "named a table under an engine that does not serve it" in text
     assert "The target architecture combines" in text
 
     report["summary_source"] = "llm"
-    assert "named a table under an engine" not in pdf_text(report, trust_generated_summary=True)
+    assert "named a table under an engine" not in engineering_text(
+        report, trust_generated_summary=True
+    )

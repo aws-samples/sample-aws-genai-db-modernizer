@@ -18,7 +18,7 @@ These are the files a run writes to its deliverables folder, under the same name
 <!-- deliverables-list -->
 <p>Every run writes them to <code>artifacts/&lt;db&gt;/&lt;job&gt;/deliverables/</code>.</p>
 <ul id="sample-deliverables">
-  <li><a href="assessment.pdf">Executive summary (PDF)</a>, <code>assessment.pdf</code>: the stakeholder-facing report: recommendation, cost, engines and roles, migration waves and risks.</li>
+  <li><a href="executive-report.pdf">Executive report (PDF)</a>, <code>executive-report.pdf</code>: the stakeholder-facing landscape briefing: recommendation, the numbers, why, migration waves, risks, decisions needed and next steps.</li>
   <li><a href="engineering-report.html">Engineering report (HTML)</a> (the run writes it as <a href="engineering-report.md">Markdown</a>, <code>engineering-report.md</code>): the same facts with implementation detail, for the team that will build it, including migration waves, per-engine query placement, and risks (a real run also adds the per-engine schemas).</li>
   <li><a href="assessment-data.json">Assessment Data (JSON)</a>, <code>assessment-data.json</code>: the complete machine-readable assessment the other files are rendered from.</li>
   <li><a href="index.md">Folder index</a>, <code>index.md</code>: each file, who it is for, and the assignment version.</li>

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.shared.report_facts import access_pattern_facts, compute_report_facts
+from src.shared.report_facts import access_pattern_facts, compute_report_facts, query_move_facts
 
 from .waves import resolve_migration_waves
 
@@ -21,14 +21,18 @@ from .waves import resolve_migration_waves
 def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     """``report["facts"]`` when synthesis wrote it, else the same block computed now.
 
-    A block written before contract 1.26 has no ``access_pattern_totals`` (#792); that one
-    figure is filled in from ``query_groups``, the rest stays as stored.
+    A block written before contract 1.26 has no ``access_pattern_totals`` (#792), and one
+    written before 1.27 no query move counts (#1020); those figures are filled in from
+    ``query_groups`` and ``ranking``, the rest stays as stored.
     """
     facts = report.get("facts")
     if isinstance(facts, dict) and isinstance(facts.get("engines"), list):
+        missing: dict[str, Any] = {}
         if "access_pattern_totals" not in facts:
-            return {**facts, "access_pattern_totals": access_pattern_facts(report)}
-        return facts
+            missing["access_pattern_totals"] = access_pattern_facts(report)
+        if "moving_query_count" not in facts:
+            missing.update(query_move_facts(report, facts["engines"]))
+        return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
 
 

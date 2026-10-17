@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from unittest.mock import patch
 
 import pytest
@@ -117,7 +118,7 @@ def rerouted(tmp_path_factory) -> dict:
         "v3": store.read_json(f"{DB}/{JOB}/assignment/v3/assignment.json"),
         "v3_access_patterns": store.read_json(f"{DB}/{JOB}/assignment/v3/access_patterns.json"),
         "report": json.loads((synthesis / "report.json").read_text()),
-        "pdf": _pdf_text(folder / "assessment.pdf"),
+        "pdf": _pdf_text(folder / "executive-report.pdf"),
         "engineering": (folder / "engineering-report.md").read_text(),
     }
 
@@ -174,7 +175,9 @@ class TestEveryDeliverableAgreesWithTheNewVersion:
     def test_dynamodb_counts_match_its_own_queries(self, rerouted):
         expected = _in_scope(rerouted["v3"], "dynamodb")
         assert expected == _in_scope(rerouted["v2"], "dynamodb") - 1
-        text = rerouted["pdf"]
+        # The summary is the engineering report's since #1020 (the executive report
+        # prints no summary: it names tables).
+        text = " ".join(re.sub(r"\\(.)", r"\1", rerouted["engineering"]).split())
         assert f"DynamoDB handles {expected} queries" in text
         assert f"{expected} in-scope access patterns)" in text
         assert f"DynamoDB: {_in_scope(rerouted['v2'], 'dynamodb')}" not in text

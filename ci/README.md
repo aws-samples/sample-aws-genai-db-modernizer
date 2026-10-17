@@ -87,7 +87,7 @@ A cheap failsafe to run before pushing or asking for a merge: `./ci/pre_merge.sh
 The deterministic end-to-end suite (`tests/e2e/`): runs the full pipeline
 (collect → triage → analysis per engine → assignment → reality check →
 synthesis → report) with no LLM and no AWS credentials, then checks the
-deliverables folder (the PDF content, the engineering report and the figures
+deliverables folder (the executive report PDF, the engineering report and the figures
 they share), the local UI in a real browser (the results page's rendering,
 overflow and accessibility included), and the built help site (its rendering of
 the sample engineering report included), against the produced artifacts.
@@ -145,7 +145,7 @@ Env vars read:
   to `test-results/`. Under it:
   - `e2e-reports-junit.xml`, `e2e-ui-junit.xml` — one junit file per invocation.
   - `deliverables/<db>/` — a copy of each pipeline run's `deliverables/`
-    folder (the PDF report, the engineering report, the assessment data and
+    folder (the executive report, the engineering report, the assessment data and
     the index), with the latest synthesis version's own files (`report.json`,
     and in an LLM run the model input and response) under `synthesis/`,
     written by a session-scoped autouse finalizer in `tests/e2e/conftest.py`,
@@ -193,7 +193,7 @@ Headless `/modernize` run on model access (Bedrock or the Anthropic API):
 `claude -p "/modernize ... --auto --mode <chat|ui|both>" --permission-mode
 dontAsk --output-format stream-json` against one of the two sample fixtures,
 then the same deliverable checks `e2e.sh` runs (contracts, the engineering
-report, PDF, and --
+report, the executive report PDF (the `pdf` check, `tests/e2e/test_report_pdf.py`), and --
 for `ui`/`both` -- the UI smoke test) pointed at the job the headless run
 produced, plus a rubric-based quality judge (`ci/llm/judge.py` /
 `ci/llm/rubric.md`) grading the rendered deliverables. Everything is merged

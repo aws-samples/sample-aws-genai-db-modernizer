@@ -44,10 +44,11 @@ class TestFiveEngineReconciliation:
         migrated = report_facts.compute_report_facts(report)["tables_migrate"]
         assert f"| {migrated} tables migrate |" in m
 
-    def test_the_pdf_states_the_reconciled_total(self, report: dict) -> None:
-        from tests.unit.report.pdf_text import pdf_text
+    def test_both_reports_state_the_reconciled_total(self, report: dict) -> None:
+        from tests.executive_pdf import engineering_text, executive_text
 
-        assert "Total $814.12" in pdf_text(report)
+        assert "| Total | | $814.12 |" in engineering_text(report)
+        assert "Total $814.12" in executive_text(report)
 
     def test_architecture_engines_all_five_with_roles(self, report: dict) -> None:
         engines = architecture._architecture_engines(report)
@@ -63,9 +64,9 @@ class TestFiveEngineReconciliation:
         assert any("ache" in r for r in roles)
 
     def test_risk_posture_counts_and_strategies(self, report: dict) -> None:
-        from tests.unit.report.pdf_text import pdf_text
+        from tests.executive_pdf import engineering_text
 
-        text = pdf_text(report)
+        text = engineering_text(report)
         assert "Open risks: 22" in text
         assert "Mitigation strategies" in text
 

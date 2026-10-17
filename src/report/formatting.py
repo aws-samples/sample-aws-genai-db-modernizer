@@ -44,7 +44,7 @@ def artifact_stem(
 def plural_noun(n: Any, singular: str, plural: str | None = None) -> str:
     """The correctly agreed noun for a count, e.g. ``f"{n} {plural_noun(n, 'risk')}"``.
 
-    Every count+noun string across the engineering report and the PDF report
+    Every count+noun string across the engineering report and the executive report
     must agree on the English singular/plural rule.
     Before this helper existed, each call site wrote its own — most just hardcoded
     the plural form, which is how the deck printed "1 session store queries"
@@ -148,7 +148,7 @@ def _fmt_usd(x: Any) -> str:
 # database -- so a missing/``None`` ``current_cost_known`` combined with a
 # falsy ``current_monthly_cost`` is unknown too, not just an explicit
 # ``current_cost_known: False``. This is the one rule every deliverable
-# (the engineering and PDF reports here and the React UI's ``tcoAnalysis.js``)
+# (the engineering and executive reports here and the React UI's ``tcoAnalysis.js``)
 # must share, so they can't disagree on the same report.
 def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     """(current monthly cost, savings) display text for ``tco``.

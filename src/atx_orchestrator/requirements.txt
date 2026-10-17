@@ -23,7 +23,7 @@ boto3>=1.34.0
 structlog>=23.2.0
 pyyaml>=6.0.1
 jinja2>=3.1.0
-# Executive Summary Report PDF (src/report/pdf_report.py).
+# Executive report PDF (src/report/executive_report.py).
 reportlab>=4.2.0
 
 # Database connectors (needed by collector agent)

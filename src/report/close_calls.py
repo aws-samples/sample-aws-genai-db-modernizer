@@ -2,9 +2,10 @@
 engine the plan keeps, and how the customer moves them.
 
 The reality check keeps deciding for the customer (ADR-031 Decision 7); these
-sections say where that decision was close. Both format ``facts.close_calls``
-(``src.shared.report_facts.close_call_facts``, ADR-032): the engineering report
-and the PDF report as a table. Nothing here counts a query.
+section says where that decision was close. It formats ``facts.close_calls``
+(``src.shared.report_facts.close_call_facts``, ADR-032) as the engineering
+report's table; the executive report leaves close calls out (#1020). Nothing
+here counts a query.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from . import escaping
 from .facts import report_facts
 from .formatting import fmt_num, plural_noun
 
-# How a customer moves a close call: the engineering report and the PDF. The UI
+# How a customer moves a close call: the engineering report. The UI
 # callout says the same, with its last sentence worded for the page it is on
 # (src/ui/src/locales/en.json, analysis-results.close-calls.override).
 CLOSE_CALL_OVERRIDE_TEXT = (

@@ -2,7 +2,7 @@
 
 ``_publish_synthesis_deliverables`` (in ``tools``) is tested with a fake store
 and a patched ``publish`` to confirm: the three deliverables (the engineering
-report, the assessment data and the PDF report) are written to S3 as the job's
+report, the assessment data and the executive report) are written to S3 as the job's
 ``deliverables/`` folder under their stable names, never next to report.json
 (#987); all three are published as CUSTOMER_OUTPUT each carrying an explicit
 download filename; and the whole step is non-fatal when the report cannot be read.
@@ -110,8 +110,10 @@ class TestSynthesisDeliverables:
             "discourse/job-x/deliverables/assessment-data.json",
             "discourse/job-x/deliverables/engineering-report.md",
         ]
-        assert sorted(store.byte_writes) == ["discourse/job-x/deliverables/assessment.pdf"]
-        assert store.byte_writes["discourse/job-x/deliverables/assessment.pdf"][:5] == b"%PDF-"
+        assert sorted(store.byte_writes) == ["discourse/job-x/deliverables/executive-report.pdf"]
+        assert (
+            store.byte_writes["discourse/job-x/deliverables/executive-report.pdf"][:5] == b"%PDF-"
+        )
         assert not [k for k in [*store.text_writes, *store.byte_writes] if "/synthesis/" in k]
 
         # three published, in order, all CUSTOMER_OUTPUT
@@ -120,7 +122,7 @@ class TestSynthesisDeliverables:
         assert [it[2] for it in items] == [
             "Engineering Report — discourse",
             "Assessment Data (raw) — discourse",
-            "Executive Summary Report — discourse (v1)",
+            "Executive Report — discourse (v1)",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 
@@ -131,7 +133,7 @@ class TestSynthesisDeliverables:
         assert [it[4] for it in items] == [
             f"discourse_engineering-report_job-x_{day}.md",
             f"discourse_assessment-data_job-x_{day}.json",
-            "summary-executive-report.pdf",
+            "executive-report.pdf",
         ]
 
     def test_publishes_all_three_on_json_only_store(self, report: dict) -> None:
@@ -212,7 +214,7 @@ class TestSynthesisDeliverables:
         store = _FakeStore({self.KEY: report})
         failed_set = DeliverableSet(
             errors=[
-                "executive-summary: RuntimeError: boom",
+                "executive-report: RuntimeError: boom",
                 "engineering-report: ValueError: bad report",
             ]
         )
@@ -227,7 +229,7 @@ class TestSynthesisDeliverables:
 
         messages = [r.getMessage() for r in caplog.records]
         assert any(
-            "executive-summary" in m and "engineering-report" in m and "failed to render" in m
+            "executive-report" in m and "engineering-report" in m and "failed to render" in m
             for m in messages
         )
         assert not any(re.search(r"\b\d+ of \d+\b", m) for m in messages)
@@ -292,6 +294,6 @@ class TestSynthesisDeliverables:
         # The durable copy is the deliverables folder, which holds the latest round:
         # v2 overwrote v1 there, and no copy was left under either synthesis version.
         assert sorted(k for k in store.byte_writes) == [
-            "discourse/job-x/deliverables/assessment.pdf"
+            "discourse/job-x/deliverables/executive-report.pdf"
         ]
-        assert store.byte_writes["discourse/job-x/deliverables/assessment.pdf"] == pdf_v2
+        assert store.byte_writes["discourse/job-x/deliverables/executive-report.pdf"] == pdf_v2

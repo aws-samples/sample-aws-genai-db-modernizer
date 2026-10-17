@@ -176,7 +176,7 @@ def test_facts_core_fields() -> None:
     assert risk["affected_tables"] == ["items"]
     assert "[truncated: 300 of" in risk["description"]
     assert facts["migration_waves"] == judge_facts.MIGRATION_WAVES_ABSENT
-    assert "Migration Sequencing" in facts["migration_waves"]
+    assert "Migration waves" in facts["migration_waves"]
 
 
 def test_migration_waves_used_when_report_has_them() -> None:
@@ -198,11 +198,11 @@ def test_strip_mermaid_removes_only_mermaid_fences() -> None:
 
 
 def test_format_pdf_pages_marks_pages_and_drops_footer() -> None:
-    """The PDF report's footer and page number repeat on every page; neither
-    reaches the prompt (src.report.pdf_report.FOOTER, the current footer)."""
-    from src.report import pdf_report
+    """The executive report's footer and page number repeat on every page; neither
+    reaches the prompt (src.report.executive_report.FOOTER, the current footer)."""
+    from src.report import executive_report
 
-    footer = "\n".join(pdf_report.FOOTER.split())
+    footer = "\n".join(executive_report.FOOTER.split())
     pages = [
         ("Risks", f"Risks\n11 risks. Two HIGH.\n{footer}\nPage 3 of 9"),
         (None, f"plain\n{footer}\nPage 4 of 9"),
@@ -212,11 +212,11 @@ def test_format_pdf_pages_marks_pages_and_drops_footer() -> None:
 
 
 def test_the_footer_pattern_matches_the_rendered_pdf() -> None:
-    from src.report import pdf_report
-    from tests.unit.report.pdf_text import pdf_text
+    from src.report import executive_report
+    from tests.executive_pdf import text as pdf_text
 
-    text = pdf_text({"database_name": "x"})
-    assert pdf_report.FOOTER in text
+    text = pdf_text(executive_report.render_executive_report_pdf({"database_name": "x"}))
+    assert executive_report.FOOTER in text
     stripped = judge._PDF_BOILERPLATE_RE.sub("", text)
     assert "Copyright" not in stripped
     assert not re.search(r"Page \d+ of \d+", stripped)
@@ -349,7 +349,7 @@ def _stage_run3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     folder = tmp_path / RUN3_DB / RUN3_JOB / "deliverables"
     folder.mkdir()
     shutil.copy(FIXTURE / "engineering-report.md", folder / "engineering-report.md")
-    (folder / "assessment.pdf").write_bytes(b"%PDF-1.4 stub")
+    (folder / "executive-report.pdf").write_bytes(b"%PDF-1.4 stub")
     pages = json.loads((FIXTURE / "pdf-pages.json").read_text())
     monkeypatch.setitem(sys.modules, "pypdf", types.ModuleType("pypdf"))
     monkeypatch.setattr(
@@ -402,7 +402,7 @@ def test_run3_prompt_has_every_criterion_input_and_fits(
     assert prompt.index("## Evidence by criterion") > last_block
     assert prompt.index("## Harness cuts") > last_block
     # rubric pointers
-    assert "tables_served" in rubric_body and "executive_pdf > Cost" in rubric_body
+    assert "tables_served" in rubric_body and "executive_pdf > The numbers" in rubric_body
     assert "decision" not in rubric_body.lower()
 
 
@@ -538,7 +538,7 @@ def _job(tmp_path: Path, version: int = 3) -> Path:
     folder = job / "deliverables"
     folder.mkdir(exist_ok=True)
     (folder / "engineering-report.md").write_text("# e")
-    (folder / "assessment.pdf").write_bytes(b"%PDF-1.4 stub")
+    (folder / "executive-report.pdf").write_bytes(b"%PDF-1.4 stub")
     return job
 
 
@@ -562,17 +562,17 @@ def test_the_judge_scores_the_deliverables_folder_not_the_versioned_copies(
     job = _job(tmp_path)
     synthesis = job / "synthesis" / "v3"
     (synthesis / "x_engineering-report_j.md").write_text("# stale copy")
-    (synthesis / "summary-executive-report.pdf").write_bytes(b"%PDF-1.4 stale")
+    (synthesis / "executive-report.pdf").write_bytes(b"%PDF-1.4 stale")
 
     found = judge.locate_deliverables(tmp_path, "db", "j")
 
     assert found["engineering_md"] == job / "deliverables" / "engineering-report.md"
-    assert found["pdf"] == job / "deliverables" / "assessment.pdf"
+    assert found["pdf"] == job / "deliverables" / "executive-report.pdf"
     assert found["report_json"] == synthesis / "report.json"
     assert set(found) == {"report_json", "engineering_md", "pdf", "llm_input", "assignment"}
 
 
-@pytest.mark.parametrize("missing", ["engineering-report.md", "assessment.pdf"])
+@pytest.mark.parametrize("missing", ["engineering-report.md", "executive-report.pdf"])
 def test_a_missing_scored_deliverable_is_a_judge_error(tmp_path: Path, missing: str) -> None:
     job = _job(tmp_path)
     (job / "deliverables" / missing).unlink()
@@ -588,7 +588,7 @@ def test_the_scored_names_are_the_folder_the_render_step_writes() -> None:
 
     assert judge.DELIVERABLES_DIR == deliverables.DELIVERABLES_DIR
     names = {e.name: e.filename for e in deliverables.FOLDER_ENTRIES}
-    assert judge.PDF_FILENAME == names["executive-summary-pdf"]
+    assert judge.PDF_FILENAME == names["executive-report"]
     assert judge.ENGINEERING_FILENAME == names["engineering-report"]
 
 

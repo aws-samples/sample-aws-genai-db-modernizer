@@ -43,15 +43,20 @@ async def get_results(job_id: str = Depends(job_id_param)):
 
     # One wave source (#225): the UI reads this same payload, so a
     # report written before #225 must show the same fallback roadmap the
-    # PDF report and engineering report already derive, not an empty one.
+    # executive report and engineering report already derive, not an empty one.
     if not synthesis.get("migration_waves"):
         synthesis["migration_waves"] = resolve_migration_waves(synthesis) or None
     # #615 (ADR-032): the UI reads every figure from synthesis.facts; a report
     # synthesized before that field existed gets the same block here, from the
     # same function, so the UI never falls back to a formula of its own. A block
-    # written before contract 1.26 gains its access-pattern totals the same way (#792).
+    # written before contract 1.26 gains its access-pattern totals the same way (#792),
+    # and one written before 1.27 its query move counts (#1020).
     facts = synthesis.get("facts")
-    if not isinstance(facts, dict) or "access_pattern_totals" not in facts:
+    if (
+        not isinstance(facts, dict)
+        or "access_pattern_totals" not in facts
+        or "moving_query_count" not in facts
+    ):
         synthesis["facts"] = report_facts(synthesis)
 
     triage = s3_service.read_triage(db_name, job_id)

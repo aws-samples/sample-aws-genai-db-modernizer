@@ -4,8 +4,8 @@
 Usage:
     uv run python ci/llm/judge.py --artifact-root R --db D --job J --out judge.json
 
-Scores the deliverables in the job's ``deliverables/`` folder (the PDF report
-``assessment.pdf``, read when ``pypdf`` is installed, and the engineering report
+Scores the deliverables in the job's ``deliverables/`` folder (the executive
+report ``executive-report.pdf``, read when ``pypdf`` is installed, and the engineering report
 ``engineering-report.md``), with the facts taken from the synthesis
 ``report.json`` they were rendered from, against the six criteria
 in ``ci/llm/rubric.md`` (``grounded``, ``justified_engines``, ``cost``,
@@ -127,7 +127,7 @@ PROMPT_INPUTS: tuple[tuple[str, str], ...] = (
     ),
     (
         "pdf",
-        "## executive_pdf -- PDF report (text, one [page N: title] marker per page)",
+        "## executive_pdf -- Executive report PDF (text, one [page N: title] marker per page)",
     ),
     (
         "engineering_md",
@@ -197,7 +197,7 @@ def load_rubric(path: Path) -> tuple[float, int, str]:
 # tests/unit/ci/test_judge_inputs.py; spelled out so the judge runs as a plain
 # script without the repo on ``sys.path``).
 DELIVERABLES_DIR = "deliverables"
-PDF_FILENAME = "assessment.pdf"
+PDF_FILENAME = "executive-report.pdf"
 ENGINEERING_FILENAME = "engineering-report.md"
 
 
@@ -228,7 +228,7 @@ def find_synthesis_dir(artifact_root: Path, db: str, job: str) -> Path:
 def locate_deliverables(artifact_root: Path, db: str, job: str) -> dict[str, Path | None]:
     """Return the paths of the deliverables to grade and of the facts' sources.
 
-    The scored files are the job's ``deliverables/`` folder: the PDF report and
+    The scored files are the job's ``deliverables/`` folder: the executive report and
     the engineering report, which the render step (``scripts/run_report.py``)
     writes there for the latest assignment version. Either one missing is a
     setup error (exit 2): the run did not produce what a customer reads. The
@@ -249,7 +249,7 @@ def locate_deliverables(artifact_root: Path, db: str, job: str) -> dict[str, Pat
         raise JudgeError(f"missing engineering report ({ENGINEERING_FILENAME}) in {folder}")
     pdf = folder / PDF_FILENAME
     if not pdf.is_file():
-        raise JudgeError(f"missing PDF report ({PDF_FILENAME}) in {folder}")
+        raise JudgeError(f"missing executive report ({PDF_FILENAME}) in {folder}")
 
     # Optional ground-truth inputs for the facts block: the synthesis LLM
     # input (its effective_architecture is the per-engine table scope) and
@@ -319,8 +319,8 @@ def _page_text_and_title(page: Any) -> tuple[str, str | None]:
     return raw, title or None
 
 
-# Page furniture repeated on every page of the PDF report
-# (``src.report.pdf_report.FOOTER`` and its "Page N of M"); dropped so it doesn't
+# Page furniture repeated on every page of the executive report
+# (``src.report.executive_report.FOOTER`` and its "Page N of M"); dropped so it doesn't
 # eat budget. Pinned to the renderer's footer by tests/unit/ci/test_judge_inputs.py.
 _PDF_BOILERPLATE_RE = re.compile(
     r"Copyright Amazon\.com, Inc\. or its affiliates\. All Rights Reserved\.\s*"

@@ -17,7 +17,7 @@ from src.report.renderers import render_engineering_report_md
 from src.report.unservable import UNSERVABLE_RERUN_TEXT
 from src.shared.capability_labels import CAPABILITY_REDESIGN_HINTS
 from src.shared.report_facts import UNSERVABLE_SHOWN, compute_report_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 MD_HEADING = "## Queries on a fallback engine"
 
@@ -77,11 +77,10 @@ def _section_md(md: str) -> str:
     return md[start:] if end == -1 else md[start:end]
 
 
-def test_the_pdf_flags_each_query_with_gates_redesign_and_rerun(report) -> None:
-    text = pdf_text(report)
+def test_the_md_flags_each_query_with_gates_redesign_and_rerun(report) -> None:
+    text = engineering_text(report)
     assert "Queries on a fallback engine (1 query)" in text
     assert "no kept engine" not in text
-    assert "Aurora MySQL No engine could score this query" in text
     assert "DynamoDB (missing a capability the query needs)" in text
     assert "Keep it on Aurora MySQL, or redesign it. For DynamoDB: " in text
     assert " ".join(CAPABILITY_REDESIGN_HINTS["aggregation"]["dynamodb"].split()) in text
@@ -111,7 +110,7 @@ def test_more_than_the_cap_says_how_many_more() -> None:
 @pytest.mark.parametrize("rows", [None, []])
 def test_no_section_without_any(rows) -> None:
     report = _report(rows)
-    assert "Queries on a fallback engine" not in pdf_text(report)
+    assert "Queries on a fallback engine" not in engineering_text(report)
     assert MD_HEADING not in render_engineering_report_md(report)
 
 
@@ -119,7 +118,7 @@ def test_the_renderers_print_the_stored_facts(report) -> None:
     doctored = copy.deepcopy(report)
     doctored["facts"]["unservable"]["unservable_query_count"] = 7
     doctored["facts"]["unservable"]["unservable_queries"][0]["redesign_hints"] = ["Stored hint."]
-    text = pdf_text(doctored)
+    text = engineering_text(doctored)
     md = _section_md(render_engineering_report_md(doctored))
     assert "(7 queries)" in text and "(7 queries)" in md
     assert "Stored hint." in text and "Stored hint." in md

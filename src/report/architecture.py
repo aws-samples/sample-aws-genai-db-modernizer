@@ -86,7 +86,7 @@ _ROLE_PHRASE = {
 def _mapping_split(report: dict[str, Any], mappings: list[dict[str, Any]] | None = None) -> str:
     """ ": 21 migrate, 1 to the cache layer" for the migration map heading (#258).
 
-    The engine table's total and the PDF report count only the tables mapped to
+    The engine table's total and the executive report count only the tables mapped to
     migration targets as "tables migrate"; a table mapped to the cache layer needs no data
     migration. Empty when every mapped table migrates. The per-role counts are
     the facts layer's ``table_basis.mapped_tables_by_role`` (#615); ``mappings``

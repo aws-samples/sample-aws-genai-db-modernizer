@@ -101,7 +101,7 @@ def _aurora_wave(
     schema). It never narrows ``tables`` -- wave 1 still carries every
     collected base table and view, because that is what "the whole source
     database moves 1:1" actually means, and every other deliverable
-    (``roadmap.py``, ``pdf_report.py``) keeps this wave's ``table_count``
+    (``roadmap.py``, ``executive_report.py``) keeps this wave's ``table_count``
     as the whole collected schema. It is used only to add one explanatory
     sentence to the rationale, reconciling this wave's full count against the
     migration map's smaller "N tables mapped to a target engine" total (the

@@ -1,6 +1,6 @@
 """The engineering report: its sections, figures, wording and branding (#987).
 
-The engineering report is the supporting deliverable next to the PDF report and
+The engineering report is the supporting deliverable next to the executive report and
 the results page. These checks read the run's ``deliverables/engineering-report.md``
 on every sample and, in external-job mode, on a headless run's own job, so the
 headless e2e-llm run checks it as its ``engineering`` bucket (``ci/llm/run.py``).

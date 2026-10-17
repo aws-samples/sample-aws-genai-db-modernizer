@@ -41,7 +41,7 @@ import pytest
 
 from src.report import renderers
 from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
 
@@ -136,16 +136,16 @@ def test_engineering_report_states_the_definition_without_schema_design() -> Non
     assert md.count(WORKLOAD_FIT_DEFINITION) == 1
 
 
-def test_pdf_states_the_definition_exactly_once_without_routed_confidence(
+def test_md_states_the_definition_exactly_once_without_routed_confidence(
     report: dict,
 ) -> None:
     assert "routed_confidence" not in report.get("ranking", [{}])[0]
-    full_text = pdf_text(report)
+    full_text = engineering_text(report)
     assert full_text.count(WORKLOAD_FIT_DEFINITION) == 1
 
 
-def test_pdf_states_the_definition_exactly_once_with_routed_confidence() -> None:
+def test_md_states_the_definition_exactly_once_with_routed_confidence() -> None:
     rep = _routed_report()
     assert rep["ranking"][0].get("routed_confidence") is not None
-    full_text = pdf_text(rep)
+    full_text = engineering_text(rep)
     assert full_text.count(WORKLOAD_FIT_DEFINITION) == 1

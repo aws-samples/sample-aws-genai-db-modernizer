@@ -1,6 +1,6 @@
 """Every deliverable shows the same figures as report.json (#573).
 
-AGENTS.md "Deliverables agree": the engineering report and the PDF report
+AGENTS.md "Deliverables agree": the engineering report and the executive report
 render one synthesis ``report.json`` (the UI reads the same file; the decision
 and interactive analysis HTML reports were retired in #987). Reviews kept finding figures
 that differed between them, or that were impossible: a card cut at 90
@@ -96,8 +96,11 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
 
 
 def _pdf_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
+    """The executive report shows totals, not the close calls (#1020): those stay in
+    the engineering report."""
     req = _common_required(report, exp) - {k for k in exp if k.startswith("cached_reads:")}
-    req |= {"cost:total", "tables_migrate", "tied"}
+    req -= {"close_calls", "settled_ties"}
+    req |= {"cost:total", "tables_migrate", "tied", "engine_count"}
     req |= {f"cost:{e}" for e in final_architecture(report)}
     return req
 
@@ -209,7 +212,7 @@ def test_every_deliverable_shows_the_reality_check_decisions(run: PipelineResult
     assert titles, "the sample's reality check made no decision to show"
     texts = {
         "engineering report": md_plain(run.deliverable("engineering-report.md").read_text()),
-        "PDF": " ".join(pdf_page_texts(str(run.deliverable("assessment.pdf")))),
+        "PDF": " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))),
     }
     for deliverable, text in texts.items():
         if deliverable == "PDF":
@@ -223,7 +226,7 @@ def test_every_deliverable_shows_the_reality_check_decisions(run: PipelineResult
 
 def test_pdf_report_figures(run: PipelineResult) -> None:
     report = _report_json(run)
-    text = " ".join(pdf_page_texts(str(run.deliverable("assessment.pdf"))))
+    text = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     _settle(run.db, "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 

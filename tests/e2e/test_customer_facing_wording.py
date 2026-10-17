@@ -7,7 +7,7 @@ same ``run`` fixture every other ``tests/e2e/`` module shares, so this does
 not run the pipeline a second time): ``report.json``,
 ``assignment/v*/assignment.json``'s per-query reasons, the reality-check
 output, and the rendered deliverables: the engineering Markdown report and
-the PDF report (the decision report HTML #572 also named was retired in #987).
+the executive report (the decision report HTML #572 also named was retired in #987).
 
 The scanner (``src.tools.validation.customer_text_guard``) flags a raw engine
 id where a display name belongs, an ``ADR-NNN`` reference, a snake_case
@@ -93,7 +93,7 @@ def test_engineering_report_markdown_has_no_internal_wording(run: PipelineResult
 def test_executive_summary_pdf_has_no_internal_wording(run: PipelineResult) -> None:
     from pypdf import PdfReader
 
-    reader = PdfReader(str(run.deliverable("assessment.pdf")))
+    reader = PdfReader(str(run.deliverable("executive-report.pdf")))
     text = "\n".join(p.extract_text() or "" for p in reader.pages)
-    findings = _filtered(scan_text(text), "assessment.pdf")
+    findings = _filtered(scan_text(text), "executive-report.pdf")
     assert findings == [], _describe(findings)

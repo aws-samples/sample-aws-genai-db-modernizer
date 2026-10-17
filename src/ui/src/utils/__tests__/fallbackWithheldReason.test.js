@@ -1,7 +1,7 @@
 /**
  * #393 / #269: ports ``src/report/formatting.py``'s ``fallback_withheld_reason``
  * (and its ``_FALLBACK_REASONS`` table) so the Results page names the same
- * specific reason the PDF report does, instead
+ * specific reason the executive report does, instead
  * of a hard-coded one that could show even when a different check actually
  * rejected the summary. Test cases mirror
  * ``tests/unit/report/test_fallback_withheld_reason.py``.

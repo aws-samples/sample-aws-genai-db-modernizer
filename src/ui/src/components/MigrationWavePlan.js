@@ -10,7 +10,7 @@ import { migrationWaves, waveCount, waveHeadline, waveTitle } from "../utils/mig
 
 /**
  * "Migration roadmap" (#957): report.json's migration waves, the same ones the
- * PDF report and the engineering report show, one card per wave
+ * executive report and the engineering report show, one card per wave
  * with its headline, rationale, gate and tables. It only formats report.json's
  * waves and facts (ADR-032); the headline is the reports' own phrasing
  * (utils/migrationWaves.js).

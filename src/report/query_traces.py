@@ -1,5 +1,5 @@
 """Per-query routing decisions (#339): the appendix of the engineering report
-and the PDF report.
+(the executive report has none, #1020).
 
 It formats ``report.json``'s ``query_traces`` (the full trace of every query
 whose routing has a story, from ``src.shared.query_trace``) and its figures,

@@ -13,7 +13,7 @@ import re
 
 from src.report.risks import _severity_counts_text
 from src.shared.report_facts import risk_facts
-from tests.unit.report.pdf_text import pdf_text
+from tests.executive_pdf import engineering_text
 
 
 def _risk(risk_id: str, severity: str) -> dict:
@@ -45,7 +45,7 @@ def _posture_paren(text: str) -> str:
 
 def test_a_single_critical_risk_is_counted_as_critical_not_folded_into_high() -> None:
     report = _report([_risk("RISK-001", "CRITICAL")], "CRITICAL")
-    text = pdf_text(report)
+    text = engineering_text(report)
     assert "Overall risk: CRITICAL" in text
     paren = _posture_paren(text)
     assert paren == "1 critical"
@@ -55,7 +55,7 @@ def test_a_single_critical_risk_is_counted_as_critical_not_folded_into_high() ->
 def test_a_mix_of_medium_and_low_risks_counts_both_and_sums_to_the_total() -> None:
     risks = [_risk("RISK-001", "MEDIUM"), _risk("RISK-002", "MEDIUM"), _risk("RISK-003", "LOW")]
     report = _report(risks, "MEDIUM")
-    paren = _posture_paren(pdf_text(report))
+    paren = _posture_paren(engineering_text(report))
     assert paren == "2 medium, 1 low"
     counted = sum(int(n) for n in re.findall(r"(\d+) (?:critical|high|medium|low)", paren))
     assert counted == len(risks)
@@ -69,13 +69,13 @@ def test_all_four_severities_are_shown_in_critical_high_medium_low_order() -> No
         _risk("RISK-004", "HIGH"),
     ]
     report = _report(risks, "CRITICAL")
-    paren = _posture_paren(pdf_text(report))
+    paren = _posture_paren(engineering_text(report))
     assert paren == "1 critical, 1 high, 1 medium, 1 low"
 
 
 def test_a_severity_at_zero_count_is_not_mentioned() -> None:
     report = _report([_risk("RISK-001", "CRITICAL"), _risk("RISK-002", "CRITICAL")], "CRITICAL")
-    paren = _posture_paren(pdf_text(report))
+    paren = _posture_paren(engineering_text(report))
     assert paren == "2 critical"
     for term in ("high", "medium", "low"):
         assert term not in paren
@@ -115,7 +115,7 @@ def test_only_unknown_severities_still_sums_to_the_total() -> None:
     assert text == "2 unrated"
 
 
-def test_an_unrated_risk_is_named_in_the_pdf_posture_line() -> None:
+def test_an_unrated_risk_is_named_in_the_md_posture_line() -> None:
     report = _report([_risk("RISK-001", "MEDIUM"), _risk("RISK-002", "SOMETHING_ELSE")], "MEDIUM")
-    paren = _posture_paren(pdf_text(report))
+    paren = _posture_paren(engineering_text(report))
     assert paren == "1 medium, 1 unrated"
