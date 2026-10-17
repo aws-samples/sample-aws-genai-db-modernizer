@@ -7,6 +7,8 @@ on hardening changes from the Oracle production JSON test run.
 
 import logging
 
+import pytest
+
 from src.agents.collector.mysql_collector import (
     _TYPE_MAP,
     _build_columns,
@@ -135,6 +137,24 @@ class TestOfflineColumnsPerEngine:
         assert col.normalized_data_type == NormalizedDataType.floating_point
         assert col.numeric_precision is None
 
+    @pytest.mark.parametrize("data_type", ["varchar2", "nvarchar2", "nchar"])
+    def test_oracle_string_row_keeps_its_char_length(self, data_type):
+        """collect-oracle.sql: VARCHAR2/NVARCHAR2/NCHAR emit CHAR_LENGTH as
+        max_length; a name the shared map lacks reaches the draft as TEXT (#543)."""
+        row = {
+            "column_name": "name",
+            "data_type": data_type,
+            "max_length": 100,
+            "numeric_precision": None,
+            "numeric_scale": None,
+            "is_nullable": "Y",
+            "column_default": None,
+            "is_identity": "NO",
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.string
+        assert col.max_length == 100
+
     def test_sqlserver_real_row(self):
         """collect-sqlserver.sql: sys.columns.precision/scale, aliased."""
         row = {
@@ -164,6 +184,22 @@ class TestOfflineColumnsPerEngine:
         assert col.normalized_data_type == NormalizedDataType.decimal
         assert col.numeric_precision == 10
         assert col.numeric_scale == 2
+
+    @pytest.mark.parametrize("data_type", ["nvarchar", "nchar"])
+    def test_sqlserver_string_row_keeps_its_char_length(self, data_type):
+        """collect-sqlserver.sql: the n-types' max_length is already bytes / 2 (#543)."""
+        row = {
+            "column_name": "name",
+            "data_type": data_type,
+            "max_length": 100,
+            "numeric_precision": None,
+            "numeric_scale": None,
+            "is_nullable": "YES",
+            "column_default": None,
+        }
+        col = _build_columns([row])[0]
+        assert col.normalized_data_type == NormalizedDataType.string
+        assert col.max_length == 100
 
     def test_postgresql_numeric_row(self):
         """collect-postgresql.sql: information_schema.columns.numeric_precision

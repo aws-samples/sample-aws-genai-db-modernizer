@@ -125,6 +125,23 @@ def test_hostile_source_type_never_reaches_ddl():
     assert result.residuals[0]["column"] == "x"
 
 
+@pytest.mark.parametrize(
+    ("engine", "data_type"), [("oracle", "varchar2"), ("sqlserver", "nvarchar")]
+)
+def test_offline_oracle_and_sqlserver_strings_keep_their_length(engine, data_type):
+    """A string column from collect-oracle.sql / collect-sqlserver.sql, through the
+    shared offline builder, reaches the draft as VARCHAR(n) with no residual (#543)."""
+    from src.agents.collector.mysql_collector import _build_columns
+
+    row = {"column_name": "name", "data_type": data_type, "max_length": 100, "is_nullable": "YES"}
+    table = _table([_build_columns([row])[0].model_dump(mode="json")])
+
+    result = generate_pg_ddl([table], source_engine=engine)
+
+    assert result.tables[0].columns[0].aurora_type == "VARCHAR(100)"
+    assert result.residuals == []
+
+
 # ---------------------------------------------------------------------------
 # Bundled discourse sample: residuals before / after
 # ---------------------------------------------------------------------------

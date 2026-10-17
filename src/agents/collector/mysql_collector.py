@@ -100,6 +100,10 @@ _TYPE_MAP: dict[str, NormalizedDataType] = {
     "smallmoney": NormalizedDataType.decimal,  # SQL Server
     "char": NormalizedDataType.string,
     "varchar": NormalizedDataType.string,
+    "varchar2": NormalizedDataType.string,  # Oracle
+    "nvarchar2": NormalizedDataType.string,  # Oracle
+    "nchar": NormalizedDataType.string,  # Oracle / SQL Server
+    "nvarchar": NormalizedDataType.string,  # SQL Server
     "text": NormalizedDataType.text,
     "tinytext": NormalizedDataType.text,
     "mediumtext": NormalizedDataType.text,
