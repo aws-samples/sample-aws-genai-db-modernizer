@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 #: Recorded under the artifact root once a full run skipped nothing. The leading
 #: underscore keeps it apart from ``.meta/<job_id>.json`` (job ids never start with one).
-MARKER = ".meta/_stored-input-redaction-v1.json"
+#: v2 (#1001) added the plain-language forms, so a v1 run does not skip them.
+MARKER = ".meta/_stored-input-redaction-v2.json"
 
 #: (glob under the artifact root, how to clean one parsed file)
 _STORED_INPUTS: tuple[tuple[str, Callable[[Any], Any]], ...] = (

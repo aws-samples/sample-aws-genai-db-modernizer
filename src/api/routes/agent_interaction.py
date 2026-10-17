@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from src.agents.answer_validation import validate_answer
 from src.api.dependencies import database_name_param, job_id_param
-from src.api.secret_guard import refuse_credential_shapes
+from src.api.secret_guard import credential_warnings, refuse_credential_shapes
 from src.contracts.agent_interaction_models import AgentAnswers, AgentQuestions
 from src.contracts.assignment_models import ValidationResult
 from src.shared.contract_versioning import load_contract
@@ -121,7 +122,8 @@ async def get_questions(
 
 # Free-text answers are stored (answers.json) or sent to a model: refuse one shaped like a
 # credential (a DSN with a password, "password=...") the same way the assessment routes do
-# (#723). Keys here are question ids, so only the values are checked.
+# (#723). Keys here are question ids, so only the values are checked. Prose that may state
+# one ("the password is ...") is saved with a warning instead (#1001).
 @router.put("/{job_id}/agents/{agent}/answers", dependencies=[Depends(refuse_credential_shapes)])
 async def put_answers(
     body: SubmitAnswersRequest,
@@ -129,7 +131,12 @@ async def put_answers(
     agent: str = Depends(validated_agent),
     database_name: str = Depends(database_name_param),
 ):
-    """Write the answers artifact for an agent."""
+    """Write the answers artifact for an agent.
+
+    The response's ``warnings`` lists a message when an answer may state a credential
+    (prose such as "the password is ..."; #1001): the answers are saved, and the message
+    asks for a secrets manager reference instead. It is empty otherwise.
+    """
     store = _require_store()
 
     # Verify questions exist so we know the agent type
@@ -149,8 +156,9 @@ async def put_answers(
 
     path = _answers_path(database_name, job_id, agent)
     store.write_json(path, answers.model_dump(mode="json"))
+    warnings = await run_in_threadpool(credential_warnings, {"answers": body.answers})
 
-    return {"job_id": job_id, "agent": agent, "status": "answers_saved"}
+    return {"job_id": job_id, "agent": agent, "status": "answers_saved", "warnings": warnings}
 
 
 @router.post(
@@ -190,4 +198,8 @@ async def validate_single_answer(
             detail=f"Question {body.question_id} not found in agent questions",
         )
 
-    return validate_answer(question, body.answer)
+    result = validate_answer(question, body.answer)
+    warnings = await run_in_threadpool(credential_warnings, {"answer": body.answer})
+    if warnings:
+        result = result.model_copy(update={"warnings": [*result.warnings, *warnings]})
+    return result

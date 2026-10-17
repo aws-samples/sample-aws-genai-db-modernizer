@@ -35,12 +35,45 @@ are field paths, never values, so a refusal can name the field without echoing t
 ``broad=False`` is the free-text reading, used for the agent-answer routes and to redact
 stored files (``src.api.stored_input_redaction``). Free text describes schemas, so it only
 counts a value with a credential shape: an assignment of a literal (``password=...``,
-``Password = '...'``, ``PASSWORD '...'``), a client flag with a value, or user info in a
-connection string (with a scheme, ``jdbc:``, or a bare host such as ``admin:pw@db`` or
-``app:pw@db.example.com:5432``). So ``users.password: bcrypt hash``, ``token: rotates
-daily``, an e-mail address after a label (``Owner:dba@example.com``) and an npm scope
-(``@scope/pkg@1.2.3``) are accepted and kept. The request fields get the broad reading,
-which also counts ``key: value`` for a secret-named key.
+``Password = '...'``), a quoted ``PASSWORD '...'`` or ``IDENTIFIED BY ...``, a client flag
+with a value (``mysql -p<pw>``, ``--password <pw>``), or user info in a connection string
+(with a scheme, ``jdbc:``, a bare host such as ``admin:pw@db`` or a port as in
+``app:pw@db.example.com:5432``). The value is a placeholder only when it is empty, ``?``,
+``%s``, ``none``, ``null``, ``n/a``, ``-``, ``*``, ``...``, ``$1``, ``:name`` or ``@name``.
+So ``users.password: bcrypt hash``, ``token: rotates daily``, an e-mail address after a
+label (``Owner:dba@example.com``) and an npm scope (``@scope/pkg@1.2.3``) are accepted and
+kept. The request fields get the broad reading, which also counts ``key: value`` for a
+secret-named key.
+
+#1001 adds two structural forms, refused only when the value is a plain literal
+(:func:`_plain_literal`: after one pair of matching outer quotes is removed, no ``$ { } %
+` < > ( ) [ ] ! #`` and no quote in it, not starting with ``@`` or ``:``, and not ``?``,
+``...``, ``***``, ``xxxx``, a placeholder :func:`_is_value` knows (``none``, ``null``,
+``n/a``, ``-``), a masked value (``••••••``, ``REDACTED``) or a documentation word such as
+``password``, ``pass``, ``changeme``, ``replace_me``, ``auth_string`` or
+``YOUR_TOKEN_HERE``, in any case). :func:`_has_credential_shape` is shared, so they also
+apply in the broad reading (``PUT /settings``, the assessment routes):
+
+- a quoted literal as the password of a ``SET PASSWORD [FOR <user>] = '<pw>'`` (or
+  ``= PASSWORD('<pw>')``) statement, read only from the statement's first word (the start
+  of the text, a line, or after ``;``);
+- ``curl -u|--user|--user=|-u<v> user:<pw>`` inside one curl command, which ends at a
+  newline (a trailing ``\\`` continues it), ``;``, ``&&``, ``||``, ``|``, ``&``, a trailing
+  ``,`` or ``.``, or a bare word that is no flag, flag value or URL.
+
+A variable, template or command substitution there (``"$user:$pass"``, ``{{ .Values.pw
+}}``, ``$(cat ~/.token)``) is not refused, and neither is a real password that holds one
+of those characters (a known limit). No other rule changed.
+
+Forms that may state a credential but may as well describe one are saved with
+:data:`WARNING_MESSAGE` instead (:func:`credential_warnings`, #1001), and the stored-file
+redaction never removes them: prose (``the password is <pw>``, where the value reads as a
+password, so ``the password is hashed`` or ``... is SHA256`` is not), user info before a
+dotted host with no port (``admin:pw@db.example.com``, with or without a path), and an
+unquoted plain literal in ``SET PASSWORD FOR app = <pw>`` or ``CREATE [OR
+REPLACE]|ALTER USER|ROLE|LOGIN <name> [WITH|LOGIN|ENCRYPTED ...] PASSWORD <pw>``, read
+from the statement's first word (all-letter keywords such as ``EXPIRE`` or ``NULL`` are
+not values).
 """
 
 from __future__ import annotations
@@ -122,6 +155,64 @@ _SHORT_PASSWORD_FLAGS = {
     "osql": "-P",
     "isql": "-P",
 }
+# Clients whose -u / --user takes user:password.
+_CURL_USER_FLAGS = frozenset({"-u", "--user", "--proxy-user", "-U"})
+# What CREATE/ALTER makes in a statement whose PASSWORD is read.
+_PRINCIPALS = frozenset({"user", "role", "login"})
+# Words that may stand between the principal's name and PASSWORD.
+_PASSWORD_LEAD_INS = frozenset({"with", "login", "encrypted", "unencrypted"})
+# A value with one of these is no plain literal in the two #1001 forms (a variable, a
+# template, a command substitution or quoting), so it is never refused there.
+_NOT_PLAIN = frozenset("${}%`<>()[]!#'\"")
+# ... and the documentation words the two forms never refuse (curl -u user:pass, the MySQL
+# manual's 'auth_string'), compared in lower case.
+_MASK_CHARS = frozenset("•*·….")
+_DOCUMENTATION_WORDS = frozenset(
+    {
+        "password",
+        "passwd",
+        "pass",
+        "pw",
+        "pwd",
+        "secret",
+        "token",
+        "changeme",
+        "change_me",
+        "replace_me",
+        "your-password",
+        "your_password",
+        "auth_string",
+        "new_password",
+        "mypassword",
+        "example",
+    }
+)
+# Hash, cipher and encoding names: "the password is SHA256" describes it, it is not it.
+_NOT_PASSWORDS = frozenset(
+    {
+        "md5",
+        "sha1",
+        "sha2",
+        "sha256",
+        "sha512",
+        "argon2",
+        "argon2id",
+        "argon2i",
+        "pbkdf2",
+        "bcrypt",
+        "scrypt",
+        "base64",
+        "base64url",
+        "base32",
+        "uuidv4",
+        "uuid4",
+        "aes256",
+        "rsa2048",
+        "utf8",
+    }
+)
+# Prose: "the password is <pw>", "the password for app is <pw>".
+_PROSE_VERBS = frozenset({"is", "was", "are", "were"})
 # A placeholder value, not a credential: "token = ?", "auth token: none".
 _PLACEHOLDERS = frozenset({"?", "%s", "''", '""', "none", "null", "n/a", "na", "-", "*", "..."})
 
@@ -136,6 +227,10 @@ REFUSAL_MESSAGE = (
     "forwards credentials, so it was refused and nothing was saved. Store the database "
     "credentials in a secrets manager such as AWS Secrets Manager, then send a reference "
     "instead: connection.secret_arn (the secret's ARN) or connection.secret_name (its name)."
+)
+WARNING_MESSAGE = (
+    "Answers look like they contain a credential ({fields}); use a secrets manager "
+    "reference (the secret's name or ARN) instead of the credential itself."
 )
 TOO_LARGE_MESSAGE = (
     "This request is too large to check for credentials ({fields}): a field is longer than "
@@ -209,6 +304,40 @@ def _is_value(value: str) -> bool:
     if v[0] in ":@" and v[1:].replace("_", "").isalnum() and len(v) <= 64:
         return False  # bind parameters: :name, @p1
     return True
+
+
+def _strip_one_quote_pair(value: str) -> str:
+    v = value.strip(" \t")
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+        return v[1:-1]
+    return v
+
+
+def _plain_literal(v: str) -> bool:
+    """A value the two #1001 forms refuse (its outer quotes already removed): no ``$ { } %
+    ` < > ( ) [ ] ! #`` and no quote in it, not starting with ``@`` or ``:``, and not
+    ``?``, ``...``, ``***``, ``xxxx``, a placeholder main's :func:`_is_value` knows
+    (``none``, ``null``, ``n/a``, ``-``, ...), a masked value (``••••••``, ``…``,
+    ``REDACTED``, ``**redacted**``) or a documentation word (:data:`_DOCUMENTATION_WORDS`,
+    ``<letters, _ and ->_here`` or ``-here``, such as ``YOUR_TOKEN_HERE``; any case).
+    Anything else (a variable, a template, a command substitution, adjacent quoting) is
+    not read as a credential there. Main's own rules never use this."""
+    if not v or v[0] in "@:" or any(c in _NOT_PLAIN for c in v):
+        return False
+    lower = v.lower()
+    if not _is_value(v) or lower in ("?", "...") or (len(v) >= 4 and set(lower) <= {"x"}):
+        return False
+    if set(v) <= _MASK_CHARS or lower.strip("*") == "redacted":
+        return False  # ••••••, …, ***, REDACTED, **redacted**
+    if lower in _DOCUMENTATION_WORDS:
+        return False
+    word = lower[:-5]
+    return not (
+        lower.endswith(("_here", "-here"))
+        and bool(word)
+        and word.isascii()
+        and word.replace("_", "").replace("-", "").isalpha()
+    )
 
 
 def _userinfo_has_password(token: str, broad: bool) -> bool:
@@ -302,6 +431,184 @@ def _client_flags_hold_secret(words: list[str], lower: list[str]) -> bool:
     return False
 
 
+# --------------------------------------------------------------------------- statements
+#
+# #1001: only a quoted literal in a statement that really is one is refused. The parser
+# reads one statement at a time (a line, split at ";") and only from its first word, so
+# prose that mentions "create user ... password ..." is never read as SQL.
+
+
+def _statements(text: str) -> list[list[str]]:
+    """The words of each statement: lines (a trailing ``\\`` continues one) split at ``;``."""
+    joined = text.replace("\\\n", " ") if "\\\n" in text else text
+    return [part.split() for line in joined.splitlines() for part in line.split(";")]
+
+
+def _unwrap(value: str) -> str:
+    """The value without a trailing ``,``/``;`` and outside MySQL 5's ``PASSWORD(...)``."""
+    v = value.rstrip(",;")
+    if v.lower().startswith("password(") and v.endswith(")"):
+        v = v[len("password(") : -1]  # PASSWORD('<pw>'), PASSWORD(?)
+    return v
+
+
+def _quoted_literal(value: str) -> bool:
+    """``'<pw>'``, ``"<pw>"``, ``PASSWORD('<pw>')``: quoted, and a plain literal inside."""
+    v = _unwrap(value)
+    if not (v[:1] in "'\"" and v[-1:] == v[:1] and len(v) > 1):
+        return False
+    return _plain_literal(v[1:-1])
+
+
+def _value_after(words: list[str], index: int) -> str | None:
+    """The value after ``words[index]`` (``PASSWORD`` or the user of ``SET PASSWORD FOR``),
+    skipping one ``=`` whether it stands alone or is glued to either side."""
+    word = words[index]
+    if "=" in word:
+        return word.partition("=")[2] or (words[index + 1] if index + 1 < len(words) else None)
+    if index + 1 >= len(words):
+        return None
+    following = words[index + 1]
+    if following == "=":
+        return words[index + 2] if index + 2 < len(words) else None
+    return following[1:] if following.startswith("=") else following
+
+
+def _set_password_value(words: list[str]) -> str | None:
+    """``SET PASSWORD [FOR <user>] = <value>`` as a whole statement: its value."""
+    lower = [w.lower() for w in words[:3]]
+    if len(words) < 2 or lower[0] != "set":
+        return None
+    if lower[1] != "password" and not lower[1].startswith("password="):
+        return None
+    if "=" not in lower[1] and len(words) > 3 and lower[2] == "for":
+        user = words[3]
+        if "=" in user or (len(words) > 4 and words[4].startswith("=")):
+            return _value_after(words, 3)
+        return None
+    if "=" in lower[1] or (len(words) > 2 and words[2].startswith("=")):
+        return _value_after(words, 1)
+    return None
+
+
+def _principal_password_value(words: list[str]) -> str | None:
+    """``CREATE [OR REPLACE]|ALTER USER|ROLE|LOGIN [IF [NOT] EXISTS] <name>
+    [WITH|LOGIN|ENCRYPTED|UNENCRYPTED ...] PASSWORD <value>`` as a whole statement: its
+    value. ``PASSWORD`` must follow the name or those words directly."""
+    lower = [w.lower() for w in words[:12]]
+    if not lower or lower[0] not in ("create", "alter"):
+        return None
+    i = 1
+    if lower[i : i + 2] == ["or", "replace"]:
+        i += 2
+    if i >= len(lower) or lower[i] not in _PRINCIPALS:
+        return None
+    i += 1
+    if lower[i : i + 3] == ["if", "not", "exists"]:
+        i += 3
+    elif lower[i : i + 2] == ["if", "exists"]:
+        i += 2
+    i += 1  # the name
+    while i < len(lower) and lower[i] in _PASSWORD_LEAD_INS:
+        i += 1
+    if i >= len(lower) or not (lower[i] == "password" or lower[i].startswith("password=")):
+        return None
+    return _value_after(words, i)
+
+
+def _statement_holds_secret(text: str) -> bool:
+    """A quoted plain literal as the password of a ``SET PASSWORD [FOR <user>]`` statement
+    (refused). A quoted ``CREATE|ALTER USER ... PASSWORD '...'`` is refused by main's own
+    rule already."""
+    for words in _statements(text):
+        value = _set_password_value(words)
+        if value is not None and _quoted_literal(value):
+            return True
+    return False
+
+
+def _statement_may_hold_secret(text: str) -> bool:
+    """An unquoted plain literal in ``SET PASSWORD`` or ``CREATE|ALTER USER ... PASSWORD``
+    (warned about): not a keyword (``EXPIRE``, ``NULL``, ``HISTORY``: all letters), a hash
+    name, or a value with a variable or template character."""
+    for words in _statements(text):
+        value = _set_password_value(words) or _principal_password_value(words)
+        if value is None:
+            continue
+        v = _unwrap(value)
+        if _is_value(v) and _plain_literal(v) and not v.isalpha():
+            if v.lower() not in _NOT_PASSWORDS:
+                return True
+    return False
+
+
+# --------------------------------------------------------------------------- curl
+
+
+def _curl_user_value(word: str, following: str | None) -> str | None:
+    """The value of ``-u``/``--user``/``--user=``/``-u<v>`` (``None`` for another word)."""
+    if word in _CURL_USER_FLAGS:
+        return following
+    if word.startswith("--") and "=" in word:
+        flag, _, value = word.partition("=")
+        return value if flag in _CURL_USER_FLAGS else None
+    if word.startswith("-u") and len(word) > 2 and not word.startswith("--"):
+        return word[2:]
+    return None
+
+
+def _curl_password_is_literal(value: str) -> bool:
+    """``user:<pw>`` (one pair of outer quotes removed from the whole token) whose
+    password is a plain literal; ``"$user:$pass"``, ``"$USER":"$PASS"`` and
+    ``user:$(cat pw)`` are not."""
+    user, colon, password = _strip_one_quote_pair(value).partition(":")
+    return bool(user and colon) and _plain_literal(password)
+
+
+def _command_end(word: str) -> tuple[str, bool]:
+    """``word`` without a glued separator, and whether the command ends with it: at
+    ``;``, ``&``, ``|`` (so ``&&``, ``||``) or a trailing ``,`` or ``.``."""
+    for index, char in enumerate(word):
+        if char in ";&|":
+            return word[:index], True
+    if word[-1:] in (",", "."):
+        return word.rstrip(",."), True
+    return word, False
+
+
+def _curl_holds_secret(text: str) -> bool:
+    """``curl -u user:<pw>`` within one curl command (refused). The command ends at a
+    newline (a trailing ``\\`` continues it), at ``;``, ``&&``, ``||``, ``|``, ``&``, a
+    trailing ``,`` or ``.``, or at a bare word that is no flag, flag value or URL (``curl
+    and docker run -u 1000:1000``). Only a plain literal password counts
+    (:func:`_curl_password_is_literal`)."""
+    joined = text.replace("\\\n", " ") if "\\\n" in text else text
+    for line in joined.splitlines():
+        words = line.split()
+        in_curl = after_flag = False
+        for index, raw in enumerate(words):
+            word, ends = _command_end(raw)
+            if not in_curl:
+                in_curl = word.rpartition("/")[2].lower() == "curl" and not ends
+                after_flag = False
+                continue
+            if word.startswith("-"):
+                following = None
+                if not ends and index + 1 < len(words):
+                    following = _command_end(words[index + 1])[0]
+                value = _curl_user_value(word, following)
+                if value is not None and _curl_password_is_literal(value):
+                    return True
+                after_flag = "=" not in word
+            elif after_flag or word[:1] in "'\"" or any(c in word for c in "./:"):
+                after_flag = False  # a flag's value, a quoted value or a URL: still curl's
+            else:
+                in_curl = False  # a bare word: another command or prose
+            if ends:
+                in_curl = False
+    return False
+
+
 def _has_credential_shape(text: str, broad: bool = True) -> bool:
     words = text.split()
     if "@" in text and any(_userinfo_has_password(w, broad) for w in words if "@" in w):
@@ -326,7 +633,138 @@ def _has_credential_shape(text: str, broad: bool = True) -> bool:
                 value = tight[index + 1]
             if is_secret_key(key.strip(_QUOTES)) and _is_value(value):
                 return True
+    # #1001: the two structural forms a parser can delimit exactly.
+    if "password" in text.lower() and _statement_holds_secret(text):
+        return True
+    return "curl" in text.lower() and _curl_holds_secret(text)
+
+
+# --------------------------------------------------------------------------- warnings
+#
+# #1001: forms that may state a credential but may as well describe one. The answers
+# routes save them with a warning; the stored-file redaction never removes them.
+
+
+def _looks_like_password(value: str) -> bool:
+    """A word that reads as a password: letters with a digit or a symbol.
+
+    Not a placeholder, a hash, cipher or encoding name (``SHA256``, ``base64url``), a
+    number with a unit (``86400s``), hyphenated words and numbers (``base64-encoded``,
+    ``AES-256-encrypted``, ``15-minutes``), or a type, call, ARN or URL (``VARCHAR(255)``,
+    ``bcrypt(cost=12)``, anything with ``(`` or ``:``). A value with ``/`` or an
+    identifier with ``_`` counts only with upper and lower case and a digit, 8 or more
+    characters (``S3cr3t_pw9``, not ``pbkdf2_sha256`` or ``/var/lib/mysql``)."""
+    v = value.strip(_QUOTES).rstrip(".,;:)")
+    if not _is_value(v) or not _plain_literal(v) or not any(c.isalpha() for c in v):
+        return False
+    if v.isalpha():
+        return False
+    if v.lstrip("0123456789").isalpha():
+        return False  # 86400s, 30d
+    if any(c in v for c in "(:"):
+        return False
+    if "/" in v or ("_" in v and v.replace("_", "").isalnum()):
+        return _mixed_case_with_digit(v)
+    parts = v.split("-")
+    return not all(p.isalpha() or p.isdigit() or p.lower() in _NOT_PASSWORDS for p in parts)
+
+
+def _mixed_case_with_digit(value: str) -> bool:
+    return (
+        len(value) >= 8
+        and any(c.isupper() for c in value)
+        and any(c.islower() for c in value)
+        and any(c.isdigit() for c in value)
+    )
+
+
+def _is_secret_word(words: list[str], index: int) -> bool:
+    """``password``, ``db_password``, ``token``; or ``key`` after ``api``/``access``/..."""
+    word = words[index].strip(_QUOTES + ".,;:!?()").lower()
+    if word == "key" and index > 0:
+        return (words[index - 1].strip(_QUOTES).lower(), "key") in _SECRET_LAST_PAIRS
+    return is_secret_key(word)
+
+
+def _prose_holds_secret(words: list[str]) -> bool:
+    """``the password is <pw>``, ``the password for app is '<pw>'``, ``api key is <pw>``.
+
+    Only a value that reads as a password counts (:func:`_looks_like_password`, and eight
+    or more characters unless quoted). So ``the password is hashed``, ``... is 'hashed'``,
+    ``... is SHA256``, ``... is VARCHAR(255)`` and ``the password policy is 90 days`` are
+    descriptions. Looks at most four words ahead."""
+    for index in range(len(words)):
+        if not _is_secret_word(words, index):
+            continue
+        verb = index + 1
+        if verb + 1 < len(words) and words[verb].lower() == "for":
+            verb += 2  # the password for app is ...
+        if verb + 1 >= len(words) or words[verb].lower() not in _PROSE_VERBS:
+            continue
+        value = words[verb + 1].rstrip(".,;:)")
+        quoted = value[:1] in "'\"`"
+        if (quoted or len(value) >= 8) and _looks_like_password(value):
+            return True
     return False
+
+
+def _email_shaped_userinfo(word: str) -> bool:
+    """``admin:pw@db.example.com``: user info with a password before a dotted host and no
+    port, which reads the same as an e-mail address after a label
+    (``Owner:dba@example.com``); with a path (``.../app``) too."""
+    before, at, host = word.strip(_QUOTES + ".,;)").rpartition("@")
+    if not at or "://" in before or not host or "." not in host:
+        return False
+    user, colon, password = before.lstrip("@").partition(":")
+    return bool(colon and _is_value(password) and any(c.isalpha() for c in user))
+
+
+def _has_warning_shape(text: str) -> bool:
+    """Free text that may hold a credential but may as well describe one (#1001): prose
+    (``the password is <pw>``), user info before a dotted host (``admin:pw@db.example.com``,
+    with or without a path), and an unquoted password in a ``SET PASSWORD`` or
+    ``CREATE|ALTER USER`` statement. Saved with a warning, never redacted."""
+    if len(text) > MAX_SCANNED_CHARS:
+        return False
+    words = text.split()
+    if _prose_holds_secret(words):
+        return True
+    if "@" in text and any(_email_shaped_userinfo(w) for w in words if "@" in w):
+        return True
+    return "password" in text.lower() and _statement_may_hold_secret(text)
+
+
+def find_credential_warnings(payload: Any) -> list[str]:
+    """The paths of the strings in ``payload`` that :func:`_has_warning_shape` flags
+    (paths only, never values). Strings over :data:`MAX_SCANNED_CHARS` and anything nested
+    deeper than :data:`MAX_DEPTH` are not checked."""
+    found: list[str] = []
+
+    def walk(node: Any, path: str, depth: int) -> None:
+        if depth > MAX_DEPTH:
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, _join(path, str(key)[:MAX_KEY_CHARS]), depth + 1)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                walk(value, f"{path}[{index}]", depth + 1)
+        elif isinstance(node, str) and _has_warning_shape(node):
+            found.append(path or "<body>")
+
+    walk(payload, "", 0)
+    return found
+
+
+def credential_warnings(payload: Any) -> list[str]:
+    """The warning to return with a saved answer: one message naming the flagged fields,
+    or none. Logs the field paths, never the values."""
+    paths = find_credential_warnings(payload)
+    if not paths:
+        return []
+    fields = ", ".join(dict.fromkeys(paths))
+    logger.warning("answer field(s) %s look like a credential; saved with a warning", fields)
+    return [WARNING_MESSAGE.format(fields=fields)]
 
 
 def _decoded_variants(text: str, budget: _Budget) -> list[str]:
@@ -454,6 +892,8 @@ def _redact_string(node: str, budget: _Budget) -> str:
     # Over-long strings are not secrets: they are left exactly as they are.
     if len(node) > MAX_SCANNED_CHARS:
         return node
+    # Only the forms the routes refuse. What they only warn about (prose, e-mail-shaped
+    # user info, #1001) may be a description, so it is never removed from disk.
     return REDACTED if _string_holds_secret(node, 0, budget, broad=False) else node
 
 
