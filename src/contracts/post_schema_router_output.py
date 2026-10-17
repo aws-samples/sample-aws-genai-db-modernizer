@@ -16,6 +16,10 @@ Version History:
 - 1.0 (2026-10-17, #972): First versioned: ``RouterOutput``
   (``router_output.json``) carries ``contract_version`` (ADR-008 Decision 1).
   A file written before has none, and still loads.
+- 1.1 (2026-10-17, #992): Added ``held_queries``: flagged queries the router kept
+  in place because their table's write group holds a customer-pinned write (a
+  table has one writer, ADR-031 Amendment 9); the flag stands as a note on the
+  unit, not a move. Defaults to empty, so a 1.0 file still loads.
 """
 
 from __future__ import annotations
@@ -75,7 +79,7 @@ class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.0", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")
@@ -85,5 +89,12 @@ class RouterOutput(BaseModel):
     terminal_queries: list[str] = Field(
         default_factory=list,
         description="Query IDs that no engine can serve — application-layer only",
+    )
+    held_queries: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Flagged queries kept on their engine because their table's write group holds "
+            "a customer-pinned write (#992): the flag is a note on the unit, not a move"
+        ),
     )
     cascade_depth: int = Field(default=0, description="Current depth of the routing cascade")

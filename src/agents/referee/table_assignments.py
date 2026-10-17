@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
+from typing import Any
 
 from src.agents.referee.aurora_choice import (
     AURORA_ENGINES,
@@ -133,6 +134,7 @@ def derive_table_assignments(
     *,
     known_tables: TableNameResolver | None = None,
     retained_engine: str | None = None,
+    write_groups: Mapping[str, Iterable[str]] | None = None,
 ) -> tuple[list[TableAssignment], UnresolvedNames]:
     """Derive table-level assignments from query assignments.
 
@@ -169,6 +171,13 @@ def derive_table_assignments(
     queries (``wp_posts`` in one, ``wordpress.wp_posts`` in another) is
     merged into a single row under the canonical ``table_id`` — never split
     into two tables.
+
+    ``write_groups`` (``Assignment.write_groups``, #992), when given, sets each
+    written table's ``source_of_truth``, the one engine its writes land on
+    (ADR-031 Amendment 9), and its ``replica_engines``, the table's other
+    engines: they serve its reads as replicas fed by CDC from the source of
+    truth. A table whose writes still sit on two engines (an artifact written
+    before the rule) has no source of truth.
 
     Requirements: 2.6, 11.1, 11.2
     """
@@ -231,6 +240,14 @@ def derive_table_assignments(
         )
         global_fallback = "aurora"
 
+    engine_of = {qa.query_id: qa.assigned_engine for qa in query_assignments}
+    write_engines: dict[str, set[str]] = defaultdict(set)
+    for table, members in (write_groups or {}).items():
+        resolved = table if known_tables is None else known_tables.resolve(table)
+        if resolved is None:
+            continue
+        write_engines[resolved].update(engine_of[q] for q in members if engine_of.get(q))
+
     result: list[TableAssignment] = []
     for table_id in sorted(table_engine_counts.keys()):
         engine_counts = table_engine_counts[table_id]
@@ -259,8 +276,25 @@ def derive_table_assignments(
                 engines=engines,
                 query_count=table_query_counts[table_id],
                 multi_engine_reason=multi_engine_reason,
+                **_source_of_truth(write_engines.get(table_id), engines),
             )
         )
 
     sorted_unresolved = sorted(unresolved)
     return result, UnresolvedNames(count=len(sorted_unresolved), names=sorted_unresolved)
+
+
+def _source_of_truth(writers: set[str] | None, engines: list[str]) -> dict[str, Any]:
+    """A table's ``write_engines``, ``source_of_truth`` and ``replica_engines``
+    (#992): the engines its writes land on and, when that is one engine, it and
+    the other engines its queries run on. Nothing when no query writes it."""
+    if not writers:
+        return {}
+    if len(writers) != 1:
+        return {"write_engines": sorted(writers)}
+    (owner,) = writers
+    return {
+        "write_engines": [owner],
+        "source_of_truth": owner,
+        "replica_engines": [e for e in engines if e != owner],
+    }

@@ -6,15 +6,21 @@ work. It pushes back out loud rather than letting an infeasible routing ship and
 fail in production, but it does not auto-fix: the customer fixes the routing or
 explicitly accepts the risk.
 
-Two checks:
+Three checks:
 
-- **Read/write split.** A table whose writes land on one engine while some of its
-  reads are routed to an engine that does not receive those writes directly needs
-  a replication/CQRS pattern to stay in sync. This is the polyglot pattern the
-  tool recommends (reads on a cache/search engine, writes on the primary), so it
-  is **advisory**: the finding names the recommended replication pattern (CDC,
-  zero-ETL, cache-aside, CQRS, Saga) keyed on the read engine's role, and the gate
-  proceeds rather than blocking.
+- **One source of truth.** A table's writes and locking reads land on one engine
+  (ADR-031 Amendment 9, #992). A table written on more than one engine is
+  **blocking**: it has no single source of truth to replicate from.
+- **Read replica.** A table whose reads are routed to an engine other than its
+  source of truth reads an eventually consistent replica, fed by CDC from the
+  source of truth. This is the polyglot pattern the tool recommends (CQRS: reads
+  on a cache, search or another store, writes on the source of truth), so it is
+  **advisory**: the finding names the source of truth, the replica engines, the
+  CDC direction, the reads that may lag a write, and the recommended replication
+  pattern (CDC, zero-ETL, cache-aside, CQRS) keyed on the replica's role, and the
+  gate proceeds rather than blocking. A table's writes are its write targets and
+  locking reads (``write_groups.written_tables``), so a table a write only reads
+  (``INSERT ... SELECT FROM t``) is read there, not written.
 - **Capability-aware co-dependency check.** For a co-dependency group (queries
   sharing a significant JOIN):
   * split across engines where at least one destination lacks ``complex_joins``
@@ -30,13 +36,14 @@ Two checks:
 from __future__ import annotations
 
 from src.agents.referee.capability_registry import can_engine_serve_capability
+from src.agents.referee.table_resolution import SourceScope
+from src.agents.referee.utility_statements import is_utility_statement
+from src.agents.referee.write_groups import written_tables
 from src.contracts.assignment_models import Assignment
 from src.contracts.feasibility_models import FeasibilityFinding, FindingKind, FindingSeverity
-
-# QueryPattern.query_type values that mutate data vs. read it. OTHER / None is
-# unclassifiable and ignored (it cannot be attributed to a read or a write).
-_WRITE_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "MERGE"})
-_READ_TYPES = frozenset({"SELECT"})
+from src.shared.engine_names import display_engine
+from src.shared.report_facts import REPLICA_READS_NAMED
+from src.tools.sql.query_facts import source_engine_of
 
 # Engine -> architectural role, used to recommend the replication pattern that
 # makes an intended read/write split work. A polyglot target routing reads to a
@@ -65,7 +72,7 @@ def _replication_recommendation(write_engines: set[str], read_dests: set[str]) -
     a second system-of-record needs a CQRS read model fed by a change stream, with
     the Saga pattern for writes that must stay consistent across stores.
     """
-    writers = sorted(write_engines)
+    writers = _engine_names(write_engines)
     dest_roles = {_engine_role(e) for e in read_dests}
     parts: list[str] = []
     if "cache" in dest_roles:
@@ -89,6 +96,20 @@ def _replication_recommendation(write_engines: set[str], read_dests: set[str]) -
     return f"Writes own the data on {writers}. Recommended: " + "; or ".join(parts) + "."
 
 
+def _engine_names(engines: set[str] | list[str]) -> str:
+    """``Aurora PostgreSQL and DynamoDB``: engines by display name, sorted by id."""
+    names = [display_engine(e) for e in sorted(engines)]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _query_list(qids: set[str] | list[str]) -> str:
+    """``q1, q2 and 3 more``: at most ``REPLICA_READS_NAMED`` query ids, the rest counted."""
+    ids = sorted(qids)
+    named = ", ".join(ids[:REPLICA_READS_NAMED])
+    more = len(ids) - REPLICA_READS_NAMED
+    return f"{named} and {more} more" if more > 0 else named
+
+
 def _engine_lacks_complex_joins(engine: str) -> bool:
     # #490: reads the shared capability registry (the single capability
     # source) instead of reality_check's now-deleted, separately drifting
@@ -110,6 +131,8 @@ def _detect_read_write_splits(
 ) -> list[FeasibilityFinding]:
     engine_by_query = _in_scope_engine_by_query(assignment)
     query_patterns = collector_output.get("queries", {}).get("query_patterns", [])
+    source_engine = source_engine_of(collector_output)
+    scope = SourceScope.from_collector(collector_output)
 
     # table -> {"write_engines", "read_engines", "write_qids", "read_qids"}
     per_table: dict[str, dict[str, set]] = {}
@@ -118,14 +141,12 @@ def _detect_read_write_splits(
         engine = engine_by_query.get(qid)
         if not engine:
             continue  # not routed / out of scope
-        qtype = str(q.get("query_type") or "").upper()
-        if qtype in _WRITE_TYPES:
-            bucket = "write"
-        elif qtype in _READ_TYPES:
-            bucket = "read"
-        else:
-            continue  # unclassifiable (OTHER / None)
-        for table in q.get("tables_accessed") or []:
+        tables = q.get("tables_accessed") or []
+        if is_utility_statement(q.get("query_text"), tables, scope):
+            continue  # administration traffic: pinned, never routed
+        written = set(written_tables(q, source_engine, scope))
+        for table in tables:
+            bucket = "write" if table in written else "read"
             slot = per_table.setdefault(
                 table,
                 {
@@ -145,11 +166,31 @@ def _detect_read_write_splits(
         read_engines = slot["read_engines"]
         if not write_engines:
             continue  # read-only table: nothing to keep in sync
-        reads_without_writes = read_engines - write_engines
-        if not reads_without_writes:
-            continue  # every read engine also owns the writes
-        involved = sorted(write_engines | reads_without_writes)
-        recommendation = _replication_recommendation(write_engines, reads_without_writes)
+        if len(write_engines) > 1:
+            findings.append(
+                FeasibilityFinding(
+                    kind=FindingKind.WRITE_SPLIT,
+                    severity=FindingSeverity.BLOCKING,
+                    table=table,
+                    engines=sorted(write_engines),
+                    query_ids=sorted(slot["write_qids"]),
+                    message=(
+                        f"Table {table} has writes on {_engine_names(write_engines)}: a "
+                        "table's writes must land on one engine, its source of truth, so the "
+                        "other engines can replicate from it. Route its writes "
+                        f"({_query_list(slot['write_qids'])}) to one engine."
+                    ),
+                )
+            )
+            continue
+        (source,) = tuple(write_engines)
+        replicas = sorted(read_engines - write_engines)
+        if not replicas:
+            continue  # every read runs on the source of truth
+        replica_reads = sorted(
+            qid for qid in slot["read_qids"] if engine_by_query.get(qid) in replicas
+        )
+        recommendation = _replication_recommendation(write_engines, set(replicas))
         findings.append(
             FeasibilityFinding(
                 kind=FindingKind.READ_WRITE_SPLIT,
@@ -159,13 +200,16 @@ def _detect_read_write_splits(
                 # it is a risk to flag (with the pattern to use), not a wall.
                 severity=FindingSeverity.ADVISORY,
                 table=table,
-                engines=involved,
-                query_ids=sorted(slot["read_qids"] | slot["write_qids"]),
+                engines=sorted({source, *replicas}),
+                query_ids=sorted(slot["write_qids"] | set(replica_reads)),
                 message=(
-                    f"Table '{table}' has writes on {sorted(write_engines)} but reads routed "
-                    f"to {sorted(reads_without_writes)}, which do not receive those writes "
-                    f"directly. This needs a replication pattern to keep the read engine in "
-                    f"sync. {recommendation}"
+                    f"Table {table} has its source of truth on {display_engine(source)} and "
+                    f"{'a replica' if len(replicas) == 1 else 'replicas'} on "
+                    f"{_engine_names(replicas)}, kept in sync by CDC from "
+                    f"{display_engine(source)} to {_engine_names(replicas)}. "
+                    f"{len(replica_reads)} {'read is' if len(replica_reads) == 1 else 'reads are'} "
+                    f"served by a replica ({_query_list(replica_reads)}) and eventually "
+                    f"consistent: a read can miss a write until it replicates. {recommendation}"
                 ),
                 recommended_pattern=recommendation,
             )
@@ -192,8 +236,8 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
             if _engine_lacks_complex_joins(engine):
                 recommendation = (
                     f"Denormalize the joined tables into a single-table / embedded design on "
-                    f"{engine}, or perform the join in the application; a server-side JOIN is "
-                    f"not available on {engine}."
+                    f"{display_engine(engine)}, or perform the join in the application; a "
+                    f"server-side JOIN is not available on {display_engine(engine)}."
                 )
                 findings.append(
                     FeasibilityFinding(
@@ -203,9 +247,9 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
                         engines=[engine],
                         query_ids=sorted(group),
                         message=(
-                            f"Co-dependent queries {sorted(group)} share a significant JOIN and "
-                            f"are all routed to {engine}, which has no server-side complex-join "
-                            f"support. {recommendation}"
+                            f"Co-dependent queries ({_query_list(group)}) share a significant "
+                            f"JOIN and are all routed to {display_engine(engine)}, which has no "
+                            f"server-side complex-join support. {recommendation}"
                         ),
                         recommended_pattern=recommendation,
                     )
@@ -221,10 +265,11 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
                     engines=sorted(engines),
                     query_ids=sorted(group),
                     message=(
-                        f"Co-dependent queries {sorted(group)} share a significant JOIN but are "
-                        f"split across engines {sorted(engines)}; {incapable} cannot serve the "
-                        f"JOIN (no complex-join support). Keep the group on one join-capable "
-                        f"engine, or move the joined data together."
+                        f"Co-dependent queries ({_query_list(group)}) share a significant JOIN "
+                        f"but are split across {_engine_names(engines)}; "
+                        f"{_engine_names(incapable)} cannot serve the JOIN (no complex-join "
+                        "support). Keep the group on one join-capable engine, or move the "
+                        "joined data together."
                     ),
                 )
             )
@@ -237,9 +282,10 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
                     engines=sorted(engines),
                     query_ids=sorted(group),
                     message=(
-                        f"Co-dependent queries {sorted(group)} are split across engines "
-                        f"{sorted(engines)}. Each side can serve joins, but a cross-engine join "
-                        f"means federated or application-side joining; confirm this is intended."
+                        f"Co-dependent queries ({_query_list(group)}) are split across "
+                        f"{_engine_names(engines)}. Each side can serve joins, but a "
+                        "cross-engine join means federated or application-side joining; "
+                        "confirm this is intended."
                     ),
                 )
             )

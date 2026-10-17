@@ -305,7 +305,12 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     MySQL in the first assignment and ``413c99e4`` DynamoDB, so neither is a DocumentDB
     move any more. The check moves 25 to Aurora MySQL and 3 to DynamoDB. The flag now goes on
     ``3a74580e`` (``SELECT user_id, meta_key, meta_value FROM wp_usermeta WHERE user_id
-    IN (...)``), still a DynamoDB move (74 against Aurora MySQL's 73)."""
+    IN (...)``), still a DynamoDB move (74 against Aurora MySQL's 73).
+
+    #992 (a table's writes land on one engine): ``4b856e29`` (``UPDATE
+    wp_woocommerce_order_itemmeta SET meta_value = ?``) is first-assigned to DynamoDB with
+    the table's other write, not to DocumentDB, so DocumentDB first-assigns 27 and the
+    check moves 24 to Aurora MySQL and 3 to DynamoDB."""
 
     FLAGGED = "3a74580e"
 
@@ -320,7 +325,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
         assert sorted(moved.values()).count("dynamodb") == 3
-        assert sorted(moved.values()).count("aurora_mysql") == 25
+        assert sorted(moved.values()).count("aurora_mysql") == 24
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 

@@ -116,6 +116,9 @@ def categorize(reason: str) -> str:
         # #787: a co-dependency group no engine can host takes the Aurora
         # fallback (it read "no analysis available" before).
         return "co_dependency_fallback"
+    if "write group: one source of truth" in reason:
+        # #992 (ADR-031 Amendment 9): a unit holding a table's write group.
+        return "write_group_tie" if "scores tie with" in reason else "write_group"
     if "co-dependency group" in reason:
         # "scores tie with" (#503): break_owner_tie's wording changed from
         # "(tie with X: ...)" to a full, honest sentence built with

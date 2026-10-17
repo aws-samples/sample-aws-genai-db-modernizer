@@ -37,7 +37,7 @@ from typing import Any
 from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.capability_labels import capability_label, redesign_hints
-from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
 
@@ -1220,6 +1220,84 @@ def access_pattern_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Sources of truth and replicas (#992, ADR-031 Amendment 9)
+# ---------------------------------------------------------------------------
+
+# How many replica-served reads a table's risk sentence names; the fact keeps them all.
+REPLICA_READS_NAMED = 5
+# How many replicated tables every deliverable lists (most replica reads first);
+# report.json's ``table_sources`` holds every written table.
+TABLE_SOURCES_SHOWN = 25
+
+
+def _replica_risk(source: str, replicas: list[str], reads: list[str]) -> str:
+    """The eventual-consistency risk of a replicated table, naming its replica reads."""
+    named = ", ".join(reads[:REPLICA_READS_NAMED])
+    more = len(reads) - REPLICA_READS_NAMED
+    if more > 0:
+        named += f" and {more} more"
+    noun = "read" if len(reads) == 1 else "reads"
+    return (
+        f"Eventually consistent: {len(reads)} {noun} on "
+        f"{', '.join(display_engine(e) for e in replicas)} ({named}) read a copy kept in "
+        f"sync from {display_engine(source)} via CDC, so a read can miss a write until it "
+        "replicates."
+    )
+
+
+def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Each written table's source of truth and replicas (``TableSourceFacts``), or None.
+
+    From ``table_sources``: a written table whose reads all run on its source of
+    truth is a single-engine table; one with a read on another engine is
+    replicated, with its replica engines (CDC runs from the source of truth to
+    each), its replica-served reads and the eventual-consistency risk naming them.
+    None for a report with no ``table_sources``.
+    """
+    rows = report.get("table_sources")
+    if not isinstance(rows, list):
+        return None
+    replicated: list[dict[str, Any]] = []
+    single: list[str] = []
+    written = split = 0
+    for row in sorted(
+        (r for r in rows if isinstance(r, dict) and r.get("table")), key=lambda r: str(r["table"])
+    ):
+        written += 1
+        source = row.get("source_of_truth")
+        if not source:
+            split += 1
+            continue
+        replicas = [r for r in row.get("replicas") or [] if isinstance(r, dict) and r.get("engine")]
+        if not replicas:
+            single.append(str(row["table"]))
+            continue
+        engines = [str(r["engine"]) for r in replicas]
+        reads = sorted({str(q) for r in replicas for q in r.get("read_query_ids") or []})
+        replicated.append(
+            {
+                "table": str(row["table"]),
+                "source_of_truth": str(source),
+                "replica_engines": engines,
+                "write_query_count": len(row.get("write_query_ids") or []),
+                "replica_read_query_ids": reads,
+                "replica_read_count": len(reads),
+                "risk": _replica_risk(str(source), engines, reads),
+            }
+        )
+    replicated.sort(key=lambda r: (-r["replica_read_count"], r["table"]))
+    return {
+        "written_table_count": written,
+        "replicated_table_count": len(replicated),
+        "split_write_table_count": split,
+        "replicated_tables": replicated[:TABLE_SOURCES_SHOWN],
+        "more_replicated_count": max(len(replicated) - TABLE_SOURCES_SHOWN, 0),
+        "single_engine_tables": single,
+        "single_engine_table_count": len(single),
+    }
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -1342,4 +1420,6 @@ def compute_report_facts(
         "unservable": unservable_query_facts(report),
         # #792: the access-pattern totals the results page shows.
         "access_pattern_totals": access_pattern_facts(report),
+        # #992: each written table's source of truth, replicas and CDC risk.
+        "table_sources": table_source_facts(report),
     }

@@ -1,0 +1,232 @@
+"""A table's write group: all of its write paths share one engine (ADR-031 Amendment 9, #992).
+
+Maintainer decision (2026-10-17): a table has one source of truth. Every
+statement that writes it (an ``INSERT``, ``UPDATE``, ``DELETE`` or ``MERGE``)
+and every locking read on it (a read that takes the row locks a write needs)
+lands on one engine. Its reads stay per query: another engine can serve a read
+as an eventually consistent replica, fed by change data capture (CDC) from the
+source of truth.
+
+This is narrower than the table-owner rule Decision 1 forbids. It groups a
+table's writes only, never its reads, and the group's engine comes from the
+writes' own per-query scores through the shared group rule
+(``co_dependency.group_engine_scores``, Decision 4 Amendment 4): the mean over
+the members, every member servable, ties through ``tie_break``.
+
+A write group and a co-dependency group that share a statement must move
+together, or one of them would split, so every routing pass places
+:func:`placement_groups`: the two kinds merged where they overlap.
+Administration statements (``TRUNCATE``, DDL, ...) never enter routing (the
+utility pin keeps them on the source-compatible engine), so they join no write
+group.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+
+from src.agents.referee.cache_overlay import is_locking_read, is_write_query
+from src.agents.referee.table_resolution import SourceScope
+from src.agents.referee.utility_statements import is_utility_statement
+from src.tools.sql.query_facts import query_facts, source_engine_of
+
+__all__ = [
+    "WRITE_GROUP_LABEL",
+    "assignment_placement_groups",
+    "build_write_groups",
+    "collector_write_groups",
+    "placement_groups",
+    "table_sources",
+    "unit_write_tables",
+    "write_group_tables",
+    "written_tables",
+]
+
+
+# The assignment reason's label for a unit placed by this rule (the move ledger's
+# rule is ``group.write``).
+WRITE_GROUP_LABEL = "write group: one source of truth"
+
+
+def _bare(table: str) -> str:
+    return table.rsplit(".", 1)[-1].strip('[]"`').lower()
+
+
+def written_tables(
+    query: Mapping, source_engine: str = "", source: SourceScope | None = None
+) -> list[str]:
+    """The collected tables ``query`` writes or locks, as its ``tables_accessed`` names them.
+
+    A write's tables are its targets (``QueryFacts.write_targets``), never a table
+    it only reads; a locking read's are every table it reads, since it locks
+    their rows. A write whose target is none of its collected tables (no text, or
+    text the facts cannot read) counts as writing all of them: keeping too many
+    writes together never splits a table's writes. An administration statement
+    writes no table here.
+    """
+    text = str(query.get("query_text") or "")
+    tables = [str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"]
+    if is_utility_statement(text, tables, source):
+        return []
+    out: list[str] = []
+    if is_write_query(query):
+        targets = set(query_facts(text, source_engine).write_targets)
+        out.extend([t for t in tables if _bare(t) in targets] or tables)
+    if is_locking_read(query):
+        out.extend(tables)
+    return list(dict.fromkeys(out))
+
+
+def build_write_groups(
+    queries: Iterable[Mapping], source_engine: str = "", source: SourceScope | None = None
+) -> dict[str, list[str]]:
+    """``{table: [query_id, ...]}``: each written table's write statements, in query order.
+
+    Tables are sorted; a table with one write statement is listed too (it is
+    still that table's source of truth), though only a group of two or more
+    constrains routing.
+    """
+    groups: dict[str, list[str]] = {}
+    for query in queries:
+        qid = str(query.get("query_id") or "")
+        if not qid:
+            continue
+        for table in written_tables(query, source_engine, source):
+            members = groups.setdefault(table, [])
+            if qid not in members:
+                members.append(qid)
+    return {table: groups[table] for table in sorted(groups)}
+
+
+def placement_groups(
+    co_dependency_groups: Iterable[Iterable[str]],
+    write_groups: Mapping[str, Iterable[str]] | None,
+) -> list[list[str]]:
+    """The units every routing pass places as one: co-dependency groups and write
+    groups (two or more members), merged where they share a query.
+
+    Deterministic: units come in the order of their first member (co-dependency
+    groups first, in their order, then write groups by table), members in the
+    order first seen. A co-dependency group no write group touches comes back
+    exactly as given.
+    """
+    sources = [list(g) for g in co_dependency_groups]
+    sources += [list(m) for _, m in sorted((write_groups or {}).items()) if len(list(m)) >= 2]
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        root = x
+        while parent.setdefault(root, root) != root:
+            root = parent[root]
+        while parent[x] != root:
+            parent[x], x = root, parent[x]
+        return root
+
+    order: list[str] = []
+    for group in sources:
+        for qid in group:
+            if qid not in parent:
+                order.append(qid)
+            find(qid)
+        for qid in group[1:]:
+            a, b = find(group[0]), find(qid)
+            if a != b:
+                parent[b] = a
+    units: dict[str, list[str]] = {}
+    for qid in order:
+        units.setdefault(find(qid), []).append(qid)
+    return [members for members in units.values() if len(members) >= 2]
+
+
+def write_group_tables(write_groups: Mapping[str, Iterable[str]] | None) -> dict[str, list[str]]:
+    """``{query_id: [table, ...]}`` for the members of every write group of two or more."""
+    out: dict[str, list[str]] = {}
+    for table, members in sorted((write_groups or {}).items()):
+        members = list(members)
+        if len(members) < 2:
+            continue
+        for qid in members:
+            out.setdefault(qid, []).append(table)
+    return out
+
+
+def unit_write_tables(
+    unit: Iterable[str], write_groups: Mapping[str, Iterable[str]] | None
+) -> list[str]:
+    """The tables whose write group (two or more statements) is part of ``unit``."""
+    members = set(unit)
+    return sorted(
+        table
+        for table, group in (write_groups or {}).items()
+        if len(list(group)) >= 2 and set(group) <= members
+    )
+
+
+def assignment_placement_groups(assignment: Mapping | None) -> list[list[str]]:
+    """:func:`placement_groups` of an assignment artifact (a dict): its
+    ``co_dependency_groups`` and ``write_groups``. An artifact written before
+    write groups existed gives its co-dependency groups alone."""
+    assignment = assignment or {}
+    return placement_groups(
+        assignment.get("co_dependency_groups") or [], assignment.get("write_groups") or {}
+    )
+
+
+def collector_write_groups(collector_output: Mapping | None) -> dict[str, list[str]]:
+    """:func:`build_write_groups` over a collector output's query patterns, read in
+    its source engine's dialect."""
+    collector_output = collector_output or {}
+    return build_write_groups(
+        collector_output.get("queries", {}).get("query_patterns", []),
+        source_engine_of(collector_output),
+        SourceScope.from_collector(collector_output),
+    )
+
+
+def table_sources(assignment: Mapping | None) -> list[dict[str, object]]:
+    """Each written table's source of truth and replicas, for ``report.json``
+    (``SynthesisOutputContract.table_sources``, #992), sorted by table.
+
+    Read from the assignment's ``write_groups`` and in-scope query assignments: a
+    table's writes give its source of truth (the one engine they sit on;
+    ``write_engines`` lists them all, so a table whose writes still sit on two
+    engines says so), and every other engine with an in-scope query on the table
+    is a replica, with the reads it serves. Empty for an assignment written
+    before write groups existed.
+    """
+    assignment = assignment or {}
+    qas = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
+    engine_of = {str(qa.get("query_id")): str(qa.get("assigned_engine") or "") for qa in qas}
+    readers: dict[str, dict[str, list[str]]] = {}
+    groups = assignment.get("write_groups") or {}
+    for qa in qas:
+        qid = str(qa.get("query_id"))
+        for table in qa.get("source_tables") or []:
+            if table in groups and qid not in groups[table]:
+                readers.setdefault(table, {}).setdefault(engine_of[qid], []).append(qid)
+    out: list[dict[str, object]] = []
+    for table in sorted(groups):
+        writes = [q for q in groups[table] if q in engine_of]
+        if not writes:
+            continue
+        writers = {engine_of[q] for q in writes}
+        # The one writer, never a pick among several (a split has no source of truth).
+        source: str | None = None
+        if len(writers) == 1:
+            (source,) = writers
+        write_engines = sorted(writers)
+        replicas = [
+            {"engine": engine, "read_query_ids": sorted(qids)}
+            for engine, qids in sorted(readers.get(table, {}).items())
+            if source is not None and engine != source
+        ]
+        out.append(
+            {
+                "table": table,
+                "source_of_truth": source,
+                "write_engines": write_engines,
+                "write_query_ids": sorted(writes),
+                "replicas": replicas,
+            }
+        )
+    return out

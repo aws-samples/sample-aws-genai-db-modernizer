@@ -849,6 +849,16 @@ class QueryFacts:
         return self._has("update", "delete") and self._parsed.multi_table_write
 
     @cached_property
+    def write_targets(self) -> tuple[str, ...]:
+        """The tables the statement writes, lower-cased bare names: every ``INSERT``,
+        ``REPLACE``, ``UPDATE``, ``DELETE``, ``MERGE`` and ``TRUNCATE`` target, never a
+        table the write only reads (``SqlFacts.write_targets``, #992).
+        """
+        if not self._has("insert", "replace", "update", "delete", "merge", "truncate"):
+            return ()
+        return self._parsed.write_targets
+
+    @cached_property
     def json_access(self) -> bool:
         """The query reads or builds JSON: a JSON function or operator, a cast to
         ``json``/``jsonb``, a JSON containment (``SqlFacts.json_access``).

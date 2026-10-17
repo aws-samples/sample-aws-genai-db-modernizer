@@ -441,7 +441,14 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     "src/shared/query_trace.py": (frozenset({"_PLACES", "EXCERPT_CHARS"}), _BUDGET),
     "src/shared/report_facts.py": (
         frozenset(
-            {"TRACE_FULL_CAP", "CLOSE_CALL_IDS_SHOWN", "CLOSE_CALL_MARGIN", "UNSERVABLE_SHOWN"}
+            {
+                "TRACE_FULL_CAP",
+                "CLOSE_CALL_IDS_SHOWN",
+                "CLOSE_CALL_MARGIN",
+                "UNSERVABLE_SHOWN",
+                "REPLICA_READS_NAMED",
+                "TABLE_SOURCES_SHOWN",
+            }
         ),
         _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",
     ),

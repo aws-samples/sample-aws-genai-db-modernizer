@@ -107,6 +107,14 @@ Version History:
   per analyzed engine, the first member (by query id) that ruled it out and
   the gate kind, so a reader can say why the group fell back even for a
   member with real, ungated scores of its own.
+- 1.6 (2026-10-17, #992): Added ``ReasonCode.WRITE_GROUP`` (``group.write``) and
+  ``ReasonCode.WRITE_GROUP_CUSTOMER_PROPAGATION``
+  (``group.write_customer_propagation``); additive, 1.5 records still load. A
+  table's writes and locking reads land on one engine, its source of truth
+  (ADR-031 Amendment 9): a unit holding a table's write group is placed with
+  ``group.write`` (pass ``co_dependency``), and a query the customer gate moves
+  with a write group the customer re-routed carries
+  ``group.write_customer_propagation``.
 """
 
 from __future__ import annotations
@@ -155,6 +163,9 @@ class ReasonCode(str, Enum):
     # A Move that only clears a query's unresolved tie (the engine stays).
     TIE_CLEARED = "tie.cleared"
     GROUP_MEAN = "group.mean"
+    # A unit holding a table's write group: all of a table's writes share one
+    # engine, its source of truth (ADR-031 Amendment 9, #992), placed on the unit's mean.
+    WRITE_GROUP = "group.write"
     OVERRIDE_TEXT_SEARCH = "override.text_search"
     OVERRIDE_UTILITY = "override.utility"
     FALLBACK_NO_SCORE = "fallback.no_score"
@@ -176,6 +187,9 @@ class ReasonCode(str, Enum):
     # A query moved with a co-dependent query the customer re-routed (Decision 4);
     # the customer did not pick it themselves.
     GROUP_CUSTOMER_PROPAGATION = "group.customer_propagation"
+    # A query moved with a write of the same table the customer re-routed
+    # (Amendment 9): a table's writes stay on one engine.
+    WRITE_GROUP_CUSTOMER_PROPAGATION = "group.write_customer_propagation"
     CACHE_LEGACY_OWNER = "cache.legacy_owner"
     # A post-schema rollback: the redesign on a reroute version failed, so the
     # next version restates the one before the reroute and each moved query

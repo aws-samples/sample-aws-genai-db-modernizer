@@ -11,6 +11,9 @@ Version History:
 - 1.0 (2026-10-16, #975): The version the value-set snapshot
   (``scripts/contract_value_snapshot.py``) tracks for ``FindingKind`` and
   ``FindingSeverity``. No schema change.
+- 1.1 (2026-10-17, #992): Added ``FindingKind.WRITE_SPLIT``: a table whose writes
+  sit on more than one engine, which breaks its one source of truth (ADR-031
+  Amendment 9). Blocking.
 """
 
 from __future__ import annotations
@@ -24,6 +27,9 @@ class FindingKind(str, Enum):
     """What kind of infeasibility the finding describes."""
 
     READ_WRITE_SPLIT = "read_write_split"
+    # A table whose writes (or locking reads) sit on more than one engine: it no
+    # longer has one source of truth (ADR-031 Amendment 9, #992). Blocking.
+    WRITE_SPLIT = "write_split"
     CO_DEPENDENCY_SPLIT = "co_dependency_split"
     # A co-dependent JOIN group co-located on ONE engine that has no server-side
     # complex-join support (e.g. the whole group pinned to DynamoDB). Not a split,

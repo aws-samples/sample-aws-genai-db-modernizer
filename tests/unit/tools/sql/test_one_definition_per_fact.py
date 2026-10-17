@@ -611,6 +611,10 @@ RELATED_FACTS: dict[frozenset[str], str] = {
     frozenset({"window_function", "ranking_window_function"}): (
         "ROW_NUMBER, RANK and DENSE_RANK are one kind of window function"
     ),
+    frozenset({"write_statement_text", "write_targets"}): (
+        "a write statement names the table it writes; write_statement_text answers whether a "
+        "statement writes, write_targets which tables (#992), and it is empty for CALL or COPY"
+    ),
     frozenset({"in_list", "comma_count"}): "an IN list holds commas; the count is DocumentDB's",
     frozenset({"where_word", "keyed_after_where"}): "a keyed read is a WHERE with an equality",
 }

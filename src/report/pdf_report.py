@@ -72,6 +72,7 @@ from .formatting import (
 from .query_traces import query_traces_md
 from .risks import NO_OPEN_RISKS_CAVEAT, _severity_counts_text, filtered_risks
 from .roadmap import _roadmap_md
+from .sources_of_truth import sources_of_truth_md
 from .unservable import unservable_md
 
 logger = logging.getLogger(__name__)
@@ -511,7 +512,7 @@ def build_story(report: dict[str, Any], *, trust_generated_summary: bool | None 
     story += h1(H_ENGINES) + md(_target_engines_md(report))
 
     # -- wave plan -----------------------------------------------------------
-    story += h1(H_WAVES) + md(_roadmap_md(report))
+    story += h1(H_WAVES) + md(_roadmap_md(report) + sources_of_truth_md(report))
 
     # -- risks ---------------------------------------------------------------
     story += h1(H_RISKS) + md(_risks_md(report))

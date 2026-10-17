@@ -59,6 +59,12 @@ count:
 - ``multi_table_write``: outside parentheses, ``UPDATE`` with a ``JOIN`` or a comma
   before the first ``SET`` or a ``FROM`` after it that names another table than the
   target, or ``DELETE`` followed by ``USING`` or ``JOIN``;
+- ``write_targets``: the table named after ``INSERT [IGNORE] [INTO]``, ``REPLACE
+  [INTO]``, ``UPDATE`` (not ``FOR UPDATE`` or ``KEY UPDATE``), ``DELETE [FROM]``,
+  ``MERGE [INTO]`` or ``TRUNCATE [TABLE]`` (past a ``TOP (n)``), on :func:`scan_sql`'s
+  output, as a bare lower-cased name, and each table a multi-table ``UPDATE``'s ``SET``
+  columns name; a MySQL ``DELETE a FROM t a`` or a SQL Server ``UPDATE a SET ...
+  FROM t a`` names the aliased table;
 - ``range_predicate`` (the fallback of the access facts' ranges): ``BETWEEN``,
   ``<``, ``<=``, ``>``, ``>=`` (not ``<>``, ``->``, ``@>`` or ``<@``).
 """
@@ -637,6 +643,99 @@ def regex_multi_table_write(query_text: str) -> bool:
         return False
     rest = text[delete.end() :]
     return bool(_USING_RE.search(rest) or _JOIN_RE.search(rest))
+
+
+_WRITE_TARGET_RE = re.compile(
+    rf"\b(?P<pre>for|key)?\s*\b(?:(?:insert|replace)(?:\s+(?:ignore|low_priority|delayed|"
+    rf"high_priority))*(?:\s+into)?|update(?:\s+(?:low_priority|ignore))*|delete"
+    rf"(?:\s+top\s*\([^)]*\)(?:\s+percent)?)?(?:\s+(?:low_priority|quick|ignore))*"
+    rf"(?:\s+from)?|merge(?:\s+into)?|truncate(?:\s+table)?)"
+    rf"(?:\s+top\s*\([^)]*\)(?:\s+percent)?)?"
+    rf"\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})*)(?:\s+(?:as\s+)?(?P<alias>{_IDENT}))?",
+    re.IGNORECASE,
+)
+_SET_END_RE = re.compile(r"\b(?:where|from|order|limit|output)\b|;", re.IGNORECASE)
+_SET_COLUMN_RE = re.compile(rf"\s*(?:(?P<table>{_IDENT})\s*\.\s*)?{_IDENT}\s*=", re.IGNORECASE)
+_ALIASED_TABLE_RE = re.compile(
+    rf"\b(?:from|join|using|into|update)\s+(?P<table>{_IDENT}(?:\s*\.\s*{_IDENT})*)"
+    rf"\s+(?:as\s+)?(?P<alias>{_IDENT})",
+    re.IGNORECASE,
+)
+_NOT_AN_ALIAS = frozenset(
+    {
+        "set",
+        "where",
+        "values",
+        "select",
+        "from",
+        "join",
+        "on",
+        "using",
+        "with",
+        "default",
+        "output",
+        "returning",
+        "when",
+        "inner",
+        "left",
+        "right",
+        "full",
+        "cross",
+        "outer",
+    }
+)
+
+
+def regex_write_targets(query_text: str) -> tuple[str, ...]:
+    """The tables a statement writes, by the keyword before each table name (the
+    fallback of ``SqlFacts.write_targets``)."""
+    text = scan_sql(query_text or "")
+    aliases: dict[str, str] = {}
+    for m in _ALIASED_TABLE_RE.finditer(text):
+        alias = _bare(m.group("alias"))
+        if alias not in _NOT_AN_ALIAS:
+            aliases.setdefault(alias, _bare(m.group("table")))
+    out: list[str] = []
+    for m in _WRITE_TARGET_RE.finditer(text):
+        if m.group("pre"):
+            continue  # FOR UPDATE (a lock) or ON DUPLICATE KEY UPDATE (the same write)
+        name = _bare(m.group("table"))
+        if name in _NOT_AN_ALIAS:
+            continue
+        has_schema = "." in m.group("table")
+        written = name if has_schema else aliases.get(name, name)
+        qualifiers, unqualified = _set_qualifiers(text, m.end()) if _is_update(m) else ([], True)
+        out.extend(aliases.get(q, q) for q in qualifiers)
+        if unqualified or not qualifiers:
+            out.append(written)
+    return tuple(dict.fromkeys(out))
+
+
+def _is_update(match: re.Match[str]) -> bool:
+    return match.group(0).lstrip().lower().startswith("update")
+
+
+def _set_qualifiers(text: str, start: int) -> tuple[list[str], bool]:
+    """A multi-table ``UPDATE``'s ``SET`` columns: the table qualifiers they name, and
+    whether any is unqualified (the fallback of ``SqlFacts.write_targets``)."""
+    set_ = _SET_RE.search(text, start)
+    if set_ is None:
+        return [], True
+    end = _SET_END_RE.search(text, set_.end())
+    body = text[set_.end() : end.start() if end else len(text)]
+    qualifiers: list[str] = []
+    unqualified = False
+    for part in _top_level(body).split(","):
+        column = _SET_COLUMN_RE.match(part)
+        if column is None:
+            continue
+        if column.group("table"):
+            q = _bare(column.group("table"))
+            if q not in qualifiers:
+                qualifiers.append(q)
+        else:
+            unqualified = True
+    return qualifiers, unqualified
 
 
 def regex_range_predicate(query_text: str) -> bool:

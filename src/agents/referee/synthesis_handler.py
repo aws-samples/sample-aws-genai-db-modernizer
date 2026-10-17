@@ -54,6 +54,7 @@ from src.agents.referee.synthesis_report import (
     source_table_count,
 )
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
+from src.agents.referee.write_groups import table_sources
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -760,6 +761,11 @@ def _write_synthesis_report(
         ],
         # #762: the summary request's budget status, only when it cut a list.
         "summary_input_budget": result.get("summary_input_budget"),
+        # #992: each written table's source of truth and replicas, from the
+        # assignment's write groups (None for an assignment written before them).
+        "table_sources": (
+            table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
+        ),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

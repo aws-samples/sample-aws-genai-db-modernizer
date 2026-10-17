@@ -113,7 +113,7 @@ ID_FIELDS = frozenset(
         "fronts",  # MigrationWave.fronts
         "engines",  # QueryGroup.engines, MigrationWave.engines, Polyglot applies_to.engines
         "read_engines",  # CQRS pattern applies_to.read_engines
-        "write_engines",  # (symmetry with read_engines; no current producer)
+        "write_engines",  # TableAssignment / TableSource.write_engines (#992); CQRS applies_to
         "target_engines",  # EVENT_SOURCING pattern applies_to.target_engines
         "tied_engines",  # QueryAssignment.tied_engines, TiedQuery.tied_engines
         "final_engine",  # QueryTraceResponse.final_engine (query_trace.py, #339)
@@ -143,6 +143,14 @@ ID_FIELDS = frozenset(
         "tables_accessed",  # collector query shape
         "affected_tables",  # Risk.affected_tables
         "co_dependency_groups",  # Assignment.co_dependency_groups
+        # #992: engine and query ids of each table's source of truth and replicas.
+        "write_groups",  # Assignment.write_groups: {table_id: [query_id, ...]}
+        "source_of_truth",  # TableAssignment / TableSource / ReplicatedTableFact
+        "replica_engines",  # TableAssignment.replica_engines, ReplicatedTableFact
+        "write_query_ids",  # TableSource.write_query_ids
+        "read_query_ids",  # ReplicaRead.read_query_ids
+        "replica_read_query_ids",  # ReplicatedTableFact.replica_read_query_ids
+        "single_engine_tables",  # TableSourceFacts.single_engine_tables: table ids
         "query_text",  # collector query shape -- the customer's own SQL
         "source_query",  # OpenSearch UnsupportedPattern.source_query -- also the customer's own SQL
         "query_excerpt",  # QueryTraceEntry.query_excerpt (#339) -- the start of the customer's SQL
@@ -174,6 +182,9 @@ ID_FIELD_PATHS = frozenset(
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
         ("table_owners", "owner"),  # TableOwner.owner (synthesis_output.py:429)
+        ("replicas", "engine"),  # TableSource.replicas[].engine (#992)
+        ("table_sources", "table"),  # TableSource.table / ReplicatedTableFact.table (#992)
+        ("replicated_tables", "table"),  # ReplicatedTableFact.table (#992)
         ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)
         ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)

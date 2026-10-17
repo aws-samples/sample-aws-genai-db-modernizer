@@ -140,6 +140,15 @@ export function unservableOf(synthesis) {
   return u;
 }
 
+// #992: each written table's source of truth and the replicas serving its reads
+// (facts.table_sources), or null when no query writes a table or the report
+// predates them. Every figure is the facts layer's.
+export function tableSourcesOf(synthesis) {
+  const ts = factsOf(synthesis) && factsOf(synthesis).table_sources;
+  if (!ts || !ts.written_table_count) return null;
+  return ts;
+}
+
 // #792: the access-pattern totals the results page shows
 // (facts.access_pattern_totals: the patterns the owner engines serve, the cache
 // layer's own apart). The explorer's live filter counts stay presentation. A
