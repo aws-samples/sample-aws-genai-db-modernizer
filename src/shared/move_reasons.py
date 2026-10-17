@@ -73,6 +73,7 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.TIE_PLACEHOLDER_HASH: "tie held for the customer's choice",
     ReasonCode.TIE_CLEARED: "tie settled",
     ReasonCode.GROUP_MEAN: "co-dependency group",
+    ReasonCode.WRITE_GROUP: "write group: one source of truth",
     ReasonCode.OVERRIDE_TEXT_SEARCH: "full-text search",
     ReasonCode.OVERRIDE_UTILITY: "administration statement",
     ReasonCode.FALLBACK_NO_SCORE: "no engine could score it",
@@ -86,6 +87,7 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.FLAG_CAPABILITY_GAP: "flagged by a design review",
     ReasonCode.CUSTOMER_PICK: "customer choice",
     ReasonCode.GROUP_CUSTOMER_PROPAGATION: "moved with its co-dependency group",
+    ReasonCode.WRITE_GROUP_CUSTOMER_PROPAGATION: "moved with its table's writes",
     ReasonCode.CACHE_LEGACY_OWNER: "a cache cannot own the query",
     ReasonCode.ROLLBACK_REDESIGN_FAILED: "redesign failed, routing restored",
 }
@@ -235,6 +237,13 @@ def _first_assignment(move: Move) -> str:
             f"Placed on {to} with its co-dependency group: {to} has the best mean score "
             f"across the group's queries ({format_score(group_score)})."
         )
+    if code == ReasonCode.WRITE_GROUP:
+        group_score = move.evidence.group_scores.get(move.to_engine, move.score_after)
+        return (
+            f"Placed on {to} with its write group: all of a table's writes land on one "
+            f"engine, its source of truth, and {to} has the best mean score across the "
+            f"group's queries ({format_score(group_score)})."
+        )
     if code == ReasonCode.OVERRIDE_TEXT_SEARCH:
         return f"Routed to {to} because the query needs full-text search."
     if code == ReasonCode.OVERRIDE_UTILITY:
@@ -294,6 +303,11 @@ def _engine_change(move: Move) -> str:
         why = "the customer chose it"
     elif code == ReasonCode.GROUP_CUSTOMER_PROPAGATION:
         why = "it moves with a co-dependent query the customer re-routed"
+    elif code == ReasonCode.WRITE_GROUP_CUSTOMER_PROPAGATION:
+        why = (
+            "a customer re-route moved its table's writes, and a table's writes stay on "
+            "one engine, its source of truth"
+        )
     elif code == ReasonCode.CACHE_LEGACY_OWNER:
         why = (
             f"a cache cannot be the system of record, so {to} owns the query and the cache "
@@ -309,6 +323,12 @@ def _engine_change(move: Move) -> str:
         why = (
             f"its co-dependency group moves together, and {to} has the best mean score "
             f"across the group ({format_score(group_score)})"
+        )
+    elif code == ReasonCode.WRITE_GROUP:
+        group_score = move.evidence.group_scores.get(move.to_engine, move.score_after)
+        why = (
+            f"all of a table's writes land on one engine, its source of truth, and {to} "
+            f"has the best mean score across the write group ({format_score(group_score)})"
         )
     elif code == ReasonCode.OVERRIDE_UTILITY:
         why = (
@@ -348,6 +368,8 @@ def _same_engine(move: Move) -> str:
         return f"The customer confirmed {to} for this query."
     if code == ReasonCode.GROUP_MEAN:
         return f"Kept on {to} with its co-dependency group."
+    if code == ReasonCode.WRITE_GROUP:
+        return f"Kept on {to} with its write group, the table's source of truth."
     return f"Stays on {to} ({rule_label(code)})."
 
 

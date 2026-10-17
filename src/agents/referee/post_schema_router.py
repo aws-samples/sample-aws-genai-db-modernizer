@@ -123,6 +123,7 @@ def route_unsupported_queries(
     source_engine: str = "",
     settled: Mapping[str, int] | None = None,
     tied_engines: Mapping[str, list[str]] | None = None,
+    write_groups: Mapping[str, list[str]] | None = None,
 ) -> RouterOutput:
     """Route unsupported queries to the best remaining engine by score.
 
@@ -162,6 +163,10 @@ def route_unsupported_queries(
             minus the flagged engine when the scorer leaves it unresolved,
             exactly as the reality check's model-flag path does (ADR-031
             Decisions 11 Amendment 2 and 12, #811)
+        write_groups: ``Assignment.write_groups`` (#992). A table's writes stay on
+            one engine (ADR-031 Amendment 9): a flagged unit whose write group
+            holds a customer-pinned write stays where it is, the flag a note on
+            it (``RouterOutput.held_queries``), since the pinned write never moves
 
     Returns:
         RouterOutput with routing decisions and terminal queries
@@ -175,6 +180,12 @@ def route_unsupported_queries(
 
     routings: list[QueryRouting] = []
     terminal: list[str] = []
+    held: list[str] = []
+    # query -> the other writes of the tables it writes (#992).
+    write_mates: dict[str, set[str]] = defaultdict(set)
+    for members in (write_groups or {}).values():
+        for member in members:
+            write_mates[member].update(members)
     candidates = [e for e in active_engines if e not in CACHE_OVERLAY_ENGINES]
 
     group_of: dict[str, list[str]] = {}
@@ -229,6 +240,20 @@ def route_unsupported_queries(
             }
         )
         seen.update(members)
+        # A write group with a pinned write stays together on the pinned engine:
+        # moving the rest would split the table's writes (ADR-031 Amendment 9).
+        pinned_mates = {
+            m for member in members for m in write_mates.get(member, ()) if m in customer_pinned
+        }
+        if pinned_mates:
+            logger.info(
+                "Held a flag from %s on %d queries: their table's writes include a write the "
+                "customer pinned there",
+                engine,
+                len(members),
+            )
+            held.extend(m for m in members if m not in held)
+            continue
         if cascade_depth >= max_depth:
             terminal.extend(members)
             continue
@@ -295,5 +320,6 @@ def route_unsupported_queries(
         job_id="",  # Caller sets this
         routings=routings,
         terminal_queries=terminal,
+        held_queries=held,
         cascade_depth=cascade_depth,
     )

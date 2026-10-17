@@ -322,6 +322,14 @@ Version History:
   rejects parts that do not. ``gate`` itself is unchanged, and the Markdown and
   PDF reports keep printing it. Backward compatible: ``None`` for a wave written
   before 1.27, which shows its gate string as it is.
+- 1.28 (2026-10-17, #992, ADR-031 Amendment 9): Added ``table_sources``
+  (``TableSource``): each written table's source of truth (the one engine its
+  writes land on), its write queries and its replicas (the other engines serving
+  its reads, with those reads), from the assignment's ``write_groups``; and
+  ``facts.table_sources`` (``TableSourceFacts``): per replicated table its source
+  of truth, replica engines (CDC runs from the source of truth to them) and the
+  eventual-consistency risk naming the replica-served reads. Backward compatible:
+  both default to None for a report synthesized before 1.28.
 """
 
 from datetime import datetime
@@ -1092,6 +1100,72 @@ class AccessPatternFacts(BaseModel):
     )
 
 
+class ReplicaRead(BaseModel):
+    """One replica of a written table and the reads it serves (#992)."""
+
+    engine: str = Field(..., description="The replica engine (id)")
+    read_query_ids: list[str] = Field(
+        default_factory=list, description="The table's reads this engine serves, sorted"
+    )
+
+
+class TableSource(BaseModel):
+    """A written table's source of truth and replicas (#992, ADR-031 Amendment 9)."""
+
+    table: str = Field(..., description="The source table")
+    source_of_truth: str | None = Field(
+        None, description="The engine all its writes land on; None if they sit on several"
+    )
+    write_engines: list[str] = Field(
+        default_factory=list, description="The engines its writes land on (one, by the rule)"
+    )
+    write_query_ids: list[str] = Field(
+        default_factory=list, description="Its writes and locking reads, sorted"
+    )
+    replicas: list[ReplicaRead] = Field(
+        default_factory=list,
+        description="The other engines serving its reads, fed by CDC from the source of truth",
+    )
+
+
+class ReplicatedTableFact(BaseModel):
+    """A written table whose reads run on a replica (#992)."""
+
+    table: str
+    source_of_truth: str = Field(..., description="The engine its writes land on (id)")
+    replica_engines: list[str] = Field(
+        default_factory=list, description="The replica engines (ids); CDC runs to each"
+    )
+    write_query_count: int = Field(0, ge=0)
+    replica_read_query_ids: list[str] = Field(
+        default_factory=list, description="The reads a replica serves, sorted"
+    )
+    replica_read_count: int = Field(0, ge=0, description="How many reads a replica serves")
+    risk: str = Field("", description="The eventual-consistency risk, naming those reads")
+
+
+class TableSourceFacts(BaseModel):
+    """Sources of truth and replicas (#992), from ``table_sources``."""
+
+    written_table_count: int = Field(0, ge=0, description="Tables some query writes")
+    replicated_table_count: int = Field(
+        0, ge=0, description="Written tables with a read on another engine"
+    )
+    split_write_table_count: int = Field(
+        0, ge=0, description="Written tables whose writes sit on several engines (0 by the rule)"
+    )
+    replicated_tables: list[ReplicatedTableFact] = Field(
+        default_factory=list,
+        description="At most TABLE_SOURCES_SHOWN, most replica reads first, then by table",
+    )
+    more_replicated_count: int = Field(0, ge=0, description="The replicated tables not listed")
+    single_engine_tables: list[str] = Field(
+        default_factory=list,
+        description="Written tables every query of which runs on the source of truth",
+    )
+    single_engine_table_count: int = Field(0, ge=0)
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -1168,6 +1242,13 @@ class ReportFacts(BaseModel):
             "has no query_groups"
         ),
     )
+    table_sources: TableSourceFacts | None = Field(
+        None,
+        description=(
+            "Each written table's source of truth, replicas, CDC direction and "
+            "eventual-consistency risk (#992); None when the report has no table_sources"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -1212,7 +1293,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.27",
+        default="1.28",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1332,6 +1413,14 @@ class SynthesisOutputContract(BaseModel):
         ),
     )
 
+    table_sources: list[TableSource] | None = Field(
+        None,
+        description=(
+            "Each written table's source of truth, writes and replicas (#992, ADR-031 "
+            "Amendment 9), from the effective assignment's write_groups. None for a report "
+            "synthesized before this field existed."
+        ),
+    )
     post_schema_reroutes: list[PostSchemaReroute] | None = Field(
         None,
         description=(

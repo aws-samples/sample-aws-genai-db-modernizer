@@ -149,7 +149,7 @@ class TestThePostSchemaRouterVersionsCarryTheCurrentVersion:
         assert v2["source"] == "post_schema_routing"
         assert v2["contract_version"] == CURRENT
         router = store.read_json(f"{prefix}/post-schema-router/router_output.json")
-        assert router["contract_version"] == "1.0"
+        assert router["contract_version"] == "1.1"
 
     @pytest.mark.parametrize("stored", STORED_VERSIONS, ids=["pre-1.15", "1.14"])
     def test_the_rollback_version(self, tmp_path, stored) -> None:

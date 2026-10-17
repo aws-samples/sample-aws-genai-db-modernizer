@@ -1054,7 +1054,8 @@
                   "values": [
                     "co_dependency_on_non_join_engine",
                     "co_dependency_split",
-                    "read_write_split"
+                    "read_write_split",
+                    "write_split"
                   ]
                 }
               },
@@ -1505,6 +1506,8 @@
                               "floor.opensearch",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.write",
+                              "group.write_customer_propagation",
                               "highest_score",
                               "override.text_search",
                               "override.utility",
@@ -1609,6 +1612,8 @@
                     "floor.opensearch",
                     "group.customer_propagation",
                     "group.mean",
+                    "group.write",
+                    "group.write_customer_propagation",
                     "highest_score",
                     "override.text_search",
                     "override.utility",
@@ -2103,11 +2108,47 @@
                   "type": "integer"
                 }
               },
+              "replica_engines": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "source_of_truth": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
               "table_id": {
                 "required": true,
                 "schema": {
                   "kind": "scalar",
                   "type": "string"
+                }
+              },
+              "write_engines": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
                 }
               }
             }
@@ -2165,10 +2206,23 @@
           "minimum": 1,
           "type": "integer"
         }
+      },
+      "write_groups": {
+        "required": false,
+        "schema": {
+          "additional": {
+            "items": {
+              "kind": "scalar",
+              "type": "string"
+            },
+            "kind": "array"
+          },
+          "kind": "object"
+        }
       }
     },
-    "schema_hash": "9b604cb6a2cfb911c8e542d08886cd811c562ea410f11936eac63f7d871fd4fc",
-    "version": "1.15"
+    "schema_hash": "f9224e4d9b6f1919c6ea1ce5c6e11217e1eb37e5bd30b4d57b6b8e10e948bed1",
+    "version": "1.16"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -12927,6 +12981,16 @@
           "type": "string"
         }
       },
+      "held_queries": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "scalar",
+            "type": "string"
+          },
+          "kind": "array"
+        }
+      },
       "job_id": {
         "required": true,
         "schema": {
@@ -13109,6 +13173,8 @@
                                   "floor.opensearch",
                                   "group.customer_propagation",
                                   "group.mean",
+                                  "group.write",
+                                  "group.write_customer_propagation",
                                   "highest_score",
                                   "override.text_search",
                                   "override.utility",
@@ -13320,8 +13386,8 @@
         }
       }
     },
-    "schema_hash": "d7d11e94cc8eb18e410e9ead2c49ebfec5a8e6b90abba1c42faac60947cf0a46",
-    "version": "1.0"
+    "schema_hash": "ccc598421a448589c0c4bf62f950432464f43e61998fec3723c5772acfbaa9d9",
+    "version": "1.1"
   },
   "reality_check_model_response.RealityCheckModelResponse": {
     "fields": {
@@ -16988,6 +17054,141 @@
                     }
                   }
                 },
+                "table_sources": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "more_replicated_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "replicated_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "replicated_tables": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "replica_engines": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "replica_read_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "replica_read_query_ids": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "risk": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "source_of_truth": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "table": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "write_query_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "single_engine_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "single_engine_tables": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "split_write_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "written_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "tables_migrate": {
                   "required": true,
                   "schema": {
@@ -18382,6 +18583,8 @@
                                         "floor.opensearch",
                                         "group.customer_propagation",
                                         "group.mean",
+                                        "group.write",
+                                        "group.write_customer_propagation",
                                         "highest_score",
                                         "override.text_search",
                                         "override.utility",
@@ -18741,6 +18944,8 @@
                                       "floor.opensearch",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.write",
+                                      "group.write_customer_propagation",
                                       "highest_score",
                                       "override.text_search",
                                       "override.utility",
@@ -18934,6 +19139,8 @@
                                       "floor.opensearch",
                                       "group.customer_propagation",
                                       "group.mean",
+                                      "group.write",
+                                      "group.write_customer_propagation",
                                       "highest_score",
                                       "override.text_search",
                                       "override.utility",
@@ -19246,6 +19453,8 @@
                               "floor.opensearch",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.write",
+                              "group.write_customer_propagation",
                               "highest_score",
                               "override.text_search",
                               "override.utility",
@@ -19374,6 +19583,8 @@
                               "floor.opensearch",
                               "group.customer_propagation",
                               "group.mean",
+                              "group.write",
+                              "group.write_customer_propagation",
                               "highest_score",
                               "override.text_search",
                               "override.utility",
@@ -20060,6 +20271,97 @@
           "kind": "array"
         }
       },
+      "table_sources": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "replicas": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "object",
+                        "properties": {
+                          "engine": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "read_query_ids": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "source_of_truth": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "table": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "write_engines": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "write_query_ids": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "tco_analysis": {
         "required": true,
         "schema": {
@@ -20364,8 +20666,8 @@
         }
       }
     },
-    "schema_hash": "4eba17fcc4e341a2933204056483a2134d26c80a74e6d1cd11eddc3430a00b15",
-    "version": "1.27"
+    "schema_hash": "b6f5316b69884a2f921d50785503710873863aff7b9d12a95dec83ad01b59209",
+    "version": "1.28"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

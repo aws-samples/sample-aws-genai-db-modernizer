@@ -373,6 +373,39 @@ def test_results_page_shows_the_reports_wave_plan(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def test_results_page_states_each_tables_source_of_truth_and_replicas(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#992: the results page lists the replicated tables report.json's
+    facts.table_sources lists (the rows the engineering report and the PDF
+    state), each with its CDC direction from the source of truth and its
+    eventual-consistency risk."""
+    from src.shared.engine_names import display_engine
+
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        facts = (report.get("facts") or {}).get("table_sources") or {}
+        rows = facts.get("replicated_tables") or []
+        assert rows, r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        section = page.locator("#sources-of-truth-section")
+        section.wait_for()
+        text = section.inner_text()
+        n = facts["written_table_count"]
+        assert f"Sources of truth and replicas ({n} written tables)" in text, r.db
+        if facts["single_engine_table_count"]:
+            assert ", ".join(facts["single_engine_tables"]) in text, r.db
+        for row in rows:
+            replicas = ", ".join(display_engine(e) for e in row["replica_engines"])
+            cdc = f"CDC: {display_engine(row['source_of_truth'])} → {replicas}"
+            line = section.locator(f'[data-table="{row["table"]}"]').inner_text()
+            assert " ".join(line.split()) == f"{row['table']} {cdc}", (r.db, line)
+            assert row["risk"] in text, (r.db, row["table"])
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
 def test_results_page_downloads_the_deliverables_folder(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

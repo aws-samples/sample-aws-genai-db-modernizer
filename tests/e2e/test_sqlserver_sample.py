@@ -250,14 +250,19 @@ def test_the_shipment_queries_no_longer_tie(trailgear_run: PipelineResult) -> No
 
     #1002 (every engine weights cost the same 10%): DynamoDB and DocumentDB lose their
     flat cost bonus. The read scores DynamoDB 71, Aurora PostgreSQL 75, DocumentDB 72;
-    the UPDATE 71, 75, 73; the INSERT 87, 79, 70. Same engines, no tie."""
+    the UPDATE 71, 75, 73; the INSERT 87, 79, 70. Same engines, no tie.
+
+    #992 (ADR-031 Amendment 9, a table has one writer): the INSERT and the UPDATE are
+    dbo.Shipment's write group, placed on its best mean, DynamoDB (87 + 71) / 2 = 79
+    against Aurora PostgreSQL 77 and DocumentDB 71.5, so the UPDATE joins the INSERT on
+    DynamoDB. The read stays per query on Aurora PostgreSQL, a replica fed by CDC."""
     expected = {
         "FROM [Shipment] WHERE [TrackingNumber] = @TrackingNumber": (
             (71, 75, 72),
             "aurora_postgresql",
         ),
         "INSERT INTO [Shipment]": ((87, 79, 70), "dynamodb"),
-        "UPDATE [Shipment] SET [DeliveredDate]": ((71, 75, 73), "aurora_postgresql"),
+        "UPDATE [Shipment] SET [DeliveredDate]": ((71, 75, 73), "dynamodb"),
     }
     snapshot = measure(trailgear_run.job_dir())["queries"]
     final = _by_id(_assignment(trailgear_run, _final_version(trailgear_run)))

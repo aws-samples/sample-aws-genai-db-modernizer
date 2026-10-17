@@ -87,6 +87,7 @@ from src.tools.sql.regex_facts import (
     regex_wildcard_likes,
     regex_window_function,
     regex_windowed_aggregate,
+    regex_write_targets,
 )
 from src.tools.sql.regex_tables import regex_table_refs
 
@@ -338,6 +339,15 @@ class SqlFacts:
             true, in order, with the column it tests and whether it is a word
             search (:class:`~src.tools.sql.regex_facts.WildcardLike`, #493);
             ``wildcard_leading`` is ``bool(wildcard_likes)``.
+        write_targets: The tables the text writes, lower-cased bare names in
+            first-seen order: the target of every ``INSERT`` (``REPLACE``),
+            ``UPDATE``, ``DELETE``, ``MERGE`` and ``TRUNCATE``, a
+            data-modifying CTE's included (#992). A target written by its
+            alias (SQL Server's ``UPDATE t SET ... FROM [Ticket] t``, MySQL's
+            ``DELETE a FROM posts a JOIN ...``) is the aliased table; a MySQL
+            multi-table ``UPDATE a JOIN b ... SET a.x = ?, b.y = ?`` writes every
+            table its ``SET`` columns name; a table the write only reads (``INSERT ... SELECT ... FROM b``, an
+            ``UPDATE ... FROM b``, a ``MERGE``'s ``USING`` source) is not one.
     """
 
     join_count: int
@@ -366,6 +376,7 @@ class SqlFacts:
     json_access: bool = False
     multi_table_write: bool = False
     wildcard_likes: tuple[WildcardLike, ...] = ()
+    write_targets: tuple[str, ...] = ()
 
     @property
     def timestamp_column(self) -> bool:
@@ -696,6 +707,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         ),
         json_access=regex_json_access(sql),
         multi_table_write=regex_multi_table_write(sql),
+        write_targets=regex_write_targets(sql),
     )
 
 
@@ -748,6 +760,7 @@ def _facts_from_statements(
         columns=_column_uses(statements),
         json_access=any(_is_json_access(node) for node in nodes),
         multi_table_write=any(_is_multi_table_write(node) for node in nodes),
+        write_targets=_write_targets(statements),
     )
 
 
@@ -922,6 +935,65 @@ def _is_multi_table_write(node: exp.Expr) -> bool:
         joined = isinstance(node.this, exp.Table) and bool(node.this.args.get("joins"))
         return bool(node.args.get("tables")) or joined or (isinstance(using, list) and bool(using))
     return False
+
+
+_WRITE_NODES: tuple[type[exp.Expr], ...] = (exp.Insert, exp.Update, exp.Delete, exp.Merge)
+
+
+def _write_targets(statements: Iterable[exp.Expr]) -> tuple[str, ...]:
+    """The tables the statements write (``SqlFacts.write_targets``)."""
+    out: list[str] = []
+    for statement in statements:
+        aliases = {
+            t.alias.lower(): t.name.lower()
+            for t in statement.find_all(exp.Table)
+            if t.alias and t.name
+        }
+        for node in statement.walk():
+            if isinstance(node, exp.TruncateTable):
+                targets = list(node.expressions)
+            elif isinstance(node, exp.Update) and _set_qualifiers(node):
+                # MySQL's multi-table ``UPDATE a JOIN b ... SET a.x = ?, b.y = ?`` (or
+                # ``UPDATE a, b SET ...``) writes each table its SET names.
+                out.extend(aliases.get(q, q) for q in _set_qualifiers(node))
+                columns = [c for c in map(_set_column, node.expressions) if c is not None]
+                if any(not c.table for c in columns):
+                    targets = [node.this]
+                else:
+                    continue
+            elif isinstance(node, _WRITE_NODES):
+                # MySQL's ``DELETE a, b FROM ...`` names its targets in ``tables``.
+                targets = list(node.args.get("tables") or []) or [node.this]
+            else:
+                continue
+            for target in targets:
+                if isinstance(target, exp.Schema):
+                    target = target.this
+                # A MERGE's ``WHEN MATCHED THEN UPDATE`` has no table of its own.
+                if not isinstance(target, exp.Table) or not target.name:
+                    continue
+                name = target.name.lower()
+                if not target.db and not target.alias and name in aliases:
+                    name = aliases[name]
+                out.append(name)
+    return tuple(dict.fromkeys(out))
+
+
+def _set_column(assignment: exp.Expr) -> exp.Column | None:
+    """The column an ``UPDATE``'s ``SET`` assignment writes."""
+    if isinstance(assignment, exp.EQ) and isinstance(assignment.this, exp.Column):
+        return assignment.this
+    return None
+
+
+def _set_qualifiers(update: exp.Update) -> list[str]:
+    """The table qualifiers (lower-case) of an ``UPDATE``'s ``SET`` columns, in order."""
+    out: list[str] = []
+    for assignment in update.expressions:
+        column = _set_column(assignment)
+        if column is not None and column.table and column.table.lower() not in out:
+            out.append(column.table.lower())
+    return out
 
 
 def _names_only_the_target(update: exp.Update, source: exp.From) -> bool:

@@ -45,6 +45,7 @@ import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
+import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import { buildQueryRoutingRows } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -2027,6 +2028,9 @@ const AnalysisResultsPage = memo(() => {
             {/* Migration roadmap (#957): report.json's waves, the same ones the
                 PDF and the engineering report show. */}
             <MigrationWavePlan synthesis={synthesis} t={t} />
+            {/* Sources of truth and replicas (#992): each table read on a
+                replica, its CDC direction and the eventual-consistency risk. */}
+            <SourcesOfTruthCallout synthesis={synthesis} t={t} />
 
             {/* Queries on a fallback engine (#729): where each landed and why,
                 its gates, a redesign hint and the assignment review that

@@ -221,6 +221,7 @@ This section is a pointer, not a restatement.
   [`test_no_engine_bias.py`](tests/unit/agents/referee/test_no_engine_bias.py)
   enforces this. Engine removal keeps the source-compatible engine when it scores every query at least as well, unless the alternative is at least 40% and $100/mo cheaper (`tie_break.source_compatible_engine_survives`, ADR-031 Decision 13).
 - An override onto an engine that can't serve the query is rejected.
+- A table has one writer (ADR-031 Amendment 9): its writes and locking reads form a write group placed as one unit with any co-dependency group it touches (`write_groups.placement_groups`) in every pass; its reads stay per query, as CDC replicas.
 - Every engine change is a Move: only `move_ledger.apply` / `apply_to_assignment`
   write `assigned_engine` and `tied_engines`, with no exceptions (ADR-031 Amendment 3,
   [`test_only_the_ledger_writes_engines.py`](tests/unit/agents/referee/test_only_the_ledger_writes_engines.py)).

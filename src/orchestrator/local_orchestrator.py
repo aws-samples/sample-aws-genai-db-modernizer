@@ -13,6 +13,7 @@ import logging
 from datetime import UTC, datetime
 
 from src.agents.referee.query_pattern import write_access_patterns
+from src.agents.referee.write_groups import assignment_placement_groups
 from src.contracts.phase_models import (
     PHASE_PREREQUISITES,
     SCHEMA_DESIGN_SKIP_REASON_NO_LLM,
@@ -476,6 +477,7 @@ class LocalOrchestrator(Orchestrator):
         already_routed: set[str] = set()
         all_routings: list = []
         all_terminal: list[str] = []
+        all_held: list[str] = []
         max_depth = 2
 
         for depth in range(max_depth + 1):
@@ -535,7 +537,11 @@ class LocalOrchestrator(Orchestrator):
                     for qa in assignment.get("query_assignments", [])
                     if qa.get("customer_override")
                 },
-                co_dependency_groups=assignment.get("co_dependency_groups", []),
+                # Co-dependency and write groups (ADR-031 Decision 4 and Amendment 9):
+                # a reroute moves a table's writes together.
+                co_dependency_groups=assignment_placement_groups(assignment),
+                # A pinned write holds its table's other writes in place (#992).
+                write_groups=assignment.get("write_groups") or {},
                 # A tied query is re-routed among its tied engines first and
                 # keeps the rest of its tie (ADR-031 Decision 12, #811).
                 tied_engines={
@@ -552,18 +558,28 @@ class LocalOrchestrator(Orchestrator):
             # written on its own, so no pass's scores are lost.
             all_routings.extend(router_output.routings)
             all_terminal.extend(q for q in router_output.terminal_queries if q not in all_terminal)
+            all_held.extend(q for q in router_output.held_queries if q not in all_held)
             prefix_router = f"{database_name}/{job_id}/post-schema-router"
             self.store.write_json(
                 f"{prefix_router}/pass-{depth}/router_output.json",
                 router_output.model_dump(mode="json"),
             )
             cumulative = router_output.model_copy(
-                update={"routings": list(all_routings), "terminal_queries": list(all_terminal)}
+                update={
+                    "routings": list(all_routings),
+                    "terminal_queries": list(all_terminal),
+                    "held_queries": list(all_held),
+                }
             )
             self.store.write_json(
                 f"{prefix_router}/router_output.json", cumulative.model_dump(mode="json")
             )
 
+            if router_output.held_queries:
+                print(
+                    f"[router] {len(router_output.held_queries)} flagged queries held in place: "
+                    "their table's writes include a write the customer pinned"
+                )
             if not router_output.routings:
                 if router_output.terminal_queries:
                     print(

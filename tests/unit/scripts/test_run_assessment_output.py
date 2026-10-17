@@ -408,10 +408,14 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # and goes to it as the source-compatible engine, a wp_options read now ties DocumentDB
     # and DynamoDB (placeholder DynamoDB), and two wp_terms joins leave a DynamoDB tie for
     # DocumentDB: dynamodb -1, aurora_mysql +1 (every moved query is in the #1002 PR).
+    # #992 (a table's writes land on one engine): wp_postmeta's INSERT joins its three
+    # other writes on Aurora MySQL (from DynamoDB), and wp_woocommerce_order_itemmeta's
+    # UPDATE joins its other write on DynamoDB (from DocumentDB): aurora_mysql +1,
+    # documentdb -1.
     assert rc["before_distribution"] == {
         "dynamodb": 31,
-        "aurora_mysql": 47,
-        "documentdb": 28,
+        "aurora_mysql": 48,
+        "documentdb": 27,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

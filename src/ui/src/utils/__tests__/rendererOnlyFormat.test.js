@@ -116,6 +116,7 @@ const GUARDED_UI_FILES = [
   'components/MigrationWavePlan.js',
   'components/ExecutiveSummaryStats.js',
   'components/DeliverablesPanel.js',
+  'components/SourcesOfTruthCallout.js',
 ];
 
 function figureFields(schema, out) {

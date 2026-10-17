@@ -84,6 +84,12 @@ from src.agents.referee.tie_break import (
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
+from src.agents.referee.write_groups import (
+    WRITE_GROUP_LABEL,
+    build_write_groups,
+    placement_groups,
+    write_group_tables,
+)
 from src.contracts.assignment_models import (
     Assignment,
     AssignmentSource,
@@ -208,8 +214,17 @@ class AssignmentResolver:
         anti_pattern_map = scoring_ctx.anti_pattern_map
         anti_pattern_notes = scoring_ctx.anti_pattern_notes
 
-        # Step 3: Build co-dependency groups
+        # Step 3: Build co-dependency groups, and each written table's write
+        # group (ADR-031 Amendment 9, #992): all of a table's writes and locking
+        # reads land on one engine, its source of truth. The two kinds merge
+        # where they share a query, and each merged unit moves as one.
         co_dep_groups = build_co_dependency_groups(queries, tables)
+        write_groups = build_write_groups(queries, source_engine, source_scope)
+        placement_units = placement_groups(co_dep_groups, write_groups)
+        write_members = set(write_group_tables(write_groups))
+
+        def _group_label(qid: str) -> str:
+            return WRITE_GROUP_LABEL if qid in write_members else "co-dependency group"
 
         # Step 4: Score each query against each engine (adjusted), via the
         # one shared pipeline (``score_query_for_engine``): the hard
@@ -425,7 +440,12 @@ class AssignmentResolver:
         # or the query's own), kept for the Move's runner-up.
         tied: list[tuple[list[str], list[str], int, str, dict[str, float]]] = []
 
-        for group in co_dep_groups:
+        for group in placement_units:
+            # A unit holding a table's write group is placed by the write-group
+            # rule (Amendment 9); its engine comes from the same group mean.
+            # Each member says why it moved: a write of a written table by the
+            # write-group rule, any other member (a read of a JOIN group the
+            # write group merged with) by the co-dependency rule.
             # ADR-031 Decision 2 steps 2-3 (#766): an engine is a candidate for
             # the group only if it may own every member AND no hard gate
             # excluded it for any member -- the group moves as one unit
@@ -466,7 +486,7 @@ class AssignmentResolver:
             top = max(group_score.values())
             best = [e for e in candidates if group_score[e] == top]
             if len(best) > 1:
-                tied.append((list(group), best, 0, "co-dependency group", group_score))
+                tied.append((list(group), best, 0, "group", group_score))
                 handled.update(group)
                 continue
             for qid in group:
@@ -475,14 +495,16 @@ class AssignmentResolver:
                     qid,
                     best[0],
                     pass_=MovePass.CO_DEPENDENCY,
-                    reason_code=ReasonCode.GROUP_MEAN,
+                    reason_code=(
+                        ReasonCode.WRITE_GROUP if qid in write_members else ReasonCode.GROUP_MEAN
+                    ),
                     score_after=_score(qid, best[0]),
                     runner_up=best_other(group_score, best[0]),
                     evidence=_evidence(query_by_id[qid], group_scores=group_score),
                     group_key=group_key(group),
                 )
                 assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
-                assigned_reason[qid] = f"co-dependency group → {display_engine(best[0])}"
+                assigned_reason[qid] = f"{_group_label(qid)} → {display_engine(best[0])}"
 
         # Step 6: Assign remaining queries individually
         for query in queries:
@@ -613,7 +635,7 @@ class AssignmentResolver:
                     else:
                         assigned_confidence[qid] = scores.get(qid, {}).get(winner, 0)
                         assigned_reason[qid] = (
-                            f"co-dependency group → {display_engine(winner)} ({why})"
+                            f"{_group_label(qid)} → {display_engine(winner)} ({why})"
                         )
 
         if fallback_qids:
@@ -875,6 +897,7 @@ class AssignmentResolver:
             query_assignments,
             known_tables=TableNameResolver.from_collector(collector_output),
             retained_engine=effective_relational_engine,
+            write_groups=write_groups,
         )
 
         # Flatten co-dep groups to list of lists of query_ids
@@ -893,6 +916,7 @@ class AssignmentResolver:
             query_assignments=query_assignments,
             table_assignments=table_assignments,
             co_dependency_groups=co_dep_lists,
+            write_groups=write_groups,
             validation_warnings=[],
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
             unresolved_table_names=unresolved_table_names,

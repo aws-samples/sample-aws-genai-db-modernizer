@@ -96,7 +96,17 @@ def _durable_owner(table: dict[str, Any], retained_engine: str | None) -> str:
     reason. Keeping the non-owner skip here is defense in depth, not a
     live bug; simplifying it is a follow-up for whoever next touches this
     function, not required by #317.
+
+    A written table's owner is its ``source_of_truth`` (#992, ADR-031 Decision
+    15): the one engine all its writes land on, which the other engines that
+    serve it replicate from. The plurality ``primary_engine`` is only a summary
+    (Decision 1), so it never names the owner of a written table: a table
+    written on DynamoDB is owned there even when more of its reads run on
+    Aurora.
     """
+    source_of_truth = table.get("source_of_truth")
+    if source_of_truth and source_of_truth not in NON_OWNER_ENGINES:
+        return str(source_of_truth)
     primary = table.get("primary_engine")
     engines = table.get("engines") or ([primary] if primary else [])
     if primary and primary not in NON_OWNER_ENGINES:
@@ -150,6 +160,9 @@ def _table_owners_for_served(
             {"table": str(t["table_id"]), "owner": owner, "sync": "CDC"}
             for t in served
             if t.get("table_id")
+            # A table this engine writes is never a copy kept in sync from
+            # another owner (#992): it is not one-way.
+            and engine not in (t.get("write_engines") or [])
             for owner in [_durable_owner(t, retained_engine)]
             if owner != engine
         ),

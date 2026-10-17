@@ -116,6 +116,15 @@ Version History:
   ``FeasibilityFinding`` stay versioned through ``Assignment``.
   ``ValidationResult`` (``validation.json``) carries its own
   ``contract_version``, starting at 1.0.
+- 1.16 (2026-10-17, #992): Added ``Assignment.write_groups`` (each written
+  table's write statements: its writes and locking reads, which all land on one
+  engine, ADR-031 Amendment 9) and, on ``TableAssignment``, ``write_engines``,
+  ``source_of_truth``
+  (the engine every write of the table lands on) and ``replica_engines`` (the
+  other engines serving its reads, as eventually consistent replicas fed by CDC
+  from the source of truth). ``Move`` gained the rules ``group.write`` and
+  ``group.write_customer_propagation`` (move ledger 1.6). All default to
+  empty/None, so artifacts written before 1.16 still load.
 """
 
 from datetime import datetime
@@ -318,6 +327,29 @@ class TableAssignment(BaseModel):
         None,
         description="Reason this table spans multiple engines (set when engines has 2+ entries)",
     )
+    write_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The engines this table's writes and locking reads land on, sorted (#992). "
+            "One engine (its source_of_truth) since ADR-031 Amendment 9; empty for a table "
+            "no query writes, and for an artifact written before 1.16"
+        ),
+    )
+    source_of_truth: str | None = Field(
+        None,
+        description=(
+            "The engine every write of this table lands on (#992, ADR-031 Amendment 9). "
+            "None for a table no query writes, and for an artifact written before 1.16"
+        ),
+    )
+    replica_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The other engines serving this table's reads, each an eventually consistent "
+            "replica fed by CDC from source_of_truth (#992). Empty when every query on the "
+            "table runs on its source of truth, or no query writes it"
+        ),
+    )
 
 
 class AuroraEngineChoice(BaseModel):
@@ -381,7 +413,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.15", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.16", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")
@@ -399,6 +431,15 @@ class Assignment(BaseModel):
     co_dependency_groups: list[list[str]] = Field(
         ...,
         description="Groups of query IDs sharing significant JOIN relationships",
+    )
+    write_groups: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Each written table's write statements, {table_id: [query_id, ...]} (#992): "
+            "every query that writes the table (INSERT, UPDATE, DELETE, MERGE) or takes "
+            "a row lock on it. They land on one engine, the table's source of truth "
+            "(ADR-031 Amendment 9). Empty for an artifact written before 1.16."
+        ),
     )
     validation_warnings: list[str] = Field(..., description="Warnings from assignment validation")
     previous_version: int | None = Field(

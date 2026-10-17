@@ -403,7 +403,8 @@ class TestSynthesisOutputContract:
     def test_contract_version_defaults(self, valid_synthesis_data):
         output = SynthesisOutputContract.model_validate(valid_synthesis_data)
         # #1028: migration_waves[].gate_parts added
-        assert output.contract_version == "1.27"
+        # #992: table_sources and facts.table_sources added
+        assert output.contract_version == "1.28"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

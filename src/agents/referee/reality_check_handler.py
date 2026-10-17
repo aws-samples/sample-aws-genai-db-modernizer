@@ -49,6 +49,7 @@ from src.agents.referee.reality_check_request import (
 )
 from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.agents.referee.tie_break import settled_counts
+from src.agents.referee.write_groups import assignment_placement_groups
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.model_flag import ResponseContractError, validation_error_note
 from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
@@ -677,7 +678,9 @@ def _apply_model_flags(result: dict, flags: list) -> None:
         query_signals=_build_query_signals(result.get("triage", {}).get("signals", [])),
         source_engine=source_engine,
         settled=settled_counts(result["revised_assignments"]),
-        co_dependency_groups=result.get("assignment", {}).get("co_dependency_groups", []),
+        # Co-dependency and write groups (ADR-031 Decision 4 and Amendment 9): each unit
+        # moves as one, so a flag never splits a table's writes.
+        co_dependency_groups=assignment_placement_groups(result.get("assignment")),
         ledger=_ledger(result),
     )
     result["flag_decisions"] = result.get("flag_decisions", []) + decisions
@@ -769,7 +772,9 @@ def _run_sanity_sweep(det: dict) -> None:
         # valid regardless of how many consolidations this run already
         # made, so a co-dependency group still on the same orphan engine
         # moves as one unit instead of being split between destinations.
-        co_dependency_groups=det.get("assignment", {}).get("co_dependency_groups", []),
+        # Write groups too (ADR-031 Amendment 9, #992): a table's writes stay
+        # on one engine whatever the sweep moves.
+        co_dependency_groups=assignment_placement_groups(det.get("assignment")),
         # The same eligibility rule Phase 2 applies needs to know which
         # specialty signals this query matched (#579 round 3,
         # ``may_absorb``'s specialist-absorb restriction).
