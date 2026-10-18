@@ -368,7 +368,7 @@ class TestFacts:
 
     def test_counts(self):
         facts = query_facts("SELECT a, b, count(id), max(id) FROM t GROUP BY a, b")
-        assert (facts.aggregate_function_count, facts.comma_count) == (2, 4)
+        assert facts.aggregate_function_count == 2
         joined = query_facts("SELECT * FROM a JOIN b ON 1=1 JOIN c ON 1=1\nJOIN d ON 1=1")
         assert joined.join_count == 3
 
@@ -457,7 +457,6 @@ _DOCUMENTDB_ONLY_FACTS = frozenset(
         "windowed_aggregate",
         "negation_word",
         "correlated_subquery_shape",
-        "comma_count",
     }
 )
 
@@ -582,3 +581,31 @@ class TestLocateColumn:
         from src.tools.sql.facade import ColumnUse
 
         assert self._locate(ColumnUse("x", from_regex=True)) == (None, "statement not parsed")
+
+
+class TestGroupingSetsFallback:
+    """#968 review: the regex fallback reads a grouping list only inside a GROUP BY."""
+
+    def test_a_postgresql_cube_function_is_not_one(self) -> None:
+        from src.tools.sql.regex_facts import regex_grouping_sets
+
+        assert not regex_grouping_sets("SELECT cube(1, 2) FROM t GROUP BY a")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT a, b, COUNT(*) FROM t GROUP BY a, b WITH CUBE",
+            "SELECT a, COUNT(*) FROM t GROUP BY a WITH ROLLUP",
+            "SELECT a, COUNT(*) FROM t GROUP BY ROLLUP (a)",
+            "SELECT a, COUNT(*) FROM t GROUP BY GROUPING SETS ((a), ())",
+        ],
+    )
+    def test_each_grouping_list_is_one(self, text: str) -> None:
+        from src.tools.sql.regex_facts import regex_grouping_sets
+
+        assert regex_grouping_sets(text)
+
+    def test_tsql_with_cube_on_the_parsed_path(self) -> None:
+        assert query_facts(
+            "SELECT a, b, COUNT(*) FROM t GROUP BY a, b WITH CUBE", "sqlserver"
+        ).grouping_sets

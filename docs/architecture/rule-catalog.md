@@ -76,7 +76,9 @@ From `src/catalog/gates.toml` (ADR-031 Decision 2 steps 2 and 3). An engine with
 | `strong_consistency` | DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL | structural | - | - | Strongly consistent reads. No query fact requires it today. |
 | `aggregation` | DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL | `needs_aggregation` | `aggregations` | - | An aggregate call, SQL_CALC_FOUND_ROWS, a window function, or a GROUP BY that does more than de-duplicate (#336, #338): an engine with no aggregation (DynamoDB) cannot run it at all, even on a single query. |
 | `text_pattern_match` | DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL | `text_search` | `text_search` | `text_search` | A text-pattern predicate (a leading-wildcard or parameterised LIKE, a full-text, regular-expression or similarity match, #893). DocumentDB runs it with $regex and $text (#485); a leading-wildcard predicate that runs as a scan is a score difference (substring-match), never this gate. |
-| `scan_engine` | OpenSearch, Aurora PostgreSQL, Aurora MySQL | `ranking_window_function`, `offset_window_function`, `recursive_cte` | - | - | A ranking or offset window function, or a recursive CTE. |
+| `scan_engine` | OpenSearch, Aurora PostgreSQL, Aurora MySQL | `recursive_cte` | - | - | A recursive CTE (a ranking or offset window function before #968, now their own capabilities). |
+| `ranking_window` | DocumentDB, OpenSearch, Aurora PostgreSQL, Aurora MySQL | `ranking_window_function` | - | - | ROW_NUMBER, RANK or DENSE_RANK over a window. DocumentDB runs them with $setWindowFields ($documentNumber, $rank, $denseRank) on 8.0.2 or later on an instance-based cluster: a version bound the window-functions anti-pattern prices, not a capability gap (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types). |
+| `offset_window` | OpenSearch, Aurora PostgreSQL, Aurora MySQL | `offset_window_function` | - | - | LAG, LEAD or NTILE over a window: it reads another row or buckets rows. DocumentDB cannot run them on any version: LAG and LEAD need $shift, which no version supports, and the supported operators include no bucketing window operator for NTILE (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types). |
 | `complex_joins` | Aurora PostgreSQL, Aurora MySQL | structural | `complex_joins` | - | Joins of three or more tables: DynamoDB and OpenSearch have no join, however the data is keyed (#338). |
 | `sql_admin` | Aurora PostgreSQL, Aurora MySQL | structural | - | - | A utility or metadata statement (DDL, session variables, transaction control, #327): only the Aurora engines understand it. Detected by utility_statements, not a query fact. |
 | `computed_join` | Aurora PostgreSQL, Aurora MySQL | `computed_join_key` | - | - | A join on a computed expression (lower(g.name) = u.username_lower), which a key lookup cannot evaluate (review of #375, finding B2). |
@@ -141,7 +143,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`correlated-subquery`](#correlated-subquery) | - | - | - | - | fit 80 | fit 80 | future | future | - | - | subqueries | 1 |
 | [`cte-recursive`](#cte-recursive) | - | - | - | - | fit 95 | fit 90 | future | future | - | - | - | 2 |
 | [`extended-reference`](#extended-reference) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
-| [`faceted-analytics`](#faceted-analytics) | - | anti 0.5 | - | - | - | - | future | future | - `guidance_only` | - | - | 1 |
+| [`faceted-analytics`](#faceted-analytics) | - | anti 0.5 | - | - | - | - | future | future | 10 `bounded_limit` | - | - | 1 |
 | [`frequent-full-scan`](#frequent-full-scan) | anti 0.5 | - | - | - | - | - | future | future | 20 `reads_more_than_returns` | - | - | 1 |
 | [`full-text-native`](#full-text-native) | - | - | - | - | fit 75 | - | future | future | - | - | - | 1 |
 | [`full-text-search-candidate`](#full-text-search-candidate) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | - `guidance_only` | - | - | 1 |
@@ -296,7 +298,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
-- DynamoDB, anti 0.7 (dynamodb-ap-02): GROUP BY, HAVING or an aggregate over many rows. DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads \(Select = COUNT\), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store \(Amazon DynamoDB API Reference, Query\).
+- DynamoDB, anti 0.7 (dynamodb-ap-02): GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join \(one key's COUNT or SUM is a Query on that key, not this pattern\). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads \(Select = COUNT\), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store \(Amazon DynamoDB API Reference, Query\).
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -347,7 +349,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- DocumentDB, anti 0.5 (documentdb-anti-06): GROUP BY over several columns with an aggregate. $group with a compound \_id serves it natively; real faceting \($facet, several groupings of one filtered set\) needs DocumentDB 8.0.2 or later on an instance-based cluster, and this detector does not find it \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
+- DocumentDB, anti 0.5 (documentdb-anti-06): Several groupings of one row set in one statement \(GROUPING SETS, ROLLUP, CUBE\): $facet runs them in one pipeline on DocumentDB 8.0.2 or later on an instance-based cluster \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\). A GROUP BY over several columns is one $group with a compound \_id, native on every version, and is not this pattern.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -881,7 +883,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- DocumentDB, anti 0.5 (documentdb-anti-07): SQL window functions \(ROW\_NUMBER, RANK, running totals\). $setWindowFields runs on DocumentDB 8.0.2 or later on an instance-based cluster; LAG/LEAD \($shift\) is not supported on any version \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
+- DocumentDB, anti 0.5 (documentdb-anti-07): SQL window functions $setWindowFields serves \(ROW\_NUMBER, RANK, running totals\): DocumentDB 8.0.2 or later on an instance-based cluster. LAG and LEAD \($shift\) and NTILE \(no bucketing window operator\) run on no version, so they are a hard capability gap, not this entry \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 

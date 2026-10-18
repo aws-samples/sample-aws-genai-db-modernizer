@@ -156,6 +156,8 @@ class TestTheGatesKeepTheirValues:
             "multi_doc_acid",
             "strong_consistency",
             "scan_engine",
+            "ranking_window",
+            "offset_window",
             "text_pattern_match",
             "aggregation",
             "complex_joins",
@@ -169,8 +171,16 @@ class TestTheGatesKeepTheirValues:
                 "strong_consistency",
                 "aggregation",
                 "text_pattern_match",
+                # #968: $setWindowFields ranks on 8.0.2+; LAG, LEAD and NTILE run nowhere.
+                "ranking_window",
             },
-            "opensearch": {"text_pattern_match", "scan_engine", "aggregation"},
+            "opensearch": {
+                "text_pattern_match",
+                "scan_engine",
+                "ranking_window",
+                "offset_window",
+                "aggregation",
+            },
             "aurora_postgresql": relational,
             "aurora_mysql": relational,
         }
@@ -178,7 +188,9 @@ class TestTheGatesKeepTheirValues:
     def test_what_requires_a_capability(self) -> None:
         assert {cap: facts for cap, facts in CAPABILITY_FACTS.items() if facts} == {
             "text_pattern_match": ("text_search",),
-            "scan_engine": ("ranking_window_function", "offset_window_function", "recursive_cte"),
+            "scan_engine": ("recursive_cte",),
+            "ranking_window": ("ranking_window_function",),
+            "offset_window": ("offset_window_function",),
             "aggregation": ("needs_aggregation",),
             "computed_join": ("computed_join_key",),
         }

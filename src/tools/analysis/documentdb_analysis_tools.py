@@ -434,12 +434,22 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         if facts.negation_word and cps >= 0.1:
             negation.append(q)
 
-        # faceted analytics
-        if facts.group_by and facts.comma_count >= 2 and facts.aggregation:
+        # faceted analytics: several groupings of one row set in one statement
+        # (GROUPING SETS, ROLLUP, CUBE), which DocumentDB serves only with $facet. A
+        # GROUP BY over several columns is one $group with a compound _id, native on
+        # every version, so it is not this pattern (#968).
+        if facts.grouping_sets and facts.aggregation:
             faceted.append(q)
 
-        # window functions
-        if facts.window_function:
+        # window functions: the ones $setWindowFields serves on 8.0.2+ (ranking,
+        # running aggregates and the rest). LAG and LEAD ($shift) and NTILE (no bucketing operator)
+        # run on no version: that is the offset_window hard gate, not this bounded
+        # limit (#968), so a query whose only window functions are those is not one.
+        if facts.window_function and (
+            facts.ranking_window_function
+            or facts.windowed_aggregate
+            or not facts.offset_window_function
+        ):
             window_fn.append(q)
 
         # correlated subqueries

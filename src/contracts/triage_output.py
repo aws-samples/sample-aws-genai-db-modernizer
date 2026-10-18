@@ -10,6 +10,10 @@ Version History:
   change from 1.0 predates it and was not recorded.
 - 1.2 (2026-10-17, #1006): ``contract_version`` declares the MAJOR.MINOR pattern
   every published version already matched (ADR-008 Decision 1).
+- 1.3 (2026-10-18): ``query_capabilities`` may name ``ranking_window`` and
+  ``offset_window`` (#968); ``scan_engine`` now means a recursive CTE only. A triage.json
+  written before lists ``scan_engine`` for a window function too and still loads: it gates
+  as strictly as it did.
 
 Note (#493, no schema change, version unchanged): the capability id
 ``inverted_index`` in ``query_capabilities`` is now ``text_pattern_match``. A
@@ -67,7 +71,7 @@ class TriageOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="Job identifier")
     database_name: str = Field(..., description="Source database name")

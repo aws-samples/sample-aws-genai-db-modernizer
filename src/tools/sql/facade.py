@@ -70,6 +70,7 @@ from src.tools.sql.regex_facts import (
     regex_aggregate_function_count,
     regex_fulltext_search,
     regex_group_by,
+    regex_grouping_sets,
     regex_has_aggregation,
     regex_has_joins,
     regex_has_subquery,
@@ -252,6 +253,9 @@ class SqlFacts:
 
     Attributes:
         group_by: A ``GROUP BY`` clause, in any statement or subquery.
+        grouping_sets: Several groupings of one row set in one ``GROUP BY``:
+            ``GROUPING SETS``, ``ROLLUP``, ``CUBE`` or MySQL's ``WITH ROLLUP``
+            (a faceted aggregation, #968).
         aggregate_function_count: How many aggregate function calls (the
             ``has_aggregation`` functions, windowed or not) the text has.
         like_parameter: A ``LIKE``/``ILIKE`` whose whole pattern is a bind
@@ -326,6 +330,7 @@ class SqlFacts:
     fallback_reason: FallbackReason | None
     dialect: str
     group_by: bool = False
+    grouping_sets: bool = False
     aggregate_function_count: int = 0
     like_parameter: bool = False
     fulltext_search: bool = False
@@ -811,6 +816,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         fallback_reason=reason,
         dialect=dialect,
         group_by=regex_group_by(sql),
+        grouping_sets=regex_grouping_sets(sql),
         aggregate_function_count=regex_aggregate_function_count(sql),
         like_parameter=regex_like_parameter(sql),
         fulltext_search=regex_fulltext_search(sql),
@@ -832,6 +838,16 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         multi_table_write=regex_multi_table_write(sql),
         write_targets=regex_write_targets(sql),
     )
+
+
+def _is_grouping_sets(node: exp.Expr) -> bool:
+    """A ``GROUP BY`` with several groupings: ``GROUPING SETS``, ``ROLLUP``, ``CUBE`` or
+    MySQL's ``WITH ROLLUP``."""
+    if not isinstance(node, exp.Group):
+        return False
+    if node.args.get("rollup") or node.args.get("cube") or node.args.get("grouping_sets"):
+        return True
+    return any(isinstance(e, (exp.GroupingSets, exp.Rollup, exp.Cube)) for e in node.expressions)
 
 
 def _facts_from_statements(
@@ -858,6 +874,7 @@ def _facts_from_statements(
         fallback_reason=None,
         dialect=dialect,
         group_by=group_by,
+        grouping_sets=any(_is_grouping_sets(node) for node in nodes),
         aggregate_function_count=aggregate_function_count,
         like_parameter="parameter" in kinds,
         fulltext_search="fulltext" in kinds,

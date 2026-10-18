@@ -43,6 +43,8 @@ count:
   ``OVER``;
 - ``windowed_aggregate``: a ``SUM``/``AVG``/``MIN``/``MAX``/``COUNT`` call followed
   by ``OVER``;
+- ``grouping_sets``: ``GROUPING SETS (``, ``ROLLUP (`` or ``CUBE (`` after ``GROUP BY``, or
+  ``WITH ROLLUP`` / ``WITH CUBE``;
 - ``recursive_cte``: ``WITH RECURSIVE``, or a CTE whose body has a ``UNION`` and
   names the CTE again, read on :func:`scan_sql`'s output (the Aurora engine
   choice's detector, #381);
@@ -144,6 +146,12 @@ _PATTERN_MATCH_RE = re.compile(
     r"\b(?:regexp|rlike)\b|\bregexp_like\s*\(|~\*?\s|\bsimilar\s+to\b", re.IGNORECASE
 )
 _SIMILARITY_MATCH_RE = re.compile(r"\b(?:strict_word_|word_)?similarity\s*\(", re.IGNORECASE)
+# A grouping list (GROUPING SETS, ROLLUP, CUBE) inside a GROUP BY, or MySQL's and SQL
+# Server's WITH ROLLUP / WITH CUBE; not a PostgreSQL cube(...) function call elsewhere.
+_GROUPING_SETS_RE = re.compile(
+    r"\bGROUP\s+BY\b[^;]*?\b(?:GROUPING\s+SETS|ROLLUP|CUBE)\s*\(|\bWITH\s+(?:ROLLUP|CUBE)\b",
+    re.IGNORECASE,
+)
 _WINDOW_FUNCTION_RE = re.compile(r"\)\s*OVER\s*\(", re.IGNORECASE)
 _ROW_LIMIT_RE = re.compile(
     r"\blimit\b|\bfetch\s+(?:first|next)\b|\btop\s*(?:\(|\d|@)", re.IGNORECASE
@@ -359,6 +367,12 @@ def regex_offset_window_function(query_text: str) -> bool:
 def regex_windowed_aggregate(query_text: str) -> bool:
     """A ``SUM``/``AVG``/``MIN``/``MAX``/``COUNT`` call followed by ``OVER``."""
     return bool(_WINDOWED_AGGREGATE_RE.search(query_text or ""))
+
+
+def regex_grouping_sets(query_text: str) -> bool:
+    """``GROUPING SETS (``, ``ROLLUP (`` or ``CUBE (`` after ``GROUP BY``, or ``WITH ROLLUP``
+    / ``WITH CUBE``."""
+    return bool(_GROUPING_SETS_RE.search(scan_sql(query_text or "")))
 
 
 def regex_recursive_cte(query_text: str) -> bool:

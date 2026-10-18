@@ -1038,11 +1038,13 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         if qt == "SELECT" and pins_nothing and facts.top_n:
             ordered_scan_queries.append(q)
 
-        # Complex aggregation — any GROUP BY or aggregate function (COUNT(*)
-        # included, #893) is an anti-pattern for DynamoDB regardless of joins.
-        # DynamoDB has no server-side aggregation; these need pre-computed
-        # counters or a different engine.
-        if facts.aggregation:
+        # Complex aggregation: a GROUP BY, or an aggregate over rows no key anchors or
+        # over a join. DynamoDB has no server-side aggregation; these need pre-computed
+        # aggregates or a different engine. An aggregate over one key's rows of one
+        # table with no GROUP BY (COUNT(*) WHERE post_id = ?) is a Query on that key
+        # with Select = COUNT, or a sum over its item collection: no redesign, so not
+        # this pattern (#968). The read itself is the key-scoped class.
+        if facts.aggregation and (facts.group_by or not access.keyed or facts.join_count > 0):
             complex_agg_queries.append(q)
 
         # Unbounded result set

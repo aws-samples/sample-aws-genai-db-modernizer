@@ -38,8 +38,8 @@ class TestCapabilityPinDisplayCoverage:
         required = detect_required_capabilities(
             "SELECT id, ROW_NUMBER() OVER (ORDER BY id) FROM posts", []
         )
-        assert "scan_engine" in required
-        assert _CAPABILITY_PIN_DISPLAY["scan_engine"] != "scan_engine"
+        assert "ranking_window" in required
+        assert _CAPABILITY_PIN_DISPLAY["ranking_window"] != "ranking_window"
 
     def test_computed_join_capability_reads_as_prose(self) -> None:
         required = detect_required_capabilities(
@@ -60,7 +60,7 @@ class TestCapabilityPinDisplayCoverage:
         assert "text_pattern_match" not in text
         assert "scan_engine" not in text
         assert "full-text or pattern search" in text
-        assert "window or recursive queries" in text
+        assert "recursive queries" in text
 
 
 class TestCapabilityPinReasonMergesAllFragments:

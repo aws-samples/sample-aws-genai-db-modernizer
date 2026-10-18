@@ -3,23 +3,23 @@ id = "faceted-analytics"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]
-penalty = 0
-penalty_basis = "guidance_only"
+penalty = 10
+penalty_basis = "bounded_limit"
 
 [engines.dynamodb]
 kind = "unscored"
 supported = true
 why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
 
-# Detection signals: multi-dimensional GROUP BY / HAVING with multiple aggregation axes
+# Detection signals: several groupings of one row set (GROUPING SETS, ROLLUP, CUBE, #968)
 [engines.documentdb]
 kind = "anti_pattern"
 supported = true
 catalog = "documentdb"
 catalog_id = "documentdb-anti-06"
 severity = 0.5
-why = "GROUP BY over several columns with an aggregate. $group with a compound _id serves it natively; real faceting ($facet, several groupings of one filtered set) needs DocumentDB 8.0.2 or later on an instance-based cluster, and this detector does not find it (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
-guidance = "Run multiple aggregation pipelines in parallel at application layer."
+why = "Several groupings of one row set in one statement (GROUPING SETS, ROLLUP, CUBE): $facet runs them in one pipeline on DocumentDB 8.0.2 or later on an instance-based cluster (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types). A GROUP BY over several columns is one $group with a compound _id, native on every version, and is not this pattern."
+guidance = "Use one $facet stage on DocumentDB 8.0.2 or later on an instance-based cluster, or run one aggregation pipeline per grouping in the application."
 
 [engines.opensearch]
 kind = "unscored"

@@ -40,8 +40,18 @@ why = "A text-pattern predicate (a leading-wildcard or parameterised LIKE, a ful
 
 [capabilities.scan_engine]
 engines = ["opensearch", "aurora_postgresql", "aurora_mysql"]
-facts = ["ranking_window_function", "offset_window_function", "recursive_cte"]
-why = "A ranking or offset window function, or a recursive CTE."
+facts = ["recursive_cte"]
+why = "A recursive CTE (a ranking or offset window function before #968, now their own capabilities)."
+
+[capabilities.ranking_window]
+engines = ["documentdb", "opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["ranking_window_function"]
+why = "ROW_NUMBER, RANK or DENSE_RANK over a window. DocumentDB runs them with $setWindowFields ($documentNumber, $rank, $denseRank) on 8.0.2 or later on an instance-based cluster: a version bound the window-functions anti-pattern prices, not a capability gap (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
+
+[capabilities.offset_window]
+engines = ["opensearch", "aurora_postgresql", "aurora_mysql"]
+facts = ["offset_window_function"]
+why = "LAG, LEAD or NTILE over a window: it reads another row or buckets rows. DocumentDB cannot run them on any version: LAG and LEAD need $shift, which no version supports, and the supported operators include no bucketing window operator for NTILE (#968; Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
 
 [capabilities.complex_joins]
 engines = ["aurora_postgresql", "aurora_mysql"]

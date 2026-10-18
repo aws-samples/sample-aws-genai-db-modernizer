@@ -64,7 +64,7 @@ EXPECTED_BASIS = {
     "wide-transaction": "bounded_limit",
     "window-functions": "bounded_limit",
     "audit-columns-only": "guidance_only",
-    "faceted-analytics": "guidance_only",
+    "faceted-analytics": "bounded_limit",
     "full-text-search-candidate": "guidance_only",
     "high-frequency-small-updates": "guidance_only",
     "negation-heavy-queries": "guidance_only",
@@ -290,6 +290,73 @@ CASES = [
         _q("neg", "SELECT * FROM categories WHERE id = $1", ["categories"]),
     ),
     (
+        # #968: several groupings of one row set ($facet, 8.0.2+); a GROUP BY over two
+        # columns is one $group with a compound _id and is not the pattern.
+        "faceted-analytics",
+        "documentdb",
+        _q(
+            "pos",
+            "SELECT status, created_at, COUNT(*) FROM orders GROUP BY ROLLUP (status, created_at)",
+            ["orders"],
+        ),
+        _q(
+            "neg",
+            "SELECT status, created_at, COUNT(*) FROM orders GROUP BY status, created_at",
+            ["orders"],
+        ),
+    ),
+    (
+        # #968: one key's COUNT is a Query with Select = COUNT, not a redesign.
+        "complex-aggregation",
+        "dynamodb",
+        _q("pos", "SELECT COUNT(*) FROM order_items WHERE price > $1", ["order_items"]),
+        _q("neg", "SELECT COUNT(*) FROM order_items WHERE order_id = $1", ["order_items"]),
+    ),
+    (
+        # LEAD alone and NTILE alone are the offset_window gate too.
+        "window-functions",
+        "documentdb",
+        _q(
+            "pos",
+            "SELECT id, RANK() OVER (ORDER BY created_at) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+        _q(
+            "neg",
+            "SELECT id, LEAD(total) OVER (ORDER BY created_at) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+    ),
+    (
+        "window-functions",
+        "documentdb",
+        _q(
+            "pos",
+            "SELECT id, AVG(total) OVER (PARTITION BY status) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+        _q(
+            "neg",
+            "SELECT id, NTILE(4) OVER (ORDER BY total) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+    ),
+    (
+        # #968: LAG alone is the offset_window gate, not this version-bound entry.
+        "window-functions",
+        "documentdb",
+        _q(
+            "pos",
+            "SELECT id, SUM(total) OVER (ORDER BY created_at) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+        _q(
+            "neg",
+            "SELECT id, LAG(total) OVER (ORDER BY created_at) FROM orders WHERE status = $1",
+            ["orders"],
+        ),
+    ),
+    (
         "window-functions",
         "documentdb",
         _q(
@@ -331,15 +398,6 @@ GUIDANCE_ONLY_CASES = [
         "negation-heavy-queries",
         "documentdb",
         _q("pos", "SELECT * FROM orders WHERE id = $1 AND status NOT IN ('a', 'b')", ["orders"]),
-    ),
-    (
-        "faceted-analytics",
-        "documentdb",
-        _q(
-            "pos",
-            "SELECT status, created_at, COUNT(*) FROM orders GROUP BY status, created_at",
-            ["orders"],
-        ),
     ),
 ]
 

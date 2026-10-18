@@ -498,6 +498,7 @@ class TestConstantsAreTheCatalogsView:
             "correlated-subquery-joins": 20,
             "graph-traversal-hierarchy": 10,
             "window-functions": 10,
+            "faceted-analytics": 10,
             "unbounded-array-growth": 10,
             "large-result-sets": 10,
         }

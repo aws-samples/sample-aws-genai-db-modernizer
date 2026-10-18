@@ -11,14 +11,14 @@ kind = "unscored"
 supported = true
 why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
 
-# Detection signals: ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, running totals
+# Detection signals: a window function other than LAG, LEAD or NTILE alone (#968)
 [engines.documentdb]
 kind = "anti_pattern"
 supported = true
 catalog = "documentdb"
 catalog_id = "documentdb-anti-07"
 severity = 0.5
-why = "SQL window functions (ROW_NUMBER, RANK, running totals). $setWindowFields runs on DocumentDB 8.0.2 or later on an instance-based cluster; LAG/LEAD ($shift) is not supported on any version (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
+why = "SQL window functions $setWindowFields serves (ROW_NUMBER, RANK, running totals): DocumentDB 8.0.2 or later on an instance-based cluster. LAG and LEAD ($shift) and NTILE (no bucketing window operator) run on no version, so they are a hard capability gap, not this entry (Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types)."
 guidance = "Use Computed Pattern (pre-calculated fields) or application-layer computation."
 
 [engines.opensearch]

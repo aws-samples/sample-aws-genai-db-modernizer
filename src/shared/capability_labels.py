@@ -38,7 +38,9 @@ CAPABILITY_DISPLAY_NAMES: dict[str, str] = {
     "computed_join": "a join on a computed expression",
     "sql_admin": "a utility or DDL statement",
     "text_pattern_match": "full-text or pattern search",
-    "scan_engine": "window or recursive queries",
+    "scan_engine": "recursive queries",
+    "ranking_window": "ranking window functions",
+    "offset_window": "LAG, LEAD or NTILE window functions",
     "multi_doc_acid": "multi-document transactions",
 }
 
@@ -65,7 +67,9 @@ def capability_label(name: str) -> str:
 _CAPABILITY_GAP_CLAUSES: dict[str, str] = {
     "sql_admin": "is a utility or DDL statement",
     "computed_join": "joins on a computed expression",
-    "scan_engine": "uses a window function or a recursive query",
+    "scan_engine": "uses a recursive query",
+    "ranking_window": "uses a ranking window function",
+    "offset_window": "uses LAG, LEAD or NTILE",
 }
 
 
@@ -156,13 +160,31 @@ CAPABILITY_REDESIGN_HINTS: dict[str, dict[str, str]] = {
     },
     "scan_engine": {
         "dynamodb": (
-            "precompute the window or recursive result when the data is written (a rank or a "
-            "hierarchy path stored on each item), or run it as an analytics query over an "
-            "export to Amazon S3 with Amazon Athena."
+            "precompute the recursive result when the data is written (a hierarchy path "
+            "stored on each item), or run it as an analytics query over an export to "
+            "Amazon S3 with Amazon Athena."
         ),
         "documentdb": (
-            "precompute the window or recursive result when the data is written (a rank "
-            "field or a materialized path), or compute it in the application."
+            "precompute the recursive result when the data is written (a materialized "
+            "path), or compute it in the application."
+        ),
+    },
+    "ranking_window": {
+        "dynamodb": (
+            "precompute the rank when the data is written (a rank stored on each item, or a "
+            "sort key that orders the items), or run it as an analytics query over an export "
+            "to Amazon S3 with Amazon Athena."
+        ),
+    },
+    "offset_window": {
+        "dynamodb": (
+            "store the previous or next value on each item when it is written, or read the "
+            "neighbouring items with a Query on the sort key and compare them in the "
+            "application."
+        ),
+        "documentdb": (
+            "store the previous or next value on each document when it is written, or read "
+            "the neighbouring documents in sort order and compare them in the application."
         ),
     },
     # DynamoDB has multi_doc_acid (ADR-031 Decision 3, #493): a write too wide for one

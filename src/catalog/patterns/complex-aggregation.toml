@@ -10,14 +10,14 @@ penalty = 30
 penalty_basis = "needs_redesign"
 penalty_aliases = ["complex_aggregation"]
 
-# Detection signals: group_by_multiple_columns, having_clause, multi_table_aggregation
+# Detection signals: a GROUP BY, or an aggregate that is not over one key's rows of one table (#968)
 [engines.dynamodb]
 kind = "anti_pattern"
 supported = true
 catalog = "dynamodb"
 catalog_id = "dynamodb-ap-02"
 severity = 0.7
-why = "GROUP BY, HAVING or an aggregate over many rows. DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query)."
+why = "GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join (one key's COUNT or SUM is a Query on that key, not this pattern). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query)."
 guidance = "Pre-compute aggregates on write (DynamoDB Streams + Lambda), or export to S3/Athena for analytics."
 
 [engines.documentdb]

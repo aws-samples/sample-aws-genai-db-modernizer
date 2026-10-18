@@ -709,6 +709,11 @@ class QueryFacts:
         return self._has("group") and self._parsed.group_by
 
     @cached_property
+    def grouping_sets(self) -> bool:
+        """Several groupings of one row set (``SqlFacts.grouping_sets``, #968)."""
+        return self._has("grouping", "rollup", "cube") and self._parsed.grouping_sets
+
+    @cached_property
     def aggregate_function_count(self) -> int:
         """How many aggregate function calls (``SqlFacts.aggregate_function_count``)."""
         if not self._may_aggregate:
@@ -1014,11 +1019,6 @@ class QueryFacts:
     def correlated_subquery_shape(self) -> bool:
         """``( SELECT ... WHERE ... a.b = c.d``."""
         return _has_correlated_subquery_shape(self._text)
-
-    @cached_property
-    def comma_count(self) -> int:
-        """How many commas the text has."""
-        return self._lower.count(",")
 
     @cached_property
     def time_function_keyword(self) -> bool:

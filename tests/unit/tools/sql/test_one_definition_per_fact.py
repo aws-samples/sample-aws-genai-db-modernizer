@@ -557,6 +557,8 @@ PROBES: list[tuple[str, str]] = [
     ),
     ("SELECT COUNT(*) FROM t", "mysql"),
     ("SELECT a FROM t GROUP BY a", "postgresql"),
+    ("SELECT a, b, COUNT(*) FROM t GROUP BY ROLLUP (a, b)", "postgresql"),
+    ("SELECT a, COUNT(*) FROM t GROUP BY a WITH ROLLUP", "mysql"),
     ("SELECT a, b, count(id), max(id) FROM t GROUP BY a, b", "postgresql"),
     ("SELECT SQL_CALC_FOUND_ROWS * FROM t LIMIT 10", "mysql"),
     ("SELECT FOUND_ROWS()", "mysql"),
@@ -665,7 +667,6 @@ RELATED_FACTS: dict[frozenset[str], str] = {
         "a write statement names the table it writes; write_statement_text answers whether a "
         "statement writes, write_targets which tables (#992), and it is empty for CALL or COPY"
     ),
-    frozenset({"in_list", "comma_count"}): "an IN list holds commas; the count is DocumentDB's",
     frozenset({"where_word", "keyed_after_where"}): "a keyed read is a WHERE with an equality",
 }
 

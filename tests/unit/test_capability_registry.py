@@ -82,12 +82,31 @@ class TestDetectRequiredCapabilities:
         caps = detect_required_capabilities("SELECT * FROM posts", ["text_search"])
         assert "text_pattern_match" in caps
 
-    def test_detects_scan_engine_from_window_function(self):
+    def test_detects_ranking_window_from_a_ranking_function(self):
         caps = detect_required_capabilities(
             "SELECT ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at) FROM posts",
             [],
         )
-        assert "scan_engine" in caps
+        assert "ranking_window" in caps
+        assert "scan_engine" not in caps
+
+    def test_detects_offset_window_from_lag(self):
+        """#968: LAG, LEAD and NTILE are their own capability, which DocumentDB lacks."""
+        caps = detect_required_capabilities(
+            "SELECT LAG(total) OVER (PARTITION BY user_id ORDER BY created_at) FROM posts",
+            [],
+        )
+        assert "offset_window" in caps
+        assert can_engine_serve_capability("documentdb", caps) is False
+        assert can_engine_serve_capability("aurora_postgresql", caps) is True
+
+    def test_documentdb_runs_a_ranking_function(self):
+        """#968: $setWindowFields ranks on DocumentDB 8.0.2+ (a bounded limit, not a gap)."""
+        caps = detect_required_capabilities(
+            "SELECT ROW_NUMBER() OVER (ORDER BY created_at) FROM posts", []
+        )
+        assert can_engine_serve_capability("documentdb", caps) is True
+        assert can_engine_serve_capability("dynamodb", caps) is False
 
     def test_detects_scan_engine_from_recursive_cte(self):
         caps = detect_required_capabilities(
