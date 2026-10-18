@@ -370,6 +370,16 @@ Version History:
   used an item of the plain-prose style list (``src.shared.prose_style``), one
   line each, for the audit trail; no deliverable renders it. Backward
   compatible: empty for a report written before 1.37.
+- 1.38 (2026-10-19, #888): ``flagged_unservable`` (``FlaggedUnservableQuery``):
+  the flagged queries no kept engine can take, which never reach the move
+  ledger -- a reality-check model flag whose outcome is ``kept`` and a
+  post-schema router terminal query -- each with its engine, the reason
+  category, the review that flagged it and why it stays. ``facts.unservable``
+  states them as a third kind, ``flagged`` (``flagged_query_count``), next to
+  ``fallback`` and ``gated_everywhere`` (together ``no_fit_query_count``), with
+  the reason category's redesign hint. Backward compatible:
+  ``flagged_unservable`` defaults to empty, ``flagged_query_count`` and
+  ``no_fit_query_count`` to 0.
 """
 
 from datetime import datetime
@@ -1097,11 +1107,12 @@ class UnservableGateFact(BaseModel):
 
 
 class UnservableQueryFact(BaseModel):
-    """A query that landed on a fallback engine because no analyzed engine fit (#729)."""
+    """A query no kept engine can serve: on a fallback engine because no analyzed
+    engine fit (#729), or flagged and kept where it is (#888)."""
 
     query_id: str
     engine: str = Field(..., description="The engine it ends on (id)")
-    kind: str = Field(..., description="fallback or gated_everywhere")
+    kind: str = Field(..., description="fallback, gated_everywhere or flagged (#888)")
     rule: str = Field("", description="The deciding step's rule (machine id)")
     explanation: str = Field("", description="Why it sits there, the trace's own sentence")
     blocking_gates: list[UnservableGateFact] = Field(default_factory=list)
@@ -1114,13 +1125,59 @@ class UnservableQueryFact(BaseModel):
     )
 
 
+class FlaggedUnservableQuery(BaseModel):
+    """A flagged query no kept engine can take, so it stays on its engine (#888).
+
+    Written by ``src.agents.referee.flagged_unservable``: a reality-check flag
+    whose outcome is ``kept``, or a post-schema router terminal query, while
+    the effective assignment keeps it in scope on the flagged engine.
+    """
+
+    query_id: str
+    engine: str = Field(..., description="The flagged engine it stays on (id)")
+    engine_name: str = Field(..., description="Its display name")
+    source: Literal["reality_check", "design_review"] = Field(
+        ..., description="The review that flagged it"
+    )
+    cause: Literal["no_kept_engine", "depth_limit"] = Field(
+        ...,
+        description=(
+            "no_kept_engine: no other kept engine can take it; depth_limit: the "
+            "post-schema routing cascade reached its last pass"
+        ),
+    )
+    reason_category: str = Field(..., description="The flag's reason category (FlagReason value)")
+    reason_label: str = Field(..., description="The reason category in plain words")
+    explanation: str = Field(..., description="Why it stays, in customer-facing words")
+    gate: str = Field("model_flag", description="The gate that rules its engine out (kind)")
+    gate_text: str = Field("", description="The gate in plain words")
+    required_capabilities: list[str] = Field(
+        default_factory=list, description="The hard capabilities triage found it needs (ids)"
+    )
+
+
 class UnservableFacts(BaseModel):
-    """Queries on a fallback engine (#729), from ``query_traces.unservable``."""
+    """Queries no kept engine can serve: the ones on a fallback engine (#729), from
+    ``query_traces.unservable``, and the flagged ones that stay put (#888), from
+    ``flagged_unservable``."""
 
     unservable_query_count: int = Field(0, ge=0)
     fallback_query_count: int = Field(0, ge=0, description="Placed by a fallback rule")
     gated_everywhere_query_count: int = Field(
         0, ge=0, description="Every candidate engine gated, no fallback rule"
+    )
+    flagged_query_count: int = Field(
+        0,
+        ge=0,
+        description="A review flagged it and no other kept engine can take it (#888)",
+    )
+    no_fit_query_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "No analyzed engine fit it: placed by a fallback rule or gated everywhere "
+            "(fallback_query_count + gated_everywhere_query_count, #888)"
+        ),
     )
     unservable_queries: list[UnservableQueryFact] = Field(
         default_factory=list, description="At most UNSERVABLE_SHOWN, by engine then query id"
@@ -1464,7 +1521,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.37",
+        default="1.38",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1613,6 +1670,13 @@ class SynthesisOutputContract(BaseModel):
             "Pending engine choices --auto decided for the customer (#1003) that still "
             "hold on the effective assignment: decided automatically, review if needed. "
             "Empty list when none; None for a report synthesized before this field existed."
+        ),
+    )
+    flagged_unservable: list[FlaggedUnservableQuery] = Field(
+        default_factory=list,
+        description=(
+            "Flagged queries no kept engine can take (#888): a reality-check flag it "
+            "kept and a post-schema router terminal query, by engine and query id"
         ),
     )
     post_schema_reroutes: list[PostSchemaReroute] | None = Field(

@@ -244,6 +244,24 @@ class TestRouterDestinationIsTheScorersChoice:
         assert result.routings == []
         assert result.terminal_queries == ["q-5"]
 
+    def test_a_terminal_query_keeps_the_flag_that_made_it_terminal(self):
+        """#888: the record synthesis turns into an unservable row."""
+        result = _route(
+            schema_outputs={"dynamodb": {}},
+            active_engines=["dynamodb"],
+            routing_flags_by_engine={"dynamodb": [_flag(["q-5"], "dynamodb", "full_scan")]},
+            scoring_context=_context({"q-5": {"dynamodb": 70}}),
+            query_map=_query_map("q-5"),
+        )
+        assert [t.model_dump() for t in result.terminal] == [
+            {
+                "query_id": "q-5",
+                "flagged_engine": "dynamodb",
+                "reason_category": "full_scan",
+                "cause": "no_kept_engine",
+            }
+        ]
+
     def test_pe_text_notes_route_nothing(self):
         """The old free-text ``[ROUTING] ... -> engine`` note is no longer read."""
         result = _route(
@@ -279,6 +297,33 @@ class TestRouteUnsupportedQueries:
             max_depth=2,
         )
         assert result.terminal_queries == ["q-99"]
+        [term] = result.terminal
+        assert (term.query_id, term.flagged_engine, term.cause) == (
+            "q-99",
+            "dynamodb",
+            "depth_limit",
+        )
+        # A designer's unsupported pattern reads as a missing feature.
+        assert term.reason_category == "missing_feature"
+
+    def test_a_routed_query_is_not_terminal(self):
+        result = _route(
+            schema_outputs={"dynamodb": {}},
+            active_engines=["dynamodb", "documentdb"],
+            routing_flags_by_engine={"dynamodb": [_flag(["q-5"], "dynamodb")]},
+            scoring_context=_context({"q-5": {"dynamodb": 70, "documentdb": 60}}),
+            query_map=_query_map("q-5"),
+        )
+        assert [r.to_engine for r in result.routings] == ["documentdb"]
+        assert result.terminal == [] and result.terminal_queries == []
+
+    def test_a_router_output_written_before_the_records_still_loads(self):
+        from src.contracts.post_schema_router_output import RouterOutput
+
+        old = RouterOutput.model_validate(
+            {"contract_version": "1.0", "job_id": "j", "terminal_queries": ["q-1"]}
+        )
+        assert old.terminal_queries == ["q-1"] and old.terminal == []
 
     def test_a_flag_on_a_query_assigned_elsewhere_is_ignored(self):
         """#713 review: a DynamoDB reviewer's flag on a query assigned to Aurora

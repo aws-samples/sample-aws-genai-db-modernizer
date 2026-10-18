@@ -7,8 +7,9 @@ import { displayEngine } from "../utils/engineNames";
 import { unservableOf } from "../utils/reportFacts";
 
 /**
- * "Queries on a fallback engine" (#729): each query no analyzed engine could
- * take, where it landed and why, from report.json's facts.unservable -- the
+ * "Queries that cannot be served as designed" (#729, #888): each query no analyzed engine could
+ * take, where it landed and why (and each flagged query no kept engine can
+ * take, #888, which stays where it is), from report.json's facts.unservable -- the
  * same list the decision and engineering reports state -- with the gate that
  * ruled out each engine, a redesign hint for those engines and the way to
  * re-run (the
@@ -25,6 +26,18 @@ function gatesText(q) {
     .join('; ');
 }
 
+// The sentence for each kind listed (#888): "These" when every row is of that
+// kind, "Some" when both are; the same sentences as src/report/unservable.py.
+function kindKeys(u) {
+  const fallback = u.no_fit_query_count || 0;
+  const flagged = u.flagged_query_count || 0;
+  const both = fallback > 0 && flagged > 0;
+  const keys = [];
+  if (fallback > 0) keys.push(`analysis-results.unservable.fallback_${both ? 'some' : 'all'}`);
+  if (flagged > 0) keys.push(`analysis-results.unservable.flagged_${both ? 'some' : 'all'}`);
+  return keys;
+}
+
 const UnservableQueriesCallout = memo(({ synthesis, jobId, onOpen, t }) => {
   const u = unservableOf(synthesis);
   if (!u) return null;
@@ -36,6 +49,7 @@ const UnservableQueriesCallout = memo(({ synthesis, jobId, onOpen, t }) => {
       >
         <SpaceBetween size="s">
           <Box>{t('analysis-results.unservable.intro')}</Box>
+          {kindKeys(u).map(key => <Box key={key}>{t(key)}</Box>)}
           {u.unservable_queries.map(q => (
             <Box key={q.query_id}>
               <SpaceBetween direction="horizontal" size="xs">

@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from typing import Literal
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.consolidation_validator import scorer_ladder
@@ -32,7 +33,7 @@ from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.tie_break import group_tie
 from src.contracts.model_flag import FlagReason, ModelFlag
 from src.contracts.move_ledger import MoveEvidence
-from src.contracts.post_schema_router_output import QueryRouting, RouterOutput
+from src.contracts.post_schema_router_output import QueryRouting, RouterOutput, TerminalQuery
 from src.shared.engine_names import display_engine
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,24 @@ def _engine_flags(engine: str, raw_flags: Iterable[object], schema_output: dict)
     except ValueError:  # an engine id outside the flag contract
         logger.warning("Ignored unsupported patterns from unknown engine %r", engine)
     return kept
+
+
+def _terminal(
+    members: list[str],
+    engine: str,
+    flag: ModelFlag,
+    cause: Literal["no_kept_engine", "depth_limit"],
+) -> list[TerminalQuery]:
+    """The ``RouterOutput.terminal`` records of a unit that stays on ``engine`` (#888)."""
+    return [
+        TerminalQuery(
+            query_id=m,
+            flagged_engine=engine,
+            reason_category=flag.reason_category.value,
+            cause=cause,
+        )
+        for m in members
+    ]
 
 
 def _fmt(value: float | None) -> str:
@@ -182,7 +201,7 @@ def route_unsupported_queries(
     tied_engines = tied_engines or {}
 
     routings: list[QueryRouting] = []
-    terminal: list[str] = []
+    terminal: list[TerminalQuery] = []
     held: list[str] = []
     # query -> the other writes of the tables it writes (#992).
     write_mates: dict[str, set[str]] = defaultdict(set)
@@ -258,7 +277,7 @@ def route_unsupported_queries(
             held.extend(m for m in members if m not in held)
             continue
         if cascade_depth >= max_depth:
-            terminal.extend(members)
+            terminal.extend(_terminal(members, engine, flag, "depth_limit"))
             continue
         failed = set().union(*(failed_engines.get(m, set()) for m in members))
         remaining = [e for e in candidates if e not in failed]
@@ -278,7 +297,7 @@ def route_unsupported_queries(
             weights=unit_weights,
         )
         if routing.destination is None:
-            terminal.extend(members)
+            terminal.extend(_terminal(members, engine, flag, "no_kept_engine"))
             continue
         label = FLAG_REASON_LABELS[flag.reason_category]
         basis = (
@@ -323,7 +342,8 @@ def route_unsupported_queries(
     return RouterOutput(
         job_id="",  # Caller sets this
         routings=routings,
-        terminal_queries=terminal,
+        terminal_queries=[t.query_id for t in terminal],
+        terminal=terminal,
         held_queries=held,
         cascade_depth=cascade_depth,
     )

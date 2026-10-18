@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
+from src.agents.referee.flagged_unservable import flagged_unservable_records
 from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
@@ -126,7 +127,8 @@ def run_synthesis_deterministic(
         ranking, table_mappings, query_groups, tco_analysis, risk_assessment,
         architecture, trade_offs, assignment_summary, reality_check_summary,
         cache_overlay, migration_waves (the incremental roadmap, #225),
-        summary (deterministic), executive_summary (deterministic fallback),
+        flagged_unservable (#888), summary (deterministic), executive_summary
+        (deterministic fallback),
         data (internal SynthesisData — for use by apply_synthesis_llm_output)
     """
     print("[synthesis] Loading all pipeline artifacts...")
@@ -388,6 +390,16 @@ def run_synthesis_deterministic(
                 }
             )
 
+    # #888: the flagged queries no kept engine can take (a reality-check flag
+    # it kept, a post-schema router terminal query), which the ledger never sees.
+    router_key = f"{database_name}/{job_id}/post-schema-router/router_output.json"
+    flagged_unservable = flagged_unservable_records(
+        data.assignment,
+        reality_check_output,
+        store.read_json(router_key) if store.exists(router_key) else None,
+        triage_query_capabilities(data.triage),
+    )
+
     return {
         "job_id": job_id,
         "database_name": database_name,
@@ -405,6 +417,7 @@ def run_synthesis_deterministic(
         "trade_offs": trade_offs,
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
+        "flagged_unservable": flagged_unservable,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
         "cache_overlay": cache_overlay,
@@ -815,6 +828,8 @@ def _write_synthesis_report(
         "table_sources": (
             table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
         ),
+        # #888: flagged queries no kept engine can take, for facts.unservable.
+        "flagged_unservable": result.get("flagged_unservable") or [],
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

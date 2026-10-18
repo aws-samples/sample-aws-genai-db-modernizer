@@ -64,6 +64,7 @@ const facts = {
   unservable_query_count: 2,
   fallback_query_count: 2,
   gated_everywhere_query_count: 0,
+  no_fit_query_count: 2,
   unservable_queries: [
     {
       query_id: 'q-count',
@@ -100,10 +101,12 @@ test('flags each query with its engine, why, the gates and a redesign', () => {
   render();
   const text = container.textContent;
   expect(container.querySelector('[data-alert]').dataset.alert).toBe('warning');
-  expect(text).toContain('2 queries on a fallback engine');
+  expect(text).toContain('2 queries that cannot be served as designed');
+  expect(text).toContain(en['analysis-results.unservable.fallback_all']);
+  expect(text).not.toContain(en['analysis-results.unservable.flagged_all']);
   expect(text).not.toContain('no kept engine');
   expect(text).toContain('does not bring back an engine it removed');
-  expect(text).toContain('landed on Aurora MySQL');
+  expect(text).toContain('on Aurora MySQL');
   expect(text).toContain('No engine could score this query, so it falls back to Aurora MySQL.');
   expect(text).toContain('Ruled out: DynamoDB (missing a capability the query needs).');
   expect(text).toContain('Keep it on Aurora MySQL, or redesign it. Maintain the aggregate as the data changes.');
@@ -140,6 +143,37 @@ test('renders nothing without any, or for a report written before them', () => {
 
 test('one query reads in the singular', () => {
   render({ synthesis: { facts: { unservable: { ...facts, unservable_query_count: 1, unservable_queries: [facts.unservable_queries[0]], more_unservable_count: 0 } } } });
-  expect(container.textContent).toContain('1 query on a fallback engine');
+  expect(container.textContent).toContain('1 query that cannot be served as designed');
   expect(container.textContent).not.toContain('more quer');
+});
+
+const flaggedRow = {
+  query_id: 'q-scan',
+  engine: 'dynamodb',
+  kind: 'flagged',
+  rule: '',
+  explanation: "The reality check's review found DynamoDB cannot serve this query (it would need a full scan), and no other engine the plan keeps can take it, so it stays on DynamoDB.",
+  blocking_gates: [{ engine: 'dynamodb', gate: 'model_flag', gate_text: 'a design review found it cannot support this query' }],
+  required_capabilities: [],
+  capability_labels: [],
+  redesign_hints: ['For DynamoDB: give the query a key or an index it can look up.'],
+};
+
+test('#888: both kinds listed: each gets its "Some" sentence', () => {
+  render({ synthesis: { facts: { unservable: { ...facts, unservable_query_count: 3, flagged_query_count: 1, unservable_queries: [...facts.unservable_queries, flaggedRow] } } } });
+  const text = container.textContent;
+  expect(text).toContain(en['analysis-results.unservable.fallback_some']);
+  expect(text).toContain(en['analysis-results.unservable.flagged_some']);
+  expect(text).toContain('on DynamoDB');
+  expect(text).toContain('Ruled out: DynamoDB (a design review found it cannot support this query).');
+  expect(text).toContain('Keep it on DynamoDB, or redesign it. For DynamoDB: give the query a key');
+});
+
+test('#888: only flagged queries never read as a fallback', () => {
+  render({ synthesis: { facts: { unservable: { unservable_query_count: 1, fallback_query_count: 0, gated_everywhere_query_count: 0, no_fit_query_count: 0, flagged_query_count: 1, unservable_queries: [flaggedRow], more_unservable_count: 0 } } } });
+  const text = container.textContent;
+  expect(text).toContain('1 query that cannot be served as designed');
+  expect(text).toContain(en['analysis-results.unservable.flagged_all']);
+  expect(text).not.toContain('fallback engine');
+  expect(text).not.toContain('no analysis scored it');
 });

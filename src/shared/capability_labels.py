@@ -215,6 +215,31 @@ GATE_REDESIGN_HINTS: dict[str, str] = {
 
 GENERIC_REDESIGN_HINT = "Rewrite the query so an analyzed engine can serve it."
 
+# A flagged query no kept engine can take (#888): how to redesign it for the
+# engine the review flagged, by the flag's reason category (``FlagReason``).
+FLAG_REDESIGN_HINTS: dict[str, str] = {
+    "full_scan": (
+        "give the query a key or an index it can look up, or precompute its result when the "
+        "data is written."
+    ),
+    "client_side_join": (
+        "store the data the query joins together in what it reads, or split it into key "
+        "lookups the application combines."
+    ),
+    "missing_feature": (
+        "rewrite the query so it needs only what the engine supports, or compute that part "
+        "in the application."
+    ),
+    "other": "redesign the query as the review describes.",
+}
+
+
+def flag_redesign_hints(engine: str, reason_category: str | None) -> list[str]:
+    """How to redesign a flagged query for ``engine``, the one the review flagged (#888):
+    ``For DynamoDB: give the query a key ...``. An unknown category reads as ``other``."""
+    text = FLAG_REDESIGN_HINTS.get(str(reason_category or ""), FLAG_REDESIGN_HINTS["other"])
+    return [f"For {display_engine(engine)}: {text}"]
+
 
 def _names(engines: list[str]) -> str:
     names = [display_engine(e) for e in engines]

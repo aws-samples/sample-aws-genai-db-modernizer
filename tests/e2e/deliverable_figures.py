@@ -243,9 +243,17 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         rows = [r for r in digest["close_calls"] if isinstance(r, dict)]
         exp["close_calls"] = sum(1 for r in rows if not r.get("settled_tie"))
         exp["settled_ties"] = sum(1 for r in rows if r.get("settled_tie"))
-    # #729: the queries on a fallback engine, from query_traces.unservable.
-    if isinstance(digest.get("unservable"), list):
-        exp["fallback_queries"] = sum(1 for r in digest["unservable"] if isinstance(r, dict))
+    # #729: the queries on a fallback engine, from query_traces.unservable, and
+    # #888: the flagged ones no kept engine can take, from flagged_unservable
+    # (a query listed in both counts once).
+    flagged = [r for r in report.get("flagged_unservable") or [] if isinstance(r, dict)]
+    if isinstance(digest.get("unservable"), list) or flagged:
+        ids = {
+            str(r.get("query_id"))
+            for r in [*(digest.get("unservable") or []), *flagged]
+            if isinstance(r, dict)
+        }
+        exp["fallback_queries"] = len(ids)
     exp["engine_count"] = len(final_architecture(report))
     exp["removed"] = frozenset(removed_engines(report))
     return exp
@@ -521,11 +529,13 @@ def _close_calls(f: Figures, text: str | None, where: str) -> None:
     f.add("settled_ties", _int(m.group(2)) if m and m.group(2) else 0, where)
 
 
-_FALLBACK_TITLE = re.compile(r"Queries on a fallback engine \(([\d,]+) quer(?:y|ies)\)")
+_FALLBACK_TITLE = re.compile(
+    r"Queries that cannot be served as designed \(([\d,]+) quer(?:y|ies)\)"
+)
 
 
 def _fallback_queries(f: Figures, text: str | None, where: str) -> None:
-    """The count of one "Queries on a fallback engine (N queries)" title (#729)."""
+    """The count of one "Queries that cannot be served as designed (N queries)" title (#729)."""
     m = _FALLBACK_TITLE.search(text or "")
     f.add("fallback_queries", _int(m.group(1)) if m else 0, where)
 
@@ -640,7 +650,7 @@ def engineering_figures(md_text: str) -> Figures:
     )
     _fallback_queries(
         f,
-        next((h for h in h2 if h.startswith("Queries on a fallback engine (")), None),
+        next((h for h in h2 if h.startswith("Queries that cannot be served as designed (")), None),
         "fallback heading",
     )
     if not re.search(r"Unresolved engine ties|Pending engine choices", " ".join(h2)):
@@ -759,6 +769,8 @@ def pdf_figures(text: str) -> Figures:
     f.add("choices", _int(c.group(1)) if c else 0, "Decisions needed: Pending engine choices")
     _auto_decided(f, text, "Decisions needed: Decided automatically")
     _fallback_queries(
-        f, text if "Queries on a fallback engine (" in text else None, "Decisions needed"
+        f,
+        text if "Queries that cannot be served as designed (" in text else None,
+        "Decisions needed",
     )
     return f

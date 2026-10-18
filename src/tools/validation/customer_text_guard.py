@@ -314,6 +314,15 @@ ID_FIELD_PATHS = frozenset(
         ("gaps", "tables"),
         ("gaps", "queries"),
         ("objects", "id"),
+        # report.json flagged_unservable (FlaggedUnservableQuery, #888): engine
+        # ids and the source, cause, reason-category and gate codes. Its
+        # explanation, reason_label and gate_text are scanned.
+        ("flagged_unservable", "engine"),
+        ("flagged_unservable", "source"),
+        ("flagged_unservable", "cause"),
+        ("flagged_unservable", "reason_category"),
+        ("flagged_unservable", "gate"),
+        ("flagged_unservable", "required_capabilities"),
     }
 )
 

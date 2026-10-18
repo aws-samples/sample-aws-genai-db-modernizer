@@ -1,5 +1,7 @@
-"""Queries on a fallback engine (#729): where each landed, why, and how to
-redesign and re-run it.
+"""Queries that cannot be served as designed: the ones on a fallback engine
+(#729), where each landed, why, and how to redesign and re-run it, and the
+flagged queries no kept engine can take (#888): a review flagged them and they
+stay where they are.
 
 A query whose engine a fallback rule decided (no analyzed engine could take
 it), or whose every candidate engine is gated, lands on the fallback engine:
@@ -23,11 +25,50 @@ from .facts import report_facts
 from .formatting import plural_noun, plural_verb
 
 UNSERVABLE_INTRO = (
-    "No analyzed engine could take these queries, so a routing rule placed each one on the "
-    "engine shown: it runs the query, but no analysis scored it there and no design covers "
-    "it. The assessment does not bring back an engine it removed. Keep each query where it "
-    "landed, or redesign it for the engines that ruled it out, then re-run."
+    "No engine the plan keeps can serve these queries as written. The assessment does not "
+    "bring back an engine it removed: keep each query where it is, or redesign it, then re-run."
 )
+
+# Why each kind cannot be served, for the kinds the section lists: "These" when
+# every row is of that kind, "Some" when both kinds are listed. The same
+# sentences as the UI callout (analysis-results.unservable.fallback_all and so on).
+UNSERVABLE_FALLBACK_ALL = (
+    "These landed on a fallback engine because no analyzed engine could take them: it runs "
+    "the query, but no analysis scored it there and no design covers it."
+)
+UNSERVABLE_FALLBACK_SOME = UNSERVABLE_FALLBACK_ALL.replace("These", "Some", 1)
+# The flagged kind (#888): scored and designed on its engine, then a review found
+# that engine cannot serve it and no other kept engine can take it.
+UNSERVABLE_FLAGGED_ALL = (
+    "These were scored and designed on their engine, then a review found that engine cannot "
+    "serve them, and no other engine the plan keeps can take them, so they stay there."
+)
+UNSERVABLE_FLAGGED_SOME = UNSERVABLE_FLAGGED_ALL.replace("These", "Some", 1)
+
+
+def unservable_kind_text(facts: dict[str, Any]) -> list[str]:
+    """The sentence for each kind the section lists (``facts.unservable``'s counts)."""
+    fallback = facts.get("no_fit_query_count") or 0
+    flagged = facts.get("flagged_query_count") or 0
+    both = bool(fallback and flagged)
+    out = []
+    if fallback:
+        out.append(UNSERVABLE_FALLBACK_SOME if both else UNSERVABLE_FALLBACK_ALL)
+    if flagged:
+        out.append(UNSERVABLE_FLAGGED_SOME if both else UNSERVABLE_FLAGGED_ALL)
+    return out
+
+
+def unservable_lists_text(facts: dict[str, Any]) -> str:
+    """Where the Assessment Data (JSON) lists every one: the list of each kind present."""
+    lists = []
+    if facts.get("no_fit_query_count"):
+        lists.append("`query_traces.unservable`")
+    if facts.get("flagged_query_count"):
+        lists.append("`flagged_unservable`")
+    where = " and ".join(lists or ["`query_traces.unservable`"])
+    return f"The Assessment Data (JSON) lists every one, with its gates, under {where}."
+
 
 # The existing re-run path: the assignment review (the customer gate). One
 # sentence for both reports, the PDF and the UI callout
@@ -55,9 +96,12 @@ def _gates(q: dict[str, Any]) -> str:
     )
 
 
+UNSERVABLE_TITLE = "Queries that cannot be served as designed"
+
+
 def unservable_title(n: Any) -> str:
-    """``Queries on a fallback engine (2 queries)``."""
-    return f"Queries on a fallback engine ({n} {plural_noun(n, 'query', 'queries')})"
+    """``Queries that cannot be served as designed (2 queries)``."""
+    return f"{UNSERVABLE_TITLE} ({n} {plural_noun(n, 'query', 'queries')})"
 
 
 def _keep_or_redesign(q: dict[str, Any]) -> str:
@@ -67,7 +111,7 @@ def _keep_or_redesign(q: dict[str, Any]) -> str:
 
 
 def unservable_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Queries on a fallback engine" section."""
+    """Engineering Report "Queries that cannot be served as designed" section."""
     facts = _facts(report)
     if facts is None:
         return []
@@ -76,7 +120,9 @@ def unservable_md(report: dict[str, Any]) -> list[str]:
         "",
         UNSERVABLE_INTRO,
         "",
-        "| Query | Landed on | Why | Engines ruled out | Needs | Keep or redesign |",
+        " ".join(unservable_kind_text(facts)),
+        "",
+        "| Query | Engine | Why | Engines ruled out | Needs | Keep or redesign |",
         "|---|---|---|---|---|---|",
     ]
     for q in facts.get("unservable_queries") or []:
@@ -97,8 +143,7 @@ def unservable_md(report: dict[str, Any]) -> list[str]:
             "",
         ]
     out += [
-        "The Assessment Data (JSON) lists every one, with its gates, under "
-        "`query_traces.unservable`.",
+        unservable_lists_text(facts),
         "",
         UNSERVABLE_RERUN_TEXT,
         "",

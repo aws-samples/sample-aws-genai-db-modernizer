@@ -36,7 +36,7 @@ from typing import Any
 
 from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
-from src.shared.capability_labels import capability_label, redesign_hints
+from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
@@ -1120,7 +1120,7 @@ def close_call_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Queries on a fallback engine (#729)
+# Queries no kept engine can serve: on a fallback engine (#729), flagged (#888)
 # ---------------------------------------------------------------------------
 
 # The rules that place a query no analyzed engine can take (ADR-031 Decision 2;
@@ -1171,29 +1171,74 @@ def is_unservable(trace: Mapping[str, Any]) -> bool:
     return bool(candidates) and all(c.get("gate") for c in candidates)
 
 
-def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
-    """The queries on a fallback engine (``UnservableFacts``), or None.
+def _flagged_unservable_rows(report: dict[str, Any], listed: set[str]) -> list[dict[str, Any]]:
+    """``report.json``'s ``flagged_unservable`` rows (#888) as ``unservable`` rows of
+    kind ``flagged``; a query the decision trace already lists keeps that row."""
+    rows: list[dict[str, Any]] = []
+    for r in report.get("flagged_unservable") or []:
+        if not isinstance(r, dict) or not r.get("query_id") or str(r["query_id"]) in listed:
+            continue
+        engine = str(r.get("engine") or "")
+        rows.append(
+            {
+                "query_id": str(r["query_id"]),
+                "engine": engine,
+                "kind": "flagged",
+                "rule": "",
+                "explanation": str(r.get("explanation") or ""),
+                "blocking_gates": [
+                    {
+                        "engine": engine,
+                        "gate": str(r.get("gate") or "model_flag"),
+                        "gate_text": str(r.get("gate_text") or ""),
+                    }
+                ],
+                "required_capabilities": [str(c) for c in r.get("required_capabilities") or []],
+                "reason_category": str(r.get("reason_category") or "other"),
+            }
+        )
+    return rows
 
-    None for a report whose ``query_traces`` predates ``unservable``. Each
-    query keeps the trace's own sentence for why it sits where it does, the
-    gate that ruled out each engine, the capabilities it needs and a
-    redesign hint for each (``capability_labels.redesign_hints``), by engine
-    then query id; at most ``UNSERVABLE_SHOWN`` are named.
+
+def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The queries no kept engine can serve (``UnservableFacts``), or None.
+
+    Three kinds: ``fallback`` and ``gated_everywhere`` from
+    ``query_traces.unservable`` (#729), and ``flagged`` from
+    ``flagged_unservable`` (#888: a review flagged it and no other kept engine
+    can take it, so it stays). None for a report with neither list. Each
+    query keeps its own sentence for why it sits where it does, the gate that
+    ruled out each engine, the capabilities it needs and a redesign hint for
+    each (``capability_labels.redesign_hints``; the flag's reason category,
+    ``flag_redesign_hints``, for a flagged one), by engine then query id; at
+    most ``UNSERVABLE_SHOWN`` are named.
     """
     digest = report.get("query_traces")
-    if not isinstance(digest, dict) or not isinstance(digest.get("unservable"), list):
+    traced = isinstance(digest, dict) and isinstance(digest.get("unservable"), list)
+    flagged_list = report.get("flagged_unservable")
+    if not traced and not (isinstance(flagged_list, list) and flagged_list):
         return None
-    rows = [r for r in digest["unservable"] if isinstance(r, dict) and r.get("query_id")]
+    traced_rows = digest["unservable"] if traced else []  # type: ignore[index]
+    rows = [r for r in traced_rows if isinstance(r, dict) and r.get("query_id")]
+    rows += _flagged_unservable_rows(report, {str(r["query_id"]) for r in rows})
     rows.sort(key=lambda r: (str(r.get("engine") or ""), str(r["query_id"])))
     out: list[dict[str, Any]] = []
     for r in rows[:UNSERVABLE_SHOWN]:
         gates = [g for g in r.get("blocking_gates") or [] if isinstance(g, dict)]
         caps = [str(c) for c in r.get("required_capabilities") or []]
+        kind = str(r.get("kind") or "fallback")
+        hints = (
+            flag_redesign_hints(str(r.get("engine") or ""), r.get("reason_category"))
+            if kind == "flagged"
+            else redesign_hints(
+                caps, [(str(g.get("engine") or ""), str(g.get("gate") or "")) for g in gates]
+            )
+        )
         out.append(
             {
                 "query_id": str(r["query_id"]),
                 "engine": str(r.get("engine") or ""),
-                "kind": str(r.get("kind") or "fallback"),
+                "kind": kind,
                 "rule": str(r.get("rule") or ""),
                 "explanation": str(r.get("explanation") or ""),
                 "blocking_gates": [
@@ -1206,16 +1251,16 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
                 ],
                 "required_capabilities": sorted(set(caps)),
                 "capability_labels": [capability_label(c) for c in sorted(set(caps))],
-                "redesign_hints": redesign_hints(
-                    caps, [(str(g.get("engine") or ""), str(g.get("gate") or "")) for g in gates]
-                ),
+                "redesign_hints": hints,
             }
         )
-    fallback = sum(1 for r in rows if r.get("kind", "fallback") == "fallback")
+    kinds = [str(r.get("kind") or "fallback") for r in rows]
     return {
         "unservable_query_count": len(rows),
-        "fallback_query_count": fallback,
-        "gated_everywhere_query_count": len(rows) - fallback,
+        "fallback_query_count": kinds.count("fallback"),
+        "gated_everywhere_query_count": kinds.count("gated_everywhere"),
+        "flagged_query_count": kinds.count("flagged"),
+        "no_fit_query_count": kinds.count("fallback") + kinds.count("gated_everywhere"),
         "unservable_queries": out,
         "more_unservable_count": max(len(rows) - UNSERVABLE_SHOWN, 0),
     }

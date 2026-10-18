@@ -18,6 +18,7 @@ from src.shared.report_facts import (
     compute_report_facts,
     query_move_facts,
     resolved_risk_severity_facts,
+    unservable_query_facts,
 )
 
 from .waves import resolve_migration_waves
@@ -26,9 +27,10 @@ from .waves import resolve_migration_waves
 def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     """``report["facts"]`` when synthesis wrote it, else the same block computed now.
 
-    A block written before contract 1.26 has no ``access_pattern_totals`` (#792), and one
-    written before 1.28 no query move counts and no resolved risks by severity (#1020);
-    those figures are filled in from ``query_groups``, ``ranking`` and the resolved risks, the rest stays as stored.
+    A block written before contract 1.26 has no ``access_pattern_totals`` (#792), one
+    written before 1.28 no query move counts and no resolved risks by severity (#1020),
+    and one written before 1.38 no per-kind ``unservable`` counts (#888); those figures are
+    filled in from ``query_groups``, ``ranking``, the resolved risks and the traces, the rest stays as stored.
     """
     facts = report.get("facts")
     if isinstance(facts, dict) and isinstance(facts.get("engines"), list):
@@ -39,6 +41,10 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing.update(query_move_facts(report, facts["engines"]))
         if "resolved_risks_by_severity" not in facts:
             missing.update(resolved_risk_severity_facts(report))
+        unservable = facts.get("unservable")
+        if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
+            # A block written before 1.38 (#888): its kinds, from the same function.
+            missing["unservable"] = unservable_query_facts(report)
         return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
 

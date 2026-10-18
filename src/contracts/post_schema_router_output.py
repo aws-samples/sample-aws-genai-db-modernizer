@@ -24,9 +24,17 @@ Version History:
   (move ledger 1.8) gained the optional ``choice_id``, ``choice_scores``,
   ``choice_unrounded_scores`` and ``choice_rule``, and ``tie_rule`` the value
   ``tie.decided_for_you``. A 1.1 file still loads.
+- 1.3 (2026-10-18, #888): ``RouterOutput.terminal`` (``TerminalQuery``): each
+  terminal query with the flag that made it terminal (the flagged engine and
+  the reason category) and why it is terminal (no kept engine can take it, or
+  the cascade hit its depth limit), so synthesis can flag it in every
+  deliverable. ``terminal_queries`` keeps the ids. Backward compatible:
+  ``terminal`` defaults to empty.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -79,11 +87,28 @@ class QueryRouting(BaseModel):
     )
 
 
+class TerminalQuery(BaseModel):
+    """A flagged query the router could not move (#888): it stays on its engine."""
+
+    query_id: str = Field(..., description="The flagged query")
+    flagged_engine: str = Field(..., description="The engine the flag judged unable (id)")
+    reason_category: str | None = Field(
+        None, description="The flag's reason category (ModelFlag.reason_category)"
+    )
+    cause: Literal["no_kept_engine", "depth_limit"] = Field(
+        ...,
+        description=(
+            "no_kept_engine: no other kept engine can take it; depth_limit: the routing "
+            "cascade reached its last pass"
+        ),
+    )
+
+
 class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")
@@ -100,5 +125,9 @@ class RouterOutput(BaseModel):
             "Flagged queries kept on their engine because their table's write group holds "
             "a customer-pinned write (#992): the flag is a note on the unit, not a move"
         ),
+    )
+    terminal: list[TerminalQuery] = Field(
+        default_factory=list,
+        description="Each terminal query with the flag that made it terminal (#888)",
     )
     cascade_depth: int = Field(default=0, description="Current depth of the routing cascade")
