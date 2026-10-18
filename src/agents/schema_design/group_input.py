@@ -23,7 +23,10 @@ contract shape but holds only what the group's design uses (issue #272):
 - ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
   the designer reads them instead of computing them (#626). No coverage ratio:
-  a group has no whole-database query count.
+  a group has no whole-database query count;
+- ``decision_trace`` for DocumentDB and OpenSearch: the engine's analysis trace
+  scoped to the group's queries and tables, which the skills tell the designer
+  to read (#1068).
 
 ``render_group_input`` writes it one record per line (a column, an index, a
 query) instead of one field per line. A query text too long for one Read line
@@ -38,6 +41,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.agents.schema_design.group_trace import scope_decision_trace
 from src.contracts.analysis_output import (
     AggregateRecommendation,
     AntiPattern,
@@ -198,6 +202,7 @@ def build_group_input(
     collector_output: dict,
     analysis_output: dict,
     total_queries: int,
+    decision_trace: dict | None = None,
 ) -> dict:
     """The compact input for one group (see the module docstring)."""
     table_ids = {t["table_id"] for t in group_tables if t.get("table_id")}
@@ -293,6 +298,8 @@ def build_group_input(
         group_input["design_metrics"] = build_design_metrics(
             engine, group_tables, group_queries
         ).model_dump(mode="json")
+    if decision_trace is not None:
+        group_input["decision_trace"] = scope_decision_trace(decision_trace, group_collector)
     return group_input
 
 

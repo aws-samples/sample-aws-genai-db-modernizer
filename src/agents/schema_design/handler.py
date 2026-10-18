@@ -252,7 +252,9 @@ def prepare_schema_design_input(
     Returns dict with keys:
       target_type, collector_output (filtered), analysis_output,
       database_name, job_id, and for DynamoDB, DocumentDB and OpenSearch
-      design_metrics (the numbers the skill reads instead of computing, #626)
+      design_metrics (the numbers the skill reads instead of computing, #626);
+      for DocumentDB and OpenSearch also decision_trace (the engine's analysis
+      trace scoped to the filtered queries and tables, #1068) when one exists
     """
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key)
@@ -278,6 +280,10 @@ def prepare_schema_design_input(
     }
     if target_type in METRIC_ENGINES:
         llm_input["design_metrics"] = design_metrics_from_collector(target_type, collector_output)
+    # The engine's own analysis evidence, scoped to this call's queries (#1068).
+    full_trace = _read_decision_trace(store, database_name, job_id, target_type)
+    if full_trace is not None:
+        llm_input["decision_trace"] = scope_decision_trace(full_trace, collector_output)
     return llm_input
 
 
@@ -847,6 +853,7 @@ def run_schema_split(
         store=store,
         schema_version=artifact_version,
         co_dependency_groups=co_dependency_groups,
+        decision_trace=_read_decision_trace(store, database_name, job_id, target_type),
     )
 
     elapsed = time.time() - start_time

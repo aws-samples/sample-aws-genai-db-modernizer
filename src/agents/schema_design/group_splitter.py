@@ -429,6 +429,7 @@ def _group_input(
     collector_output: dict,
     analysis_output: dict,
     total_queries: int,
+    decision_trace: dict | None = None,
 ) -> dict:
     return build_group_input(
         job_id=job_id,
@@ -442,6 +443,7 @@ def _group_input(
         collector_output=collector_output,
         analysis_output=analysis_output,
         total_queries=total_queries,
+        decision_trace=decision_trace,
     )
 
 
@@ -455,6 +457,7 @@ def split_schema_input(
     store: ArtifactStore,
     schema_version: int = 1,
     co_dependency_groups: list[list[str]] | None = None,
+    decision_trace: dict | None = None,
 ) -> SchemaDesignGroupsManifest:
     """Split schema design input into groups and write per-group input files.
 
@@ -470,6 +473,9 @@ def split_schema_input(
         co_dependency_groups: The assignment's co-dependency groups (query-id
             groups sharing significant JOINs). Folded into table clustering so
             co-dependent queries are designed together.
+        decision_trace: The engine's analysis decision trace (DocumentDB and
+            OpenSearch). Each group's input carries it scoped to the group's
+            own queries and tables (#1068); None leaves the key out.
 
     Returns:
         SchemaDesignGroupsManifest with group entries. A query that touches no
@@ -516,6 +522,7 @@ def split_schema_input(
             collector_output,
             analysis_output,
             len(design_queries),
+            decision_trace,
         )
         text = render_group_input(data)
         if len(read_pages(text)) > MAX_GROUP_INPUT_PAGES:
@@ -540,6 +547,7 @@ def split_schema_input(
                 collector_output,
                 analysis_output,
                 len(design_queries),
+                decision_trace,
             )
         )
         input_file = f"input_group_{idx}.json"
