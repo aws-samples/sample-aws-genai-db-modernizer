@@ -543,6 +543,7 @@ PROBES: list[tuple[str, str]] = [
     ("SELECT * FROM t WHERE CONTAINS([Body], @q)", "sqlserver"),
     ("SELECT * FROM t WHERE a ~* 'x'", "postgresql"),
     ("SELECT * FROM t WHERE a REGEXP 'x'", "mysql"),
+    ("SELECT * FROM t WHERE a ~ '^x'", "postgresql"),
     ("SELECT similarity(a, $1) FROM t", "postgresql"),
     ("SELECT ROW_NUMBER() OVER (ORDER BY id) FROM t", "postgresql"),
     ("SELECT LAG(a, 1) OVER (ORDER BY a) FROM t", "postgresql"),

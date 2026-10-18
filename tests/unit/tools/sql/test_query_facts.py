@@ -609,3 +609,25 @@ class TestGroupingSetsFallback:
         assert query_facts(
             "SELECT a, b, COUNT(*) FROM t GROUP BY a, b WITH CUBE", "sqlserver"
         ).grouping_sets
+
+
+class TestCrossApplyIsALateralJoin:
+    """#982: SQL Server's CROSS APPLY / OUTER APPLY is the LATERAL correlated join."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM t CROSS APPLY (SELECT TOP 1 * FROM u WHERE u.id = t.id) x",
+            "SELECT * FROM t OUTER APPLY dbo.f(t.id) x",
+        ],
+    )
+    def test_on_sql_server(self, text: str) -> None:
+        assert query_facts(text, "sqlserver").lateral_join
+
+    def test_only_in_the_sql_server_dialect(self) -> None:
+        text = "SELECT * FROM t CROSS APPLY (SELECT 1) x"
+        assert not query_facts(text, "postgresql").lateral_join
+        assert not query_facts(text, "mysql").lateral_join
+
+    def test_not_in_a_string_literal(self) -> None:
+        assert not query_facts("SELECT 'cross apply' FROM t", "sqlserver").lateral_join

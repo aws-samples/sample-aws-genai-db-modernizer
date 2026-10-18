@@ -585,6 +585,9 @@ UNDETECTED = {
     # Catalog-only: the access-pattern class "ad hoc filter" reads it (#728); the
     # classifier detects the class from the SQL facade's facts.
     "secondary-attribute-filter",
+    # Catalog-only: the text-search class reads it for a query with the prefix_regex
+    # fact (#982).
+    "prefix-regex",
 }
 
 

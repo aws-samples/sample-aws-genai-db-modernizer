@@ -569,8 +569,9 @@ def _with_feature_facts(
     """``result`` with the SQL features its text shows (#985), read from the shared query
     facts (:mod:`src.tools.sql.query_facts`, one definition each, read in the source's
     dialect): ``recursive_cte``, ``lateral_join`` and ``stored_routine`` (a call to, or
-    the definition of, a stored procedure or function; a SQL Server ``EXEC``) and
-    ``upsert`` (``ON CONFLICT``, ``ON DUPLICATE KEY``, ``REPLACE INTO``; #984)."""
+    the definition of, a stored procedure or function; a SQL Server ``EXEC``),
+    ``upsert`` (``ON CONFLICT``, ``ON DUPLICATE KEY``, ``REPLACE INTO``; #984) and
+    ``prefix_regex`` (every regular expression is an index-servable prefix, #982)."""
     readings = query_facts(text, source_engine)
     shown = {
         name
@@ -579,6 +580,7 @@ def _with_feature_facts(
             ("lateral_join", readings.lateral_join),
             ("stored_routine", readings.stored_routine_keyword),
             ("upsert", readings.upsert),
+            ("prefix_regex", readings.prefix_regex),
         )
         if present
     }

@@ -310,6 +310,9 @@ _LATERAL_JOIN_RE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+# SQL Server's correlated join: CROSS APPLY / OUTER APPLY of a subquery or a table-valued
+# function is the same join as LATERAL (#982), read in the SQL Server dialect only.
+_TSQL_APPLY_RE = re.compile(r"\b(?:CROSS|OUTER)\s+APPLY\b", re.IGNORECASE)
 
 # Upsert: ON CONFLICT keyword OR RETURNING used as a SQL clause.
 # RETURNING as a SQL clause follows DML (not preceded by AS keyword).
@@ -770,6 +773,12 @@ class QueryFacts:
         return self._has(*_PATTERN_MATCH_HINTS) and self._parsed.pattern_match
 
     @cached_property
+    def prefix_regex(self) -> bool:
+        """Every regular expression is a case-sensitive ``^``-anchored literal, the shape
+        an index can serve (``SqlFacts.prefix_regex``, #982)."""
+        return self.pattern_match and self._parsed.prefix_regex
+
+    @cached_property
     def similarity_match(self) -> bool:
         """A trigram similarity function (``SqlFacts.similarity_match``)."""
         return self._has("similarity") and self._parsed.similarity_match
@@ -1000,10 +1009,16 @@ class QueryFacts:
     @cached_property
     def lateral_join(self) -> bool:
         """``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``, outside comments and string
-        literals (the class score reads it too since #985, so a word in a value is not one)."""
-        if not self._has("lateral"):
+        literals (the class score reads it too since #985, so a word in a value is not one);
+        on a SQL Server source, ``CROSS APPLY`` or ``OUTER APPLY`` too (#982): the same
+        correlated join, which both Aurora engines run as ``LATERAL``."""
+        if self._has("lateral") and _LATERAL_JOIN_RE.search(
+            strip_comments_and_literals(self._text)
+        ):
+            return True
+        if self._source_engine.strip().lower() != "sqlserver" or not self._has("apply"):
             return False
-        return bool(_LATERAL_JOIN_RE.search(strip_comments_and_literals(self._text)))
+        return bool(_TSQL_APPLY_RE.search(strip_comments_and_literals(self._text)))
 
     @cached_property
     def on_conflict_or_returning(self) -> bool:

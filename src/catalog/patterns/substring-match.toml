@@ -9,6 +9,10 @@
 # penalty only when the scan matters (scan_threshold). A word search ('%word%' on a text
 # column) is never penalised: it gets each engine's word-search redesign as guidance.
 # A parameterised pattern (LIKE $1) is not this pattern: its value is unknown (#912).
+# A regular expression (REGEXP, ~, ~*, SIMILAR TO, a non-prefix $regex) is the same scan on
+# an engine with no index for it (#982): one rule, the same threshold, the same penalty.
+# Aurora PostgreSQL (pg_trgm) and OpenSearch serve it natively; DocumentDB serves a prefix
+# regular expression with an index (prefix_regex_index), Aurora MySQL does not.
 id = "substring-match"
 detectors = [
     "src.agents.referee.substring_match:substring_matches",
@@ -23,37 +27,38 @@ penalty_basis = "reads_more_than_returns"
 [scan_threshold]
 min_calls_per_second = 1.0
 min_table_rows = 100000
-why = "A leading-wildcard LIKE reads every row of the table (MySQL Reference Manual, Comparison of B-Tree and Hash Indexes: a B-tree serves LIKE only for a constant pattern that does not start with a wildcard). At 1 call per second on 100,000 rows that is 100,000 rows read every second, the point where the analysis cost bands (src/tools/analysis/scoring.py) stop calling a query rare and a table small; below either, the scan is cheap enough to keep."
+why = "A leading-wildcard LIKE, or a regular expression, reads every row of the table on an engine with no index for it (MySQL Reference Manual, Comparison of B-Tree and Hash Indexes: a B-tree serves LIKE only for a constant pattern that does not start with a wildcard, and no REGEXP). At 1 call per second on 100,000 rows that is 100,000 rows read every second, the point where the analysis cost bands (src/tools/analysis/scoring.py) stop calling a query rare and a table small; below either, the scan is cheap enough to keep."
 
 # The why of each entry is a verb phrase: the code puts the engine's display name in front
 # of it (display_engine), so no engine name is written here.
 [engines.aurora_postgresql]
 kind = "native"
 supported = true
-why = "indexes a leading-wildcard LIKE with a pg_trgm trigram index (GIN or GiST), an extension to create (the PostgreSQL documentation of pg_trgm describes its index support for LIKE and ILIKE)."
+why = "indexes a leading-wildcard LIKE and a regular expression with a pg_trgm trigram index (GIN or GiST), an extension to create (the PostgreSQL documentation of pg_trgm describes its index support for LIKE, ILIKE, ~ and ~*)."
 guidance = "create the pg_trgm extension and a GIN trigram index on the column (CREATE EXTENSION pg_trgm), which serves this LIKE, word searches included; full-text search (to_tsvector) also ranks word matches."
 
 [engines.opensearch]
 kind = "native"
 supported = true
-why = "serves a leading-wildcard match natively, with wildcard queries or an n-gram analyzer on the field."
+why = "serves a leading-wildcard match natively, with wildcard queries or an n-gram analyzer on the field, and a regular expression with a regexp query."
 
 [engines.aurora_mysql]
 kind = "scan"
 supported = true
-why = "scans a leading-wildcard LIKE: FULLTEXT indexes are word-based and serve MATCH ... AGAINST, never LIKE (MySQL Reference Manual, Full-Text Search Functions)."
+why = "scans a leading-wildcard LIKE and a REGEXP: FULLTEXT indexes are word-based and serve MATCH ... AGAINST, never LIKE (MySQL Reference Manual, Full-Text Search Functions), and no index serves REGEXP."
 guidance = "rewrite it as MATCH ... AGAINST over a FULLTEXT index on the column, which serves word search."
 
 [engines.documentdb]
 kind = "scan"
 supported = true
-why = "runs a leading-wildcard LIKE as an unanchored $regex, which reads every document; a text index serves word search with $text."
+why = "runs a leading-wildcard LIKE, and a regular expression that is not a case-sensitive prefix, as an unanchored $regex, which reads every document (the query planner uses an index only for a prefix $regex without the i, m or o options); a text index serves word search with $text."
 guidance = "create a text index on the field and query it with $text, which serves word search."
+prefix_regex_index = true
 
 [engines.dynamodb]
 kind = "unscored"
 supported = false
-why = "is ruled out of a leading-wildcard LIKE before scoring, by the hard exclusion ddb-no-leading-wildcard."
+why = "is ruled out before scoring: a leading-wildcard LIKE by the hard exclusion ddb-no-leading-wildcard, a regular expression by the text-search capability gate."
 
 [engines.elasticache]
 kind = "unscored"

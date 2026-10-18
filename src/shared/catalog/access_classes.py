@@ -63,6 +63,7 @@ QUERY_FACTS = frozenset(
         "lateral_join",
         "stored_routine",
         "upsert",
+        "prefix_regex",
     }
 )
 # The fact that marks a write (ADR-031 Decision 2 step 3: an engine that is not a

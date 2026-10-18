@@ -83,6 +83,8 @@ def test_the_known_anchors_are_labelled():
         ("pagination", "documentdb"): "pagination",
         ("secondary-attribute-filter", "documentdb"): "secondary-attribute-filter",
         ("secondary-attribute-filter", "opensearch"): "secondary-attribute-filter",
+        # #982: a prefix $regex is an index read, rated at the secondary-index filter.
+        ("prefix-regex", "documentdb"): "secondary-attribute-filter",
     }
 
 

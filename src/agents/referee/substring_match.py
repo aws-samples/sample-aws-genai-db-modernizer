@@ -14,6 +14,13 @@ pattern's penalty, but only when the scan matters: the query reaches both
 it (FULLTEXT, ``$text``, ``pg_trgm``) is stated as guidance instead. A
 parameterised pattern (``LIKE $1``) is not a leading wildcard here (#912).
 
+A regular expression (the ``pattern_match`` fact: ``REGEXP``, ``~``, ``~*``, ``SIMILAR
+TO``) is the same scan on an engine with no index for it, under the same rule and
+threshold (#982). It is never a word search, and the facts name no column for it, so the
+largest table the query reads counts (and the trace says so). A ``scan`` engine whose
+entry has ``prefix_regex_index`` (DocumentDB) loses nothing on a query whose only scan
+is a prefix regular expression (the ``prefix_regex`` fact): an index serves it.
+
 Each ``LIKE`` is read against the table that holds its column (#942): the facts layer
 names the column and the tables it can belong to (through the query's aliases and
 scopes), :func:`~src.tools.sql.query_facts.locate_column` picks the collected table
@@ -82,6 +89,8 @@ class SubstringMatch:
     ``approximations``: why a predicate was read the older way (the column could not be
     traced to one collected table, or its type was not collected), one sentence each;
     empty when every predicate was read from its own table and column (#942).
+    ``regex_only``: the only scanned predicates are regular expressions (#982), and
+    ``prefix_regex``: each of them is a prefix one an index can serve.
     """
 
     query_id: str
@@ -90,6 +99,8 @@ class SubstringMatch:
     table_rows: int | None
     scan_matters: bool
     approximations: tuple[str, ...] = ()
+    regex_only: bool = False
+    prefix_regex: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,6 +198,10 @@ class _Schema:
         return next((c for c in columns if str(c.get("column_name") or "").lower() == name), None)
 
 
+_REGEX_READING = (
+    "a regular expression names no column the facts trace, so the largest table the query "
+    "reads counts"
+)
 _OLDER_READING = (
     ", so the largest table the query reads counts and a column type not found is read as text"
 )
@@ -236,7 +251,8 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
 
 
 def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
-    """``query_id -> SubstringMatch`` for every query with a leading-wildcard ``LIKE``."""
+    """``query_id -> SubstringMatch`` for every query with a leading-wildcard ``LIKE`` or a
+    regular expression."""
     collector = collector or {}
     threshold = _threshold()
     schema = _Schema(collector)
@@ -245,11 +261,15 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
     out: dict[str, SubstringMatch] = {}
     for query in (collector.get("queries") or {}).get("query_patterns") or []:
         qid = str(query.get("query_id") or "")
-        likes = query_facts(str(query.get("query_text") or ""), source_engine).wildcard_likes
-        if not qid or not likes:
+        facts = query_facts(str(query.get("query_text") or ""), source_engine)
+        likes = facts.wildcard_likes
+        if not qid or not (likes or facts.pattern_match):
             continue
         query_tables = _query_tables(query, tables)
         readings = [_read_like(like, schema, query_tables) for like in likes]
+        regex_only = facts.pattern_match and all(r.word_search for r in readings)
+        if facts.pattern_match:
+            readings.append(_LikeReading(False, _rows(query_tables), (_REGEX_READING,)))
         word = all(r.word_search for r in readings)
         cps = float(query.get("calls_per_second") or 0.0)
         scanned = [r.rows for r in readings if not r.word_search]
@@ -258,7 +278,16 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
             r is not None and r >= threshold.min_table_rows for r in scanned
         )
         notes = tuple(dict.fromkeys(n for r in readings for n in r.approximations))
-        out[qid] = SubstringMatch(qid, word, cps, max(known) if known else None, matters, notes)
+        out[qid] = SubstringMatch(
+            qid,
+            word,
+            cps,
+            max(known) if known else None,
+            matters,
+            notes,
+            regex_only=regex_only,
+            prefix_regex=regex_only and facts.prefix_regex,
+        )
     return out
 
 
@@ -267,6 +296,8 @@ def scan_penalty(match: SubstringMatch, engine: str) -> int:
     whose scan matters, else 0."""
     support = _entries().get(engine)
     if support is None or support.kind != "scan" or not match.scan_matters:
+        return 0
+    if match.prefix_regex and support.prefix_regex_index:
         return 0
     return _pattern().penalty
 
@@ -294,6 +325,8 @@ def engine_reason(engine: str, match: SubstringMatch) -> str | None:
         return text
     if match.word_search:
         return f"{text} This is a word search, so it is not penalised; redesign: {support.guidance}"
+    if match.prefix_regex and support.prefix_regex_index:
+        return f"{text} This is a prefix regular expression, which an index serves: not penalised."
     penalty = scan_penalty(match, engine)
     if penalty:
         return (
@@ -395,7 +428,7 @@ def substring_match_risks(
             listed += f"; and {n - 3} more"
         parts = [
             f"[{engine}] {n} {'query uses' if n == 1 else 'queries use'} a leading-wildcard "
-            f"LIKE on {name}: {listed}. {name} {support.why}"
+            f"LIKE or a regular expression on {name}: {listed}. {name} {support.why}"
         ]
         if scans:
             parts.append(f"{len(scans)} of them reach the scan threshold of {_threshold_text()}.")

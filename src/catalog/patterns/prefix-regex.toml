@@ -1,0 +1,52 @@
+# Pattern prefix-regex. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+#
+# A regular expression an index can serve (#982): every pattern match in the query is a
+# case-sensitive literal anchored with ^ (PostgreSQL's ~ '^abc'), the facade's
+# prefix_regex fact. It rates only the text-search class, only for a query that shows the
+# fact (src/catalog/access_classes.toml), next to regex-search, which rates every regular
+# expression; the class score is the higher of the two. No analysis reports it.
+id = "prefix-regex"
+detectors = []
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = false
+why = "DynamoDB runs no regular expression: the text-search capability gate rules it out first."
+
+[engines.documentdb]
+kind = "unscored"
+supported = true
+why = "A prefix $regex without the i, m or o options uses an index on the field (Amazon DocumentDB Developer Guide, Query planner), an index range read rather than a collection scan. Class score (#728): 75, parity anchor: no engine-specific evidence yet; the secondary-index filter Aurora is rated at for this class (secondary-attribute-filter, 75), until a measurement replaces it."
+class_score = 75
+parity_anchor = "secondary-attribute-filter"
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's regexp query serves any regular expression; regex-search rates it, so this pattern adds nothing."
+
+[engines.elasticache]
+kind = "unscored"
+supported = false
+why = "ElastiCache runs no regular expression over stored values."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "pg_trgm serves the ~ operator whatever its anchoring; regex-search rates it, so this pattern adds nothing."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "REGEXP is not among the comparisons a B-tree index serves, anchored or not (MySQL Reference Manual, Comparison of B-Tree and Hash Indexes); regex-search rates it as a scan."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"

@@ -490,3 +490,137 @@ class TestTheScannedTableAndColumnAreRead:
             )
             for note in notes.values():
                 assert scan_text(note, strict_reason_codes=False) == [], note
+
+
+class TestARegularExpressionIsTheSameScan:
+    """#982: a regular expression no index serves is priced like a wildcard scan."""
+
+    PENALTY = pattern("substring-match").penalty
+
+    def test_a_frequent_regexp_on_a_large_table_costs_the_scan_engines(self) -> None:
+        collector = _collector("SELECT id FROM users WHERE email REGEXP 'example'")
+        assert _penalties(collector) == {
+            "aurora_postgresql": 0,
+            "opensearch": 0,
+            "aurora_mysql": self.PENALTY,
+            "documentdb": self.PENALTY,
+        }
+
+    def test_a_rare_or_small_regexp_costs_nothing(self) -> None:
+        text = "SELECT id FROM users WHERE email REGEXP 'example'"
+        rare = _threshold().min_calls_per_second / 2
+        assert set(_penalties(_collector(text, cps=rare)).values()) == {0}
+        small = _threshold().min_table_rows - 1
+        assert set(_penalties(_collector(text, rows=small)).values()) == {0}
+
+    def test_a_prefix_regex_costs_documentdb_nothing_but_still_scans_mysql(self) -> None:
+        collector = _collector("SELECT id FROM users WHERE email ~ '^admin'", source="postgresql")
+        assert _penalties(collector) == {
+            "aurora_postgresql": 0,
+            "opensearch": 0,
+            "aurora_mysql": self.PENALTY,
+            "documentdb": 0,
+        }
+        _, notes = scan_adjustments(collector)
+        assert "prefix regular expression" in notes[("q1", "documentdb")]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT id FROM users WHERE email ~* '^admin'",  # case-insensitive: no index
+            "SELECT id FROM users WHERE email ~ 'admin'",  # not anchored
+            "SELECT id FROM users WHERE email ~ '^.admin'",  # starts with a metacharacter
+            "SELECT id FROM users WHERE email ~ '^admin' AND title ~ 'x'",  # one is not
+        ],
+    )
+    def test_any_other_regex_costs_documentdb_the_scan(self, text: str) -> None:
+        assert _penalties(_collector(text, source="postgresql"))["documentdb"] == self.PENALTY
+
+    def test_the_trace_says_the_table_is_approximated(self) -> None:
+        (match,) = substring_matches(
+            _collector("SELECT id FROM users WHERE email REGEXP 'x'")
+        ).values()
+        assert not match.word_search
+        assert any("regular expression" in note for note in match.approximations)
+
+    def test_a_wildcard_like_with_a_word_search_and_a_regex_is_still_scanned(self) -> None:
+        text = "SELECT id FROM posts WHERE title LIKE '%term%' AND email REGEXP 'x'"
+        assert _penalties(_collector(text))["aurora_mysql"] == self.PENALTY
+
+
+class TestPrefixRegexFact:
+    @pytest.mark.parametrize(
+        ("text", "source", "expected"),
+        [
+            ("SELECT 1 FROM t WHERE a ~ '^abc'", "postgresql", True),
+            ("SELECT 1 FROM t WHERE a ~* '^abc'", "postgresql", False),
+            ("SELECT 1 FROM t WHERE a ~ $1", "postgresql", False),
+            ("SELECT 1 FROM t WHERE a ~ '^(a|b)'", "postgresql", False),
+            # Review of #1087: a top-level alternation anchors only its first branch.
+            ("SELECT 1 FROM t WHERE a ~ '^a|b'", "postgresql", False),
+            ("SELECT 1 FROM t WHERE a ~ '^ab|.*x'", "postgresql", False),
+            # A quantifier that can match zero times leaves no fixed prefix.
+            ("SELECT 1 FROM t WHERE a ~ '^a*'", "postgresql", False),
+            ("SELECT 1 FROM t WHERE a ~ '^a?b'", "postgresql", False),
+            ("SELECT 1 FROM t WHERE a ~ '^a{0,2}b'", "postgresql", False),
+            # A negated match: no index serves "not this prefix".
+            ("SELECT 1 FROM t WHERE a !~ '^abc'", "postgresql", False),
+            ("SELECT 1 FROM t WHERE NOT (a ~ '^abc')", "postgresql", False),
+            # Re-review of #1087: a NOT anywhere above the match, or an IS test that is not
+            # IS TRUE, negates it.
+            ("SELECT 1 FROM t WHERE NOT (s = 'x' AND a ~ '^abc')", "postgresql", False),
+            ("SELECT 1 FROM t WHERE NOT (s = 'x' OR (b = 1 AND a ~ '^abc'))", "postgresql", False),
+            ("SELECT 1 FROM t WHERE (a ~ '^abc') IS NOT TRUE", "postgresql", False),
+            ("SELECT 1 FROM t WHERE (a ~ '^abc') IS FALSE", "postgresql", False),
+            ("SELECT 1 FROM t WHERE (a ~ '^abc') IS TRUE", "postgresql", True),
+            ("SELECT 1 FROM t WHERE s = 'x' AND a ~ '^abc'", "postgresql", True),
+            # A NOT outside the subquery that holds the match does not negate its predicate.
+            (
+                "SELECT 1 FROM t WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.a ~ '^abc')",
+                "postgresql",
+                True,
+            ),
+            # One required literal character is a prefix: the quantifier is after it.
+            ("SELECT 1 FROM t WHERE a ~ '^ab*'", "postgresql", True),
+            ("SELECT 1 FROM t WHERE a ~ '^a+'", "postgresql", True),
+            ("SELECT 1 FROM t WHERE a ~ '^ab(c|d)'", "postgresql", True),
+            # MySQL's REGEXP is case-insensitive on a nonbinary string.
+            ("SELECT 1 FROM t WHERE a REGEXP '^abc'", "mysql", False),
+            ("SELECT 1 FROM t WHERE a = 'x'", "postgresql", False),
+        ],
+    )
+    def test_only_a_case_sensitive_anchored_literal(self, text, source, expected) -> None:
+        assert query_facts(text, source).prefix_regex is expected
+
+    def test_the_classifier_reads_the_fact_and_documentdb_scores_75(self) -> None:
+        """The prefix_regex class fact comes from the classifier on a real query, not a
+        hand-built fact set (review of #1087)."""
+        from src.agents.referee.access_pattern import SchemaKeys, classify_query
+        from src.shared.catalog.access_classes import access_classes, class_score
+
+        collector = _collector("SELECT id FROM users WHERE email ~ '^admin'", source="postgresql")
+        keys = SchemaKeys.from_collector(collector)
+        by_id = {c.id: c for c in access_classes()}
+
+        def documentdb_score(text: str) -> tuple[frozenset[str], int]:
+            query = {**collector["queries"]["query_patterns"][0], "query_text": text}
+            result = classify_query(query, keys, "postgresql")
+            return result.facts, class_score(by_id[result.name], "documentdb", result.facts)
+
+        facts, score = documentdb_score("SELECT id FROM users WHERE email ~ '^admin'")
+        assert {"pattern_match", "prefix_regex"} <= facts
+        assert score == 75
+        facts, score = documentdb_score("SELECT id FROM users WHERE email ~ 'admin'")
+        assert "prefix_regex" not in facts
+        assert score == 45
+
+    def test_documentdb_rates_a_prefix_regex_as_an_index_read(self) -> None:
+        from src.shared.catalog.access_classes import class_engine_scores
+
+        any_regex = class_engine_scores(frozenset({"pattern_match"}))["text_search"]
+        prefix = class_engine_scores(frozenset({"pattern_match", "prefix_regex"}))["text_search"]
+        assert (any_regex["documentdb"], prefix["documentdb"]) == (45, 75)
+        # No other engine's rating moves: the fact describes DocumentDB's index only.
+        assert {e: s for e, s in prefix.items() if e != "documentdb"} == {
+            e: s for e, s in any_regex.items() if e != "documentdb"
+        }

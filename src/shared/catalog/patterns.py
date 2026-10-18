@@ -99,6 +99,9 @@ Engine entry fields (``[engines.<engine_id>]``, one per engine):
   a table showing any of them, and must agree on both values (a DynamoDB denormalizable
   join; OpenSearch's wildcard or fuzzy match). ``complexity_feature``: the pattern counts
   toward the engine file's ``complexity_by_feature_count`` (the Aurora SQL features).
+- ``prefix_regex_index`` (``scan`` only, #982): the engine scans a regular expression
+  but an index serves a prefix one (the ``prefix_regex`` query fact), so a query whose
+  only scan is a prefix regular expression costs it nothing.
 """
 
 from __future__ import annotations
@@ -206,7 +209,7 @@ _KIND_FIELDS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         ),
     ),
     "redesign": (frozenset({"penalty"}), frozenset({"penalty"})),
-    "scan": (frozenset(), frozenset({"guidance"})),
+    "scan": (frozenset(), frozenset({"guidance", "prefix_regex_index"})),
     "native": (frozenset(), frozenset({"class_score", "guidance", "parity_anchor"})),
     "penalized": (frozenset(), frozenset()),
     "unscored": (frozenset(), frozenset({"class_score", "parity_anchor"})),
@@ -239,6 +242,7 @@ class EngineSupport(BaseModel):
     complexity_bonus: int = 0
     bonus_group: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]*$")
     complexity_feature: bool = False
+    prefix_regex_index: bool = False
 
     @model_validator(mode="after")
     def _fields_match_the_kind(self) -> EngineSupport:
@@ -288,6 +292,7 @@ _ALL_OPTIONAL = (
     "complexity_bonus",
     "bonus_group",
     "complexity_feature",
+    "prefix_regex_index",
 )
 
 

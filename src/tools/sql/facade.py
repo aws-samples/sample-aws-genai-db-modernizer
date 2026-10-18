@@ -268,6 +268,13 @@ class SqlFacts:
             Server's ``CONTAINS``/``FREETEXT``.
         pattern_match: A regular-expression or ``SIMILAR TO`` match
             (``REGEXP``, ``RLIKE``, ``~``, ``~*``, ``REGEXP_LIKE``).
+        prefix_regex: Every regular-expression match in the text is a prefix one: a
+            case-sensitive, non-negated match (PostgreSQL's ``~``, not ``!~`` or a
+            ``NOT``) of a string literal anchored with ``^`` that always starts with at
+            least one literal character (``~ '^abc'``; not ``'^a|b'``, ``'^a*'`` or
+            ``'^a?b'``), the shape an index on the column can serve (#982). MySQL's ``REGEXP`` is case-insensitive
+            on a nonbinary string and ``~*`` is case-insensitive, so neither is one. On
+            the regex fallback it is never set.
         similarity_match: A trigram similarity function (``similarity``,
             ``word_similarity``, ``strict_word_similarity``).
         window_function: A function with an ``OVER`` clause.
@@ -336,6 +343,7 @@ class SqlFacts:
     fulltext_search: bool = False
     pattern_match: bool = False
     similarity_match: bool = False
+    prefix_regex: bool = False
     window_function: bool = False
     ranking_window_function: bool = False
     offset_window_function: bool = False
@@ -880,6 +888,7 @@ def _facts_from_statements(
         fulltext_search="fulltext" in kinds,
         pattern_match="pattern" in kinds,
         similarity_match="similarity" in kinds,
+        prefix_regex=_all_prefix_regexes(nodes, dialect),
         window_function=_has_window(nodes),
         ranking_window_function=any(isinstance(w, _RANKING_FUNCTIONS) for w in windows),
         offset_window_function=any(isinstance(w, _OFFSET_FUNCTIONS) for w in windows),
@@ -1489,6 +1498,103 @@ def _text_search_kind(node: exp.Expr) -> TextSearchKind | None:
         if name in _SIMILARITY_FUNCTIONS:
             return "similarity"
     return None
+
+
+# The characters a regular expression gives a meaning to; any other is a literal.
+_REGEX_META = frozenset(".[]()*+?{}|\\$^")
+# A quantifier that can match its atom zero times, so the atom is no fixed prefix.
+_OPTIONAL_QUANTIFIERS = ("*", "?", "{0")
+
+
+def _has_top_level_alternation(pattern: str) -> bool:
+    """A ``|`` outside every group and bracket: the pattern is several alternatives, so
+    the ``^`` anchors only the first one."""
+    depth, in_class, i = 0, False, 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = ch != "]"
+        elif ch == "[":
+            in_class = True
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        elif ch == "|" and depth == 0:
+            return True
+        i += 1
+    return False
+
+
+def _literal_prefix_length(pattern: str) -> int:
+    """How many literal characters a ``^``-anchored pattern always starts with: each one
+    not a metacharacter (or an escaped non-word character) and not made optional by the
+    quantifier after it (``^a*``, ``^a?b`` have none). 0 when it is not anchored."""
+    if not pattern.startswith("^") or _has_top_level_alternation(pattern):
+        return 0
+    count, i = 0, 1
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\" and i + 1 < len(pattern) and not pattern[i + 1].isalnum():
+            step = 2
+        elif ch not in _REGEX_META:
+            step = 1
+        else:
+            break
+        if pattern.startswith(_OPTIONAL_QUANTIFIERS, i + step):
+            break
+        count += 1
+        i += step
+    return count
+
+
+def _is_negated(node: exp.Expr) -> bool:
+    """Any ``NOT`` above the match in its predicate (PostgreSQL's ``!~`` reads as
+    ``NOT (a ~ b)``; ``NOT (s = 'x' AND a ~ '^b')`` and ``... IS NOT TRUE`` too), or an
+    ``IS`` test that is not ``IS TRUE`` (``IS FALSE``, ``IS NULL``): no index serves the
+    rows the prefix does not match. The walk stops at the clause that holds the predicate."""
+    parent = node.parent
+    while parent is not None and not isinstance(parent, _PREDICATE_CLAUSES):
+        if isinstance(parent, exp.Not):
+            return True
+        if isinstance(parent, exp.Is):
+            truth = parent.expression
+            if not (isinstance(truth, exp.Boolean) and truth.this is True):
+                return True
+        parent = parent.parent
+    return False
+
+
+# The clauses a predicate tree ends at.
+_PREDICATE_CLAUSES: tuple[type[exp.Expr], ...] = (
+    exp.Where,
+    exp.Having,
+    exp.Join,
+    exp.Select,
+    exp.Qualify,
+)
+
+
+def _all_prefix_regexes(nodes: list[exp.Expr], dialect: str) -> bool:
+    """Every pattern match in ``nodes`` is a case-sensitive, non-negated match of a string
+    literal that always starts with a literal prefix (``SqlFacts.prefix_regex``): ``^``,
+    at least one literal character no quantifier makes optional, and no top-level
+    alternation. False when there is none."""
+    matches = [n for n in nodes if isinstance(n, _PATTERN_MATCH_NODES)]
+    if not matches or dialect != "postgres":
+        return False
+    for node in matches:
+        if type(node) is not exp.RegexpLike or _is_negated(node):
+            return False
+        pattern = node.expression
+        if not (isinstance(pattern, exp.Literal) and pattern.is_string):
+            return False
+        if _literal_prefix_length(pattern.this) < 1:
+            return False
+    return True
 
 
 def _is_text_search(node: exp.Expr) -> bool:

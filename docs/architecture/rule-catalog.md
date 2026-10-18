@@ -175,6 +175,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`no-relational-need`](#no-relational-need) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | 20 `workload_fit` | - | - | 1 |
 | [`ordered-scan`](#ordered-scan) | anti 0.5 | - | - | - | - | - | future | future | 20 `reads_more_than_returns` | - | - | 1 |
 | [`pagination`](#pagination) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
+| [`prefix-regex`](#prefix-regex) | no | - | - | no | - | - | future | future | - | - | - | none |
 | [`range-query`](#range-query) | fit 90 | - | - | - | - | - | future | future | - | - | range_queries | 1 |
 | [`referential-integrity`](#referential-integrity) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
 | [`regex-search`](#regex-search) | **no** | native | fit 75 | **no** | native | native | future | future | 40 `cannot_run` | text_search | text_search | 1 |
@@ -629,6 +630,14 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - No effect on: DynamoDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
+### prefix-regex
+
+No analysis reports this pattern today.
+
+- DocumentDB, -, class score 75 (parity anchor, from `secondary-attribute-filter`): A prefix $regex without the i, m or o options uses an index on the field \(Amazon DocumentDB Developer Guide, Query planner\), an index range read rather than a collection scan. Class score \(#728\): 75, parity anchor: no engine-specific evidence yet; the secondary-index filter Aurora is rated at for this class \(secondary-attribute-filter, 75\), until a measurement replaces it.
+- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
+
 ### range-query
 
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
@@ -652,7 +661,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
-- DocumentDB, native, class score 45: $regex is a native operator, but only a prefix regular expression without the i, m or o options uses an index; any other is a collection scan \(Amazon DocumentDB Developer Guide, Query planner\). Class score \(#728\): 45, a scan of every document \(no fact tells a prefix regular expression apart yet\).
+- DocumentDB, native, class score 45: $regex is a native operator, but only a prefix regular expression without the i, m or o options uses an index; any other is a collection scan \(Amazon DocumentDB Developer Guide, Query planner\). Class score \(#728\): 45, a scan of every document; a prefix regular expression is prefix-regex's \(#982\).
 - OpenSearch, fit 75 (os-03): Regex pattern matching \(REGEXP, RLIKE, PostgreSQL ~ operator\). OpenSearch supports regexp queries with finite automaton execution, avoiding full-scan overhead. Table bonus: +5 pattern match.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native, class score 75: The ~ and ~\* operators are native SQL, and a pg\_trgm GIN or GiST index serves them as far as trigrams can be extracted from the expression; one with none reads the whole index \(PostgreSQL documentation, pg\_trgm, Index Support\). Class score \(#728\): 75, index-assisted, less reliably than a LIKE.
@@ -737,12 +746,12 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 ### substring-match
 
 Detected by `src.agents.referee.substring_match:substring_matches`.
-Scan threshold: 1 calls per second and 100,000 table rows, both reached. A leading-wildcard LIKE reads every row of the table \(MySQL Reference Manual, Comparison of B-Tree and Hash Indexes: a B-tree serves LIKE only for a constant pattern that does not start with a wildcard\). At 1 call per second on 100,000 rows that is 100,000 rows read every second, the point where the analysis cost bands \(src/tools/analysis/scoring.py\) stop calling a query rare and a table small; below either, the scan is cheap enough to keep.
+Scan threshold: 1 calls per second and 100,000 table rows, both reached. A leading-wildcard LIKE, or a regular expression, reads every row of the table on an engine with no index for it \(MySQL Reference Manual, Comparison of B-Tree and Hash Indexes: a B-tree serves LIKE only for a constant pattern that does not start with a wildcard, and no REGEXP\). At 1 call per second on 100,000 rows that is 100,000 rows read every second, the point where the analysis cost bands \(src/tools/analysis/scoring.py\) stop calling a query rare and a table small; below either, the scan is cheap enough to keep.
 
-- DocumentDB, scan: runs a leading-wildcard LIKE as an unanchored $regex, which reads every document; a text index serves word search with $text. Word search: create a text index on the field and query it with $text, which serves word search.
-- OpenSearch, native: serves a leading-wildcard match natively, with wildcard queries or an n-gram analyzer on the field.
-- Aurora PostgreSQL, native: indexes a leading-wildcard LIKE with a pg\_trgm trigram index \(GIN or GiST\), an extension to create \(the PostgreSQL documentation of pg\_trgm describes its index support for LIKE and ILIKE\). Word search: create the pg\_trgm extension and a GIN trigram index on the column \(CREATE EXTENSION pg\_trgm\), which serves this LIKE, word searches included; full-text search \(to\_tsvector\) also ranks word matches.
-- Aurora MySQL, scan: scans a leading-wildcard LIKE: FULLTEXT indexes are word-based and serve MATCH ... AGAINST, never LIKE \(MySQL Reference Manual, Full-Text Search Functions\). Word search: rewrite it as MATCH ... AGAINST over a FULLTEXT index on the column, which serves word search.
+- DocumentDB, scan: runs a leading-wildcard LIKE, and a regular expression that is not a case-sensitive prefix, as an unanchored $regex, which reads every document \(the query planner uses an index only for a prefix $regex without the i, m or o options\); a text index serves word search with $text. Word search: create a text index on the field and query it with $text, which serves word search.
+- OpenSearch, native: serves a leading-wildcard match natively, with wildcard queries or an n-gram analyzer on the field, and a regular expression with a regexp query.
+- Aurora PostgreSQL, native: indexes a leading-wildcard LIKE and a regular expression with a pg\_trgm trigram index \(GIN or GiST\), an extension to create \(the PostgreSQL documentation of pg\_trgm describes its index support for LIKE, ILIKE, ~ and ~\*\). Word search: create the pg\_trgm extension and a GIN trigram index on the column \(CREATE EXTENSION pg\_trgm\), which serves this LIKE, word searches included; full-text search \(to\_tsvector\) also ranks word matches.
+- Aurora MySQL, scan: scans a leading-wildcard LIKE and a REGEXP: FULLTEXT indexes are word-based and serve MATCH ... AGAINST, never LIKE \(MySQL Reference Manual, Full-Text Search Functions\), and no index serves REGEXP. Word search: rewrite it as MATCH ... AGAINST over a FULLTEXT index on the column, which serves word search.
 - No effect on: DynamoDB, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 

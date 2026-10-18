@@ -129,11 +129,17 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     #494 slice 2 (each query's own cost dimension): 7260 to 7290. Both Aurora engines
     have the same $250 standing cost, could serve the same queries and bill no request,
     so every query's cost on them is the same (97: $2.63 a query) and both totals rise
-    by 271 from the tables' cost bands; the 30-point lead is unchanged."""
+    by 271 from the tables' cost bands; the 30-point lead is unchanged.
+
+    #982 (CROSS APPLY reads as LATERAL on a SQL Server source): 7262 to 7294. One query,
+    ``0xBE098518D277706D`` (``UserSession s CROSS APPLY OPENJSON(s.[CartJson])``), is a
+    lateral join, so the lateral-join feature rates it on both engines at each one's
+    documented credit (Aurora PostgreSQL 85, Aurora MySQL 80): +4 and +2 on its pattern
+    dimension, so the lead grows by 2 and the features still decide."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7260.0, 7290.0)
+    assert (mysql, pg) == (7262.0, 7294.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"

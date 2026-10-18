@@ -18,7 +18,7 @@ why = "DynamoDB cannot run this pattern: a query another engine reports it for l
 [engines.documentdb]
 kind = "native"
 supported = true
-why = "$regex is a native operator, but only a prefix regular expression without the i, m or o options uses an index; any other is a collection scan (Amazon DocumentDB Developer Guide, Query planner). Class score (#728): 45, a scan of every document (no fact tells a prefix regular expression apart yet)."
+why = "$regex is a native operator, but only a prefix regular expression without the i, m or o options uses an index; any other is a collection scan (Amazon DocumentDB Developer Guide, Query planner). Class score (#728): 45, a scan of every document; a prefix regular expression is prefix-regex's (#982)."
 class_score = 45
 
 # Detection signals: regexp, rlike, ~ , ~*
