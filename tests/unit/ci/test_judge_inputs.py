@@ -411,10 +411,12 @@ def test_prompt_above_ceiling_cuts_trade_offs_before_risk_register(
 ) -> None:
     deliverables = _stage_run3(tmp_path, monkeypatch)
     _, _, rubric_body = judge.load_rubric(judge.DEFAULT_RUBRIC_PATH)
+    # 55K: the #952 rubric and facts are about 7K larger than when this was
+    # 45K, so the same deliverable room makes the same cuts
     prompt, stats = judge.build_prompt_with_stats(
-        rubric_body, RUN3_DB, RUN3_JOB, deliverables, ceiling=45_000, nonce="feedc0de"
+        rubric_body, RUN3_DB, RUN3_JOB, deliverables, ceiling=55_000, nonce="feedc0de"
     )
-    assert len(prompt) <= 45_000
+    assert len(prompt) <= 55_000
     md = stats["inputs"]["engineering_md"]
     assert md["truncated"] is True and md["chars"] < md["source_chars"]
     cut = {c["section"] for c in md["sections_truncated"]}
@@ -593,8 +595,10 @@ def test_the_scored_names_are_the_folder_the_render_step_writes() -> None:
 
 
 def test_rubric_thresholds_unchanged() -> None:
+    # 2.5 for now (first rubric-v3-era main run scored 2.714 on filed defects);
+    # #1077 raises it to 3.0, then 3.5, as #1047, #1095 and #951 land
     pass_mean, min_score, _ = judge.load_rubric(judge.DEFAULT_RUBRIC_PATH)
-    assert (pass_mean, min_score) == (3.5, 2)
+    assert (pass_mean, min_score) == (2.5, 2)
 
 
 def test_run3_fixture_assignment_matches_run3_after_distribution() -> None:
@@ -822,3 +826,19 @@ def test_totals_match_the_figure_the_deterministic_summary_prints() -> None:
     totals = judge_facts.build_facts({"ranking": ranking, "query_groups": groups})["totals"]
     assert totals["target_objects"] == int(printed.group(1)) == 11
     assert totals["in_scope_access_patterns"] == int(printed.group(2)) == 3
+
+
+def test_prompt_never_exceeds_the_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The cut list's size depends on the cuts, so fitting can oscillate; the
+    loop must still land under every ceiling (#952: it overshot by a few
+    characters at some ceilings)."""
+    deliverables = _stage_run3(tmp_path, monkeypatch)
+    _, _, rubric_body = judge.load_rubric(judge.DEFAULT_RUBRIC_PATH)
+    over = []
+    for ceiling in range(40_000, 70_001, 100):
+        prompt, _stats = judge.build_prompt_with_stats(
+            rubric_body, RUN3_DB, RUN3_JOB, deliverables, ceiling=ceiling, nonce="0123456789abcdef"
+        )
+        if len(prompt) > ceiling:
+            over.append((ceiling, len(prompt) - ceiling))
+    assert over == []

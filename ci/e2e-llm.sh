@@ -25,6 +25,12 @@
 #   CLAUDE_CODE_VERSION    - npm version to install when $CLAUDE_BIN is missing.
 #                            Default: 2.1.288 (pinned; bump deliberately).
 #   ANTHROPIC_MODEL        - model id for the headless run.
+#   JUDGE_MODEL            - judge model id. Default: pinned in ci/llm/judge.py
+#                            (the Bedrock or Anthropic API id of the same model).
+#   JUDGE_SAMPLES          - judge samples per run, median reported. Default: 3.
+#   E2E_LLM_JUDGE_BASELINE - optional saved main judge.json; compared only when it
+#                            has the same rubric_version, and the judge step then fails
+#                            on a 2-point drop in one criterion or 1 point in two.
 #   E2E_LLM_DRY_RUN        - "1" skips the claude call entirely (see below).
 #   E2E_LLM_TRANSCRIPT     - required when E2E_LLM_DRY_RUN=1: path to a transcript
 #                            .jsonl file to use in place of a real claude run.
@@ -363,7 +369,14 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   fi
 
   run_judge() {
-    uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json"
+    # Median of $JUDGE_SAMPLES (default 3) samples by the pinned judge model
+    # ($JUDGE_MODEL overrides it); with E2E_LLM_JUDGE_BASELINE (a saved main
+    # judge.json of the same rubric_version) a regression fails the judge step.
+    if [ -n "${E2E_LLM_JUDGE_BASELINE:-}" ]; then
+      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json" --baseline "$E2E_LLM_JUDGE_BASELINE"
+    else
+      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json"
+    fi
   }
   step judge run_judge
 else

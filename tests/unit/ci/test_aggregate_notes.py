@@ -379,3 +379,76 @@ def test_cli_rejects_bad_numbers(flags, tmp_path):
     with pytest.raises(SystemExit) as exc:
         agg.main([str(tmp_path), *flags])
     assert exc.value.code == 2
+
+
+# --- structured defects (#952) ---------------------------------------------
+
+
+def _defect(criterion: str, kind: str, quote: str, where: str = "engineering_report > X") -> dict:
+    return {"criterion": criterion, "kind": kind, "where": where, "quote": quote, "samples": 3}
+
+
+def test_recurring_defects_group_by_criterion_kind_and_quote():
+    adopt = "One suggested adoption path, not the only one."
+    runs = {
+        "a": {"scores": {}, "notes": {}, "defects": [_defect("hedging", "hedge", adopt)]},
+        "b": {
+            "scores": {},
+            "notes": {},
+            "defects": [
+                _defect("hedging", "hedge", "One suggested adoption path - not the only one"),
+                _defect("contradictions", "contradiction", "Use Aurora MySQL for all writes"),
+            ],
+        },
+        "c": {
+            "scores": {},
+            "notes": {},
+            "defects": [
+                _defect("hedging", "hedge", adopt),
+                # same words, other criterion/kind: never merged with the hedge
+                _defect("concision", "repetition", adopt),
+            ],
+        },
+    }
+    out = agg.aggregate(runs, min_runs=2)
+    assert out["recurring_defects"] == [
+        {
+            "criterion": "hedging",
+            "kind": "hedge",
+            "run_count": 3,
+            # same token count, so the alphabetically first spelling seeds the group
+            "quote": "One suggested adoption path - not the only one",
+            "where": "engineering_report > X",
+            "runs": ["a", "b", "c"],
+        }
+    ]
+    assert agg.aggregate(runs, min_runs=1)["recurring_defects"][-1]["run_count"] == 1
+
+
+def test_judge_json_without_defects_still_aggregates(runs_dir: Path):
+    paths, _ = agg.expand_paths([str(runs_dir)])
+    runs, warnings = agg.load_runs(paths)
+    out = agg.aggregate(runs)
+    assert out["recurring_defects"] == []
+    assert "Defects recurring" in agg.render_text(out, warnings)
+
+
+def test_malformed_defects_are_skipped():
+    runs = {
+        "a": {"scores": {}, "notes": {}, "defects": "nope"},
+        "b": {"scores": {}, "notes": {}, "defects": [None, {"criterion": "hedging"}, 3]},
+    }
+    assert agg.aggregate(runs, min_runs=1)["recurring_defects"] == []
+
+
+def test_recurring_defects_render_in_text():
+    runs = {
+        r: {
+            "scores": {},
+            "notes": {},
+            "defects": [_defect("hedging", "hedge", "it might help a lot")],
+        }
+        for r in ("a", "b", "c")
+    }
+    text = agg.render_text(agg.aggregate(runs), [])
+    assert "[hedging/hedge] in 3 runs: it might help a lot (engineering_report > X)" in text

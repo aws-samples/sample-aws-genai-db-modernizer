@@ -26,6 +26,21 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
   queries are actually assigned to.
 * ``migration_waves`` -- from ``report.json`` when synthesis emits it, else an
   explicit "not in report.json" marker.
+* ``wave_figures`` -- each wave's table figures as the report states them
+  (``facts.waves[]``: served, moving and kept-in-sync tables, per engine), so
+  a deliverable's "18 served, 15 move" is checked against the report's own
+  numbers (#952).
+* ``routing_margins`` -- the close calls (queries whose engine won by under
+  the margin), per engine pair, without query ids (#952).
+* ``migration_risk_facts`` -- what the shape of this migration implies a risk
+  register should cover, taken from ``report.json`` (#952), the report's own
+  figure wherever it states one: the tables each wave keeps in sync from an
+  owner outside it (``facts.waves[].kept_in_sync``), the tables a wave's own
+  engines share (``shared_in_wave``, listed apart, never counted into it), close calls, cached reads the
+  overlay dropped, unsupported patterns, application-layer notes, hot
+  partitions, unservable queries, unresolved ties and design trade-offs. The
+  risks criterion grades completeness against it. ``None`` means the report
+  does not carry that field (an older report), not zero.
 
 Domain rule (the reason ``tables_served`` exists): assignments map *queries*
 to engines, and a table can be served by several engines.
@@ -239,6 +254,258 @@ def _eliminated_engines(
         if move.get("action") == "full" and source and not after.get(source):
             out.append({"engine": source, "absorbed_by": move.get("to_engine")})
     return out
+
+
+def _count(value: Any) -> int | None:
+    return len(value) if isinstance(value, list) else None
+
+
+_WAVE_FIGURE_KEYS = (
+    "wave",
+    "engines",
+    "migrating",
+    "served_tables",
+    "moving_tables",
+    "kept_in_sync_tables",
+    "moving_by_engine",
+    "served_by_engine",
+)
+
+
+def _wave_figures(report: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """The facts layer's per-wave table figures, verbatim; ``None`` when the
+    report has no ``facts.waves``."""
+    layer = (report.get("facts") or {}).get("waves")
+    if not isinstance(layer, list):
+        return None
+    return [{k: w.get(k) for k in _WAVE_FIGURE_KEYS} for w in layer if isinstance(w, dict)]
+
+
+def _routing_margins(report: dict[str, Any]) -> dict[str, Any] | None:
+    """Close calls per engine pair, from the synthesis facts layer
+    (``report.facts.close_calls``, ADR-032) or else counted from
+    ``query_traces.close_calls``. ``None`` when the report has neither."""
+    layer = (report.get("facts") or {}).get("close_calls")
+    if isinstance(layer, dict):
+        return {
+            "margin_points": layer.get("margin_points"),
+            "close_call_query_count": layer.get("close_call_query_count"),
+            "settled_tie_count": layer.get("settled_tie_count"),
+            "engine_pairs": [
+                {k: v for k, v in pair.items() if k not in ("query_ids", "more_query_count")}
+                for pair in layer.get("engine_pairs") or []
+                if isinstance(pair, dict)
+            ],
+        }
+    raw = (report.get("query_traces") or {}).get("close_calls")
+    if not isinstance(raw, list):
+        return None
+    # A tie a rule settled is reported apart (``settled_tie_count``), as the
+    # facts layer's ``close_call_facts`` does, not as a close call.
+    calls = [c for c in raw if isinstance(c, dict) and not c.get("settled_tie")]
+    settled = sum(1 for c in raw if isinstance(c, dict) and c.get("settled_tie"))
+    pairs: dict[tuple[str, str], dict[str, Any]] = {}
+    for call in calls:
+        key = (str(call.get("engine")), str(call.get("alternative")))
+        slot = pairs.setdefault(
+            key, {"engine": key[0], "alternative": key[1], "pair_query_count": 0, "gaps": []}
+        )
+        slot["pair_query_count"] += 1
+        if isinstance(call.get("gap"), (int, float)):
+            slot["gaps"].append(call["gap"])
+    out = []
+    for slot in sorted(pairs.values(), key=lambda p: (-p["pair_query_count"], p["engine"])):
+        gaps = slot.pop("gaps")
+        slot["min_gap"] = min(gaps) if gaps else None
+        slot["max_gap"] = max(gaps) if gaps else None
+        out.append(slot)
+    return {"close_call_query_count": len(calls), "settled_tie_count": settled, "engine_pairs": out}
+
+
+def _wave_sync(
+    report: dict[str, Any], db: str | None
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]] | None]:
+    """``(kept_in_sync, shared_in_wave)`` per wave.
+
+    The report's own figures win (ADR-032): the facts layer's
+    ``facts.waves[].kept_in_sync`` / ``kept_in_sync_tables`` (tables whose
+    owner is outside the wave, kept in sync from it) and
+    ``facts.waves[].shared_in_wave`` (a table one wave engine serves while
+    another engine of the same wave owns it, #581). Only a report without the
+    facts layer falls back to ``migration_waves[].table_owners``, split by the
+    same rule (``src.shared.report_facts.wave_facts``): owner in the wave's
+    engines -> shared, else kept in sync, one entry per table. ``None`` when
+    the report has neither."""
+    layer = (report.get("facts") or {}).get("waves")
+    waves = report.get("migration_waves")
+    source: list[tuple[Any, Any, list, list, Any]] = []
+    if isinstance(layer, list) and layer:
+        for w in layer:
+            if isinstance(w, dict):
+                source.append(
+                    (
+                        w.get("wave"),
+                        w.get("engines"),
+                        list(w.get("kept_in_sync") or []),
+                        list(w.get("shared_in_wave") or []),
+                        w.get("kept_in_sync_tables"),
+                    )
+                )
+    elif isinstance(waves, list) and waves:
+        for w in waves:
+            if not isinstance(w, dict):
+                continue
+            engines = [str(e) for e in w.get("engines") or [] if e]
+            outside: dict[str, dict[str, Any]] = {}
+            inside: list[dict[str, Any]] = []
+            for o in w.get("table_owners") or []:
+                if not isinstance(o, dict) or not o.get("table") or not o.get("owner"):
+                    continue
+                if str(o["owner"]) in engines:
+                    inside.append(o)
+                else:
+                    outside.setdefault(str(o["table"]), o)
+            source.append((w.get("wave"), w.get("engines"), list(outside.values()), inside, None))
+    else:
+        return None, None
+    kept_out: list[dict[str, Any]] = []
+    shared_out: list[dict[str, Any]] = []
+    for wave, engines, kept, shared, kept_count in source:
+        kept = [e for e in kept if isinstance(e, dict) and e.get("table")]
+        shared = [e for e in shared if isinstance(e, dict) and e.get("table")]
+        if kept:
+            owners: Counter[str] = Counter(str(e.get("owner")) for e in kept)
+            kept_out.append(
+                {
+                    "wave": wave,
+                    "engines": engines,
+                    "kept_in_sync_tables": kept_count if kept_count is not None else len(kept),
+                    "by_owner": dict(owners),
+                    "sync": sorted({str(e.get("sync")) for e in kept if e.get("sync")}),
+                    "tables": sorted(_strip_db(str(e["table"]), db) for e in kept),
+                }
+            )
+        if shared:
+            shared_out.append(
+                {
+                    "wave": wave,
+                    "engines": engines,
+                    "entries": len(shared),
+                    "tables": sorted(
+                        (
+                            {"table": _strip_db(str(e["table"]), db), "owner": e.get("owner")}
+                            for e in shared
+                        ),
+                        key=lambda row: (row["table"], str(row["owner"])),
+                    ),
+                }
+            )
+    return kept_out, shared_out
+
+
+def _shared_tables(
+    served: dict[str, list[str] | None], cache_engines: set[str]
+) -> dict[str, Any] | None:
+    """Tables two or more owning engines serve (the cache layer left out): each
+    one needs its copies kept in sync, whichever way the waves run it."""
+    if not served:
+        return None
+    by_table: dict[str, set[str]] = {}
+    for engine, tables in served.items():
+        if not engine or engine in cache_engines or not tables:
+            continue
+        for table in tables:
+            by_table.setdefault(table, set()).add(engine)
+    shared: list[dict[str, Any]] = [
+        {"table": t, "engines": sorted(by_table[t])}
+        for t in sorted(by_table)
+        if len(by_table[t]) > 1
+    ]
+    return {"count": len(shared), "tables": shared}
+
+
+def _migration_risk_facts(
+    report: dict[str, Any],
+    db: str | None,
+    served: dict[str, list[str] | None] | None = None,
+    cache_engines: set[str] | None = None,
+) -> dict[str, Any]:
+    designs = report.get("schema_designs")
+    designs = designs if isinstance(designs, dict) else {}
+
+    def per_engine(field: str) -> dict[str, int] | None:
+        if not designs:
+            return None
+        counts = {
+            engine: len(design.get(field) or [])
+            for engine, design in sorted(designs.items())
+            if isinstance(design, dict)
+        }
+        return {engine: n for engine, n in counts.items() if n}
+
+    unsupported = []
+    app_notes = []
+    for engine, design in sorted(designs.items()):
+        if not isinstance(design, dict):
+            continue
+        for item in design.get("unsupported_patterns") or []:
+            if isinstance(item, dict):
+                unsupported.append(
+                    {
+                        "engine": engine,
+                        "queries": len(item.get("source_query_ids") or []),
+                        "reason": _cap(item.get("reason")),
+                        "workaround": _cap(item.get("workaround")),
+                    }
+                )
+        for note in design.get("app_layer_notes") or []:
+            if isinstance(note, dict):
+                app_notes.append(
+                    {
+                        "engine": engine,
+                        "feature": note.get("feature"),
+                        "source_object": _cap(note.get("source_object")),
+                        "recommendation": _cap(note.get("recommendation")),
+                    }
+                )
+    kept, shared = _wave_sync(report, db)
+    trade_offs = report.get("trade_offs")
+    unservable = (report.get("facts") or {}).get("unservable")
+    if isinstance(unservable, dict):
+        unservable_count = unservable.get("unservable_query_count")
+    else:
+        unservable_count = _count((report.get("query_traces") or {}).get("unservable"))
+    overlay = report.get("cache_overlay")
+    return {
+        "rule": (
+            "risks this migration's shape implies, computed from report.json; a "
+            "deliverable that raises none of them while they are present has an "
+            "incomplete risk register. null = the report does not carry the field"
+        ),
+        # The report's figure (facts.waves[].kept_in_sync_tables); in-wave
+        # sharing is a separate, judge-only list, never added into it.
+        "kept_in_sync": kept,
+        "shared_in_wave": shared,
+        "tables_served_by_several_engines": _shared_tables(served or {}, cache_engines or set()),
+        "close_call_query_count": (_routing_margins(report) or {}).get("close_call_query_count"),
+        "cache_reads_dropped": (
+            _count(overlay.get("dropped_query_ids")) if isinstance(overlay, dict) else None
+        ),
+        "unsupported_patterns": unsupported if designs else None,
+        "app_layer_notes": app_notes if designs else None,
+        "hot_partitions_at_risk": per_engine("hot_partitions_at_risk"),
+        "unservable_queries": unservable_count,
+        "unresolved_ties": (report.get("assignment_summary") or {}).get("tie_unresolved_count"),
+        "design_trade_offs_by_engine": (
+            dict(
+                Counter(
+                    str(t.get("engine") or "unknown") for t in trade_offs if isinstance(t, dict)
+                )
+            )
+            if isinstance(trade_offs, list)
+            else None
+        ),
+    }
 
 
 def build_facts(
@@ -485,4 +752,12 @@ def build_facts(
             _cap(m) for m in risk_assessment.get("mitigation_strategies") or []
         ],
         "migration_waves": waves if waves else MIGRATION_WAVES_ABSENT,
+        "wave_figures": _wave_figures(report),
+        "routing_margins": _routing_margins(report),
+        "migration_risk_facts": _migration_risk_facts(
+            report,
+            db,
+            {e["engine"]: e["tables_served"] for e in engines if e.get("engine")},
+            {e["engine"] for e in engines if e.get("role") == "cache_layer"},
+        ),
     }

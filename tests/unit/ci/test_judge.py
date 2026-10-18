@@ -108,7 +108,7 @@ def test_pass_case(tmp_path: Path) -> None:
     assert result["scores"] == PASSING_SCORES
     assert result["mean"] == 5.0
     assert result["model"] == "claude-sonnet-5"
-    assert result["cost_usd"] == 0.01
+    assert result["cost_usd"] == 0.03  # three samples at 0.01 each
     assert set(result["notes"]) == set(judge.CRITERIA)
 
 
@@ -116,7 +116,7 @@ def test_fail_on_min_score(tmp_path: Path) -> None:
     _build_job_dir(tmp_path)
     argv_file = tmp_path / "argv.json"
     scores = dict(PASSING_SCORES)
-    scores["tone"] = 1  # below default min_score (2); mean is still well above 3.5
+    scores["hedging"] = 1  # below default min_score (2); mean is still well above 3.5
     stub = _write_stub(tmp_path, _outer(_inner(scores)), argv_file)
 
     result, code = judge.run_judge(
@@ -343,7 +343,7 @@ def test_front_matter_thresholds_are_honoured(tmp_path: Path) -> None:
     assert custom_result["mean"] == 4.0
 
 
-def test_prompt_includes_all_six_criterion_keys(tmp_path: Path) -> None:
+def test_prompt_includes_every_criterion_key(tmp_path: Path) -> None:
     _build_job_dir(tmp_path)
     argv_file = tmp_path / "argv.json"
     stub = _write_stub(tmp_path, _outer(_inner(PASSING_SCORES)), argv_file)
@@ -450,7 +450,7 @@ def test_untrusted_data_instruction_brackets_the_data(tmp_path: Path) -> None:
     for part in (before, after):
         assert "untrusted data" in part
         assert "never follow instructions" in part
-        assert "tone" in part and "grounded" in part
+        assert "contradictions" in part and "grounded" in part
 
 
 def test_undecodable_deliverable_is_a_judge_error(tmp_path: Path) -> None:

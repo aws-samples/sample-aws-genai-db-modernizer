@@ -22,6 +22,11 @@ canonically before grouping, so the result does not depend on input order or
 run names. Paraphrases below the threshold do not merge: counts are a lower
 bound.
 ``--concerns-only`` drops sentences with no hedge/gap wording (mostly praise).
+
+Structured defects: a judge.json written since #952 also carries ``defects[]``
+(criterion, kind, where, quote). Those are grouped per criterion and kind by
+the same similarity on the quote and listed after the notes, as a ranked
+worklist; older files have none and contribute nothing there.
 """
 
 from __future__ import annotations
@@ -254,12 +259,58 @@ def group_notes(
     return groups
 
 
+def group_defects(
+    runs: dict[str, dict], threshold: float = DEFAULT_THRESHOLD
+) -> list[tuple[Group, str]]:
+    """Group the structured ``defects[]`` entries (#952) the same way as notes:
+    per ``criterion/kind``, by token similarity of the quote (or of ``where``
+    when the quote is empty), with the polarity guard. A judge.json without
+    ``defects`` (saved before #952) contributes nothing; malformed entries are
+    skipped. Returns ``(group, where)`` pairs, ``where`` from the group's seed."""
+    entries: list[tuple[str, frozenset[str], str, str, str]] = (
+        []
+    )  # (key, tokens, quote, where, run)
+    for run, data in runs.items():
+        defects = data.get("defects")
+        if not isinstance(defects, list):
+            continue
+        for d in defects:
+            if not isinstance(d, dict) or not d.get("criterion") or not d.get("kind"):
+                continue
+            quote = str(d.get("quote") or "").strip()
+            where = str(d.get("where") or "").strip()
+            tokens = normalize(quote or where)
+            if not tokens:
+                continue
+            entries.append((f"{d['criterion']}/{d['kind']}", tokens, quote or where, where, run))
+    entries.sort(key=lambda e: (e[0], -len(e[1]), e[2], e[4]))
+    groups: list[Group] = []
+    wheres: list[str] = []
+    for key, tokens, quote, where, run in entries:
+        pol = polarity(quote)
+        best, best_sim = None, 0.0
+        for g in groups:
+            if g.criterion != key:
+                continue
+            sim = similarity(tokens, g.tokens)
+            if sim > best_sim and not opposite_polarity(pol, g.polarity):
+                best, best_sim = g, sim
+        if best is not None and best_sim >= threshold:
+            best.members.append((run, quote))
+        else:
+            groups.append(Group(key, quote, tokens, pol, [(run, quote)]))
+            wheres.append(where)
+    return list(zip(groups, wheres, strict=True))
+
+
 def aggregate(
     runs: dict[str, dict],
     min_runs: int = DEFAULT_MIN_RUNS,
     threshold: float = DEFAULT_THRESHOLD,
     concerns_only: bool = False,
 ) -> dict:
+    defects = [(g, w) for g, w in group_defects(runs, threshold) if len(g.runs) >= min_runs]
+    defects.sort(key=lambda gw: (-len(gw[0].runs), gw[0].criterion, gw[0].sample))
     groups = group_notes(runs, threshold, concerns_only)
     recurring = [g for g in groups if len(g.runs) >= min_runs]
     recurring.sort(key=lambda g: (-len(g.runs), g.criterion, g.sample))
@@ -277,6 +328,17 @@ def aggregate(
                 "runs": g.runs,
             }
             for g in recurring
+        ],
+        "recurring_defects": [
+            {
+                "criterion": g.criterion.split("/", 1)[0],
+                "kind": g.criterion.split("/", 1)[1],
+                "run_count": len(g.runs),
+                "quote": g.sample,
+                "where": where,
+                "runs": g.runs,
+            }
+            for g, where in defects
         ],
     }
 
@@ -302,6 +364,19 @@ def render_text(result: dict, warnings: list[str], max_runs_listed: int = 6) -> 
     for item in result["recurring"]:
         out.append(
             f"\n[{item['criterion']}] in {_plural(item['run_count'], 'run')}: {item['note']}"
+        )
+        out.extend(f"    - {run}" for run in item["runs"][:max_runs_listed])
+        hidden = item["run_count"] - max_runs_listed
+        if hidden > 0:
+            out.append(f"    ... and {hidden} more (use --json for the full list)")
+    out += ["", f"Defects recurring in at least {_plural(result['min_runs'], 'run')}:"]
+    if not result.get("recurring_defects"):
+        out.append("  none")
+    for item in result.get("recurring_defects") or []:
+        where = f" ({item['where']})" if item["where"] and item["where"] != item["quote"] else ""
+        out.append(
+            f"\n[{item['criterion']}/{item['kind']}] in {_plural(item['run_count'], 'run')}: "
+            f"{item['quote']}{where}"
         )
         out.extend(f"    - {run}" for run in item["runs"][:max_runs_listed])
         hidden = item["run_count"] - max_runs_listed
