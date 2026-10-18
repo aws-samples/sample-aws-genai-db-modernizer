@@ -11,7 +11,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 - `<collector_file>` — path to collector output JSON (required); the `.json` file (a bundled sample whose `.json` is not extracted yet, such as `docs/examples/wordpress/wordpress-collection.json`, is extracted from its tracked `.zip` by the script)
 - `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve) and means "decide for me": every pending engine choice is settled by the deterministic rule and recorded as decided automatically; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
-- `--mode chat|ui|both` — experience mode. Default is `both`: results in chat with the local UI alongside. `--mode chat` is chat only, with no UI. `--mode ui` is UI-first: chat carries only the approval-gate numbers, UI pointers, and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
+- `--mode chat|ui|both` — experience mode. Default is `both`: results in chat with the local UI alongside. `--mode chat` is chat only, with no UI. `--mode ui` is UI-first: chat carries only the approval-gate numbers, UI pointers, the one-sentence database-name notice (Phases 1-5, only when the name was rewritten), and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
 
 ## Step 0: Experience Mode
 
@@ -46,7 +46,7 @@ Run the deterministic pipeline in one command (no subagent needed):
 uv run python scripts/run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}
 ```
 
-The database name is derived from the collector filename (e.g., `wordpress-collection.json` → `wordpress`).
+The database name is derived from the collector filename: drop `.json` and a trailing `-collection`, replace every character outside `[A-Za-z0-9_-]` with `_`, keep the first 128 characters, and use `database` if nothing is left (the script rejects any other name). Examples: `wordpress-collection.json` → `wordpress`, `my.app-collection.json` → `my_app`, `sales data.json` → `sales_data`. When a character was replaced or the name was cut, tell the user in one sentence which name it used, in every mode (`--mode ui` included), and continue (never ask).
 
 Its stdout is the whole tool result: one JSON status line per phase (`{"phase": "collect", ...}`, `"triage"`, `"analysis"`, `"assignment"`, `"reality_check"`), then one line that points at the progress log:
 
