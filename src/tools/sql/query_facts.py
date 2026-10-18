@@ -315,6 +315,13 @@ _LATERAL_JOIN_RE = re.compile(
 # RETURNING as a SQL clause follows DML (not preceded by AS keyword).
 # Matches: RETURNING id, RETURNING *, RETURNING col1, col2
 # Does NOT match: AS returning FROM (alias usage)
+# An upsert in any dialect (#984): PostgreSQL's ON CONFLICT, MySQL's ON DUPLICATE KEY
+# UPDATE and REPLACE INTO, read on the text with comments, literals and quoted identifiers
+# (double quotes, backticks, T-SQL brackets) blanked out.
+_UPSERT_RE = re.compile(
+    r"\bON\s+CONFLICT\b|\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bREPLACE\s+INTO\b", re.IGNORECASE
+)
+_BACKTICK_OR_BRACKET_IDENTIFIER_RE = re.compile(r"`[^`]*`|\[[^\]]*\]")
 _ON_CONFLICT_OR_RETURNING_RE = re.compile(
     r"""
     \bON\s+CONFLICT\b
@@ -947,6 +954,18 @@ class QueryFacts:
     def duplicate_key_upsert(self) -> bool:
         """``on duplicate key`` or ``replace into``."""
         return _contains_any(self._lower, DUPLICATE_KEY_KEYWORDS)
+
+    @cached_property
+    def upsert(self) -> bool:
+        """An upsert, in any dialect: PostgreSQL's ``ON CONFLICT``, MySQL's ``ON DUPLICATE
+        KEY UPDATE`` or ``REPLACE INTO``, never inside a comment, a string literal or a quoted
+        identifier. The per-query feature fact the upsert patterns rate (#984): the upsert
+        statement itself earns the credit, never its table's other queries (ADR-031
+        Decision 14)."""
+        if not self._has("conflict", "duplicate", "replace"):
+            return False
+        text = _BACKTICK_OR_BRACKET_IDENTIFIER_RE.sub(" ", strip_comments_and_literals(self._text))
+        return bool(_UPSERT_RE.search(text))
 
     @cached_property
     def string_aggregate_call(self) -> bool:

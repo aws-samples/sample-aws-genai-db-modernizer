@@ -1,4 +1,6 @@
-"""The rule data #921 moved out of code into the catalog keeps its values (no routing change).
+"""The rule data #921 moved out of code into the catalog keeps its values (no routing change),
+except where a later issue changed one on purpose (#984: full text and upserts get the
+same Aurora bonus on both engines).
 
 Each constant below was a literal in code before #921 and is now built from
 ``src/catalog/routing.toml``, ``gates.toml``, ``triage_signals.toml``, the engine files'
@@ -347,6 +349,8 @@ PRE_921_BONUSES = {
         "group-concat-pivot": (5, 0),
         "jsonb-operations": (10, 0),
         "upsert-conflict": (5, 0),
+        # #984: the same bonus as Aurora MySQL's fulltext-search.
+        "full-text-native": (10, 0),
     },
 }
 PRE_921_FEATURES = {
@@ -358,8 +362,7 @@ PRE_921_FEATURES = {
         "group-concat-pivot",
         "stored-routine",
         "json-document-query",
-        "fulltext-search",
-        "upsert-duplicate-key",
+        # #984: full text and the upsert are per-query features now, not table-level ones.
     },
     "aurora_postgresql": {
         "cte-recursive",
@@ -419,11 +422,14 @@ class TestTheTableBonusesKeepTheirValues:
         [
             ("aurora_mysql", [], 0),
             ("aurora_mysql", ["cte-recursive"], 10),
-            ("aurora_mysql", ["cte-recursive", "fulltext-search"], 15),
+            # #984: full text no longer counts toward a table's complexity.
+            ("aurora_mysql", ["cte-recursive", "fulltext-search"], 10),
             ("aurora_mysql", ["cte-recursive", "fulltext-search", "lateral-join"], 15),
             ("aurora_postgresql", ["array-operations"], 10),
-            # upsert-conflict has a pattern bonus but is not a PostgreSQL complexity feature.
+            # #984: no upsert counts toward a table's complexity on either engine.
             ("aurora_postgresql", ["upsert-conflict"], 0),
+            ("aurora_mysql", ["upsert-duplicate-key"], 0),
+            ("aurora_postgresql", ["upsert-conflict", "full-text-native"], 0),
             ("documentdb", ["polymorphic-data", "flexible-schema"], 10),
             ("dynamodb", ["key-value-lookup"], 0),
         ],
@@ -441,6 +447,127 @@ class TestTheTableBonusesKeepTheirValues:
                 my.table_bonus,
                 my.complexity_feature,
             ), entry.id
+
+    # A feature both Aurora engines run natively, written as a different pattern file per
+    # dialect (#984): PostgreSQL's file, then MySQL's.
+    DIALECT_PAIRS = (
+        ("full-text-native", "fulltext-search"),
+        ("upsert-conflict", "upsert-duplicate-key"),
+    )
+
+    @pytest.mark.parametrize(("pg_pattern", "mysql_pattern"), DIALECT_PAIRS)
+    def test_a_dialect_pair_gets_the_same_bonus_on_both_engines(
+        self, pg_pattern: str, mysql_pattern: str
+    ) -> None:
+        """#984: ADR-031 Decision 6 compares the two engines' totals, so a feature both
+        run natively never favours one on a missing bonus; each engine's documented
+        strength stays in its fit score."""
+        from src.shared.catalog.access_classes import access_classes, feature_patterns
+        from src.shared.catalog.patterns import pattern
+
+        pg = pattern(pg_pattern).engines["aurora_postgresql"]
+        my = pattern(mysql_pattern).engines["aurora_mysql"]
+        assert (pg.kind, my.kind) == ("fit", "fit")
+        # The same table-summary bonus, and it is a real one.
+        assert pg.table_bonus == my.table_bonus > 0
+        # Neither is a table-level routing credit (Decision 14)...
+        assert not pg.complexity_feature and not my.complexity_feature
+        assert pg.complexity_bonus == my.complexity_bonus == 0
+        # ...each rates its own statement per query, on the same fact, in every class.
+        facts = {f.pattern: f.fact for f in feature_patterns()}
+        assert facts.get(pg_pattern) is not None
+        assert facts[pg_pattern] == facts[mysql_pattern]
+        assert not {pg_pattern, mysql_pattern} & {p for c in access_classes() for p in c.patterns}
+
+    def test_a_dialect_pair_scores_the_same_table_adjustment(self) -> None:
+        for pg_pattern, mysql_pattern in self.DIALECT_PAIRS:
+            assert table_bonuses("aurora_postgresql", [pg_pattern]) == table_bonuses(
+                "aurora_mysql", [mysql_pattern]
+            )
+            assert feature_complexity_bonus(
+                "aurora_postgresql", [pg_pattern]
+            ) == feature_complexity_bonus("aurora_mysql", [mysql_pattern])
+
+    def test_an_upsert_credits_the_upsert_statement_not_its_table(self) -> None:
+        """#984, ADR-031 Decision 14: a query's pattern dimension is its own class. The
+        upsert patterns rate a statement showing the upsert fact, on each engine at its
+        documented fit (80); a query without the fact earns nothing from them."""
+        from src.shared.catalog.access_classes import access_classes, class_score
+
+        # An upsert by a non-key filter: its class rates Aurora 75 without the feature.
+        ad_hoc = next(c for c in access_classes() if c.id == "ad_hoc_filter")
+        for engine in AURORA:
+            assert class_score(ad_hoc, engine) == 75
+            assert class_score(ad_hoc, engine, frozenset({"write", "upsert"})) == 80
+            assert class_score(ad_hoc, engine, frozenset({"write"})) == 75
+        # Never on an engine whose upsert it is not documented for, nor on a cache.
+        assert class_score(ad_hoc, "elasticache", frozenset({"write", "upsert"})) == 0
+
+    def test_the_classifier_sets_the_upsert_fact(self) -> None:
+        """The upsert class fact comes from the classifier on a real statement (review of
+        #1090), and a plain write of the same table does not get it."""
+        from src.agents.referee.access_pattern import SchemaKeys, classify_query
+
+        collector = {
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": "app.t",
+                        "table_name": "t",
+                        "columns": [{"column_name": "a", "data_type": "int"}],
+                        "primary_key": ["a"],
+                    }
+                ]
+            }
+        }
+        keys = SchemaKeys.from_collector(collector)
+
+        def facts(text: str, query_type: str, source: str) -> frozenset[str]:
+            query = {"query_text": text, "query_type": query_type, "tables_accessed": ["app.t"]}
+            return classify_query(query, keys, source).facts
+
+        assert "upsert" in facts(
+            "INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO NOTHING", "INSERT", "postgresql"
+        )
+        assert "upsert" in facts(
+            "INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = 2", "INSERT", "mysql"
+        )
+        assert "upsert" not in facts("INSERT INTO t (a) VALUES (1)", "INSERT", "postgresql")
+        assert "upsert" not in facts("UPDATE t SET a = 2 WHERE a = 1", "UPDATE", "mysql")
+
+    def test_full_text_credits_the_full_text_query_in_any_class(self) -> None:
+        """#984: a key-anchored full-text query gets each Aurora engine's full-text fit as a
+        feature; a query without the fact gets nothing from it."""
+        from src.shared.catalog.access_classes import access_classes, class_score
+
+        key_scoped = next(c for c in access_classes() if c.id == "key_scoped")
+        assert class_score(key_scoped, "aurora_postgresql", frozenset({"full_text"})) == 75
+        assert class_score(key_scoped, "aurora_mysql", frozenset({"full_text"})) == 80
+        assert class_score(key_scoped, "aurora_postgresql") == class_score(
+            key_scoped, "aurora_mysql"
+        )
+
+    def test_the_upsert_fact(self) -> None:
+        from src.tools.sql.query_facts import query_facts
+
+        assert query_facts(
+            "INSERT INTO t (a) VALUES (1) ON CONFLICT (a) DO NOTHING", "postgresql"
+        ).upsert
+        assert query_facts("INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE a = 1", "mysql").upsert
+        assert not query_facts("SELECT 'on conflict' FROM t", "postgresql").upsert
+        assert not query_facts("UPDATE t SET a = 1 RETURNING id", "postgresql").upsert
+        assert query_facts("REPLACE INTO t VALUES (1)", "mysql").upsert
+        # Review of #1090: never inside a literal, a comment or a quoted identifier.
+        for text in (
+            "SELECT * FROM t WHERE note = 'replace into x'",
+            "SELECT * FROM t -- on duplicate key update",
+            "SELECT * FROM t /* on duplicate key update */",
+            "SELECT `on duplicate key update` FROM t",
+            "SELECT `replace into` FROM t",
+        ):
+            assert not query_facts(text, "mysql").upsert, text
+        assert not query_facts('SELECT "on conflict" FROM t', "postgresql").upsert
+        assert not query_facts("SELECT [replace into] FROM t", "sqlserver").upsert
 
     def _catalog_with(self, tmp_path: Path, name: str, old: str, new: str) -> Path:
         for path in sorted((CATALOG / "patterns").glob("*.toml")):

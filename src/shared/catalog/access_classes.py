@@ -62,6 +62,7 @@ QUERY_FACTS = frozenset(
         "recursive_cte",
         "lateral_join",
         "stored_routine",
+        "upsert",
     }
 )
 # The fact that marks a write (ADR-031 Decision 2 step 3: an engine that is not a

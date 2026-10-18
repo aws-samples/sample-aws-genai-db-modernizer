@@ -82,10 +82,10 @@ id = "text_search"
 label = "Text search"
 leaning = "search"
 why = "With no key anchoring the rows: a leading-wildcard LIKE, a regular expression, a similarity function or a full-text match."
-patterns = ["full-text-search", "wildcard-search", "fuzzy-search", "regex-search", "full-text-native", "fulltext-search"]
+patterns = ["full-text-search", "wildcard-search", "fuzzy-search", "regex-search"]
 # Each text pattern rates only the text search it describes (#920, catalog PR C): a LIKE '%x%'
 # is not rated by an engine's full-text index, which does not serve it.
-only_when = { "full-text-search" = "full_text", "full-text-native" = "full_text", "fulltext-search" = "full_text", "wildcard-search" = "leading_wildcard", "regex-search" = "pattern_match", "fuzzy-search" = "similarity_match" }
+only_when = { "full-text-search" = "full_text", "wildcard-search" = "leading_wildcard", "regex-search" = "pattern_match", "fuzzy-search" = "similarity_match" }
 
 # SQL features a query of any class can show (#985). Each feature's pattern rates the query,
 # alongside its class's own patterns, only when the query shows the feature's fact (read from
@@ -105,3 +105,28 @@ why = "A LATERAL join (a derived table that reads the row before it) is served b
 pattern = "stored-routine"
 fact = "stored_routine"
 why = "A call to a stored procedure or function runs only where the routine lives, on an engine that runs stored routines, each at its own documented rating."
+
+# The upsert patterns rate the upsert statement itself (#984), each on its own engine at its
+# documented rating; a key read of the same table earns nothing from them (Decision 14).
+[[features]]
+pattern = "upsert-conflict"
+fact = "upsert"
+why = "An upsert (INSERT ... ON CONFLICT) is served natively by the engine whose upsert it is, at its documented rating."
+
+[[features]]
+pattern = "upsert-duplicate-key"
+fact = "upsert"
+why = "An upsert (INSERT ... ON DUPLICATE KEY UPDATE, REPLACE INTO) is served natively by the engine whose upsert it is, at its documented rating."
+
+# Each Aurora engine's full-text search rates the full-text query itself, in any class
+# (#984): a key-anchored MATCH ... AGAINST is credited like an unanchored one, and no other
+# query on the table earns anything from it (Decision 14).
+[[features]]
+pattern = "full-text-native"
+fact = "full_text"
+why = "A full-text match (tsvector with a GIN index) is served natively by Aurora PostgreSQL, at its documented rating."
+
+[[features]]
+pattern = "fulltext-search"
+fact = "full_text"
+why = "A full-text match (MATCH ... AGAINST over a FULLTEXT index) is served natively by Aurora MySQL, at its documented rating."

@@ -37,6 +37,11 @@ concerns = [
     "High-volume search workloads may still benefit from dedicated OpenSearch.",
     "Custom dictionaries and language-specific stemming require configuration.",
 ]
+# The same table bonus as Aurora MySQL's full text (fulltext-search), #984: both engines
+# run full-text search natively; the fit score keeps each engine's documented strength. The
+# routing credit is per query (a [[features]] entry in access_classes.toml), never a
+# table-level complexity credit (ADR-031 Decision 14).
+table_bonus = 10
 
 [engines.aurora_mysql]
 kind = "unscored"

@@ -43,7 +43,8 @@ concerns = [
     "InnoDB FULLTEXT indexes have higher write overhead than MyISAM.",
 ]
 table_bonus = 10
-complexity_feature = true
+# The routing credit is per query (a [[features]] entry in access_classes.toml), never a
+# table-level complexity credit (#984, ADR-031 Decision 14).
 
 [engines.neptune]
 kind = "future"

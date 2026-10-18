@@ -43,7 +43,6 @@ score = 80
 why = "UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key."
 concerns = ["Auto-increment gaps may occur with ON DUPLICATE KEY UPDATE."]
 table_bonus = 5
-complexity_feature = true
 
 [engines.neptune]
 kind = "future"

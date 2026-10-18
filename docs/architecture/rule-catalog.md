@@ -383,7 +383,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
-- Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine.
+- Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine. Table bonus: +10 pattern match.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -413,7 +413,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 
-- Aurora MySQL, fit 80 (aurora-mysql-02): Full-text search using MATCH ... AGAINST with FULLTEXT indexes. Aurora MySQL provides built-in boolean and natural language full-text modes suitable for moderate search workloads. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
+- Aurora MySQL, fit 80 (aurora-mysql-02): Full-text search using MATCH ... AGAINST with FULLTEXT indexes. Aurora MySQL provides built-in boolean and natural language full-text modes suitable for moderate search workloads. Table bonus: +10 pattern match.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -875,7 +875,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
-- Aurora MySQL, fit 80 (aurora-mysql-03): UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key. Table bonus: +5 pattern match. Counts toward the engine's feature complexity bonus.
+- Aurora MySQL, fit 80 (aurora-mysql-03): UPSERT using INSERT ... ON DUPLICATE KEY UPDATE. Aurora MySQL handles atomic insert-or-update with row-level locking on the unique/primary key. Table bonus: +5 pattern match.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
