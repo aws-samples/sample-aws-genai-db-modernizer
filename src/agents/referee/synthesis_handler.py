@@ -20,6 +20,11 @@ from datetime import UTC, datetime
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
 from src.agents.referee.flagged_unservable import flagged_unservable_records
+from src.agents.referee.migration_risks import (
+    add_migration_risks,
+    build_migration_risks,
+    last_risk_number,
+)
 from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
@@ -56,6 +61,7 @@ from src.agents.referee.synthesis_report import (
     schema_table_defs,
     source_database_label,
     source_table_count,
+    table_normaliser,
 )
 from src.agents.referee.table_assignments import retained_engine_for
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
@@ -214,16 +220,6 @@ def run_synthesis_deterministic(
         40 <= r["confidence_score"] < 70 and r.get("migration_complexity_avg") == "HIGH"
         for r in ranking
     )
-    deterministic_summary = build_summary(
-        data,
-        ranking,
-        table_mappings,
-        tco,
-        risk_assessment,
-        query_groups,
-        eliminated,
-        reality_check_settled=reality_check_settled_engines(reality_check_output),
-    )
     trade_offs = _collect_trade_offs(data)
 
     print("[synthesis] Building migration waves...")
@@ -269,6 +265,55 @@ def run_synthesis_deterministic(
         # rationale (totals, deciding features). ``None`` for every other assignment,
         # including one written before this field existed.
         aurora_engine_choice=assignment.get("aurora_engine_choice"),
+    )
+    # #339: the per-query decision traces from the move ledger (the close calls
+    # and the queries no engine fits), read before the risks that cite them.
+    query_traces = (
+        _query_traces(
+            store,
+            database_name,
+            job_id,
+            data.assignment,
+            assignment_version,
+            data.collector,
+            data.triage,
+        )
+        if data.assignment and assignment_version > 0
+        else None
+    )
+    # #992: each written table's source of truth and replicas, from the
+    # assignment's write groups (None for an assignment written before them).
+    sources = table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
+    # #950: the risks the migration's shape carries (tables kept in sync, close
+    # calls, pending ties, design trade-offs, ...), from the facts built above,
+    # before the summary states the risk count.
+    add_migration_risks(
+        risk_assessment,
+        build_migration_risks(
+            migration_waves=migration_waves,
+            query_assignments=assignment.get("query_assignments") or [],
+            source_queries=data.source_queries,
+            cache_overlay=cache_overlay,
+            query_traces=query_traces,
+            tied_queries=_tied_queries(data.assignment),
+            schema_designs={e: a.schema_design or {} for e, a in data.engines.items()},
+            trade_offs=trade_offs,
+            cache_only_engines=_cache_only_engines(assignment),
+            trigger_tables=_trigger_tables(data.collector),
+            normalise=table_normaliser(data),
+            table_sources=sources,
+            start_id=last_risk_number(risk_assessment.get("risks") or []),
+        ),
+    )
+    deterministic_summary = build_summary(
+        data,
+        ranking,
+        table_mappings,
+        tco,
+        risk_assessment,
+        query_groups,
+        eliminated,
+        reality_check_settled=reality_check_settled_engines(reality_check_output),
     )
     # #645: the post-migration checks come from the waves, built just above.
     risk_assessment["mitigation_strategies"] = [
@@ -424,6 +469,8 @@ def run_synthesis_deterministic(
         "considered_not_recommended": considered,
         "cache_overlay": cache_overlay,
         "migration_waves": migration_waves,
+        "query_traces": query_traces,
+        "table_sources": sources,
         "unresolved_names": unresolved_names,
         "known_tables": known_tables,
         "engine_tables": engine_tables,
@@ -762,6 +809,44 @@ def _engine_choices(data: SynthesisData) -> dict:
     }
 
 
+def _tied_queries(assignment: dict | None) -> list[dict]:
+    """The queries an exact tie no rule decided keeps on a placeholder engine (#503)."""
+    return [
+        {
+            "query_id": qa["query_id"],
+            "assigned_engine": qa["assigned_engine"],
+            "tied_engines": qa["tied_engines"],
+        }
+        for qa in (assignment or {}).get("query_assignments", [])
+        if qa.get("tied_engines")
+    ]
+
+
+def _cache_only_engines(assignment: dict) -> set[str]:
+    """Engines that front in-scope reads and own none (#950): the per-engine
+    risk loop never reads their designs."""
+    rows = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
+    owners = {qa.get("assigned_engine") for qa in rows}
+    return {
+        str(qa["cache_engine"])
+        for qa in rows
+        if qa.get("cache_engine") and qa["cache_engine"] not in owners
+    }
+
+
+def _trigger_tables(collector: dict | None) -> dict[str, str]:
+    """Each collected trigger's name (bare and schema-qualified) to its table id."""
+    out: dict[str, str] = {}
+    schema = (collector or {}).get("database_schema") or {}
+    for t in schema.get("triggers") or []:
+        if not isinstance(t, dict) or not t.get("trigger_name") or not t.get("table_id"):
+            continue
+        out.setdefault(str(t["trigger_name"]), str(t["table_id"]))
+        if t.get("schema_name"):
+            out.setdefault(f"{t['schema_name']}.{t['trigger_name']}", str(t["table_id"]))
+    return out
+
+
 def _write_synthesis_report(
     store: ArtifactStore,
     result: dict,
@@ -802,15 +887,7 @@ def _write_synthesis_report(
         "source_table_count": source_table_count(data),
         # #503: the actual queries behind AssignmentSummary.tie_unresolved_count,
         # so the engineering report can list them too, not just the gate.
-        "tied_queries": [
-            {
-                "query_id": qa["query_id"],
-                "assigned_engine": qa["assigned_engine"],
-                "tied_engines": qa["tied_engines"],
-            }
-            for qa in (data.assignment or {}).get("query_assignments", [])
-            if qa.get("tied_engines")
-        ],
+        "tied_queries": _tied_queries(data.assignment),
         # #1003: the open ties grouped per table, one customer choice each, with
         # the deciding facts; and --auto's decisions that still hold.
         **_engine_choices(data),
@@ -828,7 +905,13 @@ def _write_synthesis_report(
         # #992: each written table's source of truth and replicas, from the
         # assignment's write groups (None for an assignment written before them).
         "table_sources": (
-            table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
+            result["table_sources"]
+            if "table_sources" in result
+            else (
+                table_sources(data.assignment)
+                if "write_groups" in (data.assignment or {})
+                else None
+            )
         ),
         # #888: flagged queries no kept engine can take, for facts.unservable.
         "flagged_unservable": result.get("flagged_unservable") or [],
@@ -837,7 +920,9 @@ def _write_synthesis_report(
         output_data["reality_check"] = result["reality_check_summary"]
     # #339: the per-query decision traces from the move ledger, for the
     # engineering report's appendix (before the facts, which count them).
-    if data.assignment and assignment_version > 0:
+    if result.get("query_traces") is not None:
+        output_data["query_traces"] = result["query_traces"]
+    elif data.assignment and assignment_version > 0:
         output_data["query_traces"] = _query_traces(
             store,
             result["database_name"],

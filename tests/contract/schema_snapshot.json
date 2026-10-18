@@ -22466,11 +22466,63 @@
                 "items": {
                   "kind": "object",
                   "properties": {
+                    "details": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "rule": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
                     "severity": {
                       "required": true,
                       "schema": {
                         "kind": "scalar",
                         "type": "string"
+                      }
+                    },
+                    "wave": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "minimum": 1,
+                            "type": "integer"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
                       }
                     }
                   }
@@ -23128,8 +23180,8 @@
         }
       }
     },
-    "schema_hash": "103640cac82a756ca27417a49bbcba309f34f7d744ff16d3d644b7c69320d11e",
-    "version": "1.39"
+    "schema_hash": "b411013c8eccb4777580426f39e36daa6b52d33bdd8d8cad9711f481715ce701",
+    "version": "1.40"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

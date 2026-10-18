@@ -165,3 +165,13 @@ def test_mitigation_repeating_the_description_is_not_rendered_twice(report: dict
     register = md.split("## Risk register", 1)[1].split("\n## ", 1)[0]
     assert register.count("Mitigation:") == 1
     assert "Mitigation: Maintain a counter with UpdateItem." in register
+
+
+def test_engineering_report_names_a_resolved_risks_tables(report: dict) -> None:
+    """#950: a resolved risk keeps its affected tables, as an open one shows them."""
+    md = renderers.render_engineering_report_md(report)
+    section = md.split("## Resolved by the assignment (2)", 1)[1].split("\n## ", 1)[0]
+    entries = section.split("\n- ")[1:]
+    assert "  - Affects: `wordpress.wp_options`" in entries[0]
+    # A resolved risk with no table gets no empty line.
+    assert "Affects" not in entries[1]

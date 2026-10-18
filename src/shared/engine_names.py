@@ -51,6 +51,21 @@ def display_engine(engine: str) -> str:
     return engine.replace("_", " ").title() if engine else engine
 
 
+_ID_BY_NAME = {name.casefold(): eid for eid, name in ENGINE_DISPLAY_NAMES.items()}
+
+
+def canonical_engine_id(engine: str) -> str:
+    """``engine`` as a catalog engine id, from a variant a model or an older
+    artifact wrote: ``"aurora-mysql"``, ``"Aurora MySQL"`` and ``" AURORA_MYSQL "``
+    all give ``"aurora_mysql"``. An id the catalog does not know comes back as given
+    (stripped), never guessed (#950)."""
+    raw = str(engine or "").strip()
+    key = raw.casefold().replace("-", "_").replace(" ", "_")
+    if key in ENGINE_DISPLAY_NAMES:
+        return key
+    return _ID_BY_NAME.get(raw.casefold(), raw)
+
+
 # The collector's raw source-engine key (``source_database_engine``), lower-cased --
 # distinct from ENGINE_DISPLAY_NAMES, which only names synthesis's target engines.
 # A plain ``display_engine("mysql")`` fallback would title-case to "Mysql", so these

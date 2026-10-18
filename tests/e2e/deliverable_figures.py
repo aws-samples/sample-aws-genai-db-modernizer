@@ -662,7 +662,10 @@ def engineering_figures(md_text: str) -> Figures:
             for s in SEVERITIES:
                 f.add(f"risks:{s}", sev.get(s, 0), "Risk register entries")
             for eng_heading, _ in _md_sections(body, 3):
-                f.name(engine_id(md_plain(eng_heading)), "Risk register")
+                # "(general)" files the risks no single engine owns (#950: a merged
+                # wave's sync risk), not an engine.
+                if md_plain(eng_heading) != "(general)":
+                    f.name(engine_id(md_plain(eng_heading)), "Risk register")
         if heading.startswith("Migration trade-offs"):
             for x in re.findall(r"Consolidated [\d,]+ quer(?:y|ies) from (\w+) →", md_plain(body)):
                 if engine_id(x) not in targets:

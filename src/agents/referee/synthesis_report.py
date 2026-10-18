@@ -1695,6 +1695,10 @@ def _table_normaliser(data: SynthesisData) -> Callable[[Iterable[str]], set[str]
     return normalise
 
 
+# Public name for the normaliser (#950: the migration risks match tables the same way).
+table_normaliser = _table_normaliser
+
+
 def _access_pattern_query_ids(ap: dict) -> list[str]:
     """Source query ids of an access pattern.
 

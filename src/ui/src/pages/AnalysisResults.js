@@ -2467,6 +2467,13 @@ const AnalysisResultsPage = memo(() => {
                                         {t('analysis-results.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
                                       </Box>
                                     )}
+                                    {Array.isArray(risk.details) && risk.details.length > 0 && (
+                                      <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
+                                        {risk.details.map((detail, i) => (
+                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary">{detail}</Box></li>
+                                        ))}
+                                      </ul>
+                                    )}
                                   </SpaceBetween>
                                 </Box>
                               );
@@ -2504,6 +2511,11 @@ const AnalysisResultsPage = memo(() => {
                                 {risk.reason && (
                                   <Box fontSize="body-s" color="text-body-secondary">
                                     {t('analysis-results.risk-assessment.resolved-reason', { reason: risk.reason })}
+                                  </Box>
+                                )}
+                                {Array.isArray(risk.affected_tables) && risk.affected_tables.length > 0 && (
+                                  <Box fontSize="body-s" color="text-body-secondary">
+                                    {t('analysis-results.risk-assessment.affected-tables')}: {risk.affected_tables.join(', ')}
                                   </Box>
                                 )}
                               </SpaceBetween>

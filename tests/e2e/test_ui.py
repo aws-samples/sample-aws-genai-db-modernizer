@@ -584,6 +584,67 @@ def test_results_page_states_the_caveat_even_with_no_other_risk_content(
     assert ev == {"console": [], "pageerror": [], "failed": []}, ev
 
 
+def test_results_page_names_a_resolved_risks_tables(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#950: a resolved risk keeps naming its tables on the results page, as the
+    engineering report's "Affects" line does."""
+    checked = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        facts = report["facts"]
+        resolved = [
+            x
+            for x in (report.get("risk_assessment") or {}).get("resolved_risks") or []
+            if x.get("affected_tables")
+        ]
+        if not resolved or not facts.get("resolved_risks_by_severity"):
+            continue
+        n = facts["resolved_risk_count"]
+        severities = ", ".join(
+            f"{k} {s.lower()}" for s, k in facts["resolved_risks_by_severity"].items()
+        )
+        header = f"{n} {'risk' if n == 1 else 'risks'} resolved by the assignment: {severities}"
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        page.locator("#migration-roadmap-section").wait_for()
+        page.get_by_text(header, exact=True).click()
+        line = f"Affects: {', '.join(resolved[0]['affected_tables'])}"
+        assert page.get_by_text(line, exact=True).count() >= 1, (r.db, line)
+        checked += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    assert checked, "no sample resolved a risk with tables"
+
+
+def test_results_page_shows_the_same_risks_as_report_json(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#950 (ADR-032 Decision 5): the results page's severity tabs count what
+    facts.open_risks_by_severity counts, and each tab lists its risks by id, the
+    migration risks included."""
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        by_severity = report["facts"].get("open_risks_by_severity") or {}
+        risks = report["risk_assessment"]["risks"]
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        page.locator("#migration-roadmap-section").wait_for()
+        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            n = int(by_severity.get(severity) or 0)
+            tab = page.get_by_role("tab", name=f"{severity} ({n})", exact=True)
+            assert tab.count() == 1, (r.db, severity, n)
+            if not n:
+                continue
+            tab.click()
+            for risk in risks:
+                if risk.get("severity") == severity:
+                    shown = page.get_by_text(str(risk["risk_id"]), exact=True)
+                    assert shown.count() >= 1, (r.db, risk["risk_id"])
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
 def test_ui_shows_only_the_product_name(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

@@ -81,9 +81,27 @@ def _cached_queries(store: LocalArtifactStore, db: str, job_id: str, version: in
     ]
 
 
+# A long, model-shaped unsupported-pattern text (#950): the executive PDF must
+# state its count, never a clipped quote of it.
+UNSUPPORTED_CACHE_READ = (
+    "Lookup by post title text with a status list, a sort and a limit. Titles are free "
+    "text and the cache keys only on the option name, so the design cannot serve this read "
+    "from a key, and the status filter changes with every publish."
+)
+
+
 def write_elasticache_design(store: LocalArtifactStore, db: str, job_id: str, version: int) -> None:
     cached = _cached_queries(store, db, job_id, version)
     ids = [str(qa["query_id"]) for qa in cached] or ["q-cache"]
+    assignment = store.read_json(f"{db}/{job_id}/assignment/v{version}/assignment.json")
+    uncached = next(
+        (
+            str(qa["query_id"])
+            for qa in assignment["query_assignments"]
+            if qa.get("in_scope", True) and not qa.get("cache_engine")
+        ),
+        "q-uncached",
+    )
     design = ElastiCacheModelOutputContract.model_validate(
         {
             "job_id": job_id,
@@ -117,6 +135,14 @@ def write_elasticache_design(store: LocalArtifactStore, db: str, job_id: str, ve
                 {
                     "description": "Cache-aside with a short TTL",
                     "impact": "A changed option is stale for up to five minutes.",
+                }
+            ],
+            "unsupported_patterns": [
+                {
+                    "source_query_ids": [uncached],
+                    "reason": UNSUPPORTED_CACHE_READ,
+                    "workaround": "Serve the title lookup from Aurora MySQL with its own index "
+                    "and keep only the option reads in the cache.",
                 }
             ],
             "validation_passed": True,

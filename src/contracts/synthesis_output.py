@@ -386,6 +386,17 @@ Version History:
   fourth kind, ``held`` (``UnservableFacts.held_query_count``), with its own
   sentence in every deliverable. Backward compatible: ``held_query_count``
   defaults to 0.
+- 1.40 (2026-10-18, #950, ADR-032): ``Risk.rule`` and ``Risk.wave``: the
+  migration risks synthesis now raises from the facts it already computes
+  (``src.agents.referee.migration_risks``: one sync risk and one close-call risk
+  per wave, open ties, queries no engine fits, dropped cache reads, the cache
+  layer's unsupported patterns, logic moved to the application, hot partitions
+  and one review risk per engine for its design trade-offs) carry the rule that
+  raised them (a key of ``migration_risks.RULES``) and the migration wave whose
+  gate they must clear; ``Risk.details`` lists the design texts a risk covers in
+  full. ``mitigation_strategies`` gains one line per wave naming
+  those risks. Backward compatible: all three default to ``None``, the value every
+  risk written before 1.40 (and every analysis risk) reads back as.
 """
 
 from datetime import datetime
@@ -546,6 +557,24 @@ class Risk(BaseModel):
 
     severity: str = Field(..., description="LOW, MEDIUM, HIGH, CRITICAL")
     description: str = Field(...)
+    rule: str | None = Field(
+        None,
+        description=(
+            "The migration-risk rule that raised it (#950, a key of "
+            "src.agents.referee.migration_risks.RULES); None for an analysis risk"
+        ),
+    )
+    wave: int | None = Field(
+        None, ge=1, description="The migration wave whose gate it must clear (#950)"
+    )
+    details: list[str] | None = Field(
+        None,
+        description=(
+            "The design texts the risk covers, in full (#950: each trade-off, each "
+            "unsupported cache pattern with its workaround); the engineering report and "
+            "the results page list them, the executive report states only the count"
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -1536,7 +1565,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.39",
+        default="1.40",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

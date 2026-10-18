@@ -371,6 +371,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         ),
         _BUDGET,
     ),
+    "src/agents/referee/migration_risks.py": (
+        frozenset({"HOT_PARTITION_HIGH_PCT", "GATE_IDS_NAMED", "LISTED_ITEMS"}),
+        "a risk-severity threshold and two output budgets for the report's risk register "
+        "(#950), not a routing rule",
+    ),
     "src/agents/referee/synthesis_report.py": (
         frozenset({"_RELATIONAL_REASON_MAX_CHARS", "_SQL_EXCERPT_CHARS"}),
         _BUDGET,
@@ -608,8 +613,8 @@ def _inline_numeric_rule_literals(tree: ast.AST) -> set[int]:
             for child in (*node.body, *node.orelse):
                 visit(child, in_function)
             return
-        for child in ast.iter_child_nodes(node):
-            visit(child, in_function)
+        for sub in ast.iter_child_nodes(node):
+            visit(sub, in_function)
 
     visit(tree)
     return found

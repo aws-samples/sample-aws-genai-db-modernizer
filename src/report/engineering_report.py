@@ -619,6 +619,16 @@ def _engine_role_notes_md(engines: list[dict[str, Any]], migrated: int) -> list[
     return notes
 
 
+def _affects_line(risk: dict[str, Any]) -> str | None:
+    """A risk's "Affects" sub-bullet: its first eight tables, then how many more."""
+    aff = [a for a in risk.get("affected_tables") or [] if a]
+    if not aff:
+        return None
+    shown = ", ".join(f"`{escaping.md_code(a)}`" for a in aff[:8])
+    more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
+    return f"  - Affects: {shown}{more}"
+
+
 def _risk_register_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Risk register" and "Resolved by the assignment" sections."""
     facts = report_facts(report)
@@ -648,11 +658,14 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                 )
                 if r.get("mitigation") and not _repeats(r.get("mitigation"), body):
                     out.append(f"  - Mitigation: {escaping.md_text(r.get('mitigation'))}")
-                aff = list(r.get("affected_tables") or [])
-                if aff:
-                    shown = ", ".join(f"`{escaping.md_code(a)}`" for a in aff[:8])
-                    more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
-                    out.append(f"  - Affects: {shown}{more}")
+                affects = _affects_line(r)
+                if affects:
+                    out.append(affects)
+                # #950: the design texts the risk covers, in full (the executive
+                # report states only their count).
+                for detail in r.get("details") or []:
+                    if isinstance(detail, str) and detail.strip():
+                        out.append(f"  - {escaping.md_text(detail)}")
             out.append("")
 
     resolved = resolved_risks(report)
@@ -669,6 +682,10 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
             )
             if r.get("reason"):
                 out.append(f"  - Resolved because {escaping.md_text(r['reason'])}.")
+            # #950: a resolved risk keeps naming its tables, as an open one does.
+            affects = _affects_line(r)
+            if affects:
+                out.append(affects)
         out.append("")
     return out
 
