@@ -1,0 +1,7 @@
+{
+  "min_aggregate_acceptable_accuracy": 1.0,
+  "min_case_acceptable_accuracy": {
+    "kv-lookup-clean": 1.0,
+    "wordpress-trimmed": 1.0
+  }
+}

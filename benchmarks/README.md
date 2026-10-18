@@ -44,6 +44,28 @@ of cases (tags are declared per case in `index.json`).
 uv run python -m benchmarks.runner.run --stage assignment --tag kv
 ```
 
+## The gate
+
+The benchmark is the routing-quality check: the e2e-llm rubric judge grades
+the deliverables, not the engine choice (#952). `--gate` checks the stage's
+`gate.json` and exits 1 when a floor is broken:
+
+```bash
+uv run python -m benchmarks.runner.run --stage assignment --gate
+```
+
+`benchmarks/cases/assignment/gate.json` holds the floors: the aggregate
+acceptable-accuracy and one per reviewed case. A gated case that is missing,
+unreviewed or errored fails the gate too, so a case can never pass by
+dropping out. A case with no floor is reported, not gated. Both keys are required, and the case floors cannot be empty. `--gate` checks
+every gated case, so it does not combine with `--tag`.
+
+`tests/unit/benchmarks/test_gate.py` runs the gate on the committed cases in
+the unit suite, and adds a deliberate routing regression (an engine
+preference on top of the shared scorer) to show it fails. Every reviewed
+case must have a floor; raise a floor only together with the change that
+earns it.
+
 ## Reading the output
 
 ```text

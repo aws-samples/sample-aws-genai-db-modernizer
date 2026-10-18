@@ -9,6 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from benchmarks.runner.gate import GateError, check_gate, load_gate
 from benchmarks.runner.loader import load_cases
 from benchmarks.runner.models import Outcome
 from benchmarks.runner.report import CaseRun, build_report
@@ -56,10 +57,27 @@ def main() -> None:
         help="Root of the cases/ directory",
     )
     parser.add_argument("--json", action="store_true", help="Print report as JSON")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="Check the stage's gate.json floors; exit 1 when one is broken",
+    )
     args = parser.parse_args()
 
     stage_dir = Path(args.cases_dir) / args.stage
+    gate = None
+    if args.gate and args.tags:
+        parser.error("--gate checks every gated case; run it without --tag")
+    if args.gate:
+        try:
+            gate = load_gate(stage_dir)
+        except GateError as exc:
+            print(f"gate: {exc}", file=sys.stderr)
+            sys.exit(2)
     report = run_benchmark(stage_dir, tags=args.tags)
+    failures = check_gate(report, gate) if gate is not None else []
+    if gate is not None:
+        report["gate"] = {"pass": not failures, "failures": failures}
 
     if args.json:
         # stdout is reserved for machine-readable JSON; banner goes to stderr.
@@ -78,6 +96,15 @@ def main() -> None:
         for c in report["per_case"]:
             acc = "-" if c["acceptable_accuracy"] is None else f"{c['acceptable_accuracy']:.1%}"
             print(f"  {c['case_id']:30} {c['outcome']:10} {acc}")
+        if gate is not None:
+            if failures:
+                print("\nGATE FAILED:")
+                for line in failures:
+                    print(f"  - {line}")
+            else:
+                print("\ngate: pass")
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
