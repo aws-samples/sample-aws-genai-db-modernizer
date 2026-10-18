@@ -19,7 +19,7 @@ catalog_id = "documentdb-04"
 score = 85
 why = "Parent-child FK relationships with bounded child cardinality suitable for embedding as nested arrays. Eliminates JOINs entirely."
 concerns = [
-    "Embedded arrays must stay bounded — unbounded growth hits 16MB limit",
+    "Embedded arrays must stay bounded: unbounded growth hits 16MB limit",
     "Updates to embedded items rewrite the entire parent document",
 ]
 table_bonus = 12

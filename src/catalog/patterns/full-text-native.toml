@@ -32,7 +32,7 @@ supported = true
 catalog = "aurora_pg"
 catalog_id = "aurora-pg-05"
 score = 75
-why = "Native full-text search using to_tsvector, ts_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine."
+why = "Native full-text search using to_tsvector, ts_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes, suitable for moderate search workloads without a separate search engine."
 concerns = [
     "High-volume search workloads may still benefit from dedicated OpenSearch.",
     "Custom dictionaries and language-specific stemming require configuration.",

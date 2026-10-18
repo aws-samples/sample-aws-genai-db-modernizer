@@ -28,7 +28,7 @@ catalog = "opensearch"
 catalog_id = "os-04"
 score = 85
 profile = "search"
-why = "Fuzzy/similarity search via pg_trgm or similarity(). OpenSearch fuzzy queries use Levenshtein distance natively — no extension required."
+why = "Fuzzy/similarity search via pg_trgm or similarity(). OpenSearch fuzzy queries use Levenshtein distance natively, with no extension required."
 concerns = [
     "Fuzzy search performance depends on fuzziness parameter tuning.",
     "Trigram-based similarity may require custom tokenizer in OpenSearch.",

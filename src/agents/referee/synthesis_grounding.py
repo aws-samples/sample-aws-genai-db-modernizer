@@ -34,6 +34,7 @@ from src.agents.referee.summary_input_budget import TOTAL_FIELD_NAMES
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.engine_names import display_engine
+from src.shared.prose_style import find_style_hits
 from src.shared.risk_severity import count_by_severity
 
 # How each engine is written in prose, for *recognising* a mention -- deliberately
@@ -1430,3 +1431,28 @@ def build_fallback_summary(effective_architecture: dict | None) -> str | None:
             + " not need a separate deployment."
         )
     return " ".join(parts)
+
+
+def check_summary_style(summary: str, identifiers: Iterable[str] = ()) -> list[dict]:
+    """Plain-prose style findings for a generated summary (#1034).
+
+    Run on the summary after ``replace_dashes``: every remaining item of the
+    style list (``src.shared.prose_style``: filler words, hedges, "not just ...
+    but" and similar constructions, all-caps severity labels) is one
+    high-confidence finding, the same as an internal field name. The message
+    names the terms, for the audit trail only (``identifiers``: the collected
+    table and column names, which are data, not words); ``fallback_withheld_reason`` maps
+    the ``plain-prose style list`` marker to a plain customer-facing clause.
+    """
+    hits = find_style_hits(summary or "", identifiers)
+    if not hits:
+        return []
+    terms = sorted({f'"{h.term}"' for h in hits})
+    return [
+        {
+            "high_confidence": True,
+            "message": (
+                "[high confidence] plain-prose style list: the summary uses " + ", ".join(terms)
+            ),
+        }
+    ]

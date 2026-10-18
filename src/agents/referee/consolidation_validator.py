@@ -803,7 +803,7 @@ def sanity_sweep(
                 # folded into the generic serviceability reason above.
                 blocked_notes.append(
                     f"{label} (no destination eligible under the reality check's own "
-                    "placement rule -- the write/specialist-absorb gate or the "
+                    "placement rule: the write/specialist-absorb gate or the "
                     "join-onto-DynamoDB block)"
                 )
                 blocked_units.append(

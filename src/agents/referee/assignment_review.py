@@ -126,7 +126,7 @@ def render_assignment_review(assignment: Assignment) -> str:
     )
     lines.append(
         "- You only need to send back the rows you changed. Keep the two marker "
-        "comments and the header row, then include just the edited rows — any query "
+        "comments and the header row, then include just the edited rows. Any query "
         "you leave out is kept exactly as it is now. (You can also send the whole "
         "table back if you prefer.)"
     )
@@ -361,7 +361,7 @@ def render_assignment_summary(assignment: Assignment) -> str:
     in_scope_total = sum(1 for qa in assignment.query_assignments if qa.in_scope)
 
     lines: list[str] = []
-    lines.append("# Query-to-engine routing \u2014 recommendation")
+    lines.append("# Query-to-engine routing: recommendation")
     lines.append("")
     lines.append(
         f"Assignment version {assignment.version}: "

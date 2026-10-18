@@ -240,3 +240,13 @@ Write `description` and `impact` as plain, declarative facts, not hedged ("typic
 - The cost / hot-partition check ran successfully on the final `hot_partition_analysis`: the `compute_performances_and_costs` tool returned without error (Bedrock mode), or `scripts/run_schema_design.py --engine dynamodb --check-costs <draft>` returned `"passed": true` (external / Claude Code mode), and every entry's `partition_limit`, `utilization_pct` and `at_risk` are the ones it returned. Both run the same computation.
 
 `validation_failures` — one string per failed check above when `validation_passed=false`.
+
+## Customer-facing text
+
+Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+
+- No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
+- None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
+- No hedges: "not the only one", "typically", "generally", "might", "could potentially" ("generally available" is fine). State the fact.
+- None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
+- Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.

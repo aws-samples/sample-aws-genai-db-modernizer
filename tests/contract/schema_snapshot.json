@@ -20201,6 +20201,16 @@
           ]
         }
       },
+      "prose_style_rejections": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "scalar",
+            "type": "string"
+          },
+          "kind": "array"
+        }
+      },
       "query_groups": {
         "required": true,
         "schema": {
@@ -22798,8 +22808,8 @@
         }
       }
     },
-    "schema_hash": "2fdda2ce0bcbb3276d0f4309927f2ec2efd5cb21b0d2b2dc31922d9cd065ddbb",
-    "version": "1.35"
+    "schema_hash": "eb70bacd7b8f0466b475fce01eefcf3c7ce6632a8cee1944b9038cb237b8e82f",
+    "version": "1.37"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

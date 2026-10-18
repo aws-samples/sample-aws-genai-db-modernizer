@@ -123,7 +123,8 @@ def test_generic_lines_are_scoped_to_the_risks() -> None:
         "with production-scale data before cutover."
     ) in strategies
     assert (
-        "Use blue-green deployment with rollback for the tables behind the HIGH risks: "
+        "Use blue-green deployment with rollback for the tables behind the critical or high "
+        "risks: "
         "wordpress.wp_posts, wordpress.wp_woocommerce_order_items."
     ) in strategies
     assert not any("closely" in s or "2 weeks" in s for s in strategies)

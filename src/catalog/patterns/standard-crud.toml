@@ -33,7 +33,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-10"
 score = 60
-why = "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache."
+why = "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache."
 
 # Detection signals: Standard single-table CRUD with active query load
 [engines.aurora_mysql]
@@ -42,7 +42,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-10"
 score = 60
-why = "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache."
+why = "Standard single-table CRUD operations (SELECT/INSERT/UPDATE/DELETE) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache."
 
 [engines.neptune]
 kind = "future"

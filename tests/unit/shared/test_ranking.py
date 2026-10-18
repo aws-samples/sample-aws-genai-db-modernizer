@@ -45,7 +45,7 @@ class TestEvidenceNote:
 
     def test_signal_only_is_always_labelled(self):
         e = {"routed_confidence": 60, "routed_confidence_evidence": "signal_only"}
-        assert confidence_text(e) == "60% (signal only — no table-level evidence)"
+        assert confidence_text(e) == "60% (signal only, no table-level evidence)"
         assert confidence_text(e, short=True) == "60% (signal only)"
         assert is_signal_only(e)
 

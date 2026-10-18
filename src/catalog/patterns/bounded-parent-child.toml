@@ -13,7 +13,7 @@ supported = true
 catalog = "dynamodb"
 catalog_id = "dynamodb-07a"
 score = 75
-why = "Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index (then 10 GB) — the bound is domain-driven (e.g., order → items, user → addresses) (Amazon DynamoDB Developer Guide, Local secondary indexes). Large item collections may need creative sort key design for efficient range queries."
+why = "Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index (then 10 GB). The bound is domain-driven (e.g., order → items, user → addresses) (Amazon DynamoDB Developer Guide, Local secondary indexes). Large item collections may need creative sort key design for efficient range queries."
 concerns = [
     "Requires access pattern analysis to determine embedding vs. item collection",
     "Large item collections need sort key design for efficient range queries",

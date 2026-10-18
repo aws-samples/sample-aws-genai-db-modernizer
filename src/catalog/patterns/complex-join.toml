@@ -33,7 +33,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-01"
 score = 90
-why = "Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale."
+why = "Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale."
 concerns = [
     "Very large join result sets may benefit from materialized views or denormalization.",
 ]
@@ -45,7 +45,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-01"
 score = 90
-why = "Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale."
+why = "Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale."
 concerns = [
     "Very large join result sets may benefit from materialized views or denormalization.",
 ]

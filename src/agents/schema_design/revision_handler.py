@@ -270,7 +270,7 @@ def generate_changelog(
                 entity_id=pid,
                 description=(
                     f"Pattern '{pid}' was present in the previous {engine} schema "
-                    "but is absent from the current version — it was dropped or reassigned."
+                    "but is absent from the current version: it was dropped or reassigned."
                 ),
                 from_engine=engine,
                 to_engine=None,
@@ -299,7 +299,7 @@ def generate_changelog(
                     entity_type="access_pattern",
                     entity_id=pid,
                     description=(
-                        f"Pattern '{pid}' was updated in the {engine} schema — "
+                        f"Pattern '{pid}' was updated in the {engine} schema: "
                         "one or more fields changed between versions."
                     ),
                     from_engine=engine,

@@ -949,7 +949,9 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             content.append(_labelled("Gate before the next wave", gate, st["small"]))
         if wf is not None:
             content.append(
-                _labelled("Open CRITICAL/HIGH risks", wf.get("critical_high_risks", 0), st["small"])
+                _labelled(
+                    "Open critical or high risks", wf.get("critical_high_risks", 0), st["small"]
+                )
             )
         flow += [_Panel(content, accent), _gap(10)]
     return flow[:-1] if waves else flow
@@ -1364,10 +1366,10 @@ def render_executive_report_pdf(report: dict[str, Any], identifiers: Iterable[st
         rightMargin=MARGIN_X,
         topMargin=PAGE_H - FRAME_TOP,
         bottomMargin=FRAME_BOTTOM,
-        title=f"{PRODUCT_NAME} — {REPORT_NAME} — {db}",
+        title=f"{PRODUCT_NAME}: {REPORT_NAME}, {db}",
         author=PRODUCT_NAME,
         creator=PRODUCT_NAME,
-        subject=f"{REPORT_NAME} — job {report.get('job_id') or 'unknown'}",
+        subject=f"{REPORT_NAME}, job {report.get('job_id') or 'unknown'}",
         invariant=1,
         pageCompression=1,
     )

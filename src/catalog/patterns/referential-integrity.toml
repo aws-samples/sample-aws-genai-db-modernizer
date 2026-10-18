@@ -32,7 +32,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-04"
 score = 85
-why = "Tables with high foreign key density (>2 FKs) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement."
+why = "Tables with high foreign key density (>2 FKs) and CASCADE operations. Relational engines enforce referential integrity at the database level; migrating to NoSQL would require application-level enforcement."
 concerns = [
     "High FK density increases migration complexity if partial migration is planned.",
 ]
@@ -44,7 +44,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-04"
 score = 85
-why = "Tables with high foreign key density (>2 FKs) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement."
+why = "Tables with high foreign key density (>2 FKs) and CASCADE operations. Relational engines enforce referential integrity at the database level; migrating to NoSQL would require application-level enforcement."
 concerns = [
     "High FK density increases migration complexity if partial migration is planned.",
 ]

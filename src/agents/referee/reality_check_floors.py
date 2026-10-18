@@ -70,7 +70,7 @@ def _mandatory_cost_share_reason(engine: str, qas: list[dict], total_queries: in
     if cost >= MANDATORY_ENGINE_COST_FLOOR and share < MANDATORY_ENGINE_MAX_QUERY_SHARE:
         return (
             f"{display_engine(engine)} serves {len(qas)} of {total_queries} queries "
-            f"({share:.1%}) at a fixed ${cost:.0f}/mo — disproportionate to the workload "
+            f"({share:.1%}) at a fixed ${cost:.0f}/mo, too much for the workload "
             "share it serves"
         )
     return None
@@ -618,8 +618,8 @@ def _apply_justification_floors(
                         )
                         rqa["assignment_reason"] = (
                             f"reality check: consolidated from {display_engine(engine)} → "
-                            f"{display_engine(target_engine)} (justification floor "
-                            f"— {this_reason}; {fit_reason})"
+                            f"{display_engine(target_engine)} (justification floor: "
+                            f"{this_reason}; {fit_reason})"
                         )
                         rqa.pop("signal_override", None)
 
@@ -633,7 +633,7 @@ def _apply_justification_floors(
         )
         floor_reason = "; ".join(moved_reasons)
         floor_entry_reason = (
-            f"{display_engine(engine)} does not meet its justification floor — {floor_reason}"
+            f"{display_engine(engine)} does not meet its justification floor: {floor_reason}"
         )
         floor_changes = engine_changes(ledger.moves[first_move:])
         for target_engine in floor_placement:

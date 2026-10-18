@@ -2344,9 +2344,8 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
     if severe:
         tables = sorted({t for r in severe for t in (r.get("affected_tables") or []) if t})
         strategies.append(
-            "Use blue-green deployment with rollback for the tables behind the HIGH risks: "
-            + ", ".join(tables)
-            + "."
+            "Use blue-green deployment with rollback for the tables behind the critical or "
+            "high risks: " + ", ".join(tables) + "."
             if tables
             else "Use blue-green deployment with rollback for the migrations behind "
             + _join_and([r["risk_id"] for r in severe])

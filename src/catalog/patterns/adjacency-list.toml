@@ -15,7 +15,7 @@ catalog_id = "dynamodb-07d"
 score = 60
 why = "Hierarchical or graph-like relationship (self-referential FK or multi-level hierarchy traversal). Maps to DynamoDB adjacency list pattern with PK/SK design."
 concerns = [
-    "Complex key design required — needs careful PK/SK modeling",
+    "Complex key design required: needs careful PK/SK modeling",
     "Deep hierarchies may require multiple queries or GSI",
 ]
 # A denormalizable join: a moderate fit that needs design work (more migration effort).

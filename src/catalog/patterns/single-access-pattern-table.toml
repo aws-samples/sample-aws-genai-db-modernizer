@@ -34,7 +34,7 @@ catalog = "aurora_common"
 catalog_id = "aurora-anti-06"
 severity = 0.5
 why = "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora)."
-engine_hint = "This is a key-value workload wearing a relational costume — no query optimizer benefit."
+engine_hint = "This is a key-value workload wearing a relational costume, with no query optimizer benefit."
 guidance = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
 guidance_names_engine = true
 
@@ -45,7 +45,7 @@ catalog = "aurora_common"
 catalog_id = "aurora-anti-06"
 severity = 0.5
 why = "Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora)."
-engine_hint = "This is a key-value workload wearing a relational costume — no query optimizer benefit."
+engine_hint = "This is a key-value workload wearing a relational costume, with no query optimizer benefit."
 guidance = "Consider DynamoDB for simple key-value access or ElastiCache for sub-millisecond lookups. Aurora adds connection overhead and query parsing cost for access patterns that don't need them."
 guidance_names_engine = true
 

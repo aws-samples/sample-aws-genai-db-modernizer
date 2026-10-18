@@ -35,7 +35,7 @@ catalog = "aurora_common"
 catalog_id = "aurora-anti-01"
 severity = 0.8
 why = "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora)."
-engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern."
 guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
 guidance_names_engine = true
 
@@ -47,7 +47,7 @@ catalog = "aurora_common"
 catalog_id = "aurora-anti-01"
 severity = 0.8
 why = "Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora)."
-engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale — Aurora adds unnecessary overhead for this access pattern."
+engine_hint = "DynamoDB provides single-digit millisecond latency for key-value lookups at any scale. Aurora adds unnecessary overhead for this access pattern."
 guidance = "Migrate high-frequency PK lookups to DynamoDB for predictable single-digit-millisecond latency at scale (microseconds need DynamoDB Accelerator)."
 guidance_names_engine = true
 

@@ -703,7 +703,7 @@ const JobMonitoringSummaryPage = memo(() => {
                   status={isJobComplete ? 'success' : 'in-progress'}
                   statusLine={
                     <span style={{ fontSize: '13px', color: 'var(--dbm-text-secondary)' }}>
-                      {jobData.source_database_type} — {jobData.database_name} — {formatTimeAgo(jobData.created_at)}
+                      {jobData.source_database_type} · {jobData.database_name} · {formatTimeAgo(jobData.created_at)}
                     </span>
                   }
                 />

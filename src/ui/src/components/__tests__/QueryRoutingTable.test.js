@@ -173,7 +173,7 @@ test('one row per query, each with a keyboard-reachable control that opens its t
   expect(bodyRows().map(r => r.dataset.queryId)).toEqual([row(1).queryId, moved.queryId]);
   const open = container.querySelector(`tr[data-query-id="${moved.queryId}"] [role="button"]`);
   expect(open.getAttribute('tabindex')).toBe('0');
-  expect(open.getAttribute('aria-label')).toBe(`Open the journey and decision trace for query ${moved.queryId}`);
+  expect(open.getAttribute('aria-label')).toBe(`Open the history and decision trace for query ${moved.queryId}`);
   act(() => open.click());
   expect(opened).toEqual([moved.queryId]);
 });

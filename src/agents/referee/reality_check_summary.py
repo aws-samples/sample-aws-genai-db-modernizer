@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from src.shared.engine_names import display_engine
+from src.shared.prose_style import collector_identifiers, find_style_hits, replace_dashes
 
 # Engine names as a summary writes them, longest first so "Aurora MySQL" wins over
 # "Aurora". The bare "Aurora" means any Aurora engine.
@@ -395,7 +396,21 @@ def finalize_executive_summary(result: dict, eliminated: set[str] | None = None)
     before = result["before_distribution"]
     after = result["after_distribution"]
     consolidations = result["consolidations"]
-    findings = check_summary_against_records(llm_summary, before, after, consolidations, eliminated)
+    # #1034: dashes are replaced mechanically; any other item of the plain-prose
+    # style list is a finding like a contradicted record, and the terms stay here
+    # in the audit trail only.
+    identifiers = collector_identifiers(result.get("collector_output"))
+    summary_text = replace_dashes(llm_summary, identifiers)
+    findings = check_summary_against_records(
+        summary_text, before, after, consolidations, eliminated
+    )
+    hits = sorted({f'"{h.term}"' for h in find_style_hits(summary_text, identifiers)})
+    if hits:
+        findings = [
+            *findings,
+            "The summary used wording outside the report's plain-language style: "
+            + ", ".join(hits),
+        ]
     result["executive_summary_validation_warnings"] = findings
     if findings:
         for finding in findings:
@@ -404,5 +419,5 @@ def finalize_executive_summary(result: dict, eliminated: set[str] | None = None)
         result["executive_summary"] = build_final_summary(before, after, consolidations, eliminated)
         result["executive_summary_source"] = "deterministic_fallback"
     else:
-        result["executive_summary"] = llm_summary
+        result["executive_summary"] = summary_text
         result["executive_summary_source"] = "llm"

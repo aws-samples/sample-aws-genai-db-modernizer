@@ -17,7 +17,7 @@ catalog_id = "dynamodb-04"
 score = 85
 why = "Time-ordered data with timestamp-based range reads. Maps to DynamoDB with entity ID as partition key and timestamp as sort key. TTL for automatic expiry (Amazon DynamoDB Developer Guide, Time to Live)."
 concerns = [
-    "Hot partitions if all writes go to 'latest' partition — consider time-bucketing",
+    "Hot partitions if all writes go to 'latest' partition; consider time-bucketing",
     "Analytics queries (GROUP BY time) better served by aggregation or export to S3",
 ]
 table_bonus = 10

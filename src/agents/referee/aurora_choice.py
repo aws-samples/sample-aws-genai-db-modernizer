@@ -281,7 +281,7 @@ def choose_heterogeneous_engine(
             deciding_features = []
             winner = "aurora_mysql" if mysql_total > pg_total else "aurora_postgresql"
             reason = (
-                "close on total adjusted score with no deciding feature -- higher total "
+                "close on total adjusted score with no deciding feature, so the higher total "
                 f"wins ({mysql_total:.1f} vs {pg_total:.1f})"
             )
     else:

@@ -455,7 +455,9 @@ class TestDynamoDBOverlappingDesigns:
         assert "modelled independently by design groups" in warning
         assert "WpPosts (group 0; PK post_id, SK record_key)" in warning
         assert "wp_posts (group 1; PK post_name)" in warning
-        assert "choose one write path or keep copies in sync — review before migration" in warning
+        assert (
+            "choose one write path or keep copies in sync, and review before migration" in warning
+        )
         [note] = [t for t in result["trade_offs"] if t["description"] == warning]
         assert sorted(note["target_tables"]) == ["WpPosts", "wp_posts"]
         assert note["source_tables"] == ["wp_posts"]

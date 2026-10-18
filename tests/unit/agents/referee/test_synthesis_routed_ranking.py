@@ -143,7 +143,7 @@ class TestRationale:
         # "signal only", not "1 rated table" (see ``TestNoTableEvidence`` below
         # for the ``tables_accessed=["unknown"]`` case this phrase also covers).
         assert dbs["opensearch"]["rationale"].startswith(
-            "0% mean fit across 1 query (signal only — no table-level evidence), "
+            "0% mean fit across 1 query (signal only, no table-level evidence), "
             "led by full-text search (1 of 1)."
         )
         # #490: DynamoDB's old 100% included a flat signal-match bonus
@@ -186,7 +186,7 @@ class TestNoTableEvidence:
         # #490: no basic-CRUD baseline/signal bonus any more -- OpenSearch
         # has no matched pattern for s1 here either, so its fit is 0.
         assert _engine_rationale(data, opensearch).startswith(
-            "0% mean fit across 1 query (signal only — no table-level evidence), led by full-text search"
+            "0% mean fit across 1 query (signal only, no table-level evidence), led by full-text search"
         )
 
     def test_partial_evidence_is_counted(self):

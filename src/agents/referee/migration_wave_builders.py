@@ -206,7 +206,7 @@ def _aurora_wave(
             # tie, or a close call with no deciding feature). "Selected" is accurate
             # whichever of those the trace in ``decision`` (if present) turns out to be.
             f"and the assignment resolver selected {target_name} to serve it.{decision} "
-            "This is a cross-engine move -- SQL dialect and schema conversion, not a 1:1 "
+            "This is a cross-engine move: SQL dialect and schema conversion, not a 1:1 "
             "carry-over. "
             f"{n} {_query_noun(n)} ({share:.1f}%) remain on {target_name} once later waves "
             f"have moved their share; later waves move subsets of these {len(tables)} "

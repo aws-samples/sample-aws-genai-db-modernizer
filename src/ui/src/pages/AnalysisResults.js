@@ -1096,13 +1096,13 @@ const AnalysisResultsPage = memo(() => {
       if (result['query-journey']?.success) {
         setQueryJourneyData(result['query-journey']);
       } else if (result['query-journey']?.error) {
-        setQueryJourneyData({ error: result['query-journey'].error.message || 'Failed to load query journey' });
+        setQueryJourneyData({ error: result['query-journey'].error.message || 'Failed to load query history' });
       } else {
         setQueryJourneyData({ error: 'No data available' });
       }
     } catch (error) {
       console.error('Error fetching query journey:', error);
-      setQueryJourneyData({ error: error.message || 'Failed to load query journey' });
+      setQueryJourneyData({ error: error.message || 'Failed to load query history' });
     } finally {
       setQueryJourneyLoading(false);
     }
@@ -2617,7 +2617,7 @@ const AnalysisResultsPage = memo(() => {
                                                   onMouseLeave={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
                                                   onFocus={e => { e.target.style.backgroundColor = '#0972d3'; e.target.style.color = '#fff'; }}
                                                   onBlur={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
-                                                  title={`View query journey for ${qid}`}
+                                                  title={`View query history for ${qid}`}
                                                 >
                                                   {qid}
                                                 </span>

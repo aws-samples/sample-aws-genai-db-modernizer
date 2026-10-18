@@ -120,9 +120,9 @@ class TestSynthesisDeliverables:
         items = captured["items"]
         assert [it[1] for it in items] == ["MARKDOWN", "JSON", "PDF"]
         assert [it[2] for it in items] == [
-            "Engineering Report — discourse",
-            "Assessment Data (raw) — discourse",
-            "Executive Report — discourse (v1)",
+            "Engineering Report: discourse",
+            "Assessment Data (raw): discourse",
+            "Executive Report: discourse (v1)",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
 

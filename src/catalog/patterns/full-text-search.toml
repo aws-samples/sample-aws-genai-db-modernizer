@@ -29,7 +29,7 @@ catalog = "opensearch"
 catalog_id = "os-01"
 score = 95
 profile = "search"
-why = "Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload — tokenization, stemming, and relevance ranking are native."
+why = "Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload: tokenization, stemming, and relevance ranking are native."
 concerns = [
     "Ranking differences: OpenSearch uses BM25; PostgreSQL uses ts_rank. Results may differ.",
     "Custom analyzers may be needed to match existing text normalization.",

@@ -37,7 +37,7 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
         "description": (
             "Maintain a pre-computed, denormalized copy of data in a secondary "
             "database optimized for specific query patterns. The secondary store "
-            "is a read-only projection — all writes go through the primary."
+            "is a read-only projection: all writes go through the primary."
         ),
         "when": "A secondary engine serves read-only queries on data owned by the primary",
         "example": (
@@ -286,8 +286,8 @@ def _build_recommendations(
             # workload, so removing it now is not an infrastructure saving to
             # claim, even though a real cost estimate exists for it.
             outcome = (
-                f"No saving is claimed: {source_name} was never justified by the workload "
-                "-- none of its first-assignment queries clear the real-search-depth "
+                f"No saving is claimed: {source_name} was never justified by the workload. "
+                "None of its first-assignment queries clear the real-search-depth "
                 "plus traffic-or-result-size floor a standing deployment needs, so no "
                 "infrastructure cost was ever justified for it."
             )
@@ -331,9 +331,9 @@ def _build_recommendations(
                     outcome = (
                         f"Removes ${real_cost:,.2f}/mo by retiring {source_name} ({moves}), "
                         f"{source_name}'s own analysed infrastructure estimate before removal, "
-                        "plus a qualitative reduction in operational overhead -- one fewer "
-                        "engine's worth of team expertise, monitoring, backups and failover to "
-                        f"maintain -- by avoiding a dedicated {source_name} cluster."
+                        "plus a qualitative reduction in operational overhead from avoiding a "
+                        f"dedicated {source_name} cluster: one fewer engine's worth of team "
+                        "expertise, monitoring, backups and failover to maintain."
                     )
                 else:
                     outcome = (
@@ -351,9 +351,9 @@ def _build_recommendations(
                 outcome = (
                     f"Removes ${real_cost:,.2f}/mo of infrastructure cost ({source_name}'s own "
                     "analysed estimate before removal), plus a qualitative reduction in "
-                    "operational overhead -- one fewer engine's worth of team expertise, "
-                    f"monitoring, backups and failover to maintain -- by avoiding a dedicated "
-                    f"{source_name} cluster."
+                    f"operational overhead from avoiding a dedicated {source_name} cluster: one "
+                    "fewer engine's worth of team expertise, monitoring, backups and failover "
+                    "to maintain."
                 )
             else:
                 outcome = (
@@ -381,10 +381,10 @@ def _build_recommendations(
         recs.append(
             f"{display_engine(engine_a)} and {display_engine(engine_b)} are tied on "
             "operational cost per unique query, and no rule yet exists to decide between "
-            "two such engines -- both are kept rather than one being removed arbitrarily."
+            "two such engines, so both are kept rather than one being removed arbitrarily."
         )
 
     if not recs:
-        recs.append("No consolidation opportunities found — current assignment is optimal.")
+        recs.append("No consolidation opportunities found. The current assignment stays as it is.")
 
     return recs

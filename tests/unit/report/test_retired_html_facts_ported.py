@@ -36,7 +36,7 @@ RULE_NOTE = (
     "resolved do not count."
 )
 NO_MODEL_DECIDES = (
-    "Engine and query assignments are produced deterministically — no language model "
+    "Engine and query assignments are produced deterministically. No language model "
     "decides which engine a table or query goes to. The executive summary is written over "
     "already-computed results and cannot change a recommendation."
 )

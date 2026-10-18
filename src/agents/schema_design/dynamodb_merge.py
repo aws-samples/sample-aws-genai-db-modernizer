@@ -862,7 +862,7 @@ def independent_homes(homes: list[_Home], trade_offs: list[dict]) -> list[dict]:
             {
                 "description": (
                     f"{OVERLAP_PREFIX}{', '.join(sources)} modelled independently by design "
-                    f"groups in {tables}; choose one write path or keep copies in sync — "
+                    f"groups in {tables}; choose one write path or keep copies in sync, and "
                     "review before migration."
                 ),
                 "impact": (

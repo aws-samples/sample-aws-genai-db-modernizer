@@ -657,12 +657,12 @@ def _build_concerns(
 
     if profile.foreign_key_count > 0:
         concerns.append(
-            f"{profile.foreign_key_count} foreign key(s) — OpenSearch does not support "
+            f"{profile.foreign_key_count} foreign key(s): OpenSearch does not support "
             "cross-index joins; denormalization required."
         )
     if profile.has_joins and profile.max_join_count >= 2:
         concerns.append(
-            "Complex joins detected — must be handled in application layer or denormalized."
+            "Complex joins detected: must be handled in application layer or denormalized."
         )
     if workload_type == WorkloadType.TIMESERIES:
         concerns.append(
@@ -962,7 +962,7 @@ def build_opensearch_decision_trace(
         if wtype is not None:
             reason = f"Matched {wtype.value.lower()} patterns: {', '.join(sorted(ts_pattern_types & (SEARCH_PATTERN_TYPES | TIMESERIES_PATTERN_TYPES)))}"
         else:
-            reason = "No search or time-series patterns detected — NOT_SUITABLE"
+            reason = "No search or time-series patterns detected: NOT_SUITABLE"
 
         workload_classifications.append(
             {

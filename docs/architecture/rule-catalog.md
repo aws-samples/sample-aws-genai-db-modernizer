@@ -247,7 +247,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
-- Aurora PostgreSQL, fit 80 (aurora-pg-04): Array operations \(ANY, array\_agg, unnest\) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes — avoiding junction tables for simple multi-value cases. Counts toward the engine's feature complexity bonus.
+- Aurora PostgreSQL, fit 80 (aurora-pg-04): Array operations \(ANY, array\_agg, unnest\) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes, avoiding junction tables for simple multi-value cases. Counts toward the engine's feature complexity bonus.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -255,7 +255,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
-- OpenSearch, anti 0.1 (os-ap-03): Timestamp columns \(created\_at, updated\_at, event\_time, etc.\) used only in equality checks — not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification; guidance only, since no OpenSearch limit applies \(OpenSearch documentation, Date field type\).
+- OpenSearch, anti 0.1 (os-ap-03): Timestamp columns \(created\_at, updated\_at, event\_time, etc.\) used only in equality checks, not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification; guidance only, since no OpenSearch limit applies \(OpenSearch documentation, Date field type\).
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -272,7 +272,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
-- DynamoDB, fit 75 (dynamodb-07a): Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index \(then 10 GB\) — the bound is domain-driven \(e.g., order → items, user → addresses\) \(Amazon DynamoDB Developer Guide, Local secondary indexes\). Large item collections may need creative sort key design for efficient range queries. Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
+- DynamoDB, fit 75 (dynamodb-07a): Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index \(then 10 GB\). The bound is domain-driven \(e.g., order → items, user → addresses\) \(Amazon DynamoDB Developer Guide, Local secondary indexes\). Large item collections may need creative sort key design for efficient range queries. Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -304,8 +304,8 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
-- Aurora PostgreSQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale.
-- Aurora MySQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning — hash joins, merge joins, and nested loop selection are automatic and performant at scale.
+- Aurora PostgreSQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale.
+- Aurora MySQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -339,7 +339,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- DocumentDB, fit 85 (documentdb-07): Queries joining large transactional tables with small reference/lookup tables \(country, merchant, payment\_type\) just to get display names. Embed the few referenced fields directly — especially valuable in DocumentDB, where every $lookup is a read-time join. Table bonus: +10 pattern match.
+- DocumentDB, fit 85 (documentdb-07): Queries joining large transactional tables with small reference/lookup tables \(country, merchant, payment\_type\) just to get display names. Embed the few referenced fields directly, especially valuable in DocumentDB, where every $lookup is a read-time join. Table bonus: +10 pattern match.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -363,7 +363,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
-- Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes — suitable for moderate search workloads without a separate search engine. Table bonus: +10 pattern match.
+- Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes, suitable for moderate search workloads without a separate search engine. Table bonus: +10 pattern match.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -383,7 +383,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
 - DocumentDB, native, class score 60: The $text operator runs full-text search natively within its documented limits: one text index per collection, English only, no array fields, no compound index with other fields and no term exclusion \(Amazon DocumentDB Developer Guide, Performing text search\). Class score \(#728\): 60, a narrow text index, not a search engine.
-- OpenSearch, fit 95 (os-01): Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload — tokenization, stemming, and relevance ranking are native. Table bonus: +15 pattern match.
+- OpenSearch, fit 95 (os-01): Full-text search using PostgreSQL tsvector/tsquery operators or MySQL MATCH AGAINST. OpenSearch's inverted index is purpose-built for this workload: tokenization, stemming, and relevance ranking are native. Table bonus: +15 pattern match.
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native, class score 75: tsvector and tsquery full-text search with a GIN index is native SQL \(PostgreSQL documentation, Full Text Search, Preferred Index Types for Text Search\). Class score \(#728\): 75, a built-in text index for moderate search, below a dedicated search engine's relevance ranking.
 - Aurora MySQL, native, class score 80: FULLTEXT indexes with MATCH ... AGAINST, in natural-language and boolean modes, are native SQL \(MySQL Reference Manual, Full-Text Search Functions\). Class score \(#728\): 80, a built-in text index for moderate search, below a dedicated search engine's relevance ranking.
@@ -404,7 +404,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
 - DocumentDB, no: DocumentDB cannot run this pattern: a query another engine reports it for loses 40 points on DocumentDB.
-- OpenSearch, fit 85 (os-04): Fuzzy/similarity search via pg\_trgm or similarity\(\). OpenSearch fuzzy queries use Levenshtein distance natively — no extension required. Table bonus: +10 pattern match (once for the `approximate-match` group).
+- OpenSearch, fit 85 (os-04): Fuzzy/similarity search via pg\_trgm or similarity\(\). OpenSearch fuzzy queries use Levenshtein distance natively, with no extension required. Table bonus: +10 pattern match (once for the `approximate-match` group).
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native, class score 80: pg\_trgm's similarity\(\), the % operator and the &lt;-&gt; distance are native once the extension is created, and a GIN or GiST trigram index serves them \(PostgreSQL documentation, pg\_trgm, Index Support\). Class score \(#728\): 80, an index serves the match.
 - Aurora MySQL, no: Aurora MySQL cannot run this pattern: a query another engine reports it for loses 40 points on Aurora MySQL.
@@ -466,7 +466,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
-- OpenSearch, fit 90 (os-07): High-throughput INSERT workload \(&gt;= 10 calls/second per table\). OpenSearch bulk indexing API is designed for sustained high-ingest — auto-sharding and refresh interval tuning support this pattern. Table bonus: +15 pattern match.
+- OpenSearch, fit 90 (os-07): High-throughput INSERT workload \(&gt;= 10 calls/second per table\). OpenSearch bulk indexing API is designed for sustained high-ingest. Auto-sharding and refresh interval tuning support this pattern. Table bonus: +15 pattern match.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -484,7 +484,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 80 (documentdb-06): A query that reads JSON paths \(JSON\_EXTRACT, -&gt;&gt;, JSON\_VALUE\): the data is already semi-structured, and each path maps to a document field. Table bonus: +8 pattern match. Counts toward the engine's feature complexity bonus.
-- Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries — combining document flexibility with relational joins. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
+- Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries, combining document flexibility with relational joins. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
 - Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
 - No effect on: DynamoDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
@@ -544,7 +544,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
-- DynamoDB, fit 65 (dynamodb-07b): Many-to-many relationship via a junction table with composite PK of two FK columns. Needs a GSI or the adjacency list pattern in DynamoDB — more design work required \(Amazon DynamoDB Developer Guide, Best practices for managing many-to-many relationships\). Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
+- DynamoDB, fit 65 (dynamodb-07b): Many-to-many relationship via a junction table with composite PK of two FK columns. Needs a GSI or the adjacency list pattern in DynamoDB, which takes more design work \(Amazon DynamoDB Developer Guide, Best practices for managing many-to-many relationships\). Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
 - No effect on: DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -604,8 +604,8 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
-- Aurora PostgreSQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation — all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it \(Amazon Aurora User Guide, What is Amazon Aurora\).
-- Aurora MySQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation — all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it \(Amazon Aurora User Guide, What is Amazon Aurora\).
+- Aurora PostgreSQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it \(Amazon Aurora User Guide, What is Amazon Aurora\).
+- Aurora MySQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it \(Amazon Aurora User Guide, What is Amazon Aurora\).
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -622,8 +622,8 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - DocumentDB, -, class score 85 (parity anchor, from `pagination`): An index range scan with sort, skip and limit \(find\(\).sort\(\).limit\(\), or a keyset filter on an indexed field\) is native; DocumentDB's analysis does not report the pattern and it adds no cross-engine penalty. Class score \(#728\): 85, parity anchor: no engine-specific evidence yet; the same index range scan Aurora's pagination is rated at \(pagination, 85\), until a measurement replaces it \(#936\).
-- Aurora PostgreSQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
-- Aurora MySQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
+- Aurora PostgreSQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly.
+- Aurora MySQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly.
 - No effect on: DynamoDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -639,8 +639,8 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
-- Aurora PostgreSQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement.
-- Aurora MySQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level — migrating to NoSQL would require application-level enforcement.
+- Aurora PostgreSQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level; migrating to NoSQL would require application-level enforcement.
+- Aurora MySQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level; migrating to NoSQL would require application-level enforcement.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -699,8 +699,8 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
-- Aurora PostgreSQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins.
-- Aurora MySQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins.
+- Aurora PostgreSQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins.
+- Aurora MySQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -718,8 +718,8 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Segment weighting: per table. A table's score weighs this pattern by the calls of the segment's queries that access that table, not the whole segment.
 
-- Aurora PostgreSQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache.
-- Aurora MySQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads — Aurora handles them efficiently with connection pooling and buffer cache.
+- Aurora PostgreSQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache.
+- Aurora MySQL, fit 60 (aurora-common-10): Standard single-table CRUD operations \(SELECT/INSERT/UPDATE/DELETE\) at moderate frequency. These are valid relational workloads; Aurora handles them efficiently with connection pooling and buffer cache.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -755,7 +755,7 @@ No analysis reports this pattern today.
 
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
-- OpenSearch, fit 90 (os-06): Time-based aggregations using DATE\_TRUNC, DATE\(\), HOUR\(\), or EXTRACT\(\). OpenSearch date histogram aggregations run against pre-sorted time fields — very efficient. Table bonus: +15 pattern match.
+- OpenSearch, fit 90 (os-06): Time-based aggregations using DATE\_TRUNC, DATE\(\), HOUR\(\), or EXTRACT\(\). OpenSearch date histogram aggregations run against pre-sorted time fields, which is very efficient. Table bonus: +15 pattern match.
 - No effect on: DynamoDB, DocumentDB, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -788,8 +788,8 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
-- Aurora PostgreSQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination.
-- Aurora MySQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination.
+- Aurora PostgreSQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions; NoSQL engines cannot replicate this without application-level coordination.
+- Aurora MySQL, fit 90 (aurora-common-03): Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions; NoSQL engines cannot replicate this without application-level coordination.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -824,7 +824,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
-- Aurora PostgreSQL, fit 80 (aurora-pg-07): UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking — no read-modify-write cycle needed. Table bonus: +5 pattern match.
+- Aurora PostgreSQL, fit 80 (aurora-pg-07): UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking, with no read-modify-write cycle needed. Table bonus: +5 pattern match.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -862,7 +862,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 - DynamoDB, no: DynamoDB cannot run this pattern: a query another engine reports it for loses 40 points on DynamoDB.
 - DocumentDB, native, class score 45: $regex expresses LIKE natively, but only a prefix regular expression without the i, m or o options uses an index, so a leading wildcard is a collection scan \(Amazon DocumentDB Developer Guide, Query planner\). Class score \(#728\): 45, a scan of every document; what the scan costs a frequent query on a large table stays substring-match's penalty \(#493\).
-- OpenSearch, fit 80 (os-02): LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets — no full-table scan. Table bonus: +10 pattern match (once for the `approximate-match` group).
+- OpenSearch, fit 80 (os-02): LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets, with no full-table scan. Table bonus: +10 pattern match (once for the `approximate-match` group).
 - ElastiCache, no: ElastiCache cannot run this pattern: a query another engine reports it for loses 40 points on ElastiCache.
 - Aurora PostgreSQL, native, class score 80: LIKE and ILIKE are native SQL, and a pg\_trgm GIN or GiST index serves them with a leading wildcard too, an extension to create \(PostgreSQL documentation, pg\_trgm, Index Support; the substring-match pattern, #493\). Class score \(#728\): 80, an index serves the match.
 - Aurora MySQL, native, class score 45: LIKE is native SQL, but a B-tree index serves LIKE only when the pattern does not start with a wildcard and a FULLTEXT index serves only MATCH ... AGAINST, so a leading wildcard reads every row \(MySQL Reference Manual, Comparison of B-Tree and Hash Indexes\). Class score \(#728\): 45, a scan of every row; what the scan costs a frequent query on a large table stays substring-match's penalty \(#493\).

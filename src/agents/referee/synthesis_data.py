@@ -19,7 +19,9 @@ from src.agents.referee.cache_overlay import (
     overlay_summary,
     safety_net_note,
 )
+from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.shared.engine_names import PLACEHOLDER_ENGINES
+from src.shared.prose_style import collector_identifiers
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
     reality_check_run_for_lineage,
@@ -59,6 +61,9 @@ class SynthesisData:
     # not serve, and the notes recording that their overlay was dropped.
     cache_overlay_dropped: list[str] = field(default_factory=list)
     cache_overlay_notes: list[str] = field(default_factory=list)
+    # Plain-prose style (#1034): schema-design fields sent back to deterministic
+    # text by ``synthesis_prose.clean_schema_design_prose``, for the audit trail.
+    prose_style_rejections: list[str] = field(default_factory=list)
 
     @property
     def selected_engines(self) -> list[str]:
@@ -223,11 +228,12 @@ def load_synthesis_data(
         else:
             schema_key = f"{database_name}/{job_id}/schema-{engine}/schema_output.json"
 
-        artifacts.schema_design = _read_artifact(
-            store,
-            schema_key,
-            required=False,
+        artifacts.schema_design, rejections = clean_schema_design_prose(
+            engine,
+            _read_artifact(store, schema_key, required=False),
+            collector_identifiers(data.collector),
         )
+        data.prose_style_rejections.extend(rejections)
 
         # Design trace: versioned path when assignment_version > 0, else unversioned
         if assignment_version > 0:

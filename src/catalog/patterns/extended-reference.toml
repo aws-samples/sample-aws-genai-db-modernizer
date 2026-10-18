@@ -17,7 +17,7 @@ supported = true
 catalog = "documentdb"
 catalog_id = "documentdb-07"
 score = 85
-why = "Queries joining large transactional tables with small reference/lookup tables (country, merchant, payment_type) just to get display names. Embed the few referenced fields directly — especially valuable in DocumentDB, where every $lookup is a read-time join."
+why = "Queries joining large transactional tables with small reference/lookup tables (country, merchant, payment_type) just to get display names. Embed the few referenced fields directly, especially valuable in DocumentDB, where every $lookup is a read-time join."
 concerns = [
     "Denormalized fields must be updated when reference data changes (rare for lookups)",
 ]

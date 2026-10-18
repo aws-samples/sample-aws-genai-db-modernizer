@@ -56,7 +56,7 @@ def main_engine(ranking: Sequence[Mapping[str, Any]] | None) -> Mapping[str, Any
 # engine's routed queries has no table-level evidence (#152).
 PARTIAL_EVIDENCE_MIN_SHARE = 0.25
 
-SIGNAL_ONLY_NOTE = "signal only — no table-level evidence"
+SIGNAL_ONLY_NOTE = "signal only, no table-level evidence"
 SIGNAL_ONLY_SHORT = "signal only"
 PARTIAL_NOTE = "partly signal-based"
 

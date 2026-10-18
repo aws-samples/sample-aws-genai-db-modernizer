@@ -3,10 +3,11 @@
  * (#393, ported for #269; #536 added the risk-count reason).
  *
  * Mirrors ``_FALLBACK_REASONS`` / ``fallback_withheld_reason`` in
- * src/report/formatting.py. Four independent high-confidence checks can
+ * src/report/formatting.py. Five independent high-confidence checks can
  * reject the generated summary (``apply_synthesis_llm_output``:
  * ``check_summary_grounding``, ``check_summary_internal_leaks``,
- * ``check_summary_wave_order``, ``check_summary_risk_counts``), each stamping
+ * ``check_summary_wave_order``, ``check_summary_risk_counts``,
+ * ``check_summary_style``), each stamping
  * its own "[high confidence] ..." message onto `summary_validation_warnings`
  * with its own wording -- read here instead of hard-coding the
  * table-attribution reason, which used to show even when a different check
@@ -21,6 +22,7 @@
 // can assert this table still matches formatting.py's own, marker for marker.
 export const FALLBACK_REASONS = [
   ['internal field', "named one of this codebase's internal field names"],
+  ['plain-prose style list', "used wording outside the report's plain-language style"],
   ['migration waves move', 'stated a migration order that contradicts the roadmap'],
   [
     'but the risk register has',

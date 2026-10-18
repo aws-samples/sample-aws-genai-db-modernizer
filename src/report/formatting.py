@@ -298,11 +298,12 @@ def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str
     return label_other_targets(label_resolved_risks(label_in_scope_access_patterns(text, report)))
 
 
-# #393/#536: four independent high-confidence checks can reject the generated
+# #393/#536/#1034: five independent high-confidence checks can reject the generated
 # executive summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
 # ``check_summary_internal_leaks``, ``check_summary_wave_order``,
-# ``check_summary_risk_counts``), each stamping its own ``[high confidence] ...``
-# message onto ``summary_validation_warnings`` with its own wording -- read here
+# ``check_summary_risk_counts``, ``check_summary_style``), each stamping its own
+# ``[high confidence] ...`` message onto ``summary_validation_warnings`` with its
+# own wording -- read here
 # instead of hard-coding the table-attribution reason, which used to show even
 # when a different check was the one that actually rejected it. The table-
 # attribution reason stays last: it is also the default used when none of the
@@ -310,6 +311,8 @@ def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str
 # existed), so a newly added reason is inserted above it, never appended after.
 _FALLBACK_REASONS: tuple[tuple[str, str], ...] = (
     ("internal field", "named one of this codebase's internal field names"),
+    # #1034: synthesis_grounding.check_summary_style; the terms stay in the warning.
+    ("plain-prose style list", "used wording outside the report's plain-language style"),
     ("migration waves move", "stated a migration order that contradicts the roadmap"),
     (
         "but the risk register has",

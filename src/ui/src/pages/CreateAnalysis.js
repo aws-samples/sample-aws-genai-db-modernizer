@@ -273,7 +273,7 @@ function CollectionOptionsSection({ formData, setFormData }) {
   const queryLogSourceOptions = [
     {
       description:
-        "AWS Performance Insights - comprehensive query and performance metrics",
+        "AWS Performance Insights: detailed query and performance metrics",
       label: "Performance Insights (recommended)",
       tags: ["Recommended", "All databases"],
       value: "performance-insights",
@@ -1019,7 +1019,7 @@ function DatabaseAnalysisForm() {
       }]);
 
       if (confirmResults['confirm']?.error) {
-        throw new Error(confirmResults['confirm'].error?.message || 'Upload confirmation failed — file may not have reached S3');
+        throw new Error(confirmResults['confirm'].error?.message || 'Upload confirmation failed. The file may not have reached S3');
       }
 
       const confirmed = confirmResults['confirm'];

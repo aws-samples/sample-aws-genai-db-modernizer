@@ -35,7 +35,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-03"
 score = 90
-why = "Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination."
+why = "Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions; NoSQL engines cannot replicate this without application-level coordination."
 concerns = [
     "Long-running transactions may cause lock contention under high concurrency.",
 ]
@@ -47,7 +47,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-03"
 score = 90
-why = "Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions — NoSQL engines cannot replicate this without application-level coordination."
+why = "Multi-table write operations within transaction context with FK constraints. Aurora provides full ACID compliance with multi-statement transactions; NoSQL engines cannot replicate this without application-level coordination."
 concerns = [
     "Long-running transactions may cause lock contention under high concurrency.",
 ]

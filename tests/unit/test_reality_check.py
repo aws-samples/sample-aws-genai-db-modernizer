@@ -3000,7 +3000,7 @@ class TestReResolvingAnUnresolvedTieInPhaseTwo:
         # #503 review round 3, suggestion 2: the reason says WHY the tie
         # cleared (DynamoDB no longer qualifies), not just that it did.
         assert q1["assignment_reason"] == (
-            "reality check: DocumentDB is kept -- DynamoDB no longer qualifies "
+            "reality check: DocumentDB is kept; DynamoDB no longer qualifies "
             "for this query, so the earlier scores tie is resolved"
         )
 

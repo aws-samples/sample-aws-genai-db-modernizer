@@ -1075,7 +1075,7 @@ class TestAGroupMembersReasonNamesItsOwnTie:
 
         by_id = {qa["query_id"]: qa for qa in revised}
         assert by_id[tied_member]["assignment_reason"] == (
-            "reality check: DynamoDB is kept -- the earlier scores tie between "
+            "reality check: DynamoDB is kept; the earlier scores tie between "
             "engines is now resolved (the co-dependency group's scores decide)"
         )
         _assert_replays(qas, revised, ledger)
@@ -1101,7 +1101,7 @@ class TestAGroupMembersReasonNamesItsOwnTie:
 
         by_id = {qa["query_id"]: qa for qa in revised}
         assert by_id["m2"]["assignment_reason"] == (
-            "reality check: DynamoDB is kept -- DocumentDB no longer qualifies "
+            "reality check: DynamoDB is kept; DocumentDB no longer qualifies "
             "for this query, so the earlier scores tie is resolved (the co-dependency "
             "group's scores decide)"
         )
@@ -1150,7 +1150,7 @@ class TestAGroupMembersReasonNamesItsOwnTie:
         revised, _ = _place(qas, {"dynamodb", "aurora_mysql"}, trace)
 
         assert revised[0]["assignment_reason"] == (
-            "reality check: DynamoDB is kept -- the earlier scores tie between "
+            "reality check: DynamoDB is kept; the earlier scores tie between "
             "engines is now resolved"
         )
 
@@ -1165,7 +1165,7 @@ class TestAGroupMembersReasonNamesItsOwnTie:
         by_id = {qa["query_id"]: qa for qa in revised}
         assert by_id["m2"]["tied_engines"] == []
         assert by_id["m2"]["assignment_reason"] == (
-            "reality check: DynamoDB is kept -- DocumentDB no longer qualifies for this "
+            "reality check: DynamoDB is kept; DocumentDB no longer qualifies for this "
             "query; the co-dependency group's scores still tie, so the group stays where it is"
         )
         assert by_id["m1"]["assignment_reason"] == "co-dependency group"
@@ -1197,7 +1197,7 @@ class TestAGroupMembersReasonNamesItsOwnTie:
         assert by_id["m2"]["assigned_engine"] == "aurora_mysql"
         assert by_id["m2"]["tied_engines"] == []
         assert by_id["m2"]["assignment_reason"] == (
-            "reality check: Aurora MySQL is kept -- the earlier scores tie between engines "
+            "reality check: Aurora MySQL is kept; the earlier scores tie between engines "
             "is now resolved (the co-dependency group's scores tie; the source-compatible "
             "engine is kept)"
         )

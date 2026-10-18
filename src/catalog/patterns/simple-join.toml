@@ -32,7 +32,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-09"
 score = 70
-why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins."
+why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins."
 
 # Detection signals: 2-table JOIN (simpler than complex-join but still relational)
 [engines.aurora_mysql]
@@ -41,7 +41,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-09"
 score = 70
-why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer — NoSQL engines cannot perform server-side joins."
+why = "Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins."
 
 [engines.neptune]
 kind = "future"

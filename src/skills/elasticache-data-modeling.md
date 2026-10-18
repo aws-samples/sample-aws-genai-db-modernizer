@@ -122,3 +122,13 @@ Return a complete `ElastiCacheModelOutputContract` with:
 - `cache_invalidation` for all cached data, with `source_write_query_ids` for the writes that trigger it
 - `unsupported_patterns` for queries that don't fit Redis, with `source_query_ids`
 - `validation_passed` = true if all patterns are covered
+
+## Customer-facing text
+
+Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
+
+- No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
+- None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
+- No hedges: "not the only one", "typically", "generally", "might", "could potentially" ("generally available" is fine). State the fact.
+- None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
+- Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.

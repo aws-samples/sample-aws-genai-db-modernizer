@@ -203,7 +203,7 @@ def _fallback_embedding_strategy(c: EmbeddingCandidate) -> dict:
         "strategy": strategy,
         "rationale": f"Fallback rule: {c.relationship_type}, "
         f"avg_children={c.avg_children_per_parent}, co_access={c.co_access_ratio}",
-        "trade_offs": "Rule-based — LLM advisor was disabled or failed",
+        "trade_offs": "Rule-based: LLM advisor was disabled or failed",
         "risk_level": risk,
     }
 
@@ -661,11 +661,11 @@ def _build_rationale(profile: TableProfile, table_patterns: list[Pattern]) -> st
     names = [p.pattern_type.replace("-", " ") for p in table_patterns]
     parts = [f"Detected patterns: {', '.join(names)}."]
     if profile.foreign_key_count >= 1:
-        parts.append(f"{profile.foreign_key_count} FK(s) — embedding candidate for DocumentDB.")
+        parts.append(f"{profile.foreign_key_count} FK(s): embedding candidate for DocumentDB.")
     if profile.has_joins and profile.max_join_count <= 2:
         parts.append("Simple joins can be eliminated via denormalization.")
     if profile.size_mb <= 100:
-        parts.append("Small table — low storage cost on DocumentDB.")
+        parts.append("Small table: low storage cost on DocumentDB.")
     return " ".join(parts)
 
 
@@ -683,7 +683,7 @@ def _build_concerns(
             "Consider embedding related tables into a single document."
         )
     if profile.size_mb > 10000:
-        concerns.append("Large table (>10GB) — monitor DocumentDB storage I/O costs.")
+        concerns.append("Large table (>10GB): monitor DocumentDB storage I/O costs.")
     return concerns
 
 

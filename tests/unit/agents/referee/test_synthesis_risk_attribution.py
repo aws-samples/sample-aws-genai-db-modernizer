@@ -416,7 +416,7 @@ def test_resolved_move_states_the_decision_not_the_catalog_hedge() -> None:
     )
     assert res["description"] == (
         "[aurora_mysql] Moved to DynamoDB: Table with no foreign keys and no join "
-        "participation — all queries are single-table CRUD. Aurora serves single-table "
+        "participation: all queries are single-table CRUD. Aurora serves single-table "
         "CRUD natively and uses none of its relational features for it (Amazon Aurora "
         "User Guide, What is Amazon Aurora)."
     )

@@ -776,7 +776,7 @@ class AssignmentResolver:
                 )
                 assigned_confidence[qid] = 100
                 assigned_reason[qid] = (
-                    "utility/metadata statement — kept on source-compatible "
+                    "utility/metadata statement, kept on the source-compatible "
                     f"relational engine ({display_engine(utility_engine)})"
                 )
                 assigned_signal.pop(qid, None)

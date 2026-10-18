@@ -61,7 +61,14 @@ The reality check's own summary, written into the same response's `executive_sum
 - Several engines are the right architecture (purpose-built databases matched to workload patterns), not a complication. Present the path forward, not concerns.
 - When data flows between two engines, name the AWS managed integration instead of an abstract pattern, and only one that applies: DynamoDB to OpenSearch via OpenSearch Ingestion (near real-time through DynamoDB Streams); DocumentDB to OpenSearch zero-ETL; DynamoDB to Redshift; Aurora MySQL or PostgreSQL to Redshift.
 - No first person ("I found"): use second person ("Your workload...") or passive ("The analysis shows..."). No hedging, no doubt, no recommendation to collect more data, no confidence scores or internal metrics, and do not lead with cost.
-- Mention specific AWS service names. No em dashes, no markdown, bullet points or headers, and none of these words: 'straightforward', 'robust', 'leverage', 'comprehensive', 'seamless', 'cutting-edge', 'holistic', 'synergy', 'paradigm', 'elevate', 'landscape', 'realm', 'foster', 'delve', 'moreover', 'furthermore', 'notably'.
+- Mention specific AWS service names. No markdown, bullet points or headers, and none of these words: 'straightforward', 'cutting-edge', 'synergy', 'paradigm', 'realm', 'foster'.
+- The plain-prose style list. Finalize replaces dashes and sends a summary that uses anything else on it back to the summary built from the records:
+
+- No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
+- None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
+- No hedges: "not the only one", "typically", "generally", "might", "could potentially" ("generally available" is fine). State the fact.
+- None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
+- Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
 
 ## Engine Capabilities
 

@@ -88,7 +88,7 @@ test('the heading states the facts layer\'s wave count and the one-suggested-pat
   render(fixture.synthesis);
   expect(container.querySelector('h2').textContent).toBe('Migration roadmap (5 waves)');
   expect(container.querySelector('.mock-description').textContent).toBe(
-    'One suggested adoption path, not the only one — to modernize in one step instead, '
+    'This is one suggested adoption path. To modernize in one step instead, '
     + 'adopt the target architecture in Executive summary above directly.',
   );
 });

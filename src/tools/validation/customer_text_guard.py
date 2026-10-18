@@ -543,3 +543,71 @@ _FRONTMATTER_RE = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
 def scan_markdown(text: str, path: str = "") -> list[Finding]:
     """Scan a rendered Markdown deliverable, skipping its YAML frontmatter."""
     return scan_text(_FRONTMATTER_RE.sub("", text, count=1), path)
+
+
+# Plain-prose style (#1034): audit fields that keep a model's text as received,
+# or the reasons it was rejected, for the trace. No deliverable renders them
+# (``tests/unit/report/test_plain_prose_fixtures.py`` checks the renderers never
+# read them), so the style list does not apply to them.
+STYLE_AUDIT_FIELDS = frozenset(
+    {
+        "summary_llm",  # SynthesisOutputContract.summary_llm
+        "summary_validation_warnings",  # SynthesisOutputContract.summary_validation_warnings
+        "executive_summary_llm",  # RealityCheckOutputContract.executive_summary_llm
+        "executive_summary_validation_warnings",  # RealityCheckOutputContract (#236)
+        "prose_style_rejections",  # SynthesisOutputContract.prose_style_rejections (#1034)
+    }
+)
+
+# Fields the style list does not apply to because they are not prose. Kept short:
+# a model-written prose field is cleaned at its seam (synthesis_prose), never
+# added here.
+STYLE_SKIPPED_FIELDS = frozenset(
+    {
+        "key_condition",  # access pattern key condition: an expression (pk = :id AND sk BETWEEN ...)
+        # query group label: a table-derived name, or for DynamoDB the model's
+        # short pattern_group ("Post reads"); a label shown in the explorer, not a
+        # sentence, so it is not held to the style list
+        "group_name",
+    }
+)
+
+
+@dataclass(frozen=True)
+class StyleFinding:
+    path: str
+    kind: str
+    term: str
+    excerpt: str
+
+
+def scan_json_style(
+    obj: Any, path: str = "$", identifiers: frozenset[str] | set[str] = frozenset()
+) -> list[StyleFinding]:
+    """Every plain-prose style hit (``src.shared.prose_style``) in a parsed JSON
+    document's string values, skipping the same id-holding fields as
+    ``scan_json``, the ``STYLE_AUDIT_FIELDS`` and the ``STYLE_SKIPPED_FIELDS``.
+    ``identifiers``: the collected table and column names (data, not words)."""
+    from src.shared.prose_style import find_style_hits
+
+    out: list[StyleFinding] = []
+
+    def walk(node: Any, p: str, parent_key: str | None) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ID_FIELDS or (parent_key, key) in ID_FIELD_PATHS:
+                    continue
+                if key in STYLE_AUDIT_FIELDS or key in STYLE_SKIPPED_FIELDS:
+                    continue
+                walk(value, f"{p}.{key}", key)
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{p}[{i}]", parent_key)
+        elif isinstance(node, str):
+            out.extend(
+                StyleFinding(p, h.kind, h.term, h.excerpt)
+                for h in find_style_hits(node, identifiers)
+            )
+
+    walk(obj, path, None)
+    return out

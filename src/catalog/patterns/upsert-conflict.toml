@@ -35,7 +35,7 @@ supported = true
 catalog = "aurora_pg"
 catalog_id = "aurora-pg-07"
 score = 80
-why = "UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking — no read-modify-write cycle needed."
+why = "UPSERT with ON CONFLICT DO UPDATE and RETURNING clause. Aurora PG handles atomic insert-or-update in a single statement with row-level locking, with no read-modify-write cycle needed."
 concerns = [
     "High-concurrency upserts on the same key may cause retry loops.",
 ]

@@ -55,9 +55,17 @@ Use these instead of generic pattern names, and mention one only if it directly 
 
 ## Style
 
-- Never use em dashes (the long dash). Use commas, periods, or parentheses instead.
-- Never use the words 'straightforward', 'robust', 'leverage', 'comprehensive', 'seamless', 'cutting-edge', 'holistic', 'synergy', 'paradigm', 'elevate', 'landscape', 'realm', 'foster', 'delve', 'moreover', 'furthermore', 'notably'.
-- No hedging ("typically", "generally", "is recommended", "not the only option"): state the fact, don't soften it.
+The plain-prose style list. Finalize replaces dashes and rejects a summary that uses anything else on it (the report then shows the deterministic summary):
+
+- No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
+- None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
+- No hedges: "not the only one", "typically", "generally", "might", "could potentially" ("generally available" is fine). State the fact.
+- None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
+- Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
+
+Also:
+
+- Never use the words 'straightforward', 'cutting-edge', 'synergy', 'paradigm', 'realm', 'foster', and no other hedging ("is recommended", "not the only option").
 - Mention specific AWS service names (DynamoDB, OpenSearch Service, and so on).
 - No buzzwords or marketing language. No markdown, bullet points, or headers.
 - Write like a human talking to another human, not a language model writing a document.

@@ -34,7 +34,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-08"
 score = 85
-why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly."
+why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly."
 concerns = [
     "Deep OFFSET pagination (offset > 10000) degrades; prefer keyset pagination.",
 ]
@@ -46,7 +46,7 @@ supported = true
 catalog = "aurora_common"
 catalog_id = "aurora-common-08"
 score = 85
-why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly."
+why = "Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination (WHERE id > ? ORDER BY id LIMIT N). Aurora handles pagination efficiently with index-based seeks; NoSQL engines handle pagination poorly."
 concerns = [
     "Deep OFFSET pagination (offset > 10000) degrades; prefer keyset pagination.",
 ]

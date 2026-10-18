@@ -15,7 +15,7 @@ supported = true
 catalog = "dynamodb"
 catalog_id = "dynamodb-07b"
 score = 65
-why = "Many-to-many relationship via a junction table with composite PK of two FK columns. Needs a GSI or the adjacency list pattern in DynamoDB — more design work required (Amazon DynamoDB Developer Guide, Best practices for managing many-to-many relationships)."
+why = "Many-to-many relationship via a junction table with composite PK of two FK columns. Needs a GSI or the adjacency list pattern in DynamoDB, which takes more design work (Amazon DynamoDB Developer Guide, Best practices for managing many-to-many relationships)."
 concerns = [
     "Requires GSI or adjacency list pattern for bidirectional access",
     "May need data duplication for efficient queries from both sides",

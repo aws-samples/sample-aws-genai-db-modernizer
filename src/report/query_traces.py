@@ -227,7 +227,7 @@ def query_traces_md(report: dict[str, Any]) -> list[str]:
             f"Only the first {int(facts.get('full_trace_count') or 0)} are shown in full. "
             f"{not_in_full} more listed {plural_noun(not_in_full, 'query', 'queries')} "
             f"{plural_verb(not_in_full, 'is', 'are')} in the Assessment Data (JSON) under "
-            "`query_traces.more_listed`, with why each is listed; the UI's query journey "
+            "`query_traces.more_listed`, with why each is listed; the UI's query history "
             "(Why this engine) shows any query's full trace.",
             "",
         ]

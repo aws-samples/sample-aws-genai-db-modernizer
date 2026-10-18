@@ -58,7 +58,7 @@ def test_engineering_report_lists_resolved_risks(report: dict) -> None:
     section = md.split("## Resolved by the assignment (2)", 1)[1].split("\n## ", 1)[0]
     # #221 follow-up: display names, not the raw engine ids ("aurora_mysql",
     # "dynamodb") the description and resolved_on fields carry.
-    assert "HIGH · Aurora MySQL → DynamoDB — Single-row SELECT" in section
+    assert "HIGH · Aurora MySQL → DynamoDB · Single-row SELECT" in section
     assert "aurora_mysql" not in section
     assert "aurora\\_mysql" not in section
     assert (

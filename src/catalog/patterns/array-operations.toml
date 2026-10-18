@@ -32,7 +32,7 @@ supported = true
 catalog = "aurora_pg"
 catalog_id = "aurora-pg-04"
 score = 80
-why = "Array operations (ANY, array_agg, unnest) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes — avoiding junction tables for simple multi-value cases."
+why = "Array operations (ANY, array_agg, unnest) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes, avoiding junction tables for simple multi-value cases."
 concerns = [
     "Very large arrays (>1000 elements) may degrade GIN index performance.",
 ]

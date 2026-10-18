@@ -29,7 +29,7 @@ catalog = "opensearch"
 catalog_id = "os-02"
 score = 80
 profile = "search"
-why = "LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets — no full-table scan."
+why = "LIKE/ILIKE wildcard queries on text columns. OpenSearch wildcard queries are more scalable than SQL LIKE on large datasets, with no full-table scan."
 concerns = [
     "Leading wildcard queries (LIKE '%term') are expensive in both SQL and OpenSearch.",
     "For prefix queries, consider edge-ngram tokenizer for better performance.",

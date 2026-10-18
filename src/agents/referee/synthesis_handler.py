@@ -30,6 +30,7 @@ from src.agents.referee.synthesis_grounding import (
     check_summary_grounding,
     check_summary_internal_leaks,
     check_summary_risk_counts,
+    check_summary_style,
     check_summary_wave_order,
     eliminated_engines,
     engine_table_scope,
@@ -68,6 +69,7 @@ from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
+from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 
@@ -577,13 +579,21 @@ def apply_synthesis_llm_output(
     # The one response contract both modes share (#628); raises
     # pydantic.ValidationError when the answer is off it.
     llm_summary = parse_executive_summary_response(llm_output).executive_summary
+    # #1034: dashes are replaced mechanically; every check below reads the
+    # cleaned text, and the customer sees it when nothing rejects it.
+    # ``summary_llm`` keeps the text as received, for audit.
+    raw_summary = llm_summary
+    identifiers = collector_identifiers(
+        getattr(deterministic_result.get("data"), "collector", None)
+    ) | set(deterministic_result.get("known_tables") or [])
+    summary_text = replace_dashes(str(llm_summary or ""), identifiers)
     engine_tables = deterministic_result.get("engine_tables")
     if engine_tables is None:
         engine_tables = engine_table_scope(
             None, [], deterministic_result.get("table_mappings") or [], set()
         )
     findings = check_summary_grounding(
-        str(llm_summary or ""),
+        summary_text,
         engine_tables,
         deterministic_result.get("database_name", ""),
         deterministic_result.get("known_tables"),
@@ -591,22 +601,26 @@ def apply_synthesis_llm_output(
     # #380: a second, independent check -- an internal field name leaked into the
     # summary is always high-confidence (there is no low-stakes reading of it),
     # regardless of whether any table/engine attribution also happens to be wrong.
-    findings = findings + check_summary_internal_leaks(str(llm_summary or ""))
+    findings = findings + check_summary_internal_leaks(summary_text)
     # #393: a third, independent check -- a summary that states a migration order
     # ("X first, then Y") contradicting the deterministic ``migration_waves`` sequence
     # is always high-confidence, the same way the wave order itself is never a model's
     # choice (``prepare_synthesis_llm_input``'s own docstring).
     findings = findings + check_summary_wave_order(
-        str(llm_summary or ""), deterministic_result.get("migration_waves")
+        summary_text, deterministic_result.get("migration_waves")
     )
     # #536: a fourth, independent check -- a stated risk count or severity
     # ("two HIGH-severity risks") that contradicts risk_assessment.risks is always
     # high-confidence, the same way a wrong migration order is: it is a fact a
     # model never gets to restate incorrectly.
     findings = findings + check_summary_risk_counts(
-        str(llm_summary or ""), deterministic_result.get("risk_assessment")
+        summary_text, deterministic_result.get("risk_assessment")
     )
-    deterministic_result["summary_llm"] = llm_summary
+    # #1034: a fifth, independent check -- any item of the plain-prose style list
+    # left after the dash replacement (filler, hedges, "not just ... but",
+    # all-caps severity labels) sends the summary back to the deterministic text.
+    findings = findings + check_summary_style(summary_text, identifiers)
+    deterministic_result["summary_llm"] = raw_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:
         print(f"[synthesis] WARNING: {f['message']}")
@@ -620,7 +634,7 @@ def apply_synthesis_llm_output(
         )
         deterministic_result["summary_source"] = "deterministic_fallback"
     else:
-        deterministic_result["executive_summary"] = llm_summary
+        deterministic_result["executive_summary"] = summary_text
         deterministic_result["summary_source"] = "llm"
     return deterministic_result
 
@@ -751,6 +765,8 @@ def _write_synthesis_report(
         "summary_source": result.get("summary_source", "deterministic"),
         "summary_llm": result.get("summary_llm"),
         "summary_validation_warnings": result.get("summary_validation_warnings", []),
+        # #1034: schema-design prose sent back to deterministic text (audit only).
+        "prose_style_rejections": list(getattr(data, "prose_style_rejections", None) or []),
         "recommended_architecture": result["architecture"],
         "table_mappings": result["table_mappings"],
         "query_groups": result["query_groups"],

@@ -79,7 +79,7 @@ def _phase2_reason(
         )
         return (
             f"reality check: consolidated from {display_engine(current_engine)} → "
-            f"{winner_name} (no unique value — {basis}{tie_note})"
+            f"{winner_name} (no unique value: {basis}{tie_note})"
         )
     if tie_kind == TIE_KIND_UNRESOLVED:
         return (
@@ -94,16 +94,16 @@ def _phase2_reason(
         if group and tie_kind in _GROUP_TIE_RULES:
             # The removal left a tie; the tie rule, not the removal, settled it.
             return (
-                f"reality check: {winner_name} is kept -- {removed_text} {verb} for this "
+                f"reality check: {winner_name} is kept; {removed_text} {verb} for this "
                 f"query; the co-dependency group's scores still tie, so "
                 f"{_GROUP_TIE_RULES[tie_kind]}"
             )
         return (
-            f"reality check: {winner_name} is kept -- {removed_text} {verb} for this "
+            f"reality check: {winner_name} is kept; {removed_text} {verb} for this "
             f"query, so the earlier scores tie is resolved{decided}"
         )
     return (
-        f"reality check: {winner_name} is kept -- the earlier scores tie between "
+        f"reality check: {winner_name} is kept; the earlier scores tie between "
         f"engines is now resolved{decided}"
     )
 
@@ -534,16 +534,8 @@ def _place_settled_queries(
                 "from_engine": frm,
                 "to_engine": to,
                 "query_count": len(qids),
-                "reason": (
-                    f"{display_engine(frm)} provides no unique capabilities — {len(qids)} "
-                    f"queries can be served by {display_engine(to)}"
-                    + (f" ({len(retained_qids)} retained)" if retained_qids else "")
-                    + (
-                        f" ({n_tie_unresolved} of them tied on score, with no routing rule "
-                        "to decide)"
-                        if n_tie_unresolved
-                        else ""
-                    )
+                "reason": consolidation_reason(
+                    frm, to, len(qids), len(retained_qids), n_tie_unresolved
                 ),
                 "saved_cost_estimate": 0,
                 "action": "full" if is_full else "partial",
@@ -585,3 +577,21 @@ def _place_settled_queries(
         )
 
     return revised, consolidations
+
+
+def consolidation_reason(
+    from_engine: str, to_engine: str, moved: int, retained: int = 0, tie_unresolved: int = 0
+) -> str:
+    """A consolidation record's ``reason``: plain prose, the count's noun agreeing
+    with it (#1034: no dash, and "1 query", never "1 queries")."""
+    noun = "query" if moved == 1 else "queries"
+    return (
+        f"{display_engine(from_engine)} provides no unique capabilities: {moved} {noun} "
+        f"can be served by {display_engine(to_engine)}"
+        + (f" ({retained} retained)" if retained else "")
+        + (
+            f" ({tie_unresolved} of them tied on score, with no routing rule to decide)"
+            if tie_unresolved
+            else ""
+        )
+    )

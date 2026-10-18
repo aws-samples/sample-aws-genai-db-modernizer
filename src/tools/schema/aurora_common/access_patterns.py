@@ -192,7 +192,7 @@ def _resolve_index(
             True,
             "Filter predicate unknown; the collector did not record one for "
             "this query. Cannot confirm an index serves it or that a "
-            "sequential scan is the expected plan — confirm the predicate "
+            "sequential scan is the expected plan. Confirm the predicate "
             "and whether an index should be added.",
         )
     if not candidates:

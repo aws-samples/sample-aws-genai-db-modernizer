@@ -20,9 +20,9 @@ catalog_id = "documentdb-05"
 score = 75
 why = "A grouped aggregate, or one over rows no key anchors, that maps to DocumentDB's aggregation pipeline ($group, $match, $project, $sort)."
 concerns = [
-    "$stdDevPop/$stdDevSamp need DocumentDB 8.0.1+ — otherwise compute in application layer",
-    "$facet needs DocumentDB 8.0.2+ — otherwise run multiple pipelines in parallel",
-    "$setWindowFields needs DocumentDB 8.0.2+ — otherwise use Computed Pattern or application layer",
+    "$stdDevPop/$stdDevSamp need DocumentDB 8.0.1+; otherwise compute in application layer",
+    "$facet needs DocumentDB 8.0.2+; otherwise run multiple pipelines in parallel",
+    "$setWindowFields needs DocumentDB 8.0.2+; otherwise use Computed Pattern or application layer",
 ]
 table_bonus = 8
 

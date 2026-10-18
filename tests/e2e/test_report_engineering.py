@@ -20,7 +20,7 @@ from tests.placeholders import placeholder_leaks
 FORBIDDEN_SUBSTRINGS = ("[object Object]", "{{", "None%")
 
 ALWAYS = (
-    "# Database Modernization — Engineering Report",
+    "# Database Modernization: Engineering Report",
     "## Target engines",
     "## Cost",
 )

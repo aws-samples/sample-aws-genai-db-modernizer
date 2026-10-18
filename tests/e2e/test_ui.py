@@ -227,7 +227,7 @@ def _moved_query_trace(r: PipelineResult) -> dict | None:
     return trace
 
 
-OPEN_TRACE = "Open the journey and decision trace for query "
+OPEN_TRACE = "Open the history and decision trace for query "
 
 
 def test_a_querys_trace_opens_from_the_routing_table(

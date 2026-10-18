@@ -23,7 +23,7 @@ catalog = "opensearch"
 catalog_id = "os-06"
 score = 90
 profile = "timeseries"
-why = "Time-based aggregations using DATE_TRUNC, DATE(), HOUR(), or EXTRACT(). OpenSearch date histogram aggregations run against pre-sorted time fields — very efficient."
+why = "Time-based aggregations using DATE_TRUNC, DATE(), HOUR(), or EXTRACT(). OpenSearch date histogram aggregations run against pre-sorted time fields, which is very efficient."
 concerns = [
     "Deep aggregation nesting (>3 levels) can cause memory pressure.",
     "High cardinality fields in sub-aggregations may require field data cache tuning.",

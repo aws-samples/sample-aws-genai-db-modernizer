@@ -99,13 +99,13 @@ def _wave_headline_stats(w: dict[str, Any], wf: dict[str, Any] | None = None) ->
     return count_phrase, table_phrase
 
 
-# #321 review (finding 9): the "one suggested path" wording, with one real
-# em dash, never an ASCII "--", kept identical everywhere it appears so the
-# deliverables read as one voice. ``{pointer}`` names the direct, single-step
+# #321 review (finding 9): the "one suggested path" wording, kept identical
+# everywhere it appears (the UI's analysis-results.waves.suggested-path too) so
+# the deliverables read as one voice. Plain prose, no dash and no hedge (#1034). ``{pointer}`` names the direct, single-step
 # alternative already shown in the same deliverable.
 _SUGGESTED_PATH_NOTE = (
-    "One suggested adoption path, not the only one — to modernize in one step "
-    "instead, adopt {pointer} directly."
+    "This is one suggested adoption path. To modernize in one step instead, "
+    "adopt {pointer} directly."
 )
 
 

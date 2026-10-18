@@ -1303,9 +1303,9 @@ def _build_rationale(profile: TableProfile, table_patterns: list[Pattern]) -> st
             f"High throughput ({profile.total_calls_per_second:.0f} calls/sec) suits DynamoDB on-demand."
         )
     if profile.has_primary_key:
-        parts.append("Has primary key — maps to DynamoDB partition key.")
+        parts.append("Has primary key: maps to DynamoDB partition key.")
     if profile.size_mb <= 100:
-        parts.append("Small table — cost-effective on DynamoDB.")
+        parts.append("Small table: cost-effective on DynamoDB.")
 
     return " ".join(parts)
 
@@ -1329,11 +1329,11 @@ def _build_concerns(
         )
     elif profile.foreign_key_count > 0:
         concerns.append(
-            f"{profile.foreign_key_count} foreign key(s) — requires denormalization or GSI design."
+            f"{profile.foreign_key_count} foreign key(s): requires denormalization or GSI design."
         )
     if profile.has_joins and profile.max_join_count > 2:
         concerns.append(
-            "Complex joins (>2) — needs careful single-table design or separate queries."
+            "Complex joins (>2): needs careful single-table design or separate queries."
         )
     return concerns
 

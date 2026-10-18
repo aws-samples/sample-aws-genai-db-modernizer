@@ -14,6 +14,7 @@ from typing import Any
 
 from ci.llm import judge_facts
 from src.report.renderers import render_engineering_report_md, resolve_migration_waves
+from src.shared.prose_style import find_style_hits
 from tests.executive_pdf import engineering_text
 
 STORED_WAVES = [
@@ -378,14 +379,15 @@ class TestReviewFindings324:
         assert "## Target schemas by engine" in md
         assert 'the target schemas in "Target schemas by engine" below' in md
 
-    def test_suggested_path_note_uses_an_em_dash_not_ascii_double_hyphen(self):
-        # Finding 9.
+    def test_suggested_path_note_is_plain_prose(self):
+        # Finding 9, then #1034: one wording everywhere, with no dash and no hedge.
         text = engineering_text(_report_aurora_first_no_schema_design())
         md = render_engineering_report_md(_report_aurora_first_no_schema_design())
-        assert "One suggested adoption path, not the only one — to modernize" in text
-        assert "One suggested adoption path, not the only one — to modernize" in md
+        note = "This is one suggested adoption path. To modernize in one step instead"
+        assert note in text
+        assert note in md
         note_md = md.split("## Migration roadmap")[1].split("\n\n")[1]
-        assert "--" not in note_md
+        assert find_style_hits(note_md) == []
 
     def test_cache_note_fronts_the_resolved_cache_waves_engine(self):
         # Finding 6: the engineering report's cache layer note must agree
