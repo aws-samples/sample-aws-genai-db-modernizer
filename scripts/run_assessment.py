@@ -255,8 +255,18 @@ def _write_state(state: dict) -> None:
 # ============================================================
 # Phase: Collect
 # ============================================================
-def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str, str]:
-    """Parse collector output and initialize artifacts. Returns (job_id, db_name)."""
+def phase_collect(
+    collector_file: str,
+    db_name: str | None,
+    store,
+    engines_in_use: list[str] | None = None,
+) -> tuple[str, str]:
+    """Parse collector output and initialize artifacts. Returns (job_id, db_name).
+
+    ``engines_in_use`` (#963): engine ids the operator declared as already running.
+    """
+    from src.shared.engines_in_use import merge_engines_in_use
+
     _banner("COLLECT")
     from src.shared.sample_collection import CollectionPathError, resolve_collection_path
 
@@ -426,6 +436,10 @@ def phase_collect(collector_file: str, db_name: str | None, store) -> tuple[str,
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
+    if engines_in_use:
+        # #963: engines the operator declared, added to any the collection lists.
+        meta = collector_data.setdefault("metadata", {})
+        meta["engines_in_use"] = merge_engines_in_use(meta.get("engines_in_use"), engines_in_use)
     # An uploaded collector output may be at an older MINOR: written at today's (#1018).
     store.write_json(collector_path, stamp_artifact_version(collector_path, collector_data))
 
@@ -1051,6 +1065,16 @@ def main() -> None:
         help="LLM mode for reality check and schema design (default: external)",
     )
     parser.add_argument(
+        "--engines-in-use",
+        default=None,
+        metavar="ENGINES",
+        help=(
+            "Comma-separated engine ids of the other AWS databases the application already "
+            "runs today (for example opensearch,elasticache). Recorded in the collection so "
+            "retiring one shows a saving; added to any the file already lists"
+        ),
+    )
+    parser.add_argument(
         "--resume-reality-check",
         action="store_true",
         help="Resume reality check after LLM response has been written",
@@ -1109,6 +1133,12 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    from src.shared.engines_in_use import parse_engines_in_use_option
+
+    try:
+        args.engines_in_use_ids = parse_engines_in_use_option(args.engines_in_use)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.llm_mode == "bedrock":
         exit_on_invalid_guardrail_config()
 
@@ -1228,7 +1258,12 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     if args.file:
         # Full pipeline from collector file
         _start_phase("collect")
-        job_id, db_name = phase_collect(args.file, args.db, store)
+        declared = getattr(args, "engines_in_use_ids", None)
+        job_id, db_name = (
+            phase_collect(args.file, args.db, store, engines_in_use=declared)
+            if declared
+            else phase_collect(args.file, args.db, store)
+        )
         _attach_log(args.artifact_root, db_name, job_id)
         _set_job_context(store, db_name, job_id)
         state = {

@@ -91,3 +91,51 @@ def test_collector_exits_without_required_env_vars():
         with pytest.raises(SystemExit) as exc_info:
             run_collector("job-001", "mydb", store)
         assert exc_info.value.code == 1
+
+
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_collector_records_the_declared_engines_in_use(mock_dispatch):
+    """ENGINES_IN_USE reaches the CollectorInput and the stored collection (#963)."""
+    mock_result = MagicMock()
+    mock_result.model_dump_json.return_value = json.dumps(
+        {"metadata": {"engines_in_use": ["documentdb"]}}
+    )
+    mock_dispatch.return_value = mock_result
+    store = _mock_store()
+    with patch.dict("os.environ", {**ENV_VARS, "ENGINES_IN_USE": "OpenSearch,documentdb"}):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-001", "mydb", store)
+
+    assert mock_dispatch.call_args[0][1].engines_in_use == ["opensearch", "documentdb"]
+    written = store.write_json.call_args[0][1]
+    assert written["metadata"]["engines_in_use"] == ["documentdb", "opensearch"]
+
+
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_collector_without_the_variable_declares_nothing(mock_dispatch):
+    mock_result = MagicMock()
+    mock_result.model_dump_json.return_value = json.dumps({"metadata": {"engines_in_use": []}})
+    mock_dispatch.return_value = mock_result
+    store = _mock_store()
+    with patch.dict("os.environ", ENV_VARS):
+        from src.agents.collector.handler import run_collector
+
+        run_collector("job-001", "mydb", store)
+    assert mock_dispatch.call_args[0][1].engines_in_use == []
+    assert store.write_json.call_args[0][1]["metadata"]["engines_in_use"] == []
+
+
+@patch("src.agents.collector.handler._dispatch_collect")
+def test_an_invalid_engines_in_use_exits_before_collection_starts(mock_dispatch, capsys):
+    store = _mock_store()
+    with patch.dict("os.environ", {**ENV_VARS, "ENGINES_IN_USE": "opensearch,redis"}):
+        from src.agents.collector.handler import run_collector
+
+        with pytest.raises(SystemExit) as exc:
+            run_collector("job-001", "mydb", store)
+
+    assert exc.value.code == 1
+    assert "redis" in capsys.readouterr().err
+    mock_dispatch.assert_not_called()
+    store.write_json.assert_not_called()

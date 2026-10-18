@@ -26,6 +26,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared import catalog
+
 
 def engines_in_use(collector_output: Mapping[str, Any] | None) -> frozenset[str]:
     """The source engine and every engine the collection records as in use, lower-cased."""
@@ -65,3 +67,52 @@ def considered_not_recommended(report: Mapping[str, Any]) -> list[dict[str, Any]
         for row in legacy
         if isinstance(row, Mapping) and row.get("database")
     ]
+
+
+def _declarable_engines() -> frozenset[str]:
+    """Engine ids a collection may declare: the catalog's, minus placeholder and legacy ids."""
+    return catalog.engine_ids() - catalog.engine_ids(status=["future", "legacy"])
+
+
+def merge_engines_in_use(*lists: Any) -> list[str]:
+    """Engine ids from every list, first-seen order, duplicates dropped (#963).
+
+    Anything that is not a list of strings is ignored, so a malformed ``engines_in_use``
+    in a stored collection never breaks a merge.
+    """
+    merged: list[str] = []
+    for engines in lists:
+        if not isinstance(engines, list):
+            continue
+        for engine in engines:
+            if isinstance(engine, str) and engine.strip():
+                engine_id = engine.strip().lower()
+                if engine_id not in merged:
+                    merged.append(engine_id)
+    return merged
+
+
+def parse_engines_in_use_option(text: str | None) -> list[str]:
+    """Parse ``--engines-in-use opensearch,elasticache`` into engine ids (#963).
+
+    Raises ``ValueError`` naming the accepted ids when one is not an AWS database engine
+    the plan can target (a source engine such as ``mysql`` is already recorded as the
+    source, and a placeholder engine is never a plan target).
+    """
+    ids = merge_engines_in_use((text or "").split(","))
+    known = _declarable_engines()
+    for legacy in sorted(set(ids) & catalog.engine_ids(status="legacy")):
+        # A legacy id (say, the generic one before Aurora split in two) only keeps old
+        # reports rendering; name the real ids that replace it.
+        successors = sorted(e for e in known if e.startswith(f"{legacy}_"))
+        raise ValueError(
+            f"the engine id '{legacy}' is legacy and not accepted in --engines-in-use"
+            + (f": use {' or '.join(successors)}" if successors else "")
+        )
+    unknown = [e for e in ids if e not in known]
+    if unknown:
+        raise ValueError(
+            f"unknown engine(s) in --engines-in-use: {', '.join(unknown)}. "
+            f"Use engine ids from: {', '.join(sorted(known))}"
+        )
+    return ids

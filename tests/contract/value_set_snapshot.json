@@ -127,7 +127,7 @@
       "live",
       "offline"
     ],
-    "version": "3.0"
+    "version": "3.1"
   },
   "collector_input.DatabaseEngine": {
     "module": "collector_input",
@@ -139,7 +139,7 @@
       "postgresql",
       "sqlserver"
     ],
-    "version": "3.0"
+    "version": "3.1"
   },
   "collector_output.DatabaseEngine": {
     "module": "collector_output",

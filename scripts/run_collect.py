@@ -90,7 +90,24 @@ def main() -> None:
         default=os.environ.get("ARTIFACT_DIR", "./artifacts"),
         help="Root directory for local artifacts (default: $ARTIFACT_DIR or ./artifacts)",
     )
+    parser.add_argument(
+        "--engines-in-use",
+        default=None,
+        metavar="ENGINES",
+        help=(
+            "Comma-separated engine ids of the other AWS databases the application already "
+            "runs today (for example opensearch,elasticache). Recorded in the collection so "
+            "retiring one shows a saving; added to any the file already lists"
+        ),
+    )
     args = parser.parse_args()
+
+    from src.shared.engines_in_use import merge_engines_in_use, parse_engines_in_use_option
+
+    try:
+        engines_in_use = parse_engines_in_use_option(args.engines_in_use)
+    except ValueError as exc:
+        _error(str(exc))
 
     from scripts._sandbox import sandbox_violation
 
@@ -277,6 +294,10 @@ def main() -> None:
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
+    if engines_in_use:
+        # #963: engines the operator declared, added to any the collection lists.
+        meta = collector_data.setdefault("metadata", {})
+        meta["engines_in_use"] = merge_engines_in_use(meta.get("engines_in_use"), engines_in_use)
     # An uploaded collector output may be at an older MINOR: written at today's (#1018).
     store.write_json(collector_path, stamp_artifact_version(collector_path, collector_data))
 

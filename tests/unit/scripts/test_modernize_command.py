@@ -696,3 +696,25 @@ def test_design_commands_review_their_design_when_run_on_their_own() -> None:
     )
     dispatcher = (COMMANDS_DIR / "design-schema.md").read_text()
     assert "6c" in dispatcher and "6e" in dispatcher
+
+
+def test_engines_in_use_is_an_optional_never_asked_argument_passed_to_the_scripts() -> None:
+    # #963: the recorded engines reach the scripts from /modernize and /collect, and
+    # neither command asks for them (not even without --auto).
+    modernize = _modernize_text()
+    args = modernize.split("## Arguments", 1)[1].split("## Step 0", 1)[0]
+    assert "`--engines-in-use <ids>`" in args
+    assert "Never ask the user for it, with or without `--auto`" in args
+    assert "--engines-in-use {engines_in_use}" in modernize.split("## Pipeline", 1)[1]
+    collect = (COMMANDS_DIR / "collect.md").read_text()
+    assert "`--engines-in-use <ids>`" in collect
+    assert "Never ask for it" in collect
+    assert "add `--engines-in-use <ids>` to the command" in collect
+    for text in (modernize, collect):
+        assert TOOL_USE_RULE in text
+
+
+def test_the_scripts_the_commands_name_accept_engines_in_use() -> None:
+    for script in ("run_assessment.py", "run_collect.py"):
+        source = (COMMANDS_DIR.parents[1] / "scripts" / script).read_text()
+        assert '"--engines-in-use"' in source, script

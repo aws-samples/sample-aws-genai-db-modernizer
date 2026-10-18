@@ -15,6 +15,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 - A collector output JSON file exists (from running the collection SQL script against the source database)
 - The file path is provided as argument OR the user specifies it
+- Optional: `--engines-in-use <ids>`, comma-separated engine ids (for example `opensearch,elasticache`) of the other AWS databases the application already runs today. Never ask for it: absent means only the source engine counts.
 - The path points at the `.json` file; a bundled sample's missing `.json` is extracted from its tracked `.zip` by the script, so no unzip step is needed
 
 ## Steps
@@ -27,6 +28,8 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    ```bash
    uv run python scripts/run_collect.py --file <collector_file> --db {database_name}
    ```
+
+   When `--engines-in-use` was given, add `--engines-in-use <ids>` to the command.
 
    The script auto-generates a `job_id` and returns it in the output JSON.
 

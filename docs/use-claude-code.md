@@ -48,6 +48,10 @@ The scripts only run `SELECT` on `information_schema`, `pg_stat_statements` or `
 
 Every ingestion path (`/modernize`, `scripts/run_assessment.py --file`, `scripts/run_collect.py --file`, the local UI upload, and the AWS Transform upload) rejects a collection above 100 MB or above 50,000 tables or 20,000 queries, with a clear error naming the limit that was hit. These defaults comfortably cover the bundled samples and the larger query collections proposed in [#384](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/384); raise them with the `MODERNIZER_MAX_UPLOAD_BYTES`, `MODERNIZER_MAX_UPLOAD_TABLES`, and `MODERNIZER_MAX_UPLOAD_QUERIES` environment variables.
 
+### Tell the assessment which other engines you already run
+
+A saving for retiring an engine counts only if you run that engine today, so the collection records which ones. The source engine is always recorded. If the application also uses another AWS database, for example an OpenSearch domain or an ElastiCache cluster, declare it when you ingest the collection: `uv run python scripts/run_collect.py --file my-collection.json --engines-in-use opensearch,elasticache` (`scripts/run_assessment.py` takes the same option). The ids are the engine ids (`opensearch`, `elasticache`, `documentdb`, `dynamodb`, `aurora_mysql`, `aurora_postgresql`; the legacy `aurora` is refused); an unknown id is refused with the list. They are added to any `metadata.engines_in_use` the file already lists, and a collection that declares nothing behaves as before: only the source engine counts. `/modernize` and `/collect` accept the same `--engines-in-use` argument and pass it on. A live collector run reads the same list from the `ENGINES_IN_USE` environment variable.
+
 ## Optional: attach an Amazon Bedrock Guardrail
 
 If Claude Code reaches the model through Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK=1`), you can attach a guardrail you own to every model call it makes, including the ones `/modernize` triggers. It is off unless you set it. Claude Code sends the two headers below with each request, and Bedrock applies the guardrail to it.

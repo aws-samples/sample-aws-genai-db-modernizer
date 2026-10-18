@@ -214,6 +214,7 @@ class CollectorInput(BaseModel):
     source_database: SourceDatabase  # engine, endpoint, credentials
     collection_options: CollectionOptions  # PII anonymization, sample data
     aws_config: Optional[AWSConfig] = None  # RDS-specific config
+    engines_in_use: list[str] = []  # 3.1 (#963): other AWS engines already running
 ```
 
 **Supported Databases:**

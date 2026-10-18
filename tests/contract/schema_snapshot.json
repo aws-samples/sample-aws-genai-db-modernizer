@@ -3684,6 +3684,16 @@
           ]
         }
       },
+      "engines_in_use": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "scalar",
+            "type": "string"
+          },
+          "kind": "array"
+        }
+      },
       "job_id": {
         "required": true,
         "schema": {
@@ -3781,8 +3791,8 @@
         }
       }
     },
-    "schema_hash": "501ab5b6e78c31d84e2de02398f383ca2798adffe23417a4aa02cb47d9e81176",
-    "version": "3.0"
+    "schema_hash": "782c0a5d476629862732d35d5e44795bfc3fbf16a45795c4bcbc3313e05f46d8",
+    "version": "3.1"
   },
   "collector_output.CollectorOutputContract": {
     "fields": {

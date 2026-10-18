@@ -57,6 +57,17 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
             "s3_key": os.environ.get("OFFLINE_S3_KEY", ""),
         }
 
+    # #963: the other AWS engines the application already runs, declared by the operator.
+    declared = os.environ.get("ENGINES_IN_USE", "")
+    if declared.strip():
+        from src.shared.engines_in_use import parse_engines_in_use_option
+
+        try:
+            input_data["engines_in_use"] = parse_engines_in_use_option(declared)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     if region:
         input_data["aws_config"] = {
             "region": region,
@@ -72,7 +83,15 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     key = f"{database_name}/{job_id}/collector/output.json"
     import json
 
-    store.write_json(key, json.loads(result.model_dump_json()))
+    output = json.loads(result.model_dump_json())
+    if input_contract.engines_in_use:
+        from src.shared.engines_in_use import merge_engines_in_use
+
+        metadata = output.setdefault("metadata", {})
+        metadata["engines_in_use"] = merge_engines_in_use(
+            metadata.get("engines_in_use"), input_contract.engines_in_use
+        )
+    store.write_json(key, output)
 
     print(f"Collector output written to {key}")
     print(

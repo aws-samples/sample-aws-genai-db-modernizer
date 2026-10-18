@@ -1,16 +1,17 @@
 """
 Collector Input Contract (Pydantic Model)
 
-Version: 3.0
+Version: 3.1
 
 Two collection modes:
   - LIVE: Connect to cluster endpoint + Secrets Manager, collect everything directly
   - DDL:  Parse DDL scripts from S3, pull metrics via cluster endpoint (no DB connection)
 """
 
+import re
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DatabaseEngine(str, Enum):
@@ -133,10 +134,14 @@ class CollectorInput(BaseModel):
     Version history:
     - 2.0: Initial version
     - 3.0: Two-mode collection (live/ddl), cluster_endpoint as primary identifier
+    - 3.1 (#963): Added optional ``engines_in_use``: engine ids of the AWS databases
+      the application already runs next to the source. The collector copies them to
+      the collection's ``metadata.engines_in_use`` (CollectorOutputContract 3.2).
+      Backward compatible: defaults to empty.
     """
 
     contract_version: str = Field(
-        default="3.0", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="3.1", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(description="Unique job identifier")
 
@@ -178,6 +183,23 @@ class CollectorInput(BaseModel):
     timeout_minutes: int = Field(
         default=360, ge=30, le=720, description="Max collection time in minutes"
     )
+
+    engines_in_use: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Engine ids (e.g. opensearch, elasticache) of the AWS databases the application "
+            "already runs today next to the source; recorded in the collection (#963)."
+        ),
+    )
+
+    @field_validator("engines_in_use")
+    @classmethod
+    def validate_engines_in_use(cls, v: list[str]) -> list[str]:
+        out = [e.strip().lower() for e in v]
+        for e in out:
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", e):
+                raise ValueError(f"engines_in_use holds engine ids, got {e!r}")
+        return out
 
     @model_validator(mode="after")
     def validate_mode_config(self):
