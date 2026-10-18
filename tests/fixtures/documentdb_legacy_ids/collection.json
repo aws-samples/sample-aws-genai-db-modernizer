@@ -1,0 +1,306 @@
+{
+ "database_schema": {
+  "tables": [
+   {
+    "columns": [
+     {
+      "column_name": "id",
+      "data_type": "bigint",
+      "normalized_data_type": "integer",
+      "nullable": false
+     },
+     {
+      "column_name": "post_type",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "title",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "body",
+      "data_type": "text",
+      "normalized_data_type": "text",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_0",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_1",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_2",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_3",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_4",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_5",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_6",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_7",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_8",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_9",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_10",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_11",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_12",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_13",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_14",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "extra_15",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     }
+    ],
+    "foreign_keys": [],
+    "indexes": [
+     {
+      "columns": [
+       "id"
+      ],
+      "index_name": "posts_pkey",
+      "is_primary": true,
+      "is_unique": true
+     }
+    ],
+    "primary_key": [
+     "id"
+    ],
+    "row_count": 500000,
+    "schema_name": "public",
+    "size_mb": 400.0,
+    "table_id": "public.posts",
+    "table_name": "posts"
+   },
+   {
+    "columns": [
+     {
+      "column_name": "id",
+      "data_type": "bigint",
+      "normalized_data_type": "integer",
+      "nullable": false
+     },
+     {
+      "column_name": "post_id",
+      "data_type": "bigint",
+      "normalized_data_type": "integer",
+      "nullable": true
+     },
+     {
+      "column_name": "name",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "value",
+      "data_type": "text",
+      "normalized_data_type": "text",
+      "nullable": true
+     }
+    ],
+    "foreign_keys": [],
+    "indexes": [
+     {
+      "columns": [
+       "id"
+      ],
+      "index_name": "post_custom_fields_pkey",
+      "is_primary": true,
+      "is_unique": true
+     },
+     {
+      "columns": [
+       "post_id"
+      ],
+      "index_name": "post_custom_fields_0",
+      "is_unique": false
+     },
+     {
+      "columns": [
+       "name"
+      ],
+      "index_name": "post_custom_fields_1",
+      "is_unique": false
+     }
+    ],
+    "primary_key": [
+     "id"
+    ],
+    "row_count": 500000,
+    "schema_name": "public",
+    "size_mb": 400.0,
+    "table_id": "public.post_custom_fields",
+    "table_name": "post_custom_fields"
+   },
+   {
+    "columns": [
+     {
+      "column_name": "id",
+      "data_type": "bigint",
+      "normalized_data_type": "integer",
+      "nullable": false
+     },
+     {
+      "column_name": "category",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "title",
+      "data_type": "varchar",
+      "normalized_data_type": "string",
+      "nullable": true
+     },
+     {
+      "column_name": "attributes",
+      "data_type": "json",
+      "normalized_data_type": "json",
+      "nullable": true
+     }
+    ],
+    "foreign_keys": [],
+    "indexes": [
+     {
+      "columns": [
+       "id"
+      ],
+      "index_name": "products_pkey",
+      "is_primary": true,
+      "is_unique": true
+     }
+    ],
+    "primary_key": [
+     "id"
+    ],
+    "row_count": 500000,
+    "schema_name": "public",
+    "size_mb": 400.0,
+    "table_id": "public.products",
+    "table_name": "products"
+   }
+  ]
+ },
+ "job_id": "legacy-ids",
+ "metadata": {
+  "source_database": {
+   "engine": "postgresql"
+  }
+ },
+ "queries": {
+  "query_patterns": [
+   {
+    "calls_per_second": 2.0,
+    "frequency_per_hour": 7200,
+    "has_joins": false,
+    "join_count": 0,
+    "query_id": "q-typed",
+    "query_text": "SELECT id, category, attributes FROM products WHERE id = $1",
+    "query_type": "SELECT",
+    "rows_returned_avg": 5.0,
+    "tables_accessed": [
+     "public.products"
+    ]
+   },
+   {
+    "calls_per_second": 2.0,
+    "frequency_per_hour": 7200,
+    "has_joins": false,
+    "join_count": 0,
+    "query_id": "q-json",
+    "query_text": "SELECT id, attributes->>'color' FROM products WHERE id = $1",
+    "query_type": "SELECT",
+    "rows_returned_avg": 5.0,
+    "tables_accessed": [
+     "public.products"
+    ]
+   },
+   {
+    "calls_per_second": 2.0,
+    "frequency_per_hour": 7200,
+    "has_joins": false,
+    "join_count": 0,
+    "query_id": "q-eav",
+    "query_text": "SELECT post_id, name, value FROM post_custom_fields WHERE post_id = $1",
+    "query_type": "SELECT",
+    "rows_returned_avg": 5.0,
+    "tables_accessed": [
+     "public.post_custom_fields"
+    ]
+   }
+  ]
+ }
+}

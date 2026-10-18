@@ -22,13 +22,16 @@ attributes:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.tools.analysis.documentdb_analysis_tools import analyze_documentdb_use_cases
 
-VARIANT_PATTERNS = ("product-catalog", "polymorphic-data", "content-management")
+# #967: the three reads are one pattern, variant-attributes.
+VARIANT_PATTERNS = ("variant-attributes",)
 
 
 def _col(name: str, data_type: str = "varchar", nullable: bool = True) -> dict[str, Any]:
@@ -122,7 +125,7 @@ def _patterns_of(query: dict) -> set[str]:
 
 POSITIVE = [
     (
-        "polymorphic-data",
+        "variant-attributes",
         _query(
             "eav-read",
             "SELECT post_id, name, value FROM post_custom_fields WHERE post_id IN ($1, $2)",
@@ -130,7 +133,7 @@ POSITIVE = [
         ),
     ),
     (
-        "content-management",
+        "variant-attributes",
         _query(
             "entity-with-fields",
             "SELECT p.id, p.title, f.name, f.value FROM posts p "
@@ -139,7 +142,7 @@ POSITIVE = [
         ),
     ),
     (
-        "product-catalog",
+        "variant-attributes",
         _query(
             "typed-document",
             "SELECT id, category, attributes FROM products WHERE id = $1",
@@ -150,7 +153,7 @@ POSITIVE = [
 
 NEGATIVE = [
     (
-        "polymorphic-data",
+        "variant-attributes",
         # One attribute across every entity: not one entity's attribute set.
         _query(
             "attribute-across-entities",
@@ -159,12 +162,12 @@ NEGATIVE = [
         ),
     ),
     (
-        "content-management",
+        "variant-attributes",
         # The typed entity alone, without its variable fields.
         _query("entity-alone", "SELECT * FROM posts WHERE id = $1", ["posts"]),
     ),
     (
-        "product-catalog",
+        "variant-attributes",
         # An aggregate over the catalog, not a read of one entity.
         _query(
             "catalog-aggregate",
@@ -175,12 +178,12 @@ NEGATIVE = [
 ]
 
 
-@pytest.mark.parametrize(("pattern", "query"), POSITIVE, ids=[p for p, _ in POSITIVE])
+@pytest.mark.parametrize(("pattern", "query"), POSITIVE, ids=[q["query_id"] for _, q in POSITIVE])
 def test_a_key_anchored_read_of_variable_attributes_fires_the_pattern(pattern, query):
     assert pattern in _patterns_of(query)
 
 
-@pytest.mark.parametrize(("pattern", "query"), NEGATIVE, ids=[p for p, _ in NEGATIVE])
+@pytest.mark.parametrize(("pattern", "query"), NEGATIVE, ids=[q["query_id"] for _, q in NEGATIVE])
 def test_the_same_tables_without_the_access_pattern_do_not_fire_it(pattern, query):
     assert pattern not in _patterns_of(query)
 
@@ -237,3 +240,83 @@ def test_the_patterns_cite_the_document_model_limits_they_depend_on():
         assert "16 MB" in why, pattern_id
         assert "wildcard" in why.lower(), pattern_id
         assert "Developer Guide" in why, pattern_id
+
+
+def test_the_trace_lists_the_tables_the_variant_facts_name():
+    """#967: the decision trace's polymorphic_tables reads the same schema facts as the
+    pattern (an attribute table, or a typed entity with a JSON column), never nullability
+    or a column named type."""
+    from src.tools.analysis.documentdb_analysis_tools import detect_polymorphic_tables
+
+    collector = {"database_schema": {"tables": [POSTS, POST_FIELDS, PRODUCTS, THEMES]}}
+    assert detect_polymorphic_tables(collector) == ["public.post_custom_fields", "public.products"]
+
+
+LEGACY_DIR = Path(__file__).resolve().parents[3] / "fixtures" / "documentdb_legacy_ids"
+
+
+def test_an_analysis_saved_before_the_merge_routes_like_the_new_one():
+    """#967 merged six pattern ids into two. ``analysis-old-ids.json`` is a saved
+    DocumentDB analysis with the old ids (product-catalog/documentdb-02,
+    polymorphic-data/documentdb-03, flexible-schema, write-time-aggregation/documentdb-08);
+    ``analysis-new-ids.json`` is the same analysis with today's ids and the same table
+    recommendations. Each loads as the analysis contract from disk, and the resolver's
+    assignment for the old file equals the new file's, query by query."""
+    from src.agents.referee.assignment_resolver import AssignmentResolver
+    from src.contracts.analysis_output import AnalysisOutputContract
+
+    collector = json.loads((LEGACY_DIR / "collection.json").read_text())
+    triage = {
+        "selected_agents": [{"agent_type": "documentdb"}, {"agent_type": "aurora_postgresql"}],
+        "signals": [],
+    }
+    aurora = {
+        "table_recommendations": [
+            {"table_id": t["table_id"], "confidence_score": 60}
+            for t in collector["database_schema"]["tables"]
+        ],
+        "workload_analysis": {"patterns_detected": [], "anti_patterns_detected": []},
+    }
+
+    def routed(name: str) -> list[dict]:
+        saved = json.loads((LEGACY_DIR / name).read_text())
+        AnalysisOutputContract.model_validate(saved)  # the saved artifact still loads
+        outputs = {"documentdb": saved, "aurora_postgresql": aurora}
+        assignment = AssignmentResolver().resolve(triage, outputs, collector)
+        return [qa.model_dump(mode="json") for qa in assignment.query_assignments]
+
+    old_types = {
+        p["pattern_type"]
+        for p in json.loads((LEGACY_DIR / "analysis-old-ids.json").read_text())[
+            "workload_analysis"
+        ]["patterns_detected"]
+    }
+    assert old_types == {
+        "product-catalog",
+        "polymorphic-data",
+        "flexible-schema",
+        "write-time-aggregation",
+    }
+    old, new = routed("analysis-old-ids.json"), routed("analysis-new-ids.json")
+    assert len(old) == 3
+    assert old == new
+
+
+@pytest.mark.parametrize(
+    ("text", "fires"),
+    [
+        ("SELECT category, COUNT(*) FROM products GROUP BY category", True),
+        ("SELECT COUNT(*) FROM products WHERE attributes IS NOT NULL", True),
+        # One key's rows: an indexed count, not a $group pipeline (#967).
+        ("SELECT COUNT(*) FROM products WHERE id = $1", False),
+        # A GROUP BY that only de-duplicates is no aggregation.
+        ("SELECT category FROM products GROUP BY category", False),
+        # Review of #1093: a window function or FOUND_ROWS() alone is no aggregate.
+        ("SELECT id, LAG(category) OVER (ORDER BY id) FROM products", False),
+        ("SELECT id, ROW_NUMBER() OVER (PARTITION BY category ORDER BY id) FROM products", False),
+        ("SELECT FOUND_ROWS()", False),
+    ],
+)
+def test_aggregation_pipeline_needs_a_grouped_or_unanchored_aggregate(text, fires):
+    fired = _fired(_query("agg", text, ["products"]))
+    assert ("agg" in fired.get("aggregation-pipeline", set())) is fires

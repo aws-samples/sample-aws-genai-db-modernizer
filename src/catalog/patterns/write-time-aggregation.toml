@@ -1,8 +1,9 @@
 # Pattern write-time-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+#
+# Precomputing an aggregate at write time is a design every engine can use (#967): no
+# analysis reports it as a fit any more, and the schema designers' skills describe it.
 id = "write-time-aggregation"
-detectors = [
-    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
-]
+detectors = []
 penalty = 0
 
 [engines.dynamodb]
@@ -10,19 +11,10 @@ kind = "unscored"
 supported = true
 why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
 
-# Detection signals: multiple SUM/COUNT/MIN/MAX + JOIN, high read:write ratio on aggregated data
 [engines.documentdb]
-kind = "fit"
+kind = "unscored"
 supported = true
-catalog = "documentdb"
-catalog_id = "documentdb-08"
-score = 90
-why = "Complex aggregation queries (multiple SUM/COUNT/MIN/MAX with JOINs) that can be pre-computed at write time via CDC pipeline and stored as documents. Eliminates real-time aggregation entirely. Validated: 65x speedup in AnyCompany PoC."
-concerns = [
-    "Requires CDC pipeline (DMS/Lambda) to maintain pre-aggregated documents",
-    "Stale data window between write and CDC propagation",
-]
-table_bonus = 15
+why = "A design note, not a fit (#967): precomputing an aggregate on write and storing it as a document (a change stream or a CDC pipeline) is as available on Aurora (summary tables, materialized views) and DynamoDB (Streams), so no engine is credited for it."
 
 [engines.opensearch]
 kind = "unscored"

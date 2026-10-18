@@ -311,7 +311,13 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     #992 (a table's writes land on one engine): ``4b856e29`` (``UPDATE
     wp_woocommerce_order_itemmeta SET meta_value = ?``) is first-assigned to DynamoDB with
     the table's other write, not to DocumentDB, so DocumentDB first-assigns 27 and the
-    check moves 24 to Aurora MySQL and 3 to DynamoDB."""
+    check moves 24 to Aurora MySQL and 3 to DynamoDB.
+
+    #967 (no table-level variant-attribute credit for DocumentDB, Decision 14): the 16
+    wp_posts, wp_terms and order-item-meta reads that lost 3 DocumentDB points are
+    first-assigned to Aurora MySQL already, so DocumentDB first-assigns 11 and the check
+    moves 8 to Aurora MySQL and 3 to DynamoDB; the flag on a DynamoDB move still never
+    brings DocumentDB back."""
 
     FLAGGED = "3a74580e"
 
@@ -326,7 +332,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
         assert sorted(moved.values()).count("dynamodb") == 3
-        assert sorted(moved.values()).count("aurora_mysql") == 24
+        assert sorted(moved.values()).count("aurora_mysql") == 8
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 

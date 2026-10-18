@@ -422,6 +422,11 @@ INLINE_PATTERN_LITERALS: dict[str, tuple[int, str]] = {
     "src/tools/analysis/aurora_common_analysis_tools.py": (1, _INLINE_DETECTION),
     "src/tools/analysis/aurora_mysql_analysis_tools.py": (3, _JOIN_COUNTS),
     "src/tools/analysis/aurora_pg_analysis_tools.py": (3, _JOIN_COUNTS),
+    "src/tools/analysis/documentdb_analysis_tools.py": (
+        5,
+        "the fit patterns the DocumentDB detectors report, looked up by type instead of by "
+        "list position (#967)",
+    ),
     "src/contracts/dynamodb_decision_trace.py": (
         4,
         "the DynamoDB denormalization subtypes the decision trace contract publishes "

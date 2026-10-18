@@ -314,12 +314,13 @@ PRE_921_BONUSES = {
         "adjacency-list": (5, -10),
     },
     "documentdb": {
-        "content-management": (12, 0),
-        "product-catalog": (10, 0),
+        # #967: content-management (12) and product-catalog (10) are variant-attributes
+        # (10); flexible-schema is json-document-query; write-time-aggregation (15) is no
+        # longer a fit.
+        "variant-attributes": (10, 0),
         "nested-document": (12, 0),
-        "write-time-aggregation": (15, 0),
         "extended-reference": (10, 0),
-        "flexible-schema": (8, 0),
+        "json-document-query": (8, 0),
         "aggregation-pipeline": (8, 0),
     },
     "opensearch": {
@@ -347,7 +348,7 @@ PRE_921_BONUSES = {
         "lateral-join": (10, 0),
         "multi-table-update": (10, 0),
         "group-concat-pivot": (5, 0),
-        "jsonb-operations": (10, 0),
+        "json-document-query": (10, 0),  # #967: was jsonb-operations
         "upsert-conflict": (5, 0),
         # #984: the same bonus as Aurora MySQL's fulltext-search.
         "full-text-native": (10, 0),
@@ -371,10 +372,12 @@ PRE_921_FEATURES = {
         "multi-table-update",
         "group-concat-pivot",
         "stored-routine",
-        "jsonb-operations",
+        "json-document-query",  # #967: was jsonb-operations
         "array-operations",
     },
-    "documentdb": {"polymorphic-data", "flexible-schema"},
+    # #967: flexible-schema is json-document-query; polymorphic-data's credit is not carried
+    # into variant-attributes, which would widen it to typed-entity reads (Decision 14).
+    "documentdb": {"json-document-query"},
 }
 
 
@@ -430,7 +433,7 @@ class TestTheTableBonusesKeepTheirValues:
             ("aurora_postgresql", ["upsert-conflict"], 0),
             ("aurora_mysql", ["upsert-duplicate-key"], 0),
             ("aurora_postgresql", ["upsert-conflict", "full-text-native"], 0),
-            ("documentdb", ["polymorphic-data", "flexible-schema"], 10),
+            ("documentdb", ["variant-attributes", "json-document-query"], 10),
             ("dynamodb", ["key-value-lookup"], 0),
         ],
     )

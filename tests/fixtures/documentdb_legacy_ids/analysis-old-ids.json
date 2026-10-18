@@ -1,0 +1,175 @@
+{
+ "agent_metadata": {
+  "agent_name": "documentdb-analysis-agent",
+  "agent_version": "1.0.0",
+  "analysis_duration_seconds": 0.007074,
+  "analysis_timestamp": "2026-10-18T18:23:43.964852",
+  "target_database": "documentdb"
+ },
+ "aggregate_recommendations": [
+  {
+   "aggregate_id": "agg-post_custom_fields",
+   "co_access_confidence": 40,
+   "combined_migration_complexity": "LOW",
+   "key_design_rationale": null,
+   "member_tables": [
+    "public.post_custom_fields"
+   ],
+   "partition_key": null,
+   "root_table": "public.post_custom_fields",
+   "sort_key": null,
+   "supporting_access_patterns": []
+  },
+  {
+   "aggregate_id": "agg-posts",
+   "co_access_confidence": 40,
+   "combined_migration_complexity": "LOW",
+   "key_design_rationale": null,
+   "member_tables": [
+    "public.posts"
+   ],
+   "partition_key": null,
+   "root_table": "public.posts",
+   "sort_key": null,
+   "supporting_access_patterns": []
+  },
+  {
+   "aggregate_id": "agg-products",
+   "co_access_confidence": 40,
+   "combined_migration_complexity": "LOW",
+   "key_design_rationale": null,
+   "member_tables": [
+    "public.products"
+   ],
+   "partition_key": null,
+   "root_table": "public.products",
+   "sort_key": null,
+   "supporting_access_patterns": []
+  }
+ ],
+ "contract_version": "2.1",
+ "cost_estimate": {
+  "cost_components": {
+   "instance": 254.04,
+   "instance_type": "db.r6g.large",
+   "io_requests": 3.11,
+   "storage_gb": 0.12
+  },
+  "monthly_cost_usd": 257.27,
+  "pricing_assumptions": [
+   "Single db.r6g.large instance (no replicas)",
+   "Region: us-east-1",
+   "I/O: $0.20 per million read/write requests",
+   "Storage: $0.10 per GB-month",
+   "No backups, snapshots, or data transfer included"
+  ]
+ },
+ "load_test_results": null,
+ "table_recommendations": [
+  {
+   "concerns": [],
+   "confidence_score": 23,
+   "migration_complexity": "LOW",
+   "rationale": "No strong DocumentDB patterns detected for public.posts.",
+   "score_breakdown": {
+    "complexity_score": 80,
+    "cost_score": 25,
+    "pattern_match_score": 0,
+    "performance_score": 0
+   },
+   "supporting_patterns": [],
+   "table_id": "public.posts"
+  },
+  {
+   "concerns": [],
+   "confidence_score": 79,
+   "migration_complexity": "LOW",
+   "rationale": "Detected patterns: variant attributes.",
+   "score_breakdown": {
+    "complexity_score": 100,
+    "cost_score": 60,
+    "pattern_match_score": 90,
+    "performance_score": 25
+   },
+   "supporting_patterns": [
+    "documentdb-01"
+   ],
+   "table_id": "public.post_custom_fields"
+  },
+  {
+   "concerns": [],
+   "confidence_score": 83,
+   "migration_complexity": "LOW",
+   "rationale": "Detected patterns: variant attributes, json document query.",
+   "score_breakdown": {
+    "complexity_score": 100,
+    "cost_score": 60,
+    "pattern_match_score": 98,
+    "performance_score": 25
+   },
+   "supporting_patterns": [
+    "documentdb-01",
+    "documentdb-06"
+   ],
+   "table_id": "public.products"
+  }
+ ],
+ "workload_analysis": {
+  "anti_patterns_detected": null,
+  "patterns_detected": [
+   {
+    "confidence": "MEDIUM",
+    "description": "An entity whose attribute set varies (by type or category, or as attribute rows), read by its key: DocumentDB stores each entity as one document of up to 16 MB with only the fields it has; it has no wildcard index, so each queried attribute needs its own index (Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences).",
+    "frequency_percent": null,
+    "pattern_id": "documentdb-02",
+    "pattern_type": "product-catalog",
+    "query_ids": [
+     "q-typed",
+     "q-json"
+    ],
+    "table_ids": [
+     "public.products"
+    ]
+   },
+   {
+    "confidence": "MEDIUM",
+    "description": "An entity whose attribute set varies (by type or category, or as attribute rows), read by its key: DocumentDB stores each entity as one document of up to 16 MB with only the fields it has; it has no wildcard index, so each queried attribute needs its own index (Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences).",
+    "frequency_percent": null,
+    "pattern_id": "documentdb-03",
+    "pattern_type": "polymorphic-data",
+    "query_ids": [
+     "q-eav"
+    ],
+    "table_ids": [
+     "public.post_custom_fields"
+    ]
+   },
+   {
+    "confidence": "MEDIUM",
+    "description": "A query that reads JSON paths (JSON_EXTRACT, ->>, JSON_VALUE): the data is already semi-structured, and each path maps to a document field.",
+    "frequency_percent": null,
+    "pattern_id": "documentdb-06",
+    "pattern_type": "flexible-schema",
+    "query_ids": [
+     "q-json"
+    ],
+    "table_ids": [
+     "public.products"
+    ]
+   },
+   {
+    "confidence": "MEDIUM",
+    "description": "Saved before #967.",
+    "frequency_percent": null,
+    "pattern_id": "documentdb-08",
+    "pattern_type": "write-time-aggregation",
+    "query_ids": [
+     "q-json"
+    ],
+    "table_ids": [
+     "public.products"
+    ]
+   }
+  ]
+ }
+}

@@ -423,10 +423,17 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # 85.9, Aurora MySQL 81.2), and wp_woocommerce_order_itemmeta's UPDATE joins its
     # other write on DynamoDB (from DocumentDB): aurora_mysql -3, documentdb -1,
     # dynamodb +4.
+    # #967 (DocumentDB's table-level variant-attribute credit is not carried into the merged
+    # pattern, ADR-031 Decision 14): DocumentDB drops 3 points on the wp_posts, wp_terms and
+    # wp_woocommerce_order_itemmeta reads it first-assigned, so 9 wp_posts reads go to Aurora
+    # MySQL on score; 4 wp_terms joins (DocumentDB 71) leave Aurora MySQL and DynamoDB tied at
+    # 73 and 3 order-item-meta reads tie Aurora MySQL and DocumentDB at 77, and each tie goes
+    # to Aurora MySQL as the source-compatible engine: documentdb -16, aurora_mysql +16 (every moved
+    # query is in the #967 PR; the reality check already moved all 16 there).
     assert rc["before_distribution"] == {
         "dynamodb": 36,
-        "aurora_mysql": 43,
-        "documentdb": 27,
+        "aurora_mysql": 59,
+        "documentdb": 11,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

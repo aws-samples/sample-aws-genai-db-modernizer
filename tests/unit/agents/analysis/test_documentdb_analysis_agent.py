@@ -39,7 +39,7 @@ def _run(fixture: dict) -> tuple[set[str], set[str], AnalysisOutputContract, dic
 class TestContentManagementPattern:
     def test_detects_content_management(self):
         patterns, _, _, _ = _run(get_content_management_fixture())
-        assert "content-management" in patterns
+        assert "variant-attributes" in patterns  # #967: one pattern for the three reads
 
     def test_confidence(self):
         _, _, result, _ = _run(get_content_management_fixture())
@@ -49,13 +49,13 @@ class TestContentManagementPattern:
 class TestProductCatalogPattern:
     def test_detects_product_catalog(self):
         patterns, _, _, _ = _run(get_product_catalog_fixture())
-        assert "product-catalog" in patterns
+        assert "variant-attributes" in patterns  # #967: one pattern for the three reads
 
 
 class TestPolymorphicDataPattern:
     def test_detects_polymorphic(self):
         patterns, _, _, _ = _run(get_polymorphic_data_fixture())
-        assert "polymorphic-data" in patterns
+        assert "variant-attributes" in patterns  # #967: one pattern for the three reads
 
 
 class TestNestedDocumentPattern:
@@ -78,7 +78,15 @@ class TestAggregationPipelinePattern:
 class TestFlexibleSchemaPattern:
     def test_detects_flexible_schema(self):
         patterns, _, _, _ = _run(get_flexible_schema_fixture())
-        assert "flexible-schema" in patterns
+        assert "json-document-query" in patterns  # #967: the merged JSON pattern
+
+    def test_a_json_column_alone_is_not_a_json_read(self):
+        """#967: a SELECT on a table with a JSON column that reads no JSON path."""
+        fixture = get_flexible_schema_fixture()
+        for q in fixture["queries"]["query_patterns"]:
+            q["query_text"] = "SELECT id FROM events WHERE id = ?"
+        patterns, _, _, _ = _run(fixture)
+        assert not patterns & {"json-document-query", "flexible-schema"}
 
 
 class TestExtendedReferencePattern:
@@ -88,9 +96,10 @@ class TestExtendedReferencePattern:
 
 
 class TestWriteTimeAggregationPattern:
-    def test_detects_write_time_aggregation(self):
+    def test_is_a_design_note_not_a_fit(self):
+        """#967: precomputing on write is available on every engine, so no fit."""
         patterns, _, _, _ = _run(get_write_time_aggregation_fixture())
-        assert "write-time-aggregation" in patterns
+        assert "write-time-aggregation" not in patterns
 
 
 class TestCrossCollectionJoinsAntiPattern:

@@ -96,7 +96,7 @@ Each catalog pattern includes:
 |--------|----------|
 | DynamoDB | key-value-lookup (100), range-query (90), write-heavy-ingestion (85), time-series-event-log (85), metadata-config-store (90), session-store (90), bounded-parent-child (75), many-to-many-junction (65), co-accessed-tables (70), adjacency-list (60) |
 | Redis | caching-layer (95), session-store (90), rate-limiter (85), leaderboard (85), pub-sub (80) |
-| DocumentDB | content-management (90), product-catalog (85), polymorphic-data (80), nested-document (85) |
+| DocumentDB | variant-attributes (80), nested-document (85), extended-reference (85), json-document-query (80) |
 | OpenSearch | full-text-search (95), log-analytics (90), faceted-navigation (85) |
 | Neptune | social-graph (95), fraud-detection (90), knowledge-graph (85), recommendation-engine (80) |
 

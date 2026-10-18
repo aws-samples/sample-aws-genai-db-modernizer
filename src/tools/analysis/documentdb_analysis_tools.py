@@ -33,7 +33,7 @@ from src.tools.analysis.documentdb_pattern_catalog import (
     CatalogAntiPattern,
     CatalogPattern,
 )
-from src.tools.analysis.key_access import is_junction_table
+from src.tools.analysis.key_access import KeyAccessReader, is_junction_table
 from src.tools.analysis.llm_advisor_base import LlmAdvisorBase
 from src.tools.analysis.scoring import (
     TableProfile,
@@ -171,19 +171,12 @@ def detect_embedding_candidates(collector_output: dict) -> list[EmbeddingCandida
 
 
 def detect_polymorphic_tables(collector_output: dict) -> list[str]:
-    """Detect tables with >30% nullable columns or type discriminator columns."""
-    tables = (collector_output.get("database_schema") or {}).get("tables") or []
-    result: list[str] = []
-    type_keywords = {"type", "kind", "category", "class", "discriminator", "entity_type"}
-    for t in tables:
-        cols = t.get("columns") or []
-        if not cols:
-            continue
-        nullable_count = sum(1 for c in cols if c.get("nullable", False))
-        has_discriminator = any(c.get("column_name", "").lower() in type_keywords for c in cols)
-        if nullable_count / len(cols) > 0.3 or has_discriminator:
-            result.append(t.get("table_id", t.get("table_name", "")))
-    return result
+    """The tables that hold an entity with variable attributes, from the same schema facts
+    the variant-attributes pattern reads (``src.tools.analysis.variant_attributes``, #967):
+    an entity-attribute-value table, or a typed entity (a discriminator column) with a JSON
+    column. Nullability and a column merely named ``type`` are not evidence (#920)."""
+    schema = VariantAttributeSchema.from_collector(collector_output)
+    return sorted(set(schema.entity_columns) | (schema.typed & schema.documents))
 
 
 # ---------------------------------------------------------------------------
@@ -342,17 +335,12 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
 
     # Build lookup structures
     table_row_counts: dict[str, int] = {}
-    table_has_json: dict[str, bool] = {}
     table_fk_count: dict[str, int] = {}
     self_ref_tables: set[str] = set()
 
     for t in tables:
         tid = t.get("table_id", "")
         table_row_counts[tid] = t.get("row_count") or 0
-        cols = t.get("columns") or []
-        table_has_json[tid] = any(
-            (c.get("data_type") or "").lower() in ("json", "jsonb") for c in cols
-        )
         fks = t.get("foreign_keys") or []
         table_fk_count[tid] = len(fks)
         for fk in fks:
@@ -363,15 +351,14 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
     # access pattern, never a column count or nullability.
     variant = VariantAttributeSchema.from_collector(collector_output)
 
+    key_reader = KeyAccessReader.from_collector(collector_output, source_engine)
+
     # Pattern accumulators
-    content_mgmt: list[dict] = []
-    product_catalog: list[dict] = []
-    polymorphic_qs: list[dict] = []
+    variant_reads: list[dict] = []
     nested_doc: list[dict] = []
     agg_pipeline: list[dict] = []
-    flexible_schema: list[dict] = []
+    json_reads: list[dict] = []
     extended_ref: list[dict] = []
-    write_time_agg: list[dict] = []
 
     # Anti-pattern accumulators
     cross_joins: list[dict] = []
@@ -393,16 +380,14 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
 
         # The variable-attribute patterns test the read their catalog entry describes:
         # a key-anchored read of an entity with variable attributes (#920).
-        reads = variant.reads(q, source_engine)
-        # content-management: a typed entity read with its attribute rows
-        if ENTITY_WITH_ATTRIBUTE_ROWS in reads:
-            content_mgmt.append(q)
-        # product-catalog: a typed entity whose variable attributes are a JSON column
-        if TYPED_DOCUMENT in reads:
-            product_catalog.append(q)
-        # polymorphic-data: one entity's attribute rows (an entity-attribute-value table)
-        if ATTRIBUTE_ROWS in reads:
-            polymorphic_qs.append(q)
+        # variant-attributes: one entity's attribute rows, a typed entity read with its
+        # attribute rows, or a typed entity with a JSON column (#967: one pattern).
+        if variant.reads(q, source_engine) & {
+            ATTRIBUTE_ROWS,
+            ENTITY_WITH_ATTRIBUTE_ROWS,
+            TYPED_DOCUMENT,
+        }:
+            variant_reads.append(q)
 
         # nested-document: simple FK join (1-2 tables), bounded child
         if has_joins and join_count <= 2 and qt == "SELECT":
@@ -411,18 +396,24 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
                     nested_doc.append(q)
                     break
 
-        # aggregation-pipeline: GROUP BY + agg functions
-        if facts.aggregation and not has_joins:
+        # aggregation-pipeline: a GROUP BY that does more than de-duplicate, or an
+        # aggregate over rows no key anchors, with no join (#967). One key's COUNT or SUM
+        # is an indexed read (countDocuments on the key), not a $group pipeline.
+        # ``aggregation`` (a GROUP BY or an aggregate call), not ``needs_aggregation``,
+        # which a window function or FOUND_ROWS() alone also sets (review of #1093).
+        if (
+            facts.aggregation
+            and not facts.dedup_only_group_by
+            and not has_joins
+            and (facts.group_by or not key_reader.access(q).keyed)
+        ):
             agg_pipeline.append(q)
 
-        # flexible-schema: JSON columns or JSON_EXTRACT
+        # json-document-query: the query reads or builds JSON (the json_access fact,
+        # #967). A JSON column on a table the query reads is a schema fact, not this
+        # access pattern.
         if facts.json_access:
-            flexible_schema.append(q)
-        else:
-            for tid in accessed:
-                if table_has_json.get(tid, False) and qt == "SELECT":
-                    flexible_schema.append(q)
-                    break
+            json_reads.append(q)
 
         # extended-reference: join with small lookup table
         if has_joins and len(accessed) >= 2:
@@ -431,9 +422,7 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
             if has_small and has_large:
                 extended_ref.append(q)
 
-        # write-time-aggregation: multiple agg functions + JOIN
-        if has_joins and facts.aggregate_function_count >= 2:
-            write_time_agg.append(q)
+        # write-time-aggregation is a cross-engine design note, not a DocumentDB fit (#967).
 
         # --- Anti-pattern matching ---
 
@@ -466,16 +455,14 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
                     graph_hierarchy.append(q)
                     break
 
+    by_type = {p.pattern_type: p for p in DOCUMENTDB_PATTERNS}
     patterns = _build_patterns_from_matches(
         [
-            (DOCUMENTDB_PATTERNS[0], content_mgmt),
-            (DOCUMENTDB_PATTERNS[1], product_catalog),
-            (DOCUMENTDB_PATTERNS[2], polymorphic_qs),
-            (DOCUMENTDB_PATTERNS[3], nested_doc),
-            (DOCUMENTDB_PATTERNS[4], agg_pipeline),
-            (DOCUMENTDB_PATTERNS[5], flexible_schema),
-            (DOCUMENTDB_PATTERNS[6], extended_ref),
-            (DOCUMENTDB_PATTERNS[7], write_time_agg),
+            (by_type["variant-attributes"], variant_reads),
+            (by_type["nested-document"], nested_doc),
+            (by_type["aggregation-pipeline"], agg_pipeline),
+            (by_type["json-document-query"], json_reads),
+            (by_type["extended-reference"], extended_ref),
         ]
     )
 

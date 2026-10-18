@@ -12,7 +12,7 @@ The projected input is provided inline in the user prompt as JSON containing:
 - **decision_trace**: Pre-computed DocumentDB-specific signals from the analysis agent:
   - `embedding_candidates`: per-FK analysis with co_access_ratio, avg_children_per_parent, exceeds_16mb, relationship_type
   - `denormalization_strategies`: embed/reference/hybrid decision per FK relationship
-  - `polymorphic_tables`: tables with >30% nullable columns or type discriminators
+  - `polymorphic_tables`: tables that hold an entity with variable attributes: an entity-attribute-value table, or a typed entity (a discriminator column) with a JSON column
   - `documentdb_compatibility`: the target version and cluster type (`target_version`, `cluster_type`), query features that need DocumentDB 8.0 or 8.0.2+ (`version_dependent_features_detected`), and features with no operator on any version (`unsupported_features_detected`, e.g. LAG/LEAD/NTILE)
   - `relationships`: full FK relationship graph
   - `table_groups`: FK-connected table clusters

@@ -362,14 +362,14 @@ class TestConstantsAreTheCatalogsView:
 
     def test_documentdb(self) -> None:
         assert _ids(documentdb_pattern_catalog.DOCUMENTDB_PATTERNS, "base_score") == [
-            ("documentdb-01", "content-management", 90),
-            ("documentdb-02", "product-catalog", 85),
-            ("documentdb-03", "polymorphic-data", 80),
+            # #967: content-management, product-catalog and polymorphic-data are one
+            # variant-attributes pattern (80), flexible-schema is the JSON pattern, and
+            # write-time-aggregation is a cross-engine design note, not a fit.
+            ("documentdb-01", "variant-attributes", 80),
             ("documentdb-04", "nested-document", 85),
             ("documentdb-05", "aggregation-pipeline", 75),
-            ("documentdb-06", "flexible-schema", 80),
+            ("documentdb-06", "json-document-query", 80),
             ("documentdb-07", "extended-reference", 85),
-            ("documentdb-08", "write-time-aggregation", 90),
         ]
         assert _ids(documentdb_pattern_catalog.DOCUMENTDB_ANTI_PATTERNS, "severity_weight") == [
             ("documentdb-anti-01", "heavy-cross-collection-joins", 0.6),
@@ -437,7 +437,7 @@ class TestConstantsAreTheCatalogsView:
         assert _ids(aurora_pg_pattern_catalog.AURORA_PG_PATTERNS, "base_score") == [
             ("aurora-pg-01", "cte-recursive", 95),
             ("aurora-pg-02", "window-function", 90),
-            ("aurora-pg-03", "jsonb-operations", 85),
+            ("aurora-pg-03", "json-document-query", 85),  # #967: the merged JSON pattern
             ("aurora-pg-04", "array-operations", 80),
             ("aurora-pg-05", "full-text-native", 75),
             ("aurora-pg-06", "lateral-join", 85),
@@ -579,6 +579,8 @@ UNDETECTED = {
     "text_search",
     "low-frequency-read",
     "low-frequency-write",
+    # A cross-engine design note since #967: no analysis reports it as a fit.
+    "write-time-aggregation",
     # Catalog-only: the access-pattern class "ad hoc filter" reads it (#728); the
     # classifier detects the class from the SQL facade's facts.
     "secondary-attribute-filter",

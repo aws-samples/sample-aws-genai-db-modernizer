@@ -137,13 +137,11 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`co-accessed-tables`](#co-accessed-tables) | fit 70 | - | - | - | - | - | future | future | - | - | - | 1 |
 | [`complex-aggregation`](#complex-aggregation) | anti 0.7 | - | - | - | - | - | future | future | 30 `needs_redesign` (also `complex_aggregation`) | - | aggregations | 1 |
 | [`complex-join`](#complex-join) | - | - | - | - | fit 90 | fit 90 | future | future | - | - | complex_joins | 1 |
-| [`content-management`](#content-management) | - | fit 90 | - | - | - | - | future | future | - | - | - | 1 |
 | [`correlated-subquery-joins`](#correlated-subquery-joins) | - | anti 0.7 | - | - | - | - | future | future | 20 `reads_more_than_returns` | - | - | 1 |
 | [`correlated-subquery`](#correlated-subquery) | - | - | - | - | fit 80 | fit 80 | future | future | - | - | subqueries | 1 |
 | [`cte-recursive`](#cte-recursive) | - | - | - | - | fit 95 | fit 90 | future | future | - | - | - | 2 |
 | [`extended-reference`](#extended-reference) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
 | [`faceted-analytics`](#faceted-analytics) | - | anti 0.5 | - | - | - | - | future | future | - `guidance_only` | - | - | 1 |
-| [`flexible-schema`](#flexible-schema) | - | fit 80 | - | - | - | - | future | future | - | - | json_columns | 1 |
 | [`frequent-full-scan`](#frequent-full-scan) | anti 0.5 | - | - | - | - | - | future | future | 20 `reads_more_than_returns` | - | - | 1 |
 | [`full-text-native`](#full-text-native) | - | - | - | - | fit 75 | - | future | future | - | - | - | 1 |
 | [`full-text-search-candidate`](#full-text-search-candidate) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | - `guidance_only` | - | - | 1 |
@@ -158,8 +156,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`high-frequency-small-updates`](#high-frequency-small-updates) | - | anti 0.4 | - | - | - | - | future | future | - `guidance_only` | - | - | none |
 | [`high-ingest`](#high-ingest) | - | - | fit 90 | - | - | - | future | future | - | - | - | 1 |
 | [`high-volume-text-search`](#high-volume-text-search) | - | - | - | - | anti 0.7 | anti 0.7 | future | future | 20 `reads_more_than_returns` | - | - | 1 |
-| [`json-document-query`](#json-document-query) | - | - | - | - | - | fit 85 | future | future | - | - | - | 1 |
-| [`jsonb-operations`](#jsonb-operations) | - | - | - | - | fit 85 | - | future | future | - | - | - | 1 |
+| [`json-document-query`](#json-document-query) | - | fit 80 | - | - | fit 85 | fit 85 | future | future | - | - | json_columns | 3 |
 | [`key-value-lookup`](#key-value-lookup) | fit 100 | - | - | - | fit 80 | fit 80 | future | future | - | - | key_value_lookups | 2 |
 | [`large-result-sets`](#large-result-sets) | - | - | - | anti 0.5 | - | - | future | future | 10 `bounded_limit` | - | - | 1 |
 | [`lateral-join`](#lateral-join) | - | - | - | - | fit 85 | fit 80 | future | future | - | - | - | 2 |
@@ -176,8 +173,6 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`no-relational-need`](#no-relational-need) | - | - | - | - | anti 0.6 | anti 0.6 | future | future | 20 `workload_fit` | - | - | 1 |
 | [`ordered-scan`](#ordered-scan) | anti 0.5 | - | - | - | - | - | future | future | 20 `reads_more_than_returns` | - | - | 1 |
 | [`pagination`](#pagination) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
-| [`polymorphic-data`](#polymorphic-data) | - | fit 80 | - | - | - | - | future | future | - | - | - | 1 |
-| [`product-catalog`](#product-catalog) | - | fit 85 | - | - | - | - | future | future | - | - | - | 1 |
 | [`range-query`](#range-query) | fit 90 | - | - | - | - | - | future | future | - | - | range_queries | 1 |
 | [`referential-integrity`](#referential-integrity) | - | - | - | - | fit 85 | fit 85 | future | future | - | - | - | 1 |
 | [`regex-search`](#regex-search) | **no** | native | fit 75 | **no** | native | native | future | future | 40 `cannot_run` | text_search | text_search | 1 |
@@ -201,12 +196,13 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 | [`unbounded-time-series-ingest`](#unbounded-time-series-ingest) | - | - | - | - | anti 0.4 | anti 0.4 | future | future | - `guidance_only` | - | - | 1 |
 | [`upsert-conflict`](#upsert-conflict) | - | - | - | - | fit 80 | - | future | future | - | - | - | 1 |
 | [`upsert-duplicate-key`](#upsert-duplicate-key) | - | - | - | - | - | fit 80 | future | future | - | - | - | 1 |
+| [`variant-attributes`](#variant-attributes) | - | fit 80 | - | - | - | - | future | future | - | - | - | 1 |
 | [`wide-transaction`](#wide-transaction) | anti 0.3 | - | - | - | - | - | future | future | 10 `bounded_limit` | - | - | 1 |
 | [`wildcard-search`](#wildcard-search) | **no** | native | fit 80 | **no** | native | native | future | future | 40 `cannot_run` | text_search | text_search | 1 |
 | [`window-function`](#window-function) | - | - | - | - | fit 90 | fit 85 | future | future | - | - | - | 2 |
 | [`window-functions`](#window-functions) | - | anti 0.5 | - | - | - | - | future | future | 10 `bounded_limit` | - | - | 1 |
 | [`write-heavy-ingestion`](#write-heavy-ingestion) | fit 85 | - | - | - | - | - | future | future | - | - | write_heavy | 1 |
-| [`write-time-aggregation`](#write-time-aggregation) | - | fit 90 | - | - | - | - | future | future | - | - | - | 1 |
+| [`write-time-aggregation`](#write-time-aggregation) | - | - | - | - | - | - | future | future | - | - | - | none |
 
 ## Patterns
 
@@ -243,7 +239,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- DocumentDB, fit 75 (documentdb-05): Queries using GROUP BY with aggregate functions that map to DocumentDB's aggregation pipeline \($group, $match, $project, $sort\). Table bonus: +8 pattern match.
+- DocumentDB, fit 75 (documentdb-05): A grouped aggregate, or one over rows no key anchors, that maps to DocumentDB's aggregation pipeline \($group, $match, $project, $sort\). Table bonus: +8 pattern match.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -313,14 +309,6 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
-### content-management
-
-Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
-
-- DocumentDB, fit 90 (documentdb-01): Typed content \(articles, pages, media\) read by key together with its per-type attribute rows: DocumentDB stores the entity and its variable fields as one document of up to 16 MB; it has no wildcard index, so each queried field needs its own index \(Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences\). Table bonus: +12 pattern match.
-- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
-- Not modelled yet (future enhancement): Neptune, Keyspaces.
-
 ### correlated-subquery-joins
 
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
@@ -360,14 +348,6 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.5 (documentdb-anti-06): GROUP BY over several columns with an aggregate. $group with a compound \_id serves it natively; real faceting \($facet, several groupings of one filtered set\) needs DocumentDB 8.0.2 or later on an instance-based cluster, and this detector does not find it \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
-- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
-- Not modelled yet (future enhancement): Neptune, Keyspaces.
-
-### flexible-schema
-
-Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
-
-- DocumentDB, fit 80 (documentdb-06): Tables with JSON/JSONB columns or high column count with many nullable fields — data is already semi-structured and maps directly to documents. Table bonus: +8 pattern match. Counts toward the engine's feature complexity bonus.
 - No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
@@ -501,18 +481,12 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### json-document-query
 
-Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
+Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
-- No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
-- Not modelled yet (future enhancement): Neptune, Keyspaces.
-
-### jsonb-operations
-
-Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
-
+- DocumentDB, fit 80 (documentdb-06): A query that reads JSON paths \(JSON\_EXTRACT, -&gt;&gt;, JSON\_VALUE\): the data is already semi-structured, and each path maps to a document field. Table bonus: +8 pattern match. Counts toward the engine's feature complexity bonus.
 - Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries — combining document flexibility with relational joins. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
-- No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora MySQL.
+- Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
+- No effect on: DynamoDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### key-value-lookup
@@ -651,22 +625,6 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 - Aurora PostgreSQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
 - Aurora MySQL, fit 85 (aurora-common-08): Pagination patterns using OFFSET/LIMIT or cursor-based keyset pagination \(WHERE id &gt; ? ORDER BY id LIMIT N\). Aurora handles pagination efficiently with index-based seeks — NoSQL engines handle pagination poorly.
 - No effect on: DynamoDB, OpenSearch, ElastiCache.
-- Not modelled yet (future enhancement): Neptune, Keyspaces.
-
-### polymorphic-data
-
-Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
-
-- DocumentDB, fit 80 (documentdb-03): One entity's attribute rows \(an entity-attribute-value table\) read by the entity's key: DocumentDB stores the attributes as fields of the entity's own document, up to 16 MB, with only the fields it has; it has no wildcard index, so each queried attribute needs its own index \(Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences\). Counts toward the engine's feature complexity bonus.
-- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
-- Not modelled yet (future enhancement): Neptune, Keyspaces.
-
-### product-catalog
-
-Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
-
-- DocumentDB, fit 85 (documentdb-02): A typed entity \(category or type\) whose variable attributes are a JSON column, read by its key: DocumentDB stores each entity as one flexible document of up to 16 MB with only its own fields; it has no wildcard index, so each queried attribute needs its own index \(Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences\). Table bonus: +10 pattern match.
-- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ### range-query
@@ -879,6 +837,14 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
+### variant-attributes
+
+Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
+
+- DocumentDB, fit 80 (documentdb-01): An entity whose attribute set varies \(by type or category, or as attribute rows\), read by its key: DocumentDB stores each entity as one document of up to 16 MB with only the fields it has; it has no wildcard index, so each queried attribute needs its own index \(Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences\). Table bonus: +10 pattern match.
+- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- Not modelled yet (future enhancement): Neptune, Keyspaces.
+
 ### wide-transaction
 
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
@@ -930,10 +896,9 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### write-time-aggregation
 
-Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
+No analysis reports this pattern today.
 
-- DocumentDB, fit 90 (documentdb-08): Complex aggregation queries \(multiple SUM/COUNT/MIN/MAX with JOINs\) that can be pre-computed at write time via CDC pipeline and stored as documents. Eliminates real-time aggregation entirely. Validated: 65x speedup in AnyCompany PoC. Table bonus: +15 pattern match.
-- No effect on: DynamoDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
+- No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 
 ## Relational move: version and feature gaps

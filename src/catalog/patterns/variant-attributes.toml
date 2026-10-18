@@ -1,0 +1,68 @@
+# Pattern variant-attributes. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
+#
+# An entity with variable attributes, read by its key (#967): one file for the fact that
+# content-management, product-catalog and polymorphic-data each described a part of. An
+# analysis saved before #967 may still name the three old ids, which no reader looks up
+# in the catalog.
+id = "variant-attributes"
+detectors = [
+    "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
+]
+penalty = 0
+
+[engines.dynamodb]
+kind = "unscored"
+supported = true
+why = "DynamoDB's analysis does not report this pattern; it adds no cross-engine penalty."
+
+# Detection (#920, #967): a key lookup or key-scoped SELECT of an entity with variable
+# attributes (src/tools/analysis/variant_attributes.py): an entity-attribute-value table
+# read with its entity column pinned or joined (ATTRIBUTE_ROWS), a typed entity joined to
+# that table on the entity key (ENTITY_WITH_ATTRIBUTE_ROWS), or a typed entity with a
+# JSON column (TYPED_DOCUMENT). Column count and nullability are not evidence. One fact,
+# merged from content-management, product-catalog and polymorphic-data (#967).
+[engines.documentdb]
+kind = "fit"
+supported = true
+catalog = "documentdb"
+catalog_id = "documentdb-01"
+score = 80
+why = "An entity whose attribute set varies (by type or category, or as attribute rows), read by its key: DocumentDB stores each entity as one document of up to 16 MB with only the fields it has; it has no wildcard index, so each queried attribute needs its own index (Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences)."
+concerns = [
+    "16MB document limit for large text/blob content",
+    "Wildcard indexes ($**) not supported in any DocumentDB version: flatten queryable attributes to top-level fields with targeted indexes",
+]
+table_bonus = 10
+# No table-level complexity credit (review of #1093, ADR-031 Decision 14): polymorphic-data
+# had one; the merged pattern would have widened it to the typed-entity reads, and a
+# table-level credit reaches every query on the table.
+
+[engines.opensearch]
+kind = "unscored"
+supported = true
+why = "OpenSearch's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.elasticache]
+kind = "unscored"
+supported = true
+why = "ElastiCache's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_postgresql]
+kind = "unscored"
+supported = true
+why = "Aurora PostgreSQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.aurora_mysql]
+kind = "unscored"
+supported = true
+why = "Aurora MySQL's analysis does not report this pattern; it adds no cross-engine penalty."
+
+[engines.neptune]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
+
+[engines.keyspaces]
+kind = "future"
+supported = false
+why = "Not modelled yet (future enhancement)"
