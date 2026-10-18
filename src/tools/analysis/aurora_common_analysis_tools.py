@@ -676,7 +676,7 @@ def analyze_aurora_common_use_cases(
 # natively (window functions, recursive CTEs, LATERAL, stored routines, a multi-table
 # UPDATE/DELETE, a string aggregate: MySQL 8.0, which Aurora MySQL version 3 is
 # compatible with, has them all) has the same values on either engine (#920, checked by
-# tests/unit/shared/test_pattern_catalog.py), so it never favours the engine that used to
+# tests/unit/shared/test_routing_catalog.py), so it never favours the engine that used to
 # be the only one with the catalog row: ADR-031 Decision 6 compares the two engines'
 # totals for a heterogeneous source. Where one engine's documentation states more, its
 # catalog fit score says so.

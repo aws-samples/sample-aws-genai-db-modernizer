@@ -104,8 +104,9 @@ OPENSEARCH_MIN_CALLS_PER_SECOND = catalog.engine_threshold("opensearch", "min_ca
 # MATCH...AGAINST, Postgres tsvector/pg_trgm) already covers these patterns
 # for free -- the Aurora engines' native, basic full-text support. A
 # dedicated OpenSearch domain must clear a higher traffic bar than
-# OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway.
-NATIVE_TEXT_SEARCH_SOURCE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "postgres"})
+# OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway. The source engines whose own
+# dialect an Aurora engine is (the Aurora engine files' ``source_engines``).
+NATIVE_TEXT_SEARCH_SOURCE_ENGINES = frozenset(catalog.source_engine_dialects())
 
 # The traffic floor a native-text-search source engine's queries must clear
 # before OpenSearch is justified despite the source already covering the
