@@ -30,6 +30,10 @@ Version History:
   the cascade hit its depth limit), so synthesis can flag it in every
   deliverable. ``terminal_queries`` keeps the ids. Backward compatible:
   ``terminal`` defaults to empty.
+- 1.4 (2026-10-18, #1033): ``RouterOutput.held`` (``HeldQuery``): each held query
+  with the flag it was held under (the flagged engine and the reason category), so
+  synthesis can state it in every deliverable. ``held_queries`` keeps the ids.
+  Backward compatible: ``held`` defaults to empty.
 """
 
 from __future__ import annotations
@@ -104,11 +108,21 @@ class TerminalQuery(BaseModel):
     )
 
 
+class HeldQuery(BaseModel):
+    """A flagged query kept on its engine by a customer pin (#1033)."""
+
+    query_id: str = Field(..., description="The flagged query")
+    flagged_engine: str = Field(..., description="The engine the flag judged unable (id)")
+    reason_category: str | None = Field(
+        None, description="The flag's reason category (ModelFlag.reason_category)"
+    )
+
+
 class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")
@@ -125,6 +139,10 @@ class RouterOutput(BaseModel):
             "Flagged queries kept on their engine because their table's write group holds "
             "a customer-pinned write (#992): the flag is a note on the unit, not a move"
         ),
+    )
+    held: list[HeldQuery] = Field(
+        default_factory=list,
+        description="Each held query with the flag it was held under (#1033)",
     )
     terminal: list[TerminalQuery] = Field(
         default_factory=list,

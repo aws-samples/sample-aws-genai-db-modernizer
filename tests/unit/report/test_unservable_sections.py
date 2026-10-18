@@ -19,6 +19,9 @@ from src.report.unservable import (
     UNSERVABLE_FALLBACK_SOME,
     UNSERVABLE_FLAGGED_ALL,
     UNSERVABLE_FLAGGED_SOME,
+    UNSERVABLE_HELD_ALL,
+    UNSERVABLE_HELD_LEAD,
+    UNSERVABLE_HELD_SOME,
     UNSERVABLE_INTRO,
     UNSERVABLE_RERUN_TEXT,
 )
@@ -278,7 +281,13 @@ def test_only_flagged_queries_never_read_as_a_fallback() -> None:
 
 def test_the_kind_sentences_are_absent_without_their_kind(report) -> None:
     md = render_engineering_report_md(report)
-    for sentence in (UNSERVABLE_FLAGGED_ALL, UNSERVABLE_FLAGGED_SOME, UNSERVABLE_FALLBACK_SOME):
+    for sentence in (
+        UNSERVABLE_FLAGGED_ALL,
+        UNSERVABLE_FLAGGED_SOME,
+        UNSERVABLE_FALLBACK_SOME,
+        UNSERVABLE_HELD_ALL,
+        UNSERVABLE_HELD_SOME,
+    ):
         assert sentence not in md
         assert " ".join(sentence.split()) not in engineering_text(report)
 
@@ -294,6 +303,9 @@ def test_the_sentences_match_the_ui_callout() -> None:
     assert en[key + "fallback_some"] == UNSERVABLE_FALLBACK_SOME
     assert en[key + "flagged_all"] == UNSERVABLE_FLAGGED_ALL
     assert en[key + "flagged_some"] == UNSERVABLE_FLAGGED_SOME
+    assert en[key + "held_all"] == UNSERVABLE_HELD_ALL
+    assert en[key + "held_some"] == UNSERVABLE_HELD_SOME
+    assert en[key + "redesign_held"] == UNSERVABLE_HELD_LEAD + " {{hints}}"
     assert en[key + "rerun"] == UNSERVABLE_RERUN_TEXT
 
 
@@ -306,3 +318,66 @@ def test_a_facts_block_written_before_the_kinds_still_names_the_fallback_kind() 
     md = _section_md(render_engineering_report_md(report))
     assert UNSERVABLE_FALLBACK_ALL in md
     assert "`query_traces.unservable`" in md
+
+
+def _held_report(*, with_fallback: bool = False) -> dict[str, Any]:
+    """A query the router held because a customer pin keeps its table's writes on
+    DynamoDB (#1033), alone or next to a fallback row."""
+    from src.agents.referee.flagged_unservable import flagged_unservable_records
+
+    report = _report([_row("q-count")] if with_fallback else [])
+    report["flagged_unservable"] = flagged_unservable_records(
+        {"query_assignments": [{"query_id": "w2", "assigned_engine": "dynamodb"}]},
+        None,
+        {
+            "held": [
+                {
+                    "query_id": "w2",
+                    "flagged_engine": "dynamodb",
+                    "reason_category": "missing_feature",
+                }
+            ]
+        },
+    )
+    report["facts"] = compute_report_facts(report)
+    return report
+
+
+def test_a_held_query_names_the_pin_in_both_reports() -> None:
+    """#1033: with only a held row, the sentence names the pin, the row's lead sentence
+    says to change the pin, and nothing reads as a fallback or as 'no other engine'."""
+    report = _held_report()
+    section = _section_md(render_engineering_report_md(report))
+    text = engineering_text(report)
+    row = next(line for line in section.splitlines() if line.startswith("| `w2`"))
+    assert "| DynamoDB |" in row
+    assert "is pinned to DynamoDB in the assignment review" in row
+    assert f"{UNSERVABLE_HELD_LEAD} For DynamoDB: " in row
+    assert "Keep it on DynamoDB" not in row
+    for out in (section, text):
+        flat = " ".join(out.split())
+        assert "Queries that cannot be served as designed (1 query)" in flat
+        assert " ".join(UNSERVABLE_HELD_ALL.split()) in flat
+        assert " ".join(UNSERVABLE_INTRO.split()) in flat
+        assert "fallback engine" not in flat
+        assert "no other engine the plan keeps" not in flat
+    assert "`flagged_unservable`" in section and "`query_traces.unservable`" not in section
+
+
+def test_a_held_and_a_fallback_query_each_get_their_some_sentence() -> None:
+    section = _section_md(render_engineering_report_md(_held_report(with_fallback=True)))
+    assert "(2 queries)" in section
+    assert UNSERVABLE_FALLBACK_SOME in section and UNSERVABLE_HELD_SOME in section
+    assert UNSERVABLE_HELD_ALL not in section
+    assert "`query_traces.unservable` and `flagged_unservable`" in section
+
+
+def test_the_executive_report_states_a_held_query_without_naming_it() -> None:
+    """The executive report prints the title and the neutral intro (true for every
+    kind) and no query id, table or per-kind row."""
+    from tests.executive_pdf import executive_text
+
+    text = executive_text(_held_report())
+    assert "Queries that cannot be served as designed (1 query)" in text
+    assert " ".join(UNSERVABLE_INTRO.split()) in text
+    assert "w2" not in text and "pinned" not in text

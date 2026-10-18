@@ -139,7 +139,7 @@ LEGACY_FILES: dict[type[BaseModel], tuple[str, dict[str, Any]]] = {
         {"confirmed_version": 2, "confirmed_at": _TS, "engine": "dynamodb"},
     ),
     RouterOutput: (
-        "1.3",
+        "1.4",
         {
             "job_id": "job-1",
             "routings": [

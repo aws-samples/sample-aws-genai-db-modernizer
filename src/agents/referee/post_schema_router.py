@@ -33,7 +33,12 @@ from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.tie_break import group_tie
 from src.contracts.model_flag import FlagReason, ModelFlag
 from src.contracts.move_ledger import MoveEvidence
-from src.contracts.post_schema_router_output import QueryRouting, RouterOutput, TerminalQuery
+from src.contracts.post_schema_router_output import (
+    HeldQuery,
+    QueryRouting,
+    RouterOutput,
+    TerminalQuery,
+)
 from src.shared.engine_names import display_engine
 
 logger = logging.getLogger(__name__)
@@ -104,12 +109,13 @@ def _engine_flags(engine: str, raw_flags: Iterable[object], schema_output: dict)
 
 
 def _terminal(
-    members: list[str],
+    flagged: list[tuple[str, ModelFlag]],
     engine: str,
-    flag: ModelFlag,
     cause: Literal["no_kept_engine", "depth_limit"],
 ) -> list[TerminalQuery]:
-    """The ``RouterOutput.terminal`` records of a unit that stays on ``engine`` (#888)."""
+    """The ``RouterOutput.terminal`` records of the queries flagged on ``engine`` whose
+    unit stays there (#888). A unit member nobody flagged gets none: the record
+    claims a review found the engine cannot serve it."""
     return [
         TerminalQuery(
             query_id=m,
@@ -117,7 +123,16 @@ def _terminal(
             reason_category=flag.reason_category.value,
             cause=cause,
         )
-        for m in members
+        for m, flag in flagged
+    ]
+
+
+def _held(flagged: list[tuple[str, ModelFlag]], engine: str) -> list[HeldQuery]:
+    """The ``RouterOutput.held`` records of the queries flagged on ``engine`` that a
+    customer pin keeps there (#1033); an unflagged unit member gets none."""
+    return [
+        HeldQuery(query_id=m, flagged_engine=engine, reason_category=flag.reason_category.value)
+        for m, flag in flagged
     ]
 
 
@@ -202,7 +217,9 @@ def route_unsupported_queries(
 
     routings: list[QueryRouting] = []
     terminal: list[TerminalQuery] = []
+    terminal_ids: list[str] = []
     held: list[str] = []
+    held_records: list[HeldQuery] = []
     # query -> the other writes of the tables it writes (#992).
     write_mates: dict[str, set[str]] = defaultdict(set)
     for members in (write_groups or {}).values():
@@ -246,6 +263,11 @@ def route_unsupported_queries(
                 failed_engines[qid].add(engine)
                 pending.append((qid, engine, flag))
 
+    # Each (query, engine) flag, so a unit's records name only the queries a review flagged.
+    flag_of: dict[tuple[str, str], ModelFlag] = {}
+    for qid, engine, flag in pending:
+        flag_of.setdefault((qid, engine), flag)
+
     gated = scoring_context.with_flag_gaps(failed_engines)
     seen: set[str] = set()
     for qid, engine, flag in pending:
@@ -262,6 +284,7 @@ def route_unsupported_queries(
             }
         )
         seen.update(members)
+        flagged = [(m, flag_of.get((m, engine), flag)) for m in members if (m, engine) in flag_of]
         # A write group with a pinned write stays together on the pinned engine:
         # moving the rest would split the table's writes (ADR-031 Amendment 9).
         pinned_mates = {
@@ -275,9 +298,11 @@ def route_unsupported_queries(
                 len(members),
             )
             held.extend(m for m in members if m not in held)
+            held_records.extend(_held(flagged, engine))
             continue
         if cascade_depth >= max_depth:
-            terminal.extend(_terminal(members, engine, flag, "depth_limit"))
+            terminal.extend(_terminal(flagged, engine, "depth_limit"))
+            terminal_ids.extend(m for m in members if m not in terminal_ids)
             continue
         failed = set().union(*(failed_engines.get(m, set()) for m in members))
         remaining = [e for e in candidates if e not in failed]
@@ -297,7 +322,8 @@ def route_unsupported_queries(
             weights=unit_weights,
         )
         if routing.destination is None:
-            terminal.extend(_terminal(members, engine, flag, "no_kept_engine"))
+            terminal.extend(_terminal(flagged, engine, "no_kept_engine"))
+            terminal_ids.extend(m for m in members if m not in terminal_ids)
             continue
         label = FLAG_REASON_LABELS[flag.reason_category]
         basis = (
@@ -342,8 +368,9 @@ def route_unsupported_queries(
     return RouterOutput(
         job_id="",  # Caller sets this
         routings=routings,
-        terminal_queries=[t.query_id for t in terminal],
+        terminal_queries=terminal_ids,
         terminal=terminal,
         held_queries=held,
+        held=held_records,
         cascade_depth=cascade_depth,
     )

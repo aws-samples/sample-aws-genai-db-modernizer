@@ -1183,7 +1183,7 @@ def _flagged_unservable_rows(report: dict[str, Any], listed: set[str]) -> list[d
             {
                 "query_id": str(r["query_id"]),
                 "engine": engine,
-                "kind": "flagged",
+                "kind": "held" if r.get("cause") == "held_by_pin" else "flagged",
                 "rule": "",
                 "explanation": str(r.get("explanation") or ""),
                 "blocking_gates": [
@@ -1203,10 +1203,11 @@ def _flagged_unservable_rows(report: dict[str, Any], listed: set[str]) -> list[d
 def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     """The queries no kept engine can serve (``UnservableFacts``), or None.
 
-    Three kinds: ``fallback`` and ``gated_everywhere`` from
-    ``query_traces.unservable`` (#729), and ``flagged`` from
+    Four kinds: ``fallback`` and ``gated_everywhere`` from
+    ``query_traces.unservable`` (#729), and ``flagged`` and ``held`` from
     ``flagged_unservable`` (#888: a review flagged it and no other kept engine
-    can take it, so it stays). None for a report with neither list. Each
+    can take it, so it stays; #1033: a review flagged it and a customer pin
+    keeps its table's writes there, so it stays). None for a report with neither list. Each
     query keeps its own sentence for why it sits where it does, the gate that
     ruled out each engine, the capabilities it needs and a redesign hint for
     each (``capability_labels.redesign_hints``; the flag's reason category,
@@ -1229,7 +1230,7 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         kind = str(r.get("kind") or "fallback")
         hints = (
             flag_redesign_hints(str(r.get("engine") or ""), r.get("reason_category"))
-            if kind == "flagged"
+            if kind in ("flagged", "held")
             else redesign_hints(
                 caps, [(str(g.get("engine") or ""), str(g.get("gate") or "")) for g in gates]
             )
@@ -1260,6 +1261,7 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "fallback_query_count": kinds.count("fallback"),
         "gated_everywhere_query_count": kinds.count("gated_everywhere"),
         "flagged_query_count": kinds.count("flagged"),
+        "held_query_count": kinds.count("held"),
         "no_fit_query_count": kinds.count("fallback") + kinds.count("gated_everywhere"),
         "unservable_queries": out,
         "more_unservable_count": max(len(rows) - UNSERVABLE_SHOWN, 0),

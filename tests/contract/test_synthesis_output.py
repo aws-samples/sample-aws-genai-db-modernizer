@@ -408,7 +408,9 @@ class TestSynthesisOutputContract:
         # #992: table_sources (1.32); #471: facts.relational_gaps (1.35)
         # #1034: prose_style_rejections added (1.37)
         # #888: flagged_unservable added (1.38)
-        assert output.contract_version == "1.38"
+        # #1033: FlaggedUnservableQuery.cause gains held_by_pin, facts.unservable
+        # gains held_query_count (1.39)
+        assert output.contract_version == "1.39"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

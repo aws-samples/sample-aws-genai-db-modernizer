@@ -1,7 +1,8 @@
 """Queries that cannot be served as designed: the ones on a fallback engine
 (#729), where each landed, why, and how to redesign and re-run it, and the
 flagged queries no kept engine can take (#888): a review flagged them and they
-stay where they are.
+stay where they are, and the flagged queries a customer pin holds on their
+engine (#1033).
 
 A query whose engine a fallback rule decided (no analyzed engine could take
 it), or whose every candidate engine is gated, lands on the fallback engine:
@@ -25,8 +26,9 @@ from .facts import report_facts
 from .formatting import plural_noun, plural_verb
 
 UNSERVABLE_INTRO = (
-    "No engine the plan keeps can serve these queries as written. The assessment does not "
-    "bring back an engine it removed: keep each query where it is, or redesign it, then re-run."
+    "These queries cannot be served as designed on the engine they are on. The assessment "
+    "does not bring back an engine it removed: keep each query where it is, or redesign it, "
+    "then re-run."
 )
 
 # Why each kind cannot be served, for the kinds the section lists: "These" when
@@ -44,18 +46,31 @@ UNSERVABLE_FLAGGED_ALL = (
     "serve them, and no other engine the plan keeps can take them, so they stay there."
 )
 UNSERVABLE_FLAGGED_SOME = UNSERVABLE_FLAGGED_ALL.replace("These", "Some", 1)
+# The held kind (#1033): flagged like the above, but another engine was never tried
+# because a pin the customer set keeps the table's writes on this one.
+UNSERVABLE_HELD_ALL = (
+    "These were scored and designed on their engine, then a design review found that engine "
+    "cannot serve them. A write on each query's table is pinned to that engine in the "
+    "assignment review, and a table has one writer, so they stay there until the pin changes."
+)
+UNSERVABLE_HELD_SOME = UNSERVABLE_HELD_ALL.replace("These", "Some", 1)
+# How to move a held query: the pin, not the engine pick (the row's lead sentence).
+UNSERVABLE_HELD_LEAD = "To move it, change the pin in the assignment review, or redesign it."
 
 
 def unservable_kind_text(facts: dict[str, Any]) -> list[str]:
     """The sentence for each kind the section lists (``facts.unservable``'s counts)."""
     fallback = facts.get("no_fit_query_count") or 0
     flagged = facts.get("flagged_query_count") or 0
-    both = bool(fallback and flagged)
+    held = facts.get("held_query_count") or 0
+    several = bool((fallback and flagged) or (fallback and held) or (flagged and held))
     out = []
     if fallback:
-        out.append(UNSERVABLE_FALLBACK_SOME if both else UNSERVABLE_FALLBACK_ALL)
+        out.append(UNSERVABLE_FALLBACK_SOME if several else UNSERVABLE_FALLBACK_ALL)
     if flagged:
-        out.append(UNSERVABLE_FLAGGED_SOME if both else UNSERVABLE_FLAGGED_ALL)
+        out.append(UNSERVABLE_FLAGGED_SOME if several else UNSERVABLE_FLAGGED_ALL)
+    if held:
+        out.append(UNSERVABLE_HELD_SOME if several else UNSERVABLE_HELD_ALL)
     return out
 
 
@@ -64,7 +79,7 @@ def unservable_lists_text(facts: dict[str, Any]) -> str:
     lists = []
     if facts.get("no_fit_query_count"):
         lists.append("`query_traces.unservable`")
-    if facts.get("flagged_query_count"):
+    if facts.get("flagged_query_count") or facts.get("held_query_count"):
         lists.append("`flagged_unservable`")
     where = " and ".join(lists or ["`query_traces.unservable`"])
     return f"The Assessment Data (JSON) lists every one, with its gates, under {where}."
@@ -105,9 +120,13 @@ def unservable_title(n: Any) -> str:
 
 
 def _keep_or_redesign(q: dict[str, Any]) -> str:
-    """``Keep it on Aurora MySQL, or redesign it. For DynamoDB: ...``."""
+    """``Keep it on Aurora MySQL, or redesign it. For DynamoDB: ...``; a held query
+    names the pin as the way to move it (#1033)."""
+    hints = " ".join(q.get("redesign_hints") or [])
+    if q.get("kind") == "held":
+        return f"{UNSERVABLE_HELD_LEAD} {hints}"
     engine = display_engine(str(q.get("engine", "")))
-    return f"Keep it on {engine}, or redesign it. {' '.join(q.get('redesign_hints') or [])}"
+    return f"Keep it on {engine}, or redesign it. {hints}"
 
 
 def unservable_md(report: dict[str, Any]) -> list[str]:

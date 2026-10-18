@@ -380,6 +380,12 @@ Version History:
   the reason category's redesign hint. Backward compatible:
   ``flagged_unservable`` defaults to empty, ``flagged_query_count`` and
   ``no_fit_query_count`` to 0.
+- 1.39 (2026-10-19, #1033): ``FlaggedUnservableQuery.cause`` gains ``held_by_pin``:
+  a query the post-schema router kept on its flagged engine because a customer pin
+  holds its table's write group there (#992). ``facts.unservable`` states it as a
+  fourth kind, ``held`` (``UnservableFacts.held_query_count``), with its own
+  sentence in every deliverable. Backward compatible: ``held_query_count``
+  defaults to 0.
 """
 
 from datetime import datetime
@@ -1112,7 +1118,7 @@ class UnservableQueryFact(BaseModel):
 
     query_id: str
     engine: str = Field(..., description="The engine it ends on (id)")
-    kind: str = Field(..., description="fallback, gated_everywhere or flagged (#888)")
+    kind: str = Field(..., description="fallback, gated_everywhere, flagged (#888) or held (#1033)")
     rule: str = Field("", description="The deciding step's rule (machine id)")
     explanation: str = Field("", description="Why it sits there, the trace's own sentence")
     blocking_gates: list[UnservableGateFact] = Field(default_factory=list)
@@ -1139,11 +1145,12 @@ class FlaggedUnservableQuery(BaseModel):
     source: Literal["reality_check", "design_review"] = Field(
         ..., description="The review that flagged it"
     )
-    cause: Literal["no_kept_engine", "depth_limit"] = Field(
+    cause: Literal["no_kept_engine", "depth_limit", "held_by_pin"] = Field(
         ...,
         description=(
             "no_kept_engine: no other kept engine can take it; depth_limit: the "
-            "post-schema routing cascade reached its last pass"
+            "post-schema routing cascade reached its last pass; held_by_pin: a customer "
+            "pin keeps its table's write group on the flagged engine (#1033)"
         ),
     )
     reason_category: str = Field(..., description="The flag's reason category (FlagReason value)")
@@ -1170,6 +1177,14 @@ class UnservableFacts(BaseModel):
         0,
         ge=0,
         description="A review flagged it and no other kept engine can take it (#888)",
+    )
+    held_query_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "A design review flagged it, and a customer pin keeps its table's writes "
+            "on the flagged engine (#1033)"
+        ),
     )
     no_fit_query_count: int = Field(
         0,
@@ -1521,7 +1536,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.38",
+        default="1.39",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

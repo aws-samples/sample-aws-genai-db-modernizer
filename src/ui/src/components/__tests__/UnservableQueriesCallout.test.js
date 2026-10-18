@@ -177,3 +177,42 @@ test('#888: only flagged queries never read as a fallback', () => {
   expect(text).not.toContain('fallback engine');
   expect(text).not.toContain('no analysis scored it');
 });
+
+const heldRow = {
+  query_id: 'w2',
+  engine: 'dynamodb',
+  kind: 'held',
+  rule: '',
+  explanation: 'A design review found DynamoDB cannot serve this query (it needs a feature the engine lacks). A write on its table is pinned to DynamoDB in the assignment review, and a table has one writer, so it stays on DynamoDB until the pin changes.',
+  blocking_gates: [{ engine: 'dynamodb', gate: 'model_flag', gate_text: 'a design review found it cannot support this query' }],
+  required_capabilities: [],
+  capability_labels: [],
+  redesign_hints: ['For DynamoDB: rewrite the query so it needs only what the engine supports.'],
+};
+const heldOnly = { unservable_query_count: 1, fallback_query_count: 0, gated_everywhere_query_count: 0, no_fit_query_count: 0, flagged_query_count: 0, held_query_count: 1, unservable_queries: [heldRow], more_unservable_count: 0 };
+
+test('#1033: a held query names the pin and never reads as a fallback', () => {
+  render({ synthesis: { facts: { unservable: heldOnly } } });
+  const text = container.textContent;
+  expect(text).toContain('1 query that cannot be served as designed');
+  expect(text).toContain(en['analysis-results.unservable.intro']);
+  expect(text).toContain(en['analysis-results.unservable.held_all']);
+  expect(text).toContain('To move it, change the pin in the assignment review, or redesign it. For DynamoDB: rewrite the query');
+  expect(text).not.toContain('Keep it on DynamoDB');
+  expect(text).not.toContain('fallback engine');
+  expect(text).not.toContain('no other engine the plan keeps');
+});
+
+test('#1033: a held and a fallback query each get their "Some" sentence', () => {
+  render({ synthesis: { facts: { unservable: { ...heldOnly, unservable_query_count: 3, no_fit_query_count: 2, fallback_query_count: 2, unservable_queries: [...facts.unservable_queries, heldRow] } } } });
+  const text = container.textContent;
+  expect(text).toContain(en['analysis-results.unservable.fallback_some']);
+  expect(text).toContain(en['analysis-results.unservable.held_some']);
+  expect(text).not.toContain(en['analysis-results.unservable.held_all']);
+  expect(text).toContain('Keep it on Aurora MySQL, or redesign it.');
+});
+
+test('#1033: a facts block written before held queries has no held sentence', () => {
+  render();
+  expect(container.textContent).not.toContain('pinned to that engine');
+});

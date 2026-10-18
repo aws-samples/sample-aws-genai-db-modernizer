@@ -31,10 +31,13 @@ function gatesText(q) {
 function kindKeys(u) {
   const fallback = u.no_fit_query_count || 0;
   const flagged = u.flagged_query_count || 0;
-  const both = fallback > 0 && flagged > 0;
+  const held = u.held_query_count || 0;
+  const several = [fallback, flagged, held].filter(n => n > 0).length > 1;
+  const which = several ? 'some' : 'all';
   const keys = [];
-  if (fallback > 0) keys.push(`analysis-results.unservable.fallback_${both ? 'some' : 'all'}`);
-  if (flagged > 0) keys.push(`analysis-results.unservable.flagged_${both ? 'some' : 'all'}`);
+  if (fallback > 0) keys.push(`analysis-results.unservable.fallback_${which}`);
+  if (flagged > 0) keys.push(`analysis-results.unservable.flagged_${which}`);
+  if (held > 0) keys.push(`analysis-results.unservable.held_${which}`);
   return keys;
 }
 
@@ -65,7 +68,11 @@ const UnservableQueriesCallout = memo(({ synthesis, jobId, onOpen, t }) => {
               {(q.blocking_gates || []).length > 0 && (
                 <div>{t('analysis-results.unservable.ruled-out', { gates: gatesText(q) })}</div>
               )}
-              <div>{t('analysis-results.unservable.redesign', { engine: displayEngine(q.engine), hints: (q.redesign_hints || []).join(' ') })}</div>
+              <div>
+                {q.kind === 'held'
+                  ? t('analysis-results.unservable.redesign_held', { hints: (q.redesign_hints || []).join(' ') })
+                  : t('analysis-results.unservable.redesign', { engine: displayEngine(q.engine), hints: (q.redesign_hints || []).join(' ') })}
+              </div>
             </Box>
           ))}
           {u.more_unservable_count > 0 && (

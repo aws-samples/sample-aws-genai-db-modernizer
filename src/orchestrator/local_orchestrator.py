@@ -525,6 +525,7 @@ class LocalOrchestrator(Orchestrator):
             "terminal_queries": [],
             "held_queries": [],
             "terminal": [],
+            "held": [],
         }
 
     def _post_schema_routing_pass(
@@ -545,7 +546,7 @@ class LocalOrchestrator(Orchestrator):
             routing_flags_from_trace,
         )
         from src.agents.referee.tie_break import settled_counts
-        from src.contracts.post_schema_router_output import QueryRouting, TerminalQuery
+        from src.contracts.post_schema_router_output import HeldQuery, QueryRouting, TerminalQuery
 
         selected_engines = run["selected_engines"]
         assignment_version = run["assignment_version"]
@@ -637,6 +638,11 @@ class LocalOrchestrator(Orchestrator):
         all_terminal_records = [TerminalQuery.model_validate(t) for t in run.get("terminal") or []]
         recorded = {t.query_id for t in all_terminal_records}
         all_terminal_records.extend(t for t in router_output.terminal if t.query_id not in recorded)
+        # #1033: each held query once, with the flag it was held under.
+        all_held_records = [HeldQuery.model_validate(h) for h in run.get("held") or []]
+        held_recorded = {h.query_id for h in all_held_records}
+        all_held_records.extend(h for h in router_output.held if h.query_id not in held_recorded)
+        run["held"] = [h.model_dump(mode="json") for h in all_held_records]
         run["routings"] = [r.model_dump(mode="json") for r in all_routings]
         run["terminal_queries"] = all_terminal
         run["held_queries"] = all_held
@@ -652,6 +658,7 @@ class LocalOrchestrator(Orchestrator):
                 "terminal_queries": list(all_terminal),
                 "held_queries": list(all_held),
                 "terminal": list(all_terminal_records),
+                "held": list(all_held_records),
             }
         )
         self.store.write_json(

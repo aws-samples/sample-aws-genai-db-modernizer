@@ -262,6 +262,41 @@ class TestRouterDestinationIsTheScorersChoice:
             }
         ]
 
+    def test_an_unflagged_unit_member_is_terminal_without_a_flag_record(self):
+        """The unit stays together, so both ids are terminal, but only the flagged
+        query claims a review found the engine cannot serve it (#888 review)."""
+        result = _route(
+            schema_outputs={"dynamodb": {}},
+            active_engines=["dynamodb"],
+            routing_flags_by_engine={"dynamodb": [_flag(["q-5"], "dynamodb", "full_scan")]},
+            scoring_context=_context({"q-5": {"dynamodb": 70}, "q-6": {"dynamodb": 70}}),
+            query_map=_query_map("q-5", "q-6"),
+            assigned_engines={"q-5": "dynamodb", "q-6": "dynamodb"},
+            co_dependency_groups=[["q-5", "q-6"]],
+        )
+        assert sorted(result.terminal_queries) == ["q-5", "q-6"]
+        assert [t.query_id for t in result.terminal] == ["q-5"]
+
+    def test_each_flagged_unit_member_keeps_its_own_flag(self):
+        result = _route(
+            schema_outputs={"dynamodb": {}},
+            active_engines=["dynamodb"],
+            routing_flags_by_engine={
+                "dynamodb": [
+                    _flag(["q-5"], "dynamodb", "full_scan"),
+                    _flag(["q-6"], "dynamodb", "client_side_join"),
+                ]
+            },
+            scoring_context=_context({"q-5": {"dynamodb": 70}, "q-6": {"dynamodb": 70}}),
+            query_map=_query_map("q-5", "q-6"),
+            assigned_engines={"q-5": "dynamodb", "q-6": "dynamodb"},
+            co_dependency_groups=[["q-5", "q-6"]],
+        )
+        assert {t.query_id: t.reason_category for t in result.terminal} == {
+            "q-5": "full_scan",
+            "q-6": "client_side_join",
+        }
+
     def test_pe_text_notes_route_nothing(self):
         """The old free-text ``[ROUTING] ... -> engine`` note is no longer read."""
         result = _route(
