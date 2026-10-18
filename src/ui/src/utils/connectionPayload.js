@@ -7,6 +7,8 @@
  * carries one (src/api/secret_guard.py) -- so this builds the connection from
  * an explicit list of fields and ignores any credential left in the form state.
  */
+import { normalizeDatabaseName } from './databaseName';
+
 export const CREDENTIAL_REFERENCE_TYPES = ['secrets-arn', 'secrets-name'];
 
 export const NO_PASSWORD_GUIDANCE =
@@ -21,7 +23,7 @@ export function buildConnection(formData) {
   const connection = {
     host: formData.host,
     port: parseInt(formData.port, 10),
-    database: formData.databaseName.trim(),
+    database: normalizeDatabaseName(formData.databaseName),
     credentials_type: type,
   };
   if (type === 'secrets-arn') {
