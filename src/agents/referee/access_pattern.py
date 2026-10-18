@@ -62,9 +62,16 @@ leading column, or the leading column of a non-unique, non-text index unless the
 column is a date or timestamp (an index on a point in time orders rows, it does not
 address an entity) or the collector's statistics show it low-cardinality
 (``_LOW_CARDINALITY_SHARE``). With no statistics the index rule holds, and the
-reason names the unconfirmed key. A unique key is the primary key or the columns of
-a unique index. A table outside the collected schema has no keys. A join edge is
-a ``col = col`` term (or ``JOIN ... USING``) with a key column on at least one
+reason names the unconfirmed key. A key column is also the key of other access
+patterns on the table (#1061, ``_workload_keys``): a column the table is looked up by
+in at least two distinct access patterns (``access_signature``: copies of one lookup,
+or copies that differ only in IN-list length or projection, count once), each
+pinning it in a scope that reads the table alone and pins none of its schema keys,
+with the same date, time, true/false and low-cardinality exclusions; the reason says
+so. This is the one key-anchor definition: reads and writes (``transaction_shape``)
+both read it from ``TableKeys.key_columns``. A unique key is the primary key or the
+columns of a unique index. A table outside the collected schema has no keys. A join
+edge is a ``col = col`` term (or ``JOIN ... USING``) with a key column on at least one
 side. A derived table or CTE counts as pinned when its own scope is a key lookup
 or a key-scoped read and it is not the optional side of a ``LEFT``/``FULL`` join.
 A join to a function of the row (``unnest``, ``CROSS APPLY OPENJSON``) reads no
@@ -79,8 +86,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 
 from src.agents.referee.table_resolution import TableNameResolver
+from src.tools.sql.access_signature import AccessSignature, scope_signature
 from src.tools.sql.facade import AccessFacts, ColumnFact, ScopeFacts, ScopeSource
-from src.tools.sql.query_facts import is_timestamp_type, query_facts
+from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
 
 KEY_LOOKUP = "key_lookup"
 KEY_SCOPED = "key_scoped"
@@ -146,6 +154,18 @@ class TableKeys:
     unconfirmed_keys: frozenset[str] = frozenset()
     # The collector's row count, when it reports one.
     row_count: int | None = None
+    # Keys only because the workload looks the table up by them (``_workload_keys``,
+    # #1061): no primary key, foreign key or index makes them keys. Part of
+    # ``key_columns``; the reason text says so.
+    workload_keys: frozenset[str] = frozenset()
+    # Per workload key, the queries that look the table up by it (sorted ids): the
+    # key-value lookups that make it a key, which the DynamoDB designer is given.
+    workload_lookups: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    def lookup_queries(self, column: str) -> tuple[str, ...]:
+        """The queries that look the table up by ``column`` when it is a workload key,
+        else none (a schema key needs no lookups to be one)."""
+        return dict(self.workload_lookups).get(column, ())
 
     def pins_unique_key(self, pinned: Iterable[str]) -> bool:
         """Whether ``pinned`` (lower-case column names held to a value) covers a full
@@ -163,13 +183,32 @@ class SchemaKeys:
 
     @classmethod
     def from_collector(cls, collector_output: Mapping) -> SchemaKeys:
+        """The keys of every collected table: the schema's own (``_table_keys``) plus the
+        columns the collection's workload looks each table up by (``_workload_keys``).
+        Pass the whole collection: the workload keys read every query in it."""
         schema = collector_output.get("database_schema") or {}
         tables: dict[str, TableKeys] = {}
+        meta: dict[str, Mapping] = {}
         for table in schema.get("tables") or []:
             table_id = str(table.get("table_id") or "")
             if table_id:
                 tables[table_id] = _table_keys(table)
-        return cls(tables=tables, resolver=TableNameResolver.from_collector(collector_output))
+                meta[table_id] = table
+        own = cls(tables=tables, resolver=TableNameResolver.from_collector(collector_output))
+        found = _workload_keys(own, collector_output, meta)
+        if not found:
+            return own
+        for table_id, by_column in found.items():
+            schema_keys = tables[table_id]
+            columns = frozenset(by_column)
+            merged = schema_keys.key_columns | columns
+            tables[table_id] = replace(
+                schema_keys,
+                key_columns=merged,
+                workload_keys=columns,
+                workload_lookups=tuple(sorted(by_column.items())),
+            )
+        return cls(tables=tables, resolver=own.resolver)
 
     def table_id(self, source: ScopeSource) -> str | None:
         if source.table is None or self.resolver is None:
@@ -236,6 +275,76 @@ def _table_keys(table: Mapping) -> TableKeys:
         unconfirmed_keys=frozenset(unconfirmed - key_columns),
         row_count=rows if isinstance(rows := table.get("row_count"), int) else None,
     )
+
+
+# A column the workload looks a table up by is a key once at least this many distinct
+# access patterns (``access_signature.scope_signature``) look it up by that column:
+# then, for each of them, another access pattern on the table has it as its key
+# (#1061). The query being classified counts as one of them: it is a lookup on that
+# key.
+WORKLOAD_KEY_LOOKUPS = 2
+_BOOLEAN_TYPES = frozenset({"boolean", "bool", "bit"})
+
+
+def _is_boolean(column: Mapping) -> bool:
+    """A true/false column: two values address no entity, so it is never a key."""
+    normalized = str(column.get("normalized_data_type") or "").lower()
+    native = str(column.get("data_type") or "").lower().split("(")[0].split()
+    return (normalized or (native[0] if native else "")) in _BOOLEAN_TYPES
+
+
+def _workload_keys(
+    own: SchemaKeys, collector_output: Mapping, tables: Mapping[str, Mapping]
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """The columns the workload makes keys, by table id, each with the queries that
+    look the table up by it (#1061, maintainer direction on
+    #915: a key anchor is also "the key of other access patterns on the table").
+
+    A query looks a table up by a column when one of its scopes reads that table alone,
+    pins the column to a value, and pins none of the table's own keys (``own``: the
+    schema's keys only, so the rule never feeds on itself): the column is that access
+    pattern's key, not a filter on rows another key already addresses. A column the
+    table is looked up by in at least ``WORKLOAD_KEY_LOOKUPS`` distinct access-pattern
+    signatures (``access_signature.scope_signature``, #1104 review: copies of one lookup
+    count once; the query being classified counts as one) is a key, unless it
+    is a date, time or true/false column, or the collector's statistics show it
+    low-cardinality (the schema rule's exclusions, ``_table_keys``). A digest the
+    collector cut short is no evidence (``query_access``, #986)."""
+    engine = source_engine_of(collector_output)
+    queries = (collector_output.get("queries") or {}).get("query_patterns") or []
+    lookups: dict[tuple[str, str], set[str]] = {}
+    signatures: dict[tuple[str, str], set[AccessSignature]] = {}
+    for query in queries:
+        facts = query_facts(str(query.get("query_text") or ""), engine).access_facts()
+        if facts.parsed_by != "sqlglot" or facts.truncated_read:
+            continue
+        qid = str(query.get("query_id") or query.get("query_text") or "")
+        for scope_facts in facts.scopes:
+            scope = _scope_columns(scope_facts, own)
+            if len(scope.tables) != 1:
+                continue
+            (table,) = scope.tables
+            keys = own.tables.get(table)
+            pinned = scope.pinned.get(table, frozenset())
+            if keys is None or not pinned or pinned & keys.key_columns:
+                continue
+            signature = scope_signature(facts, scope_facts)
+            for column in pinned:
+                lookups.setdefault((table, column), set()).add(qid)
+                signatures.setdefault((table, column), set()).add(signature)
+    found: dict[str, dict[str, tuple[str, ...]]] = {}
+    for (table, column), qids in lookups.items():
+        if len(signatures[(table, column)]) < WORKLOAD_KEY_LOOKUPS:
+            continue
+        meta = tables.get(table) or {}
+        by_name = {str(c.get("column_name") or "").lower(): c for c in meta.get("columns") or []}
+        info = by_name.get(column)
+        if info is None or _is_temporal(info) or _is_boolean(info):
+            continue
+        if _is_low_cardinality(info, meta.get("row_count")):
+            continue
+        found.setdefault(table, {})[column] = tuple(sorted(qids))
+    return found
 
 
 @dataclass(frozen=True)
@@ -403,7 +512,8 @@ def _scope_class(
 
 
 def _key_note(scope: _ScopeTables, pinned: Mapping[str, set[str]], anchored: set[str]) -> str:
-    """Says so when the only keys used are index leading columns with no statistics."""
+    """Says so when the only keys used are index leading columns with no statistics,
+    or columns only the workload makes keys (#1061)."""
     used = [
         (a, c)
         for a in anchored
@@ -411,6 +521,12 @@ def _key_note(scope: _ScopeTables, pinned: Mapping[str, set[str]], anchored: set
         for c in pinned.get(a, ())
         if c in keys.key_columns
     ]
+    if used and all(c in scope.table_keys(a).workload_keys for a, c in used):  # type: ignore[union-attr]
+        columns = ", ".join(sorted({f"{scope.name(a)}.{c}" for a, c in used}))
+        return (
+            f" (key {columns}: no index or foreign key, but other queries look the table "
+            "up by it)"
+        )
     if used and all(c in scope.table_keys(a).unconfirmed_keys for a, c in used):  # type: ignore[union-attr]
         columns = ", ".join(sorted({f"{scope.name(a)}.{c}" for a, c in used}))
         return (

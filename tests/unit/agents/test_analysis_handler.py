@@ -85,7 +85,7 @@ def test_dynamodb_analysis_writes_contract_output():
 
     assert analysis_call is not None
     body = analysis_call[0][1]
-    assert body["contract_version"] == "2.1"
+    assert body["contract_version"] == "2.2"
     assert body["agent_metadata"]["agent_name"] == "dynamodb-analysis-agent"
     assert body["agent_metadata"]["target_database"] == "dynamodb"
     assert len(body["table_recommendations"]) == 1
@@ -110,7 +110,7 @@ def test_opensearch_analysis_writes_contract_output():
 
     assert analysis_call is not None
     body = analysis_call[0][1]
-    assert body["contract_version"] == "2.1"
+    assert body["contract_version"] == "2.2"
     assert body["agent_metadata"]["agent_name"] == "opensearch-analysis-agent"
     assert body["agent_metadata"]["target_database"] == "opensearch"
     assert len(body["table_recommendations"]) == 1
@@ -134,6 +134,6 @@ def test_placeholder_agent_writes_output():
 
     assert analysis_call is not None
     body = analysis_call[0][1]
-    assert body["contract_version"] == "2.1"
+    assert body["contract_version"] == "2.2"
     assert body["agent_metadata"]["agent_name"] == "neptune-analysis-agent"
     assert body["agent_metadata"]["agent_version"] == "0.0.1"

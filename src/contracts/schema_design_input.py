@@ -3,7 +3,7 @@ Schema Design Agent — Input Contract
 
 Defines exactly what the schema design agent receives as validated input.
 This is a projection of CollectorOutputContract (v3.0) and
-AnalysisOutputContract (v2.1) — only the fields the agent actually uses.
+AnalysisOutputContract (v2.2) — only the fields the agent actually uses.
 
 The projection function in this module validates that the full contracts
 can be projected into these models. If validation fails, the schema design
@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
-    from src.contracts.analysis_output import AnalysisOutputContract
+    from src.contracts.analysis_output import AnalysisOutputContract, KeyScopedWrite
     from src.contracts.collector_output import CollectorOutputContract
 
 # ---------------------------------------------------------------------------
@@ -253,6 +253,26 @@ class AgentAggregateRecommendation(BaseModel):
     combined_migration_complexity: MigrationComplexity
 
 
+class AgentKeyAnchor(BaseModel):
+    """A key-scoped write's key column (``analysis_output.KeyAnchor``, #1061): its
+    cardinality (``"unknown"`` with no statistics) and the other queries that look the table
+    up by it."""
+
+    column: str
+    cardinality: int | Literal["unknown"]
+    lookup_query_ids: list[str] = Field(default_factory=list)
+
+
+class AgentKeyScopedWrite(BaseModel):
+    """A key-scoped write and the key it needs (``analysis_output.KeyScopedWrite``, #1061)."""
+
+    query_id: str
+    table_id: str
+    columns: list[str]
+    schema_note: str
+    anchors: list[AgentKeyAnchor] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Root input contracts
 # ---------------------------------------------------------------------------
@@ -280,6 +300,8 @@ class AgentAnalysisInput(BaseModel):
     anti_patterns_detected: list[AgentAntiPattern] | None = None
     table_recommendations: list[AgentTableRecommendation]
     aggregate_recommendations: list[AgentAggregateRecommendation] | None = None
+    # DynamoDB only: each key-scoped write's partition-key/GSI requirement (#1061).
+    key_scoped_writes: list[AgentKeyScopedWrite] | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -366,6 +388,16 @@ class SchemaDesignGroupsManifest(BaseModel):
 # ---------------------------------------------------------------------------
 # Projection function — maps full contracts to agent input
 # ---------------------------------------------------------------------------
+
+
+def _writes_in_scope(
+    analysis_output: AnalysisOutputContract, collector_output: CollectorOutputContract
+) -> list[KeyScopedWrite]:
+    """The key-scoped writes of this design call's queries (``KeyScopedWrite.in_scope``):
+    the collector given here is already filtered to the call's engine or group."""
+    ids = {q.query_id for q in collector_output.queries.query_patterns}
+    scoped = (w.in_scope(ids) for w in analysis_output.key_scoped_writes or [])
+    return [w for w in scoped if w is not None]
 
 
 def project_schema_design_input(
@@ -556,6 +588,24 @@ def project_schema_design_input(
                 ),
             )
             for ar in (analysis_output.aggregate_recommendations or [])
+        ]
+        or None,
+        key_scoped_writes=[
+            AgentKeyScopedWrite(
+                query_id=w.query_id,
+                table_id=w.table_id,
+                columns=w.columns,
+                schema_note=w.schema_note,
+                anchors=[
+                    AgentKeyAnchor(
+                        column=a.column,
+                        cardinality=a.cardinality,
+                        lookup_query_ids=a.lookup_query_ids,
+                    )
+                    for a in w.anchors
+                ],
+            )
+            for w in _writes_in_scope(analysis_output, collector_output)
         ]
         or None,
     )

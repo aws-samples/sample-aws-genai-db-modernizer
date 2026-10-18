@@ -34,7 +34,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.1"
+    "version": "2.2"
   },
   "analysis_output.MigrationComplexity": {
     "module": "analysis_output",
@@ -43,7 +43,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.1"
+    "version": "2.2"
   },
   "analysis_output.RecommendationLevel": {
     "module": "analysis_output",
@@ -53,7 +53,7 @@
       "NOT_SUITABLE",
       "SUITABLE"
     ],
-    "version": "2.1"
+    "version": "2.2"
   },
   "analysis_output.Severity": {
     "module": "analysis_output",
@@ -63,7 +63,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.1"
+    "version": "2.2"
   },
   "analysis_output.TargetDatabase": {
     "module": "analysis_output",
@@ -78,7 +78,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "2.1"
+    "version": "2.2"
   },
   "assignment_models.AssignmentSource": {
     "module": "assignment_models",

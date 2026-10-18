@@ -32,6 +32,7 @@ from src.agents.schema_design.scope import (
     apply_scope_violations,
     assess_schema_scope,
 )
+from src.contracts.analysis_output import key_scoped_writes_in_scope
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
@@ -270,6 +271,18 @@ def prepare_schema_design_input(
 
     analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
     analysis_output = store.read_json(analysis_key)
+    if analysis_output.get("key_scoped_writes"):
+        # Only this call's own key-scoped writes, naming only its own queries (#1104).
+        query_ids = {
+            str(q.get("query_id"))
+            for q in (collector_output.get("queries") or {}).get("query_patterns") or []
+        }
+        analysis_output = {
+            **analysis_output,
+            "key_scoped_writes": key_scoped_writes_in_scope(
+                analysis_output["key_scoped_writes"], query_ids
+            ),
+        }
 
     llm_input = {
         "target_type": target_type,

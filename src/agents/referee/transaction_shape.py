@@ -13,7 +13,8 @@ one write statement, the same way for every engine; the catalog
 - ``KEY_SCOPED``: it changes the rows one value of a key column addresses, a
   column that is not a full primary or unique key but is a key anchor (the #728
   key-column rule, ``TableKeys.key_columns``: a foreign key, an index's leading
-  column, part of a unique key). On DynamoDB that column becomes the partition
+  column, part of a unique key, or the key of other access patterns on the table,
+  #1061). On DynamoDB that column becomes the partition
   key of an item collection (or a GSI's), and the write is a ``Query`` plus a
   batch write: a key-scoped multi-item write, not a wide transaction (maintainer
   decision on #915). Its trace carries that schema-design requirement
@@ -115,6 +116,10 @@ class TransactionShape:
     reason: str
     # The schema-design requirement a key-scoped write carries (``KEY_SCOPED``).
     schema_note: str | None = None
+    # A key-scoped write's table id and the key anchors it pins, the columns its
+    # ``schema_note`` names (#1061: the DynamoDB designer reads them). Not in the trace.
+    table_id: str | None = None
+    anchors: tuple[str, ...] = ()
 
     @property
     def needs_redesign(self) -> bool:
@@ -251,7 +256,8 @@ def _unique_key_shape(
     ``None`` when the write's own scope pins a full primary or unique key of its
     table. When its ``WHERE`` is an ``OR`` of branches that each pin a full key
     (``id = $1 OR id = $2``), as many items as branches. ``KEY_SCOPED`` when it pins
-    a key anchor (``TableKeys.key_columns``) but no full key. Otherwise
+    a key anchor (``TableKeys.key_columns``, the one definition reads use too) but no
+    full key. Otherwise
     ``UNBOUNDED``: the rows a filter with no key anchor matches.
 
     The pinned columns are the SQL facade's for the statement's outermost scope (an
@@ -311,6 +317,8 @@ def _unique_key_shape(
             schema_note=(
                 f"{must} of an item collection (or a GSI's) so this write reads its items by key"
             ),
+            table_id=table,
+            anchors=tuple(anchors),
         )
     if pinned:
         by = f"by {', '.join(sorted(pinned))}, no key of {name}"

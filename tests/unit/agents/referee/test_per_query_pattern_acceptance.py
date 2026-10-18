@@ -10,7 +10,10 @@ They read only the routing path every production caller uses
   ``topics`` + ``categories`` joins stay on Aurora PostgreSQL is checked on the sample
   itself (``tests/e2e/test_per_query_pattern_score.py``);
 - criterion 4b (narrowed by the maintainer to the pattern score, 2026-10-16): adding a
-  query to a table never changes another query's score through the pattern dimension.
+  query to a table never changes another query's score through the pattern dimension,
+  except through the one key-anchor rule (#1061): a new query that makes a column a key
+  of its table (another access pattern looks the table up by it) can change the class of
+  the queries that use that column, and of no other query.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from unittest.mock import patch
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from src.agents.referee.access_pattern import SchemaKeys, query_access
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.contracts.analysis_output import ScoreBreakdown
 from src.tools.analysis.scoring import compute_confidence
@@ -212,9 +216,13 @@ def test_4b_adding_a_query_to_a_table_never_changes_another_querys_score(
 ):
     """Criterion 4b, narrowed to the pattern score: a new query on the same table, and
     whatever pattern score the table's analysis then gives it, leaves every other query's
-    score on every engine where it was (complexity, performance and cost held fixed)."""
+    score on every engine where it was (complexity, performance and cost held fixed),
+    unless the newcomer makes a column a key of its table (#1061) and the query uses that
+    column."""
     queries = [_shape_query(i, n) for n, i in enumerate(existing)]
     newcomer = _shape_query(added, len(existing))
+    made_keys = _new_workload_keys(_collector(*queries), _collector(*queries, newcomer))
+    queries = [q for q in queries if not _uses(q, made_keys)]
     for engine in ENGINES:
         before_analysis = _analysis(
             engine,
@@ -234,3 +242,44 @@ def test_4b_adding_a_query_to_a_table_never_changes_another_querys_score(
             assert _score(query, engine, after, after_analysis) == _score(
                 query, engine, before, before_analysis
             ), (engine, query["query_text"], newcomer["query_text"])
+
+
+def _new_workload_keys(before: dict, after: dict) -> set[tuple[str, str]]:
+    """``(table, column)`` pairs the workload makes keys in ``after`` but not ``before``."""
+
+    def pairs(collector: dict) -> set[tuple[str, str]]:
+        keys = SchemaKeys.from_collector(collector)
+        return {(t, c) for t, k in keys.tables.items() for c in k.workload_keys}
+
+    return pairs(after) - pairs(before)
+
+
+def _uses(query: dict, columns: set[tuple[str, str]]) -> bool:
+    """Whether ``query`` pins, or joins on, one of ``columns``."""
+    access = query_access(query, SchemaKeys.from_collector(_collector(query)), "postgresql")
+    for scope in access.scopes:
+        used = {(t, c) for t, cols in scope.pinned.items() for c in cols}
+        used |= {(t, c) for a, ca, b, cb in scope.joined for t, c in ((a, ca), (b, cb))}
+        if used & columns:
+            return True
+    return False
+
+
+def test_4b_the_one_exception_a_second_lookup_makes_its_column_a_key():
+    """The exception the property above allows, and only it (#1061): a second, different
+    lookup of ``topics`` by ``title`` (no index or foreign key on it) makes ``title`` a
+    key, so the first one becomes a key-scoped read; a query that does not use ``title``
+    keeps its score. A second copy of the first lookup is no second lookup (#1104)."""
+    first = _shape_query(4, 0)  # title = $1 AND views > $2
+    copy = _shape_query(4, 1)
+    second = _query("q1", "SELECT id FROM topics WHERE title = $1", ["topics"], "SELECT")
+    bystander = _shape_query(1, 2)  # category_id = $1
+    analysis = _analysis("dynamodb", {"d.topics": 50, "d.categories": 50, "d.flags": 50})
+    alone = _collector(first, bystander)
+    both = _collector(first, bystander, second)
+    assert _new_workload_keys(alone, _collector(first, bystander, copy)) == set()
+    assert _new_workload_keys(alone, both) == {("d.topics", "title")}
+    assert _score(first, "dynamodb", both, analysis) > _score(first, "dynamodb", alone, analysis)
+    assert _score(bystander, "dynamodb", both, analysis) == _score(
+        bystander, "dynamodb", alone, analysis
+    )

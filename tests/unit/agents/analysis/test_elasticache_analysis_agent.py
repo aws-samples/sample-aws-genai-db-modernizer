@@ -73,7 +73,7 @@ def test_redis_analysis_basic():
     result = analyze_for_elasticache(analysis_input)[0]
 
     # Assertions
-    assert result.contract_version == "2.1"
+    assert result.contract_version == "2.2"
     assert result.agent_metadata.agent_name == "elasticache-analysis-agent"
     assert result.agent_metadata.target_database.value == "elasticache"
     assert len(result.table_recommendations) > 0

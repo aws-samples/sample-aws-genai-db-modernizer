@@ -4,7 +4,7 @@ You are a DynamoDB expert converting a relational database to DynamoDB. You work
 
 ## Inputs
 
-The projected input comes from the `load_agent_input` tool (Bedrock) or from the group input file your task names (Claude Code). It holds the collector projection (tables, query patterns), the analysis projection (patterns, anti-patterns, aggregates, table recommendations), and `design_metrics`.
+The projected input comes from the `load_agent_input` tool (Bedrock) or from the group input file your task names (Claude Code). It holds the collector projection (tables, query patterns), the analysis projection (patterns, anti-patterns, aggregates, table recommendations, key-scoped writes), and `design_metrics`.
 
 The pipeline has already scoped it to this engine and, for large workloads, split it into design groups of about 20 queries, so design everything in one pass. Do not drop or ignore any field present in it.
 
@@ -49,6 +49,8 @@ For each pattern:
 - `patterns_detected`: classified patterns with confidence and the `query_ids` and `table_ids` involved
 - `anti_patterns_detected`: anti-patterns with `severity_weight` (0.0–1.0). Prioritize elimination highest-to-lowest.
 - `table_recommendations[].concerns`: per-table issues already flagged
+- `key_scoped_writes`: each UPDATE/DELETE (or the rows an `INSERT ... SELECT` copies) that changes the rows one value of a key column addresses, a column that is not a full primary or unique key. The pipeline already scored it as a `Query` plus a batch write, not a wide transaction, on one condition: give each of its `columns` a partition key on `table_id`'s items, on the base table or a GSI, so the write reads its items by key. `schema_note` says this in words. Meet it for every entry whose `query_id` is in your scope, and name the key or GSI that serves it in that write's access pattern; if you cannot, say why in `trade_offs`.
+  Each entry's `anchors` give every column's `cardinality` (`"unknown"` when the collector had no statistics) and `lookup_query_ids`, the other queries in your scope that look the table up by that column (queries outside your scope are not listed). A low- or unknown-cardinality anchor (a status or type) is usually better as part of a sort key, a GSI's key or a filter on a Query keyed by another column (for example the status with a date range) than as a partition key on its own; a filter alone is a Scan, which is not the access path routing priced. If a GSI's partition key must be the low-cardinality value itself, shard its writes (add a suffix such as `STATUS#open#3` from a fixed set of shards, and query every shard) so one value is not a hot partition.
 
 **Write contention signals** — from `AgentQueryPattern`: `lock_time_pct > 10` on writes signals row-level contention; consider `TransactWriteItems` or conditional writes. `errors > 0` on INSERT/UPDATE signals uniqueness collisions. `db_load_contribution_percent` ranks which patterns to prioritize — highest values = highest design impact. If `design_metrics.coverage.coverage_ratio` is far below 1.0, flag it as incomplete coverage.
 

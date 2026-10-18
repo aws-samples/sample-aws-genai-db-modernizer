@@ -2,14 +2,17 @@
 Analysis Output Contract Models
 
 Version History:
+- 2.2 (2026-10-18): Add KeyScopedWrite and KeyAnchor models and optional key_scoped_writes
+  field (#1061)
 - 2.1 (2026-03-17): Add AggregateRecommendation model and optional aggregate_recommendations field
 - 2.0 (2026-02-02): Updated to MAJOR.MINOR versioning
 - 1.0 (2026-01-21): Initial version - Output contract for all Analysis agents
 """
 
+from collections.abc import Collection, Iterable, Mapping
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -220,11 +223,68 @@ class AggregateRecommendation(BaseModel):
     )
 
 
+class KeyAnchor(BaseModel):
+    """One key column a key-scoped write pins (#1061): its collected cardinality, or
+    ``"unknown"`` when the collector has no statistics for it, and the other queries that look
+    the table up by it when the workload makes it a key (none for a primary key,
+    foreign key or index column). A low- or unknown-cardinality anchor is still a key:
+    the schema design decides how to model it (a partition key, or part of a sort key,
+    a GSI or a filter)."""
+
+    column: str
+    cardinality: int | Literal["unknown"]
+    lookup_query_ids: list[str] = Field(default_factory=list)
+
+
+class KeyScopedWrite(BaseModel):
+    """A write the analysis found key scoped (ADR-031 Decision 3, #915, #1061): it changes
+    the rows one value of each of ``columns`` addresses, a key anchor that is not a full
+    primary or unique key of ``table_id``. Its schema-design requirement is
+    ``schema_note``: each column must become the partition key of an item collection (or
+    a GSI's) so the write reads its items by key (a Query plus a batch write)."""
+
+    query_id: str
+    table_id: str
+    columns: list[str] = Field(..., min_length=1)
+    schema_note: str
+    # Per column of ``columns``: its cardinality and the lookups behind it (#1061).
+    anchors: list[KeyAnchor] = Field(default_factory=list)
+
+    def in_scope(self, query_ids: Collection[str]) -> "KeyScopedWrite | None":
+        """This write as one design call sees it (#1104 review): None when the write is
+        not one of ``query_ids`` (another group's, or a query another engine serves),
+        else the write with each anchor's ``lookup_query_ids`` trimmed to ``query_ids``,
+        so it never names a query the designer cannot see."""
+        if self.query_id not in query_ids:
+            return None
+        anchors = [
+            a.model_copy(
+                update={"lookup_query_ids": [q for q in a.lookup_query_ids if q in query_ids]}
+            )
+            for a in self.anchors
+        ]
+        return self.model_copy(update={"anchors": anchors})
+
+
+def key_scoped_writes_in_scope(
+    writes: Iterable[Mapping[str, Any]] | None, query_ids: Collection[str]
+) -> list[dict[str, Any]]:
+    """The raw ``key_scoped_writes`` of an analysis file, as one design call sees them
+    (``KeyScopedWrite.in_scope``): the one scoping every designer input path uses (the
+    external request, each design group's input and the Bedrock projection)."""
+    out = []
+    for raw in writes or []:
+        scoped = KeyScopedWrite.model_validate(raw).in_scope(query_ids)
+        if scoped is not None:
+            out.append(scoped.model_dump(mode="json"))
+    return out
+
+
 class AnalysisOutputContract(BaseModel):
     """Output contract for all Analysis agents"""
 
     contract_version: str = Field(
-        default="2.1",
+        default="2.2",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -245,6 +305,13 @@ class AnalysisOutputContract(BaseModel):
     )
     aggregate_recommendations: list[AggregateRecommendation] | None = Field(
         None, description="Optional aggregate recommendations when table aggregates are detected"
+    )
+    key_scoped_writes: list[KeyScopedWrite] | None = Field(
+        None,
+        description=(
+            "DynamoDB analysis only: every key-scoped write and the key it needs (#1061); "
+            "the DynamoDB schema designer reads it"
+        ),
     )
 
     model_config = ConfigDict(use_enum_values=True, extra="ignore")  # Forward compatibility

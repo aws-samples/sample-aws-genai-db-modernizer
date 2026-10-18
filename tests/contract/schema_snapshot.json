@@ -546,6 +546,102 @@
           }
         }
       },
+      "key_scoped_writes": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "anchors": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "object",
+                        "properties": {
+                          "cardinality": {
+                            "required": true,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "const",
+                                  "value": "unknown"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "integer"
+                                }
+                              ]
+                            }
+                          },
+                          "column": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "lookup_query_ids": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "columns": {
+                    "required": true,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array",
+                      "minItems": 1
+                    }
+                  },
+                  "query_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "schema_note": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "table_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "load_test_results": {
         "required": false,
         "schema": {
@@ -1026,8 +1122,8 @@
         }
       }
     },
-    "schema_hash": "54da921afae141c14da81a88f1ee20745f6b3723af3f954932fae245e4ffac51",
-    "version": "2.1"
+    "schema_hash": "3a17a0e5da4326c2f1f29b6d17d18617864222948773762e9b1656f2f16e16ec",
+    "version": "2.2"
   },
   "assignment_models.Assignment": {
     "fields": {

@@ -163,7 +163,7 @@ class TestGracefulDegradation:
         fixture = get_content_management_fixture()
         fixture.pop("metrics", None)
         _, _, result, _ = _run(fixture)
-        assert result.contract_version == "2.1"
+        assert result.contract_version == "2.2"
 
 
 class TestCostEstimation:

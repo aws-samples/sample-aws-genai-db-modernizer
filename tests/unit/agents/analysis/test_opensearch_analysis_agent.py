@@ -532,7 +532,7 @@ class TestAnalyzeForOpenSearch:
         analysis_input = _make_analysis_input(fixture)
         result, _, _ = analyze_for_opensearch(analysis_input)
 
-        assert result.contract_version == "2.1"
+        assert result.contract_version == "2.2"
         assert result.agent_metadata.agent_name == "opensearch-analysis-agent"
         assert result.agent_metadata.target_database == "opensearch"
         assert isinstance(result.table_recommendations, list)
@@ -573,7 +573,7 @@ class TestAnalyzeForOpenSearch:
         )
         result, decision_trace, mermaid = analyze_for_opensearch(analysis_input)
 
-        assert result.contract_version == "2.1"
+        assert result.contract_version == "2.2"
         assert result.table_recommendations == []
         assert mermaid == ""
         assert isinstance(decision_trace, dict)

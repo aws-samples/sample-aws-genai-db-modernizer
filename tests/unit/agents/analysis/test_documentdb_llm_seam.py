@@ -69,11 +69,11 @@ class TestRunDeterministicUsesFallbackEmbedding:
     """analyze_for_documentdb_deterministic must use fallback strategies and never call LLM."""
 
     def test_returns_valid_output_contract(self):
-        """Result[0] is an AnalysisOutputContract with contract_version 2.1."""
+        """Result[0] is an AnalysisOutputContract with contract_version 2.2."""
         inp = _make_input()
         result, trace, mermaid = analyze_for_documentdb_deterministic(inp)
         assert isinstance(result, AnalysisOutputContract)
-        assert result.contract_version == "2.1"
+        assert result.contract_version == "2.2"
 
     def test_returns_decision_trace_dict(self):
         """Result[1] is a dict with the expected trace keys."""
@@ -302,7 +302,7 @@ class TestBackwardCompatibility:
             inp = _make_input()
             contract, _, _ = analyze_for_documentdb(inp)
         assert isinstance(contract, AnalysisOutputContract)
-        assert contract.contract_version == "2.1"
+        assert contract.contract_version == "2.2"
 
     def test_second_element_is_decision_trace(self):
         with patch.dict("os.environ", {"ENABLE_LLM_ADVISOR": "false"}):

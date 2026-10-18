@@ -34,6 +34,7 @@ from src.tools.analysis.dynamodb_analysis_tools import (
     detect_secondary_index_dominance,
     estimate_dynamodb_costs,
     generate_mermaid_er_diagram,
+    key_scoped_writes,
 )
 from src.tools.analysis.scoring import identify_aggregates
 
@@ -101,6 +102,7 @@ def analyze_for_dynamodb_deterministic(
             if aggregates
             else None
         ),
+        key_scoped_writes=key_scoped_writes(collector_output) or None,
     )
 
     decision_trace = build_decision_trace(

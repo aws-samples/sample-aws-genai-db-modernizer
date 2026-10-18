@@ -18,7 +18,8 @@ contract shape but holds only what the group's design uses (issue #272):
   views or duplicate top-level ``tables``;
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
-  aggregates and table recommendations for the group's tables;
+  aggregates and table recommendations for the group's tables, and the group's own
+  ``key_scoped_writes`` (DynamoDB, #1061);
 - no null or empty optional fields;
 - ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
@@ -47,6 +48,7 @@ from src.contracts.analysis_output import (
     AntiPattern,
     Pattern,
     TableRecommendation,
+    key_scoped_writes_in_scope,
 )
 from src.contracts.collector_output import (
     Column,
@@ -267,7 +269,13 @@ def build_group_input(
     group_analysis: dict[str, Any] = {
         k: v
         for k, v in analysis_output.items()
-        if k not in ("table_recommendations", "workload_analysis", "aggregate_recommendations")
+        if k
+        not in (
+            "table_recommendations",
+            "workload_analysis",
+            "aggregate_recommendations",
+            "key_scoped_writes",
+        )
         and not _empty(v)
     }
     group_analysis["table_recommendations"] = [
@@ -283,6 +291,10 @@ def build_group_input(
     ]
     if aggregates:
         group_analysis["aggregate_recommendations"] = aggregates
+    # The key each of the group's own key-scoped writes needs (#1061).
+    writes = key_scoped_writes_in_scope(analysis_output.get("key_scoped_writes"), query_ids)
+    if writes:
+        group_analysis["key_scoped_writes"] = writes
 
     group_input: dict[str, Any] = {
         "job_id": job_id,

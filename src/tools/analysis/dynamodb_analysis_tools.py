@@ -25,6 +25,8 @@ from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
     CostEstimate,
+    KeyAnchor,
+    KeyScopedWrite,
     MigrationComplexity,
     Pattern,
     ScoreBreakdown,
@@ -1411,6 +1413,59 @@ def estimate_dynamodb_costs(
             "No DAX, backups, or global tables included",
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Key-scoped writes (the DynamoDB schema designer's input, #1061)
+# ---------------------------------------------------------------------------
+
+
+def key_scoped_writes(collector_output: dict) -> list[KeyScopedWrite]:
+    """Every key-scoped write of the collection and the key it needs (#915, #1061).
+
+    The same engine-neutral ``transaction_shape`` the wide-transaction check and the
+    decision trace read (``query_matches[].transaction_shape.schema_note``), over the
+    whole collection, so the designer is given exactly what routing scored. The
+    analysis contract carries it, so every designer input path (the external request,
+    the Bedrock projection and each group's input) reads the same list."""
+    scope = SourceScope.from_collector(collector_output)
+    keys = SchemaKeys.from_collector(collector_output)
+    columns_by_table = {
+        str(t.get("table_id") or ""): {
+            str(c.get("column_name") or "").lower(): c for c in t.get("columns") or []
+        }
+        for t in (collector_output.get("database_schema") or {}).get("tables") or []
+    }
+    out: list[KeyScopedWrite] = []
+    for q in collector_output.get("queries", {}).get("query_patterns", []):
+        shape = transaction_shape(q, scope, keys)
+        if shape is None or shape.schema_note is None or shape.table_id is None:
+            continue
+        qid = str(q.get("query_id") or "")
+        table_keys = keys.tables.get(shape.table_id)
+        anchors = []
+        for column in shape.anchors:
+            cardinality = (
+                columns_by_table.get(shape.table_id, {}).get(column, {}).get("cardinality")
+            )
+            lookups = table_keys.lookup_queries(column) if table_keys else ()
+            anchors.append(
+                KeyAnchor(
+                    column=column,
+                    cardinality=cardinality if isinstance(cardinality, int) else "unknown",
+                    lookup_query_ids=[x for x in lookups if x != qid],
+                )
+            )
+        out.append(
+            KeyScopedWrite(
+                query_id=qid,
+                table_id=shape.table_id,
+                columns=list(shape.anchors),
+                schema_note=shape.schema_note,
+                anchors=anchors,
+            )
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------

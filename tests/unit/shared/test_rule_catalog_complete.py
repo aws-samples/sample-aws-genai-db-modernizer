@@ -294,10 +294,11 @@ _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     "src/agents/referee/access_pattern.py": (
-        frozenset({"_LOW_CARDINALITY_SHARE", "SMALL_TABLE_MAX_ROWS"}),
-        _DETECTION + ": when an index's leading column is too coarse to be a key (#728), and "
+        frozenset({"_LOW_CARDINALITY_SHARE", "SMALL_TABLE_MAX_ROWS", "WORKLOAD_KEY_LOOKUPS"}),
+        _DETECTION + ": when an index's leading column is too coarse to be a key (#728), "
         "the most rows a small reference table holds (#920, shared with DynamoDB's "
-        "metadata-config-store detector)",
+        "metadata-config-store detector), and how many queries make a column the key of "
+        "other access patterns on its table (#1061: each of them and at least one other)",
     ),
     "src/agents/referee/consolidation_validator.py": (
         frozenset({"MAX_QUERIES_PER_CALL"}),
