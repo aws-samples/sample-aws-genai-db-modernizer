@@ -28,6 +28,7 @@ import ApiManager from "../classes/ApiManager";
 import ProgressState from "../components/ProgressState";
 import ChartSankey from "../components/ChartSankey";
 import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
+import { engineHex } from "../utils/engineColors";
 
 
 
@@ -36,28 +37,6 @@ import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
 //--|#######################|
 //--|#######################| Main Page  |#######################
 //--|#######################|
-
-
-
-const ENGINE_COLORS = {
-  dynamodb: 'blue',
-  documentdb: 'green',
-  elasticache: 'red',
-  opensearch: 'grey',
-  neptune: 'red',
-  keyspaces: 'blue',
-  aurora: 'green',
-};
-
-const ENGINE_COLORS_HEX = {
-  dynamodb: '#3184e8',
-  documentdb: '#1d8102',
-  elasticache: '#d13212',
-  opensearch: '#2ea597',
-  neptune: '#7d2105',
-  keyspaces: '#8b6ccb',
-  aurora: '#ec7211',
-};
 
 
 
@@ -789,9 +768,9 @@ const JobMonitoringSummaryPage = memo(() => {
                     {triageInsights.topSignals.map((sig, i) => (
                       <span key={i} style={{
                         fontSize: '12px',
-                        color: sig.primaryTarget ? ENGINE_COLORS_HEX[sig.primaryTarget] : 'var(--dbm-text-primary)',
+                        color: sig.primaryTarget ? engineHex(sig.primaryTarget) : 'var(--dbm-text-primary)',
                         background: sig.primaryTarget
-                          ? `${ENGINE_COLORS_HEX[sig.primaryTarget]}18`
+                          ? `${engineHex(sig.primaryTarget)}18`
                           : 'var(--dbm-signal-badge-muted-bg)',
                         padding: '3px 8px',
                         borderRadius: '4px',
