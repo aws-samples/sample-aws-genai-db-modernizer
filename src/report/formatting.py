@@ -182,6 +182,32 @@ def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     )
 
 
+def stay_on_source_text(facts: dict[str, Any]) -> str:
+    """ "Everything on Aurora MySQL: $318.80/mo (this plan adds $263.96/mo)", or ""
+    with no baseline (#949).
+
+    The facts layer's ``stay_on_source``: keeping every query on the
+    source-compatible engine, against the plan's projected cost. "saves" when the
+    plan costs less, "the same as this plan" when they match.
+    """
+    base = facts.get("stay_on_source")
+    if not isinstance(base, dict):
+        return ""
+    diff = base.get("plan_difference_usd")
+    if not isinstance(diff, (int, float)) or isinstance(diff, bool):
+        return ""
+    if diff > 0:
+        versus = f"this plan adds {_fmt_usd(diff)}/mo"
+    elif diff < 0:
+        versus = f"this plan saves {_fmt_usd(abs(diff))}/mo"
+    else:
+        versus = "the same as this plan"
+    return (
+        f"Everything on {display_engine(str(base.get('engine') or ''))}: "
+        f"{_fmt_usd(base.get('monthly_cost_usd'))}/mo ({versus})"
+    )
+
+
 def _retired_engine_savings_text(tco: dict[str, Any]) -> str:
     """ "$271.80/mo (ElastiCache), $240.96/mo (OpenSearch)" or "" with none.
 

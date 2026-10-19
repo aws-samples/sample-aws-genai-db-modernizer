@@ -53,3 +53,26 @@ export function costBaselineStats(tco) {
     savingsStat: known ? formatSavingsPercent(tco?.savings_percent) : null,
   };
 }
+
+/**
+ * The stay-on-source baseline tile (#949): `facts.stay_on_source` formatted, or
+ * `null` when the report has none. `kind` is `adds`, `saves` or `same`, so the
+ * caller picks its translated sentence; the figures are the facts layer's, only
+ * formatted here (ADR-032).
+ */
+export function stayOnSourceStat(facts) {
+  const base = facts?.stay_on_source;
+  if (!base || typeof base !== 'object') return null;
+  const cost = Number(base.monthly_cost_usd);
+  const diff = Number(base.plan_difference_usd);
+  if (!base.engine || !Number.isFinite(cost) || !Number.isFinite(diff)) return null;
+  let kind = 'same';
+  if (diff > 0) kind = 'adds';
+  else if (diff < 0) kind = 'saves';
+  return {
+    engine: base.engine,
+    costStat: formatCurrentCostStat(cost),
+    kind,
+    differenceStat: formatCurrentCostStat(Math.abs(diff)),
+  };
+}

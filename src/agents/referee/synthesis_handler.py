@@ -85,7 +85,8 @@ def _eliminated_engine_costs(
     job_id: str,
     eliminated: dict[str, str | None],
 ) -> dict[str, float]:
-    """Each eliminated engine's own analysed infrastructure cost (#380).
+    """Each eliminated engine's own analysed infrastructure cost (#380); also read for
+    the stay-on-source baseline engine (#949), which the plan may or may not keep.
 
     By the time ``build_tco_analysis`` runs, ``data.engines`` has already
     dropped every engine the reality check eliminated (ADR-029 Layer E,
@@ -192,7 +193,27 @@ def run_synthesis_deterministic(
     considered = [
         {"engine": e, "absorbed_by": a} for e, a in sorted(eliminated.items()) if e not in running
     ]
-    tco = build_tco_analysis(data, retired_costs=retired_costs)
+    # #949: the stay-on-source baseline, the source-compatible Aurora engine's own
+    # analysed cost (read from its analysis, so it is there even when the plan moved
+    # every query off it).
+    assignment_doc = data.assignment or {}
+    retained = retained_engine_for(
+        data.collector,
+        assignment_doc.get("query_assignments") or [],
+        assignment_doc.get("aurora_engine_choice"),
+    )
+    retained_cost = (
+        _eliminated_engine_costs(store, database_name, job_id, {retained: None}).get(retained)
+        if retained
+        else None
+    )
+    tco = build_tco_analysis(
+        data,
+        retired_costs=retired_costs,
+        stay_on_source=(
+            (retained, retained_cost) if retained and retained_cost is not None else None
+        ),
+    )
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).
     known_tables: list[str] = sorted(

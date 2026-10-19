@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
+import { displayEngine } from "../utils/engineNames";
 
 /**
  * The executive summary's tiles on the results page (#1028).
@@ -9,8 +10,11 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
  * tile is shown only when its figure is available: the projected cost when the
  * report has one (0 included; only a missing figure hides it), the current monthly cost and the savings when the cost
  * baseline is known (costBaselineStats in utils/tcoAnalysis.js); otherwise the
- * tile is left out instead of saying the figure is missing. It only formats
- * the figures it is given (ADR-032).
+ * tile is left out instead of saying the figure is missing. The stay-on-source
+ * tile (#949) shows what keeping every query on the source-compatible engine
+ * costs and the plan's difference from it, when the report has that baseline
+ * (stayOnSourceStat in utils/tcoAnalysis.js). It only formats the figures it is
+ * given (ADR-032).
  *
  * `accessPatternCount` is the facts layer's owned access-pattern total (0
  * without schema design), `ownerQueryCount` the queries the plan owns and
@@ -20,7 +24,7 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
  */
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
-  targetEngines, projectedCost, costBaseline,
+  targetEngines, projectedCost, costBaseline, stayOnSource,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -61,6 +65,17 @@ const ExecutiveSummaryStats = memo(({
         <div data-tile="projected-cost">
           <Box variant="awsui-key-label">{t('analysis-results.executive-summary.projected-cost')}</Box>
           <Box fontSize="heading-m" fontWeight="bold">{`$${projectedCost.toFixed(2)}/mo`}</Box>
+        </div>
+      )}
+      {stayOnSource && (
+        <div data-tile="stay-on-source">
+          <Box variant="awsui-key-label">
+            {t('analysis-results.executive-summary.stay-on-source', { engine: displayEngine(stayOnSource.engine) })}
+          </Box>
+          <Box fontSize="heading-m" fontWeight="bold">{stayOnSource.costStat}</Box>
+          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+            {t(`analysis-results.executive-summary.stay-on-source-${stayOnSource.kind}`, { amount: stayOnSource.differenceStat })}
+          </Box>
         </div>
       )}
       {baselineKnown && (

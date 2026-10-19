@@ -19019,6 +19019,45 @@
                     ]
                   }
                 },
+                "stay_on_source": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "engine": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "monthly_cost_usd": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "plan_difference_usd": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "number"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "table_basis": {
                   "required": true,
                   "schema": {
@@ -22886,6 +22925,38 @@
                 "kind": "scalar",
                 "type": "number"
               }
+            },
+            "stay_on_source": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "database": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "monthly_cost_usd": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
             }
           }
         }
@@ -23032,8 +23103,8 @@
         }
       }
     },
-    "schema_hash": "103640cac82a756ca27417a49bbcba309f34f7d744ff16d3d644b7c69320d11e",
-    "version": "1.39"
+    "schema_hash": "e5aea5bf7ea8adbd81baf00ddf4e026a5678e510edbcb93c4106220c5d7b9a14",
+    "version": "1.40"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

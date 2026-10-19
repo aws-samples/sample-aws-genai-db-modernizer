@@ -256,7 +256,61 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         exp["fallback_queries"] = len(ids)
     exp["engine_count"] = len(final_architecture(report))
     exp["removed"] = frozenset(removed_engines(report))
+
+    # #949: "N of M queries move to a new engine". Every owned query moves except the
+    # ones that stay on wave 1's Aurora engine when the source already speaks its
+    # dialect (a homogeneous wave 1); after a cross-engine wave 1 every query moves.
+    owned = {e: int(n) for e, n in after.items() if n}
+    waves = [w for w in report.get("migration_waves") or [] if isinstance(w, dict)]
+    first = next((w for w in waves if w.get("homogeneity") is not None), None)
+    stays = 0
+    if first and first.get("homogeneity") == "homogeneous":
+        stays = sum(owned.get(str(e), 0) for e in first.get("engines") or [])
+    if owned:
+        exp["queries_moved"] = (sum(owned.values()) - stays, sum(owned.values()))
+    # #949: the stay-on-source baseline, and the plan's difference from it (signed:
+    # positive when the plan costs more), when the plan has another engine.
+    base = tco.get("stay_on_source") or {}
+    cost = base.get("monthly_cost_usd") if isinstance(base, dict) else None
+    if (
+        isinstance(cost, (int, float))
+        and not isinstance(cost, bool)
+        and isinstance(tco.get("projected_monthly_cost"), (int, float))
+        and final_architecture(report) - {base.get("database")}
+    ):
+        exp["stay_on_source"] = (
+            str(base.get("database")),
+            round(float(cost), 2),
+            round(float(tco["projected_monthly_cost"]) - float(cost), 2),
+        )
     return exp
+
+
+_STAY_ON_SOURCE_RE = re.compile(
+    rf"Everything on ({_NAMES_RE}): \$([\d,]+\.\d\d)/mo "
+    r"\((?:this plan (adds|saves) \$([\d,]+\.\d\d)/mo|the same as this plan)\)"
+)
+
+
+def stay_on_source(f: Figures, text: str, where: str) -> None:
+    """#949: "Everything on <engine>: $X/mo (this plan adds $Y/mo)" as
+    ``(engine, X, signed Y)``; none recorded when the line is absent."""
+    m = _STAY_ON_SOURCE_RE.search(text)
+    if not m:
+        return
+    diff = _usd(m.group(4)) if m.group(4) else 0.0
+    if m.group(3) == "saves":
+        diff = -diff
+    f.add("stay_on_source", (engine_id(m.group(1)), _usd(m.group(2)), diff), where)
+
+
+_QUERIES_MOVED_RE = re.compile(r"([\d,]+) of ([\d,]+) quer(?:y|ies) moves? to a new engine")
+
+
+def queries_moved(f: Figures, text: str, where: str) -> None:
+    """#949: "N of M queries move to a new engine" as ``(N, M)``."""
+    m = _QUERIES_MOVED_RE.search(text)
+    f.add("queries_moved", (_int(m.group(1)), _int(m.group(2))) if m else UNREADABLE, where)
 
 
 # --------------------------------------------------------------------------
@@ -600,6 +654,8 @@ def engineering_figures(md_text: str) -> Figures:
 
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
+    stay_on_source(f, h2.get("Cost", "") and md_plain(h2["Cost"]), "Cost section")
+    queries_moved(f, md_plain(h2.get("Target engines", "")), "Target engines: Queries moved")
     f.add("removal_savings", removal_savings(plain), "Migration trade-offs")
     removed: set[str] = set()
     m = re.search(r"^- Retired by this plan: (.+)$", plain, re.M)
@@ -744,6 +800,8 @@ def pdf_figures(text: str) -> Figures:
         f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
     m = re.search(r"Total [\d.]+% ([\d,]+) tables? migrates?", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Engines table Total")
+    stay_on_source(f, text, "Projected monthly cost tile")
+    queries_moved(f, text, "Queries moved tile")
     m = re.search(r"([\d,]+) Engines in the target architecture", text)
     f.add("engine_count", _int(m.group(1)) if m else UNREADABLE, "Engines tile")
     m = re.search(r"([\d,]+) Open risks((?: [\d,]+ (?:critical|high|medium|low|unrated),?)*)", text)

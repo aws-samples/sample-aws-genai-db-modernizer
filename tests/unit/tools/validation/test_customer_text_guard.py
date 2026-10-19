@@ -363,6 +363,15 @@ class TestScanJsonIdFieldPaths:
         }
         assert scan_json(report) == []
 
+    def test_949_stay_on_source_engine_ids_are_excluded(self) -> None:
+        report = {
+            "tco_analysis": {"stay_on_source": {"database": "aurora_mysql"}},
+            "facts": {"stay_on_source": {"engine": "aurora_mysql"}},
+        }
+        assert scan_json(report) == []
+        # The same field names under an unrelated parent are still scanned.
+        assert [f.kind for f in scan_json({"other": {"engine": "aurora_mysql"}})] == ["engine_id"]
+
     def test_databases_service_is_excluded(self) -> None:
         report = {"recommended_architecture": {"databases": [{"service": "dynamodb"}]}}
         assert scan_json(report) == []

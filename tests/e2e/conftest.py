@@ -197,6 +197,25 @@ def trailgear_run(e2e_root: Path) -> PipelineResult:
     return _run_pipeline_cached("trailgear", e2e_root / "artifacts", job_id="e2e-trai")
 
 
+@pytest.fixture(scope="session")
+def designed_run(e2e_root: Path) -> PipelineResult:
+    """The wordpress run with a schema design for every kept engine and no model
+    (``tests/e2e/designed_run.py``), cached once per session: the deterministic
+    samples never run schema design, so this is the one job whose deliverables show
+    the designed figures (#949)."""
+    if _external_env() is not None:
+        pytest.skip("external-job mode: no deterministic designed run")
+    cached = _PIPELINE_CACHE.get("wordpress-designed")
+    if cached is not None:
+        return cached
+    from tests.e2e.designed_run import run_designed_wordpress
+
+    result = run_designed_wordpress(e2e_root / "artifacts", "e2e-desi")
+    _RESULTS.append(result)
+    _PIPELINE_CACHE["wordpress-designed"] = result
+    return result
+
+
 def _ensure_port_free(port: int) -> None:
     """Fail fast, with a clear message, instead of silently talking to whatever
     (possibly stale) process is already listening on ``port``."""

@@ -56,7 +56,7 @@ import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
 import { buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
 import { codeEditorI18nStrings } from "../utils/codeEditorI18n";
 import { RISK_SEVERITIES, UNRATED, filterRisksWithContent, groupRisksBySeverity, mitigationRepeatsDescription, riskSeverityStatus, splitRiskDescription } from "../utils/riskAssessment";
-import { costBaselineStats } from "../utils/tcoAnalysis";
+import { costBaselineStats, stayOnSourceStat } from "../utils/tcoAnalysis";
 // #358: engine display names come from the shared mapping (kept in sync with
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
@@ -462,6 +462,8 @@ const AnalysisResultsPage = memo(() => {
     () => costBaselineStats(synthesis?.tco_analysis),
     [synthesis]
   );
+  // #949: the plan against keeping every query on the source-compatible engine.
+  const stayOnSource = useMemo(() => stayOnSourceStat(synthesis?.facts), [synthesis]);
 
   // Build Sankey from after_distribution
   const sankeyData = useMemo(() => {
@@ -1929,6 +1931,7 @@ const AnalysisResultsPage = memo(() => {
                   cachePatternCount={cachePatternCount}
                   projectedCost={projectedCost}
                   costBaseline={costBaseline}
+                  stayOnSource={stayOnSource}
                   targetEngines={(
                     <>
                       <Box fontSize="heading-m">

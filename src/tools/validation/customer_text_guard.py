@@ -173,6 +173,8 @@ ID_FIELD_PATHS = frozenset(
         ("cost_breakdown", "database"),  # CostBreakdown.database (synthesis_output.py:298)
         ("eliminated_engine_costs", "database"),  # same CostBreakdown shape, TCO's own list
         ("retired_engine_savings", "database"),  # same CostBreakdown shape (#949)
+        ("stay_on_source", "database"),  # TCOAnalysis.stay_on_source, a CostBreakdown (#949)
+        ("stay_on_source", "engine"),  # ReportFacts.stay_on_source.engine (#949)
         ("considered_not_recommended", "engine"),  # ConsideredEngine.engine (#949)
         ("considered_not_recommended", "absorbed_by"),  # ConsideredEngine.absorbed_by (#949)
         ("databases", "service"),  # recommended_architecture.databases[].service

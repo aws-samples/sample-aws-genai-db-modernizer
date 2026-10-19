@@ -18,6 +18,7 @@ from src.shared.report_facts import (
     compute_report_facts,
     query_move_facts,
     resolved_risk_severity_facts,
+    stay_on_source_facts,
     unservable_query_facts,
 )
 
@@ -29,8 +30,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
 
     A block written before contract 1.26 has no ``access_pattern_totals`` (#792), one
     written before 1.28 no query move counts and no resolved risks by severity (#1020),
-    and one written before 1.38 no per-kind ``unservable`` counts (#888); those figures are
-    filled in from ``query_groups``, ``ranking``, the resolved risks and the traces, the rest stays as stored.
+    one written before 1.38 no per-kind ``unservable`` counts (#888), and one written before
+    1.40 no ``stay_on_source`` (#949); those figures are filled in from ``query_groups``,
+    ``ranking``, the resolved risks, the traces and ``tco_analysis``, the rest stays as stored.
     """
     facts = report.get("facts")
     if isinstance(facts, dict) and isinstance(facts.get("engines"), list):
@@ -41,6 +43,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing.update(query_move_facts(report, facts["engines"]))
         if "resolved_risks_by_severity" not in facts:
             missing.update(resolved_risk_severity_facts(report))
+        if "stay_on_source" not in facts:
+            # A block written before 1.40 (#949).
+            missing["stay_on_source"] = stay_on_source_facts(
+                report, {e["engine"] for e in facts["engines"] if e.get("role") != "Evaluated"}
+            )
         unservable = facts.get("unservable")
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.

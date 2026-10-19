@@ -10,7 +10,7 @@ import { createRoot } from 'react-dom/client';
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import ExecutiveSummaryStats from '../ExecutiveSummaryStats';
-import { costBaselineStats } from '../../utils/tcoAnalysis';
+import { costBaselineStats, stayOnSourceStat } from '../../utils/tcoAnalysis';
 
 jest.mock('@cloudscape-design/components/box', () => ({
   __esModule: true,
@@ -125,4 +125,32 @@ test('without schema design the count is the queries, and with neither it is a d
   render({ accessPatternCount: 0, ownerQueryCount: 0, databaseName: null });
   expect(container.querySelector('[data-figure="access-patterns"]').textContent).toBe('—');
   expect(container.querySelector('[data-figure="database-name"]').textContent).toBe('—');
+});
+
+describe('the stay-on-source tile (#949)', () => {
+  const stat = (diff) => stayOnSourceStat({
+    stay_on_source: { engine: 'aurora_mysql', monthly_cost_usd: 318.8, plan_difference_usd: diff },
+  });
+
+  test('shows the baseline and what the plan adds, before the cost baseline tiles', () => {
+    render({ costBaseline: UNKNOWN, stayOnSource: stat(263.96) });
+    expect(tiles()).toEqual(['database', 'target-engines', 'projected-cost', 'stay-on-source']);
+    expect(container.querySelector('[data-tile="stay-on-source"]').textContent).toBe(
+      'Everything on Aurora MySQL$318.80/mothis plan adds $263.96/mo',
+    );
+  });
+
+  test('a cheaper plan says what it saves, an equal one says so', () => {
+    render({ stayOnSource: stat(-12.5) });
+    expect(container.querySelector('[data-tile="stay-on-source"]').textContent).toContain('this plan saves $12.50/mo');
+    render({ stayOnSource: stat(0) });
+    expect(container.querySelector('[data-tile="stay-on-source"]').textContent).toContain('the same as this plan');
+  });
+
+  test('no baseline, no tile', () => {
+    render({ stayOnSource: stayOnSourceStat({}) });
+    expect(tiles()).not.toContain('stay-on-source');
+    expect(stayOnSourceStat(null)).toBeNull();
+    expect(stayOnSourceStat({ stay_on_source: { engine: 'aurora_mysql' } })).toBeNull();
+  });
 });

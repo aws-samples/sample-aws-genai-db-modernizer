@@ -701,3 +701,40 @@ def test_results_page_states_the_pending_engine_choices(
         else:
             assert note.count() == 0, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_results_page_states_the_stay_on_source_baseline(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#949: the executive summary's stay-on-source tile shows facts.stay_on_source
+    as the executive and engineering reports do ("Everything on Aurora MySQL:
+    $318.80/mo (this plan adds $263.96/mo)")."""
+    checked = 0
+    for r in all_runs:
+        facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
+        base = facts.get("stay_on_source")
+        if not base:
+            continue
+        diff = base["plan_difference_usd"]
+        if diff > 0:
+            versus = f"this plan adds ${diff:,.2f}/mo"
+        elif diff < 0:
+            versus = f"this plan saves ${-diff:,.2f}/mo"
+        else:
+            versus = "the same as this plan"
+        engine = ENGINE_LABELS.get(base["engine"], base["engine"])
+        cost = f"${base['monthly_cost_usd']:,.2f}/mo"
+        md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
+        assert f"Everything on {engine}: {cost} \\({versus}\\)" in md, r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        page.locator("#migration-roadmap-section").wait_for()
+        tile = page.locator('[data-tile="stay-on-source"]')
+        assert tile.count() == 1, r.db
+        assert (
+            " ".join(tile.inner_text().split()) == f"Everything on {engine} {cost} {versus}"
+        ), r.db
+        checked += 1
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+    assert checked, "no sample has a stay-on-source baseline"

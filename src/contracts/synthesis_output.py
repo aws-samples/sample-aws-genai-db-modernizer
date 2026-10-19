@@ -386,6 +386,14 @@ Version History:
   fourth kind, ``held`` (``UnservableFacts.held_query_count``), with its own
   sentence in every deliverable. Backward compatible: ``held_query_count``
   defaults to 0.
+- 1.40 (2026-10-19, #949, ADR-032): ``tco_analysis.stay_on_source``
+  (``CostBreakdown``): the source-compatible Aurora engine and its own analysed
+  monthly cost, sized for the whole workload -- what keeping every query on it
+  costs; and ``facts.stay_on_source`` (``StayOnSourceFacts``): the same baseline
+  with the plan's difference from it (``plan_difference_usd``, positive when the
+  plan costs more), None when the plan is that engine alone. Every deliverable
+  states it next to the projected cost. Backward compatible: both None for a
+  report written before 1.40.
 """
 
 from datetime import datetime
@@ -523,6 +531,14 @@ class TCOAnalysis(BaseModel):
             "Engines the source runs today (the source engine, or one the collection "
             "records in metadata.engines_in_use) that the plan retires, with their "
             "analysed monthly cost. A candidate engine the plan dropped is never here."
+        ),
+    )
+    # #949: what keeping every query on the source-compatible Aurora engine costs.
+    stay_on_source: CostBreakdown | None = Field(
+        None,
+        description=(
+            "The source-compatible Aurora engine and its own analysed monthly cost, sized "
+            "for the whole workload: the baseline the plan is compared against."
         ),
     )
     assumptions: list[str] | None = Field(None)
@@ -1323,6 +1339,20 @@ class RelationalGap(BaseModel):
     )
 
 
+class StayOnSourceFacts(BaseModel):
+    """The plan against keeping every query on the source-compatible engine (#949)."""
+
+    engine: str = Field(..., description="The source-compatible Aurora engine")
+    monthly_cost_usd: float = Field(..., ge=0, description="Its analysed monthly cost")
+    plan_difference_usd: float = Field(
+        ...,
+        description=(
+            "The projected monthly cost minus that baseline: positive when the plan "
+            "costs more, negative when it saves"
+        ),
+    )
+
+
 class RelationalGapFacts(BaseModel):
     """The relational move's version and feature gaps against its Aurora target (#471),
     computed once at synthesis by ``src.tools.analysis.relational_gaps``."""
@@ -1492,6 +1522,13 @@ class ReportFacts(BaseModel):
             "None when there is no Aurora target, no collection, or the report predates 1.35"
         ),
     )
+    stay_on_source: StayOnSourceFacts | None = Field(
+        None,
+        description=(
+            "The stay-on-source baseline and the plan's difference from it (#949); None "
+            "when synthesis recorded none or the plan is that engine alone"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -1536,7 +1573,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.39",
+        default="1.40",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

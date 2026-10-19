@@ -35,6 +35,7 @@ from .formatting import (
     label_summary_counts,
     plural_noun,
     plural_verb,
+    stay_on_source_text,
 )
 from .query_traces import query_traces_md
 from .risks import (
@@ -720,6 +721,10 @@ def render_engineering_report_md(
             f"{escaping.md_text(_fmt_usd(tco.get('projected_monthly_cost')))}",
             f"- Savings: {escaping.md_text(savings_text)}",
         ]
+        # #949: the plan against keeping every query on the source-compatible engine.
+        baseline = stay_on_source_text(facts)
+        if baseline:
+            out.append(f"- {escaping.md_text(baseline)}")
         # #949: only an engine the source runs today; a dropped candidate is no saving.
         retired_text = _retired_engine_savings_text(tco)
         if retired_text:

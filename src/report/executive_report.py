@@ -84,6 +84,7 @@ from .formatting import (
     fmt_num,
     plural_noun,
     plural_verb,
+    stay_on_source_text,
 )
 from .risks import (
     NO_OPEN_RISKS_CAVEAT,
@@ -815,7 +816,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     tco = report.get("tco_analysis") or {}
     current, savings = _cost_baseline_text(tco)
     retired = _retired_engine_savings_text(tco)
-    cost_lines = [f"Current monthly (source): {current}", f"Savings: {savings}"]
+    # #949: the stay-on-source baseline first: the one comparison every run can make.
+    baseline = stay_on_source_text(facts)
+    cost_lines = [baseline] if baseline else []
+    cost_lines += [f"Current monthly (source): {current}", f"Savings: {savings}"]
     if retired:
         cost_lines.append(f"Retired by this plan: {retired}")
     engines = facts.get("engines") or []
