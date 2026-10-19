@@ -32,6 +32,8 @@ Read all files. Do not output anything yet.
 
 **Access Patterns** — from `queries.query_patterns` where `query_type` in (SELECT, INSERT, UPDATE, DELETE). Skip `query_type = OTHER`.
 
+`queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `query_ids`, so coverage holds.
+
 For each pattern:
 
 - **RPS**: `design_rps` from `design_metrics.queries`
@@ -167,10 +169,10 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 
 `source_database` — copy from the collector projection's `source_database_name`.
 
-`access_patterns` — one entry per in-scope query in the collector projection (excluding `query_type=OTHER`). This is the primary output. Build these first:
+`access_patterns` — one entry per query pattern in the collector projection (excluding `query_type=OTHER`): the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query appears in exactly one entry's `query_ids`. This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `DDB-`, e.g. `"DDB-AP-1"`, `"DDB-AP-2"`. Assign in order of `design_rps` descending.
-- `query_id`: copy from source
+- `query_ids`: copy the source `query_id` values from the collector: every member of the query pattern group, or the one query
 - `pattern_group`: human-readable group label for UI consolidation. Group related patterns by entity + operation type, e.g. "Discussion CRUD", "Post reads", "Tag management", "User lookups". Patterns targeting the same entity with similar operations share a group.
 - `source_tables`: copy `tables_accessed` from the source query
 - `operation`: map the SQL query_type and shape to the correct `DynamoDBOperation`

@@ -1355,6 +1355,19 @@ class ScopeFacts:
     ``count_only``: the scope's own aggregates (``aggregate``) are all plain counts,
     ``COUNT(*)``, ``COUNT(1)`` or ``COUNT(col)`` (non-null values), and no ``COUNT(DISTINCT ...)``,
     filtered count (``FILTER (WHERE ...)``), ``MIN``, ``MAX``, ``SUM`` or ``AVG`` (#377).
+    ``returned``: for a SELECT scope, the columns its projection names, in order
+    (inside an expression or an aggregate too, not inside a nested query), and
+    ``returns_all``: the projection has ``*`` or ``alias.*``. They are what the scope
+    returns, not how it reads, so no access-pattern signature holds them (#1146).
+    ``group_by_items``: each ``GROUP BY`` item's shape (a projection named by its
+    alias or position resolved to its expression), in order; ``having``: each
+    top-level ``AND`` term of ``HAVING`` as a shape; ``aggregate_kinds``: the aggregate
+    functions of the scope's own projection, ``HAVING`` and ``ORDER BY`` (``count(*)``,
+    ``count``, ``sum``, ...), sorted. A shape names a column by its name (no
+    qualifier), a value or bind parameter as ``?`` and anything else as its node kind
+    over its parts' shapes (``year(post_date)``, ``gt(count(*),?)``), so it holds no
+    literal (#1146). They tell two aggregates over the same rows apart; the scope's
+    access-pattern signature (``access_signature.scope_signature``) does not read them.
     """
 
     sources: tuple[ScopeSource, ...]
@@ -1374,6 +1387,11 @@ class ScopeFacts:
     time_bucket: bool = False
     text_search_kinds: frozenset[TextSearchKind] = frozenset()
     or_branches: tuple[tuple[ColumnFact, ...], ...] = ()
+    returned: tuple[ColumnFact, ...] = ()
+    returns_all: bool = False
+    group_by_items: tuple[str, ...] = ()
+    having: tuple[str, ...] = ()
+    aggregate_kinds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2103,6 +2121,83 @@ def _counts_only(aggregates: list[exp.Expr]) -> bool:
     )
 
 
+def _projection(root: exp.Expr) -> tuple[tuple[ColumnFact, ...], bool]:
+    """A SELECT scope's returned columns and whether it returns ``*`` (``ScopeFacts``)."""
+    if not isinstance(root, exp.Select):
+        return (), False
+    columns: list[ColumnFact] = []
+    every = False
+    for item in root.expressions:
+        target = item.this if isinstance(item, exp.Alias) else item
+        if isinstance(target, exp.Star) or (
+            isinstance(target, exp.Column) and isinstance(target.this, exp.Star)
+        ):
+            every = True
+            continue
+        columns += [f for c in _own_columns(item) if (f := _column_fact(c)) is not None]
+    return tuple(dict.fromkeys(columns)), every
+
+
+def _shape(node: exp.Expr) -> str:
+    """An expression's shape (``ScopeFacts.group_by_items``): no literal, no qualifier."""
+    while isinstance(node, exp.Paren):
+        node = node.this
+    if isinstance(node, exp.Star) or (
+        isinstance(node, exp.Column) and isinstance(node.this, exp.Star)
+    ):
+        return "*"
+    if _is_bind(node) or isinstance(node, (exp.Literal, exp.Null, exp.Boolean)):
+        return "?"
+    if isinstance(node, exp.Column):
+        return str(node.name).lower()
+    if isinstance(node, exp.Var):  # a date part or keyword (``'day'`` in date_trunc)
+        return str(node.name).lower()
+    if isinstance(node, (exp.Subquery, exp.Select)):
+        return "subquery"
+    name = node.name.lower() if isinstance(node, exp.Anonymous) else node.key
+    parts = [_shape(child) for child in node.iter_expressions()]
+    return f"{name}({','.join(parts)})"
+
+
+def _group_by_items(root: exp.Expr) -> tuple[str, ...]:
+    group = root.args.get("group")
+    if not isinstance(group, exp.Group):
+        return ()
+    projections = list(root.args.get("expressions") or [])
+    by_alias = {p.alias.lower(): p.this for p in projections if isinstance(p, exp.Alias)}
+    items = []
+    for item in group.expressions:
+        target: exp.Expr = item
+        if isinstance(item, exp.Literal) and not item.is_string and str(item.this).isdigit():
+            position = int(item.this) - 1
+            if 0 <= position < len(projections):
+                target = projections[position]
+                target = target.this if isinstance(target, exp.Alias) else target
+        elif isinstance(item, exp.Column) and not item.table and item.name.lower() in by_alias:
+            target = by_alias[item.name.lower()]
+        items.append(_shape(target))
+    return tuple(items)
+
+
+def _aggregate_kinds(root: exp.Expr) -> tuple[str, ...]:
+    """The aggregate functions of ``root``'s own projection, HAVING and ORDER BY."""
+    stack: list[exp.Expr] = list(root.args.get("expressions") or [])
+    for key in ("having", "order"):
+        if root.args.get(key) is not None:
+            stack.append(root.args[key])
+    kinds: set[str] = set()
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (exp.Subquery, exp.Select, exp.Window)):
+            continue
+        if _is_aggregate_function(node):
+            star = isinstance(node.this, exp.Star) if isinstance(node, exp.Count) else False
+            name = node.name.lower() if isinstance(node, exp.Anonymous) else node.key
+            kinds.add(f"{name}(*)" if star else name)
+        stack.extend(node.iter_expressions())
+    return tuple(sorted(kinds))
+
+
 def _scope_facts(
     root: exp.Expr, index_of: dict[int, int], cte_bodies: dict[str, int]
 ) -> ScopeFacts:
@@ -2128,6 +2223,7 @@ def _scope_facts(
         _column_fact(o.this) if isinstance(o.this, exp.Column) else None
         for o in (order.expressions if isinstance(order, exp.Order) else [])
     )
+    returned, returns_all = _projection(root)
     source_nodes = [j.this for j in joins]
     if isinstance(root.args.get("from_"), exp.From):
         source_nodes.append(root.args["from_"].this)
@@ -2150,4 +2246,16 @@ def _scope_facts(
         time_bucket=_has_time_bucket(root),
         text_search_kinds=frozenset(k for n in own if (k := _text_search_kind(n)) is not None),
         or_branches=_or_branches(where_terms, aliases),
+        returned=returned,
+        returns_all=returns_all,
+        group_by_items=_group_by_items(root),
+        having=tuple(
+            _shape(t)
+            for t in (
+                _conjuncts(root.args["having"].this)
+                if isinstance(root.args.get("having"), exp.Having)
+                else []
+            )
+        ),
+        aggregate_kinds=_aggregate_kinds(root),
     )

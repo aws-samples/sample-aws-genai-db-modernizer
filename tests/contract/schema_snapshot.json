@@ -18664,6 +18664,63 @@
                     "type": "number"
                   }
                 },
+                "query_pattern_counts": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "pattern_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "repeated_pattern_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "repeated_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "split_pattern_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "query_trace": {
                   "required": false,
                   "schema": {
@@ -21001,6 +21058,110 @@
             }
           },
           "kind": "array"
+        }
+      },
+      "query_pattern_groups": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "frequency_per_hour": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  },
+                  "members": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "object",
+                        "properties": {
+                          "engine": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "frequency_per_hour": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "query_id": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "operation": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "pattern_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "returned_columns": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "tables": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
         }
       },
       "query_traces": {
@@ -23620,8 +23781,8 @@
         }
       }
     },
-    "schema_hash": "6f8523d6b011151b8ae483e645630d6d13dd42d463b7306bca9c52975e319731",
-    "version": "1.48"
+    "schema_hash": "0db40131cd1d74bb3ae8bfcea17faebc4fa141a7af2ed236b4b961290ced203c",
+    "version": "1.49"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

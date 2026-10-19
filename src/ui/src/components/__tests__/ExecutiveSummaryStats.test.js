@@ -162,3 +162,19 @@ test('#1076: a retired engine with no counted saving says why', () => {
     'OpenSearch (runs today), no saving counted (no queries justified it before the move)It adds nothing over Aurora MySQL.',
   );
 });
+
+// #1146: the queries and the distinct query patterns they make, from the facts.
+test('the distinct query patterns line reads the facts it is given', () => {
+  render({ queryPatterns: { queries: 1654, patterns: 1045 } });
+  const line = container.querySelector('[data-figure="query-patterns"]');
+  expect(line.textContent).toBe('1,654 queries in 1,045 distinct query patterns');
+  render({ queryPatterns: { queries: 1, patterns: 1 } });
+  expect(container.querySelector('[data-figure="query-patterns"]').textContent).toBe(
+    '1 query in 1 distinct query pattern',
+  );
+});
+
+test('a report written before the figure shows no query patterns line', () => {
+  render({ queryPatterns: null });
+  expect(container.querySelector('[data-figure="query-patterns"]')).toBeNull();
+});

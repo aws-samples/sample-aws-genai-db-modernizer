@@ -27,6 +27,21 @@ It is read from the SQL facade's ``AccessFacts`` (``src.tools.sql.facade``), whi
 hold no literal, no placeholder number and no IN-list length, so it adds no SQL reading
 of its own: values are gone, and ``IN ($1)`` and ``IN ($1, $2)`` are one predicate. The
 projection (the columns a read returns) is not part of it.
+
+A whole statement's access pattern (``query_signature``, #1146) is its tables written
+plus the signature of every scope it reads in: the outermost with the statement's
+operation, each nested one (a subquery, a derived table, a CTE body, a ``UNION``
+branch) as ``scope_signature`` reads it, and each scope's aggregate shape (its
+``GROUP BY`` items, ``HAVING`` terms and aggregate functions: ``GROUP BY status`` and
+``GROUP BY customer_id``, ``COUNT(*)`` and ``SUM(total)`` are different numbers). The
+aggregate shape is only in the statement signature: routing's key anchors read
+``scope_signature``. So is a write's kind (INSERT, UPDATE, DELETE or upsert): an
+``UPDATE`` and a ``DELETE`` by one key are two item operations, so two statement
+patterns, while the scope signature still calls both a ``write``. ``DISTINCT`` is read like the projection: it does not separate
+two statements. An ``INSERT ... VALUES`` reads no scope: its
+signature is the write on its table. A statement the facade could not read, read only
+up to where the collector cut it short, or that reads and writes no stored table (``SELECT
+NEXT VALUE FOR seq``, a function call) has none: it is its own access pattern.
 """
 
 from __future__ import annotations
@@ -132,3 +147,81 @@ def statement_signature(facts: AccessFacts) -> AccessSignature | None:
     if not facts.scopes:
         return None
     return scope_signature(facts, facts.scopes[0], operation(facts))
+
+
+# A scope's aggregate shape (#1146 review): its GROUP BY items, HAVING terms and aggregate
+# functions, as the facade reads them (``ScopeFacts.group_by_items``, ``having``,
+# ``aggregate_kinds``).
+AggregateShape = tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+
+
+# A write's item operation (#1146 review): an INSERT, an UPDATE, a DELETE, or an upsert
+# (``ON CONFLICT``, ``ON DUPLICATE KEY UPDATE``, ``REPLACE``, ``MERGE``). Each is a
+# different operation on the target item, so two writes of different kinds are two
+# statement patterns even on one key.
+WriteKind = Literal["insert", "update", "delete", "upsert"]
+
+
+def write_kind(facts: AccessFacts, upsert: bool = False) -> WriteKind | None:
+    """The statement's write kind, or None for a statement that writes nothing.
+    ``upsert``: the statement is an upsert (``QueryFacts.upsert``, the one definition)."""
+    if operation(facts) != "write":
+        return None
+    if upsert or facts.kind == "merge":
+        return "upsert"
+    return facts.kind if facts.kind in ("insert", "update", "delete") else "upsert"  # type: ignore[return-value]
+
+
+@dataclass(frozen=True)
+class QuerySignature:
+    """One statement's access pattern (the module docstring): the tables it writes,
+    sorted, the signature of each scope, outermost first, in the facade's order, and
+    each scope's aggregate shape, in step with ``scopes``, and a write's kind
+    (``write_kind``).
+
+    The aggregate shape is a statement-level part only: ``scope_signature``, which the
+    routing key anchors read (ADR-031 Amendment 11), leaves it out, so two aggregates
+    over the same rows are two statement patterns while routing still counts one
+    lookup."""
+
+    writes: tuple[str, ...]
+    scopes: tuple[AccessSignature, ...]
+    aggregates: tuple[AggregateShape, ...] = ()
+    write_kind: WriteKind | None = None
+
+
+def query_signature(
+    facts: AccessFacts, writes: Iterable[str] = (), upsert: bool = False
+) -> QuerySignature | None:
+    """The statement's access pattern, or None when it has no signature: a fallback parse,
+    a digest the collector cut short, or a statement that reads and writes no stored table.
+    ``writes``: the tables the statement writes (``QueryFacts.write_targets``);
+    ``upsert``: it is an upsert (``QueryFacts.upsert``)."""
+    if facts.parsed_by != "sqlglot" or facts.truncated_read:
+        return None
+    targets = tuple(sorted({t.lower() for t in writes}))
+    top = statement_signature(facts)
+    if top is None:
+        if operation(facts) != "write" or not targets:
+            return None
+        top = AccessSignature("write", targets, (), (), (), (), 0, (), (), "none")
+    nested = tuple(scope_signature(facts, scope) for scope in facts.scopes[1:])
+    if not targets and not any(s.tables for s in (top, *nested)):
+        return None  # reads no stored table: a sequence, a function, a constant
+    shapes = tuple((s.group_by_items, s.having, s.aggregate_kinds) for s in facts.scopes)
+    return QuerySignature(
+        writes=targets,
+        scopes=(top, *nested),
+        aggregates=shapes,
+        write_kind=write_kind(facts, upsert),
+    )
+
+
+def returned_columns(facts: AccessFacts) -> tuple[str, ...]:
+    """The columns the statement's outermost scope returns, by name, sorted, with ``*``
+    first when it returns every column; the projection a signature leaves out."""
+    if not facts.scopes:
+        return ()
+    top = facts.scopes[0]
+    names = sorted({c.name.lower() for c in top.returned})
+    return ("*", *names) if top.returns_all else tuple(names)

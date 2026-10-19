@@ -178,6 +178,15 @@ export function accessPatternTotals(synthesis, shownOwned, shownCacheLayer) {
   return { owned: shownOwned || 0, cacheLayer: shownCacheLayer || 0, listed: (shownOwned || 0) + (shownCacheLayer || 0) };
 }
 
+// #1146: the in-scope queries and the distinct query patterns they make
+// (facts.query_pattern_counts), or null for a report written before the figure.
+// Not the designers' access patterns (accessPatternTotals above).
+export function queryPatternCountsOf(synthesis) {
+  const c = factsOf(synthesis) && factsOf(synthesis).query_pattern_counts;
+  if (!c || typeof c.query_count !== 'number' || typeof c.pattern_count !== 'number') return null;
+  return { queries: c.query_count, patterns: c.pattern_count };
+}
+
 // #746: the reality-check moves no model reviewed (facts.unreviewed_move_count);
 // 0 when none, or for a report written before the figure.
 export function unreviewedMoveCountOf(synthesis) {

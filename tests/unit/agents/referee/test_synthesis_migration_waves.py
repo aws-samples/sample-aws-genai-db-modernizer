@@ -7,6 +7,8 @@ cache overlay, table assignments, co-dependency groups), with no model call.
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
@@ -209,6 +211,40 @@ class TestMigrationWaves:
         # Wave 1 carries the whole schema: 3 tables, no views here.
         assert (facts["waves"][0]["tables_only"], facts["waves"][0]["views"]) == (3, 0)
         assert facts["source_table_count"] == report["source_table_count"] == 3
+
+    def test_written_report_groups_the_queries_by_access_pattern(self, store):
+        """#1146: hot1 and kv1 read users by id: one access pattern, each query kept
+        under it with its engine; facts.query_pattern_counts counts the owners' queries."""
+        from src.agents.referee.synthesis_handler import _write_synthesis_report
+
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        _write_synthesis_report(store, result, assignment_version=2)
+        report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+        groups = report["query_pattern_groups"]
+        assert [[m["query_id"] for m in g["members"]] for g in groups] == [
+            ["hot1", "kv1"],
+            ["kv2"],
+            ["rel1"],
+        ]
+        assert groups[0]["tables"] == ["users"] and groups[0]["returned_columns"] == ["*"]
+        assert {m["engine"] for m in groups[0]["members"]} == {"dynamodb"}
+        facts = report["facts"]
+        assert facts["query_pattern_counts"]["query_count"] == facts["in_scope_query_count"] == 4
+        assert facts["query_pattern_counts"]["pattern_count"] == 3
+        assert facts["query_pattern_counts"]["repeated_pattern_count"] == 1
+
+    def test_an_out_of_scope_query_is_not_grouped(self, store):
+        from src.agents.referee.synthesis_handler import _write_synthesis_report
+
+        assignment = copy.deepcopy(ASSIGNMENT)
+        assignment["query_assignments"][1]["in_scope"] = False
+        store.write_json(f"{DB}/{JOB}/assignment/v2/assignment.json", assignment)
+        result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+        _write_synthesis_report(store, result, assignment_version=2)
+        report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+        members = [m["query_id"] for g in report["query_pattern_groups"] for m in g["members"]]
+        assert members == ["hot1", "kv2", "rel1"]
+        assert report["facts"]["query_pattern_counts"]["query_count"] == 3
 
     def test_written_report_carries_the_query_traces(self, store):
         """#339: the lineage's ledger, traced; the moved query listed in full."""

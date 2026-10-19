@@ -16,6 +16,8 @@ The input comes from the `load_agent_input` tool (Bedrock) or the request file y
   - `tables[]`: per `table_id`, `data_gb` (`size_mb` / 1024)
   - `opensearch_shards`: the shard rule (`assumed_node_count`, `search_max_shard_gb`, `timeseries_max_shard_gb`) and, per table, `search_shards` and `timeseries_shards`
 
+`collector.queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `query_ids`, so coverage holds.
+
 Read all inputs silently before producing any output.
 
 ## Workload Classification
@@ -172,12 +174,12 @@ Translate the design into `OpenSearchModelOutputContract` (`src/contracts/opense
 
 `source_database` — copy from the collector projection's `source_database_name`.
 
-`access_patterns` — one entry per in-scope query from collector (excluding queries that OpenSearch cannot serve). This is the primary output. Build these first:
+`access_patterns` — one entry per query pattern from collector (excluding queries that OpenSearch cannot serve): the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query it serves appears in exactly one entry's `query_ids`. This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `OS-`, e.g. `"OS-AP-1"`, `"OS-AP-2"`. Assign in order of `design_rps` descending.
 - `name`: human-readable name derived from the query context, e.g. `"Search posts by title and content"`, `"Aggregate page views by date"`.
 - `description`: plain-English description of what this access pattern does and why OpenSearch serves it well.
-- `query_ids`: copy the source query ID(s) from collector that map to this pattern. Multiple source queries may consolidate into one pattern if they produce the same DSL.
+- `query_ids`: copy the source `query_id` values from collector: every member of the query pattern group, or the one query. Other source queries may also consolidate into one pattern if they produce the same DSL.
 - `source_tables`: copy `tables_accessed` from the source query.
 - `source_query`: copy the original SQL `query_text` from collector.
 - `opensearch_dsl`: the equivalent OpenSearch query DSL as a JSON string. Follow the translation rules in "Access Pattern Translation" above.

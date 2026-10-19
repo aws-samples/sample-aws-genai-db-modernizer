@@ -24,6 +24,8 @@ The projected input is provided inline in the user prompt as JSON containing:
 
 The pipeline has already scoped the input to this engine; design everything you receive in one pass.
 
+`collector.queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `source_query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `source_query_ids`, so coverage holds.
+
 ## Phase 1: Silent Analysis
 
 Read all inputs. Do not output anything yet.
@@ -162,7 +164,7 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 
 `source_database` — copy from `collector.json` `source_database_name`.
 
-`access_patterns` — one entry per in-scope query from collector. This is the primary output. Build these first:
+`access_patterns` — one entry per query pattern from collector: the queries of one `query_pattern_groups` entry share one entry, and every other query has its own. Every in-scope query appears in exactly one entry's `source_query_ids`. This is the primary output. Build these first:
 
 - `pattern_id`: sequential stable identifier prefixed with `DOC-`, e.g. `"DOC-AP-1"`, `"DOC-AP-2"`. Assign in order of `design_rps` descending.
 - `description`: plain-English description of what this access pattern does, e.g. `"Get user by email for authentication"`, `"List recent posts with embedded tags"`.
@@ -172,7 +174,7 @@ Translate the design into `DocumentDBModelOutputContract` (defined in `documentd
 - `projection`: include when the query selects specific columns (not SELECT *).
 - `sort`: include when the query has ORDER BY, e.g. `{"created_at": -1}`.
 - `index_used`: reference the index name from Phase 3 that serves this pattern. Must match an entry in the collection's `indexes` list.
-- `source_query_ids`: copy the source query ID(s) from collector that map to this pattern.
+- `source_query_ids`: copy the source `query_id` values from collector: every member of the query pattern group, or the one query.
 - `source_tables`: copy `tables_accessed` from the source query.
 - `design_rps`: copy from `design_metrics.queries`; for a pattern with several `source_query_ids`, the sum of theirs.
 - `pipeline`: populate for aggregate operations with the full aggregation pipeline stages.

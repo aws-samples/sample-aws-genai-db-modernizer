@@ -456,6 +456,13 @@ Version History:
   Backward compatible: None / False for every other wave; a stored facts block without
   them gets them, and the wave 1 counts, from the facts reader
   (``src.report.facts.report_facts``, ADR-032 Decision 4).
+- 1.49 (2026-10-20, #1146): Added optional ``query_pattern_groups``
+  (``QueryPatternGroup``: the in-scope queries grouped into distinct query patterns,
+  each query kept with its id, frequency and engine) and ``facts.query_pattern_counts``
+  (``QueryPatternFacts``: the 'N queries in M distinct query patterns' figures every
+  deliverable prints, counted over the owner engines' in-scope queries). Routing never
+  reads them. Backward compatible: both None for an older report, whose deliverables
+  leave the line out.
 """
 
 from datetime import datetime
@@ -1433,6 +1440,49 @@ class AccessPatternFacts(BaseModel):
     )
 
 
+class QueryPatternMember(BaseModel):
+    """One query of a query pattern (#1146): its id, frequency and engine, as routed."""
+
+    query_id: str
+    frequency_per_hour: float = Field(0.0, ge=0)
+    engine: str | None = Field(None, description="The engine the query is assigned to")
+
+
+class QueryPatternGroup(BaseModel):
+    """The in-scope queries that are one query pattern (#1146): the same tables, predicate
+    shape, order, limit class and operation; the columns they return may differ."""
+
+    pattern_id: str = Field(..., description="PAT-<n>, in assignment order")
+    operation: str = Field(
+        ...,
+        description=(
+            "read, aggregate, or a write's kind (insert, update, delete, upsert); unread when "
+            "the SQL could not be read"
+        ),
+    )
+    tables: list[str] = Field(default_factory=list, description="The tables it reads or writes")
+    returned_columns: list[str] = Field(
+        default_factory=list, description="The union of the columns its queries return; * first"
+    )
+    frequency_per_hour: float = Field(0.0, ge=0, description="Its queries' frequency, summed")
+    members: list[QueryPatternMember] = Field(default_factory=list)
+
+
+class QueryPatternFacts(BaseModel):
+    """The "N queries in M distinct query patterns" figures (#1146), from ``query_pattern_groups``,
+    over the queries the owner engines serve (N is ``in_scope_query_count``)."""
+
+    query_count: int = Field(0, ge=0, description="The queries counted: the owners' in-scope ones")
+    pattern_count: int = Field(0, ge=0, description="The distinct query patterns they make")
+    repeated_pattern_count: int = Field(
+        0, ge=0, description="Of those, the patterns more than one query makes"
+    )
+    repeated_query_count: int = Field(0, ge=0, description="The queries in those patterns")
+    split_pattern_count: int = Field(
+        0, ge=0, description="Patterns whose queries routing put on more than one engine"
+    )
+
+
 class ReplicaRead(BaseModel):
     """One replica of a written table and the reads it serves (#992)."""
 
@@ -1718,6 +1768,13 @@ class ReportFacts(BaseModel):
             "None when there is no Aurora target, no collection, or the report predates 1.35"
         ),
     )
+    query_pattern_counts: QueryPatternFacts | None = Field(
+        None,
+        description=(
+            "The queries and the distinct query patterns they make (#1146); None when the report has "
+            "no query_pattern_groups (written before #1146)"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -1762,7 +1819,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.48",
+        default="1.49",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1903,6 +1960,13 @@ class SynthesisOutputContract(BaseModel):
             "Each written table's source of truth, writes and replicas (#992, ADR-031 "
             "Amendment 9), from the effective assignment's write_groups. None for a report "
             "synthesized before this field existed."
+        ),
+    )
+    query_pattern_groups: list[QueryPatternGroup] | None = Field(
+        None,
+        description=(
+            "The in-scope queries grouped into distinct query patterns, each query under its pattern "
+            "(#1146); routing never reads it. None for a report synthesized before #1146."
         ),
     )
     pending_engine_choices: list[PendingEngineChoice] | None = Field(

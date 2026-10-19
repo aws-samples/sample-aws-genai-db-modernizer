@@ -1873,6 +1873,11 @@ def access_pattern_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 MOVING_ROLES = (MIGRATION_TARGET, SEARCH_READ_MODEL)
 
 
+def _owns_queries(engine: Mapping[str, Any]) -> bool:
+    """An owner engine: every engine but the cache layer, which owns no query (#296)."""
+    return engine.get("role") != CACHE_LAYER and engine.get("cached_queries") is None
+
+
 def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> dict[str, int]:
     """The in-scope queries the owner engines serve and how many of them move (#1020).
 
@@ -1890,13 +1895,61 @@ def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> d
             counts[str(r["target"])] = n
     in_scope = moving = 0
     for e in engines:
-        if e.get("role") == CACHE_LAYER or e.get("cached_queries") is not None:
+        if not _owns_queries(e):
             continue
         n = counts.get(str(e.get("engine")), 0)
         in_scope += n
         if e.get("role") in MOVING_ROLES:
             moving += n
     return {"in_scope_query_count": in_scope, "moving_query_count": moving}
+
+
+# ---------------------------------------------------------------------------
+# Queries and the distinct query patterns they make (#1146)
+# ---------------------------------------------------------------------------
+
+
+def query_pattern_facts(
+    report: dict[str, Any], engines: list[dict[str, Any]]
+) -> dict[str, int] | None:
+    """The "N queries in M distinct query patterns" figures (``QueryPatternFacts``), or None
+    for a report with no ``query_pattern_groups`` (written before #1146).
+
+    Counted over the same queries as ``in_scope_query_count``: the in-scope queries whose
+    engine is an owner engine of the plan (``query_move_facts``), so N agrees with it. A
+    pattern counts once however many of those queries make it; a pattern with none of
+    them is not counted. ``split_pattern_count``: patterns whose counted queries sit on
+    more than one engine (routing is per query, ADR-031).
+    """
+    groups = report.get("query_pattern_groups")
+    if not isinstance(groups, list):
+        return None
+    owners = {str(e.get("engine")) for e in engines if _owns_queries(e)}
+    queries = patterns = repeated = repeated_queries = split = 0
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        members = [
+            m
+            for m in group.get("members") or []
+            if isinstance(m, dict) and str(m.get("engine")) in owners
+        ]
+        if not members:
+            continue
+        patterns += 1
+        queries += len(members)
+        if len(members) > 1:
+            repeated += 1
+            repeated_queries += len(members)
+        if len({str(m.get("engine")) for m in members}) > 1:
+            split += 1
+    return {
+        "query_count": queries,
+        "pattern_count": patterns,
+        "repeated_pattern_count": repeated,
+        "repeated_query_count": repeated_queries,
+        "split_pattern_count": split,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2175,4 +2228,6 @@ def compute_report_facts(
         "table_sources": table_source_facts(report),
         # #471: the relational move's version and feature gaps.
         "relational_gaps": dict(relational_gaps) if relational_gaps is not None else None,
+        # #1146: the queries and the distinct query patterns they make.
+        "query_pattern_counts": query_pattern_facts(report, engines),
     }

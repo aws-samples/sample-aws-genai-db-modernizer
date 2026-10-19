@@ -218,3 +218,16 @@ test('unservableOf returns the stored queries, or null without any', () => {
   expect(unservableOf({ facts: {} })).toBeNull();
   expect(unservableOf(null)).toBeNull();
 });
+
+describe('queryPatternCountsOf (#1146)', () => {
+  const { queryPatternCountsOf } = require('../reportFacts');
+  test('reads facts.query_pattern_counts', () => {
+    expect(
+      queryPatternCountsOf({ facts: { query_pattern_counts: { query_count: 9, pattern_count: 4 } } }),
+    ).toEqual({ queries: 9, patterns: 4 });
+  });
+  test('is null for a report written before it', () => {
+    expect(queryPatternCountsOf({ facts: {} })).toBeNull();
+    expect(queryPatternCountsOf({})).toBeNull();
+  });
+});

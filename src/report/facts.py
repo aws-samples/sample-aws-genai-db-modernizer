@@ -21,6 +21,7 @@ from src.shared.report_facts import (
     engine_table_split_facts,
     map_split_facts,
     query_move_facts,
+    query_pattern_facts,
     query_trace_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
@@ -37,11 +38,13 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     written before 1.28 no query move counts and no resolved risks by severity (#1020),
     one written before 1.38 no per-kind ``unservable`` counts (#888), one written
     before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
-    the contract has them empty while queries have a full trace), and one written before
-    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), and one
-    written before #1120 no cross-engine wave 1 figures or note; those figures are
-    filled in from ``query_groups``, ``ranking``, the resolved risks, the traces and the
-    migration waves, the rest stays as stored.
+    the contract has them empty while queries have a full trace), one written before
+    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), one
+    written before #1120 no cross-engine wave 1 figures or note, and one written before
+    #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
+    report with no grouping, whose deliverables leave the query patterns out); those
+    figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
+    traces and the migration waves, the rest stays as stored.
     """
     facts = report.get("facts")
     if isinstance(facts, dict) and isinstance(facts.get("engines"), list):
@@ -50,6 +53,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing["access_pattern_totals"] = access_pattern_facts(report)
         if "moving_query_count" not in facts:
             missing.update(query_move_facts(report, facts["engines"]))
+        if "query_pattern_counts" not in facts:
+            missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:
             missing.update(resolved_risk_severity_facts(report))
         basis = facts.get("table_basis")

@@ -65,7 +65,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, openRiskCountAt, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -1932,6 +1932,7 @@ const AnalysisResultsPage = memo(() => {
                   projectedCost={projectedCost}
                   costBaseline={costBaseline}
                   retiredEngines={synthesis?.facts?.retired_in_use_engines}
+                  queryPatterns={queryPatternCountsOf(synthesis)}
                   targetEngines={(
                     <>
                       <Box fontSize="heading-m">

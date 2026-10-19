@@ -21,7 +21,9 @@ out of each (``tests/e2e/deliverable_figures.py``) and compares every one with
 - the queries that move to a new engine (#949);
 - the Migration map heading's tables that migrate, are kept in sync or stay, and
   each migration target's Scope cell split, whose kept-in-sync counts must agree
-  with the wave plan's (#1169).
+  with the wave plan's (#1169);
+- the queries and the distinct query patterns they make (#1146), in the UI too
+  (``tests/e2e/test_ui.py``).
 
 The same checks also run on a wordpress job with a schema design for every kept
 engine (``designed_run``, #949): the deterministic samples never run schema
@@ -104,6 +106,8 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {"fallback_queries"} & set(exp)
     # #949: the queries that move to a new engine.
     req |= {"queries_moved"} & set(exp)
+    # #1146: and the distinct query patterns those queries make.
+    req |= {"query_patterns"} & set(exp)
     return req
 
 

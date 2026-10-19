@@ -48,6 +48,8 @@ from src.tools.schema.design_metrics import (
     in_scope_pattern_count,
 )
 from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
+from src.tools.sql.query_pattern_groups import repeated_query_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,8 @@ def filter_collector_for_assignment(
     Returns a new collector_output dict with:
     - queries filtered to only those assigned to target_engine with in_scope=True
     - tables filtered to only those referenced by the filtered queries
+    - ``queries.query_pattern_groups``: the query patterns more than one of those
+      queries makes, each once with its member query ids and combined frequency (#1146)
 
     Args:
         injected_query_ids: Additional query IDs to include regardless of assignment.
@@ -179,6 +183,12 @@ def filter_collector_for_assignment(
     filtered = dict(collector_output)
     filtered["queries"] = dict(collector_output.get("queries", {}))
     filtered["queries"]["query_patterns"] = filtered_queries
+    # #1146: the query patterns several of those queries make, each listed once.
+    repeated = repeated_query_patterns(filtered_queries, source_engine_of(collector_output))
+    if repeated:
+        filtered["queries"][QUERY_PATTERNS_KEY] = repeated
+    else:
+        filtered["queries"].pop(QUERY_PATTERNS_KEY, None)
     # Coverage (design_metrics, #626) compares the whole log, not this engine's share.
     filtered["queries"].setdefault(
         UNFILTERED_PATTERNS_KEY, in_scope_pattern_count(original_queries)

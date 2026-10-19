@@ -13,6 +13,8 @@ The owners' writes on the cached tables arrive as read-only context in
 them only in `cache_invalidation[].source_write_query_ids`, never as access
 patterns or keys.
 
+`collector.queries.query_pattern_groups`, when present, lists the queries that are one query pattern: they read or write the same rows the same way (the same tables, filters, sort order, row limit and operation, where an insert, an update, a delete and an upsert are different operations, and for a count or total the same grouping) and differ only in literal values, IN-list lengths or returned columns. Design each pattern once: one access pattern whose `source_query_ids` lists every member, whose load is the sum of the members' `design_rps` (the group's `frequency_per_hour` and `calls_per_second` are their totals) and whose projection covers the group's `returned_columns`, the union of the columns they return. A query in no group is a pattern of its own. Every in-scope query still appears in exactly one access pattern's `source_query_ids`, so coverage holds.
+
 ## Design Phases
 
 ### Phase 1: Classify Source Patterns
@@ -67,7 +69,7 @@ Translate each source SQL query to Redis commands:
 Use **pipelining** (or `MGET`) for multi-key reads. Use **Lua scripts** for
 atomic multi-step operations that must be consistent.
 
-Every `access_pattern` includes `source_query_ids`: the exact `query_id` values from the collector input it serves (all of them when one pattern serves several), never invented ones. Its `pattern_id` is `EC-AP-1`, `EC-AP-2`, ..., in order of importance/frequency.
+Every `access_pattern` includes `source_query_ids`: the exact `query_id` values from the collector input it serves (all of them when one pattern serves several, and every member of a query pattern group), never invented ones. Its `pattern_id` is `EC-AP-1`, `EC-AP-2`, ..., in order of importance/frequency.
 
 ### Phase 4: Cache Invalidation
 

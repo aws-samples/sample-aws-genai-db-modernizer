@@ -13,6 +13,14 @@ The grouping strategy (enhanced with analysis signals):
   4. Smaller clusters are batched together into misc groups
   5. Groups exceeding MAX_GROUP_SIZE are sub-split into chunks
 
+The queries of one query pattern (``src.tools.sql.query_pattern_groups``, #1146) are
+designed together: they go to the cluster of the pattern's first query, sit next to
+each other, and a chunk or a halved group does not cut a pattern that fits in one, so a
+designer sees each pattern once. A pattern of more than ``MAX_GROUP_SIZE`` queries is
+still cut into chunks of that size, filling the chunk before it and leaving its last
+part open for the next pattern. Keeping patterns whole never takes more chunks or
+halved parts than the plain cut would: when it would, the plain cut is kept.
+
 Works with ArtifactStore for both local and S3 backends.
 """
 
@@ -34,6 +42,8 @@ from src.contracts.schema_design_input import (
     SchemaDesignGroupsManifest,
 )
 from src.storage.artifact_store import ArtifactStore
+from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.query_pattern_groups import group_by_query_pattern
 
 # A query with no reason to see any table at all. The exclusion reason
 # written to the split manifest for these (#276/#369).
@@ -255,13 +265,17 @@ def build_groups(
     else:
         parent = {}
 
+    # Each query's query pattern (#1146): its queries share one cluster, the first one's.
+    pattern_of = query_pattern_index(queries, collector_output)
+    pattern_root: dict[int, str] = {}
+
     # Map each query to its cluster root
     by_cluster: dict[str, list[dict]] = defaultdict(list)
     cluster_tables: dict[str, set[str]] = defaultdict(set)
 
     for q in queries:
         primary = _canon(get_primary_table(q, db_name), db_name, resolver)
-        root = _get_cluster_root(primary, parent)
+        root = pattern_root.setdefault(pattern_of[_qid(q)], _get_cluster_root(primary, parent))
         by_cluster[root].append(q)
         cluster_tables[root].add(primary)
         # Also track all accessed tables for naming
@@ -277,7 +291,7 @@ def build_groups(
     small_tables: list[str] = []
 
     for cluster_root in sorted(by_cluster, key=lambda c: len(by_cluster[c]), reverse=True):
-        cluster_queries = by_cluster[cluster_root]
+        cluster_queries = _by_pattern(by_cluster[cluster_root], pattern_of)
         tables_in_cluster = sorted(cluster_tables.get(cluster_root, {cluster_root}))
 
         # Name the group after the root table (or first table alphabetically)
@@ -293,16 +307,10 @@ def build_groups(
                     }
                 )
             else:
-                # Sub-split large clusters by chunk
-                chunk_num = 0
-                for i in range(0, len(cluster_queries), MAX_GROUP_SIZE):
-                    chunk = cluster_queries[i : i + MAX_GROUP_SIZE]
-                    chunk_num += 1
-                    suffix = (
-                        f"_part{chunk_num}"
-                        if chunk_num > 1 or i + MAX_GROUP_SIZE < len(cluster_queries)
-                        else ""
-                    )
+                # Sub-split large clusters by chunk, whole query patterns per chunk
+                chunks = _pattern_chunks(cluster_queries, pattern_of, MAX_GROUP_SIZE)
+                for chunk_num, chunk in enumerate(chunks, start=1):
+                    suffix = f"_part{chunk_num}" if len(chunks) > 1 else ""
                     groups.append(
                         {
                             "group_name": f"{group_base_name}{suffix}",
@@ -347,6 +355,67 @@ def build_groups(
     return groups
 
 
+def _qid(query: dict) -> str:
+    return str(query.get("query_id") or query.get("query_text") or id(query))
+
+
+def query_pattern_index(queries: list[dict], collector_output: dict | None) -> dict[str, int]:
+    """Query id -> the index of its query pattern among ``queries`` (#1146), read in the
+    collection's dialect. Every query has one (a query with no signature its own)."""
+    keyed = [{**q, "query_id": _qid(q)} for q in queries]
+    groups = group_by_query_pattern(keyed, source_engine_of(collector_output))
+    return {qid: n for n, g in enumerate(groups) for qid in g.query_ids}
+
+
+def _by_pattern(queries: list[dict], pattern_of: dict[str, int]) -> list[dict]:
+    """``queries`` with each query pattern's queries next to each other, the patterns in
+    the order of their first query (a stable reorder: one-query patterns keep their order)."""
+    keys = [pattern_of.get(_qid(q), -1 - n) for n, q in enumerate(queries)]
+    order: dict[int, int] = {}
+    for key in keys:
+        order.setdefault(key, len(order))
+    ranked = sorted(range(len(queries)), key=lambda n: order[keys[n]])
+    return [queries[n] for n in ranked]
+
+
+def _runs(queries: list[dict], pattern_of: dict[str, int]) -> list[list[dict]]:
+    """``queries`` (each pattern's queries already adjacent) cut into one run per pattern."""
+    runs: list[list[dict]] = []
+    last: int | None = None
+    for n, q in enumerate(queries):
+        key = pattern_of.get(_qid(q), -1 - n)
+        if runs and key == last:
+            runs[-1].append(q)
+        else:
+            runs.append([q])
+        last = key
+    return runs
+
+
+def _pattern_chunks(queries: list[dict], pattern_of: dict[str, int], size: int) -> list[list[dict]]:
+    """Chunks of at most ``size`` queries that cut no query pattern that fits in one.
+
+    A pattern larger than ``size`` fills the open chunk, then whole chunks, and its
+    last part stays open for the next pattern, so it adds no group of its own. When
+    keeping the patterns whole would still take more chunks than a plain ``size``
+    cut, the plain cut of the same (pattern-ordered) queries is kept: no extra
+    designer call (#1146 review)."""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    for run in _runs(queries, pattern_of):
+        if len(run) <= size and current and len(current) + len(run) > size:
+            chunks.append(current)
+            current = []
+        current += run
+        while len(current) > size:
+            chunks.append(current[:size])
+            current = current[size:]
+    if current:
+        chunks.append(current)
+    plain = [queries[i : i + size] for i in range(0, len(queries), size)]
+    return chunks if len(chunks) <= len(plain) else plain
+
+
 def tables_for_queries(
     queries: list[dict],
     all_tables: list[dict],
@@ -382,6 +451,7 @@ def fit_groups_to_budget(
     groups: list[dict],
     measure: Callable[[dict], int],
     max_chars: int = MAX_GROUP_INPUT_CHARS,
+    pattern_of: dict[str, int] | None = None,
 ) -> list[dict]:
     """Halve each group whose input is over ``max_chars`` until every part fits.
 
@@ -390,6 +460,9 @@ def fit_groups_to_budget(
     ``primary_tables`` and are named ``<group_name>_s1``, ``_s2``, ... Each
     part is measured under the longest name it could get (``_s<query count>``),
     so the written file is never larger than the size that was checked.
+    ``pattern_of`` (query id -> query pattern, #1146): a group is halved at the
+    query-pattern boundary nearest its middle, inside a pattern only when the
+    group is one pattern, unless that takes more parts than halving at the middle.
     """
     fitted: list[dict] = []
     for group in groups:
@@ -399,7 +472,13 @@ def fit_groups_to_budget(
         def measure_part(qs: list[dict], base: dict = group, name: str = longest_name) -> int:
             return measure({**base, "group_name": name, "queries": qs})
 
-        parts = _halve_to_fit(group["queries"], measure_part, max_chars)
+        parts = _halve_to_fit(group["queries"], measure_part, max_chars, pattern_of or {})
+        if pattern_of and len(parts) > 1:
+            # Cutting at pattern boundaries must not take more parts than the plain
+            # halving would: no extra designer call (#1146 review).
+            plain = _halve_to_fit(group["queries"], measure_part, max_chars)
+            if len(plain) < len(parts):
+                parts = plain
         if len(parts) == 1:
             fitted.append(group)
             continue
@@ -409,13 +488,26 @@ def fit_groups_to_budget(
 
 
 def _halve_to_fit(
-    queries: list[dict], measure: Callable[[list[dict]], int], max_chars: int
+    queries: list[dict],
+    measure: Callable[[list[dict]], int],
+    max_chars: int,
+    pattern_of: dict[str, int] | None = None,
 ) -> list[list[dict]]:
     if len(queries) <= 1 or measure(queries) <= max_chars:
         return [queries]
     mid = (len(queries) + 1) // 2
-    return _halve_to_fit(queries[:mid], measure, max_chars) + _halve_to_fit(
-        queries[mid:], measure, max_chars
+    # The access-pattern boundary nearest the middle (#1146); the middle when none.
+    if pattern_of:
+        cuts, n = [], 0
+        for run in _runs(queries, pattern_of)[:-1]:
+            n += len(run)
+            cuts.append(n)
+        # Only a boundary in the middle half: a lopsided cut leaves a tiny group.
+        near = [c for c in cuts if len(queries) <= 4 * c <= 3 * len(queries)]
+        if near:
+            mid = min(near, key=lambda c: (abs(c - mid), c))
+    return _halve_to_fit(queries[:mid], measure, max_chars, pattern_of) + _halve_to_fit(
+        queries[mid:], measure, max_chars, pattern_of
     )
 
 
@@ -533,7 +625,8 @@ def split_schema_input(
 
     manifest_groups: list[SchemaDesignGroupEntry] = []
 
-    for idx, group in enumerate(fit_groups_to_budget(groups, measure)):
+    pattern_of = query_pattern_index(design_queries, collector_output)
+    for idx, group in enumerate(fit_groups_to_budget(groups, measure, pattern_of=pattern_of)):
         group_queries = group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables, resolver)
         text = render_group_input(

@@ -40,6 +40,7 @@ from .formatting import (
     plural_noun,
     plural_verb,
 )
+from .query_patterns import query_patterns_md
 from .query_traces import query_traces_md
 from .relational_gaps import heterogeneous_wave
 from .risks import (
@@ -584,6 +585,8 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
             "a search read model); the rest stay on the engine that runs them today.",
             "",
         ]
+        # #1146: the same in-scope queries, as the query patterns they make.
+        out += query_patterns_md(report)
         notes = _engine_role_notes_md(
             target_engines,
             migrated,

@@ -810,6 +810,57 @@ def _query_traces(
     return digest.model_dump(mode="json", by_alias=True)
 
 
+def _query_pattern_groups(data: SynthesisData) -> list[dict] | None:
+    """``report.json``'s ``query_pattern_groups`` (#1146): the effective assignment's
+    in-scope queries grouped by query pattern (``group_by_query_pattern``, read in the
+    collection's dialect), each with its id, collected frequency and assigned engine.
+    A query the collection has no text for is its own pattern. None with no assignment.
+    Routing never reads it: the query stays the unit (ADR-031)."""
+    from src.tools.sql.query_facts import remember_collected_facts, source_engine_of
+    from src.tools.sql.query_pattern_groups import group_by_query_pattern
+
+    if not data.assignment:
+        return None
+    collector = data.collector or {}
+    remember_collected_facts(collector)
+    collected = {
+        str(q["query_id"]): q
+        for q in (collector.get("queries") or {}).get("query_patterns") or []
+        if isinstance(q, dict) and q.get("query_id")
+    }
+    engine_of: dict[str, str | None] = {}
+    queries: list[dict] = []
+    for qa in data.assignment.get("query_assignments") or []:
+        qid = str(qa.get("query_id") or "")
+        if not qid or not qa.get("in_scope", True) or qid in engine_of:
+            continue
+        engine_of[qid] = qa.get("assigned_engine")
+        queries.append(collected.get(qid) or {"query_id": qid})
+    groups = []
+    for g in group_by_query_pattern(queries, source_engine_of(collector)):
+        frequency = {q: collected.get(q, {}).get("frequency_per_hour") for q in g.query_ids}
+        groups.append(
+            {
+                "pattern_id": g.pattern_id,
+                "operation": g.operation,
+                "tables": list(g.tables),
+                "returned_columns": list(g.returned_columns),
+                "frequency_per_hour": g.frequency_per_hour,
+                "members": [
+                    {
+                        "query_id": q,
+                        "frequency_per_hour": (
+                            float(f) if isinstance(f, (int, float)) and f >= 0 else 0.0
+                        ),
+                        "engine": engine_of.get(q),
+                    }
+                    for q, f in frequency.items()
+                ],
+            }
+        )
+    return groups
+
+
 def _engine_choices(data: SynthesisData) -> dict:
     """``pending_engine_choices`` and ``auto_decided_choices`` for report.json (#1003),
     built the way the customer gate builds them (``assignment_overrides``)."""
@@ -978,6 +1029,8 @@ def _write_synthesis_report(
         ),
         # #888: flagged queries no kept engine can take, for facts.unservable.
         "flagged_unservable": result.get("flagged_unservable") or [],
+        # #1146: the in-scope queries grouped by query pattern, for facts.query_pattern_counts.
+        "query_pattern_groups": _query_pattern_groups(data),
     }
     if result.get("reality_check_summary"):
         output_data["reality_check"] = result["reality_check_summary"]

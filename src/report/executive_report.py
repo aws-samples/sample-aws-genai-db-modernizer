@@ -86,6 +86,7 @@ from .formatting import (
     plural_noun,
     plural_verb,
 )
+from .query_patterns import query_pattern_count_text
 from .relational_gaps import heterogeneous_wave, impact_label, wave_gaps
 from .risks import (
     NO_OPEN_RISKS_CAVEAT,
@@ -862,7 +863,9 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
             GREEN,
             [
                 f"{migrated} {plural_noun(migrated, 'table')} "
-                f"{plural_verb(migrated, 'migrates', 'migrate')}"
+                f"{plural_verb(migrated, 'migrates', 'migrate')}",
+                # #1146: the in-scope queries as the query patterns they make.
+                *([patterns] if (patterns := query_pattern_count_text(report)) else []),
             ],
         ),
     ]

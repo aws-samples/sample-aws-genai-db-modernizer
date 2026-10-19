@@ -300,11 +300,7 @@ def _report_wave_stats(r: PipelineResult) -> dict[str, tuple[str, str]]:
     """Each wave's headline as the reports compute it (``roadmap._wave_headline_stats``)
     and its count phrase as the engineering report prints it, by wave number."""
     from src.report.escaping import md_text
-    from src.report.roadmap import (
-        _facts_by_wave,
-        _wave_headline_stats,
-        resolve_migration_waves,
-    )
+    from src.report.roadmap import _facts_by_wave, _wave_headline_stats, resolve_migration_waves
 
     report = json.loads((r.artifact_root / r.report["report"]).read_text())
     facts = _facts_by_wave(report)
@@ -550,6 +546,30 @@ def test_results_page_states_the_resolved_risks_by_severity(
         checked += 1
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
     assert checked, "no sample resolved a risk"
+
+
+def test_results_page_states_the_distinct_query_patterns(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1146: the results page prints "N queries in M distinct query patterns" from
+    facts.query_pattern_counts, the same figures the engineering report prints."""
+    figure = re.compile(r"([\d,]+) quer(?:y|ies) in ([\d,]+) distinct query patterns?")
+    for r in all_runs:
+        facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
+        counts = facts["query_pattern_counts"]
+        expected = (counts["query_count"], counts["pattern_count"])
+        md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
+        found = figure.search(md)
+        assert found and tuple(int(g.replace(",", "")) for g in found.groups()) == expected, r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        line = page.locator('[data-figure="query-patterns"]')
+        line.wait_for()
+        shown = figure.fullmatch(line.inner_text().strip())
+        assert shown, (r.db, line.inner_text())
+        assert tuple(int(g.replace(",", "")) for g in shown.groups()) == expected, r.db
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
 def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(

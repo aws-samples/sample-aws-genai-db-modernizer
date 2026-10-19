@@ -38,6 +38,7 @@ from src.tools.schema.aurora_common.bedrock_delta import (
     prepare_delta_design,
 )
 from src.tools.schema.base_schema_agent import AgentInputPaths, SchemaDesignRunner
+from src.tools.sql.query_pattern_groups import listed_query_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
         analysis = load_contract(AnalysisOutputContract, json.load(f), artifact=analysis_path)
 
     agent_collector, agent_analysis, agent_context = project_schema_design_input(
-        collector, analysis
+        collector, analysis, query_pattern_groups=listed_query_patterns(raw_collector)
     )
 
     decision_trace: dict = {}

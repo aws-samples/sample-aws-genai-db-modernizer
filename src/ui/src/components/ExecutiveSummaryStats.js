@@ -21,11 +21,14 @@ import { displayEngine } from '../utils/engineNames';
  * without schema design), `ownerQueryCount` the queries the plan owns and
  * `cachePatternCount` the cache layer's own patterns; `targetEngines` is the
  * page's own engine badges and notes. Callers pass `t` (the page's own
- * `useTranslation` function), like QueryRoutingTable.
+ * `useTranslation` function), like QueryRoutingTable. `queryPatterns` is
+ * facts.query_pattern_counts as `{ queries, patterns }` (queryPatternCountsOf),
+ * or null for a report written before it (#1146): "1,654 queries in 1,045 distinct
+ * query patterns", the line the executive and engineering reports print.
  */
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
-  targetEngines, projectedCost, costBaseline, retiredEngines,
+  targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -49,6 +52,21 @@ const ExecutiveSummaryStats = memo(({
         {showOfQueries && (
           <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
             {t('analysis-results.executive-summary.access-patterns-of-queries', { count: ownerQueryCount })}
+          </Box>
+        )}
+        {/* #1146: the queries and the distinct query patterns they make. */}
+        {queryPatterns && (
+          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+            <span data-figure="query-patterns">
+              {t('analysis-results.executive-summary.query-patterns', {
+                count: queryPatterns.patterns,
+                patterns: queryPatterns.patterns.toLocaleString('en-US'),
+                queries: t('analysis-results.executive-summary.query-patterns-queries', {
+                  count: queryPatterns.queries,
+                  queries: queryPatterns.queries.toLocaleString('en-US'),
+                }),
+              })}
+            </span>
           </Box>
         )}
         {/* #361: the cache layer's own patterns are real, but never owned

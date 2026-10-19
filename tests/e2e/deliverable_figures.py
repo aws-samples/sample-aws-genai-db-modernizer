@@ -283,6 +283,14 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         stays = sum(owned.get(str(e), 0) for e in first.get("engines") or [])
     if owned:
         exp["queries_moved"] = (sum(owned.values()) - stays, sum(owned.values()))
+    # #1146: "N queries in M distinct query patterns": the same owned queries, and the
+    # patterns in report.json's query_pattern_groups that one of them makes.
+    groups = report.get("query_pattern_groups")
+    if owned and isinstance(groups, list):
+        patterns = sum(
+            1 for g in groups if any(str(m.get("engine")) in owned for m in g.get("members") or [])
+        )
+        exp["query_patterns"] = (sum(owned.values()), patterns)
     return exp
 
 
@@ -384,6 +392,15 @@ def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
     parts.setdefault(f"synced:{eng}", 0)
     for key, n in parts.items():
         f.add(key, n, where)
+
+
+_QUERY_PATTERNS_RE = re.compile(r"([\d,]+) quer(?:y|ies) in ([\d,]+) distinct query patterns?")
+
+
+def query_patterns(f: Figures, text: str, where: str) -> None:
+    """#1146: "N queries in M distinct query patterns" as ``(N, M)``."""
+    m = _QUERY_PATTERNS_RE.search(text)
+    f.add("query_patterns", (_int(m.group(1)), _int(m.group(2))) if m else UNREADABLE, where)
 
 
 _QUERIES_MOVED_RE = re.compile(r"([\d,]+) of ([\d,]+) quer(?:y|ies) moves? to a new engine")
@@ -827,6 +844,9 @@ def engineering_figures(md_text: str) -> Figures:
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
     queries_moved(f, md_plain(h2.get("Target engines", "")), "Target engines: Queries moved")
+    query_patterns(
+        f, md_plain(h2.get("Target engines", "")), "Target engines: Distinct query patterns"
+    )
     f.add("removal_savings", removal_savings(plain), "Migration trade-offs")
     removed: set[str] = set()
     removed |= {
@@ -983,6 +1003,7 @@ def pdf_figures(text: str) -> Figures:
     m = re.search(r"Total [\d.]+% ([\d,]+) tables? migrates?", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Engines table Total")
     queries_moved(f, text, "Queries moved tile")
+    query_patterns(f, text, "Queries moved tile")
     m = re.search(r"([\d,]+) Engines in the target architecture", text)
     f.add("engine_count", _int(m.group(1)) if m else UNREADABLE, "Engines tile")
     m = re.search(r"([\d,]+) Open risks((?: [\d,]+ (?:critical|high|medium|low|unrated),?)*)", text)

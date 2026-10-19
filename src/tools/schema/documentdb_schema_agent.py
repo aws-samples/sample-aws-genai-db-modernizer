@@ -44,6 +44,7 @@ from src.tools.schema.design_metrics import (
     design_metrics_from_projection,
     unfiltered_pattern_count,
 )
+from src.tools.sql.query_pattern_groups import listed_query_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
         analysis = load_contract(AnalysisOutputContract, json.load(f), artifact=analysis_path)
 
     agent_collector, agent_analysis, agent_context = project_schema_design_input(
-        collector, analysis
+        collector, analysis, query_pattern_groups=listed_query_patterns(raw_collector)
     )
 
     decision_trace: dict = {}

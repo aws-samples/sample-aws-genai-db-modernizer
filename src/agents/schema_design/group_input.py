@@ -12,6 +12,9 @@ contract shape but holds only what the group's design uses (issue #272):
   ``total_queries_analyzed``: that counts the whole database, so the skill's
   coverage check (patterns / total_queries_analyzed) would flag every group
   as incomplete; a group's own count is ``_filtered_count``;
+- ``queries.query_pattern_groups``: the query patterns more than one of the
+  group's queries makes, each once with its member query ids, combined frequency
+  and the union of the columns they return (#1146);
 - the tables those queries touch, with the projected table, column, index and
   foreign-key fields (plus the native ``data_type``), the triggers on those
   tables (the skill writes ``migration_notes`` for them), and no procedures,
@@ -51,14 +54,7 @@ from src.contracts.analysis_output import (
     key_scoped_counts_in_scope,
     key_scoped_writes_in_scope,
 )
-from src.contracts.collector_output import (
-    Column,
-    ForeignKey,
-    Index,
-    QueryPattern,
-    Table,
-    Trigger,
-)
+from src.contracts.collector_output import Column, ForeignKey, Index, QueryPattern, Table, Trigger
 from src.contracts.schema_design_input import (
     AgentAggregateRecommendation,
     AgentAntiPattern,
@@ -70,6 +66,9 @@ from src.contracts.schema_design_input import (
     AgentTable,
 )
 from src.tools.schema.design_metrics import METRIC_ENGINES, build_design_metrics
+from src.tools.sql.query_facts import source_engine_of
+from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
+from src.tools.sql.query_pattern_groups import repeated_query_patterns
 
 # Read returns at most 2000 lines per call and cuts lines longer than 2000
 # characters, so records are inlined only up to this width.
@@ -216,7 +215,7 @@ def build_group_input(
     queries_header = {
         k: v
         for k, v in source_queries.items()
-        if k not in ("query_patterns", "total_queries_analyzed")
+        if k not in ("query_patterns", "total_queries_analyzed", QUERY_PATTERNS_KEY)
         and not k.startswith("_")
         and not _empty(v)
     }
@@ -228,21 +227,26 @@ def build_group_input(
     group_schema: dict[str, Any] = {"tables": [_slim_table(t) for t in group_tables]}
     if triggers:
         group_schema["triggers"] = triggers
+    group_queries_section: dict[str, Any] = {
+        **queries_header,
+        "query_patterns": [_slim_query(q) for q in group_queries],
+        "_filtered": True,
+        "_filter_engine": engine,
+        "_group_index": group_index,
+        "_group_name": group_name,
+        "_original_count": total_queries,
+        "_filtered_count": len(group_queries),
+    }
+    # #1146: the query patterns several of the group's queries make, each listed once.
+    repeated = repeated_query_patterns(group_queries, source_engine_of(collector_output))
+    if repeated:
+        group_queries_section[QUERY_PATTERNS_KEY] = repeated
     group_collector = {
         "contract_version": collector_output.get("contract_version"),
         "job_id": collector_output.get("job_id"),
         "metadata": collector_output.get("metadata"),
         "database_schema": group_schema,
-        "queries": {
-            **queries_header,
-            "query_patterns": [_slim_query(q) for q in group_queries],
-            "_filtered": True,
-            "_filter_engine": engine,
-            "_group_index": group_index,
-            "_group_name": group_name,
-            "_original_count": total_queries,
-            "_filtered_count": len(group_queries),
-        },
+        "queries": group_queries_section,
         "metrics": collector_output.get("metrics"),
     }
 

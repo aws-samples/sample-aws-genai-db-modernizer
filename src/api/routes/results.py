@@ -59,8 +59,9 @@ async def get_results(job_id: str = Depends(job_id_param)):
     # same function, so the UI never falls back to a formula of its own. A block
     # written before contract 1.26 gains its access-pattern totals the same way (#792),
     # one written before 1.28 its query move counts and resolved risks by severity (#1020),
-    # one written before 1.38 its per-kind unservable counts (#888), and one written before
-    # the retired-engine statements existed gains them (#1076).
+    # one written before 1.38 its per-kind unservable counts (#888), one written before
+    # the retired-engine statements existed gains them (#1076), and one written before
+    # #1146 its query-pattern figures.
     facts = synthesis.get("facts")
     unservable = facts.get("unservable") if isinstance(facts, dict) else None
     if (
@@ -69,6 +70,7 @@ async def get_results(job_id: str = Depends(job_id_param)):
         or "moving_query_count" not in facts
         or "resolved_risks_by_severity" not in facts
         or "retired_in_use_engines" not in facts
+        or "query_pattern_counts" not in facts
         or (isinstance(unservable, dict) and "no_fit_query_count" not in unservable)
     ):
         synthesis["facts"] = report_facts(synthesis)

@@ -206,8 +206,27 @@ class AgentQueryPattern(BaseModel):
     last_seen: datetime | None = None
 
 
+class AgentQueryPatternGroup(BaseModel):
+    """Queries that are one query pattern (#1146, ``src.tools.sql.query_pattern_groups``):
+    the same tables, predicate shape, order, limit class and operation; the columns they
+    return may differ. Design it once and name every member query id."""
+
+    pattern_id: str
+    query_ids: list[str]
+    frequency_per_hour: float = Field(0.0, ge=0, description="The members' frequency, summed")
+    calls_per_second: float | None = Field(None, description="The members' rate, summed")
+    operation: str
+    tables: list[str] = Field(default_factory=list)
+    returned_columns: list[str] = Field(
+        default_factory=list, description="The union of the columns the members return"
+    )
+
+
 class AgentQueriesInput(BaseModel):
     query_patterns: list[AgentQueryPattern]
+    # #1146: the query patterns more than one of the queries makes; every other query is
+    # a pattern of its own.
+    query_pattern_groups: list[AgentQueryPatternGroup] | None = None
     total_queries_analyzed: int | None = None
     query_log_source: QueryLogSource | None = None
     collection_start_time: datetime | None = None
@@ -423,6 +442,7 @@ def project_schema_design_input(
     collector_output: CollectorOutputContract,
     analysis_output: AnalysisOutputContract,
     context: dict | None = None,
+    query_pattern_groups: list[dict] | None = None,
 ) -> tuple[AgentCollectorInput, AgentAnalysisInput, AgentContextInput]:
     """Project full contracts into validated schema design agent input.
 
@@ -434,6 +454,9 @@ def project_schema_design_input(
         collector_output: Full CollectorOutputContract from the collector step.
         analysis_output: Full AnalysisOutputContract from the analysis step.
         context: Optional dict of human overrides (growth_multiplier, etc.).
+        query_pattern_groups: The input file's ``queries.query_pattern_groups``
+            (#1146), which the collector contract does not carry; kept only for
+            the projected queries.
 
     Returns:
         Tuple of (AgentCollectorInput, AgentAnalysisInput, AgentContextInput).
@@ -537,6 +560,12 @@ def project_schema_design_input(
             )
         )
 
+    projected_ids = {q.query_id for q in query_patterns}
+    groups = [
+        AgentQueryPatternGroup.model_validate(g)
+        for g in query_pattern_groups or []
+        if isinstance(g, dict) and set(g.get("query_ids") or []) <= projected_ids
+    ]
     queries = collector_output.queries
     agent_collector = AgentCollectorInput(
         contract_version=collector_output.contract_version,
@@ -553,6 +582,7 @@ def project_schema_design_input(
             ),
             collection_start_time=queries.collection_start_time,
             collection_end_time=queries.collection_end_time,
+            query_pattern_groups=groups or None,
         ),
     )
 

@@ -216,6 +216,13 @@ ID_FIELD_PATHS = frozenset(
         # engine ids, the reason-category code and the co-dependency members
         # moved with the flag are structured fields; its ``reason`` (built with
         # display_engine) is still scanned.
+        # report.json query_pattern_groups (QueryPatternGroup, #1146): each member's
+        # assigned engine id, the operation code and the table and column names are
+        # structured fields; no deliverable renders them as text.
+        ("members", "engine"),
+        ("query_pattern_groups", "operation"),
+        ("query_pattern_groups", "tables"),
+        ("query_pattern_groups", "returned_columns"),
         ("flag_decisions", "flagged_engine"),
         ("flag_decisions", "destination_engine"),
         ("flag_decisions", "reason_category"),
