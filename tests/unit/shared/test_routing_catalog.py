@@ -591,25 +591,29 @@ class TestTheTableBonusesKeepTheirValues:
         assert "json-document-query" not in {p for c in access_classes() for p in c.patterns}
 
     def test_a_json_read_credits_the_json_query_not_its_table(self) -> None:
-        """#1102: the JSON query gets each engine's documented JSON fit, in any class; a
-        query without the fact gets nothing from it, and no engine without a JSON fit
-        gains anything."""
+        """#1102: the JSON query gets each engine's documented JSON fit, in any class
+        that scores the engine above 0; a class that scores it 0 keeps it at 0 (#1123: a
+        JSON read does not make DocumentDB serve an unanchored join). A query without the
+        fact gets nothing from it, and no engine without a JSON fit gains anything."""
         from src.shared.catalog.access_classes import access_classes, class_score
 
         json_fact = frozenset({"json_access"})
         for access_class in access_classes():
             for engine, fit in self.JSON_ENGINES.items():
                 base = class_score(access_class, engine)
-                if base == 0:
-                    # Not pinned: a feature fit lifting a class the engine scores 0
-                    # (DocumentDB's unanchored join, 0 to 80 today) is pending the
-                    # maintainer decision in #1123 (cap feature fits by class).
-                    continue
-                assert class_score(access_class, engine, json_fact) == max(base, fit)
+                shown = class_score(access_class, engine, json_fact)
+                assert shown == (max(base, fit) if base else 0), (access_class.id, engine)
             for engine in ("dynamodb", "opensearch", "elasticache"):
                 assert class_score(access_class, engine, json_fact) == class_score(
                     access_class, engine
                 ), (access_class.id, engine)
+        # The zero cells #1118's review named stay at 0 (#1123).
+        unanchored_join = next(c for c in access_classes() if c.id == "unanchored_join")
+        assert class_score(unanchored_join, "documentdb") == 0
+        assert class_score(unanchored_join, "documentdb", json_fact) == 0
+        text_search = next(c for c in access_classes() if c.id == "text_search")
+        for engine in self.JSON_ENGINES:
+            assert class_score(text_search, engine, json_fact) == 0, engine
         # A key read of a JSON table: the class alone, then the JSON read itself.
         key_lookup = next(c for c in access_classes() if c.id == "key_lookup")
         for engine in AURORA:

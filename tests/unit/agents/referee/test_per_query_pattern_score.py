@@ -178,33 +178,109 @@ class TestClassScoresComeFromThePatternCatalog:
             assert "PostgreSQL documentation" in entry.why and "MySQL Reference Manual" in entry.why
 
     @pytest.mark.parametrize(
-        ("fact", "pattern_id"),
-        [
-            ("recursive_cte", "cte-recursive"),
-            ("lateral_join", "lateral-join"),
-            ("stored_routine", "stored-routine"),
-        ],
+        "fact",
+        ["recursive_cte", "lateral_join", "stored_routine", "upsert", "full_text", "json_access"],
     )
-    def test_a_sql_feature_carries_its_documented_credit_in_every_class(self, fact, pattern_id):
-        """#985: a query showing a SQL feature is rated, in whatever class it falls in, at
-        least at each engine's own catalog rating for that feature (recursive CTEs: Aurora
-        PostgreSQL 95, Aurora MySQL 90), and no engine without one gains anything."""
+    def test_a_sql_feature_carries_its_documented_credit_in_every_class(self, fact):
+        """#985, #1123: a query showing a SQL feature is rated, in whatever class it falls
+        in, at least at each engine's own catalog rating for that feature (recursive CTEs:
+        Aurora PostgreSQL 95, Aurora MySQL 90) wherever its class gives the engine a score
+        above 0, and at 0 wherever the class gives it 0: a feature raises a class score,
+        never lifts a 0. No engine without a rating for the feature gains anything."""
         from src.shared.catalog.patterns import pattern
 
-        ratings = {
-            engine: entry.score
-            for engine, entry in pattern(pattern_id).engines.items()
-            if entry.kind == "fit"
-        }
-        assert ratings, pattern_id
-        shown = class_engine_scores(frozenset({fact}))
+        ratings: dict[str, int] = {}
+        for feature in feature_patterns():
+            if feature.fact != fact:
+                continue
+            for engine, entry in pattern(feature.pattern).engines.items():
+                if entry.kind == "fit" and entry.score is not None:
+                    ratings[engine] = max(ratings.get(engine, 0), entry.score)
+        assert ratings, fact
+        facts = frozenset({fact})
+        shown = class_engine_scores(facts)
         for access_class in access_classes():
-            plain = class_engine_scores()[access_class.id]
-            for engine, score in plain.items():
-                assert shown[access_class.id][engine] == max(score, ratings.get(engine, 0)), (
-                    access_class.id,
-                    engine,
-                )
+            for engine, score in shown[access_class.id].items():
+                own = class_score(access_class, engine, facts, with_features=False)
+                expected = max(own, ratings.get(engine, 0)) if own > 0 else 0
+                assert score == expected, (access_class.id, engine, own)
+
+    def test_a_feature_never_lifts_a_class_score_of_0(self):
+        """#1123: in every class, for every feature and every other fact a query can show
+        with it, an engine its class scores 0 stays at 0 (a JSON read does not make
+        DocumentDB serve an unanchored join, an upsert does not give Aurora MySQL a
+        similarity search), and an engine its class scores above 0 never goes down."""
+        from src.shared.catalog.access_classes import QUERY_FACTS
+
+        engines = class_engine_scores()[KEY_LOOKUP]
+        lifted_somewhere = False
+        for feature in feature_patterns():
+            for other in sorted(QUERY_FACTS | {""}):
+                facts = frozenset({feature.fact, other} - {""})
+                for access_class in access_classes():
+                    for engine in engines:
+                        own = class_score(access_class, engine, facts, with_features=False)
+                        score = class_score(access_class, engine, facts)
+                        if own == 0:
+                            assert score == 0, (feature.pattern, other, access_class.id, engine)
+                        else:
+                            assert score >= own, (feature.pattern, other, access_class.id, engine)
+                            lifted_somewhere |= score > own
+        # The rule bites where a feature fit is above the class's own non-zero score.
+        assert lifted_somewhere
+
+    @pytest.mark.parametrize(
+        ("class_id", "facts", "engine", "own"),
+        [
+            # #1118 review: a JSON read on an unanchored join DocumentDB cannot serve.
+            (UNANCHORED_JOIN, {"json_access"}, "documentdb", 0),
+            # A similarity search Aurora MySQL has no index or function for.
+            (TEXT_SEARCH, {"similarity_match", "upsert"}, "aurora_mysql", 0),
+            (TEXT_SEARCH, {"similarity_match", "json_access"}, "documentdb", 0),
+            # A prefix regex only DocumentDB rates in the class.
+            (TEXT_SEARCH, {"prefix_regex", "recursive_cte"}, "aurora_postgresql", 0),
+            (TEXT_SEARCH, {"prefix_regex", "lateral_join"}, "aurora_mysql", 0),
+            (TEXT_SEARCH, {"prefix_regex", "stored_routine"}, "aurora_postgresql", 0),
+        ],
+    )
+    def test_a_feature_leaves_these_zero_class_scores_at_0(self, class_id, facts, engine, own):
+        """#1123: named cases that a feature fit lifted before the cap (DocumentDB's
+        unanchored join with a JSON read went from 0 to 80)."""
+        access_class = next(c for c in access_classes() if c.id == class_id)
+        assert class_score(access_class, engine, frozenset(facts), with_features=False) == own
+        assert class_score(access_class, engine, frozenset(facts)) == 0
+        assert class_engine_scores(frozenset(facts))[class_id][engine] == 0
+
+    def test_a_scan_level_class_score_is_not_capped_further(self):
+        """#1123 caps a feature only at a class score of 0: where the class rates the
+        engine as a scan (45, a leading-wildcard LIKE on Aurora MySQL and DocumentDB), a
+        JSON read still raises it to the engine's JSON fit."""
+        text_search = next(c for c in access_classes() if c.id == TEXT_SEARCH)
+        facts = frozenset({"leading_wildcard", "json_access"})
+        for engine, fit in (("aurora_mysql", 85), ("documentdb", 80)):
+            assert class_score(text_search, engine, facts, with_features=False) == 45
+            assert class_score(text_search, engine, facts) == fit
+
+    def test_parity_anchors_read_the_same_capped_ratings(self):
+        """#1123: the parity-anchor notes come from the same capped ratings as the score.
+        A feature on a class that scores the engine 0 adds no note (DocumentDB's
+        unanchored join with a JSON read); where a feature fit with its own evidence
+        rates the engine at least as high as the borrowed class score, the note goes
+        (DocumentDB's key lookup, 80 against JSON 80; its ad hoc filter, 75 against 80),
+        and an engine with no rating for the feature keeps its note (OpenSearch)."""
+        from src.shared.catalog.access_classes import class_parity_anchors
+
+        json_read = frozenset({"json_access"})
+        assert "documentdb" not in class_parity_anchors(UNANCHORED_JOIN, json_read)
+        assert class_engine_scores(json_read)[UNANCHORED_JOIN]["documentdb"] == 0
+        assert "documentdb" in class_parity_anchors(KEY_LOOKUP)
+        assert "documentdb" not in class_parity_anchors(KEY_LOOKUP, json_read)
+        plain, shown = class_parity_anchors(AD_HOC_FILTER), class_parity_anchors(
+            AD_HOC_FILTER, json_read
+        )
+        assert {"documentdb", "opensearch"} <= set(plain)
+        assert "documentdb" not in shown
+        assert shown["opensearch"] == plain["opensearch"]
 
     def test_the_recursive_cte_edge_is_the_catalogs(self):
         """Aurora PostgreSQL's documented edge (SEARCH/CYCLE, no default recursion cap)

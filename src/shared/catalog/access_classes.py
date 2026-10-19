@@ -172,34 +172,51 @@ def _entry_score(support: EngineSupport) -> int | None:
 
 
 def _ratings(
-    access_class: AccessClass, engine: str, facts: frozenset[str]
+    access_class: AccessClass, engine: str, facts: frozenset[str], *, with_features: bool = True
 ) -> list[tuple[int, EngineSupport]]:
     """``(rating, entry)`` for each of the class's patterns that rates ``engine`` for a
-    query showing ``facts`` (see :func:`class_score`)."""
+    query showing ``facts`` (see :func:`class_score`), then each feature pattern whose
+    fact the query shows, but only where the class's own patterns rate the engine above
+    0 (#1123): a feature raises a class score, it never lifts a 0."""
     if WRITE_FACT in facts and engine not in engine_ids(system_of_record=True):
         return []
-    listed = [(p, access_class.only_when.get(p, "")) for p in access_class.patterns]
-    listed += [(f.pattern, f.fact) for f in feature_patterns()]
-    return [
-        (score, support)
-        for pattern_id, needs in listed
-        if needs in facts | {""}
-        and (support := pattern(pattern_id).engines.get(engine)) is not None
-        and (score := _entry_score(support)) is not None
-    ]
+
+    def rated(listed: list[tuple[str, str]]) -> list[tuple[int, EngineSupport]]:
+        return [
+            (score, support)
+            for pattern_id, needs in listed
+            if needs in facts | {""}
+            and (support := pattern(pattern_id).engines.get(engine)) is not None
+            and (score := _entry_score(support)) is not None
+        ]
+
+    own = rated([(p, access_class.only_when.get(p, "")) for p in access_class.patterns])
+    if not with_features or max((score for score, _ in own), default=0) == 0:
+        return own
+    return own + rated([(f.pattern, f.fact) for f in feature_patterns()])
 
 
-def class_score(access_class: AccessClass, engine: str, facts: frozenset[str] = frozenset()) -> int:
+def class_score(
+    access_class: AccessClass,
+    engine: str,
+    facts: frozenset[str] = frozenset(),
+    *,
+    with_features: bool = True,
+) -> int:
     """The highest rating the class's patterns give ``engine`` for a query showing
     ``facts``, else 0. A pattern in ``only_when`` counts only when its fact is in
     ``facts``, a feature pattern (:func:`feature_patterns`, #985) counts in every class
     for a query that shows its fact, and a write is rated only on a system of record.
+    A feature only raises a score the class's own patterns give: where they give the
+    engine 0, the class score stays 0 whatever features the query shows (#1123).
+    ``with_features=False`` gives the class's own score, with no feature pattern.
 
     A ``fit`` entry counts at its ``score``; a ``native`` or ``unscored`` entry at its
     ``class_score`` (the engine serves the pattern although its analysis does not report
     it). An anti-pattern, a penalised entry or an entry with no rating counts nothing.
     """
-    return max((score for score, _ in _ratings(access_class, engine, facts)), default=0)
+    ratings = _ratings(access_class, engine, facts, with_features=with_features)
+    return max((score for score, _ in ratings), default=0)
 
 
 @cache

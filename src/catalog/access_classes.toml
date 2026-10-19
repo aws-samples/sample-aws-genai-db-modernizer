@@ -91,6 +91,8 @@ only_when = { "full-text-search" = "full_text", "wildcard-search" = "leading_wil
 # alongside its class's own patterns, only when the query shows the feature's fact (read from
 # the SQL facts by the classifier), so the per-query score keeps each engine's documented
 # credit for the feature (recursive CTEs: Aurora PostgreSQL 95 against Aurora MySQL 90).
+# A feature only raises a score the class's own patterns give the engine: where they give it
+# 0, the query's class score stays 0 whatever features it shows (#1123).
 [[features]]
 pattern = "cte-recursive"
 fact = "recursive_cte"
