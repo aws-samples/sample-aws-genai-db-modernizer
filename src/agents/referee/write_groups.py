@@ -33,10 +33,12 @@ from src.tools.sql.query_facts import query_facts, source_engine_of
 __all__ = [
     "WRITE_GROUP_LABEL",
     "assignment_placement_groups",
+    "assignment_sources_of_truth",
     "assignment_unit_weights",
     "build_write_groups",
     "collector_write_groups",
     "placement_groups",
+    "sources_of_truth",
     "table_sources",
     "unit_call_weights",
     "unit_write_tables",
@@ -191,6 +193,32 @@ def collector_write_groups(collector_output: Mapping | None) -> dict[str, list[s
         source_engine_of(collector_output),
         SourceScope.from_collector(collector_output),
     )
+
+
+def sources_of_truth(
+    write_groups: Mapping[str, Iterable[str]] | None, engine_of: Mapping[str, str]
+) -> dict[str, str]:
+    """``{table: engine}`` for each written table whose writes placed so far
+    (``engine_of``, query id -> engine) all sit on one engine, its source of truth. A
+    table with no placed write, or writes on two engines, has none."""
+    out: dict[str, str] = {}
+    for table, members in sorted((write_groups or {}).items()):
+        writers = {engine_of[q] for q in members if engine_of.get(q)}
+        if len(writers) == 1:
+            (out[table],) = writers
+    return out
+
+
+def assignment_sources_of_truth(assignment: Mapping | None) -> dict[str, str]:
+    """:func:`sources_of_truth` of an assignment artifact (a dict): its ``write_groups``
+    and in-scope query engines. Empty for one written before write groups existed."""
+    assignment = assignment or {}
+    engine_of = {
+        str(qa.get("query_id")): str(qa.get("assigned_engine") or "")
+        for qa in assignment.get("query_assignments") or []
+        if qa.get("in_scope", True)
+    }
+    return sources_of_truth(assignment.get("write_groups") or {}, engine_of)
 
 
 def table_sources(assignment: Mapping | None) -> list[dict[str, object]]:

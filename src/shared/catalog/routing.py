@@ -13,6 +13,8 @@ missing or mistyped field fails at import time):
   the same engines) and ``why``. ``[[exclusions]]`` are per-engine bars, in order: the
   ``engine``, a stable ``rule_id``, the query ``fact`` (with ``min`` for a count), the
   technical ``description`` and the customer-facing ``customer_message`` (#548).
+  ``[[waivers]]`` lift one capability for one engine on a narrower query shape (a class
+  fact) when the query's table has its source of truth on that engine (#377).
 - ``src/catalog/triage_signals.toml``: each triage signal's ``targets`` (the engines it
   is evidence for, in triage's order) and, for a signal override, ``override_engine``
   and ``override_reason_code`` (a move-ledger ``ReasonCode`` value, #616).
@@ -27,9 +29,11 @@ from __future__ import annotations
 import tomllib
 from functools import cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.shared.catalog.access_classes import QUERY_FACTS
 from src.shared.catalog.engines import ACTIVE, CatalogError, Threshold, engine_ids, engines
 from src.shared.catalog.patterns import Capability, patterns
 
@@ -73,11 +77,30 @@ class Exclusion(BaseModel):
     customer_message: str = Field(min_length=1, pattern=_ONE_LINE)
 
 
+class Waiver(BaseModel):
+    """One capability waiver: ``engine`` serves ``capability`` for a query showing the
+    class fact ``fact``, when ``when`` holds (ADR-031 Decision 2 Amendment 12, #377).
+
+    ``when = "source_of_truth"``: the query reads one table, and that table's writes
+    are on ``engine`` (its write group, ADR-031 Amendment 9).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    engine: str
+    capability: str = Field(pattern=_ID)
+    rule_id: str = Field(pattern=r"^[a-z][a-z0-9-]*$")
+    fact: str = Field(pattern=_ID)
+    when: Literal["source_of_truth"]
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
 class GatesFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     capabilities: dict[str, HardCapability]
     exclusions: tuple[Exclusion, ...]
+    waivers: tuple[Waiver, ...] = ()
 
     @model_validator(mode="after")
     def _one_signal_per_capability(self) -> GatesFile:
@@ -90,6 +113,17 @@ class GatesFile(BaseModel):
         rule_ids = [e.rule_id for e in self.exclusions]
         if len(set(rule_ids)) != len(rule_ids):
             raise ValueError(f"exclusion rule_ids repeat: {sorted(rule_ids)}")
+        waiver_ids = [w.rule_id for w in self.waivers]
+        if len(set(waiver_ids)) != len(waiver_ids) or set(waiver_ids) & set(rule_ids):
+            raise ValueError(f"waiver rule_ids repeat: {sorted(waiver_ids)}")
+        for waiver in self.waivers:
+            waived = self.capabilities.get(waiver.capability)
+            if waived is None:
+                raise ValueError(f"waiver {waiver.rule_id} names unknown {waiver.capability!r}")
+            if waiver.engine in waived.engines:
+                raise ValueError(
+                    f"waiver {waiver.rule_id}: {waiver.engine} already has {waiver.capability}"
+                )
         return self
 
 
@@ -144,6 +178,19 @@ def load_gates_file(path: Path = GATES_FILE) -> GatesFile:
     for rule in loaded.exclusions:
         if rule.engine not in known:
             raise CatalogError(f"{path.name}: exclusion {rule.rule_id} names {rule.engine!r}")
+    owners = engine_ids(status=ACTIVE, system_of_record=True)
+    for waiver in loaded.waivers:
+        if waiver.engine not in known:
+            raise CatalogError(f"{path.name}: waiver {waiver.rule_id} names {waiver.engine!r}")
+        if waiver.fact not in QUERY_FACTS:
+            raise CatalogError(
+                f"{path.name}: waiver {waiver.rule_id} reads unknown fact {waiver.fact!r}"
+            )
+        if waiver.when == "source_of_truth" and waiver.engine not in owners:
+            raise CatalogError(
+                f"{path.name}: waiver {waiver.rule_id}: {waiver.engine} owns no writes, "
+                "so no table's source of truth is on it"
+            )
     return loaded
 
 
@@ -204,6 +251,10 @@ def hard_capabilities() -> dict[str, HardCapability]:
 
 def exclusions() -> tuple[Exclusion, ...]:
     return gates_file().exclusions
+
+
+def waivers() -> tuple[Waiver, ...]:
+    return gates_file().waivers
 
 
 def triage_signals() -> dict[str, TriageSignal]:

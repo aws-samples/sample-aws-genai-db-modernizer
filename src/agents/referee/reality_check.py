@@ -37,7 +37,8 @@ that feed into synthesis.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
 
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.capability_registry import triage_query_capabilities
@@ -88,6 +89,11 @@ from src.agents.referee.reality_check_settle import (
     _settle_committed_engines,
 )
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.write_groups import assignment_sources_of_truth
+
+if TYPE_CHECKING:
+    from src.agents.referee.query_scoring import ScoringContext
+
 from src.shared.engine_names import without_placeholder_engines
 from src.shared.engines_in_use import engines_in_use
 
@@ -132,6 +138,21 @@ __all__ = [
 ]
 
 
+def _scoring_context(
+    analysis_outputs: dict[str, dict],
+    triage: dict,
+    collector_output: dict,
+    sources_of_truth: Mapping[str, str],
+) -> ScoringContext:
+    """The check's one shared scoring context (#490/#549), its capability waivers
+    reading the input version's sources of truth (#377)."""
+    from src.agents.referee.query_scoring import ScoringContext
+
+    return ScoringContext.from_pipeline(
+        analysis_outputs, triage, collector_output
+    ).with_sources_of_truth(sources_of_truth)
+
+
 def run_reality_check(
     assignment: dict,
     triage: dict,
@@ -141,8 +162,15 @@ def run_reality_check(
     source_engine: str | None = None,
     ledger: MoveLedger | None = None,
     customer_kept_engines: Iterable[str] = (),
+    sources_of_truth: Mapping[str, str] | None = None,
 ) -> dict:
     """Run the CTO-level reality check on the assignment.
+
+    ``sources_of_truth`` (``{table: engine}``) are the input version's, its
+    customer-pinned writes included (the handler holds pinned queries out of
+    ``assignment``): the capability waivers (#377) read them in the trace's scores,
+    Phase 1/2 eligibility and the floors alike. ``None`` reads them from
+    ``assignment``.
 
     ``source_engine`` is the source database engine (e.g. ``"mysql"``); it picks
     the Aurora engine when both are committed. Defaults to the collector's.
@@ -251,13 +279,23 @@ def run_reality_check(
     # ``query_assignments`` -- see ``tests/e2e/routing_snapshot.py`` for the
     # same technique and its own consistency guard.
     from src.agents.referee.assignment_resolver import AssignmentResolver, RoutingTrace
-    from src.agents.referee.query_scoring import ScoringContext
 
     # ADR-031 Decision 9: a placeholder engine is never a candidate, absorber or owner.
     analysis_outputs = without_placeholder_engines(analysis_outputs)
     kept_by_customer = frozenset(customer_kept_engines) & set(analysis_outputs)
     _trace = RoutingTrace()
-    AssignmentResolver().resolve(triage, analysis_outputs, collector_output, routing_trace=_trace)
+    sources = (
+        dict(sources_of_truth)
+        if sources_of_truth is not None
+        else assignment_sources_of_truth(assignment)
+    )
+    AssignmentResolver().resolve(
+        triage,
+        analysis_outputs,
+        collector_output,
+        routing_trace=_trace,
+        sources_of_truth=sources,
+    )
     trace_by_query = _trace.by_query
     # The one shared scoring context (#490/#549): the mandatory-engine
     # floor's absorber (``_find_best_absorber_for_query``) scores each
@@ -265,7 +303,7 @@ def run_reality_check(
     # instead of reading ``trace_by_query`` -- one scoring call site, same
     # as ``routed_confidence.py``, rather than a second way of reaching the
     # identical number.
-    scoring_ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
+    scoring_ctx = _scoring_context(analysis_outputs, triage, collector_output, sources)
     # The resolver's OWN settled-workload snapshot (#503), persisted on the
     # trace rather than recomputed here from
     # the final v1 assignment: the resolver's snapshot is taken before the

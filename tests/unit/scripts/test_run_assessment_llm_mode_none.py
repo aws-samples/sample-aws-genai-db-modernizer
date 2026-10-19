@@ -193,10 +193,13 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
     # (key lookup), which DynamoDB rates best, so it leaves Aurora MySQL. 64% after #992
     # (68 of 107): a table's writes land on one engine, weighted by call rate, so
     # wp_postmeta's three UPDATEs and wp_woocommerce_order_itemmeta's UPDATE join their
-    # tables' other writes on DynamoDB.
+    # tables' other writes on DynamoDB. 63% after #377 (67 of 107): wp_comments' key-scoped
+    # ``COUNT(*) ... WHERE comment_post_ID = ? AND comment_approved = ?`` passes DynamoDB's
+    # aggregation gate (the table's writes are on DynamoDB), ties DocumentDB at 77 and
+    # settles on DynamoDB when the reality check removes DocumentDB.
     assert arch["rationale"] == (
         "Hybrid architecture: Aurora MySQL retained as the relational core "
-        "(64% of queries); DynamoDB for key-value access; ElastiCache for "
+        "(63% of queries); DynamoDB for key-value access; ElastiCache for "
         "caching hot data. Schema design was not run, so no tables are "
         "allocated yet."
     )

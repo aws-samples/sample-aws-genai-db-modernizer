@@ -34,7 +34,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.2"
+    "version": "2.3"
   },
   "analysis_output.MigrationComplexity": {
     "module": "analysis_output",
@@ -43,7 +43,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.2"
+    "version": "2.3"
   },
   "analysis_output.RecommendationLevel": {
     "module": "analysis_output",
@@ -53,7 +53,7 @@
       "NOT_SUITABLE",
       "SUITABLE"
     ],
-    "version": "2.2"
+    "version": "2.3"
   },
   "analysis_output.Severity": {
     "module": "analysis_output",
@@ -63,7 +63,7 @@
       "LOW",
       "MEDIUM"
     ],
-    "version": "2.2"
+    "version": "2.3"
   },
   "analysis_output.TargetDatabase": {
     "module": "analysis_output",
@@ -78,7 +78,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "2.2"
+    "version": "2.3"
   },
   "assignment_models.AssignmentSource": {
     "module": "assignment_models",
@@ -90,7 +90,7 @@
       "reality_check",
       "source_of_truth_reroute"
     ],
-    "version": "1.18"
+    "version": "1.19"
   },
   "assignment_models.AssignmentStatus": {
     "module": "assignment_models",
@@ -102,7 +102,7 @@
       "reroute_rolled_back",
       "rerouted_after_approval"
     ],
-    "version": "1.18"
+    "version": "1.19"
   },
   "capability_ids": {
     "module": "triage_output",
@@ -576,7 +576,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "1.18"
+    "version": "1.19"
   },
   "feasibility_models.FindingKind": {
     "module": "feasibility_models",
@@ -625,7 +625,7 @@
       "model_flag",
       "rule"
     ],
-    "version": "1.8"
+    "version": "1.9"
   },
   "move_ledger.MovePass": {
     "module": "move_ledger",
@@ -650,7 +650,7 @@
       "tie",
       "utility_pin"
     ],
-    "version": "1.8"
+    "version": "1.9"
   },
   "move_ledger.ReasonCode": {
     "module": "move_ledger",
@@ -665,6 +665,7 @@
       "flag.capability_gap",
       "floor.cost_share",
       "floor.opensearch",
+      "gate.key_scoped_count",
       "group.customer_propagation",
       "group.mean",
       "group.write",
@@ -682,7 +683,7 @@
       "tie.source_compatible",
       "tie.stability"
     ],
-    "version": "1.8"
+    "version": "1.9"
   },
   "phase_models.Phase": {
     "module": "phase_models",
@@ -717,7 +718,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.46"
+    "version": "1.47"
   },
   "referee_output.ArchitectureType": {
     "module": "referee_output",
@@ -864,6 +865,6 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.46"
+    "version": "1.47"
   }
 }

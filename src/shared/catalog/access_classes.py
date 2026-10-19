@@ -46,9 +46,10 @@ _ONE_LINE = r"^[^\n]+$"
 # The query facts a class score may depend on, each read from the SQL facade by the
 # classifier (``AccessClassification.facts``): a pattern listed in ``only_when`` counts
 # only for a query showing its fact (a date/time bucket, each text-search kind, a
-# window function, a partition-key equality plus a range on one table), and ``write``
+# window function, a partition-key equality plus a range on one table), ``write``
 # (an INSERT, UPDATE, DELETE or MERGE) is credited only to a system of record
-# (``class_score``).
+# (``class_score``), and ``key_scoped_count`` (a key-scoped read that only counts one
+# table's rows) is what the capability waiver in ``gates.toml`` reads (#377).
 QUERY_FACTS = frozenset(
     {
         "time_bucket",
@@ -65,6 +66,7 @@ QUERY_FACTS = frozenset(
         "upsert",
         "prefix_regex",
         "json_access",
+        "key_scoped_count",
     }
 )
 # The fact that marks a write (ADR-031 Decision 2 step 3: an engine that is not a

@@ -1282,6 +1282,7 @@ class LocalOrchestrator(Orchestrator):
         from src.agents.referee.query_scoring import ScoringContext
         from src.agents.referee.reality_check_rules import _build_query_signals
         from src.agents.referee.tie_break import settled_counts
+        from src.agents.referee.write_groups import assignment_sources_of_truth
         from src.storage.assignment_versioning import assignment_artifact_path
 
         prefix = f"{database_name}/{job_id}"
@@ -1300,9 +1301,10 @@ class LocalOrchestrator(Orchestrator):
             else {}
         )
         return {
+            # The capability waivers (#377) read the approved version's sources of truth.
             "scoring_context": ScoringContext.from_pipeline(
                 analysis_outputs, triage or None, collector or None
-            ),
+            ).with_sources_of_truth(assignment_sources_of_truth(assignment)),
             "query_map": {
                 q["query_id"]: q for q in collector.get("queries", {}).get("query_patterns", [])
             },

@@ -13,6 +13,16 @@
 # ``min`` for a count), checked in order. ``description`` is the technical reason (logs and
 # the decision trace only); ``customer_message`` is the plain verb phrase a rejected
 # override quotes (#548): no leading subject, no engine name, no mention of another engine.
+#
+# [[waivers]]: a capability an engine lacks in general but serves for one narrower query
+# shape, a class fact of the query (``fact``, src.agents.referee.access_pattern), only
+# when the query's one table has its source of truth on that engine (``when``, the
+# table's write group, ADR-031 Amendment 9; ADR-031 Decision 2 Amendment 12, #377). The
+# waiver only lifts the gate: the shared scorer still scores the engine and decides. It
+# depends on where the table's writes are, so the first assignment applies it once the
+# writes are placed (``AssignmentResolver`` Step 6d) and later passes read the sources of
+# truth of the version they route (``ScoringContext.with_sources_of_truth``); an engine's
+# standing-cost share never counts it (Decision 5).
 
 [capabilities.multi_doc_acid]
 engines = ["dynamodb", "documentdb", "aurora_postgresql", "aurora_mysql"]
@@ -68,6 +78,14 @@ why = "A utility or metadata statement (DDL, session variables, transaction cont
 engines = ["aurora_postgresql", "aurora_mysql"]
 facts = ["computed_join_key"]
 why = "A join on a computed expression (lower(g.name) = u.username_lower), which a key lookup cannot evaluate (review of #375, finding B2)."
+
+[[waivers]]
+engine = "dynamodb"
+capability = "aggregation"
+rule_id = "ddb-key-scoped-count"
+fact = "key_scoped_count"
+when = "source_of_truth"
+why = "A COUNT with no GROUP BY over the rows one key value of one table addresses is a DynamoDB Query on that key with Select = COUNT, which returns the number of matching items (after any filter expression; a COUNT(col) adds attribute_exists(col)) instead of the items, yet still reads and bills every matching item: read capacity is the same as reading them, and a result past 1 MB is paged, so the count is summed over the pages (Amazon DynamoDB Developer Guide, Query, Select; maintainer decision on #377). It applies only when the table's writes are on DynamoDB, so no table is pulled off another engine for one count; routing has no cardinality gate, so the DynamoDB designer is given each such count's key and its cardinality (or unknown) to choose the key or a maintained counter. MIN and MAX are not waived (they need a designed sort key)."
 
 [[exclusions]]
 engine = "dynamodb"

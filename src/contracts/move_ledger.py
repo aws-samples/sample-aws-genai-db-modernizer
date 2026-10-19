@@ -128,6 +128,11 @@ Version History:
   me") settles each pending engine choice (one per table) with one Move per
   query: actor ``rule``, the alternative as the runner-up, and both engines'
   whole-point and unrounded choice scores in the evidence.
+- 1.9 (2026-10-20, #377): Added ``ReasonCode.KEY_SCOPED_COUNT``
+  (``gate.key_scoped_count``), ``CapabilityWaiver`` and the optional
+  ``MoveEvidence.capability_waivers``: a key-scoped COUNT placed on the engine its
+  table's writes are on, once a capability waiver lets that engine score it (ADR-031
+  Decision 2 Amendment 12).
 """
 
 from __future__ import annotations
@@ -217,6 +222,10 @@ class ReasonCode(str, Enum):
     # next version restates the one before the reroute and each moved query
     # goes back (#770).
     ROLLBACK_REDESIGN_FAILED = "rollback.redesign_failed"
+    # A key-scoped COUNT placed once its table's writes are: DynamoDB-style Query with
+    # Select = COUNT, whose aggregation gate the catalog waives when the table's
+    # source of truth is the engine (ADR-031 Decision 2 Amendment 12, #377).
+    KEY_SCOPED_COUNT = "gate.key_scoped_count"
 
 
 class MoveActor(str, Enum):
@@ -275,6 +284,20 @@ class GroupGate(BaseModel):
             "The gate that ruled it out for that member: the scorer's gate kind "
             "(hard_exclusion, capability, model_flag) or write_gate (not a system of record)"
         ),
+    )
+
+
+class CapabilityWaiver(BaseModel):
+    """A capability the catalog waived for the destination engine (``gates.toml``
+    ``[[waivers]]``, ADR-031 Decision 2 Amendment 12, #377)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    rule_id: str = Field(..., description="The waiver's rule id in gates.toml")
+    capability: str = Field(..., description="The capability waived")
+    table: str = Field(..., description="The one table the query reads")
+    source_of_truth: str = Field(
+        ..., description="The engine the table's writes are on (its source of truth)"
     )
 
 
@@ -346,6 +369,13 @@ class MoveEvidence(BaseModel):
         description=(
             "For a Move that changes the query's tie: its tied_engines before the "
             "Move (sorted). Empty otherwise"
+        ),
+    )
+    capability_waivers: list[CapabilityWaiver] = Field(
+        default_factory=list,
+        description=(
+            "For a gate.key_scoped_count Move: each capability the catalog waived for "
+            "the destination engine, with the table and its source of truth. Empty otherwise"
         ),
     )
 

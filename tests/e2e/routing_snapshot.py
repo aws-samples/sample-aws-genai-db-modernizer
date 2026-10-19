@@ -126,6 +126,10 @@ def categorize(reason: str) -> str:
         return "co_dependency_tie" if "scores tie with" in reason else "co_dependency_group"
     if "signal override:" in reason:
         return "signal_override"
+    if "highest fit for" in reason and "key-scoped count of" in reason:
+        # #377 (ADR-031 Decision 2 Amendment 12): a capability waiver let the engine
+        # its table's writes are on score it, and it won.
+        return "key_scoped_count_tie" if "scores tie with" in reason else "key_scoped_count"
     if "highest fit for" in reason:
         return "individual_tie" if "scores tie with" in reason else "individual_highest_confidence"
     if "no engine scored this query" in reason:

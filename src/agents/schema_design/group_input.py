@@ -19,7 +19,7 @@ contract shape but holds only what the group's design uses (issue #272):
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
   aggregates and table recommendations for the group's tables, and the group's own
-  ``key_scoped_writes`` (DynamoDB, #1061);
+  ``key_scoped_writes`` (DynamoDB, #1061) and ``key_scoped_counts`` (DynamoDB, #377);
 - no null or empty optional fields;
 - ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
@@ -48,6 +48,7 @@ from src.contracts.analysis_output import (
     AntiPattern,
     Pattern,
     TableRecommendation,
+    key_scoped_counts_in_scope,
     key_scoped_writes_in_scope,
 )
 from src.contracts.collector_output import (
@@ -275,6 +276,7 @@ def build_group_input(
             "workload_analysis",
             "aggregate_recommendations",
             "key_scoped_writes",
+            "key_scoped_counts",
         )
         and not _empty(v)
     }
@@ -295,6 +297,10 @@ def build_group_input(
     writes = key_scoped_writes_in_scope(analysis_output.get("key_scoped_writes"), query_ids)
     if writes:
         group_analysis["key_scoped_writes"] = writes
+    # The group's own key-scoped counts, with their keys' cardinality (#377).
+    counts = key_scoped_counts_in_scope(analysis_output.get("key_scoped_counts"), query_ids)
+    if counts:
+        group_analysis["key_scoped_counts"] = counts
 
     group_input: dict[str, Any] = {
         "job_id": job_id,

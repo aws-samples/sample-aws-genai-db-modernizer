@@ -34,6 +34,9 @@ Version History:
   with the flag it was held under (the flagged engine and the reason category), so
   synthesis can state it in every deliverable. ``held_queries`` keeps the ids.
   Backward compatible: ``held`` defaults to empty.
+- 1.5 (2026-10-20, #377): No field of its own. Each routing's evidence gained the
+  optional ``capability_waivers`` and its ``tie_rule`` the value
+  ``gate.key_scoped_count`` (move ledger).
 """
 
 from __future__ import annotations
@@ -122,7 +125,7 @@ class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.5", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")

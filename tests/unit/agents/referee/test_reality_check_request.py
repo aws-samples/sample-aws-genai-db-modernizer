@@ -317,7 +317,13 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     wp_posts, wp_terms and order-item-meta reads that lost 3 DocumentDB points are
     first-assigned to Aurora MySQL already, so DocumentDB first-assigns 11 and the check
     moves 8 to Aurora MySQL and 3 to DynamoDB; the flag on a DynamoDB move still never
-    brings DocumentDB back."""
+    brings DocumentDB back.
+
+    #377 (a key-scoped COUNT passes DynamoDB's aggregation gate when its table's writes
+    are on DynamoDB): ``8c66eaee`` (``SELECT COUNT(*) FROM wp_comments WHERE
+    comment_post_ID = ? AND comment_approved = ?``) ties DocumentDB and DynamoDB at 77 in
+    the first assignment and is listed under DynamoDB pending a choice, so it is no
+    longer a DocumentDB move: the check moves 7 to Aurora MySQL and 3 to DynamoDB."""
 
     FLAGGED = "3a74580e"
 
@@ -332,7 +338,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
         assert sorted(moved.values()).count("dynamodb") == 3
-        assert sorted(moved.values()).count("aurora_mysql") == 8
+        assert sorted(moved.values()).count("aurora_mysql") == 7
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"
 

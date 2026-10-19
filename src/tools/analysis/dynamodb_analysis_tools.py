@@ -14,10 +14,12 @@ from pathlib import Path
 from pydantic import BaseModel, TypeAdapter
 
 from src.agents.referee.access_pattern import (
+    KEY_SCOPED_COUNT_FACT,
     SMALL_TABLE_MAX_ROWS,
     UNPARSED,
     UTILITY,
     SchemaKeys,
+    query_access,
 )
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.transaction_shape import transaction_shape
@@ -26,6 +28,8 @@ from src.contracts.analysis_output import (
     Confidence,
     CostEstimate,
     KeyAnchor,
+    KeyScopedCount,
+    KeyScopedCountKey,
     KeyScopedWrite,
     MigrationComplexity,
     Pattern,
@@ -1473,6 +1477,74 @@ def key_scoped_writes(collector_output: dict) -> list[KeyScopedWrite]:
 # ---------------------------------------------------------------------------
 
 _RELATIONSHIP: TypeAdapter[Relationship] = TypeAdapter(Relationship)
+
+
+# ---------------------------------------------------------------------------
+# Key-scoped counts (the DynamoDB schema designer's input, #377)
+# ---------------------------------------------------------------------------
+
+KEY_SCOPED_COUNT_NOTE = (
+    "Served as a Query on this key with Select = COUNT, which reads and bills every "
+    "matching item (1 MB per page, summed over the pages): give the key a partition key "
+    "of an item collection (the base table's or a GSI's); for a low- or unknown-"
+    "cardinality key, or a hot count, prefer a maintained counter item."
+)
+
+
+def key_scoped_counts(collector_output: dict) -> list[KeyScopedCount]:
+    """Every key-scoped count of the collection (the ``key_scoped_count`` class fact,
+    ADR-031 Decision 2 Amendment 12, #377), the key columns it pins and each one's
+    collected cardinality (``"unknown"`` with no statistics).
+
+    Routing may place such a count on DynamoDB when its table's writes are there; the
+    analysis lists every one, and each design call keeps the ones it serves
+    (``key_scoped_counts_in_scope``), so the designer is told the count's key and how
+    selective it is, never routing's cardinality gate (there is none)."""
+    from src.tools.sql.query_facts import source_engine_of
+
+    keys = SchemaKeys.from_collector(collector_output)
+    source_engine = source_engine_of(collector_output)
+    columns_by_table = {
+        str(t.get("table_id") or ""): {
+            str(c.get("column_name") or "").lower(): c for c in t.get("columns") or []
+        }
+        for t in (collector_output.get("database_schema") or {}).get("tables") or []
+    }
+    out: list[KeyScopedCount] = []
+    for q in collector_output.get("queries", {}).get("query_patterns", []):
+        access = query_access(q, keys, source_engine)
+        if KEY_SCOPED_COUNT_FACT not in access.classification.facts or len(access.scopes) != 1:
+            continue
+        (scope,) = access.scopes
+        if len(scope.tables) != 1:
+            continue
+        (table_id,) = scope.tables
+        pinned = sorted(
+            scope.pinned.get(table_id, frozenset()) & scope.key_columns.get(table_id, frozenset())
+        )
+        if not pinned:
+            continue
+        stats = columns_by_table.get(table_id, {})
+        out.append(
+            KeyScopedCount(
+                query_id=str(q.get("query_id") or ""),
+                table_id=table_id,
+                columns=pinned,
+                keys=[
+                    KeyScopedCountKey(
+                        column=c,
+                        cardinality=(
+                            card
+                            if isinstance(card := stats.get(c, {}).get("cardinality"), int)
+                            else "unknown"
+                        ),
+                    )
+                    for c in pinned
+                ],
+                schema_note=KEY_SCOPED_COUNT_NOTE,
+            )
+        )
+    return out
 
 
 def build_decision_trace(

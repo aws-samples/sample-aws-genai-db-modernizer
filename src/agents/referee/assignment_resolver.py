@@ -42,6 +42,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
+from src.agents.referee import write_groups as write_groups_module
 from src.agents.referee.aurora_choice import (
     AURORA_ENGINES,
     choose_heterogeneous_engine,
@@ -51,7 +52,11 @@ from src.agents.referee.aurora_choice import (
     pick_aurora_engine_with_tie,
     source_database_engine,
 )
-from src.agents.referee.cache_overlay import apply_cache_overlay, can_own, overlay_summary
+from src.agents.referee.cache_overlay import (
+    apply_cache_overlay,
+    can_own,
+    overlay_summary,
+)
 from src.agents.referee.co_dependency import (
     build_co_dependency_groups,
     group_engine_scores,
@@ -67,14 +72,19 @@ from src.agents.referee.move_ledger import (
     state_of,
 )
 from src.agents.referee.query_scoring import (
+    GATE_KIND_CAPABILITY,
     GATE_KIND_WRITE,
     ScoringContext,
     compute_query_confidence,
     score_query_for_engine,
+    waiver_table,
 )
 from src.agents.referee.reality_check import opensearch_justification
 from src.agents.referee.routing_trace import RoutingTrace
-from src.agents.referee.table_assignments import derive_table_assignments, retained_engine_for
+from src.agents.referee.table_assignments import (
+    derive_table_assignments,
+    retained_engine_for,
+)
 from src.agents.referee.table_resolution import SourceScope, TableNameResolver
 from src.agents.referee.tie_break import (
     TIE_KIND_SOURCE_COMPATIBLE,
@@ -99,9 +109,19 @@ from src.contracts.assignment_models import (
     CacheOverlaySummary,
     QueryAssignment,
 )
-from src.contracts.move_ledger import GroupGate, MoveEvidence, MovePass, ReasonCode
+from src.contracts.move_ledger import (
+    CapabilityWaiver,
+    GroupGate,
+    MoveEvidence,
+    MovePass,
+    ReasonCode,
+)
 from src.shared import catalog
-from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine, without_placeholder_engines
+from src.shared.engine_names import (
+    PLACEHOLDER_ENGINES,
+    display_engine,
+    without_placeholder_engines,
+)
 from src.shared.move_reasons import render_group_gates
 from src.shared.signal_labels import signal_noun
 
@@ -165,8 +185,15 @@ class AssignmentResolver:
         collector_output: dict,
         *,
         routing_trace: RoutingTrace | None = None,
+        sources_of_truth: Mapping[str, str] | None = None,
     ) -> Assignment:
         """Produce initial assignment based on query-level scoring.
+
+        ``sources_of_truth`` (``{table: engine}``) overrides the sources of truth the
+        capability waivers read (Step 6d, ADR-031 Decision 2 Amendment 12, #377): the
+        reality check passes its input version's, so the routing trace it reads scores
+        each waived query against that version's writes. ``None``, the default, reads
+        them from this run's own placement of the writes.
 
         Every query's pattern dimension is its own access-pattern class score
         (``ScoringContext.from_pipeline``'s pattern model, ADR-031 Decision 14
@@ -526,6 +553,50 @@ class AssignmentResolver:
                 assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
                 assigned_reason[qid] = f"{_group_label(qid)} → {display_engine(best[0])}"
 
+        source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+
+        def _individual_best(query: dict) -> tuple[int, list[str]] | None:
+            """Step 6's rule: the highest adjusted score among the engines that may own
+            ``query`` and passed the hard gates, and every engine at that score."""
+            query_scores = _ownable_scores(query)
+            if not query_scores:
+                return None
+            top = max(query_scores.values())
+            return int(top), [e for e in query_scores if query_scores[e] == top]
+
+        def _decide_tie(
+            qids: list[str], best: list[str], settled: Mapping[str, int]
+        ) -> tuple[str, str, str, ReasonCode]:
+            """Step 6b's rule for an exact tie: ``break_owner_tie`` seeded with the
+            sorted member ids, and the ledger rule that decided it."""
+            hash_seed = ",".join(sorted(qids))
+            winner, why, tie_kind = break_owner_tie(
+                best, source_aurora, settled_counts=settled, query_id=hash_seed
+            )
+            return winner, why, tie_kind, _tie_reason_code(tie_kind, best, settled, hash_seed)
+
+        def _waiver_candidate(query: dict) -> bool:
+            """A lone query a capability waiver could reach (#377): its one table is
+            written, and some engine's capability gate on it is waived when that
+            engine is the table's source of truth. Placed in Step 6d, once the
+            writes are, so its first-assignment Move is the one it keeps."""
+            table = waiver_table(query)
+            if table is None or table not in write_groups:
+                return False
+            return any(
+                gate == GATE_KIND_CAPABILITY
+                and scoring_ctx.with_sources_of_truth({table: engine}).capability_waivers(
+                    query, engine
+                )
+                for engine, gate in gates_by_query.get(query["query_id"], {}).items()
+            )
+
+        # Waiver candidates Step 6d places, and the engine Step 6 would have given
+        # each untied one: the settled-workload snapshot counts it there, as it
+        # counted every lone query before #377, so no other tie changes.
+        deferred: list[dict] = []
+        deferred_settled: dict[str, str] = {}
+
         # Step 6: Assign remaining queries individually
         for query in queries:
             qid = query["query_id"]
@@ -568,14 +639,15 @@ class AssignmentResolver:
             # (ADR-031 Decision 2 step 2, #766): its recorded 0 must never join an
             # exact tie and win it through ``break_tie``. When no engine passes,
             # the query takes the Aurora fallback below.
-            query_scores = {
-                e: s
-                for e, s in scores.get(qid, {}).items()
-                if can_own(e, query, source_engine) and _score(qid, e) is not None
-            }
-            if query_scores:
-                top_score = max(query_scores.values())
-                best = [e for e in query_scores if query_scores[e] == top_score]
+            picked = _individual_best(query)
+            if picked is not None and _waiver_candidate(query):
+                deferred.append(query)
+                if len(picked[1]) == 1:
+                    deferred_settled[qid] = picked[1][0]
+                handled.add(qid)
+                continue
+            if picked is not None:
+                top_score, best = picked
                 if len(best) > 1:
                     tied.append(([qid], best, top_score, "individual", _ownable_scores(query)))
                     handled.add(qid)
@@ -614,20 +686,16 @@ class AssignmentResolver:
         # is otherwise unchanged can never silently re-pick between the same two
         # engines just because the two stages measured "settled" differently.
         settled_counts = Counter(ledger.engines.values())
+        settled_counts.update(deferred_settled.values())
         if routing_trace is not None:
             routing_trace.record_settled_counts(settled_counts)
         if tied:
-            source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
             for qids, best, top_score, kind, ranked in tied:
                 # Sorted member ids (#503): the hash fallback's seed must not
                 # depend on ``qids``'s own input order,
                 # which here comes from ``build_co_dependency_groups``'s (or the
                 # query list's) incidental order, not a stable identifier.
-                hash_seed = ",".join(sorted(qids))
-                winner, why, tie_kind = break_owner_tie(
-                    best, source_aurora, settled_counts=settled_counts, query_id=hash_seed
-                )
-                tie_reason = _tie_reason_code(tie_kind, best, settled_counts, hash_seed)
+                winner, why, tie_kind, tie_reason = _decide_tie(qids, best, settled_counts)
                 is_group = kind != "individual"
                 for qid in qids:
                     if routing_trace is not None:
@@ -711,6 +779,88 @@ class AssignmentResolver:
                 if fallback_tie_kind == "tie_unresolved":
                     if routing_trace is not None:
                         routing_trace.record_tie(qid, fallback_tie_kind)
+
+        # Step 6d: Key-scoped counts (ADR-031 Decision 2 Amendment 12, #377). A
+        # capability waiver (``gates.toml`` ``[[waivers]]``) lifts a gate for an engine
+        # only when the query's table has its source of truth there, so its candidates
+        # wait until the writes are placed: each written table's source of truth is
+        # read from the ledger (or given, by the reality check), the engine a waiver
+        # now lets serve the query is scored by the shared scorer, and the query is
+        # placed once, by the Step 6 / 6b rule (``_individual_best``, ``_decide_tie``,
+        # the same settled snapshot). A signal override was applied in Step 6 and a
+        # placement unit in Step 5, so neither waits here.
+        sources = (
+            sources_of_truth
+            if sources_of_truth is not None
+            else write_groups_module.sources_of_truth(write_groups, ledger.engines)
+        )
+        waiver_ctx = scoring_ctx.with_sources_of_truth(sources)
+        waivers_by_query: dict[str, dict[str, list[CapabilityWaiver]]] = {}
+        for query in deferred:
+            qid = query["query_id"]
+            lifted: dict[str, list[CapabilityWaiver]] = {}
+            for engine, gate_kind in list(gates_by_query.get(qid, {}).items()):
+                waived = waiver_ctx.capability_waivers(query, engine)
+                if gate_kind != GATE_KIND_CAPABILITY or not waived:
+                    continue
+                result = score_query_for_engine(query, engine, waiver_ctx)
+                if result.score is None:
+                    continue
+                table = str(waiver_table(query))
+                lifted[engine] = [
+                    CapabilityWaiver(
+                        rule_id=w.rule_id,
+                        capability=w.capability,
+                        table=table,
+                        source_of_truth=sources[table],
+                    )
+                    for w in waived
+                ]
+                scores.setdefault(qid, {})[engine] = int(result.score)
+                exclusion_notes[qid] = [n for n in exclusion_notes[qid] if n["engine"] != engine]
+                if not exclusion_notes[qid]:
+                    del exclusion_notes[qid]
+                del gates_by_query[qid][engine]
+            if lifted:
+                waivers_by_query[qid] = lifted
+            picked = _individual_best(query)
+            if picked is None:  # pragma: no cover - a lifted gate only adds a candidate
+                raise RuntimeError(f"waiver candidate {qid!r} lost every candidate")
+            top_score, best = picked
+            count_tie: str | None = None
+            why = ""
+            if len(best) == 1:
+                winner = best[0]
+                reason_code = (
+                    ReasonCode.KEY_SCOPED_COUNT if winner in lifted else ReasonCode.HIGHEST_SCORE
+                )
+            else:
+                winner, why, count_tie, reason_code = _decide_tie([qid], best, settled_counts)
+                if routing_trace is not None:
+                    routing_trace.record_tie(qid, count_tie)
+            moved_evidence = _evidence(query)
+            moved_evidence.capability_waivers = lifted.get(winner, [])
+            apply(
+                ledger,
+                qid,
+                winner,
+                pass_=MovePass.TIE if count_tie else MovePass.SCORE,
+                reason_code=reason_code,
+                score_after=_score(qid, winner),
+                runner_up=best_other(_ownable_scores(query), winner),
+                evidence=moved_evidence,
+                tied_engines=best if count_tie == "tie_unresolved" else (),
+            )
+            assigned_confidence[qid] = top_score
+            reason = f"highest fit for {display_engine(winner)}"
+            if why:
+                reason += f" ({why})"
+            if winner in lifted:
+                reason += (
+                    f"; key-scoped count of {lifted[winner][0].table}, whose writes are on "
+                    f"{display_engine(winner)}"
+                )
+            assigned_reason[qid] = reason
 
         # Step 6c: Surface a reduced capability-redesign penalty's reason
         # (#477) in the assignment reason -- but only on the engine the note
@@ -856,6 +1006,12 @@ class AssignmentResolver:
                 tie_rule = routing_trace.tie_break_by_query.get(qid)
                 if tie_rule is not None:
                     payload["tie_break"] = tie_rule
+                # The capabilities a waiver lifted, per engine (#377): the reality
+                # check's eligibility reads them with the scores above.
+                if qid in waivers_by_query:
+                    payload["capability_waivers"] = {
+                        e: [w.model_dump() for w in ws] for e, ws in waivers_by_query[qid].items()
+                    }
                 routing_trace.record(qid, payload)
 
         # Step 8: Cache overlay (#296): hot bounded reads get cache_engine; the

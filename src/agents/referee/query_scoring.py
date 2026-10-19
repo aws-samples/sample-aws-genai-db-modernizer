@@ -39,10 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal, overload
 
-from src.agents.referee.capability_registry import (
-    can_engine_serve_capability,
-    triage_query_capabilities,
-)
+from src.agents.referee.capability_registry import missing_capabilities, triage_query_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.query_cost import QueryCost, QueryCostModel
 from src.agents.referee.query_pattern import QueryPatternModel
@@ -56,6 +53,7 @@ from src.shared.catalog.patterns import (
     capability_redesign_penalties,
     capability_signal_engines,
 )
+from src.shared.catalog.routing import Waiver, waivers
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import display_engine
 from src.tools.analysis.scoring import DEFAULT_WEIGHTS, compute_confidence, weighted_confidence
@@ -66,6 +64,18 @@ CAPABILITY_SIGNAL_ENGINES: dict[str, frozenset[str]] = capability_signal_engines
 CAPABILITY_REDESIGN_PENALTIES: dict[str, dict[str, int]] = capability_redesign_penalties()
 CAPABILITY_REDESIGN_NOTES: dict[str, str] = capability_redesign_notes()
 CAPABILITY_EXEMPT_NOTES: dict[str, str] = capability_exempt_notes()
+# The capability waivers (``gates.toml`` ``[[waivers]]``, ADR-031 Decision 2 Amendment 12).
+CAPABILITY_WAIVERS: tuple[Waiver, ...] = waivers()
+
+
+def waiver_table(query: Mapping) -> str | None:
+    """The one table ``query`` reads, as ``tables_accessed`` names it (the name a write
+    group and a source of truth use), or ``None`` when it reads none or several."""
+    tables = {str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"}
+    if len(tables) != 1:
+        return None
+    (table,) = tables
+    return table
 
 
 @overload
@@ -426,6 +436,32 @@ class ScoringContext:
             source_engine=""
         )  # engine unknown: no collector here
     )
+    # ``{table: engine}``: each written table's source of truth, the one engine all of
+    # its writes are on (ADR-031 Amendment 9), as ``tables_accessed`` names the table.
+    # Read only by the capability waivers (``gates.toml`` ``[[waivers]]``, ADR-031
+    # Decision 2 Amendment 12, #377), which depend on where a table's writes are, so an
+    # assignment step sets it (:meth:`with_sources_of_truth`) once those writes are
+    # placed; empty, no waiver applies and every gate is the plain one.
+    sources_of_truth: Mapping[str, str] = field(default_factory=dict)
+
+    def with_sources_of_truth(self, sources: Mapping[str, str]) -> ScoringContext:
+        """A copy whose capability waivers read ``sources`` (``{table: engine}``)."""
+        return replace(self, sources_of_truth=dict(sources))
+
+    def capability_waivers(self, query: Mapping, engine: str) -> tuple[Waiver, ...]:
+        """The catalog's waivers that lift a capability ``engine`` lacks for ``query``
+        (ADR-031 Decision 2 Amendment 12, #377): the query shows the waiver's class fact
+        and reads one table, whose source of truth (``sources_of_truth``) is ``engine``."""
+        if not self.sources_of_truth:
+            return ()
+        found = [w for w in CAPABILITY_WAIVERS if w.engine == engine]
+        if not found:
+            return ()
+        table = waiver_table(query)
+        if table is None or self.sources_of_truth.get(table) != engine:
+            return ()
+        facts = self.pattern_model.classification(query).facts
+        return tuple(w for w in found if w.fact in facts)
 
     def servable_queries(self, engine: str) -> frozenset[str]:
         """The workload's query ids ``engine`` could serve: past its hard exclusion
@@ -445,7 +481,9 @@ class ScoringContext:
                 or is_locking_read(query, self.source_engine)
             ):
                 return False
-            return _structural_gate(query, engine, self) is None
+            # The plain gate, never a waiver: a waiver depends on where the table's
+            # writes are, and this count must not depend on the assignment (Decision 5).
+            return _structural_gate(query, engine, self, waive=False) is None
 
         return self.cost_model.servable(engine, serves)
 
@@ -649,9 +687,14 @@ def score_query_for_engine(
     return EngineScore(score=float(max(0, base - penalty)))
 
 
-def _structural_gate(query: Mapping, engine: str, ctx: ScoringContext) -> EngineScore | None:
+def _structural_gate(
+    query: Mapping, engine: str, ctx: ScoringContext, *, waive: bool = True
+) -> EngineScore | None:
     """The hard exclusion and capability gates (ADR-031 Decision 2 step 2) for
-    ``(query, engine)``: the gated :class:`EngineScore`, or ``None`` when neither fires."""
+    ``(query, engine)``: the gated :class:`EngineScore`, or ``None`` when neither fires.
+
+    A capability the catalog waives for the pair (:meth:`ScoringContext.capability_waivers`,
+    ADR-031 Decision 2 Amendment 12) is not required, unless ``waive`` is False."""
     query_id = str(query.get("query_id") or "")
     query_text = query.get("query_text", "")
     exclusion = check_exclusions(query_id, query_text, engine, ctx.source_engine)
@@ -664,7 +707,11 @@ def _structural_gate(query: Mapping, engine: str, ctx: ScoringContext) -> Engine
             gate_kind=GATE_KIND_HARD_EXCLUSION,
         )
     required_caps = ctx.query_capabilities.get(query_id, [])
-    if required_caps and not can_engine_serve_capability(engine, required_caps):
+    missing = required_caps and missing_capabilities(engine, required_caps)
+    if missing and waive:
+        waived = {w.capability for w in ctx.capability_waivers(query, engine)}
+        missing = [c for c in missing if c not in waived]
+    if missing:
         return EngineScore(
             score=None,
             gate_reason=(

@@ -546,6 +546,92 @@
           }
         }
       },
+      "key_scoped_counts": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "columns": {
+                    "required": true,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array",
+                      "minItems": 1
+                    }
+                  },
+                  "keys": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "object",
+                        "properties": {
+                          "cardinality": {
+                            "required": true,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "const",
+                                  "value": "unknown"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "integer"
+                                }
+                              ]
+                            }
+                          },
+                          "column": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "query_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "schema_note": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "table_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "key_scoped_writes": {
         "required": false,
         "schema": {
@@ -1122,8 +1208,8 @@
         }
       }
     },
-    "schema_hash": "3a17a0e5da4326c2f1f29b6d17d18617864222948773762e9b1656f2f16e16ec",
-    "version": "2.2"
+    "schema_hash": "6087c74357a8899dea0f304498ca394331e436018b2629f39ad4d0addb92ef3c",
+    "version": "2.3"
   },
   "assignment_models.Assignment": {
     "fields": {
@@ -1592,6 +1678,45 @@
                         "kind": "array"
                       }
                     },
+                    "capability_waivers": {
+                      "required": false,
+                      "schema": {
+                        "items": {
+                          "kind": "object",
+                          "properties": {
+                            "capability": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            },
+                            "rule_id": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            },
+                            "source_of_truth": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            },
+                            "table": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "kind": "array"
+                      }
+                    },
                     "choice_id": {
                       "required": false,
                       "schema": {
@@ -1746,6 +1871,7 @@
                               "flag.capability_gap",
                               "floor.cost_share",
                               "floor.opensearch",
+                              "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
                               "group.write",
@@ -1855,6 +1981,7 @@
                     "flag.capability_gap",
                     "floor.cost_share",
                     "floor.opensearch",
+                    "gate.key_scoped_count",
                     "group.customer_propagation",
                     "group.mean",
                     "group.write",
@@ -2471,8 +2598,8 @@
         }
       }
     },
-    "schema_hash": "5279fcf70b2f6d16e363e5ca83afe0229a579b337df9e147280c7e6e16492adc",
-    "version": "1.18"
+    "schema_hash": "76d66431cc37d86ed8c4fde42e1cc8dce2b72bd8550e11e86a27ce2387b497ef",
+    "version": "1.19"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -14463,6 +14590,45 @@
                             "kind": "array"
                           }
                         },
+                        "capability_waivers": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "capability": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "rule_id": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "source_of_truth": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "table": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
                         "choice_id": {
                           "required": false,
                           "schema": {
@@ -14617,6 +14783,7 @@
                                   "flag.capability_gap",
                                   "floor.cost_share",
                                   "floor.opensearch",
+                                  "gate.key_scoped_count",
                                   "group.customer_propagation",
                                   "group.mean",
                                   "group.write",
@@ -14885,8 +15052,8 @@
         }
       }
     },
-    "schema_hash": "f477c5f429ba9a857a3f34931bdc2c25982e1c037abd193f5ebbf77fa83ff581",
-    "version": "1.4"
+    "schema_hash": "6a4131e8624c34cffd3cfc7076beffc186d21f8be215adf0a9ee39d174e9c26a",
+    "version": "1.5"
   },
   "reality_check_model_response.RealityCheckModelResponse": {
     "fields": {
@@ -21277,6 +21444,7 @@
                                         "flag.capability_gap",
                                         "floor.cost_share",
                                         "floor.opensearch",
+                                        "gate.key_scoped_count",
                                         "group.customer_propagation",
                                         "group.mean",
                                         "group.write",
@@ -21641,6 +21809,7 @@
                                       "flag.capability_gap",
                                       "floor.cost_share",
                                       "floor.opensearch",
+                                      "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
                                       "group.write",
@@ -21838,6 +22007,7 @@
                                       "flag.capability_gap",
                                       "floor.cost_share",
                                       "floor.opensearch",
+                                      "gate.key_scoped_count",
                                       "group.customer_propagation",
                                       "group.mean",
                                       "group.write",
@@ -22154,6 +22324,7 @@
                               "flag.capability_gap",
                               "floor.cost_share",
                               "floor.opensearch",
+                              "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
                               "group.write",
@@ -22286,6 +22457,7 @@
                               "flag.capability_gap",
                               "floor.cost_share",
                               "floor.opensearch",
+                              "gate.key_scoped_count",
                               "group.customer_propagation",
                               "group.mean",
                               "group.write",
@@ -23425,8 +23597,8 @@
         }
       }
     },
-    "schema_hash": "9f10801e3fcfd2071fcf194d6df301e4784619a520d85f5c03b1b4b70c043eba",
-    "version": "1.46"
+    "schema_hash": "62e5e19933473fcb75215f44231a138102e34f99f3d43634dbebf640bf2c360c",
+    "version": "1.47"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

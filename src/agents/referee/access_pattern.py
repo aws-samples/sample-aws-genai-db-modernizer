@@ -97,6 +97,10 @@ KEY_RANGE = "key_range"
 AD_HOC_FILTER = "ad_hoc_filter"
 UNANCHORED_JOIN = "unanchored_join"
 AGGREGATION = "aggregation"
+# The class fact of a key-scoped read that only counts one table's rows (#377): the
+# shape DynamoDB serves with ``Query`` and ``Select = COUNT``, read by the capability
+# waiver in ``src/catalog/gates.toml``.
+KEY_SCOPED_COUNT_FACT = "key_scoped_count"
 TEXT_SEARCH = "text_search"
 UTILITY = "utility"
 UNPARSED = "unparsed"
@@ -355,7 +359,8 @@ class AccessClassification:
     scopes show (``full_text``, ``leading_wildcard``, ``pattern_match``,
     ``similarity_match``), ``window_function``, ``write`` (an INSERT, UPDATE, DELETE
     or MERGE), ``partition_range`` (a scope that pins a key column of one table and
-    ranges another of its columns) and the SQL features ``recursive_cte``,
+    ranges another of its columns), ``key_scoped_count`` (a key-scoped read that only
+    counts one table's rows, #377) and the SQL features ``recursive_cte``,
     ``lateral_join`` and ``stored_routine`` (#985)."""
 
     name: str
@@ -608,7 +613,26 @@ def classify_facts(
         reason += " (its LIKE pattern is a bind parameter, so no text search is visible, #912)"
     if facts.truncated_read:
         name, reason = _cut_short_class(facts, name, reason)
-    return AccessClassification(name, reason, _class_facts(facts, keys))
+    class_facts = _class_facts(facts, keys)
+    if name == KEY_SCOPED and _key_scoped_count(facts):
+        class_facts |= {KEY_SCOPED_COUNT_FACT}
+    return AccessClassification(name, reason, class_facts)
+
+
+def _key_scoped_count(facts: AccessFacts) -> bool:
+    """A key-scoped read that only counts one table's rows: a single ``SELECT`` scope
+    (no subquery, derived table or CTE) reading one stored table, whose own aggregates
+    are all plain counts (``ScopeFacts.count_only``; a ``COUNT(col)`` counts the rows
+    whose ``col`` is not null, a filter ``attribute_exists(col)`` on DynamoDB). The caller has already classed
+    it key-scoped, so a key column is pinned by an equality and there is no ``GROUP BY``
+    with an aggregate and no windowed aggregate (both are the aggregation class):
+    ``COUNT(*) FROM posts WHERE topic_id = $1``, DynamoDB's ``Query`` on that key with
+    ``Select = COUNT`` (#377, ADR-031 Decision 2 Amendment 12)."""
+    if facts.kind != "select" or len(facts.scopes) != 1:
+        return False
+    (scope,) = facts.scopes
+    tables = [s for s in scope.sources if not s.function]
+    return len(tables) == 1 and tables[0].table is not None and scope.count_only
 
 
 def _cut_short_class(facts: AccessFacts, name: str, reason: str) -> tuple[str, str]:

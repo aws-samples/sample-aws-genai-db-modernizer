@@ -53,11 +53,7 @@ from src.shared.catalog.patterns import (  # noqa: E402
     PatternEntry,
     patterns,
 )
-from src.shared.catalog.routing import (  # noqa: E402
-    gates_file,
-    routing_file,
-    triage_signals_file,
-)
+from src.shared.catalog.routing import gates_file, routing_file, triage_signals_file  # noqa: E402
 
 JS_OUT = REPO_ROOT / "src" / "ui" / "src" / "utils" / "engineCatalog.generated.js"
 MD_OUT = REPO_ROOT / "docs" / "architecture" / "rule-catalog.md"
@@ -491,6 +487,21 @@ def _routing_sections(entries: tuple[EngineEntry, ...]) -> list[str]:
         out.append(
             f"| {md_cell(names.get(r.engine, r.engine))} | `{r.rule_id}` | {fact} | "
             f"{md_cell(r.description)} | {md_cell(r.customer_message)} |"
+        )
+    out += [
+        "",
+        "Waivers (ADR-031 Decision 2 Amendment 12): the engine serves a capability it lacks "
+        "for a query showing the class fact, when the condition holds. The shared scorer "
+        "still decides whether the engine wins.",
+        "",
+        "| Engine | Rule | Capability | Class fact | When | Why |",
+        "|---|---|---|---|---|---|",
+    ]
+    for w in gates.waivers:
+        when = "the query's table has its source of truth (its writes) on the engine"
+        out.append(
+            f"| {md_cell(names.get(w.engine, w.engine))} | `{w.rule_id}` | `{w.capability}` | "
+            f"`{w.fact}` | {when} | {md_cell(w.why)} |"
         )
     out += [
         "",

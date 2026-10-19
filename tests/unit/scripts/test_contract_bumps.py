@@ -421,10 +421,13 @@ def test_the_default_base_is_the_public_repos_remote(monkeypatch) -> None:
     assert rcv.default_base() == "upstream/main"
 
 
+@pytest.mark.passes_on_main
 def test_check_against_head_finds_nothing_on_a_clean_tree() -> None:
     """``--against`` compares with a ref's committed snapshots; this tree's own
-    snapshots match it, so there is no problem."""
-    assert rcv._against("HEAD", {}) == []
+    snapshots match it, so there is no problem. A branch that changes a contract
+    keeps main's snapshots and declares the bump (ADR-008 Decision 8), so the
+    comparison reads this tree's pending bumps, as ``--check`` does (#377)."""
+    assert rcv._against("HEAD", pending_kinds(load_pending())) == []
 
 
 def test_check_refuses_a_pending_file_for_an_unknown_contract(monkeypatch, capsys) -> None:

@@ -724,8 +724,12 @@ def normalize_cache_owners(
     ctx = None
     if isinstance(engines, Mapping):
         from src.agents.referee.query_scoring import ScoringContext
+        from src.agents.referee.write_groups import assignment_sources_of_truth
 
-        ctx = ScoringContext.from_pipeline(engines, triage, collector)
+        # The capability waivers (#377) read this version's sources of truth.
+        ctx = ScoringContext.from_pipeline(engines, triage, collector).with_sources_of_truth(
+            assignment_sources_of_truth(assignment)
+        )
     in_memory = ledger is None
     if ledger is None:
         ledger = ledger_continuing(assignment)

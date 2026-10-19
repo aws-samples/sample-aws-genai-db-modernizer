@@ -430,10 +430,13 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # 73 and 3 order-item-meta reads tie Aurora MySQL and DocumentDB at 77, and each tie goes
     # to Aurora MySQL as the source-compatible engine: documentdb -16, aurora_mysql +16 (every moved
     # query is in the #967 PR; the reality check already moved all 16 there).
+    # #377 (a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of
+    # truth): wp_comments' COUNT ties DocumentDB and DynamoDB at 77 and is listed under
+    # DynamoDB pending a choice: documentdb -1, dynamodb +1.
     assert rc["before_distribution"] == {
-        "dynamodb": 36,
+        "dynamodb": 37,
         "aurora_mysql": 59,
-        "documentdb": 11,
+        "documentdb": 10,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

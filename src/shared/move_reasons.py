@@ -92,6 +92,7 @@ _RULE_LABEL: dict[ReasonCode, str] = {
     ReasonCode.WRITE_GROUP_REROUTE: "re-routed to one source of truth",
     ReasonCode.CACHE_LEGACY_OWNER: "a cache cannot own the query",
     ReasonCode.ROLLBACK_REDESIGN_FAILED: "redesign failed, routing restored",
+    ReasonCode.KEY_SCOPED_COUNT: "key-scoped count on its table's source of truth",
 }
 
 # How an exact tie was decided (``evidence.tie_rule`` or a tie Move's code).

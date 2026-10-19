@@ -441,6 +441,9 @@ Version History:
   `report.json`: its lines quote model text and name raw engine ids, so synthesis writes
   them to `_logs/prose_style_rejections-v<N>.json`. The field stays on the contract,
   empty by default, so an older report that has lines still loads with them.
+- 1.47 (2026-10-20, #377): No field of its own. The query traces' rule values gain
+  ``gate.key_scoped_count`` (move ledger): a key-scoped count placed on the engine its
+  table's writes are on (ADR-031 Decision 2 Amendment 12).
 """
 
 from datetime import datetime
@@ -1726,7 +1729,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.46",
+        default="1.47",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

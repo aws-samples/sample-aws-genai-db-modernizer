@@ -58,6 +58,7 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
     "move_ledger.EngineScore": ("allow", _ROUND_TRIP),
     "move_ledger.CandidateScore": ("allow", _ROUND_TRIP),
     "move_ledger.GroupGate": ("allow", _ROUND_TRIP),
+    "move_ledger.CapabilityWaiver": ("allow", _ROUND_TRIP),
     "feasibility_models.FeasibilityFinding": ("allow", _ROUND_TRIP),
     "schema_design_input.SchemaDesignGroupsManifest": ("allow", _ROUND_TRIP),
     "design_metrics.DesignMetricsContract": ("allow", _ROUND_TRIP),

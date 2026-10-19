@@ -142,6 +142,48 @@ class TestProjectionFunction:
         assert agent_context.growth_multiplier == 10.0
         assert agent_context.peak_to_avg_ratio == 3.0
 
+    def test_projection_carries_only_the_calls_key_scoped_counts(self, valid_collector_output_data):
+        """#377: the DynamoDB designer is given the key-scoped counts among its own
+        queries, each key column with its cardinality or "unknown"."""
+        from src.contracts.analysis_output import (
+            AgentMetadata,
+            AnalysisOutputContract,
+            CostEstimate,
+            KeyScopedCount,
+            KeyScopedCountKey,
+            TargetDatabase,
+            WorkloadAnalysis,
+        )
+        from src.contracts.collector_output import CollectorOutputContract
+
+        def count(qid: str) -> KeyScopedCount:
+            return KeyScopedCount(
+                query_id=qid,
+                table_id="public.users",
+                columns=["tenant_id"],
+                keys=[KeyScopedCountKey(column="tenant_id", cardinality="unknown")],
+                schema_note="note",
+            )
+
+        analysis = AnalysisOutputContract(
+            agent_metadata=AgentMetadata(
+                agent_name="dynamodb-analysis-agent",
+                agent_version="1.0.0",
+                target_database=TargetDatabase.DYNAMODB,
+                analysis_timestamp="2024-01-15T12:00:00Z",
+                analysis_duration_seconds=1.0,
+            ),
+            table_recommendations=[],
+            workload_analysis=WorkloadAnalysis(patterns_detected=[]),
+            cost_estimate=CostEstimate(monthly_cost_usd=0.0, cost_components={}),
+            key_scoped_counts=[count("q1-select-users"), count("q-served-elsewhere")],
+        )
+        collector = CollectorOutputContract.model_validate(valid_collector_output_data)
+        _, agent_analysis, _ = project_schema_design_input(collector, analysis)
+        assert agent_analysis.key_scoped_counts is not None
+        assert [c.query_id for c in agent_analysis.key_scoped_counts] == ["q1-select-users"]
+        assert agent_analysis.key_scoped_counts[0].keys[0].cardinality == "unknown"
+
     def test_projection_with_context_overrides(self, valid_collector_output_data):
         from src.contracts.analysis_output import (
             AgentMetadata,

@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.reality_check import _build_query_signals
+from src.agents.referee.write_groups import assignment_sources_of_truth
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.signal_labels import WORKLOAD_CHARACTERISTIC_SIGNALS
 
@@ -161,7 +162,7 @@ def routed_fits(
             "queries": {"query_patterns": list(query_map.values())},
             "database_schema": {"tables": list(schema_tables or [])},
         },
-    )
+    ).with_sources_of_truth(assignment_sources_of_truth(assignment))
 
     def real_tables(qid: str) -> set[str]:
         # The fit reads tables_accessed; so do the counts, minus the pseudo-tables

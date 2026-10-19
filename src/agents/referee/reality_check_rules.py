@@ -247,7 +247,9 @@ def _query_eligible_engines(
     - the ownership/write gate and specialist-absorb restriction
       (``may_absorb``) -- a specialist engine (OpenSearch) only ever
       receives a query that matches its own specialty;
-    - the hard capability gate (``can_engine_serve_capability``);
+    - the hard capability gate (``can_engine_serve_capability``), less any
+      capability a catalog waiver lifted for the engine at the first assignment
+      (the trace's ``capability_waivers``, #377);
     - the join-on-DynamoDB block (review of #375, finding B2): a join
       query consolidated away from a non-Aurora engine never lands on
       DynamoDB. A join already on DynamoDB, or arrived there from Aurora,
@@ -283,7 +285,12 @@ def _query_eligible_engines(
             e, qid, query, query_signals, query_capabilities, source_engine
         ):
             return False
-        if not can_engine_serve_capability(e, required_caps):
+        # A capability the catalog waived for ``e`` at the first assignment (#377,
+        # ADR-031 Decision 2 Amendment 12), recorded with the trace's score, is not
+        # required here either.
+        waived = (trace_by_query.get(qid) or {}).get("capability_waivers", {}).get(e, [])
+        waived_caps = {str(w.get("capability")) for w in waived}
+        if not can_engine_serve_capability(e, [c for c in required_caps if c not in waived_caps]):
             return False
         if (
             e == "dynamodb"

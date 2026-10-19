@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "#1002: every engine weights cost the same 10%; discourse's Aurora PostgreSQL owner share rises as DocumentDB and DynamoDB lose their flat cost bonus",
+  "reason": "#377: a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of truth: 1 wordpress and 3 discourse queries move to DynamoDB",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -30,7 +30,8 @@
     "#728: each query is scored on its own access-pattern class (ADR-031 Decision 14 Amendment 7) plus #920's class-table items",
     "#728: each query is scored on its own access-pattern class plus #920's and #985's class-table items",
     "#494 slice 2: each query's cost dimension is its own per-engine cost; reality check Phase 1's burden is engine-aware",
-    "#1002: every engine weights cost the same 10%; discourse's Aurora PostgreSQL owner share rises as DocumentDB and DynamoDB lose their flat cost bonus"
+    "#1002: every engine weights cost the same 10%; discourse's Aurora PostgreSQL owner share rises as DocumentDB and DynamoDB lose their flat cost bonus",
+    "#377: a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of truth: 1 wordpress and 3 discourse queries move to DynamoDB"
   ],
   "samples": {
     "wordpress": {
@@ -39,14 +40,14 @@
       "assignment_version": 2,
       "queries_in_scope": 107,
       "owner_share_percent": {
-        "aurora_mysql": 68.2,
-        "dynamodb": 31.8
+        "aurora_mysql": 62.6,
+        "dynamodb": 37.4
       },
       "owner_queries": {
-        "aurora_mysql": 73,
-        "dynamodb": 34
+        "aurora_mysql": 67,
+        "dynamodb": 40
       },
-      "source_compatible_share_percent": 68.2,
+      "source_compatible_share_percent": 62.6,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 20,
@@ -57,7 +58,7 @@
           "engines": [
             "aurora_mysql"
           ],
-          "workload_percent": 68.2,
+          "workload_percent": 62.6,
           "cached_call_share_percent": 0.0,
           "table_count": 50
         },
@@ -73,9 +74,9 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 31.8,
+          "workload_percent": 37.4,
           "cached_call_share_percent": 0.0,
-          "table_count": 17
+          "table_count": 18
         }
       ],
       "utility_queries_off_aurora": 0
@@ -86,16 +87,16 @@
       "assignment_version": 2,
       "queries_in_scope": 1654,
       "owner_share_percent": {
-        "aurora_postgresql": 46.4,
-        "documentdb": 10.8,
-        "dynamodb": 42.8
+        "aurora_postgresql": 48.2,
+        "documentdb": 10.3,
+        "dynamodb": 41.5
       },
       "owner_queries": {
-        "aurora_postgresql": 768,
-        "documentdb": 178,
-        "dynamodb": 708
+        "aurora_postgresql": 797,
+        "documentdb": 171,
+        "dynamodb": 686
       },
-      "source_compatible_share_percent": 46.4,
+      "source_compatible_share_percent": 48.2,
       "owner_engines": 3,
       "cache_overlay": {
         "queries": 3,
@@ -106,7 +107,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 46.4,
+          "workload_percent": 48.2,
           "cached_call_share_percent": 0.0,
           "table_count": 312
         },
@@ -123,9 +124,9 @@
             "dynamodb",
             "documentdb"
           ],
-          "workload_percent": 53.6,
+          "workload_percent": 51.8,
           "cached_call_share_percent": 0.0,
-          "table_count": 228
+          "table_count": 225
         }
       ],
       "utility_queries_off_aurora": 0
@@ -136,14 +137,14 @@
       "assignment_version": 2,
       "queries_in_scope": 95,
       "owner_share_percent": {
-        "aurora_postgresql": 50.5,
-        "dynamodb": 49.5
+        "aurora_postgresql": 49.5,
+        "dynamodb": 50.5
       },
       "owner_queries": {
-        "aurora_postgresql": 48,
-        "dynamodb": 47
+        "aurora_postgresql": 47,
+        "dynamodb": 48
       },
-      "source_compatible_share_percent": 50.5,
+      "source_compatible_share_percent": 49.5,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 16,
@@ -154,7 +155,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 50.5,
+          "workload_percent": 49.5,
           "cached_call_share_percent": 0.0,
           "table_count": 31
         },
@@ -170,7 +171,7 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 49.5,
+          "workload_percent": 50.5,
           "cached_call_share_percent": 0.0,
           "table_count": 29
         }

@@ -1352,6 +1352,9 @@ class ScopeFacts:
     branches made only of ``col = <value>`` terms (``id = $1 OR id = $2``), the
     columns each branch pins, one tuple per branch (#915); empty otherwise. The
     ``OR`` group itself still counts in ``other_filters``.
+    ``count_only``: the scope's own aggregates (``aggregate``) are all plain counts,
+    ``COUNT(*)``, ``COUNT(1)`` or ``COUNT(col)`` (non-null values), and no ``COUNT(DISTINCT ...)``,
+    filtered count (``FILTER (WHERE ...)``), ``MIN``, ``MAX``, ``SUM`` or ``AVG`` (#377).
     """
 
     sources: tuple[ScopeSource, ...]
@@ -1364,6 +1367,7 @@ class ScopeFacts:
     has_where: bool = False
     group_by: bool = False
     aggregate: bool = False
+    count_only: bool = False
     skip_locked: bool = False
     text_search: bool = False
     like_parameter: bool = False
@@ -2069,21 +2073,34 @@ def _skips_locked(root: exp.Expr, sources_nodes: list[exp.Expr]) -> bool:
     return False
 
 
-def _has_own_aggregate(root: exp.Expr) -> bool:
-    """An aggregate function in ``root``'s own projection, HAVING or ORDER BY."""
+def _own_aggregates(root: exp.Expr) -> list[exp.Expr]:
+    """The aggregate functions in ``root``'s own projection, HAVING or ORDER BY."""
     parts: list[exp.Expr] = list(root.args.get("expressions") or [])
     for key in ("having", "order"):
         if root.args.get(key) is not None:
             parts.append(root.args[key])
+    found: list[exp.Expr] = []
     stack = parts
     while stack:
         node = stack.pop()
         if isinstance(node, (exp.Subquery, exp.Select, exp.Window)):
             continue
-        if _is_aggregation(node):
-            return True
+        # ``COUNT(*) FILTER (WHERE ...)``: the filtered aggregate is one aggregate.
+        if isinstance(node, exp.Filter) or _is_aggregation(node):
+            found.append(node)
+            continue
         stack.extend(node.iter_expressions())
-    return False
+    return found
+
+
+def _counts_only(aggregates: list[exp.Expr]) -> bool:
+    """Every aggregate is a plain count: ``COUNT(*)`` or ``COUNT(1)`` (rows) or
+    ``COUNT(col)`` (the rows whose ``col`` is not null), never ``COUNT(DISTINCT ...)`` or
+    a filtered ``COUNT(*) FILTER (WHERE ...)`` (``ScopeFacts.count_only``, #377)."""
+    return bool(aggregates) and all(
+        isinstance(node, exp.Count) and not isinstance(node.this, exp.Distinct)
+        for node in aggregates
+    )
 
 
 def _scope_facts(
@@ -2114,6 +2131,7 @@ def _scope_facts(
     source_nodes = [j.this for j in joins]
     if isinstance(root.args.get("from_"), exp.From):
         source_nodes.append(root.args["from_"].this)
+    aggregates = _own_aggregates(root)
     return ScopeFacts(
         sources=tuple(sources),
         equalities=tuple(reader.equalities),
@@ -2124,7 +2142,8 @@ def _scope_facts(
         limit=_row_limit(root),
         has_where=where is not None,
         group_by=root.args.get("group") is not None,
-        aggregate=_has_own_aggregate(root),
+        aggregate=bool(aggregates),
+        count_only=_counts_only(aggregates),
         skip_locked=_skips_locked(root, source_nodes),
         text_search=any(_is_text_search(n) for n in own),
         like_parameter=any(_text_search_kind(n) == "parameter" for n in own),

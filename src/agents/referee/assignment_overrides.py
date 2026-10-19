@@ -57,6 +57,7 @@ from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
 from src.agents.referee.write_groups import (
+    assignment_sources_of_truth,
     collector_write_groups,
     placement_groups,
     write_group_tables,
@@ -621,7 +622,10 @@ def apply_assignment_overrides(
     if isinstance(analysis_outputs, Mapping):
         from src.agents.referee.query_scoring import ScoringContext
 
-        ctx = ScoringContext.from_pipeline(analysis_outputs, triage, collector_output)
+        # The capability waivers (#377) read the edited version's sources of truth.
+        ctx = ScoringContext.from_pipeline(
+            analysis_outputs, triage, collector_output
+        ).with_sources_of_truth(assignment_sources_of_truth(current.model_dump(mode="json")))
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
 
@@ -1652,7 +1656,13 @@ def pending_choices_from(
     outputs = _drop_losing_aurora_analysis(
         {e: dict(a) for e, a in (analysis_outputs or {}).items() if a}, dict(assignment)
     )
-    ctx = ScoringContext.from_pipeline(outputs, triage or {}, collector_output) if outputs else None
+    ctx = (
+        ScoringContext.from_pipeline(outputs, triage or {}, collector_output).with_sources_of_truth(
+            assignment_sources_of_truth(assignment)
+        )
+        if outputs
+        else None
+    )
     return build_pending_choices(
         assignment.get("query_assignments") or [],
         collector_output,

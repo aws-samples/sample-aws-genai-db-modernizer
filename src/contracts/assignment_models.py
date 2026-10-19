@@ -145,6 +145,9 @@ Version History:
   customer edit; a batch that also carries a customer pick stays
   ``customer_modified`` / ``customer_gate``. Defaults to empty, so artifacts
   written before 1.18 still load.
+- 1.19 (2026-10-20, #377): No field of its own. ``Move`` gained the rule
+  ``gate.key_scoped_count`` and the optional evidence ``capability_waivers`` (move
+  ledger).
 """
 
 from datetime import datetime
@@ -551,7 +554,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.18", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.19", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

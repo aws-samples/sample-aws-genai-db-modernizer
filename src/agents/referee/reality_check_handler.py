@@ -55,6 +55,7 @@ from src.agents.referee.reality_check_summary import finalize_executive_summary
 from src.agents.referee.tie_break import settled_counts
 from src.agents.referee.write_groups import (
     assignment_placement_groups,
+    assignment_sources_of_truth,
     assignment_unit_weights,
 )
 from src.contracts.assignment_models import AssignmentSource
@@ -195,6 +196,8 @@ def run_reality_check_deterministic(
         source_engine=source_database_engine(collector_output),
         ledger=ledger,
         customer_kept_engines=sorted({qa["assigned_engine"] for qa in pinned}),
+        # The whole input version's sources of truth, pinned writes included (#377).
+        sources_of_truth=assignment_sources_of_truth(assignment),
     )
     if pinned:
         revised_by_id = {qa["query_id"]: qa for qa in result["revised_assignments"]}
@@ -660,9 +663,21 @@ def _scoring_inputs(det: dict) -> tuple[dict, ScoringContext]:
         q["query_id"]: q
         for q in det.get("collector_output", {}).get("queries", {}).get("query_patterns", [])
     }
-    scoring_context = ScoringContext.from_pipeline(
-        det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
-    ).with_flag_gaps(det.get("model_flag_gaps") or {})
+    # The capability waivers (#377) read each written table's source of truth as the
+    # check has placed it so far.
+    sources = assignment_sources_of_truth(
+        {
+            "write_groups": (det.get("assignment") or {}).get("write_groups") or {},
+            "query_assignments": det.get("revised_assignments") or [],
+        }
+    )
+    scoring_context = (
+        ScoringContext.from_pipeline(
+            det.get("analysis_outputs", {}), det.get("triage"), det.get("collector_output")
+        )
+        .with_flag_gaps(det.get("model_flag_gaps") or {})
+        .with_sources_of_truth(sources)
+    )
     return query_map, scoring_context
 
 

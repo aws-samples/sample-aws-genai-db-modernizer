@@ -91,6 +91,12 @@ Exclusions, checked in order: the engine cannot serve a query showing the fact.
 | OpenSearch | `os-no-write-subquery` | `write_with_subquery` | OpenSearch cannot perform transactional writes with subquery logic. The application layer must handle conditional insert/update logic before indexing. | performs a conditional write with a subquery, which needs transactional guarantees it can't provide |
 | ElastiCache | `ec-no-complex-join` | `join_count` >= 2 | ElastiCache cannot perform multi-table JOINs; it's a key-value/data structure store | joins more than one table, and a key-value store can't serve joins |
 
+Waivers (ADR-031 Decision 2 Amendment 12): the engine serves a capability it lacks for a query showing the class fact, when the condition holds. The shared scorer still decides whether the engine wins.
+
+| Engine | Rule | Capability | Class fact | When | Why |
+|---|---|---|---|---|---|
+| DynamoDB | `ddb-key-scoped-count` | `aggregation` | `key_scoped_count` | the query's table has its source of truth (its writes) on the engine | A COUNT with no GROUP BY over the rows one key value of one table addresses is a DynamoDB Query on that key with Select = COUNT, which returns the number of matching items (after any filter expression; a COUNT(col) adds attribute_exists(col)) instead of the items, yet still reads and bills every matching item: read capacity is the same as reading them, and a result past 1 MB is paged, so the count is summed over the pages (Amazon DynamoDB Developer Guide, Query, Select; maintainer decision on #377). It applies only when the table's writes are on DynamoDB, so no table is pulled off another engine for one count; routing has no cardinality gate, so the DynamoDB designer is given each such count's key and its cardinality (or unknown) to choose the key or a maintained counter. MIN and MAX are not waived (they need a designed sort key). |
+
 ## Triage signals
 
 From `src/catalog/triage_signals.toml`: the engines each signal is evidence for (detection stays in `src/agents/referee/triage.py`), and the signal overrides.

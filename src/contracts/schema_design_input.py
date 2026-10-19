@@ -253,6 +253,23 @@ class AgentAggregateRecommendation(BaseModel):
     combined_migration_complexity: MigrationComplexity
 
 
+class AgentKeyScopedCountKey(BaseModel):
+    """A key-scoped count's key column (``analysis_output.KeyScopedCountKey``, #377)."""
+
+    column: str
+    cardinality: int | Literal["unknown"]
+
+
+class AgentKeyScopedCount(BaseModel):
+    """A key-scoped count and its key (``analysis_output.KeyScopedCount``, #377)."""
+
+    query_id: str
+    table_id: str
+    columns: list[str]
+    keys: list[AgentKeyScopedCountKey] = Field(default_factory=list)
+    schema_note: str
+
+
 class AgentKeyAnchor(BaseModel):
     """A key-scoped write's key column (``analysis_output.KeyAnchor``, #1061): its
     cardinality (``"unknown"`` with no statistics) and the other queries that look the table
@@ -302,6 +319,8 @@ class AgentAnalysisInput(BaseModel):
     aggregate_recommendations: list[AgentAggregateRecommendation] | None = None
     # DynamoDB only: each key-scoped write's partition-key/GSI requirement (#1061).
     key_scoped_writes: list[AgentKeyScopedWrite] | None = None
+    # DynamoDB only: the key-scoped counts this call serves, keys' cardinality (#377).
+    key_scoped_counts: list[AgentKeyScopedCount] | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -606,6 +625,21 @@ def project_schema_design_input(
                 ],
             )
             for w in _writes_in_scope(analysis_output, collector_output)
+        ]
+        or None,
+        key_scoped_counts=[
+            AgentKeyScopedCount(
+                query_id=c.query_id,
+                table_id=c.table_id,
+                columns=c.columns,
+                keys=[
+                    AgentKeyScopedCountKey(column=k.column, cardinality=k.cardinality)
+                    for k in c.keys
+                ],
+                schema_note=c.schema_note,
+            )
+            for c in analysis_output.key_scoped_counts or []
+            if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
         ]
         or None,
     )

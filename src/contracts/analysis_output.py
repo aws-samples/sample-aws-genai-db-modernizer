@@ -2,6 +2,9 @@
 Analysis Output Contract Models
 
 Version History:
+- 2.3 (2026-10-20, #377): Added the optional ``key_scoped_counts`` (``KeyScopedCount``,
+  ``KeyScopedCountKey``): every key-scoped COUNT of the collection, the key columns it
+  pins and each one's cardinality, for the DynamoDB schema designer.
 - 2.2 (2026-10-18): Add KeyScopedWrite and KeyAnchor models and optional key_scoped_writes
   field (#1061)
 - 2.1 (2026-03-17): Add AggregateRecommendation model and optional aggregate_recommendations field
@@ -280,11 +283,47 @@ def key_scoped_writes_in_scope(
     return out
 
 
+class KeyScopedCountKey(BaseModel):
+    """One key column a key-scoped count pins (#377): its collected cardinality, or
+    ``"unknown"`` when the collector has no statistics for it."""
+
+    column: str
+    cardinality: int | Literal["unknown"]
+
+
+class KeyScopedCount(BaseModel):
+    """A key-scoped count (the ``key_scoped_count`` class fact, ADR-031 Decision 2
+    Amendment 12, #377): a ``COUNT`` over the rows one value of each of ``columns``
+    addresses in ``table_id``. When it is routed to DynamoDB it is a ``Query`` on that
+    key with ``Select = COUNT``, which reads (and bills) every matching item, 1 MB per
+    page; ``schema_note`` says what the design must give it."""
+
+    query_id: str
+    table_id: str
+    columns: list[str] = Field(..., min_length=1)
+    keys: list[KeyScopedCountKey] = Field(default_factory=list)
+    schema_note: str
+
+
+def key_scoped_counts_in_scope(
+    counts: Iterable[Mapping[str, Any]] | None, query_ids: Collection[str]
+) -> list[dict[str, Any]]:
+    """The raw ``key_scoped_counts`` of an analysis file that one design call sees: the
+    counts among ``query_ids`` (the engine's or the group's queries), so a designer is
+    never given a count another engine serves."""
+    out = []
+    for raw in counts or []:
+        count = KeyScopedCount.model_validate(raw)
+        if count.query_id in query_ids:
+            out.append(count.model_dump(mode="json"))
+    return out
+
+
 class AnalysisOutputContract(BaseModel):
     """Output contract for all Analysis agents"""
 
     contract_version: str = Field(
-        default="2.2",
+        default="2.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -311,6 +350,13 @@ class AnalysisOutputContract(BaseModel):
         description=(
             "DynamoDB analysis only: every key-scoped write and the key it needs (#1061); "
             "the DynamoDB schema designer reads it"
+        ),
+    )
+    key_scoped_counts: list[KeyScopedCount] | None = Field(
+        None,
+        description=(
+            "DynamoDB analysis only: every key-scoped count, its key columns and their "
+            "cardinality (#377); the DynamoDB schema designer reads the ones it serves"
         ),
     )
 
