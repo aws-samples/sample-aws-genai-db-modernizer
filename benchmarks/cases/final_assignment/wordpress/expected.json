@@ -1,0 +1,8 @@
+{
+  "case_id": "wordpress",
+  "stage": "final_assignment",
+  "intent": "Full WordPress + WooCommerce sample (MySQL source), through the reality check. The key is written with the maintainer from the blind review sheet (review/wordpress.md), never from the current routing output (#1074).",
+  "authored_by": "human",
+  "reviewed": false,
+  "expected": {}
+}

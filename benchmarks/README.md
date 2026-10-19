@@ -66,6 +66,34 @@ preference on top of the shared scorer) to show it fails. Every reviewed
 case must have a floor; raise a floor only together with the change that
 earns it.
 
+## The final_assignment stage (#1074)
+
+The `assignment` stage feeds the resolver gold triage and analysis inputs and scores its first pass. The deliverables show something later: the assignment the reality check leaves behind. The `final_assignment` stage scores that one. It runs the deterministic pipeline on a whole bundled sample (`docs/examples/<sample>/<sample>.zip`): collect, triage, every selected engine's analysis, assignment and the reality check, with no model and no AWS call, then reads the newest assignment version (the reality check's when it consolidated anything, else v1).
+
+```bash
+uv run python -m benchmarks.runner.run --stage final_assignment
+```
+
+Its cases (`benchmarks/cases/final_assignment/`) are the wordpress, discourse and trailgear samples. An index entry names its sample instead of shipping collection, triage and analysis files:
+
+```json
+{ "id": "discourse", "path": "discourse", "sample": "discourse", "intent": "...", "tags": ["real"] }
+```
+
+The key format, the scoring and the gate rules are the assignment stage's. Every key starts `reviewed: false` with an empty `expected`, so the stage skips it: an unreviewed case is never scored and never gates. The stage has no `gate.json` until a key is reviewed; `tests/unit/benchmarks/test_gate.py` checks, for every stage, that the floors in `gate.json` name exactly the reviewed cases. `--run-unreviewed` still runs the unreviewed cases, to show the stage works on them (the report gives how many queries each assigned), but they stay `skipped`, out of the aggregate and the gate. The three samples take about 30 seconds together.
+
+### Writing a sample's key
+
+The keys are written with the maintainer from review, never from the current routing output (copying it would anchor the key on the behaviour the benchmark exists to check). `benchmarks/runner/review_sheet.py` writes one blind review sheet per sample:
+
+```bash
+uv run python -m benchmarks.runner.review_sheet --sample wordpress --sample discourse --sample trailgear
+```
+
+The sheets (`benchmarks/cases/final_assignment/review/<sample>.md`) list every query with the facts routing reads (access-pattern class and reason, tables, statement type, call rate and share, co-dependency and write groups, pattern facts) and empty `acceptable`, `ideal` and `rationale` columns. They never show the engine the pipeline picked or any score. Rows are grouped by co-dependency group and table (a table's writes first), busiest section first, with a call-share tier and a "same shape as row N" pointer per row; each sheet's guide gives the review order. Once a sheet is filled in, its key goes into `expected.json` with `reviewed: true`, and its floor into the stage's `gate.json`.
+
+`tests/unit/benchmarks/test_review_sheet.py` checks that the committed sheets show no engine outside the customer's own SQL and cover every query of the sample; regenerate them with the command above when the collector's query list changes.
+
 ## Reading the output
 
 ```text

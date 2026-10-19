@@ -90,6 +90,16 @@ offline-collection JSONs. This needs no deployment for the deterministic stage.
 The dataset/runner boundary preserves the option to move the dataset to an
 external repo, or to drive the deployed API, later.
 
+## Amendment 1 (2026-10-19, #1074): a final-assignment stage
+
+The first end-to-end stage is `final_assignment`. It runs the deterministic chain (collect, triage, analysis, assignment, reality check, no model) on a whole bundled sample and scores the assignment the reality check leaves behind, which is what the deliverables show. It coexists with the gold-input `assignment` stage and uses the same key format, scoring and gate rules: an unreviewed case is skipped and never gates. Its keys are written by a human from a blind review sheet (`benchmarks/runner/review_sheet.py`) that shows the facts routing reads and never the pipeline's engine or scores, per principle 6. That a human writes each key is a process rule: the guards check only that the committed keys stay `reviewed: false` and that the sheet shows no engine or score. Principle 4 (gold-input isolation) still holds for the `assignment` stage; this stage answers the other question it names, "is the product good".
+
+## Enforcement
+
+| Decision | Enforced by |
+|---|---|
+| Amendment 1 | `tests/unit/benchmarks/test_stage_final_assignment.py::test_the_stage_scores_the_reality_checks_version_not_the_first_pass`<br>`tests/unit/benchmarks/test_stage_final_assignment.py::test_run_unreviewed_runs_but_never_scores_or_gates`<br>`tests/unit/benchmarks/test_stage_final_assignment.py::test_the_committed_stage_lists_the_three_samples_unreviewed`<br>`tests/unit/benchmarks/test_gate.py::test_every_stage_gates_exactly_its_reviewed_cases`<br>`tests/unit/benchmarks/test_stage_final_assignment.py::test_the_stage_matches_the_e2e_pipelines_final_engines`<br>`tests/unit/benchmarks/test_stage_final_assignment.py::test_an_unreviewed_case_that_errors_stays_skipped_and_never_fails_the_gate`<br>`tests/unit/benchmarks/test_review_sheet.py::test_rows_never_show_an_engine_or_a_score`<br>`tests/unit/benchmarks/test_review_sheet.py::test_committed_sheet_is_blind_and_covers_every_query` |
+
 ## Consequences
 
 **Positive**

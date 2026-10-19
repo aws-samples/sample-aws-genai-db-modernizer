@@ -41,6 +41,27 @@ def test_every_reviewed_case_has_a_floor() -> None:
     assert sorted(gate["min_case_acceptable_accuracy"]) == sorted(reviewed)
 
 
+CASES_DIR = STAGE_DIR.parent
+
+
+@pytest.mark.parametrize("stage", sorted(p.name for p in CASES_DIR.iterdir() if p.is_dir()))
+def test_every_stage_gates_exactly_its_reviewed_cases(stage: str) -> None:
+    """Every stage, not only ``assignment`` (#1074): a reviewed case needs a
+    floor in that stage's gate.json, and an unreviewed case never has one. A
+    stage with no reviewed case yet may have no gate.json at all."""
+    stage_dir = CASES_DIR / stage
+    index = json.loads((stage_dir / "index.json").read_text())
+    reviewed = sorted(
+        c["id"]
+        for c in index["cases"]
+        if json.loads((stage_dir / c["path"] / "expected.json").read_text()).get("reviewed")
+    )
+    if not (stage_dir / "gate.json").exists():
+        assert reviewed == [], f"{stage}: reviewed cases {reviewed} but no gate.json"
+        return
+    assert sorted(gate_mod.load_gate(stage_dir)["min_case_acceptable_accuracy"]) == reviewed
+
+
 def _bias_toward(engine: str, bonus: int = 60):
     """A deliberate routing regression: an engine preference added on top of
     the shared scorer (exactly what tests/unit/agents/referee/test_no_engine_bias.py

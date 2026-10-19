@@ -1,0 +1,8 @@
+{
+  "case_id": "discourse",
+  "stage": "final_assignment",
+  "intent": "Full Discourse sample (PostgreSQL source, 1654 queries), through the reality check. The key is written with the maintainer from the blind review sheet (review/discourse.md), never from the current routing output (#1074).",
+  "authored_by": "human",
+  "reviewed": false,
+  "expected": {}
+}

@@ -12,6 +12,7 @@ class CaseRun:
     case_id: str
     outcome: Outcome
     score: ScoreResult | None  # present only when outcome == SCORED
+    assigned: int | None = None  # queries the stage assigned, when the case ran
 
 
 def build_report(runs: list[CaseRun]) -> dict:
@@ -51,6 +52,7 @@ def build_report(runs: list[CaseRun]) -> dict:
                 "case_id": r.case_id,
                 "outcome": r.outcome.value,
                 "acceptable_accuracy": (round(r.score.acceptable_accuracy, 4) if r.score else None),
+                "assigned_queries": r.assigned,
             }
             for r in runs
         ],

@@ -18,6 +18,9 @@ class Case:
     triage: dict
     analysis: dict  # engine -> analysis dict
     expected: dict  # query_id -> {acceptable, ideal?, rationale?}
+    # A bundled sample (docs/examples/<sample>/<sample>.zip) the case runs from
+    # instead of its own collection/triage/analysis files (final_assignment, #1074).
+    sample: str | None = None
 
 
 def load_cases(stage_dir: Path, tags: list[str] | None = None) -> list[Case]:
@@ -28,11 +31,13 @@ def load_cases(stage_dir: Path, tags: list[str] | None = None) -> list[Case]:
         if tags and not (set(tags) & set(entry.get("tags", []))):
             continue
         cdir = stage_dir / entry["path"]
-        collection = json.loads((cdir / "collection.json").read_text())
-        triage = json.loads((cdir / "triage.json").read_text())
+        sample = entry.get("sample")
+        # A sample case carries only its key: the pipeline makes the rest.
+        collection = {} if sample else json.loads((cdir / "collection.json").read_text())
+        triage = {} if sample else json.loads((cdir / "triage.json").read_text())
         analysis: dict = {}
         adir = cdir / "analysis"
-        if adir.is_dir():
+        if adir.is_dir() and not sample:
             for f in sorted(adir.glob("*.json")):
                 analysis[f.stem] = json.loads(f.read_text())
         key = json.loads((cdir / "expected.json").read_text())
@@ -47,6 +52,7 @@ def load_cases(stage_dir: Path, tags: list[str] | None = None) -> list[Case]:
                 triage=triage,
                 analysis=analysis,
                 expected=key.get("expected", {}),
+                sample=sample,
             )
         )
     return cases

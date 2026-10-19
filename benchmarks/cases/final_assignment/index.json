@@ -1,0 +1,37 @@
+{
+  "stage": "final_assignment",
+  "cases": [
+    {
+      "id": "wordpress",
+      "path": "wordpress",
+      "sample": "wordpress",
+      "intent": "Full WordPress + WooCommerce sample (MySQL source), through the reality check",
+      "tags": [
+        "real",
+        "mysql"
+      ]
+    },
+    {
+      "id": "discourse",
+      "path": "discourse",
+      "sample": "discourse",
+      "intent": "Full Discourse sample (PostgreSQL source, 1654 queries), through the reality check",
+      "tags": [
+        "real",
+        "postgresql",
+        "scale"
+      ]
+    },
+    {
+      "id": "trailgear",
+      "path": "trailgear",
+      "sample": "trailgear",
+      "intent": "Full synthetic TrailGear sample (SQL Server source), through the reality check",
+      "tags": [
+        "synthetic",
+        "sqlserver",
+        "heterogeneous"
+      ]
+    }
+  ]
+}
