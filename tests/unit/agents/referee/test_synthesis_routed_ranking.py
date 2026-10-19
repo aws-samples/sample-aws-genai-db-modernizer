@@ -7,12 +7,15 @@ with the cache layer after the owners, and the rationale names the routed worklo
 
 from __future__ import annotations
 
+import pytest
+
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import (
     _engine_rationale,
     build_architecture_recommendation,
     build_ranking,
 )
+from src.shared.ranking import SIGNAL_ONLY_NOTE, confidence_text
 
 
 def _analysis(patterns: int, **scores: int) -> dict:
@@ -143,7 +146,7 @@ class TestRationale:
         # "signal only", not "1 rated table" (see ``TestNoTableEvidence`` below
         # for the ``tables_accessed=["unknown"]`` case this phrase also covers).
         assert dbs["opensearch"]["rationale"].startswith(
-            "0% mean fit across 1 query (signal only, no table-level evidence), "
+            "0% mean fit across 1 query (signal only), "
             "led by full-text search (1 of 1)."
         )
         # #490: DynamoDB's old 100% included a flat signal-match bonus
@@ -174,7 +177,7 @@ class TestRationale:
 
 
 class TestNoTableEvidence:
-    def test_rationale_says_when_no_table_backs_the_fit(self):
+    def test_opensearch_rationale_names_signal_evidence_for_unknown_tables(self):
         """discourse OpenSearch: its queries read tables_accessed ["unknown"]."""
         data = _data(ASSIGNMENT)
         data.collector["queries"]["query_patterns"] = [
@@ -186,8 +189,15 @@ class TestNoTableEvidence:
         # #490: no basic-CRUD baseline/signal bonus any more -- OpenSearch
         # has no matched pattern for s1 here either, so its fit is 0.
         assert _engine_rationale(data, opensearch).startswith(
-            "0% mean fit across 1 query (signal only, no table-level evidence), led by full-text search"
+            "0% mean fit across 1 query (signal only), led by full-text search"
         )
+
+    def test_table_scored_engine_keeps_its_signal_only_description(self):
+        data = _data(ASSIGNMENT)
+        data.engines["dynamodb"].analysis["table_recommendations"] = []
+        dynamodb = _by_target(build_ranking(data))["dynamodb"]
+        assert dynamodb["routed_confidence_evidence"] == "signal_only"
+        assert f"({SIGNAL_ONLY_NOTE})" in _engine_rationale(data, dynamodb)
 
     def test_partial_evidence_is_counted(self):
         data = _data(ASSIGNMENT)
@@ -231,3 +241,75 @@ class TestPatternEvidence:
         text = _engine_rationale(data, opensearch)
         assert "(matches a detected pattern)" in text
         assert "rated table" not in text
+
+
+def _opensearch_data(n: int, matched: int, table: str = "unknown") -> SynthesisData:
+    data = _data(
+        {
+            "version": 2,
+            "query_assignments": [
+                {"query_id": q["query_id"], "assigned_engine": "opensearch"} for q in QUERIES[:n]
+            ],
+        }
+    )
+    data.collector["queries"]["query_patterns"] = [
+        {**q, "tables_accessed": [table]} for q in QUERIES
+    ]
+    data.engines["opensearch"].analysis["workload_analysis"]["patterns_detected"] = [
+        {
+            "pattern_type": "full_text_search",
+            "query_ids": [q["query_id"] for q in QUERIES[:matched]],
+        }
+    ]
+    return data
+
+
+@pytest.mark.parametrize("table", ["unknown", "posts"])
+@pytest.mark.parametrize(
+    ("n", "matched", "detail"),
+    [
+        (1, 0, "signal only"),
+        (2, 0, "signal only"),
+        (2, 1, "1 query matches a detected pattern; 1 query signal only"),
+        (3, 1, "1 query matches a detected pattern; 2 queries signal only"),
+        (3, 2, "2 queries match a detected pattern; 1 query signal only"),
+        (5, 4, "4 queries match a detected pattern; 1 query signal only"),
+        (1, 1, "matches a detected pattern"),
+        (2, 2, "each matches a detected pattern"),
+    ],
+)
+def test_opensearch_rationale_describes_its_query_evidence(n, matched, detail, table):
+    data = _opensearch_data(n, matched, table)
+    entry = _by_target(build_ranking(data))["opensearch"]
+    evidence = "signal_only" if not matched else "pattern" if matched == n else "partial"
+    assert entry["routed_confidence_evidence"] == evidence
+    assert entry["routed_queries_without_table_evidence"] == n - matched
+    rationale = _engine_rationale(data, entry)
+    assert f"({detail})" in rationale
+    assert "rated table" not in rationale
+    assert "table-level evidence" not in rationale
+    assert "\u2014" not in rationale
+    note = (
+        " (signal only)"
+        if not matched
+        else " (partly signal-based)" if 0 < matched < n and (n - matched) / n >= 0.25 else ""
+    )
+    assert confidence_text(entry) == f"{entry['routed_confidence']}%{note}"
+
+
+@pytest.mark.parametrize("matched", [0, 1])
+def test_rendered_engine_rationale_agrees_with_synthesis(matched):
+    from src.report.engineering_report import render_engineering_report_md
+    from tests.executive_pdf import executive_text
+
+    data = _opensearch_data(2, matched)
+    ranking = build_ranking(data)
+    report = {
+        "database_name": "db",
+        "ranking": ranking,
+        "architecture_recommendation": build_architecture_recommendation(data, ranking, []),
+    }
+    rationale = report["architecture_recommendation"]["databases"][0]["rationale"]
+    assert "table-level evidence" not in rationale
+    assert rationale in render_engineering_report_md(report)
+    assert " ".join(rationale.split()) in executive_text(report)

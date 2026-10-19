@@ -22,6 +22,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
+
 
 def engine_confidence(entry: Mapping[str, Any]) -> float:
     """The confidence to show for a ranking entry: routed, else the analysis average."""
@@ -71,16 +73,20 @@ def is_signal_only(entry: Mapping[str, Any]) -> bool:
 def evidence_note(entry: Mapping[str, Any], short: bool = False) -> str:
     """How much a routed confidence rests on signals alone, or "" when it does not.
 
-    A signal-only fit is the basic baseline plus the signal bonus, never a
-    measurement, so it is always labelled. A ``partial`` fit is labelled only when
-    at least PARTIAL_EVIDENCE_MIN_SHARE of the engine's routed queries lack table
-    evidence.
+    A signal-only fit is always labelled. Pattern-only engines use query pattern
+    evidence, so their note does not refer to tables. A ``partial`` fit is labelled
+    only when at least PARTIAL_EVIDENCE_MIN_SHARE of the engine's routed queries
+    lack evidence (matched patterns for pattern-only engines, rated tables otherwise).
     """
     if entry.get("routed_confidence") is None:
         return ""
     evidence = entry.get("routed_confidence_evidence")
     if evidence == "signal_only":
-        return SIGNAL_ONLY_SHORT if short else SIGNAL_ONLY_NOTE
+        return (
+            SIGNAL_ONLY_SHORT
+            if short or entry.get("target") in PATTERN_ONLY_ENGINES
+            else SIGNAL_ONLY_NOTE
+        )
     if evidence == "partial":
         n = int(entry.get("routed_queries") or 0)
         unbacked = int(entry.get("routed_queries_without_table_evidence") or 0)

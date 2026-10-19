@@ -45,6 +45,7 @@ from src.contracts.executive_summary_response import (
 from src.contracts.model_flag import validation_error_note
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
+from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_source_clause
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
@@ -2650,13 +2651,10 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     *analysis* rated (#312 review) -- not every table the routed queries touch,
     which the schema design's own table count already states elsewhere.
 
-    Says "signal only — no table-level evidence" when no routed query touches a
-    source table the engine's analysis rated: the fit is then the basic baseline
-    plus the signal bonus, not a measurement. A partial fit adds "partly
-    signal-based" once at least a quarter of the queries lack table evidence (the
-    labels and threshold of ``src.shared.ranking``, which the deck uses too). A
-    ``pattern`` fit (OpenSearch, every routed query matches one of its detected
-    patterns) says so instead of a rated-table count.
+    Table-scored engines name rated tables and queries without table evidence,
+    using the labels and threshold of ``src.shared.ranking``. Pattern-only
+    engines name matched patterns and signal-only queries instead. A ``pattern``
+    fit keeps "(each) matches a detected pattern".
     """
     fit = r.get("routed_confidence")
     if fit is None:
@@ -2666,11 +2664,18 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     unbacked = int(r.get("routed_queries_without_table_evidence") or 0)
     evidence = r.get("routed_confidence_evidence")
     if evidence == "signal_only" or (evidence is None and not n_t):
-        detail = SIGNAL_ONLY_NOTE
+        detail = evidence_note(r) or SIGNAL_ONLY_NOTE
     elif evidence == "pattern":
         # #859: a pattern-only engine (OpenSearch) never scores a table, so its
         # evidence is the query's own matched pattern, not a rated-table count.
         detail = "matches a detected pattern" if n == 1 else "each matches a detected pattern"
+    elif evidence == "partial" and r.get("target") in PATTERN_ONLY_ENGINES:
+        matched = n - unbacked
+        verb = "matches" if matched == 1 else "match"
+        detail = (
+            f"{_count(matched, *what)} {verb} a detected pattern; "
+            f"{_count(unbacked, *what)} signal only"
+        )
     else:
         detail = _count(n_t, "rated table", "rated tables")
         if unbacked:
