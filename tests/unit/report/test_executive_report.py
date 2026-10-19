@@ -169,9 +169,11 @@ def test_the_cost_baseline_text(report: dict[str, Any], known: bool) -> None:
     rep["tco_analysis"]["savings_percent"] = 12.5
     current, savings = _cost_baseline_text(rep["tco_analysis"])
     text = _body(rep)
-    assert f"Current monthly (source): {current}" in text
-    assert f"Savings: {savings}" in text
-    assert ("source cost not provided" in text) is not known
+    # #949 (#1028): an unknown baseline's two lines are left out, not "not provided".
+    assert (f"Current monthly (source): {current}" in text) is known
+    assert (f"Savings: {savings}" in text) is known
+    assert "source cost not provided" not in text
+    assert "not available" not in text
 
 
 def test_only_a_retired_engine_saving_is_printed(report: dict[str, Any]) -> None:

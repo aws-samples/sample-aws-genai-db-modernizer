@@ -30,6 +30,7 @@ from .formatting import (
     _fmt_usd,
     _retired_engine_savings_text,
     access_pattern_scope,
+    cost_baseline_known,
     fallback_withheld_reason,
     fmt_num,
     label_summary_counts,
@@ -712,14 +713,18 @@ def render_engineering_report_md(
     tco = report.get("tco_analysis") or {}
     if tco:
         current_cost_text, savings_text = _cost_baseline_text(tco)
-        out += [
-            "## Cost",
-            "",
-            f"- Current monthly (source): {escaping.md_text(current_cost_text)}",
+        # #949 (#1028): with no source baseline the current-cost and savings lines are
+        # left out, not "source cost not provided" / "not available".
+        known = cost_baseline_known(tco)
+        out += ["## Cost", ""]
+        if known:
+            out.append(f"- Current monthly (source): {escaping.md_text(current_cost_text)}")
+        out.append(
             f"- Projected monthly (target): "
-            f"{escaping.md_text(_fmt_usd(tco.get('projected_monthly_cost')))}",
-            f"- Savings: {escaping.md_text(savings_text)}",
-        ]
+            f"{escaping.md_text(_fmt_usd(tco.get('projected_monthly_cost')))}"
+        )
+        if known:
+            out.append(f"- Savings: {escaping.md_text(savings_text)}")
         # #949: only an engine the source runs today; a dropped candidate is no saving.
         retired_text = _retired_engine_savings_text(tco)
         if retired_text:

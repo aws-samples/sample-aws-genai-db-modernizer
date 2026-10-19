@@ -81,6 +81,7 @@ from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
     _retired_engine_savings_text,
+    cost_baseline_known,
     fmt_num,
     plural_noun,
     plural_verb,
@@ -815,7 +816,12 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     tco = report.get("tco_analysis") or {}
     current, savings = _cost_baseline_text(tco)
     retired = _retired_engine_savings_text(tco)
-    cost_lines = [f"Current monthly (source): {current}", f"Savings: {savings}"]
+    # #949 (#1028): with no source baseline the two lines are left out, not "not provided".
+    cost_lines = (
+        [f"Current monthly (source): {current}", f"Savings: {savings}"]
+        if cost_baseline_known(tco)
+        else []
+    )
     if retired:
         cost_lines.append(f"Retired by this plan: {retired}")
     engines = facts.get("engines") or []

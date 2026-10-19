@@ -4,6 +4,8 @@
 **Date:** 2026-10-14
 **Deciders:** Database Modernizer Assessment Architecture Team
 
+> **Amended (2026-10-19, #949):** a migration target's table figures (`engines[].engine_source_tables`, `tables_migrate`) come from its migration wave with or without a schema design, and the source-compatible engine is `Retained` with or without one, so the headline counts agree with the wave plan. With no source cost baseline, the executive and engineering reports leave the current-cost and savings lines out, as the results page does. `tests/e2e/test_deliverable_figures.py` also checks a wordpress job with a schema design for every kept engine.
+>
 > **Amended (2026-10-17, #1020):** the multi-page PDF report was retired. The PDF deliverable is now the executive report (`executive-report.pdf`, `src/report/executive_report.py`), a landscape briefing with totals and reasons only: no table names, no close calls and no traceability appendix; those stay in the engineering report. Its "Queries moved" total is a fact (`facts.moving_query_count` of `facts.in_scope_query_count`, contract 1.28), and so are the resolved risks by severity it and the engineering report print (`facts.resolved_risks_by_severity`), and its architecture bar is the one pinned presentation exemption (chart geometry). The decisions below name the executive report where they named the PDF report.
 >
 > **Amended (2026-10-16, #987):** the decision report HTML, the interactive analysis report HTML and the UI's HTML export were retired. The deliverables this ADR governs are now the PDF report, the engineering report and the UI results page, all reading the facts layer; the decisions below are stated for them. The Context keeps the original list.

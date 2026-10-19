@@ -228,3 +228,67 @@ def test_rationale_keeps_primary_data_storage_when_retained_engine_is_the_minori
         "dynamodb": "Migration target",
         "elasticache": "Cache layer",
     }
+
+
+# #949: the source-compatible Aurora engine with a schema design of its own (an Aurora
+# design ran: DDL and optimizations) is still the retained core. It read "Migration
+# target", so every deliverable said "107 of 107 queries move to a new engine" and
+# "the migration moves the 18 tables assigned to Aurora MySQL, DynamoDB".
+_AURORA_DESIGN = {"table_definitions": [{"table_name": "wp_posts", "source_tables": ["wp.p"]}]}
+_DDB_DESIGN = {"table_definitions": [{"table_name": "Posts", "source_tables": ["wp.p"]}]}
+
+
+def test_a_designed_retained_engine_stays_retained() -> None:
+    ranking = [
+        _rank("aurora_mysql", 70, 68, 63.6, True),
+        _rank("dynamodb", 85, 39, 36.4, True),
+    ]
+    report = _report(
+        ranking,
+        {"aurora_mysql": _AURORA_DESIGN, "dynamodb": _DDB_DESIGN},
+        [{"source_table": "wp.p", "recommended_database": "dynamodb"}],
+        collector={"metadata": {"source_database": {"engine": "mysql"}}},
+    )
+    assert report["schema_designs"]["aurora_mysql"]["status"] == "completed"
+    services = [d["service"] for d in report["recommended_architecture"]["databases"]]
+    assert services == ["dynamodb"]
+    assert "Aurora MySQL retained as the relational core" in (
+        report["recommended_architecture"]["rationale"]
+    )
+    assert _roles(report) == {"aurora_mysql": "Retained", "dynamodb": "Migration target"}
+
+
+def test_a_designed_heterogeneous_aurora_engine_stays_a_migration_target() -> None:
+    """What must not change: SQL Server has no Aurora dialect of its own, so the
+    chosen Aurora engine is a real migration target, with or without a design."""
+    ranking = [
+        _rank("aurora_postgresql", 70, 60, 55.0, True),
+        _rank("dynamodb", 60, 40, 45.0, True),
+    ]
+    report = _report(
+        ranking,
+        {"aurora_postgresql": _AURORA_DESIGN, "dynamodb": _DDB_DESIGN},
+        [{"source_table": "wp.p", "recommended_database": "dynamodb"}],
+        collector={"metadata": {"source_database": {"engine": "sqlserver"}}},
+    )
+    services = [d["service"] for d in report["recommended_architecture"]["databases"]]
+    assert "aurora_postgresql" in services
+    assert _roles(report) == {
+        "aurora_postgresql": "Migration target",
+        "dynamodb": "Migration target",
+    }
+
+
+def test_engine_role_of_a_designed_relational_engine_outside_the_targets() -> None:
+    from src.shared.report_facts import engine_role
+
+    designs = {"aurora_mysql": {"status": "completed"}}
+    assert engine_role("aurora_mysql", set(), designs, 63.6) == "Retained"
+    # Listed as a target (a heterogeneous source), it is one.
+    assert engine_role("aurora_mysql", {"aurora_mysql"}, designs, 63.6) == "Migration target"
+    # A non-relational engine with a design and no listing keeps Migration target.
+    assert engine_role("dynamodb", set(), {"dynamodb": {"status": "completed"}}, 36.4) == (
+        "Migration target"
+    )
+    # No workload is still Evaluated.
+    assert engine_role("aurora_mysql", set(), designs, 0.0) == "Evaluated"

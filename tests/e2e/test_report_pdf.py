@@ -20,7 +20,7 @@ from src.report import executive_report
 from src.report.cache_layer import cache_layer_text
 from src.report.deliverables import FOLDER_FILENAMES
 from src.report.executive_report import collected_identifiers, table_names, without_table_names
-from src.report.formatting import _cost_baseline_text, _fmt_usd, fmt_num
+from src.report.formatting import _cost_baseline_text, _fmt_usd, cost_baseline_known, fmt_num
 from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
@@ -121,8 +121,11 @@ def test_the_numbers_match_report_json(run: PipelineResult) -> None:
     assert _fmt_usd(facts["projected_monthly_cost_usd"]) == _fmt_usd(tco["projected_monthly_cost"])
     assert f"{_fmt_usd(facts['projected_monthly_cost_usd'])} Projected monthly cost" in text
     current, savings = _cost_baseline_text(tco)
-    assert f"Current monthly (source): {current}" in text
-    assert f"Savings: {savings}" in text
+    # #949 (#1028): an unknown baseline's two lines are left out, never a placeholder.
+    known = cost_baseline_known(tco)
+    assert (f"Current monthly (source): {current}" in text) is known
+    assert (f"Savings: {savings}" in text) is known
+    assert "source cost not provided" not in text
     assert f"{facts['engine_count']} Engines in the target architecture" in text
     n_in, moving = facts["in_scope_query_count"], facts["moving_query_count"]
     assert n_in == report["assignment_summary"]["in_scope_count"]

@@ -78,8 +78,9 @@ def engine_role(
     it drops the retained relational core and cache engines because it filters on
     a ``schema_design_available`` flag that is False for both (defect (d) for the
     cache, which has a completed design the flag does not count; by design for a
-    retained engine, which has no migration design). Roles are therefore derived
-    from the engine kind and its design status, not from that list alone.
+    retained engine, which synthesis leaves out whether or not it has a design of
+    its own, #949). Roles are therefore derived from the engine kind and its design
+    status, not from that list alone.
 
     An engine carrying **no workload** is ``Evaluated``: triage selected it, analysis
     scored it, and the assignment then routed nothing to it because another engine won
@@ -106,11 +107,17 @@ def engine_role(
     # ``skipped``/``not_available`` branch below is the one being corrected.
     if not workload:
         return EVALUATED
+    if engine in RELATIONAL_ENGINES:
+        # #949: carrying queries and not a listed target, a relational engine is the
+        # retained, source-compatible core whatever its design status: synthesis lists
+        # a heterogeneous source's Aurora engine (a real target) and leaves the retained
+        # one out, design or not. An Aurora design of its own made it a "Migration
+        # target", so every one of its queries read as moving to a new engine.
+        return RETAINED
     status = (schema_designs.get(engine) or {}).get("status")
     if status in ("not_available", "skipped"):
-        # Retained means the source-compatible relational core; any other engine
-        # carrying queries without a design is still a migration target
-        return RETAINED if engine in RELATIONAL_ENGINES else MIGRATION_TARGET
+        # Any other engine carrying queries without a design is still a migration target
+        return MIGRATION_TARGET
     if status == "completed":
         return MIGRATION_TARGET
     return ASSESSED
@@ -298,12 +305,13 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
     ``recommended_architecture.databases`` alone is a lossy projection of it that
     neither reconciles to the cost total nor matches the executive summary.
 
-    A migration target with no completed schema design yet (``table_mappings``
-    and ``databases[].table_count`` stay 0) reads its tables from its migration
-    wave instead (#524): ``source_tables`` is the wave's served count, and
-    ``tables_migrate`` only the subset the engine durably owns (#568 review) --
-    from ``owned_counts_by_engine`` for the merged DynamoDB/DocumentDB wave,
-    never its union ``table_count`` credited to both engines.
+    A migration target reads its tables from its migration wave (#524; with a
+    completed schema design too since #949, so the headline agrees with the wave):
+    ``source_tables`` is the wave's served count, and ``tables_migrate`` only the
+    subset the engine durably owns (#568 review) -- from ``owned_counts_by_engine``
+    for the merged DynamoDB/DocumentDB wave, never its union ``table_count``
+    credited to both engines. Only an engine with no wave (a report written before
+    waves) falls back to ``databases[].table_count``, the design's table map.
     """
     ranking = [r for r in (report.get("ranking") or []) if isinstance(r, dict)]
     arch = report.get("recommended_architecture") or {}
@@ -338,11 +346,14 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
         migrates = 0
         if role == MIGRATION_TARGET:
             n = src_tables.get(eng)
-            has_design = design.get("status") == "completed"
             owned: int | None = None
-            if not n and not has_design:
-                wave_n = wave_served.get(eng)
-                n = wave_n if isinstance(wave_n, int) and wave_n > 0 else n
+            # #949: the routing's figure, design or not: the tables the engine's
+            # queries touch (its wave's served count) and the ones it owns, which
+            # move. A design's table map can list more or fewer, and then "N tables
+            # migrate" disagreed with the wave's own "N to move".
+            wave_n = wave_served.get(eng)
+            if isinstance(wave_n, int) and wave_n > 0:
+                n = wave_n
                 owned = wave_owned.get(eng)
             migrates = (
                 owned if isinstance(owned, int) else (n if isinstance(n, int) else (objs or 0))

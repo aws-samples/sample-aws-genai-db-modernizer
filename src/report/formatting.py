@@ -162,6 +162,17 @@ def _fmt_usd(x: Any) -> str:
 # ``current_cost_known: False``. This is the one rule every deliverable
 # (the engineering and executive reports here and the React UI's ``tcoAnalysis.js``)
 # must share, so they can't disagree on the same report.
+def cost_baseline_known(tco: dict[str, Any]) -> bool:
+    """Whether ``tco`` has a real current-cost baseline (``_cost_baseline_text``'s rule).
+
+    #949 (the #1028 direction): a deliverable leaves the current-cost and savings
+    lines out when it is unknown, instead of printing "source cost not provided" and
+    "not available", as the results page already does.
+    """
+    known = tco.get("current_cost_known")
+    return not (known is False or (known is None and not tco.get("current_monthly_cost")))
+
+
 def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     """(current monthly cost, savings) display text for ``tco``.
 

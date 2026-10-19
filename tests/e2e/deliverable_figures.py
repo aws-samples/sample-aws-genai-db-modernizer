@@ -256,7 +256,28 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
         exp["fallback_queries"] = len(ids)
     exp["engine_count"] = len(final_architecture(report))
     exp["removed"] = frozenset(removed_engines(report))
+
+    # #949: "N of M queries move to a new engine". Every owned query moves except the
+    # ones that stay on wave 1's Aurora engine when the source already speaks its
+    # dialect (a homogeneous wave 1); after a cross-engine wave 1 every query moves.
+    owned = {e: int(n) for e, n in after.items() if n}
+    waves = [w for w in report.get("migration_waves") or [] if isinstance(w, dict)]
+    first = next((w for w in waves if w.get("homogeneity") is not None), None)
+    stays = 0
+    if first and first.get("homogeneity") == "homogeneous":
+        stays = sum(owned.get(str(e), 0) for e in first.get("engines") or [])
+    if owned:
+        exp["queries_moved"] = (sum(owned.values()) - stays, sum(owned.values()))
     return exp
+
+
+_QUERIES_MOVED_RE = re.compile(r"([\d,]+) of ([\d,]+) quer(?:y|ies) moves? to a new engine")
+
+
+def queries_moved(f: Figures, text: str, where: str) -> None:
+    """#949: "N of M queries move to a new engine" as ``(N, M)``."""
+    m = _QUERIES_MOVED_RE.search(text)
+    f.add("queries_moved", (_int(m.group(1)), _int(m.group(2))) if m else UNREADABLE, where)
 
 
 # --------------------------------------------------------------------------
@@ -600,6 +621,7 @@ def engineering_figures(md_text: str) -> Figures:
 
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
+    queries_moved(f, md_plain(h2.get("Target engines", "")), "Target engines: Queries moved")
     f.add("removal_savings", removal_savings(plain), "Migration trade-offs")
     removed: set[str] = set()
     m = re.search(r"^- Retired by this plan: (.+)$", plain, re.M)
@@ -744,6 +766,7 @@ def pdf_figures(text: str) -> Figures:
         f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
     m = re.search(r"Total [\d.]+% ([\d,]+) tables? migrates?", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Engines table Total")
+    queries_moved(f, text, "Queries moved tile")
     m = re.search(r"([\d,]+) Engines in the target architecture", text)
     f.add("engine_count", _int(m.group(1)) if m else UNREADABLE, "Engines tile")
     m = re.search(r"([\d,]+) Open risks((?: [\d,]+ (?:critical|high|medium|low|unrated),?)*)", text)

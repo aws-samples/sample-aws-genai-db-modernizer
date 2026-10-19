@@ -1108,6 +1108,8 @@ def build_risk_assessment(
     # target engine -> {query id: severity} for queries an anti-pattern's advice moved to
     # that engine but its design does not serve (reported as one gap risk per engine).
     coverage_gaps: dict[str, dict[str, str]] = {}
+    # #949: engines whose coverage gap is "not checked", because no design ran.
+    undesigned: set[str] = set()
 
     for engine, artifacts in data.engines.items():
         # ``assigned`` empty => no readable assignment => keep every risk (fail-open).
@@ -1530,8 +1532,16 @@ def build_risk_assessment(
         if not gap:
             continue
         risk_id += 1
+        # #949: with no schema design for ``target``, every moved query "has no access
+        # pattern" only because the design did not run.
+        target_artifacts = data.engines.get(target)
+        design_ran = bool(target_artifacts and target_artifacts.schema_design)
+        if not design_ran:
+            undesigned.add(target)
         risks.append(
-            _coverage_gap_risk(f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables)
+            _coverage_gap_risk(
+                f"RISK-{risk_id:03d}", target, gap, query_text, risk_tables, design_ran
+            )
         )
 
     # Guard (#335): a query reality check moved onto an engine whose own schema
@@ -1562,7 +1572,9 @@ def build_risk_assessment(
     return {
         "overall_risk_level": overall_risk_level(risks),
         "risks": risks,
-        "mitigation_strategies": _build_mitigation_strategies(risks, assigned or set(data.engines)),
+        "mitigation_strategies": _build_mitigation_strategies(
+            risks, assigned or set(data.engines), undesigned
+        ),
         # Anti-pattern risks the effective assignment resolved (#221): kept for the
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
@@ -1929,8 +1941,14 @@ def _coverage_gap_risk(
     gap: dict[str, str],
     query_text: dict[str, str],
     query_tables: dict[str, set[str]],
+    design_ran: bool = True,
 ) -> dict:
-    """One risk for the queries assigned to ``engine`` that its design does not serve."""
+    """One risk for the queries assigned to ``engine`` that its design does not serve.
+
+    ``design_ran`` False (#949): ``engine`` has no schema design, so its queries were
+    never checked against one. The risk says so and is LOW: a phase that did not run
+    never raises the overall level (``overall_risk_level``) on its own.
+    """
     ids = sorted(gap)
     n = len(ids)
     severity = min(gap.values(), key=lambda s: _SEVERITY_ORDER.get(s, 9))
@@ -1939,21 +1957,39 @@ def _coverage_gap_risk(
         t = " ".join(query_text.get(q, "").split()) or q[:12]
         texts.append(t if len(t) <= 80 else t[:77] + "...")
     listed = "; ".join(texts) + (f"; and {n - 3} more" if n > 3 else "")
+    tables = sorted({t for q in ids for t in query_tables.get(q, set())} - _PLACEHOLDER_TABLES)
+    name = display_name(engine)
+    if not design_ran:
+        return {
+            "risk_id": risk_id,
+            "risk_type": "MIGRATION_COMPLEXITY",
+            "severity": "LOW",
+            "description": (
+                f"[{engine}] Not checked: schema design was not run for {name}, so "
+                f"{n} {'query' if n == 1 else 'queries'} assigned to it "
+                f"{'has' if n == 1 else 'have'} no access pattern to check against: {listed}"
+            ),
+            "affected_tables": tables,
+            "mitigation": (
+                f"Run the {name} schema design; any of these queries it does not serve "
+                "then becomes a schema design gap."
+            ),
+            "query_ids": ids,
+            "coverage_gap": True,
+        }
     return {
         "risk_id": risk_id,
         "risk_type": "MIGRATION_COMPLEXITY",
         "severity": severity,
         "description": (
             f"[{engine}] Schema design gap: {n} {'query' if n == 1 else 'queries'} assigned "
-            f"to {display_name(engine)} {'has' if n == 1 else 'have'} no in-scope access "
+            f"to {name} {'has' if n == 1 else 'have'} no in-scope access "
             f"pattern: {listed} (0% of queries resolved by schema design, {n} remaining)"
         ),
-        "affected_tables": sorted(
-            {t for q in ids for t in query_tables.get(q, set())} - _PLACEHOLDER_TABLES
-        ),
+        "affected_tables": tables,
         "mitigation": (
             f"Add in-scope access patterns for {'this query' if n == 1 else 'these queries'} "
-            f"to the {display_name(engine)} schema design, or route "
+            f"to the {name} schema design, or route "
             f"{'it' if n == 1 else 'them'} to an engine that serves "
             f"{'it' if n == 1 else 'them'}."
         ),
@@ -2265,8 +2301,13 @@ def _risk_scope(risk: dict) -> str:
     return f"{n} {'query' if n == 1 else 'queries'}" if n else "no table recorded"
 
 
-def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str]) -> list[str]:
+def _build_mitigation_strategies(
+    risks: list[dict], effective_engines: set[str], undesigned: set[str] | None = None
+) -> list[str]:
     """Mitigation strategies derived from the risks actually present (#222).
+
+    ``undesigned`` (#949) are the engines with no schema design: their coverage gap
+    is a check that did not run, so its strategy is to run the design.
 
     The CRITICAL/HIGH risks come first, each with its engine, scope and own
     mitigation; every other line names the risks, engines or objects it is about.
@@ -2307,7 +2348,16 @@ def _build_mitigation_strategies(risks: list[dict], effective_engines: set[str])
 
     complexity = by_type.get("MIGRATION_COMPLEXITY", [])
     unsupported = [r for r in complexity if not r.get("coverage_gap")]
-    gaps = [r for r in complexity if r.get("coverage_gap")]
+    unchecked = [
+        r for r in complexity if r.get("coverage_gap") and _tagged_engine(r) in (undesigned or ())
+    ]
+    gaps = [r for r in complexity if r.get("coverage_gap") and r not in unchecked]
+    for r in unchecked:
+        n = len(r.get("query_ids") or [])
+        strategies.append(
+            f"Run the {display_name(_tagged_engine(r) or '')} schema design to check the {n} "
+            f"{'query' if n == 1 else 'queries'} assigned to it ({r['risk_id']})."
+        )
     if gaps:
         n = sum(len(r.get("query_ids") or []) for r in gaps)
         strategies.append(
@@ -2604,19 +2654,25 @@ def build_architecture_recommendation(
     # undesigned retained engine, letting it fall through to the "Retained"
     # status check in ``report_facts.engine_role`` instead of reading as a
     # migration target.
-    retained_engine: str | None = None
-    if no_schema_design:
-        candidate = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
-        if candidate in engines_with_workload:
-            retained_engine = candidate
+    #
+    # #949: the same holds when that engine has a schema design of its own (an Aurora
+    # design: DDL and optimizations for the tables it keeps). It is still the retained
+    # core, not a migration target: listed here, every deliverable said all of its
+    # queries "move to a new engine".
+    # In a designed run that needs routed queries: a design alone is no workload.
+    candidate = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector))
+    routed = any(r["target"] == candidate and r.get("assigned_queries", 0) > 0 for r in ranking)
+    retained_engine: str | None = (
+        candidate if candidate in engines_with_workload and (no_schema_design or routed) else None
+    )
     databases = []
     for r in ranking:
         engine = r["target"]
         tables = engine_tables.get(engine, [])
+        if engine == retained_engine:
+            continue
         if not tables and not r.get("schema_design_available"):
             if not (no_schema_design and engine in engines_with_workload):
-                continue
-            if engine == retained_engine:
                 continue
 
         databases.append(

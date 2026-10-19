@@ -1,5 +1,7 @@
-"""The PDF report and engineering report must show a known TCO baseline,
-or say it is unknown, instead of a bare $0.00 / 0% (#380 review).
+"""The PDF report and engineering report must show a known TCO baseline, and
+never a bare $0.00 / 0% (#380 review). An unknown baseline's current-cost and
+savings lines are left out (#949, the #1028 direction the results page already
+follows), not printed as "source cost not provided" / "not available".
 
 A retired engine's own analysed cost (``tco_analysis.retired_engine_savings``, #949:
 an engine the source runs today) must also be traceable wherever the deliverable
@@ -31,7 +33,7 @@ def _report(tco: dict) -> dict:
 
 
 class TestExecutiveReportCostBaseline:
-    def test_unknown_baseline_says_so_not_zero_dollars(self) -> None:
+    def test_unknown_baseline_leaves_the_lines_out(self) -> None:
         tco = {
             "current_monthly_cost": 0.0,
             "current_cost_known": False,
@@ -40,9 +42,11 @@ class TestExecutiveReportCostBaseline:
             "cost_breakdown": [],
         }
         text = executive_text(_report(tco))
-        assert "Current monthly (source): source cost not provided" in text
-        assert "Savings: not available" in text
-        assert "Current monthly (source): $0.00" not in text
+        # #949 (#1028): the lines are left out, never a placeholder.
+        assert "Current monthly (source)" not in text
+        assert "Savings:" not in text
+        assert "source cost not provided" not in text
+        assert "not available" not in text
         assert "Savings: 0%" not in text
 
     def test_known_baseline_shows_the_real_figures(self) -> None:
@@ -86,9 +90,11 @@ class TestExecutiveReportCostBaseline:
             "cost_breakdown": [],
         }
         text = executive_text(_report(tco))
-        assert "Current monthly (source): source cost not provided" in text
-        assert "Savings: not available" in text
-        assert "Current monthly (source): $0.00" not in text
+        # #949 (#1028): the lines are left out, never a placeholder.
+        assert "Current monthly (source)" not in text
+        assert "Savings:" not in text
+        assert "source cost not provided" not in text
+        assert "not available" not in text
         assert "Savings: 0%" not in text
 
     def test_retired_engine_savings_are_traceable(self) -> None:
@@ -119,7 +125,7 @@ class TestExecutiveReportCostBaseline:
 
 
 class TestEngineeringReportCostBaseline:
-    def test_unknown_baseline_says_so_not_zero_dollars(self) -> None:
+    def test_unknown_baseline_leaves_the_lines_out(self) -> None:
         tco = {
             "current_monthly_cost": 0.0,
             "current_cost_known": False,
@@ -128,8 +134,12 @@ class TestEngineeringReportCostBaseline:
             "cost_breakdown": [],
         }
         md = render_engineering_report_md(_report(tco))
-        assert "source cost not provided" in md
-        assert "not available" in md
+        # #949 (#1028): the lines are left out, the projection stays.
+        assert "Current monthly (source)" not in md
+        assert "- Savings:" not in md
+        assert "source cost not provided" not in md
+        assert "not available" not in md
+        assert "- Projected monthly (target): $121.06" in md
 
     def test_known_baseline_shows_the_real_figures(self) -> None:
         tco = {

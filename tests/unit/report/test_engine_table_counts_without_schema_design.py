@@ -15,9 +15,9 @@ numbers, on the same page, already called 8.
 ``_architecture_engines`` (``src/report/architecture.py``) now reads that same
 per-wave ``table_count`` (via ``resolve_migration_waves``) for a migration
 target with no completed schema design, so the Scope column, the tile and
-the roadmap all come from the one field. An engine with a completed schema
-design is never affected: its own mapped-table figure (however it reads, 0
-included) is left alone.
+the roadmap all come from the one field. Since #949 an engine with a completed
+schema design reads the same wave figure; only an engine with no wave keeps its
+design's mapped-table figure.
 
 Fixtures:
 - ``wordpress_no_schema_design_report.json``: the real synthesis report from
@@ -97,41 +97,44 @@ def test_engineering_report_scope_total_and_roadmap_agree(report: dict[str, Any]
     assert scope_n == total_n == roadmap_n == 8
 
 
-def test_designed_engine_with_zero_mapped_tables_keeps_its_own_figure(
+def test_designed_engine_reads_its_tables_from_its_wave(
     designed_report: dict[str, Any],
 ) -> None:
-    """A completed schema design is never second-guessed by the wave fallback,
-    even when its own mapped-table count reads 0 and a migration wave offers a
-    different, larger number for the same engine -- the #524 fix only fires
-    for an engine with no completed design."""
+    """#949 (it was the other way round before): a completed schema design's own
+    mapped-table count is the design's table map, not the routing's figure. With a
+    migration wave for the engine, the wave's served and owned tables are the
+    engine's Scope and "migrates", so the headline "N tables migrate" agrees with
+    the wave's "N to move"; an engine with no wave keeps its design figure."""
     rigged = copy.deepcopy(designed_report)
     for d in rigged["recommended_architecture"]["databases"]:
         if d["service"] == "documentdb":
             d["table_count"] = 0
     assert rigged["schema_designs"]["documentdb"]["status"] == "completed"
+    tables = [f"db.t{i}" for i in range(30)]
     rigged["migration_waves"] = [
         {
-            "wave": 1,
+            "wave": 2,
             "engines": ["documentdb"],
             "moves_from": ["aurora_postgresql"],
             "homogeneity": None,
-            "table_count": 999,
+            "tables": tables,
+            "table_count": 30,
+            "table_owners": [{"table": t, "owner": "aurora_postgresql"} for t in tables[:4]],
         }
     ]
 
     rows = {e["engine"]: e for e in architecture._architecture_engines(rigged)}
     documentdb = rows["documentdb"]
     assert documentdb["role"] == "Migration target"
-    # Its own figure (0, with the design's "incl. shared" count carried along),
-    # not the wave's 999.
-    assert documentdb["migrates"] == 0
-    assert documentdb["scope"] == "0 source tables (86 incl. shared)"
+    # The wave's 30 served, 26 owned (4 kept in sync from Aurora PostgreSQL), and
+    # the design's own "incl. shared" count carried along.
+    assert documentdb["migrates"] == 26
+    assert documentdb["scope"] == "30 source tables (86 incl. shared)"
 
-    # Not double counted: the aggregate total is dynamodb's real 15 only --
-    # documentdb contributes 0, never the wave's 999 on top.
+    # dynamodb has no wave here: its design figure (15) stands, counted once.
     migrated_total = sum(
         e["migrates"]
         for e in architecture._architecture_engines(rigged)
         if e["role"] == "Migration target"
     )
-    assert migrated_total == 15
+    assert migrated_total == 15 + 26

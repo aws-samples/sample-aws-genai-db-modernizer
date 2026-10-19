@@ -17,7 +17,12 @@ out of each (``tests/e2e/deliverable_figures.py``) and compares every one with
 - monthly cost per engine and in total;
 - risk counts by severity;
 - the tied-query count;
-- the engines the reality check removed.
+- the engines the reality check removed;
+- the queries that move to a new engine (#949).
+
+The same checks also run on a wordpress job with a schema design for every kept
+engine (``designed_run``, #949): the deterministic samples never run schema
+design, and the designed figures disagreed there.
 
 It also checks the invariants: no total exceeds the tables or queries
 analyzed, wave counts reconcile with their table groups, and every engine a
@@ -94,6 +99,8 @@ def _common_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {"close_calls", "settled_ties"} & set(exp)
     # #729: and the queries on a fallback engine.
     req |= {"fallback_queries"} & set(exp)
+    # #949: the queries that move to a new engine.
+    req |= {"queries_moved"} & set(exp)
     return req
 
 
@@ -284,3 +291,32 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
         1 for r in rows if r["open_tie"]
     )
     assert "left in an unresolved tie" not in md
+
+
+def test_designed_report_json_is_consistent(designed_run: PipelineResult) -> None:
+    """#949: the same invariants on a job whose engines all have a schema design."""
+    report = _report_json(designed_run)
+    exp = expected_figures(report)
+    as_observed = {k: [(v, "report.json")] for k, v in exp.items()}
+    problems = report_invariant_violations(report)
+    problems += invariant_violations(report, as_observed, "report.json")
+    _settle("wordpress-designed", "report.json", problems)
+
+
+def test_designed_pdf_report_figures(designed_run: PipelineResult) -> None:
+    """#949: with a schema design, the PDF's headline figures still agree with
+    report.json: the retained core is not a migration target ("107 of 107 queries
+    move"), and "N tables migrate" is the waves' figure, not the design map's."""
+    report = _report_json(designed_run)
+    text = " ".join(pdf_page_texts(str(designed_run.deliverable("executive-report.pdf"))))
+    _settle("wordpress-designed", "PDF", _problems(report, pdf_figures(text), _pdf_required))
+
+
+def test_designed_engineering_report_figures(designed_run: PipelineResult) -> None:
+    report = _report_json(designed_run)
+    figs = engineering_figures(designed_run.deliverable("engineering-report.md").read_text())
+    _settle(
+        "wordpress-designed",
+        "engineering report",
+        _problems(report, figs, _engineering_required),
+    )

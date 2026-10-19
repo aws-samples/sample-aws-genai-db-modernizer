@@ -575,3 +575,78 @@ def test_mitigation_follows_the_concern_of_the_catalog_entry(pattern_type, expec
     text = _assigned_engine_mitigation(entry.guidance, "aurora_mysql", 3)
     assert expected in text and "Aurora MySQL" in text and "3 flagged queries" in text
     assert not any(n in text for n in _OTHER_ENGINE_NAMES)
+
+
+class TestCoverageGapWithoutASchemaDesign:
+    """#949: with no schema design for the engine the queries moved to, every one of
+    them "has no in-scope access pattern" only because the design did not run. The
+    gap says so, and is LOW, so it never raises the overall level on its own (the
+    wordpress no-model run read "Overall risk HIGH" from this one risk)."""
+
+    @staticmethod
+    def _undesigned() -> SynthesisData:
+        data = _data()
+        _set_recommendation(
+            data, "aurora_mysql", "high-frequency-pk-lookup", "Migrate PK lookups to DynamoDB."
+        )
+        data.engines["dynamodb"].schema_design = None
+        return data
+
+    def test_the_gap_says_the_design_did_not_run_and_is_low(self) -> None:
+        gaps = [
+            r for r in build_risk_assessment(self._undesigned())["risks"] if r.get("coverage_gap")
+        ]
+        assert len(gaps) == 1
+        gap = gaps[0]
+        assert gap["severity"] == "LOW"
+        assert gap["query_ids"] == ["q-opt"]
+        assert gap["description"] == (
+            "[dynamodb] Not checked: schema design was not run for DynamoDB, so 1 query "
+            "assigned to it has no access pattern to check against: q-opt"
+        )
+        assert gap["mitigation"] == (
+            "Run the DynamoDB schema design; any of these queries it does not serve "
+            "then becomes a schema design gap."
+        )
+        assert "Schema design gap" not in gap["description"]
+
+    def test_it_never_raises_the_overall_level(self) -> None:
+        data = self._undesigned()
+        # The aggregation queries run as SQL on Aurora: no other HIGH risk is left.
+        for qa in data.assignment["query_assignments"]:
+            if qa["query_id"].startswith("q-agg"):
+                qa["assigned_engine"] = "aurora_mysql"
+        result = build_risk_assessment(data)
+        others = [r for r in result["risks"] if not r.get("coverage_gap")]
+        assert synthesis_report.overall_risk_level(others) != "HIGH"
+        assert result["overall_risk_level"] == synthesis_report.overall_risk_level(others)
+
+    def test_an_empty_design_counts_as_not_run(self) -> None:
+        data = self._undesigned()
+        data.engines["dynamodb"].schema_design = {}
+        gaps = [r for r in build_risk_assessment(data)["risks"] if r.get("coverage_gap")]
+        assert [g["severity"] for g in gaps] == ["LOW"]
+
+    def test_a_design_that_ran_keeps_the_gap_and_its_severity(self) -> None:
+        """What must not change: a design that ran and does not serve the query is a
+        real gap, at the anti-pattern's own severity."""
+        data = _data()
+        _set_recommendation(
+            data, "aurora_mysql", "high-frequency-pk-lookup", "Migrate PK lookups to DynamoDB."
+        )
+        _set_in_scope(data, "DDB-AP-1", False)
+        gaps = _risks_by_type(build_risk_assessment(data), "Schema design gap")
+        assert [(g["severity"], g["query_ids"]) for g in gaps] == [("HIGH", ["q-opt"])]
+
+
+def test_the_strategy_for_a_gap_with_no_design_is_to_run_the_design() -> None:
+    """#949: the next step for queries no design checked is the design itself, not
+    "add access patterns the design does not serve"."""
+    data = TestCoverageGapWithoutASchemaDesign._undesigned()
+    strategies = build_risk_assessment(data)["mitigation_strategies"]
+    gap = next(r for r in build_risk_assessment(data)["risks"] if r.get("coverage_gap"))
+    assert (
+        f"Run the DynamoDB schema design to check the 1 query assigned to it ({gap['risk_id']})."
+        in strategies
+    )
+    assert not any("schema design does not serve" in s for s in strategies)
