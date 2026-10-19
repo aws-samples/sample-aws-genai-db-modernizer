@@ -279,7 +279,8 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
 
 4. **Update documentation** if needed
 
-5. **Self-review** against the [Before asking for review](AGENTS.md#before-asking-for-review) checklist in AGENTS.md, and run `./ci/pre_merge.sh`
+5. **Fill in "Maintainer decision this implements"** in the PR template: link the issue comment where the decision was recorded, or write "None"
+6. **Self-review** against the [Before asking for review](AGENTS.md#before-asking-for-review) checklist in AGENTS.md, and run `./ci/pre_merge.sh`
 
 ### PR Title Format
 

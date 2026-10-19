@@ -242,6 +242,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
 8. Make timing and resource checks relative (a ratio against a same-process reference), so local runs match CI.
 9. Run `./ci/pre_merge.sh` before pushing: it checks conflicts, contract versions, lint, tests and the `needs_llm_run` verdict in one pass (see [ci/README.md](ci/README.md)).
 10. Pass the source dialect or engine wherever SQL is parsed. A default dialect silently misparses other engines' syntax.
+11. Fill in the PR template's "Maintainer decision this implements" with a link to the issue comment that recorded the decision (or "None"), so the reviewer can check the PR against it.
 
 ## Conventions
 

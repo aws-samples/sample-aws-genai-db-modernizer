@@ -173,3 +173,13 @@ def test_every_cited_name_flag_and_env_var_exists() -> None:
     assert names and env_vars and flags
     for token in sorted(names | env_vars | (flags - EXTERNAL_FLAGS)):
         assert token in corpus, f"AGENTS.md cites {token!r}, not found in the repo"
+
+
+def test_maintainer_decision_field_is_in_template_and_both_docs() -> None:
+    field = "Maintainer decision this implements"
+    template = (REPO_ROOT / ".github" / "pull_request_template.md").read_text()
+    contributing = (REPO_ROOT / "CONTRIBUTING.md").read_text()
+    assert f"## {field}" in template
+    assert '"None"' in template
+    assert field in contributing
+    assert field in _text()
