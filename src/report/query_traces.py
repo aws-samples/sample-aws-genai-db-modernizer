@@ -30,10 +30,15 @@ def _score(value: Any) -> str:
     return fmt_num(value, 1) if isinstance(value, (int, float)) else "n/a"
 
 
-def _kinds(row: dict[str, Any]) -> str:
+def _kinds(row: dict[str, Any], group: dict[str, Any] | None = None) -> str:
     """Why the query is listed, from the facts layer's row: a tie still open is an
-    "unresolved tie" (as in "Unresolved engine ties"), a settled one "was tied"."""
+    "unresolved tie" (as in "Unresolved engine ties"), a settled one "was tied".
+    A group's entry (#1108) states its stored open-tie count instead ("26
+    unresolved ties"), so the headings add up to "Unresolved engine ties"."""
     tie = "unresolved tie" if row.get("open_tie") else "was tied"
+    if group is not None and row.get("open_tie"):
+        open_ties = int(group.get("open_tie_count") or 0)
+        tie = f"{open_ties} {plural_noun(open_ties, 'unresolved tie', 'unresolved ties')}"
     labels = (
         ("moved", "moved"),
         ("tied", tie),
@@ -83,20 +88,38 @@ def _step_md(step: dict[str, Any], first: bool, previous: dict[str, Any] | None)
     return out
 
 
-def _trace_md(trace: dict[str, Any], row: dict[str, Any]) -> list[str]:
+def _trace_md(
+    trace: dict[str, Any], row: dict[str, Any], group: dict[str, Any] | None = None
+) -> list[str]:
+    """One entry: a query's trace, or (``group``, #1108) the one trace the queries
+    of a facts-layer group share, headed by their count and short ids."""
     first = trace.get("first_assignment") or {}
     start = first.get("to_engine_name")
     end = trace.get("final_engine_name") or "?"
     path = f"{start} to {end}" if start and start != end else f"on {end}"
     tables = [t for t in trace.get("source_tables") or [] if t]
     on = f" on {_tables_md(tables)}" if tables else ""
-    out = [
-        f"### `{escaping.md_code(trace.get('query_id', '?'))}`{on} "
-        f"({escaping.md_text(_kinds(row))}): {escaping.md_text(path)}",
-        "",
-    ]
-    if trace.get("query_excerpt"):
-        out += [f"`{escaping.md_code(trace['query_excerpt'])}`", ""]
+    if group is not None:
+        count = int(group.get("query_count") or 0)
+        out = [
+            f"### {count} {plural_noun(count, 'query', 'queries')} "
+            f"({escaping.md_text(_kinds(row, group))}): {escaping.md_text(path)}",
+            "",
+            "Queries: "
+            + ", ".join(f"`{escaping.md_code(i)}`" for i in group.get("short_ids") or []),
+            "",
+            "Each of them has this trace; their full ids, tables and SQL are in the "
+            "Assessment Data (JSON) and the UI's query history.",
+            "",
+        ]
+    else:
+        out = [
+            f"### `{escaping.md_code(trace.get('query_id', '?'))}`{on} "
+            f"({escaping.md_text(_kinds(row))}): {escaping.md_text(path)}",
+            "",
+        ]
+        if trace.get("query_excerpt"):
+            out += [f"`{escaping.md_code(trace['query_excerpt'])}`", ""]
     previous: dict[str, Any] | None = None
     for step in ([first] if first else []) + list(trace.get("moves") or []):
         out += _step_md(step, first=step is first, previous=previous)
@@ -131,8 +154,9 @@ def _trace_md(trace: dict[str, Any], row: dict[str, Any]) -> list[str]:
             out.append(f"- {escaping.md_text(better['explanation'])}")
     tied = trace.get("tied_engine_names") or []
     if tied:
+        who = "each query" if group is not None else "the query"
         out.append(
-            f"- Unresolved tie: {escaping.md_text(', '.join(str(n) for n in tied))}; the query "
+            f"- Unresolved tie: {escaping.md_text(', '.join(str(n) for n in tied))}; {who} "
             "is listed under the final engine pending the customer's choice."
         )
     out.append("")
@@ -233,8 +257,21 @@ def query_traces_md(report: dict[str, Any]) -> list[str]:
             "(Why this engine) shows any query's full trace.",
             "",
         ]
-    for row in facts.get("listed_queries") or []:
-        trace = by_id.get(str(row.get("query_id")))
-        if row.get("in_full") and trace is not None:
-            out += _trace_md(trace, row)
+    entries = int(facts.get("trace_group_count") or 0)
+    in_full = int(facts.get("full_trace_count") or 0)
+    if entries and entries < in_full:
+        out += [
+            f"Queries whose trace reads the same (same path, steps, scores and reason) share one "
+            f"entry: {entries} {plural_noun(entries, 'entry', 'entries')} below cover "
+            f"{in_full} {plural_noun(in_full, 'query', 'queries')}.",
+            "",
+        ]
+    rows = {str(r.get("query_id")): r for r in facts.get("listed_queries") or []}
+    # A report written before 1.41 gets its groups from report_facts (#1108).
+    for group in facts.get("trace_groups") or []:
+        rep = str(group.get("representative_id"))
+        trace = by_id.get(rep)
+        if trace is None or not rows.get(rep, {}).get("in_full"):
+            continue
+        out += _trace_md(trace, rows[rep], group if group.get("query_count", 1) > 1 else None)
     return out

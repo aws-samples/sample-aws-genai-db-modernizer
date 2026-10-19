@@ -17,6 +17,7 @@ from src.shared.report_facts import (
     access_pattern_facts,
     compute_report_facts,
     query_move_facts,
+    query_trace_facts,
     resolved_risk_severity_facts,
     unservable_query_facts,
 )
@@ -29,7 +30,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
 
     A block written before contract 1.26 has no ``access_pattern_totals`` (#792), one
     written before 1.28 no query move counts and no resolved risks by severity (#1020),
-    and one written before 1.38 no per-kind ``unservable`` counts (#888); those figures are
+    one written before 1.38 no per-kind ``unservable`` counts (#888), and one written
+    before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
+    the contract has them empty while queries have a full trace); those figures are
     filled in from ``query_groups``, ``ranking``, the resolved risks and the traces, the rest stays as stored.
     """
     facts = report.get("facts")
@@ -45,6 +48,21 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.
             missing["unservable"] = unservable_query_facts(report)
+        trace = facts.get("query_trace")
+        if (
+            isinstance(trace, dict)
+            and not trace.get("trace_groups")
+            and any(
+                isinstance(r, dict) and r.get("in_full") for r in trace.get("listed_queries") or []
+            )
+        ):
+            # A block written before 1.41 (#1108): the groups, from the same function.
+            computed = query_trace_facts(report) or {}
+            missing["query_trace"] = {
+                **trace,
+                "trace_groups": computed.get("trace_groups") or [],
+                "trace_group_count": computed.get("trace_group_count") or 0,
+            }
         return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
 

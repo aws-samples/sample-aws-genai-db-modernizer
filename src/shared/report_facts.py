@@ -30,6 +30,7 @@ an old report gets one answer per figure.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -940,6 +941,147 @@ def trace_order(row: Mapping[str, Any]) -> tuple[bool, bool, bool, bool, str]:
 _KIND_KEYS = ("moved", "tied", "open_tie", "overridden", "pinned")
 
 
+SHORT_ID_LENGTH = 8
+
+
+def _trace_signature(trace: Mapping[str, Any], row: Mapping[str, Any]) -> str:
+    """What makes two listed queries read the same in the appendix (#1108).
+
+    The same kinds of story, the same path, and at every step the same rule,
+    sentence, engine move and candidate scores or gates, then the same final
+    engine and scores, runner-up and outscored engines. Anything specific to
+    one query (its id, tables, SQL, step ``seq``) is left out, so queries a
+    rule moved together share a signature. A JSON string, so it hashes and
+    sorts.
+    """
+    first = trace.get("first_assignment")
+    steps = ([first] if isinstance(first, Mapping) else []) + [
+        m for m in trace.get("moves") or [] if isinstance(m, Mapping)
+    ]
+    runner = trace.get("runner_up")
+    return json.dumps(
+        {
+            "kinds": [bool(row.get(k)) for k in _KIND_KEYS],
+            "steps": [
+                [
+                    s.get("version"),
+                    s.get("reason_code"),
+                    s.get("from_engine"),
+                    s.get("to_engine"),
+                    s.get("explanation"),
+                    [
+                        [c.get("engine"), c.get("score"), c.get("gate")]
+                        for c in s.get("candidates") or []
+                        if isinstance(c, Mapping)
+                    ],
+                ]
+                for s in steps
+            ],
+            "final": [
+                trace.get("final_engine"),
+                trace.get("final_score"),
+                trace.get("final_group_mean"),
+                trace.get("final_version"),
+                trace.get("effective_version"),
+                sorted(trace.get("tied_engines") or []),
+            ],
+            # The appendix prints the runner-up's sentence and, from its basis and
+            # score, whether it was compared on the group's mean scores.
+            "runner_up": (
+                [runner.get("explanation"), runner.get("basis"), runner.get("score")]
+                if isinstance(runner, Mapping)
+                else None
+            ),
+            "outscored": [
+                o.get("explanation")
+                for o in trace.get("outscored_by") or []
+                if isinstance(o, Mapping)
+            ],
+        },
+        sort_keys=True,
+    )
+
+
+def report_query_ids(value: Any) -> set[str]:
+    """Every query id anywhere in ``report.json`` (#1108): each ``query_id`` and every
+    id of a ``*query_ids`` list, at any depth, so a short id is checked against the
+    queries the JSON and the UI name, not only the ones the appendix lists."""
+    found: set[str] = set()
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                if key == "query_id" and isinstance(child, (str, int)) and child != "":
+                    found.add(str(child))
+                elif isinstance(key, str) and key.endswith("query_ids") and isinstance(child, list):
+                    found.update(str(q) for q in child if isinstance(q, (str, int)) and q != "")
+                else:
+                    stack.append(child)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def short_query_ids(query_ids: Iterable[str], known_ids: Iterable[str] = ()) -> dict[str, str]:
+    """Each of ``query_ids``' short form: its first ``SHORT_ID_LENGTH`` characters, or
+    the whole id when another id among them or ``known_ids`` (every other query of the
+    report) shares the short form, so a short id never names two of the report's queries."""
+    ids = sorted({str(q) for q in query_ids})
+    counts: dict[str, int] = {}
+    for q in {*ids, *(str(k) for k in known_ids)}:
+        counts[q[:SHORT_ID_LENGTH]] = counts.get(q[:SHORT_ID_LENGTH], 0) + 1
+    return {q: q if counts[q[:SHORT_ID_LENGTH]] > 1 else q[:SHORT_ID_LENGTH] for q in ids}
+
+
+def trace_groups(
+    traces: Iterable[Mapping[str, Any]],
+    rows: Iterable[Mapping[str, Any]],
+    known_ids: Iterable[str] = (),
+) -> list[dict[str, Any]]:
+    """The listed queries with a full trace, grouped by what their trace says (#1108).
+
+    ``rows`` are the facts layer's listed queries (most notable first),
+    ``traces`` the full traces. Queries whose trace reads the same
+    (``_trace_signature``) form one group: ``query_ids`` in the rows' order,
+    ``short_ids`` beside them (unique among them and ``known_ids``, the
+    report's other query ids), ``query_count``, ``open_tie_count`` (those
+    still in an unresolved tie, so the appendix's headings add up to
+    "Unresolved engine ties"), and ``representative_id``, the first of them,
+    whose trace the appendix renders once. Groups follow
+    the order of their first member, so the output is deterministic. Every
+    query with a full trace is in exactly one group; a lone query is a group
+    of one.
+    """
+    by_id = {str(t.get("query_id")): t for t in traces}
+    members: dict[str, list[str]] = {}
+    open_ties: dict[str, int] = {}
+    order: list[str] = []
+    for row in rows:
+        qid = str(row.get("query_id"))
+        trace = by_id.get(qid)
+        if not row.get("in_full") or trace is None:
+            continue
+        sig = _trace_signature(trace, row)
+        if sig not in members:
+            members[sig] = []
+            open_ties[sig] = 0
+            order.append(sig)
+        members[sig].append(qid)
+        open_ties[sig] += 1 if row.get("open_tie") else 0
+    short = short_query_ids((q for ids in members.values() for q in ids), known_ids)
+    return [
+        {
+            "representative_id": members[sig][0],
+            "query_ids": members[sig],
+            "short_ids": [short[q] for q in members[sig]],
+            "query_count": len(members[sig]),
+            "open_tie_count": open_ties[sig],
+        }
+        for sig in order
+    ]
+
+
 def query_trace_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     """The figures of ``report["query_traces"]`` (``QueryTraceFacts``), or None without it."""
     digest = report.get("query_traces")
@@ -962,6 +1104,7 @@ def query_trace_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     total = digest.get("query_count")
     total = total if isinstance(total, int) and not isinstance(total, bool) else len(rows)
     in_full = sum(1 for row in rows if row["in_full"])
+    groups = trace_groups(full, rows, report_query_ids(report))
     return {
         "has_ledger": bool(digest.get("has_ledger")),
         "traced_query_count": total,
@@ -976,6 +1119,8 @@ def query_trace_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "pinned_query_count": sum(1 for row in rows if row["pinned"]),
         "unlisted_query_count": max(total - len(rows), 0),
         "listed_queries": rows,
+        "trace_group_count": len(groups),
+        "trace_groups": groups,
         "unlisted_rules": [
             {
                 "rule": str(r.get("rule")),

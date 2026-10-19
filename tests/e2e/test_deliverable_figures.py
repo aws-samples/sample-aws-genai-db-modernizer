@@ -287,9 +287,20 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
             appendix
         )
     rows = [r for r in trace["listed_queries"] if r["in_full"]]
-    assert appendix.count("(unresolved tie") + appendix.count(", unresolved tie") == sum(
-        1 for r in rows if r["open_tie"]
-    )
+    open_in_full = sum(1 for r in rows if r["open_tie"])
+    # #1108: an entry is one query or a group of queries whose trace reads the
+    # same; a group's heading carries its open-tie count ("26 unresolved ties"),
+    # a single query's its "unresolved tie" label. They add up either way.
+    groups = trace.get("trace_groups") or []
+    assert sum(int(g["open_tie_count"]) for g in groups) == open_in_full
+    labelled = 0
+    for heading in re.findall(r"^### .*$", appendix, flags=re.MULTILINE):
+        if re.match(r"### \d+ quer", heading):
+            n = re.search(r"\b(\d+) unresolved ties?\b", heading)
+            labelled += int(n.group(1)) if n else 0
+        else:
+            labelled += int("(unresolved tie" in heading or ", unresolved tie" in heading)
+    assert labelled == open_in_full
     assert "left in an unresolved tie" not in md
 
 

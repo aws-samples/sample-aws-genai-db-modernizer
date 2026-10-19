@@ -411,7 +411,8 @@ class TestSynthesisOutputContract:
         # #1033: FlaggedUnservableQuery.cause gains held_by_pin, facts.unservable
         # gains held_query_count (1.39)
         # #950: Risk.rule and Risk.wave added (1.40)
-        assert output.contract_version == "1.40"
+        # #1108: facts.query_trace.trace_groups added (1.41)
+        assert output.contract_version == "1.41"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

@@ -397,6 +397,16 @@ Version History:
   full. ``mitigation_strategies`` gains one line per wave naming
   those risks. Backward compatible: all three default to ``None``, the value every
   risk written before 1.40 (and every analysis risk) reads back as.
+- 1.41 (2026-10-19, #1108): ``facts.query_trace.trace_groups``
+  (``QueryTraceGroup``) and ``trace_group_count``: the listed queries with a
+  full trace, grouped by what their trace says (same kinds, path, steps,
+  scores, final engine and runner-up), each group with its query ids, 8-character
+  short ids (unique among every query id in the report), count and open-tie
+  count, so the engineering report's appendix states a story once and names
+  the queries that share it, and its headings still add up to "Unresolved
+  engine ties". ``listed_queries`` still lists every query. Backward
+  compatible: both default to empty / 0, and a stored block without groups
+  gets them from ``src.report.facts.report_facts``.
 """
 
 from datetime import datetime
@@ -1069,6 +1079,40 @@ class TraceRuleFact(BaseModel):
     rule_query_count: int = Field(..., ge=0)
 
 
+class QueryTraceGroup(BaseModel):
+    """Listed queries whose full traces read the same (#1108): one appendix entry."""
+
+    representative_id: str = Field(
+        ..., description="The first of them, whose full trace the appendix renders once"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="Every query of the group, most notable first"
+    )
+    short_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Each id's short form, in step with query_ids (8 characters, whole if another "
+            "query id in the report starts the same)"
+        ),
+    )
+    query_count: int = Field(..., ge=1, description="How many queries share the entry")
+    open_tie_count: int = Field(
+        0,
+        ge=0,
+        description="Those still in an unresolved tie; the headings add up to the open ties",
+    )
+
+    @model_validator(mode="after")
+    def _counts_agree(self) -> "QueryTraceGroup":
+        if not (len(self.query_ids) == len(self.short_ids) == self.query_count):
+            raise ValueError("query_ids, short_ids and query_count must agree")
+        if self.open_tie_count > self.query_count:
+            raise ValueError("open_tie_count cannot exceed query_count")
+        if self.representative_id not in self.query_ids:
+            raise ValueError("representative_id must be one of query_ids")
+        return self
+
+
 class QueryTraceFacts(BaseModel):
     """The figures of the per-query decision traces (#339), from ``query_traces``."""
 
@@ -1090,6 +1134,13 @@ class QueryTraceFacts(BaseModel):
     )
     listed_queries: list[QueryTraceFactRow] = Field(
         default_factory=list, description="Every listed query, most notable first"
+    )
+    trace_group_count: int = Field(
+        0, ge=0, description="Entries in the appendix: groups of the queries with a full trace"
+    )
+    trace_groups: list[QueryTraceGroup] = Field(
+        default_factory=list,
+        description="The queries with a full trace, grouped by what their trace says (#1108)",
     )
     unlisted_rules: list[TraceRuleFact] = Field(
         default_factory=list, description="The queries not listed, by their first rule"
@@ -1565,7 +1616,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.40",
+        default="1.41",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

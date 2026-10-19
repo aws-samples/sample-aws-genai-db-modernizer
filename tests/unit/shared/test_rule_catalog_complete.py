@@ -411,6 +411,7 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset(
             {
                 "TRACE_FULL_CAP",
+                "SHORT_ID_LENGTH",
                 "CLOSE_CALL_IDS_SHOWN",
                 "CLOSE_CALL_MARGIN",
                 "UNSERVABLE_SHOWN",
