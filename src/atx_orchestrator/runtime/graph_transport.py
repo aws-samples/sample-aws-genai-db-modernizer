@@ -24,6 +24,13 @@ This module bridges that gap with a two-part convention:
 The pointer is plain STATE JSON, so it is discoverable through the store's
 existing label index by any later phase or the read-side API — no new discovery
 mechanism, no change to how the store lists artifacts.
+
+Planned reader: ``download_graph`` has no production caller yet. It is kept on
+purpose for #309, which will read the published graph back in a later phase
+process. The pointer write in ``publish_graph`` stays for the same reason: it is
+the only way that reader can find the published artifact, because the store's label
+index lists STATE artifacts and not EXTERNAL deliverables. Do not remove either as
+dead code before #309 lands.
 """
 
 from __future__ import annotations
