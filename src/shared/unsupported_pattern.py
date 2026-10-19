@@ -58,7 +58,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.shared.sql_spans import LITERALS_AND_COMMENTS, sub_spans
+from src.shared.sql_spans import literals_and_comments_for, sub_spans
 
 
 def unsupported_pattern_ids(u: dict[str, Any]) -> list[str]:
@@ -224,7 +224,7 @@ _SCALAR_OPERATION_ALLOWLIST = frozenset(
 )
 
 
-def is_dedup_only_group_by(query_sql: str | None) -> bool:
+def is_dedup_only_group_by(query_sql: str | None, source_engine: str | None = None) -> bool:
     """True when ``query_sql``'s ``GROUP BY`` only de-duplicates rows (#336).
 
     A common idiom (seen in the WordPress sample) joins tables and then adds
@@ -276,7 +276,7 @@ def is_dedup_only_group_by(query_sql: str | None) -> bool:
         if match.group(1).lower() not in _SCALAR_OPERATION_ALLOWLIST:
             return False
 
-    sql = strip_comments_and_literals(original)
+    sql = strip_comments_and_literals(original, source_engine)
     if not _GROUP_BY_RE.search(sql):
         return False
     if _HAVING_RE.search(sql):
@@ -306,14 +306,18 @@ _NOT_A_CALL_RE = re.compile(
 )
 
 
-def strip_comments_and_literals(query_sql: str | None) -> str:
+def strip_comments_and_literals(query_sql: str | None, source_engine: str | None = None) -> str:
     """``query_sql`` with comments and quoted strings/identifiers blanked out.
 
     The same stripping ``is_dedup_only_group_by`` applies first, so a keyword,
     operator or function call that only appears inside a literal or comment
     never counts as part of the query.
+
+    ``source_engine`` picks the dialect's extra forms (#1101): MySQL and MariaDB ``#``
+    line comments, PostgreSQL ``$$...$$`` and ``$tag$...$tag$`` strings. None known
+    reads only the forms every dialect shares.
     """
-    return sub_spans(query_sql or "", LITERALS_AND_COMMENTS, lambda _span: " ")
+    return sub_spans(query_sql or "", literals_and_comments_for(source_engine), lambda _span: " ")
 
 
 def non_scalar_function_names(query_sql: str | None) -> set[str]:

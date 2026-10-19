@@ -937,7 +937,7 @@ class QueryFacts:
         """The ``GROUP BY`` only de-duplicates rows
         (``unsupported_pattern.is_dedup_only_group_by``, #336).
         """
-        return self.group_by and is_dedup_only_group_by(self._text)
+        return self.group_by and is_dedup_only_group_by(self._text, self._source_engine)
 
     @cached_property
     def computed_join_key(self) -> bool:
@@ -978,7 +978,9 @@ class QueryFacts:
         Decision 14)."""
         if not self._has("conflict", "duplicate", "replace"):
             return False
-        text = _BACKTICK_OR_BRACKET_IDENTIFIER_RE.sub(" ", strip_comments_and_literals(self._text))
+        text = _BACKTICK_OR_BRACKET_IDENTIFIER_RE.sub(
+            " ", strip_comments_and_literals(self._text, self._source_engine)
+        )
         return bool(_UPSERT_RE.search(text))
 
     @cached_property
@@ -1013,7 +1015,7 @@ class QueryFacts:
         on a SQL Server source, ``CROSS APPLY`` or ``OUTER APPLY`` too (#982): the same
         correlated join, which both Aurora engines run as ``LATERAL``."""
         if self._has("lateral") and _LATERAL_JOIN_RE.search(
-            strip_comments_and_literals(self._text)
+            strip_comments_and_literals(self._text, self._source_engine)
         ):
             return True
         if self._source_engine.strip().lower() != "sqlserver" or not self._has("apply"):

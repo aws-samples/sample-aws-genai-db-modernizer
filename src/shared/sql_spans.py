@@ -23,14 +23,20 @@ Two grammars are provided, one per old regex:
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from functools import lru_cache
 
 __all__ = [
     "COMMENTS_LITERALS_AND_IDENTIFIERS",
     "LITERALS_AND_COMMENTS",
+    "MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS",
+    "MYSQL_LITERALS_AND_COMMENTS",
+    "POSTGRES_LITERALS_AND_COMMENTS",
     "QUOTED_IDENTIFIERS",
     "Grammar",
+    "literals_and_comments_for",
     "quoted_span_end",
     "spans",
     "sub_spans",
@@ -108,7 +114,65 @@ def _end_comments_literals_and_identifiers(text: str, start: int, opener: str) -
     return quoted_span_end(text, start, opener, backslash=opener == "'")
 
 
+# A PostgreSQL dollar-quoted string opens with ``$$`` or ``$tag$`` (a tag cannot start with
+# a digit, so a ``$1`` parameter is not one) and closes at the same ``$tag$``. Not an opener
+# inside an identifier (``a$b$``), which PostgreSQL reads as one name.
+_DOLLAR_OPENER = r"(?<![\w$])\$(?:[^\W\d]\w*)?\$"
+_DOLLAR_TOKEN_RE = re.compile(r"(?=(\$(?:[^\W\d]\w*)?\$))")
+
+
+@lru_cache(maxsize=2)
+def _dollar_tokens(text: str) -> dict[str, list[int]]:
+    """Every ``$tag$`` token in ``text`` (overlaps included) with its start offsets,
+    built in one pass so that finding a closer is a bisect, never a rescan per tag."""
+    found: dict[str, list[int]] = {}
+    for match in _DOLLAR_TOKEN_RE.finditer(text):
+        found.setdefault(match.group(1), []).append(match.start())
+    return found
+
+
+def _dollar_end(text: str, start: int, opener: str) -> int:
+    positions = _dollar_tokens(text).get(opener, [])
+    at = bisect_left(positions, start + len(opener))
+    return positions[at] + len(opener) if at < len(positions) else -1
+
+
+def _end_with_hash(text: str, start: int, opener: str) -> int:
+    if opener == "#":
+        newline = text.find("\n", start)
+        return len(text) if newline < 0 else newline
+    if opener == "`":
+        return _end_quoted_identifiers(text, start, opener)
+    return _end_literals_and_comments(text, start, opener)
+
+
+def _end_mysql_comments_literals_and_identifiers(text: str, start: int, opener: str) -> int:
+    if opener == "#":
+        return _end_with_hash(text, start, opener)
+    return _end_comments_literals_and_identifiers(text, start, opener)
+
+
+def _end_with_dollar(text: str, start: int, opener: str) -> int:
+    if opener.startswith("$"):
+        return _dollar_end(text, start, opener)
+    return _end_literals_and_comments(text, start, opener)
+
+
 LITERALS_AND_COMMENTS = Grammar(re.compile(r"/\*|--|['\"]"), _end_literals_and_comments)
+# MySQL and MariaDB also end a line at ``#``; PostgreSQL reads ``#`` as an operator, so
+# only this grammar blanks it (#1101).
+# A backtick-quoted identifier is a span too, so a ``#`` inside one (`` `order#items` ``)
+# is not a comment.
+MYSQL_LITERALS_AND_COMMENTS = Grammar(re.compile(r"/\*|--|#|['\"`]"), _end_with_hash)
+# The same with ``"..."`` and ``[...]`` identifiers: one scan that strips comments and
+# literals and unquotes identifiers in source order (the transaction shape, #1101).
+MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
+    re.compile(r"/\*|--|#|['\"`\[]"), _end_mysql_comments_literals_and_identifiers
+)
+# PostgreSQL also quotes strings with ``$$...$$`` and ``$tag$...$tag$`` (#1101).
+POSTGRES_LITERALS_AND_COMMENTS = Grammar(
+    re.compile(rf"/\*|--|['\"]|{_DOLLAR_OPENER}"), _end_with_dollar
+)
 QUOTED_IDENTIFIERS = Grammar(re.compile(r"[\"`\[]"), _end_quoted_identifiers)
 # All of them in one scan, the span that opens first winning: ``/* */`` and ``--``
 # comments, ``'...'`` literals with backslash escapes, ``"..."`` identifiers without
@@ -116,6 +180,18 @@ QUOTED_IDENTIFIERS = Grammar(re.compile(r"[\"`\[]"), _end_quoted_identifiers)
 COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
     re.compile(r"/\*|--|['\"`\[]"), _end_comments_literals_and_identifiers
 )
+
+
+def literals_and_comments_for(source_engine: str | None) -> Grammar:
+    """The comment and literal grammar of a source engine (``metadata.source_database.engine``):
+    MySQL's and MariaDB's add ``#`` comments, PostgreSQL's adds dollar quoting, every other
+    engine (or none known) keeps the common one."""
+    engine = (source_engine or "").strip().lower()
+    if engine in ("mysql", "mariadb"):
+        return MYSQL_LITERALS_AND_COMMENTS
+    if engine in ("postgresql", "postgres"):
+        return POSTGRES_LITERALS_AND_COMMENTS
+    return LITERALS_AND_COMMENTS
 
 
 def spans(text: str, grammar: Grammar) -> Iterator[tuple[int, int, str]]:
