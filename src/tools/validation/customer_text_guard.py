@@ -124,6 +124,7 @@ ID_FIELDS = frozenset(
         "designed_engines",  # ReportFacts.table_basis.designed_engines (#615)
         "pending_engines",  # ReportFacts.table_basis.pending_engines (#615)
         "moved_to",  # ReportFacts.removed_engines[].moved_to (#615)
+        "engines_in_use",  # SynthesisOutputContract.engines_in_use: raw engine ids (#1076)
         "signal_overrides",  # ReportFacts.engines[].signal_overrides: raw signal ids (#584)
         # Rule/pattern ids (exclusion rule ids, generated pattern ids like
         # "relational-aurora_mysql-<query_id>"): internal identifiers, not prose.
@@ -187,6 +188,7 @@ ID_FIELD_PATHS = frozenset(
         ("replicated_tables", "table"),  # ReplicatedTableFact.table (#992)
         ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)
         ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
+        ("retired_in_use_engines", "engine"),  # ReportFacts.retired_in_use_engines (#1076)
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)

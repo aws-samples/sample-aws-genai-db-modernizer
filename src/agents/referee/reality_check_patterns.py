@@ -335,8 +335,12 @@ def _build_recommendations(
             outcome = (
                 f"No saving is claimed: {source_name} was never justified by the workload. "
                 "None of its first-assignment queries clear the real-search-depth "
-                "plus traffic-or-result-size floor a standing deployment needs, so no "
-                "infrastructure cost was ever justified for it."
+                "plus traffic-or-result-size floor a standing deployment needs, so "
+                + (
+                    f"the plan counts no saving for the {source_name} the source runs today."
+                    if source in running
+                    else "no infrastructure cost was ever justified for it."
+                )
             )
         elif source not in running:
             # #949: a candidate the plan considered and dropped; the customer does not

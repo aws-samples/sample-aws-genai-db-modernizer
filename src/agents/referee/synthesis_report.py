@@ -48,6 +48,7 @@ from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailInterven
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_source_clause
+from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
@@ -3074,6 +3075,7 @@ def build_summary(
     query_groups: list[dict],
     eliminated: dict[str, str | None] | None = None,
     reality_check_settled: set[str] | None = None,
+    retired_in_use: list[dict] | None = None,
 ) -> str:
     """Build a comprehensive executive summary.
 
@@ -3269,16 +3271,25 @@ def build_summary(
     if named_groups:
         parts.append(f"Top query groups by throughput: {', '.join(named_groups)}.")
 
+    # #1076: an engine the customer runs today that the plan retires is stated on its own,
+    # with its saving, and is not an "other target" the customer never had.
+    retired_ids = {str(r["engine"]) for r in retired_in_use or []}
+    if has_assignment and retired_in_use:
+        statements = "; ".join(retired_in_use_statement(r) for r in retired_in_use)
+        parts.append(f"Retired by this plan: {statements}.")
+
     # Other engines: evaluated but carrying no workload in the target
     if has_assignment:
         others = [
             f"{display_name(r['target'])} (no queries assigned)"
             for r in ranking
-            if r.get("assigned_queries", 0) == 0 and not is_cache_layer(r)
+            if r.get("assigned_queries", 0) == 0
+            and not is_cache_layer(r)
+            and r["target"] not in retired_ids
         ]
         listed = {r["target"] for r in ranking}
         for engine, absorber in (eliminated or {}).items():
-            if engine in listed:
+            if engine in listed or engine in retired_ids:
                 continue
             settled = reality_check_settled is None or engine in reality_check_settled
             engine_name = display_name(engine)

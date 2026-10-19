@@ -443,3 +443,50 @@ def test_table_rps_weights_sums_each_tables_group_rps_across_the_report() -> Non
     assert weights["b"] == 5.0
     assert weights["c"] == 2.0
     assert weights["Utility and session statements"] == 999.0
+
+
+def test_a_retired_engine_the_source_runs_is_not_an_other_target() -> None:
+    """#1076: an engine the customer runs today and the plan retires gets its own sentence,
+    not a place under "Other targets evaluated"; a dropped candidate stays there."""
+    retired: list[dict] = [
+        {"engine": "documentdb", "monthly_cost_usd": 367.39, "moved_to": [], "reason": None},
+        {
+            "engine": "opensearch",
+            "monthly_cost_usd": None,
+            "moved_to": [],
+            "reason": None,
+            "no_saving_reason": "no queries justified it before the move",
+        },
+    ]
+    ranking = RANKING + [_rank("documentdb", 0.3, 0, 0.0, 0, 0, 0)]
+    text = build_summary(
+        _data(),
+        ranking,
+        MAPPINGS,
+        TCO,
+        RISKS,
+        GROUPS,
+        {"documentdb": "aurora_mysql", "opensearch": "aurora_mysql", "neptune": None},
+        retired_in_use=retired,
+    )
+    assert text.endswith(
+        "Retired by this plan: DocumentDB (runs today), $367.39/mo; "
+        "OpenSearch (runs today), no saving counted (no queries justified it before the move). "
+        "Other targets evaluated: Neptune (eliminated by the reality check)."
+    )
+
+
+def test_with_only_retired_engines_there_is_no_other_targets_sentence() -> None:
+    retired = [{"engine": "opensearch", "monthly_cost_usd": 240.96, "moved_to": [], "reason": None}]
+    text = build_summary(
+        _data(),
+        RANKING,
+        MAPPINGS,
+        TCO,
+        RISKS,
+        GROUPS,
+        {"opensearch": "aurora_mysql"},
+        retired_in_use=retired,
+    )
+    assert text.endswith("Retired by this plan: OpenSearch (runs today), $240.96/mo.")
+    assert "Other targets evaluated" not in text

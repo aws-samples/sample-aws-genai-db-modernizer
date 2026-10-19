@@ -1931,6 +1931,7 @@ const AnalysisResultsPage = memo(() => {
                   cachePatternCount={cachePatternCount}
                   projectedCost={projectedCost}
                   costBaseline={costBaseline}
+                  retiredEngines={synthesis?.facts?.retired_in_use_engines}
                   targetEngines={(
                     <>
                       <Box fontSize="heading-m">

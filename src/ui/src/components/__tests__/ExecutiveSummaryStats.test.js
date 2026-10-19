@@ -126,3 +126,39 @@ test('without schema design the count is the queries, and with neither it is a d
   expect(container.querySelector('[data-figure="access-patterns"]').textContent).toBe('—');
   expect(container.querySelector('[data-figure="database-name"]').textContent).toBe('—');
 });
+
+const RETIRED = [
+  { engine: 'documentdb', monthly_cost_usd: 367.39, moved_to: ['aurora_mysql'], reason: 'DocumentDB provides no unique capabilities over Aurora MySQL' },
+  { engine: 'opensearch', monthly_cost_usd: null, moved_to: ['aurora_mysql'], reason: null },
+];
+
+test('#1076: an engine the customer runs today and the plan retires has its own tile, with its saving and reason', () => {
+  render({ retiredEngines: RETIRED });
+  expect(tiles()).toContain('retired-engines');
+  const tile = container.querySelector('[data-tile="retired-engines"]');
+  expect(tile.querySelector('[data-retired-engine="documentdb"]').textContent).toBe(
+    'DocumentDB (runs today), $367.39/moDocumentDB provides no unique capabilities over Aurora MySQL.',
+  );
+  expect(tile.querySelector('[data-retired-engine="opensearch"]').textContent).toBe(
+    'OpenSearch (runs today), no saving counted',
+  );
+  expect(tile.textContent).toContain('Retired by this plan');
+});
+
+test('#1076: without a retired engine there is no retired tile', () => {
+  [undefined, null, []].forEach((none) => {
+    render({ retiredEngines: none });
+    expect(tiles()).not.toContain('retired-engines');
+  });
+});
+
+test('#1076: a retired engine with no counted saving says why', () => {
+  render({
+    retiredEngines: [
+      { engine: 'opensearch', monthly_cost_usd: null, moved_to: [], reason: 'It adds nothing over Aurora MySQL.', no_saving_reason: 'no queries justified it before the move' },
+    ],
+  });
+  expect(container.querySelector('[data-retired-engine="opensearch"]').textContent).toBe(
+    'OpenSearch (runs today), no saving counted (no queries justified it before the move)It adds nothing over Aurora MySQL.',
+  );
+});

@@ -100,7 +100,7 @@ def test_retiring_an_engine_the_source_runs_is_still_a_saving(
     assert [c["saved_cost_estimate"] for c in rc["consolidations"]] == [367.39, 0.0, 0.0]
     texts = _texts(in_use_run)
     for where in ("pdf", "engineering report"):
-        assert "Retired by this plan: $367.39/mo (DocumentDB)" in texts[where], where
+        assert "Retired by this plan: DocumentDB (runs today), $367.39/mo" in texts[where], where
     assert "Removes $367.39/mo by retiring DocumentDB" in texts["engineering report"]
 
 
@@ -124,3 +124,44 @@ def test_recording_an_engine_in_use_changes_no_routing(
         }
 
     assert engines(in_use_run) == engines(plain)
+
+
+@pytest.fixture(scope="module")
+def both_in_use_run(e2e_root: Path) -> PipelineResult:
+    """wordpress, declaring DocumentDB and OpenSearch as already running (#1076)."""
+    raw = unzip_sample("wordpress", e2e_root / "input-1076")
+    text = raw.read_text()
+    marker = '"metadata": {'
+    assert text.count(marker) == 1
+    edited = raw.with_name("wordpress-both-in-use-collection.json")
+    edited.write_text(
+        text.replace(marker, marker + '"engines_in_use": ["documentdb", "opensearch"], ')
+    )
+    return run_pipeline_from_file(edited, "wordpress", e2e_root / "artifacts-1076", "both-in-use")
+
+
+def test_a_declared_and_retired_engine_has_its_own_statement_everywhere(
+    both_in_use_run: PipelineResult,
+) -> None:
+    report = _report(both_in_use_run)
+    retired = {r["engine"]: r for r in report["facts"]["retired_in_use_engines"]}
+    assert set(retired) == {"documentdb", "opensearch"}
+    assert retired["documentdb"]["monthly_cost_usd"] == 367.39
+    assert retired["opensearch"]["monthly_cost_usd"] is None
+    assert report["considered_not_recommended"] == []
+    summary = report["summary"]
+    assert (
+        "Retired by this plan: DocumentDB (runs today), $367.39/mo; OpenSearch (runs today)"
+        in summary
+    )
+    assert "Other targets evaluated" not in summary
+    texts = _texts(both_in_use_run)
+    for where in ("pdf", "engineering report"):
+        text = texts[where]
+        assert "Retired by this plan: DocumentDB (runs today), $367.39/mo" in text, where
+        assert (
+            "Retired by this plan: OpenSearch (runs today), no saving counted (no queries justified it before the move)"
+            in text
+        ), where
+        assert "DocumentDB provides no unique capabilities" in text, where
+        assert "Other targets evaluated" not in text, where

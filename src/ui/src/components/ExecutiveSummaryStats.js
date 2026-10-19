@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import Box from "@cloudscape-design/components/box";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
+import { displayEngine } from '../utils/engineNames';
 
 /**
  * The executive summary's tiles on the results page (#1028).
@@ -12,6 +13,10 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
  * tile is left out instead of saying the figure is missing. It only formats
  * the figures it is given (ADR-032).
  *
+ * `retiredEngines` is the facts layer's `retired_in_use_engines` (#1076): the engines the
+ * customer runs today that the plan retires, each stated once with its counted saving (or
+ * "no saving counted") and the consolidation reason; none shows without one.
+ *
  * `accessPatternCount` is the facts layer's owned access-pattern total (0
  * without schema design), `ownerQueryCount` the queries the plan owns and
  * `cachePatternCount` the cache layer's own patterns; `targetEngines` is the
@@ -20,7 +25,7 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
  */
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
-  targetEngines, projectedCost, costBaseline,
+  targetEngines, projectedCost, costBaseline, retiredEngines,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -30,6 +35,7 @@ const ExecutiveSummaryStats = memo(({
   // Missing (null, as resolveCostBreakdown reports it) hides the tile; a real
   // $0.00 projection is a figure and shows.
   const hasProjectedCost = typeof projectedCost === 'number' && Number.isFinite(projectedCost);
+  const retiredList = Array.isArray(retiredEngines) ? retiredEngines : [];
   return (
     <ColumnLayout columns={4} variant="text-grid">
       <div data-tile="database">
@@ -61,6 +67,30 @@ const ExecutiveSummaryStats = memo(({
         <div data-tile="projected-cost">
           <Box variant="awsui-key-label">{t('analysis-results.executive-summary.projected-cost')}</Box>
           <Box fontSize="heading-m" fontWeight="bold">{`$${projectedCost.toFixed(2)}/mo`}</Box>
+        </div>
+      )}
+      {retiredList.length > 0 && (
+        <div data-tile="retired-engines">
+          <Box variant="awsui-key-label">{t('analysis-results.executive-summary.retired-engines')}</Box>
+          {retiredList.map((row) => (
+            <div key={row.engine} data-retired-engine={row.engine}>
+              <Box fontSize="heading-s" fontWeight="bold">
+                {typeof row.monthly_cost_usd === 'number'
+                  ? t('analysis-results.executive-summary.retired-engine-saving', {
+                    engine: displayEngine(row.engine), cost: `$${row.monthly_cost_usd.toFixed(2)}`,
+                  })
+                  : t(row.no_saving_reason
+                    ? 'analysis-results.executive-summary.retired-engine-no-saving-why'
+                    : 'analysis-results.executive-summary.retired-engine-no-saving', {
+                    engine: displayEngine(row.engine),
+                    reason: row.no_saving_reason,
+                  })}
+              </Box>
+              {row.reason && (
+                <Box fontSize="body-s" color="text-body-secondary">{`${String(row.reason).replace(/\.+$/, '')}.`}</Box>
+              )}
+            </div>
+          ))}
         </div>
       )}
       {baselineKnown && (

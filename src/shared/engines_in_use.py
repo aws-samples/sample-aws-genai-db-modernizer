@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from src.shared import catalog
+from src.shared.engine_names import display_engine
 
 
 def engines_in_use(collector_output: Mapping[str, Any] | None) -> frozenset[str]:
@@ -67,6 +68,23 @@ def considered_not_recommended(report: Mapping[str, Any]) -> list[dict[str, Any]
         for row in legacy
         if isinstance(row, Mapping) and row.get("database")
     ]
+
+
+def retired_in_use_statement(row: Mapping[str, Any]) -> str:
+    """ "DocumentDB (runs today), $367.39/mo" or "OpenSearch (runs today), no saving counted" (#1076).
+
+    ``row`` is one ``facts.retired_in_use_engines`` entry. The one wording every deliverable
+    and the deterministic summary use for an engine the customer runs today that the plan
+    retires; the UI formats the same two shapes.
+    """
+    name = display_engine(str(row.get("engine") or ""))
+    cost = row.get("monthly_cost_usd")
+    if isinstance(cost, (int, float)):
+        saving = f"${cost:,.2f}/mo"
+    else:
+        why = str(row.get("no_saving_reason") or "").strip()
+        saving = f"no saving counted ({why})" if why else "no saving counted"
+    return f"{name} (runs today), {saving}"
 
 
 def _declarable_engines() -> frozenset[str]:

@@ -433,6 +433,10 @@ Version History:
   documentation and objects are in ``Risk.details``. Raised by
   ``src.shared.migration_risk_rules`` from the facts block, so the deliverables and
   the results payload raise it for a report written before 1.44. No field changes.
+- 1.45 (2026-10-20, #1076): engines_in_use and facts.retired_in_use_engines
+  (RetiredInUseEngine): an engine the source runs today that the plan retires is stated
+  once, with its counted saving or why none, where its queries went and the
+  consolidation reason
 """
 
 from datetime import datetime
@@ -1044,6 +1048,22 @@ class RemovedEngine(BaseModel):
     reasons: list[str] = Field(default_factory=list, description="The reality check's own lines")
 
 
+class RetiredInUseEngine(BaseModel):
+    """An engine the customer runs today that the plan retires (#1076)."""
+
+    engine: str = Field(...)
+    monthly_cost_usd: float | None = Field(
+        None, ge=0, description="The counted saving; None when the plan counts none"
+    )
+    moved_to: list[str] = Field(default_factory=list, description="Where its queries went")
+    reason: str | None = Field(
+        None, description="The reality check's reason for the first consolidation out of it"
+    )
+    no_saving_reason: str | None = Field(
+        None, description="Why no saving is counted; None when monthly_cost_usd is set"
+    )
+
+
 class RealityCheckTradeOff(BaseModel):
     """One reality-check entry of ``trade_offs`` and whether it still applies (#546)."""
 
@@ -1545,6 +1565,13 @@ class ReportFacts(BaseModel):
     waves: list[WaveFacts] = Field(default_factory=list)
     no_migration: NoMigrationFacts = Field(default_factory=NoMigrationFacts)
     removed_engines: list[RemovedEngine] = Field(default_factory=list)
+    retired_in_use_engines: list[RetiredInUseEngine] = Field(
+        default_factory=list,
+        description=(
+            "Removed engines the customer runs today (#1076), each stated once with its "
+            "counted saving; a dropped candidate the source never ran is not here"
+        ),
+    )
     reality_check_trade_offs: list[RealityCheckTradeOff] = Field(default_factory=list)
     reality_check_decisions: list[RealityCheckDecision] = Field(default_factory=list)
     trade_off_count: int = Field(
@@ -1695,7 +1722,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.44",
+        default="1.45",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1755,6 +1782,13 @@ class SynthesisOutputContract(BaseModel):
             "Cache layer view (#296): engine, query_count, calls_per_second, "
             "call_share_percent, owners, patterns, dropped_query_ids and notes. The cache "
             "owns no query, so it is never part of the owner workload share."
+        ),
+    )
+    engines_in_use: list[str] | None = Field(
+        None,
+        description=(
+            "Engines the source runs today (#1076): its own engine and those the collection "
+            "declares in metadata.engines_in_use. None for a report synthesized before this field existed."
         ),
     )
     considered_not_recommended: list[ConsideredEngine] | None = Field(

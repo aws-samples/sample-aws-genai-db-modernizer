@@ -17794,6 +17794,25 @@
           "type": "string"
         }
       },
+      "engines_in_use": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "scalar",
+                "type": "string"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "facts": {
         "required": false,
         "schema": {
@@ -19169,6 +19188,83 @@
                       "type": "integer"
                     },
                     "kind": "object"
+                  }
+                },
+                "retired_in_use_engines": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "monthly_cost_usd": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "moved_to": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "no_saving_reason": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "reason": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
                   }
                 },
                 "source_of_truth_reroute_count": {
@@ -23329,8 +23425,8 @@
         }
       }
     },
-    "schema_hash": "e24d67f2e3aca91e8bc708407e994449bb1b84078ac5f457d1c226ab63705ae1",
-    "version": "1.44"
+    "schema_hash": "9f10801e3fcfd2071fcf194d6df301e4784619a520d85f5c03b1b4b70c043eba",
+    "version": "1.45"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

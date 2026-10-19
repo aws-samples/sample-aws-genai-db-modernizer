@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
-from src.shared.engines_in_use import retired_engine_savings
+from src.shared.engines_in_use import retired_in_use_statement
 
 
 def artifact_stem(
@@ -193,23 +193,23 @@ def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def _retired_engine_savings_text(tco: dict[str, Any]) -> str:
-    """ "$271.80/mo (ElastiCache), $240.96/mo (OpenSearch)" or "" with none.
+def _retired_in_use_lines(facts: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """``(statement, reason, engine name)`` per engine the customer runs today that the plan retires (#1076).
 
-    Only engines the source runs today that the plan retires
-    (``tco_analysis.retired_engine_savings``, #949), so a saving named for one
-    elsewhere in the same report (the reality check's own line, e.g. "Removes
-    $271.80/mo by retiring ElastiCache") is traceable to this report's own TCO
-    facts. A candidate engine the plan dropped is never listed: the legacy
-    ``eliminated_engine_costs`` is not read.
+    ``facts.retired_in_use_engines`` already holds the split (declared, retired, the saving
+    when one is counted, the consolidation reason); this only words each row:
+    ``("DocumentDB (runs today), $367.39/mo", "DocumentDB provides no unique ...")``. A
+    dropped candidate the source never ran is not in it (``considered_not_recommended``).
     """
-    rows = retired_engine_savings(tco)
-    if not rows:
-        return ""
-    return ", ".join(
-        f"{_fmt_usd(row['monthly_cost_usd'])}/mo ({display_engine(row.get('database', ''))})"
-        for row in rows
-    )
+    return [
+        (
+            retired_in_use_statement(row),
+            str(row.get("reason") or "").strip().rstrip("."),
+            display_engine(str(row["engine"])),
+        )
+        for row in facts.get("retired_in_use_engines") or []
+        if isinstance(row, dict) and row.get("engine")
+    ]
 
 
 def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:

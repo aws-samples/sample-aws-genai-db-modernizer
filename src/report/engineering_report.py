@@ -31,7 +31,7 @@ from .formatting import (
     _completed_designs,
     _cost_baseline_text,
     _fmt_usd,
-    _retired_engine_savings_text,
+    _retired_in_use_lines,
     access_pattern_scope,
     cost_baseline_known,
     fallback_withheld_reason,
@@ -790,15 +790,13 @@ def render_engineering_report_md(
         )
         if known:
             out.append(f"- Savings: {escaping.md_text(savings_text)}")
-        # #949: only an engine the source runs today; a dropped candidate is no saving.
-        retired_text = _retired_engine_savings_text(tco)
-        if retired_text:
-            out.append(
-                f"- Retired by this plan: "
-                f"{escaping.md_text(retired_text)}, "
-                "running today and not in this projection (see Migration trade-offs below "
-                "for why)."
-            )
+        # #1076: an engine the source runs today that the plan retires, stated once.
+        for statement, reason, _name in _retired_in_use_lines(facts):
+            line = f"Retired by this plan: {statement}."
+            if reason:
+                line += f" {reason}."
+            line += " Not in this projection (see Migration trade-offs below for why)."
+            out.append(f"- {escaping.md_text(line)}")
         out.append("")
         out += _cost_by_engine_md(report)
 

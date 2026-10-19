@@ -257,6 +257,35 @@ class TestGetResults:
         assert risk["details"][0].startswith("TOP row limits: TOP becomes LIMIT.")
         assert synthesis["facts"]["open_risk_count"] == 1
 
+    def test_a_facts_block_before_1_40_gains_the_retired_in_use_engines(self, mock_services):
+        """#1076: a report from before the field existed has no ``engines_in_use``; its stored block gets the
+        retired engine from the report's ``retired_engine_savings`` rows."""
+        stored = {
+            "engines": [],
+            "access_pattern_totals": None,
+            "moving_query_count": 0,
+            "resolved_risks_by_severity": {},
+            "removed_engines": [{"engine": "opensearch", "moved_to": ["aurora_mysql"]}],
+        }
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [],
+            "facts": stored,
+            "tco_analysis": {
+                "retired_engine_savings": [{"database": "opensearch", "monthly_cost_usd": 240.96}]
+            },
+        }
+        mock_services["s3"].read_triage.return_value = None
+        facts = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]["facts"]
+        assert facts["retired_in_use_engines"] == [
+            {
+                "engine": "opensearch",
+                "monthly_cost_usd": 240.96,
+                "moved_to": ["aurora_mysql"],
+                "reason": None,
+                "no_saving_reason": None,
+            }
+        ]
+
     def test_keeps_stored_access_pattern_totals(self, mock_services):
         totals = {"owned_pattern_count": 9, "cache_layer_pattern_count": 0}
         mock_services["s3"].read_synthesis.return_value = {

@@ -187,7 +187,7 @@ def test_only_a_retired_engine_saving_is_printed(report: dict[str, Any]) -> None
         {"database": "documentdb", "monthly_cost_usd": 4242.42}
     ]
     text = _body(rep)
-    assert "Retired by this plan: $271.80/mo (ElastiCache)" in text
+    assert "Retired by this plan: ElastiCache (runs today), $271.80/mo" in text
     assert "4242.42" not in text
 
 

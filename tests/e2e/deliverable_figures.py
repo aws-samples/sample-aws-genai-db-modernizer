@@ -819,9 +819,10 @@ def engineering_figures(md_text: str) -> Figures:
     queries_moved(f, md_plain(h2.get("Target engines", "")), "Target engines: Queries moved")
     f.add("removal_savings", removal_savings(plain), "Migration trade-offs")
     removed: set[str] = set()
-    m = re.search(r"^- Retired by this plan: (.+)$", plain, re.M)
-    if m:
-        removed |= {engine_id(x) for x in re.findall(r"/mo \(([^)]+)\)", m.group(1))}
+    removed |= {
+        engine_id(x)
+        for x in re.findall(r"^- Retired by this plan: ([^(\n]+?) \(runs today\)", plain, re.M)
+    }
 
     for heading, body in _md_sections(md, 2):
         m = re.match(r"^Cache layer \((.+)\)$", heading)
@@ -997,9 +998,9 @@ def pdf_figures(text: str) -> Figures:
     r = re.search(rf"((?:{_NAMES_RE})(?:, (?:{_NAMES_RE}))*) Removed by the reality check", text)
     if r:
         removed |= {engine_id(x) for x in r.group(1).split(", ")}
-    r = re.search(r"Retired by this plan: ((?:\$[\d,.]+/mo \([^)]+\)(?:, )?)+)", text)
-    if r:
-        removed |= {engine_id(x) for x in re.findall(r"/mo \(([^)]+)\)", r.group(1))}
+    removed |= {
+        engine_id(x) for x in re.findall(r"Retired by this plan: ([^(]+?) \(runs today\)", text)
+    }
     f.add("removed", frozenset(removed), "Removed tile and Retired line")
     m = re.search(r"Unresolved engine ties \(([\d,]+) quer(?:y|ies)\)", text)
     c = re.search(r"Pending engine choices \(([\d,]+) tables?, ([\d,]+) quer(?:y|ies)\)", text)

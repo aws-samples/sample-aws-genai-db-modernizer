@@ -77,6 +77,7 @@ from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.prose_style import collector_identifiers, replace_dashes
+from src.shared.report_facts import retired_in_use_engine_facts
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from src.tools.sql.query_facts import source_engine_of
@@ -322,6 +323,17 @@ def run_synthesis_deterministic(
             source_engine=source_engine_of(data.collector),
         ),
     )
+    # #1076: the removed engines the customer runs today, from the one function the facts
+    # block uses, so the summary states them as the deliverables do.
+    retired_in_use = retired_in_use_engine_facts(
+        {
+            "engines_in_use": sorted(running),
+            "tco_analysis": tco,
+            "ranking": ranking,
+            "reality_check": reality_check_output or {},
+        },
+        [{"engine": e, "moved_to": [a] if a else []} for e, a in sorted(eliminated.items())],
+    )
     deterministic_summary = build_summary(
         data,
         ranking,
@@ -331,6 +343,7 @@ def run_synthesis_deterministic(
         query_groups,
         eliminated,
         reality_check_settled=reality_check_settled_engines(reality_check_output),
+        retired_in_use=retired_in_use,
     )
     # #645: the post-migration checks come from the waves, built just above.
     risk_assessment["mitigation_strategies"] = [
@@ -475,6 +488,7 @@ def run_synthesis_deterministic(
         "relational_gaps": relational_gaps,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
+        "engines_in_use": sorted(running),
         "cache_overlay": cache_overlay,
         "migration_waves": migration_waves,
         "query_traces": query_traces,
@@ -901,6 +915,7 @@ def _write_synthesis_report(
         "cache_overlay": result.get("cache_overlay"),
         # #949: candidate engines the plan analysed and dropped, never a saving.
         "considered_not_recommended": result.get("considered_not_recommended"),
+        "engines_in_use": result.get("engines_in_use"),
         "migration_waves": result.get("migration_waves"),
         # #225: how many table_assignments names the waves dropped as parser noise.
         "unresolved_names": result.get("unresolved_names"),

@@ -80,7 +80,7 @@ from .facts import report_facts
 from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
-    _retired_engine_savings_text,
+    _retired_in_use_lines,
     cost_baseline_known,
     fmt_num,
     plural_noun,
@@ -818,15 +818,14 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     facts = report_facts(report)
     tco = report.get("tco_analysis") or {}
     current, savings = _cost_baseline_text(tco)
-    retired = _retired_engine_savings_text(tco)
+    retired = _retired_in_use_lines(facts)
     # #949 (#1028): with no source baseline the two lines are left out, not "not provided".
     cost_lines = (
         [f"Current monthly (source): {current}", f"Savings: {savings}"]
         if cost_baseline_known(tco)
         else []
     )
-    if retired:
-        cost_lines.append(f"Retired by this plan: {retired}")
+    cost_lines += [f"Retired by this plan: {statement}" for statement, _, _ in retired]
     engines = facts.get("engines") or []
     removed = facts.get("removed_engines") or []
     removed_names = ", ".join(display_engine(r["engine"]) for r in removed)
@@ -860,6 +859,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         ),
     ]
     flow: list[Flowable] = [_Section(H_NUMBERS), _Columns(tiles), _gap(16)]
+    # #1076: why each engine the customer runs today is retired, in the consolidation's words.
+    reasons = [f"{name}: {reason}." for _, reason, name in retired if reason]
+    if reasons:
+        flow += [_para(without_table_names(" ".join(reasons), names), st["small"]), _gap(10)]
     arch = _architecture_engines(report)
     if arch:
         flow.append(_para(L_COST_BREAKDOWN.upper(), st["kicker"]))

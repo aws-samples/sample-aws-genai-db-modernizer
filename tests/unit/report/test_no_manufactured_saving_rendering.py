@@ -46,7 +46,7 @@ class TestRetiredEngineSavingIsShown:
                 {"retired_engine_savings": [{"database": "elasticache", "monthly_cost_usd": 88.5}]}
             )
         )
-        assert "Retired by this plan: $88.50/mo (ElastiCache)" in text
+        assert "Retired by this plan: ElastiCache (runs today), $88.50/mo." in text
 
     def test_engineering_report(self) -> None:
         md = render_engineering_report_md(
@@ -54,7 +54,7 @@ class TestRetiredEngineSavingIsShown:
                 {"retired_engine_savings": [{"database": "elasticache", "monthly_cost_usd": 88.5}]}
             )
         )
-        assert r"Retired by this plan: $88.50/mo \(ElastiCache\)" in md
+        assert r"Retired by this plan: ElastiCache \(runs today\), $88.50/mo." in md
 
 
 class TestALegacyCandidateCostIsNeverASaving:

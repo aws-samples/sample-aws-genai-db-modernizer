@@ -1055,6 +1055,60 @@ def removed_engine_facts(
     return out
 
 
+NO_SAVING_REASON = "no queries justified it before the move"
+
+
+def retired_in_use_engine_facts(
+    report: Mapping[str, Any], removed: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Engines the customer runs today that the plan retires, each stated once (#1076).
+
+    An engine in ``report.engines_in_use`` (the source's own engine and those the collection
+    declares, #963) that ``removed`` lists, plus every engine with a row in
+    ``tco_analysis.retired_engine_savings`` (a report from before the field existed has no
+    ``engines_in_use``, but those rows are by definition engines the source runs). Each row
+    carries ``monthly_cost_usd`` (the counted saving, None when none is counted), where its
+    queries went and the reality check's own consolidation reason. A dropped candidate the
+    source never ran is not here: ``considered_not_recommended`` names it. A declared engine
+    the routing analysed but gave no queries (``ranking``, ``assigned_queries`` 0) is retired
+    too. ``reason`` is the first consolidation's; ``no_saving_reason`` says why no saving is
+    counted.
+    """
+    declared = {str(e).lower() for e in report.get("engines_in_use") or [] if isinstance(e, str)}
+    tco = report.get("tco_analysis") or {}
+    savings = {
+        str(r["database"]): float(r["monthly_cost_usd"])
+        for r in tco.get("retired_engine_savings") or []
+        if isinstance(r, Mapping)
+        and r.get("database")
+        and isinstance(r.get("monthly_cost_usd"), (int, float))
+    }
+    moved = {str(r["engine"]): list(r.get("moved_to") or []) for r in removed}
+    idle = {
+        str(r["target"])
+        for r in report.get("ranking") or []
+        if isinstance(r, Mapping)
+        and r.get("target") in declared
+        and not r.get("assigned_queries")
+        and r["target"] not in CACHE_ENGINES
+    }
+    engines = sorted({e for e in moved if e in declared} | set(savings) | idle)
+    reasons: dict[str, str] = {}
+    for c in (report.get("reality_check") or {}).get("consolidations") or []:
+        if isinstance(c, Mapping) and c.get("reason") and c.get("from_engine"):
+            reasons.setdefault(str(c["from_engine"]), str(c["reason"]))
+    return [
+        {
+            "engine": e,
+            "monthly_cost_usd": savings.get(e),
+            "moved_to": moved.get(e, []),
+            "reason": reasons.get(e),
+            "no_saving_reason": None if e in savings else NO_SAVING_REASON,
+        }
+        for e in engines
+    ]
+
+
 # ---------------------------------------------------------------------------
 # The whole facts block
 # ---------------------------------------------------------------------------
@@ -1934,6 +1988,8 @@ def compute_report_facts(
         "waves": wave_rows,
         "no_migration": no_migration,
         "removed_engines": removed,
+        # #1076: the removed engines the customer runs today, stated once with their saving.
+        "retired_in_use_engines": retired_in_use_engine_facts(report, removed),
         "reality_check_decisions": reality_check_decision_facts(report, rc_trade_offs, removed),
         "reality_check_trade_offs": rc_trade_offs,
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),

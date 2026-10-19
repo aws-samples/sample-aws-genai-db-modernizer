@@ -22,6 +22,7 @@ from src.shared.report_facts import (
     query_move_facts,
     query_trace_facts,
     resolved_risk_severity_facts,
+    retired_in_use_engine_facts,
     unservable_query_facts,
 )
 
@@ -97,6 +98,11 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 "trace_groups": computed.get("trace_groups") or [],
                 "trace_group_count": computed.get("trace_group_count") or 0,
             }
+        if "retired_in_use_engines" not in facts:
+            # A block written before this field existed (#1076): the same function over the stored rows.
+            missing["retired_in_use_engines"] = retired_in_use_engine_facts(
+                report, facts.get("removed_engines") or []
+            )
         return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
 
