@@ -96,6 +96,6 @@ def evidence_note(entry: Mapping[str, Any], short: bool = False) -> str:
 
 
 def confidence_text(entry: Mapping[str, Any], short: bool = False) -> str:
-    """``60% (signal only — no table-level evidence)``; ``93%`` when table-backed."""
+    """``60% (signal only, no table-level evidence)``; ``93%`` when table-backed."""
     note = evidence_note(entry, short=short)
     return f"{engine_confidence(entry):.0f}%" + (f" ({note})" if note else "")

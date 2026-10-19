@@ -146,8 +146,7 @@ class TestRationale:
         # "signal only", not "1 rated table" (see ``TestNoTableEvidence`` below
         # for the ``tables_accessed=["unknown"]`` case this phrase also covers).
         assert dbs["opensearch"]["rationale"].startswith(
-            "0% mean fit across 1 query (signal only), "
-            "led by full-text search (1 of 1)."
+            "0% mean fit across 1 query (signal only), led by full-text search (1 of 1)."
         )
         # #490: DynamoDB's old 100% included a flat signal-match bonus
         # (``key_value_lookups`` matching its own ``_engine_fit_score``
