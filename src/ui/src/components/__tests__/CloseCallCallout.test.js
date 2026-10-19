@@ -156,7 +156,7 @@ test('a pair with only settled ties says so', () => {
 
 // #1028: a short banner. Each pair names its first 3 closest queries, then a
 // "+N more" control (N: the rest of the pair's listed ids) that expands to the
-// rest; each link shows the first 5 characters of the id, the full id in its
+// rest; each link shows the first 6 characters of the id, the full id in its
 // tooltip, label and link target.
 const LONG_IDS = ['first-query', 'second-query', 'third-query', 'fourth-query', 'fifth-query'];
 const longPair = { ...facts.engine_pairs[0], query_ids: LONG_IDS, more_query_count: 13 };
@@ -167,7 +167,7 @@ const shownIds = () => [...container.querySelectorAll('[role="button"][aria-labe
 
 test('shows the first 3 closest queries, then +N more', () => {
   render({ synthesis: longSynthesis });
-  expect(shownIds()).toEqual(['first', 'secon', 'third']);
+  expect(shownIds()).toEqual(['first-', 'second', 'third-']);
   const more = container.querySelector('button[aria-expanded]');
   expect(more.getAttribute('aria-expanded')).toBe('false');
   expect(more.textContent).toBe('+2 more');
@@ -179,7 +179,7 @@ test('+N more expands to the rest of the listed queries, and Show fewer folds th
   render({ synthesis: longSynthesis });
   const toggle = container.querySelector('button[aria-expanded]');
   act(() => toggle.click());
-  expect(shownIds()).toEqual(['first', 'secon', 'third', 'fourt', 'fifth']);
+  expect(shownIds()).toEqual(['first-', 'second', 'third-', 'fourth', 'fifth-']);
   expect(container.textContent).toContain('and 13 more');
   // The same control, now saying it folds the list back, with its state.
   expect(container.querySelector('button[aria-expanded]')).toBe(toggle);
@@ -187,7 +187,7 @@ test('+N more expands to the rest of the listed queries, and Show fewer folds th
   expect(toggle.textContent).toBe('Show fewer');
   expect(toggle.hasAttribute('aria-label')).toBe(false);
   act(() => toggle.click());
-  expect(shownIds()).toEqual(['first', 'secon', 'third']);
+  expect(shownIds()).toEqual(['first-', 'second', 'third-']);
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
   expect(container.textContent).not.toContain('and 13 more');
 });
@@ -213,7 +213,7 @@ test('a short id keeps the full id in its tooltip, label and link target', () =>
   const opened = [];
   render({ synthesis: longSynthesis, onOpen: id => opened.push(id) });
   const link = container.querySelector('[role="button"][aria-label="Open the decision trace for query second-query"]');
-  expect(link.textContent).toBe('secon');
+  expect(link.textContent).toBe('second');
   expect(link.querySelector('[title]').getAttribute('title')).toBe('second-query');
   act(() => link.click());
   expect(opened).toEqual(['second-query']);

@@ -496,7 +496,7 @@ def test_results_page_shows_the_headline_first(
             opener = banner.get_by_role(
                 "button", name=f"Open the decision trace for query {first[0]}"
             )
-            assert opener.inner_text().strip() == first[0][:5], r.db
+            assert opener.inner_text().strip() == first[0][:6], r.db
             shown = banner.get_by_role(
                 "button", name=re.compile("^Open the decision trace for query ")
             )

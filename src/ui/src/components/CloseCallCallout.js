@@ -24,7 +24,7 @@ import { closeCallsOf } from "../utils/reportFacts";
  */
 
 const SHOWN_IDS = 3;
-const SHORT_ID_CHARS = 5;
+const SHORT_ID_CHARS = 6;
 
 const INLINE_TOGGLE_STYLE = {
   background: 'none',
