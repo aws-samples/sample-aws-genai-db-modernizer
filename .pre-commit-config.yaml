@@ -49,8 +49,10 @@ repos:
         # sha256 schema_hash values, one per contract.
         # tests/unit/tools/sql/baselines/table_refs_snapshot.json (#557) and
         # sql_facts_snapshot.json (#796): the per-query facade snapshots, keyed
-        # by the same query ids. All excluded here rather than scanned at all.
-        exclude: (^package-lock\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
+        # by the same query ids. benchmarks/cases/anti_pattern/<case>/expected.json
+        # (#1084): answer keys listing and keyed by the same query ids. All
+        # excluded here rather than scanned at all.
+        exclude: (^package-lock\.json$|^benchmarks/cases/anti_pattern/[^/]+/expected\.json$|^tests/e2e/baselines/routing_snapshot\.json$|^tests/contract/schema_snapshot\.json$|^tests/unit/tools/sql/baselines/table_refs_snapshot\.json$|^tests/unit/tools/sql/baselines/sql_facts_snapshot\.json$)
 
   # Python code formatting
   # NOTE: linter revs below are kept in lockstep with the versions CI resolves

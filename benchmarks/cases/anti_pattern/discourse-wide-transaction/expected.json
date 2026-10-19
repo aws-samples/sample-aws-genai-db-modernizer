@@ -1,0 +1,29 @@
+{
+  "case_id": "discourse-wide-transaction",
+  "stage": "anti_pattern",
+  "anti_pattern": "wide-transaction",
+  "intent": "discourse: whether queries show the `wide-transaction` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/discourse-wide-transaction.md), never from the pipeline output (#1084).",
+  "authored_by": "human",
+  "reviewed": false,
+  "queries": [
+    "-1122944120888445388",
+    "-1932152331896383119",
+    "-2157908926232439407",
+    "-3763059574405510293",
+    "-4017385751635848589",
+    "-4537743428232862924",
+    "-5142529018510995284",
+    "-5145007055741204478",
+    "-52950655929901990",
+    "-5857369871323005506",
+    "-6072012279523579697",
+    "-6436268800550501250",
+    "-7092816913670244085",
+    "1153768651040116829",
+    "1762445502296210457",
+    "2584108843483812003",
+    "6213645647369225488",
+    "6472674005637336992"
+  ],
+  "expected": {}
+}

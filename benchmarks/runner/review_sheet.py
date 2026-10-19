@@ -216,7 +216,12 @@ def build_rows(collector: dict, access_patterns: dict, assignment: dict) -> list
     ordered = sorted(sections.values(), key=lambda s: (s.kind == "utility", -s.calls, s.title))
     for s in ordered:
         s.rows.sort(key=lambda r: (not r.writes, -r.calls))
+    return number_rows(ordered)
 
+
+def number_rows(ordered: list[Section]) -> list[Section]:
+    """Number the rows in sheet order and point each at the first earlier row of
+    the same shape (access path, tables, operation, facts)."""
     shapes: dict[tuple, int] = {}
     number = 0
     for s in ordered:
@@ -232,10 +237,8 @@ def build_rows(collector: dict, access_patterns: dict, assignment: dict) -> list
                 "agg" in r.flags,
                 "subquery" in r.flags,
             )
-            if shape in shapes:
-                r.shape_of = shapes[shape]
-            else:
-                shapes[shape] = number
+            r.shape_of = shapes.get(shape)
+            shapes.setdefault(shape, number)
     return ordered
 
 
@@ -254,10 +257,33 @@ def _pct(x: float) -> str:
     return "0" if x == 0 else f"{x * 100:.2f}%" if x >= 0.0001 else "<0.01%"
 
 
-HEADER = (
+def row_cells(r: Row, ids: dict[str, str]) -> list[str]:
+    """A row's fact cells, ``#`` through ``shape``: no engine, no score."""
+    groups = [r.co_dep] if r.co_dep else []
+    groups += [f"W:{_bare(t)}" for t in r.writes]
+    same = r.shape_of is not None
+    return [
+        str(r.number),
+        f"`{md_cell(ids[r.query_id])}`",
+        _sql(r.sql),
+        md_cell(r.op),
+        md_cell(", ".join(_bare(t) for t in r.tables)),
+        f"{r.calls:.3g}",
+        _pct(r.share),
+        r.tier,
+        md_cell(" ".join(g for g in groups if g)),
+        md_cell(r.cls),
+        "as row " + str(r.shape_of) if same else md_cell(_clip(r.reason, REASON_CHARS)),
+        md_cell(", ".join(r.facts + r.flags)),
+        f"={r.shape_of}" if same else "",
+    ]
+
+
+FACT_COLUMNS = (
     "| # | id | SQL | op | tables | calls/s | share | tier | groups | class | access path "
-    "| facts | shape | acceptable | ideal | rationale |"
+    "| facts | shape |"
 )
+HEADER = FACT_COLUMNS + " acceptable | ideal | rationale |"
 DIVIDER = "|" + "---|" * 16
 
 
@@ -409,37 +435,7 @@ def render(sample: str, sections: list[Section], table_facts: dict[str, dict]) -
         out.append(HEADER)
         out.append(DIVIDER)
         for r in s.rows:
-            groups = [r.co_dep] if r.co_dep else []
-            groups += [f"W:{_bare(t)}" for t in r.writes]
-            same = r.shape_of is not None
-            out.append(
-                "| "
-                + " | ".join(
-                    [
-                        str(r.number),
-                        f"`{md_cell(ids[r.query_id])}`",
-                        _sql(r.sql),
-                        md_cell(r.op),
-                        md_cell(", ".join(_bare(t) for t in r.tables)),
-                        f"{r.calls:.3g}",
-                        _pct(r.share),
-                        r.tier,
-                        md_cell(" ".join(g for g in groups if g)),
-                        md_cell(r.cls),
-                        (
-                            "as row " + str(r.shape_of)
-                            if same
-                            else md_cell(_clip(r.reason, REASON_CHARS))
-                        ),
-                        md_cell(", ".join(r.facts + r.flags)),
-                        f"={r.shape_of}" if same else "",
-                        "",
-                        "",
-                        "",
-                    ]
-                )
-                + " |"
-            )
+            out.append("| " + " | ".join(row_cells(r, ids) + ["", "", ""]) + " |")
     out.append("")
     return "\n".join(out)
 

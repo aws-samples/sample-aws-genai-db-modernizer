@@ -94,6 +94,37 @@ The sheets (`benchmarks/cases/final_assignment/review/<sample>.md`) list every q
 
 `tests/unit/benchmarks/test_review_sheet.py` checks that the committed sheets show no engine outside the customer's own SQL and cover every query of the sample; regenerate them with the command above when the collector's query list changes.
 
+## The anti_pattern stage (#1084)
+
+The assignment keys show few anti-patterns, and none decides an answer, so the benchmark cannot tell a right penalty from a wrong one (#968). The `anti_pattern` stage adds cases where one does. A case is one bundled sample and one penalised catalog anti-pattern (`src/catalog/patterns/<id>.toml`); its key says, per query, whether the query shows that anti-pattern and, optionally, which engines are acceptable for it:
+
+```json
+{ "<query_id>": { "shows": true, "acceptable": ["aurora_mysql"], "ideal": "aurora_mysql", "rationale": "..." } }
+```
+
+```bash
+uv run python -m benchmarks.runner.run --stage anti_pattern
+```
+
+The stage runs the `final_assignment` chain once per sample and returns, per case query, the pipeline's verdict (some engine's analysis reports the pattern for it, in `anti_patterns_detected` or `patterns_detected`; for `substring-match`, the collector-based detector) and its final engine. A query is correct when the verdicts agree and, if the key gives an acceptable set, the engine is in it; the report adds `verdict_accuracy` and `engine_accuracy` per case. The gate rules are the other stages': every key starts `reviewed: false` with an empty `expected`, so the stage skips it and has no `gate.json` until a key is reviewed. A key entry without a boolean `shows` errors its case.
+
+### How the cases are chosen
+
+`benchmarks/runner/anti_pattern_cases.py` builds them. For each penalised pattern the pipeline reports on a sample, it reruns assignment and the reality check with the pattern's penalty at each basis point (0, 10, 20, 30, 40; ADR-031 Decision 8 Amendment 6). Flagged queries whose final engine moves at some point are the ones the pattern decides (up to 12, busiest first); a pattern that decides none makes no case. Each deciding query gets two decoys: unflagged queries of its kind (read or write) and, while the sample has any left, of its access-pattern class, on its tables first, then nearest in call rate. So every case has twice as many decoys as deciding queries. `expected.json` lists both groups as one `queries` list sorted by id.
+
+```bash
+uv run python -m benchmarks.runner.anti_pattern_cases --sample wordpress --sample discourse --sample trailgear
+uv run python -m benchmarks.runner.anti_pattern_cases --sample wordpress --sheets-only
+```
+
+The first selects the cases again (it rewrites unreviewed cases and drops the ones no longer selected, and never touches a reviewed one); `--sheets-only` regenerates the sheets of the unreviewed committed cases when the collector's facts change (a reviewed case's sheet is the record its key came from, and is kept).
+
+### Writing a case's key
+
+Each case has a blind sheet, `benchmarks/cases/anti_pattern/review/<case>.md`: the pattern's definition in words that name no engine, then one table with a row per case query: the SQL, statement type, tables, call rate, share and tier, groups and collector flags, and empty `shows`, `acceptable`, `ideal` and `rationale` columns. It leaves out what routing derived from the query (access-pattern class, its reason, pattern facts, shape pointers), since those restate the detectors' inputs, and orders the rows by a hash of the case id and query id. It never says which rows the pipeline flagged and never shows an engine or a score. The reviewer answers `shows` (`yes`/`no`) on every row they keep, and `acceptable` where the engine choice should turn on the answer; the `=N`, Default, `?` and `-` conventions apply. The filled sheet becomes the case's `expected` (with `reviewed: true`) and a floor in `benchmarks/cases/anti_pattern/gate.json`. Then the sweep in #1084 (each basis's points over 0 to 40) can be rerun against the keys.
+
+`tests/unit/benchmarks/test_anti_pattern_cases.py` checks that the committed sheets carry no engine, score, pattern id or answer and cover exactly their case's queries, that no row position and no low-cardinality column (statement type, tier, group membership, collector flags) has a value only flagged rows show, and that the committed membership follows the sweep rule; `tests/unit/benchmarks/test_stage_anti_pattern.py` scores a reviewed fixture case on the real pipeline (test-only keys, never committed) and checks that unreviewed cases never score or gate.
+
 ## Reading the output
 
 ```text

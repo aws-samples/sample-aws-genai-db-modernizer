@@ -15,6 +15,18 @@ class CaseRun:
     assigned: int | None = None  # queries the stage assigned, when the case ran
 
 
+def _case_row(r: CaseRun) -> dict:
+    row = {
+        "case_id": r.case_id,
+        "outcome": r.outcome.value,
+        "acceptable_accuracy": (round(r.score.acceptable_accuracy, 4) if r.score else None),
+        "assigned_queries": r.assigned,
+    }
+    if r.score and r.score.metrics:
+        row.update({k: round(v, 4) for k, v in r.score.metrics.items()})
+    return row
+
+
 def build_report(runs: list[CaseRun]) -> dict:
     """Aggregate over SCORED cases only; quarantine throttled/errored/skipped."""
     scored = [r for r in runs if r.outcome is Outcome.SCORED and r.score is not None]
@@ -47,13 +59,5 @@ def build_report(runs: list[CaseRun]) -> dict:
         "total_scored_queries": total_scored_q,
         "total_acceptable_queries": total_ok_q,
         "aggregate_acceptable_accuracy": round(agg, 4),
-        "per_case": [
-            {
-                "case_id": r.case_id,
-                "outcome": r.outcome.value,
-                "acceptable_accuracy": (round(r.score.acceptable_accuracy, 4) if r.score else None),
-                "assigned_queries": r.assigned,
-            }
-            for r in runs
-        ],
+        "per_case": [_case_row(r) for r in runs],
     }

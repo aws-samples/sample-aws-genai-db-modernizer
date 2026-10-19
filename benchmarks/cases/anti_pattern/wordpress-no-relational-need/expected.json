@@ -1,0 +1,20 @@
+{
+  "case_id": "wordpress-no-relational-need",
+  "stage": "anti_pattern",
+  "anti_pattern": "no-relational-need",
+  "intent": "wordpress: whether queries show the `no-relational-need` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-no-relational-need.md), never from the pipeline output (#1084).",
+  "authored_by": "human",
+  "reviewed": false,
+  "queries": [
+    "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+    "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b",
+    "34b8682eed45cb3b81adfe16d9e14ba068fb1ab334f02f252491de1545c47f13",
+    "3c5c8a793663a2b214fc0a46b8016d075a2462b371b5a21117ce8a4d517508d4",
+    "50b465673de32095cd10b0e635ae5ccda2d00157c0d9da77d556d45e7f6dd417",
+    "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+    "966f5a331e5bea92b89330f26d7b09ef9a538cf47edf3fcec3070693566a405c",
+    "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+    "ee386e4a29973ed202a8880875d2a5f8f7656dfd04f8b9dd4e05c824021a0034"
+  ],
+  "expected": {}
+}

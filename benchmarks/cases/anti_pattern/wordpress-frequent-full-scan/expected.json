@@ -1,0 +1,14 @@
+{
+  "case_id": "wordpress-frequent-full-scan",
+  "stage": "anti_pattern",
+  "anti_pattern": "frequent-full-scan",
+  "intent": "wordpress: whether queries show the `frequent-full-scan` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-frequent-full-scan.md), never from the pipeline output (#1084).",
+  "authored_by": "human",
+  "reviewed": false,
+  "queries": [
+    "329367a24ba84ce690000276ff2e3801ac2acef2858fbe113c0f6a3ba3893616",
+    "413c99e446984db35e1e4e8f3952ddb966d21a85a898e88235b61d26ea096e60",
+    "d4bf16d6ce4eb63d541be4f9536e2550869dcdb758b0b7a847c5dc63f832ed3c"
+  ],
+  "expected": {}
+}

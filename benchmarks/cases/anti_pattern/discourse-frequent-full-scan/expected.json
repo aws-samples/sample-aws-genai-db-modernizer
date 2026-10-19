@@ -1,0 +1,17 @@
+{
+  "case_id": "discourse-frequent-full-scan",
+  "stage": "anti_pattern",
+  "anti_pattern": "frequent-full-scan",
+  "intent": "discourse: whether queries show the `frequent-full-scan` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/discourse-frequent-full-scan.md), never from the pipeline output (#1084).",
+  "authored_by": "human",
+  "reviewed": false,
+  "queries": [
+    "-2453444977054120611",
+    "-7989811519127883198",
+    "3003621838099020685",
+    "5571699630796892942",
+    "5623656843796831553",
+    "8344127436710142645"
+  ],
+  "expected": {}
+}

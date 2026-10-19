@@ -1,0 +1,83 @@
+{
+  "stage": "anti_pattern",
+  "cases": [
+    {
+      "id": "wordpress-frequent-full-scan",
+      "path": "wordpress-frequent-full-scan",
+      "sample": "wordpress",
+      "anti_pattern": "frequent-full-scan",
+      "intent": "wordpress: whether queries show the `frequent-full-scan` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-frequent-full-scan.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "mysql",
+        "anti-pattern",
+        "frequent-full-scan"
+      ]
+    },
+    {
+      "id": "wordpress-no-relational-need",
+      "path": "wordpress-no-relational-need",
+      "sample": "wordpress",
+      "anti_pattern": "no-relational-need",
+      "intent": "wordpress: whether queries show the `no-relational-need` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/wordpress-no-relational-need.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "mysql",
+        "anti-pattern",
+        "no-relational-need"
+      ]
+    },
+    {
+      "id": "discourse-frequent-full-scan",
+      "path": "discourse-frequent-full-scan",
+      "sample": "discourse",
+      "anti_pattern": "frequent-full-scan",
+      "intent": "discourse: whether queries show the `frequent-full-scan` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/discourse-frequent-full-scan.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "postgresql",
+        "anti-pattern",
+        "frequent-full-scan"
+      ]
+    },
+    {
+      "id": "discourse-no-relational-need",
+      "path": "discourse-no-relational-need",
+      "sample": "discourse",
+      "anti_pattern": "no-relational-need",
+      "intent": "discourse: whether queries show the `no-relational-need` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/discourse-no-relational-need.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "postgresql",
+        "anti-pattern",
+        "no-relational-need"
+      ]
+    },
+    {
+      "id": "discourse-wide-transaction",
+      "path": "discourse-wide-transaction",
+      "sample": "discourse",
+      "anti_pattern": "wide-transaction",
+      "intent": "discourse: whether queries show the `wide-transaction` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/discourse-wide-transaction.md), never from the pipeline output (#1084).",
+      "tags": [
+        "real",
+        "postgresql",
+        "anti-pattern",
+        "wide-transaction"
+      ]
+    },
+    {
+      "id": "trailgear-frequent-full-scan",
+      "path": "trailgear-frequent-full-scan",
+      "sample": "trailgear",
+      "anti_pattern": "frequent-full-scan",
+      "intent": "trailgear: whether queries show the `frequent-full-scan` anti-pattern, on queries where it can decide the final engine and on matched queries the pipeline does not flag with it. The key is written with the maintainer from the blind review sheet (review/trailgear-frequent-full-scan.md), never from the pipeline output (#1084).",
+      "tags": [
+        "synthetic",
+        "sqlserver",
+        "anti-pattern",
+        "frequent-full-scan"
+      ]
+    }
+  ]
+}

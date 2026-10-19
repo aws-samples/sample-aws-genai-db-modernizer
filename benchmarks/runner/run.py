@@ -1,4 +1,7 @@
-"""Benchmark CLI: discover cases, run a stage (assignment or final_assignment), score, report."""
+"""Benchmark CLI: discover cases, run a stage, score, report.
+
+Stages: assignment, final_assignment (#1074), anti_pattern (#1084).
+"""
 
 from __future__ import annotations
 
@@ -7,22 +10,33 @@ import contextlib
 import json
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from benchmarks.runner.gate import GateError, check_gate, load_gate
 from benchmarks.runner.loader import load_cases
-from benchmarks.runner.models import Outcome
+from benchmarks.runner.models import Outcome, ScoreResult
 from benchmarks.runner.report import CaseRun, build_report
-from benchmarks.runner.scoring import score_assignment
+from benchmarks.runner.scoring import score_anti_pattern, score_assignment
+from benchmarks.runner.stage_anti_pattern import run_anti_pattern_case
 from benchmarks.runner.stage_assignment import run_assignment_case
 from benchmarks.runner.stage_final_assignment import run_final_assignment_case
 
 # Stage name (index.json's "stage", else the directory name) -> case runner.
 # ``assignment`` scores the resolver's first pass from gold inputs;
-# ``final_assignment`` runs a sample through the reality check (#1074).
+# ``final_assignment`` runs a sample through the reality check (#1074);
+# ``anti_pattern`` scores the pipeline's anti-pattern verdict on a sample's
+# queries, plus their final engine where the key gives one (#1084).
 STAGE_RUNNERS = {
     "assignment": run_assignment_case,
     "final_assignment": run_final_assignment_case,
+    "anti_pattern": run_anti_pattern_case,
+}
+# Stage name -> scorer of the runner's output against the key.
+STAGE_SCORERS: dict[str, Callable[[dict, dict], ScoreResult]] = {
+    "assignment": score_assignment,
+    "final_assignment": score_assignment,
+    "anti_pattern": score_anti_pattern,
 }
 
 # Bedrock throttling exception name (assignment is rule-based so this is future-proofing
@@ -34,14 +48,18 @@ def _is_throttle(exc: Exception) -> bool:
     return any(m in type(exc).__name__ or m in str(exc) for m in _THROTTLE_MARKERS)
 
 
-def stage_runner(stage_dir: Path):
-    """The case runner for ``stage_dir``, named by its index.json ``stage``."""
+def stage_name(stage_dir: Path) -> str:
+    """The stage ``stage_dir`` holds: its index.json ``stage``, else the directory name."""
     manifest = json.loads((Path(stage_dir) / "index.json").read_text())
     stage = manifest.get("stage") or Path(stage_dir).name
-    try:
-        return STAGE_RUNNERS[stage]
-    except KeyError:
-        raise ValueError(f"unknown benchmark stage {stage!r} in {stage_dir}") from None
+    if stage not in STAGE_RUNNERS:
+        raise ValueError(f"unknown benchmark stage {stage!r} in {stage_dir}")
+    return stage
+
+
+def stage_runner(stage_dir: Path):
+    """The case runner for ``stage_dir``, named by its index.json ``stage``."""
+    return STAGE_RUNNERS[stage_name(stage_dir)]
 
 
 def run_benchmark(
@@ -52,6 +70,7 @@ def run_benchmark(
     many queries it assigned), but it never enters the aggregate or the gate."""
     work_root = work_root or Path(tempfile.mkdtemp(prefix="benchmark_"))
     run_case = stage_runner(stage_dir)
+    score = STAGE_SCORERS[stage_name(stage_dir)]
     runs: list[CaseRun] = []
     for case in load_cases(stage_dir, tags=tags):
         if not case.reviewed and not run_unreviewed:
@@ -76,7 +95,12 @@ def run_benchmark(
         if not case.reviewed:
             runs.append(CaseRun(case.case_id, Outcome.SKIPPED, None, assigned=len(actual)))
             continue
-        result = score_assignment(actual, case.expected)
+        try:
+            result = score(actual, case.expected)
+        except ValueError as exc:  # a malformed key errors its case, not the batch
+            print(f"{case.case_id}: bad answer key: {exc}", file=sys.stderr)
+            runs.append(CaseRun(case.case_id, Outcome.ERRORED, None, assigned=len(actual)))
+            continue
         runs.append(CaseRun(case.case_id, Outcome.SCORED, result, assigned=len(actual)))
     return build_report(runs)
 
@@ -139,7 +163,12 @@ def main() -> None:
                 if c.get("assigned_queries") is None
                 else f"  ({c['assigned_queries']} queries assigned)"
             )
-            print(f"  {c['case_id']:30} {c['outcome']:10} {acc}{ran}")
+            extra = "".join(
+                f"  {k.removesuffix('_accuracy')} {c[k]:.1%}"
+                for k in ("verdict_accuracy", "engine_accuracy")
+                if c.get(k) is not None
+            )
+            print(f"  {c['case_id']:30} {c['outcome']:10} {acc}{extra}{ran}")
         if gate is not None:
             if failures:
                 print("\nGATE FAILED:")

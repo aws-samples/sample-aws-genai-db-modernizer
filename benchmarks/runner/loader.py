@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -21,6 +21,10 @@ class Case:
     # A bundled sample (docs/examples/<sample>/<sample>.zip) the case runs from
     # instead of its own collection/triage/analysis files (final_assignment, #1074).
     sample: str | None = None
+    # The anti_pattern stage (#1084): the catalog anti-pattern the key decides on
+    # (index.json) and the queries the case covers (expected.json's ``queries``).
+    anti_pattern: str | None = None
+    queries: list[str] = field(default_factory=list)
 
 
 def load_cases(stage_dir: Path, tags: list[str] | None = None) -> list[Case]:
@@ -53,6 +57,8 @@ def load_cases(stage_dir: Path, tags: list[str] | None = None) -> list[Case]:
                 analysis=analysis,
                 expected=key.get("expected", {}),
                 sample=sample,
+                anti_pattern=entry.get("anti_pattern"),
+                queries=list(key.get("queries") or []),
             )
         )
     return cases
