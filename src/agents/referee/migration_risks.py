@@ -37,6 +37,10 @@ rule                       severity  raised when
                            LOW       every such query stays on the source-compatible engine
 ``routing.tie_open``       MEDIUM    queries tie exactly and no routing rule decides them
 ``routing.unservable``     HIGH      queries fit no analyzed engine (``query_traces.unservable``)
+``routing.flagged``        HIGH      a review found an engine cannot serve queries no other kept
+                                     engine can take (``flagged_unservable``, #1148); one risk
+                                     per engine
+                           MEDIUM    every such query is held there by a customer pin
 ``cache.dropped``          MEDIUM    the cache safety net dropped reads the plan cached
 ``cache.unsupported``      MEDIUM    the cache layer's design lists unsupported patterns (an
                                      engine that only fronts reads is never raised by the
@@ -69,6 +73,11 @@ The wording is the code's own, plain and assertive: no dashes as punctuation,
 no hedges. A risk's description and mitigation quote no model text; its
 ``details`` carry the design's own texts, as data.
 
+``routing.flagged`` reads only fields ``report.json`` carries, so it lives in
+``src.shared.migration_risk_rules`` (with :data:`RULES` and the wave-gate
+lines): the deliverables raise it for a report synthesized before it existed
+(``backfill_report_risks``), with the same function synthesis calls.
+
 Facts on main that no rule reads yet are listed in :data:`PENDING_FACT_HOOKS`,
 each a follow-up that needs its own rule, severity and test.
 """
@@ -82,7 +91,19 @@ from typing import Any
 
 from src.agents.referee.cache_overlay import is_write_query
 from src.shared.engine_names import canonical_engine_id, display_engine
+from src.shared.migration_risk_rules import (
+    GATE_IDS_NAMED,
+    RULES,
+    RiskRule,
+    flagged_unservable_risks,
+    last_risk_number,
+    make_risk,
+    number_risks,
+    wave_gate_strategies,
+)
+from src.shared.migration_risk_rules import wave_of_engine as _wave_of_engine
 from src.shared.report_facts import CLOSE_CALL_MARGIN, RELATIONAL_ENGINES, wave_facts
+from src.shared.risk_severity import overall_risk_level
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -92,40 +113,15 @@ from src.shared.unsupported_pattern import (
 # above 80%) it is MEDIUM.
 HOT_PARTITION_HIGH_PCT = 95.0
 
-# A wave-gate strategy line names its risk ids up to this many, else counts them.
-GATE_IDS_NAMED = 5
-
 # A risk's text names at most this many short labels (an app-layer feature),
 # then how many more.
 LISTED_ITEMS = 5
 
 
-@dataclass(frozen=True)
-class RiskRule:
-    """One deterministic risk rule: its base severity, risk type and short label."""
-
-    severity: str
-    risk_type: str
-    label: str
-
-
-RULES: dict[str, RiskRule] = {
-    "sync.wave": RiskRule("MEDIUM", "DATA_CONSISTENCY", "tables kept in sync"),
-    "routing.close_calls": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "close calls"),
-    "routing.tie_open": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "pending engine choices"),
-    "routing.unservable": RiskRule("HIGH", "MIGRATION_COMPLEXITY", "queries no engine fits"),
-    "cache.dropped": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "dropped cache reads"),
-    "cache.unsupported": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "unsupported cache patterns"),
-    "design.app_layer": RiskRule("MEDIUM", "OPERATIONAL_RISK", "logic moved to the application"),
-    "design.hot_partition": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "hot partitions"),
-    "design.trade_offs": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "design trade-offs"),
-}
-
-# Facts the risk register does not read yet (both landed on main while #950 was
+# Facts the risk register does not read yet (landed on main while #950 was
 # open). Each needs its own rule above (severity, test); until then nothing
 # reads the field.
 PENDING_FACT_HOOKS: dict[str, str] = {
-    "flagged_unservable": "#1039: kept and terminal flagged queries no engine serves",
     "facts.relational_gaps": "#1079: version and feature gaps for the relational move",
 }
 
@@ -214,10 +210,7 @@ def _context(
     writes = {q for q in engine_of if is_write_query(collected.get(q) or {}, source_engine)}
     # A wave with no number is left out: no risk can name its gate.
     waves = [w for w in migration_waves or [] if isinstance(w, dict) and _wave_number(w)]
-    wave_of_engine: dict[str, int] = {}
-    for w in waves:
-        for e in w.get("engines") or []:
-            wave_of_engine.setdefault(canonical_engine_id(str(e)), int(w["wave"]))
+    wave_of_engine = _wave_of_engine(waves)
     retained = frozenset(
         str(e) for w in waves if w.get("homogeneity") is not None for e in w.get("engines") or []
     )
@@ -231,30 +224,7 @@ def _context(
     )
 
 
-def _risk(
-    rule: str,
-    engine: str | None,
-    description: str,
-    mitigation: str,
-    tables: Iterable[str],
-    query_ids: Iterable[str],
-    wave: int | None,
-    severity: str | None = None,
-    details: list[str] | None = None,
-) -> dict[str, Any]:
-    spec = RULES[rule]
-    extra = {"details": details} if details else {}
-    return {
-        "risk_type": spec.risk_type,
-        "severity": severity or spec.severity,
-        "description": f"[{engine}] {description}" if engine else description,
-        "affected_tables": sorted({t for t in tables if t}),
-        "mitigation": mitigation,
-        "query_ids": sorted({q for q in query_ids if q}),
-        "rule": rule,
-        "wave": wave,
-        **extra,
-    }
+_risk = make_risk
 
 
 def _wave_tag(ctx: _Context, wave: int) -> str | None:
@@ -812,6 +782,7 @@ def build_migration_risks(
     trigger_tables: Mapping[str, str] | None = None,
     normalise: Callable[[Iterable[str]], set[str]] | None = None,
     table_sources: list[dict[str, Any]] | None = None,
+    flagged_unservable: list[dict[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -823,8 +794,9 @@ def build_migration_risks(
     ``assigned_engine``); ``trigger_tables`` maps a collected trigger's name
     to its table; ``normalise`` maps table names to the collector's ids;
     ``table_sources`` is report.json's ``table_sources`` (None for an
-    assignment written before write groups); ``source_engine`` is the dialect the
-    queries' text is read in.
+    assignment written before write groups); ``flagged_unservable`` its
+    ``flagged_unservable`` rows (#888, #1148); ``source_engine`` is the dialect
+    the queries' text is read in.
     """
     norm = normalise or (lambda names: {str(n) for n in names if n})
     # One engine id per engine, whichever variant an artifact wrote (#950).
@@ -843,36 +815,15 @@ def build_migration_risks(
         *_app_layer_risks(ctx, designs, trigger_tables or {}),
         *_hot_partition_risks(ctx, designs, norm),
         *_trade_off_risks(ctx, trade_offs, norm),
+        # Last: a report written before this rule gets it appended at render time
+        # (``backfill_report_risks``), so both number and order it the same way.
+        *flagged_unservable_risks(
+            {"flagged_unservable": flagged_unservable or [], "query_traces": query_traces or {}},
+            ctx.wave_of_engine,
+            ctx.tables_of,
+        ),
     ]
-    numbered = []
-    for i, risk in enumerate(risks, start=start_id + 1):
-        numbered.append({"risk_id": f"RISK-{i:03d}", **risk})
-    return numbered
-
-
-def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
-    """One mitigation-strategy line per wave: the risks to close before its gate,
-    by id up to ``GATE_IDS_NAMED``, else by count (the cards carry the ids)."""
-    by_wave: dict[int | None, list[dict[str, Any]]] = {}
-    for r in risks:
-        if r.get("rule") in RULES:
-            by_wave.setdefault(r.get("wave"), []).append(r)
-    lines = []
-    for wave in sorted(by_wave, key=lambda w: (w is None, w or 0)):
-        items = by_wave[wave]
-        ids = (
-            _join([str(r["risk_id"]) for r in items])
-            if len(items) <= GATE_IDS_NAMED
-            else f"the {len(items)} Wave {wave} risks" if wave else f"the {len(items)} risks"
-        )
-        labels: list[str] = []
-        for r in items:
-            label = RULES[r["rule"]].label
-            if label not in labels:
-                labels.append(label)
-        head = f"Before the Wave {wave} gate" if wave else "Before cutover"
-        lines.append(f"{head}, close {ids} ({_join(labels)}).")
-    return lines
+    return number_risks(risks, start_id)
 
 
 def add_migration_risks(risk_assessment: dict[str, Any], risks: list[dict[str, Any]]) -> None:
@@ -880,8 +831,6 @@ def add_migration_risks(risk_assessment: dict[str, Any], risks: list[dict[str, A
     and one wave-gate line per wave in ``mitigation_strategies``. In place."""
     if not risks:
         return
-    from src.agents.referee.synthesis_report import overall_risk_level
-
     risk_assessment["risks"] = [*(risk_assessment.get("risks") or []), *risks]
     risk_assessment["overall_risk_level"] = overall_risk_level(risk_assessment["risks"])
     risk_assessment["mitigation_strategies"] = [
@@ -890,11 +839,12 @@ def add_migration_risks(risk_assessment: dict[str, Any], risks: list[dict[str, A
     ]
 
 
-def last_risk_number(risks: list[dict[str, Any]]) -> int:
-    """The highest ``RISK-NNN`` number in ``risks`` (0 when none)."""
-    best = 0
-    for r in risks or []:
-        m = re.fullmatch(r"RISK-(\d+)", str(r.get("risk_id") or ""))
-        if m:
-            best = max(best, int(m.group(1)))
-    return best
+__all__ = [
+    "GATE_IDS_NAMED",
+    "RULES",
+    "RiskRule",
+    "add_migration_risks",
+    "build_migration_risks",
+    "last_risk_number",
+    "wave_gate_strategies",
+]

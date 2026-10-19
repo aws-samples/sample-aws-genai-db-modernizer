@@ -403,3 +403,16 @@ def test_the_held_records_of_every_pass_are_kept(tmp_path) -> None:
     assert router["held"] == [
         {"query_id": "q-1", "flagged_engine": "dynamodb", "reason_category": "full_scan"}
     ]
+
+
+def test_synthesis_raises_the_held_query_as_a_risk_before_the_summary(store) -> None:
+    """#1148: the flagged rows are read before the risks, so the register, the
+    facts and the summary count the held query's risk."""
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=1)
+    _write_synthesis_report(store, result, assignment_version=1)
+    report = store.read_json(f"{DB}/{JOB}/synthesis/v1/report.json")
+    [risk] = [r for r in report["risk_assessment"]["risks"] if r.get("rule") == "routing.flagged"]
+    assert risk["severity"] == "MEDIUM" and risk["query_ids"] == ["q-hold"]
+    assert risk["affected_tables"] == ["t"]
+    assert report["facts"]["open_risk_count"] == len(report["risk_assessment"]["risks"])
+    assert any(risk["risk_id"] in s for s in report["risk_assessment"]["mitigation_strategies"])

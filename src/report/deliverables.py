@@ -17,6 +17,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.shared.migration_risk_rules import backfill_report_risks
+
 from . import executive_report, renderers
 
 logger = logging.getLogger(__name__)
@@ -251,7 +253,9 @@ def render_deliverables(
     """
     if not store.exists(report_key):
         raise FileNotFoundError(f"synthesis report not found: {report_key}")
-    report = store.read_json(report_key)
+    # #1148: a report synthesized before a report-only risk rule existed shows
+    # the same risk a new synthesis writes (the same function, ADR-032).
+    report = backfill_report_risks(store.read_json(report_key))
 
     def prov(artifact: str, ext: str) -> dict:
         return renderers.provenance(

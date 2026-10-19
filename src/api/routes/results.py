@@ -15,6 +15,7 @@ from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
 from src.report.risks import NO_OPEN_RISKS_CAVEAT
 from src.shared.database_name import validate_database_name
+from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
@@ -45,6 +46,9 @@ async def get_results(job_id: str = Depends(job_id_param)):
     if not synthesis:
         raise HTTPException(status_code=404, detail="Results not available yet")
 
+    # #1148: the risks a report-only rule raises, for a report synthesized before
+    # the rule existed, the same ones the deliverables show (before its facts).
+    synthesis = backfill_report_risks(synthesis)
     # One wave source (#225): the UI reads this same payload, so a
     # report written before #225 must show the same fallback roadmap the
     # executive report and engineering report already derive, not an empty one.

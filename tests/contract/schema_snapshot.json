@@ -20006,6 +20006,16 @@
                     "reality_check"
                   ]
                 }
+              },
+              "source_tables": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
               }
             }
           },
@@ -23319,8 +23329,8 @@
         }
       }
     },
-    "schema_hash": "3f66bdd68f3c05e7425a9f43cf29c5a3e38a32505fd61ff691262a8df3c02d2a",
-    "version": "1.42"
+    "schema_hash": "e24d67f2e3aca91e8bc708407e994449bb1b84078ac5f457d1c226ab63705ae1",
+    "version": "1.43"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

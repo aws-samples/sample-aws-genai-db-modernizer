@@ -717,6 +717,33 @@ def risk_facts(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    """``facts`` with every risk figure counted again from ``report``'s risks: the
+    open and resolved counts (``risk_facts``) and each wave's and the no-migration
+    step's critical and high count, as ``compute_report_facts`` counts them. For a
+    report whose risks were added after its facts block was written (#1148: a rule
+    backfilled at render time); every other figure stays as stored."""
+    risks = risk_facts(report)
+    by_engine = risks["critical_high_risks_by_engine"]
+
+    def high(engines: Any) -> int:
+        return sum(by_engine.get(str(e), 0) for e in engines or [])
+
+    out = {**facts, **risks}
+    if isinstance(facts.get("waves"), list):
+        out["waves"] = [
+            {**w, "critical_high_risks": high(w.get("engines"))} if isinstance(w, dict) else w
+            for w in facts["waves"]
+        ]
+    no_migration = facts.get("no_migration")
+    if isinstance(no_migration, dict):
+        out["no_migration"] = {
+            **no_migration,
+            "critical_high_risks": high(no_migration.get("engines")),
+        }
+    return out
+
+
 def resolved_risk_severity_facts(report: dict[str, Any]) -> dict[str, dict[str, int]]:
     """The resolved risks by severity (#1020), as ``open_risks_by_severity`` counts the
     open ones: every resolved risk once, a severity with none left out."""
@@ -1506,6 +1533,23 @@ def _flagged_unservable_rows(report: dict[str, Any], listed: set[str]) -> list[d
                 "reason_category": str(r.get("reason_category") or "other"),
             }
         )
+    return rows
+
+
+def flagged_unservable_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """The ``flagged`` and ``held`` rows ``facts.unservable`` counts (#888, #1033):
+    ``report.json``'s ``flagged_unservable`` less any query the decision trace
+    already lists, by engine then query id. The migration risk register raises
+    them from this same list (#1148), so its counts agree with the facts."""
+    digest = report.get("query_traces")
+    traced = digest.get("unservable") if isinstance(digest, dict) else None
+    listed = {
+        str(r["query_id"])
+        for r in (traced if isinstance(traced, list) else [])
+        if isinstance(r, dict) and r.get("query_id")
+    }
+    rows = _flagged_unservable_rows(report, listed)
+    rows.sort(key=lambda r: (str(r.get("engine") or ""), str(r["query_id"])))
     return rows
 
 

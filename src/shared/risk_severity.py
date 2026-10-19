@@ -34,3 +34,23 @@ def count_by_severity(risks: list[dict[str, Any]]) -> dict[str, int]:
         level = severity_of(risk)
         counts[level] = counts.get(level, 0) + 1
     return counts
+
+
+def severity_rank(level: str) -> int:
+    """``LOW`` 0 up to ``CRITICAL`` 3; an unrecognised level ranks below ``LOW``."""
+    up = str(level or "").upper()
+    return len(SEVERITY_ORDER) - 1 - SEVERITY_ORDER.index(up) if up in _KNOWN_SEVERITIES else -1
+
+
+def overall_risk_level(risks: list[dict[str, Any]]) -> str:
+    """Overall risk level: the highest severity among the open ``risks`` (#248).
+
+    Any CRITICAL risk gives CRITICAL, any HIGH gives HIGH, any MEDIUM gives MEDIUM,
+    otherwise LOW (including no risks). ``risks`` are the open risks only;
+    ``resolved_risks`` never count.
+    """
+    severities = {str(r.get("severity") or "").upper() for r in risks}
+    for level in ("CRITICAL", "HIGH", "MEDIUM"):
+        if level in severities:
+            return level
+    return "LOW"

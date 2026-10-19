@@ -285,6 +285,17 @@ def run_synthesis_deterministic(
     # #992: each written table's source of truth and replicas, from the
     # assignment's write groups (None for an assignment written before them).
     sources = table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
+    # #888: the flagged queries no kept engine can take (a reality-check flag
+    # it kept, a post-schema router terminal query), which the ledger never sees;
+    # read before the risks, which raise them (#1148).
+    router_key = f"{database_name}/{job_id}/post-schema-router/router_output.json"
+    flagged_unservable = flagged_unservable_records(
+        data.assignment,
+        reality_check_output,
+        store.read_json(router_key) if store.exists(router_key) else None,
+        triage_query_capabilities(data.triage),
+    )
+
     # #950: the risks the migration's shape carries (tables kept in sync, close
     # calls, pending ties, design trade-offs, ...), from the facts built above,
     # before the summary states the risk count.
@@ -303,6 +314,7 @@ def run_synthesis_deterministic(
             trigger_tables=_trigger_tables(data.collector),
             normalise=table_normaliser(data),
             table_sources=sources,
+            flagged_unservable=flagged_unservable,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -438,16 +450,6 @@ def run_synthesis_deterministic(
                     "engine": "reality-check",
                 }
             )
-
-    # #888: the flagged queries no kept engine can take (a reality-check flag
-    # it kept, a post-schema router terminal query), which the ledger never sees.
-    router_key = f"{database_name}/{job_id}/post-schema-router/router_output.json"
-    flagged_unservable = flagged_unservable_records(
-        data.assignment,
-        reality_check_output,
-        store.read_json(router_key) if store.exists(router_key) else None,
-        triage_query_capabilities(data.triage),
-    )
 
     return {
         "job_id": job_id,

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from src.api.main import app
 from src.api.routes import results
+from src.shared.report_facts import compute_report_facts
 
 client = TestClient(app)
 
@@ -178,6 +179,38 @@ class TestGetResults:
         facts = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]["facts"]
         assert facts["resolved_risks_by_severity"] == {"HIGH": 2, "MEDIUM": 1}
         assert facts["resolved_risk_count"] == 3
+
+    def test_an_older_report_gains_the_flagged_query_risk(self, mock_services):
+        # #1148: a report synthesized before routing.flagged existed shows the risk
+        # its flagged_unservable rows raise, as the deliverables do, and its facts
+        # count it.
+        report = {
+            "migration_waves": [{"wave": 2, "engines": ["dynamodb"], "tables": []}],
+            "flagged_unservable": [
+                {
+                    "query_id": "q1",
+                    "engine": "dynamodb",
+                    "cause": "no_kept_engine",
+                    "reason_category": "full_scan",
+                }
+            ],
+            "risk_assessment": {
+                "overall_risk_level": "LOW",
+                "risks": [{"risk_id": "RISK-001", "severity": "LOW", "description": "[x] y"}],
+                "mitigation_strategies": [],
+            },
+        }
+        report["facts"] = compute_report_facts(report)
+        mock_services["s3"].read_synthesis.return_value = report
+        mock_services["s3"].read_triage.return_value = {}
+        synthesis = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]
+        risks = synthesis["risk_assessment"]["risks"]
+        assert [(r["risk_id"], r.get("rule")) for r in risks] == [
+            ("RISK-001", None),
+            ("RISK-002", "routing.flagged"),
+        ]
+        assert synthesis["risk_assessment"]["overall_risk_level"] == "HIGH"
+        assert synthesis["facts"]["open_risk_count"] == 2
 
     def test_keeps_stored_access_pattern_totals(self, mock_services):
         totals = {"owned_pattern_count": 9, "cache_layer_pattern_count": 0}

@@ -577,6 +577,14 @@ def _all_kinds() -> list[dict[str, Any]]:
         ],
         cache_only_engines={CACHE},
         trigger_tables={"p": "db.a"},
+        flagged_unservable=[
+            {
+                "query_id": "r1",
+                "engine": DDB,
+                "cause": "no_kept_engine",
+                "reason_category": "full_scan",
+            }
+        ],
         start_id=7,
     )
 
@@ -664,7 +672,7 @@ def test_the_wording_is_plain() -> None:
 
 
 def test_pending_fact_hooks_name_their_pull_requests() -> None:
-    assert set(PENDING_FACT_HOOKS) == {"flagged_unservable", "facts.relational_gaps"}
+    assert set(PENDING_FACT_HOOKS) == {"facts.relational_gaps"}
     assert all(re.match(r"#\d+: ", v) for v in PENDING_FACT_HOOKS.values())
 
 

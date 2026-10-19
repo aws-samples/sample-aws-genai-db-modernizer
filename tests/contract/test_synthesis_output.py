@@ -413,7 +413,8 @@ class TestSynthesisOutputContract:
         # #950: Risk.rule and Risk.wave added (1.40)
         # #1108: facts.query_trace.trace_groups added (1.41)
         # #1169: facts.engines[] kept_in_sync_tables / moves_to_tables and the table_basis map split (1.42)
-        assert output.contract_version == "1.42"
+        # #1148: routing.flagged, FlaggedUnservableQuery.source_tables (1.43)
+        assert output.contract_version == "1.43"
 
     def test_summary_input_budget_is_optional(self, valid_synthesis_data):
         assert (

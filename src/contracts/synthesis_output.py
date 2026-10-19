@@ -416,6 +416,15 @@ Version History:
   no row for, and ``mapped_tables_not_served``, the rows mapped to a migration target
   that no query routed there reads. Backward compatible: they default to None, empty
   and 0, and the facts reader fills them in for an older block.
+- 1.43 (2026-10-19, #1148, ADR-032): ``Risk.rule`` gains ``routing.flagged``: one
+  risk per engine for the flagged queries no other kept engine takes
+  (``flagged_unservable``, the ``flagged`` and ``held`` kinds ``facts.unservable``
+  counts), HIGH, or MEDIUM when a customer pin holds every one of them; raised by
+  ``src.shared.migration_risk_rules`` from report.json's own fields, so the
+  deliverables and the results payload raise it for a report written before 1.43
+  (``backfill_report_risks``). ``FlaggedUnservableQuery.source_tables``: the tables
+  the query reads, the risk's evidence. Backward compatible: ``source_tables``
+  defaults to empty; an older report's risk takes its tables from its query groups.
 """
 
 from datetime import datetime
@@ -1296,6 +1305,13 @@ class FlaggedUnservableQuery(BaseModel):
     required_capabilities: list[str] = Field(
         default_factory=list, description="The hard capabilities triage found it needs (ids)"
     )
+    source_tables: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The tables it reads, from the assignment (#1148: its migration risk's "
+            "evidence); empty for a row written before 1.43"
+        ),
+    )
 
 
 class UnservableFacts(BaseModel):
@@ -1671,7 +1687,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.42",
+        default="1.43",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

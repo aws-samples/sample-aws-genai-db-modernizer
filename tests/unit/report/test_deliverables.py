@@ -190,3 +190,28 @@ def test_missing_report_raises(tmp_path: Path) -> None:
     empty = LocalArtifactStore(base_dir=str(tmp_path))
     with pytest.raises(FileNotFoundError):
         dl.render_deliverables(empty, JOB, DB, KEY)
+
+
+def test_an_older_report_renders_the_flagged_query_risk_it_never_stored(tmp_path: Path) -> None:
+    """#1148: the deliverables read a stored report through ``backfill_report_risks``,
+    so a report synthesized before ``routing.flagged`` shows the risk its
+    ``flagged_unservable`` rows raise, in the engineering report and the data file."""
+    s = LocalArtifactStore(base_dir=str(tmp_path))
+    report = json.loads(FIXTURE.read_text())
+    report["flagged_unservable"] = [
+        {
+            "query_id": "q-flag",
+            "engine": "dynamodb",
+            "cause": "no_kept_engine",
+            "reason_category": "full_scan",
+        }
+    ]
+    s.write_json(KEY, report)
+    out = {d.name: d for d in dl.render_deliverables(s, JOB, DB, KEY).items}
+    data = json.loads(out["assessment-data"].content)
+    [risk] = [r for r in data["risk_assessment"]["risks"] if r.get("rule") == "routing.flagged"]
+    assert risk["risk_id"] == "RISK-029" and risk["severity"] == "HIGH"
+    md = out["engineering-report"].content.decode("utf-8")
+    assert "**RISK-029**" in md and "although a review found DynamoDB cannot serve it" in md
+    # The stored report is left as it was.
+    assert "routing.flagged" not in json.dumps(s.read_json(KEY))

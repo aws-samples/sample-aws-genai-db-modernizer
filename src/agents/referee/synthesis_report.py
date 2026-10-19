@@ -51,6 +51,7 @@ from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_s
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
+from src.shared.risk_severity import overall_risk_level
 from src.shared.signal_labels import signal_noun
 from src.shared.skill_sections import skill_sections, skill_subsections
 from src.shared.unsupported_pattern import (
@@ -1585,20 +1586,6 @@ def build_risk_assessment(
         # audit trail so no risk, HIGH or otherwise, disappears without a record.
         "resolved_risks": resolved,
     }
-
-
-def overall_risk_level(risks: list[dict]) -> str:
-    """Overall risk level: the highest severity among the open ``risks`` (#248).
-
-    Any CRITICAL risk gives CRITICAL, any HIGH gives HIGH, any MEDIUM gives MEDIUM,
-    otherwise LOW (including no risks). ``risks`` are the open risks only;
-    ``resolved_risks`` never count.
-    """
-    severities = {str(r.get("severity") or "").upper() for r in risks}
-    for level in ("CRITICAL", "HIGH", "MEDIUM"):
-        if level in severities:
-            return level
-    return "LOW"
 
 
 _SQL_EXCERPT_CHARS = 120

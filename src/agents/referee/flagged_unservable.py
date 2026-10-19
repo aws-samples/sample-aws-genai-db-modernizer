@@ -72,10 +72,15 @@ def flagged_unservable_records(
     A query is listed only while the effective ``assignment`` keeps it in
     scope on the flagged engine.
     """
-    engine_of = {
-        str(qa["query_id"]): qa.get("assigned_engine")
+    in_scope = [
+        qa
         for qa in (assignment or {}).get("query_assignments") or []
         if isinstance(qa, Mapping) and qa.get("query_id") and qa.get("in_scope", True)
+    ]
+    engine_of = {str(qa["query_id"]): qa.get("assigned_engine") for qa in in_scope}
+    tables_of = {
+        str(qa["query_id"]): sorted({str(t) for t in qa.get("source_tables") or [] if t})
+        for qa in in_scope
     }
     caps = query_capabilities or {}
     rows: dict[str, dict[str, Any]] = {}
@@ -95,6 +100,7 @@ def flagged_unservable_records(
             "gate": GATE_KIND_MODEL_FLAG,
             "gate_text": gate_text(GATE_KIND_MODEL_FLAG) or "",
             "required_capabilities": sorted({str(c) for c in caps.get(qid) or []}),
+            "source_tables": tables_of.get(qid, []),
         }
 
     for decision in (reality_check or {}).get("flag_decisions") or []:
