@@ -18,6 +18,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 2. **Read input and domain expertise**
    a. Read: `artifacts/{database_name}/{job_id}/llm_requests/schema_design_opensearch.json`
       - Contains: filtered queries, tables, analysis results, `decision_trace` (the analysis agent's pre-computed signals for exactly these queries and tables; absent when the analysis wrote none), `design_metrics` (the `design_rps` and sizing figures computed for you: copy them, never recompute them), and `output_schema` (the exact JSON Schema your output must conform to)
+      - Read the whole file in the step 1 status line's `input_pages` (each is a Read `offset`/`limit`), every page in order; when `oversized` is true there are more than `input_page_budget` of them, and none may be skipped
    b. Read: `src/skills/opensearch-index-modeling.md` (domain expertise guide)
 
 3. **Design the schema**

@@ -198,8 +198,14 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
 
         # One table per line, so the model can page it with Read offset/limit.
         store.write_bytes(llm_request_path, render_request(llm_request).encode("utf-8"))
+        paging: dict = {}
     else:
-        store.write_json(llm_request_path, llm_request)
+        # One record per line plus the Read pages that cover the whole file:
+        # a large request is read in more pages, never cut (#1103).
+        from src.agents.schema_design.external_request import render_external_request
+
+        text, paging = render_external_request(llm_request)
+        store.write_bytes(llm_request_path, text.encode("utf-8"))
 
     _output(
         {
@@ -207,6 +213,7 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
             "assignment_version": assignment_version,
             "llm_request": llm_request_path,
             "skill_prompt": _SKILL_PROMPTS.get(engine, f"src/skills/{engine}-data-modeling.md"),
+            **paging,
         }
     )
 
