@@ -54,7 +54,10 @@ class TestCacheCostJustification:
     def test_rationale_states_the_hot_read_floor_the_cache_clears(self) -> None:
         ranking = build_ranking(_data())
         cache = next(r for r in ranking if r.get("role") == "cache_layer")
-        assert "estimated $165.10/month" in cache["rationale"]
+        # #951: the cost is the Cost table's, not a fragment of the reason; the
+        # reason still states the floor the cache clears and the traffic that
+        # cleared it.
+        assert "estimated $" not in cache["rationale"]
         assert "1 calls/s hot-read floor" in cache["rationale"]
         # 3 + 3 + 3.8 = 9.8 calls/s combined across the three cached reads.
-        assert "9.8 calls/s combined" in cache["rationale"]
+        assert "These reads total 9.8 calls/s" in cache["rationale"]

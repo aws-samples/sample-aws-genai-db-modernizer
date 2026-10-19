@@ -687,7 +687,7 @@ def engineering_figures(md_text: str) -> Figures:
             f.add(f"wave{n}:queries", _int(c.group(2)), where)
         st = re.search(
             r"^- ([\d,]+) source (?:tables and views(?: \(([\d,]+) tables?, ([\d,]+) views?\))?"
-            r"|tables?): ",
+            r"|tables?(?: \(([\d,]+) to move\))?): ",
             text,
             re.M,
         )
@@ -696,6 +696,9 @@ def engineering_figures(md_text: str) -> Figures:
             if st.group(2):
                 f.add(f"wave{n}:tables_only", _int(st.group(2)), where)
                 f.add(f"wave{n}:views", _int(st.group(3)), where)
+            if st.group(4):
+                # #951: the wave's tables that move, beside the kept-in-sync line.
+                f.add(f"wave{n}:moving", _int(st.group(4)), where)
         k = re.search(r"^- ([\d,]+) tables? kept in sync from their owner: ", text, re.M)
         if k:
             f.add(f"wave{n}:synced", _int(k.group(1)), where)
@@ -751,6 +754,17 @@ def pdf_figures(text: str) -> Figures:
             for s in SEVERITIES:
                 f.add(f"risks:{s}", sev.get(s, 0), "Open risks tile")
     f.add("removal_savings", removal_savings(text), "Reality-check decisions")
+    # #951: a wave with tables kept in sync states both halves of its tables.
+    for seg in re.finditer(r"WAVE (\d+) (.*?)(?=WAVE \d+ |$)", text):
+        h = re.search(
+            r"([\d,]+) source tables?: ([\d,]+) to move, ([\d,]+) kept in sync from",
+            seg.group(2),
+        )
+        if h:
+            n, where = seg.group(1), f"wave {seg.group(1)} headline"
+            f.add(f"wave{n}:served", _int(h.group(1)), where)
+            f.add(f"wave{n}:moving", _int(h.group(2)), where)
+            f.add(f"wave{n}:synced", _int(h.group(3)), where)
     removed: set[str] = set()
     r = re.search(rf"((?:{_NAMES_RE})(?:, (?:{_NAMES_RE}))*) Removed by the reality check", text)
     if r:

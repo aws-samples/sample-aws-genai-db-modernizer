@@ -69,9 +69,12 @@ def _section_md(md: str) -> str:
     return md[start:] if end == -1 else md[start:end]
 
 
+# #951: the reads are counted, not listed (their ids are replica_read_query_ids),
+# and the risk states its bound and what to do.
 RISK = (
-    "Eventually consistent: 2 reads on Aurora PostgreSQL (r1, r2) read a copy kept in sync "
-    "from DynamoDB via CDC, so a read can miss a write until it replicates."
+    "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from "
+    "DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the "
+    "replication lag; a read that must see its own write should read from DynamoDB."
 )
 
 

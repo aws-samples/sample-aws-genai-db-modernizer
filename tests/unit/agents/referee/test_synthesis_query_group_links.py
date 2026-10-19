@@ -363,7 +363,7 @@ def test_relational_branch_labels_utility_statements(engine: str) -> None:
     assert by_name["Utility and session statements"]["access_patterns"][0]["query_ids"] == ["q5"]
 
 
-def test_relational_branch_caps_the_assignment_reason() -> None:
+def test_relational_branch_keeps_a_long_base_reason_whole() -> None:
     data = _relational_data("aurora_mysql")
     data.assignment["query_assignments"][0]["assignment_reason"] = "x" * 300
     (group,) = [g for g in build_query_groups(data) if g["group_name"] == "wp.wp_posts"]
@@ -375,21 +375,24 @@ def test_relational_branch_caps_the_assignment_reason() -> None:
     # discourse sample).
     assert "description" not in ap
     assert isinstance(ap["reason_index"], int)
-    # #478: cut on a word boundary with an ellipsis, not a
-    # bare mid-word cut -- a single run of "x" has no word boundary to cut
-    # on, so the whole 180-char prefix is kept plus the ellipsis character.
-    assert description == "x" * 180 + "…"
+    # #951: the reason itself (no other engine's exclusions after " | ") is
+    # never cut: it says why the query is on this engine.
+    assert description == "x" * 300
 
 
-def test_relational_branch_caps_on_a_word_boundary() -> None:
+def test_relational_branch_caps_on_a_clause_boundary() -> None:
+    """#951: a long reason drops the other engines' exclusions whole, from the
+    end, and counts them, never cutting a sentence with an ellipsis."""
     data = _relational_data("aurora_mysql")
-    reason = " ".join(["word"] * 50)  # far longer than 180 chars, real words
+    exclusions = [f"Engine{i} lacks required capability: multi-table joins" for i in range(6)]
+    reason = "highest fit for Aurora MySQL | " + "; ".join(exclusions)
     data.assignment["query_assignments"][0]["assignment_reason"] = reason
     (group,) = [g for g in build_query_groups(data) if g["group_name"] == "wp.wp_posts"]
     description = reason_text_for(group, group["access_patterns"][0])
-    assert description.endswith("…")
-    assert not description[:-1].endswith("wor")  # never a mid-word cut
-    assert len(description) <= 181
+    assert "…" not in description
+    assert description == (
+        "highest fit for Aurora MySQL | " + "; ".join(exclusions[:2]) + " (+4 more)"
+    )
 
 
 def test_relational_branch_dedupes_repeated_reason_clauses() -> None:

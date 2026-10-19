@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from src.contracts.synthesis_output import SynthesisOutputContract
+from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
 from src.shared.query_trace import query_trace_digest
 from src.shared.report_facts import compute_report_facts
@@ -119,7 +120,7 @@ def test_a_moved_query_states_where_it_started_and_ended(report) -> None:
     assert f"{moved['first_assignment']['to_engine_name']} to {moved['final_engine_name']}" in head
     # The engine that scored higher and the step that decided against it.
     if moved["outscored_by"]:
-        assert "- Scored higher: " in appendix
+        assert f"- {md_text(moved['outscored_by'][0]['explanation'])}" in appendix
 
 
 def test_the_rest_are_summarised_by_rule_not_listed(report) -> None:

@@ -144,7 +144,9 @@ def test_query_ids_are_escaped() -> None:
     md = _section_md(render_engineering_report_md(hostile))
     assert "<script>" not in md
     row = next(line for line in md.splitlines() if line.startswith("| DynamoDB"))
-    assert row.count(" | ") == 6  # the id's pipe does not open a cell
+    # Six columns (no pair is compared on a group mean, #951): the id's pipe does
+    # not open a cell.
+    assert row.count(" | ") == 5
 
 
 def test_an_unknown_engine_id_is_escaped_in_the_engineering_report() -> None:
@@ -152,4 +154,5 @@ def test_an_unknown_engine_id_is_escaped_in_the_engineering_report() -> None:
     md = _section_md(render_engineering_report_md(hostile))
     assert "<script>" not in md
     row = next(line for line in md.splitlines() if "q1" in line)
-    assert row.count(" | ") == 6  # the engine id's pipe does not open a cell
+    # Six columns (no group-mean column, #951): the engine id's pipe does not open a cell.
+    assert row.count(" | ") == 5

@@ -520,7 +520,11 @@ def ground_risks(
 # ---------------------------------------------------------------------------
 
 
-def recompute_reality_check_patterns(summary: dict, query_assignments: list[dict]) -> dict:
+def recompute_reality_check_patterns(
+    summary: dict,
+    query_assignments: list[dict],
+    write_groups: dict[str, list[str]] | None = None,
+) -> dict:
     """Recompute patterns and their recommendation lines from the effective assignment.
 
     The stored reality-check output can predate the final assignment (patterns were
@@ -528,6 +532,8 @@ def recompute_reality_check_patterns(summary: dict, query_assignments: list[dict
     them again from the effective in-scope ``query_assignments``. This also fixes jobs
     written before the reality check refreshed its own patterns. Consolidation lines are
     history and are kept verbatim. Without an assignment the summary is returned as is.
+    ``write_groups`` (the assignment's) decides which engines take writes, so a
+    CQRS line is named only for an engine that takes them all (#951).
     """
     if not query_assignments:
         return summary
@@ -536,7 +542,7 @@ def recompute_reality_check_patterns(summary: dict, query_assignments: list[dict
         patterns_for_assignment,
     )
 
-    patterns = patterns_for_assignment(query_assignments)
+    patterns = patterns_for_assignment(query_assignments, write_groups)
     recommendations = [
         r
         for r in summary.get("recommendations", [])

@@ -67,14 +67,20 @@ function tablePhrase(t, synthesis, wave) {
     return t('analysis-results.waves.tables-and-views', { count: served, views: viewsPhrase(t, wf) });
   }
   if (wf && wf.kept_in_sync_tables && typeof wf.moving_tables === 'number') {
-    return t('analysis-results.waves.served-move', { served, moving: wf.moving_tables });
+    const kept = Number(wf.kept_in_sync_tables);
+    return t('analysis-results.waves.served-move', {
+      count: served,
+      moving: wf.moving_tables,
+      kept,
+      owner: t('analysis-results.waves.kept-owner', { count: kept }),
+    });
   }
   return t('analysis-results.waves.source-tables', { count: served });
 }
 
 // "all 107 queries at cutover; 65 (60.7%) remain on Aurora MySQL at the end,
 // 50 source tables and views", "20 queries (83.4% of calls)",
-// "1 query (0.9% of query patterns), 4 served, 3 move".
+// "1 query (0.9% of query patterns), 4 source tables: 3 to move, 1 kept in sync from its owner".
 export function waveHeadline(t, synthesis, wave) {
   return countPhrase(t, wave) + tablePhrase(t, synthesis, wave);
 }

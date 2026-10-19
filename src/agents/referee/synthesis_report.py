@@ -134,18 +134,30 @@ def _clean_relational_reason(
     """A relational engine's per-query reason, ready to sit next to its excerpt.
 
     Deduplicated (see above), the collector's "unknown" table placeholder
-    replaced by a readable phrase, and capped on a word boundary with an
-    ellipsis rather than cut mid-word.
+    replaced by a readable phrase, and capped by dropping whole exclusion
+    clauses (never mid-sentence, #951).
     """
     cleaned = _dedupe_reason_clauses(reason or "")
     cleaned = _UNKNOWN_WORD_RE.sub("an unresolved table", cleaned)
     if len(cleaned) <= max_chars:
         return cleaned
-    truncated = cleaned[:max_chars]
-    last_space = truncated.rfind(" ")
-    if last_space > 0:
-        truncated = truncated[:last_space]
-    return truncated.rstrip(" ;|,") + "…"
+    # #951: never cut mid-sentence. The base reason (before " | ") says why the
+    # query is on this engine and is kept whole; the other engines' exclusions
+    # after it are dropped whole, from the end, and counted.
+    base, sep, rest = cleaned.partition(" | ")
+    if not sep:
+        return cleaned
+    clauses = rest.split("; ")
+    kept = list(clauses)
+    while kept and len(f"{base} | {'; '.join(kept)}") > max_chars:
+        kept.pop()
+    if not kept:
+        # Not even one exclusion fits: the base reason alone, with no count that
+        # would read as more reasons for this engine.
+        return base
+    dropped = len(clauses) - len(kept)
+    more = f" (+{dropped} more)" if dropped else ""
+    return f"{base} | {'; '.join(kept)}{more}"
 
 
 def reason_text_for(group: dict, access_pattern: dict) -> str:
@@ -2711,25 +2723,19 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         parts = [head + (f"; {fit}" if fit else "")]
         if r.get("target_tables", 0) > 0:
             parts.append(
-                f"schema design: {_count(r['target_tables'], 'key design', 'key designs')}, "
+                f"Schema design: {_count(r['target_tables'], 'key design', 'key designs')}, "
                 + _in_scope_phrase(*_access_pattern_scope(data, r))
             )
-        if r["monthly_cost_usd"] > 0:
-            cps = r.get("cache_calls_per_second", 0.0)
-            floor = r.get("cache_min_calls_per_second", 0.0)
-            # Review of #375: a bare dollar figure for a cache serving only a
-            # handful of reads reads as an unjustified cost -- state the
-            # overlay's own eligibility floor (#304/#296) and the combined
-            # traffic that cleared it, so the figure is grounded in the same
-            # facts the cache_overlay section already carries, not asserted
-            # on its own.
-            justification = (
-                f" ({cps:g} calls/s combined across these reads clears the {floor:g} "
-                "calls/s hot-read floor)"
-                if floor
-                else ""
+        cps = r.get("cache_calls_per_second", 0.0)
+        floor = r.get("cache_min_calls_per_second", 0.0)
+        if floor:
+            # Review of #375: the cache is justified by the overlay's own
+            # eligibility floor (#304/#296) and the combined traffic that
+            # cleared it. #951: the cost itself is the Cost table's, never a
+            # fragment appended to the reason.
+            parts.append(
+                f"These reads total {cps:g} calls/s, above the {floor:g} calls/s hot-read floor"
             )
-            parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month{justification}")
         return ". ".join(parts) + "."
     if r.get("routed_confidence") is not None:
         n = int(r.get("routed_queries") or 0)
@@ -2768,11 +2774,11 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
             parts.append(f"{r['patterns_detected']} matching workload patterns")
     if r.get("target_tables", 0) > 0:
         parts.append(
-            f"schema design: {r['target_tables']} target tables, "
+            f"Schema design: {r['target_tables']} target tables, "
             + _in_scope_phrase(*_access_pattern_scope(data, r))
         )
-    if r["monthly_cost_usd"] > 0:
-        parts.append(f"estimated ${r['monthly_cost_usd']:.2f}/month")
+    # #951: no "estimated $X/month." fragment here: every deliverable states each
+    # engine's cost once, in its cost table.
     return ". ".join(parts) + "."
 
 

@@ -47,6 +47,18 @@ def _views_phrase(wf: dict[str, Any]) -> str:
     return f" ({tables} {plural_noun(tables, 'table')}, {views} {plural_noun(views, 'view')})"
 
 
+def _served_move_phrase(served: int, moving: int, kept: int) -> str:
+    """``, 18 source tables: 15 to move, 3 kept in sync from their owners`` (#951).
+
+    The UI words it the same (``analysis-results.waves.served-move``).
+    """
+    owner = "its owner" if kept == 1 else "their owners"
+    return (
+        f", {served} source {plural_noun(served, 'table')}: {moving} to move, "
+        f"{kept} kept in sync from {owner}"
+    )
+
+
 def _wave_headline_stats(w: dict[str, Any], wf: dict[str, Any] | None = None) -> tuple[str, str]:
     """(count-and-share phrase, table-count phrase) for one wave's headline.
 
@@ -68,7 +80,8 @@ def _wave_headline_stats(w: dict[str, Any], wf: dict[str, Any] | None = None) ->
     (tables only).
 
     #568 review round 2, Suggestion 2: a wave with tables kept in sync from
-    an owner outside it states both halves -- "N served, M move".
+    an owner outside it states both halves; #951: as "N source tables: M to
+    move, K kept in sync from their owners", so the two halves visibly add up.
     """
     if wf is None:
         wf = wave_facts(w)
@@ -93,7 +106,7 @@ def _wave_headline_stats(w: dict[str, Any], wf: dict[str, Any] | None = None) ->
         count_phrase = f"{n} {plural_noun(n, 'query', 'queries')} ({share}% {basis})"
         moving = wf.get("moving_tables")
         if tables and wf.get("kept_in_sync_tables") and isinstance(moving, int):
-            table_phrase = f", {tables} served, {moving} move"
+            table_phrase = _served_move_phrase(tables, moving, int(wf["kept_in_sync_tables"]))
         else:
             table_phrase = f", {tables} source {plural_noun(tables, 'table')}" if tables else ""
     return count_phrase, table_phrase
@@ -205,7 +218,15 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             )
             shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:20])
             more = f" (+{len(tables) - 20} more)" if len(tables) > 20 else ""
-            out.append(f"- {served} source {table_noun}: {shown}{more}")
+            # #951: the headline's "M to move" stated here too, next to the
+            # kept-in-sync line below, so the report shows both halves.
+            moving = wf.get("moving_tables")
+            to_move = (
+                f" ({moving} to move)"
+                if wf.get("kept_in_sync_tables") and isinstance(moving, int)
+                else ""
+            )
+            out.append(f"- {served} source {table_noun}{to_move}: {shown}{more}")
         groups = w.get("table_groups") or []
         if groups:
             out.append(f"- {len(groups)} table {plural_noun(len(groups), 'group')}:")

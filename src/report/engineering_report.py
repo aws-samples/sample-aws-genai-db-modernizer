@@ -30,7 +30,6 @@ from .formatting import (
     _fmt_usd,
     _retired_engine_savings_text,
     access_pattern_scope,
-    clip,
     fallback_withheld_reason,
     fmt_num,
     label_summary_counts,
@@ -374,7 +373,7 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
             "|---|---|---|---|",
         ]
         for table, n_queries, total_rps, reasons in rows:
-            reason_text = clip("; ".join(reasons), 200)
+            reason_text = _table_reason_cell(reasons)
             out.append(
                 f"| {escaping.md_cell(table)} | {n_queries} "
                 f"| {escaping.md_cell(fmt_num(total_rps))} "
@@ -382,6 +381,36 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
             )
         out.append("")
     return out
+
+
+# How many distinct reasons one "Queries on Aurora by table" row names; the rest
+# are counted. Each query's full reason is in its trace.
+_TABLE_REASONS_SHOWN = 3
+
+
+def _table_reason_cell(reasons: list[str]) -> str:
+    """One table's reasons, each stated once and whole (#951).
+
+    A reason is "<why this engine> | <why not the others>"; the cell names the
+    first part only, so the same "highest fit for Aurora MySQL" never repeats
+    with a different tail. Reasons that differ only in their per-query detail
+    in parentheses ("... (scores tie with OpenSearch; ...)", "... (no unique
+    value: DocumentDB scores 79.0, ...)") are named once, without it: each
+    query's own detail is in its trace. Nothing is cut mid-sentence: after the
+    first few reasons, the rest are counted.
+    """
+    by_rule: dict[str, list[str]] = {}
+    for reason in reasons:
+        head = reason.split(" | ", 1)[0].strip()
+        if head:
+            rule = head.split(" (", 1)[0].strip()
+            variants = by_rule.setdefault(rule, [])
+            if head not in variants:
+                variants.append(head)
+    whole = [variants[0] if len(variants) == 1 else rule for rule, variants in by_rule.items()]
+    shown = whole[:_TABLE_REASONS_SHOWN]
+    more = len(whole) - len(shown)
+    return "; ".join(shown) + (f" (+{more} more)" if more else "")
 
 
 def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
@@ -706,11 +735,24 @@ def render_engineering_report_md(
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)
     if mappings:
+        # #951: the table-level engine is a summary label (AGENTS.md: assignments map
+        # queries to engines), so it is named as the recommendation it is, never as
+        # the table's owner; the owner is its source of truth.
+        written = (facts.get("table_sources") or {}).get("written_table_count")
+        owner_pointer = (
+            " A table's writes land on its source of truth, listed under Sources of truth "
+            "and replicas below."
+            if written
+            else ""
+        )
         out += [
             f"## Migration map ({mapped} {plural_noun(mapped, 'table')}"
             f"{_mapping_split(report, mappings)})",
             "",
-            f"| Source table | Target engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
+            "Recommended engine is each table's summary label: the queries decide where "
+            f"they run, and several engines can serve one table.{owner_pointer}",
+            "",
+            f"| Source table | Recommended engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
             "|---|---|---|---|---|",
         ]
         for m in mappings:

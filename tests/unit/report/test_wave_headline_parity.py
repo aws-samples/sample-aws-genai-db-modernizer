@@ -39,14 +39,14 @@ def test_python_wave_headline_matches_the_shared_fixture(wave_no: str) -> None:
 
 
 def test_the_fixture_covers_every_headline_shape() -> None:
-    """Cutover (with and without views), calls basis, served/move, a plain table
+    """Cutover (with and without views), calls basis, to move/kept in sync, a plain table
     count, and a wave the facts block does not list."""
     data = _fixture()
     headlines = data["expected_headlines"].values()
     assert any("at cutover" in h and "view" in h.split("and views")[-1] for h in headlines)
     assert any("at cutover" in h and h.endswith("and views") for h in headlines)
     assert any("of calls" in h for h in headlines)
-    assert any("served," in h and h.endswith("move") for h in headlines)
+    assert any("to move, " in h and "kept in sync from" in h for h in headlines)
     assert any(h.endswith("source table") for h in headlines)
     listed = {str(r["wave"]) for r in data["synthesis"]["facts"]["waves"]}
     assert set(data["expected_headlines"]) - listed

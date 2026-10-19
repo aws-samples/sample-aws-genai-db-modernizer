@@ -350,7 +350,9 @@ def _kv_wave(
         "share_basis": "queries",
         "rationale": (
             f"{n} key-value and point-lookup {query} ({share:.1f}% of query patterns) across "
-            f"{n_groups} table {group}, respecting co-dependent tables where possible: the "
+            # #951: no "where possible": the grouping is deterministic, each
+            # co-dependency group's tables form one group (_dynamodb_table_groups).
+            f"{n_groups} table {group}, where co-dependent tables move together: the "
             f"pattern {display_engine(engine)} fits best, and the smallest-blast-radius data "
             "migration available once the cache wave has absorbed the read pressure."
         ),

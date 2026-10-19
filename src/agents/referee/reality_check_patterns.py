@@ -82,8 +82,16 @@ def _detect_architectural_patterns(
     assignments: list[dict],
     committed_engines: set[str],
     engine_queries: dict[str, list[dict]],
+    write_engines: set[str] | None = None,
 ) -> list[dict]:
-    """Detect which architectural patterns apply to this multi-engine setup."""
+    """Detect which architectural patterns apply to this multi-engine setup.
+
+    ``write_engines`` (#951) is every engine a written table's writes land on,
+    from the assignment's write groups (``write_engines_of``). CQRS says the
+    primary takes all write operations, so it applies only when the primary is
+    the one engine every write lands on. ``None`` (an assignment written before
+    write groups existed) keeps the earlier detection.
+    """
     patterns: list[dict] = []
 
     # Get engines that actually have queries after consolidation
@@ -100,7 +108,10 @@ def _detect_architectural_patterns(
 
     # Check for CQRS pattern
     # Primary handles writes, secondary handles reads/search
-    primary_has_writes = any(qa["assigned_engine"] == primary for qa in assignments)
+    if write_engines is None:
+        primary_has_writes = any(qa["assigned_engine"] == primary for qa in assignments)
+    else:
+        primary_has_writes = write_engines == {primary}
 
     read_secondaries = [e for e in secondaries if e in ("opensearch", "elasticache", "dynamodb")]
     if primary_has_writes and read_secondaries:
@@ -139,12 +150,46 @@ def _detect_architectural_patterns(
     return patterns
 
 
-def patterns_for_assignment(query_assignments: list[dict]) -> list[dict]:
-    """Architectural patterns for the engines that carry in-scope queries."""
+def write_engines_of(
+    query_assignments: list[dict], write_groups: dict[str, list[str]] | None
+) -> set[str] | None:
+    """The engines the in-scope writes land on, from the write groups (table ->
+    its write query ids), or ``None`` when the assignment records none (#951).
+
+    ``None`` (the key is missing) means an assignment written before write groups
+    existed, and keeps the earlier CQRS detection. ``{}`` means no in-scope query
+    writes a table, so no engine takes "all write operations". The contract's
+    ``write_groups`` defaults to ``{}`` for an artifact written before 1.17: a path
+    that loads the assignment through the model must pass ``None`` for such an
+    artifact, never the default. Synthesis and the reality check read the raw dict.
+    """
+    if write_groups is None:
+        return None
+    engine_of = {
+        str(qa.get("query_id")): str(qa["assigned_engine"])
+        for qa in query_assignments
+        if qa.get("in_scope", True) and qa.get("assigned_engine")
+    }
+    return {
+        engine_of[str(q)] for qids in write_groups.values() for q in qids if str(q) in engine_of
+    }
+
+
+def patterns_for_assignment(
+    query_assignments: list[dict], write_groups: dict[str, list[str]] | None = None
+) -> list[dict]:
+    """Architectural patterns for the engines that carry in-scope queries.
+
+    ``write_groups`` (the assignment's, table -> write query ids) decides which
+    engines take writes (#951): CQRS is named only for a primary that takes them
+    all, so the line never contradicts the sources of truth.
+    """
     in_scope = [
         qa for qa in query_assignments if qa.get("in_scope", True) and qa.get("assigned_engine")
     ]
-    return _detect_architectural_patterns(in_scope, set(), {})
+    return _detect_architectural_patterns(
+        in_scope, set(), {}, write_engines_of(in_scope, write_groups)
+    )
 
 
 def refresh_patterns_and_recommendations(result: dict) -> None:
@@ -156,7 +201,9 @@ def refresh_patterns_and_recommendations(result: dict) -> None:
     an engine that ends up with no in-scope query (#202). Only in-scope queries count.
     Mutates ``result``.
     """
-    patterns = patterns_for_assignment(result["revised_assignments"])
+    patterns = patterns_for_assignment(
+        result["revised_assignments"], (result.get("assignment") or {}).get("write_groups")
+    )
     result["architectural_patterns"] = patterns
     result["recommendations"] = _build_recommendations(
         result["revised_assignments"],

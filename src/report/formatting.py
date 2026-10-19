@@ -108,6 +108,18 @@ def fmt_num(value: Any, decimals: int = 2) -> str:
     return "0" if text in ("-0", "") else text
 
 
+# A query id as the engineering report's tables name it (#951): its first 8
+# characters; report.json keeps the full id. The results page shows 5 (#1028,
+# #1031): it is read on screen, where each id opens its full trace.
+SHORT_QUERY_ID_CHARS = 8
+
+
+def short_query_id(query_id: Any) -> str:
+    """``22726c84`` for a 64-character query hash; a short id stays as it is."""
+    text = str(query_id)
+    return text[:SHORT_QUERY_ID_CHARS]
+
+
 def clip(text: str, n: int) -> str:
     """Truncate on a word boundary — long descriptions and reasons read like a
     rendering bug when cut mid-word ("...DocumentDB versi").

@@ -534,9 +534,9 @@ def _place_settled_queries(
                 "from_engine": frm,
                 "to_engine": to,
                 "query_count": len(qids),
-                "reason": consolidation_reason(
-                    frm, to, len(qids), len(retained_qids), n_tie_unresolved
-                ),
+                # #951: the count and the engines are the record's own fields (and the
+                # trade-off line's title), so the reason does not restate the count.
+                "reason": consolidation_reason(frm, to, len(retained_qids), n_tie_unresolved),
                 "saved_cost_estimate": 0,
                 "action": "full" if is_full else "partial",
                 "queries_retained": retained_qids,
@@ -580,14 +580,15 @@ def _place_settled_queries(
 
 
 def consolidation_reason(
-    from_engine: str, to_engine: str, moved: int, retained: int = 0, tie_unresolved: int = 0
+    from_engine: str, to_engine: str, retained: int = 0, tie_unresolved: int = 0
 ) -> str:
-    """A consolidation record's ``reason``: plain prose, the count's noun agreeing
-    with it (#1034: no dash, and "1 query", never "1 queries")."""
-    noun = "query" if moved == 1 else "queries"
+    """A consolidation record's ``reason``: plain prose (#1034: no dash). It does
+    not restate how many queries moved (#951): that is the record's own
+    ``query_count``, and the trade-off line's "Consolidated N queries" title, so
+    no count can read "1 queries" either."""
     return (
-        f"{display_engine(from_engine)} provides no unique capabilities: {moved} {noun} "
-        f"can be served by {display_engine(to_engine)}"
+        f"{display_engine(from_engine)} provides no unique capabilities over "
+        f"{display_engine(to_engine)}"
         + (f" ({retained} retained)" if retained else "")
         + (
             f" ({tie_unresolved} of them tied on score, with no routing rule to decide)"

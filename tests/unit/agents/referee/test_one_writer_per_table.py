@@ -916,9 +916,10 @@ class TestTheSourceOfTruth:
                     "replica_read_query_ids": ["r1"],
                     "replica_read_count": 1,
                     "risk": (
-                        "Eventually consistent: 1 read on Aurora PostgreSQL (r1) read a copy "
-                        "kept in sync from DynamoDB via CDC, so a read can miss a write until "
-                        "it replicates."
+                        "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept "
+                        "in sync from DynamoDB via CDC, so each sees a write only after CDC "
+                        "applies it, behind by the replication lag; a read that must see its "
+                        "own write should read from DynamoDB."
                     ),
                 }
             ],

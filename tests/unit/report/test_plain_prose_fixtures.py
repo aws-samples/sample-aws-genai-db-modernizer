@@ -113,12 +113,21 @@ def test_model_schema_text_comes_out_of_its_seam_plain(path: Path) -> None:
         assert _hits(texts) == [], engine
 
 
-@pytest.mark.parametrize("n, noun", [(1, "query"), (3, "queries")])
-def test_consolidation_reason_is_plain_and_counts_right(n: int, noun: str) -> None:
-    reason = consolidation_reason("documentdb", "aurora_mysql", n)
-    assert reason == (
-        f"DocumentDB provides no unique capabilities: {n} {noun} can be served by Aurora MySQL"
-    )
+@pytest.mark.parametrize(
+    "retained, ties, tail",
+    [
+        (0, 0, ""),
+        (2, 0, " (2 retained)"),
+        (0, 1, " (1 of them tied on score, with no routing rule to decide)"),
+    ],
+)
+def test_consolidation_reason_is_plain_and_states_no_count(
+    retained: int, ties: int, tail: str
+) -> None:
+    """#951: the count is the record's ``query_count`` and the line's title, so the
+    reason never restates it (and so never reads "1 queries")."""
+    reason = consolidation_reason("documentdb", "aurora_mysql", retained, ties)
+    assert reason == "DocumentDB provides no unique capabilities over Aurora MySQL" + tail
     assert find_style_hits(reason) == []
 
 

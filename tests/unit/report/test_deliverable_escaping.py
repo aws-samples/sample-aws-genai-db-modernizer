@@ -287,7 +287,9 @@ class TestEngineeringReportEscaping:
             ]
         }
         lines = renderers.render_engineering_report_md(report).splitlines()
-        header = lines.index("| Source table | Target engine | Target | Pattern | Workload fit |")
+        header = lines.index(
+            "| Source table | Recommended engine | Target | Pattern | Workload fit |"
+        )
         row = lines[header + 2]
         cells = re.split(r"(?<!\\)\|", row)[1:-1]
         assert len(cells) == 5, row

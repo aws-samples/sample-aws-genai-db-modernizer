@@ -353,7 +353,9 @@ def run_synthesis_deterministic(
             "validation_incomplete": reality_check_output.get("validation_incomplete", []),
         }
         reality_check_summary = recompute_reality_check_patterns(
-            reality_check_summary, (data.assignment or {}).get("query_assignments", [])
+            reality_check_summary,
+            (data.assignment or {}).get("query_assignments", []),
+            (data.assignment or {}).get("write_groups"),
         )
         for rec in reality_check_summary["recommendations"]:
             rec_desc = rec if isinstance(rec, str) else str(rec)

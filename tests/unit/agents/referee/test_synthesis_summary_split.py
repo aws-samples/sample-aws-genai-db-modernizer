@@ -285,11 +285,11 @@ def test_engine_rationale_counts_in_scope_access_patterns() -> None:
         "elasticache": EngineArtifacts("elasticache", schema_design={"access_patterns": [{}] * 13}),
     }
     assert (
-        "schema design: 20 target tables, 47 in-scope access patterns (plus 5 out of scope)."
+        "Schema design: 20 target tables, 47 in-scope access patterns (plus 5 out of scope)."
         in _rationale(data, "dynamodb")
     )
     text = _rationale(data, "elasticache")
-    assert "schema design: 10 target tables, 13 in-scope access patterns." in text
+    assert "Schema design: 10 target tables, 13 in-scope access patterns." in text
     assert "out of scope" not in text
 
 

@@ -10,7 +10,7 @@ import { tableSourcesOf } from "../utils/reportFacts";
  * table whose reads run on another engine, the written tables with no replica
  * and the tables whose writes sit on more than one engine, from report.json's
  * facts.table_sources -- the same rows the engineering report states: the source of truth its writes land on, the CDC direction to
- * its replicas and the eventual-consistency risk naming the reads a replica
+ * its replicas and the eventual-consistency risk counting the reads a replica
  * serves (most replica reads first; the facts name the rest's count). It only
  * formats the facts (ADR-032).
  *

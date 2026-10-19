@@ -146,10 +146,10 @@ class TestQueriesOnAuroraByTable:
         assert engineering_report._reason_text_for(group, {"reason_index": 0}) == ""
         assert engineering_report._reason_text_for(group, {"reason_index": 1}) == "a real reason"
 
-    def test_long_joined_reasons_are_cut_on_a_word_boundary(self) -> None:
-        """#478: the joined "Reason" cell used to hard-cut at
-        200 characters, sometimes mid-word; it must back up to a word
-        boundary like every other clipped cell in the deliverables."""
+    def test_a_long_reason_is_kept_whole(self) -> None:
+        """#478: the joined "Reason" cell used to hard-cut at 200 characters,
+        sometimes mid-word. #951: it is never cut at all: each reason is named
+        once and whole, and only the count of reasons is capped."""
         report = _report()
         long_reason = (
             "this reason sentence repeats itself many times over so that the joined "
@@ -160,14 +160,8 @@ class TestQueriesOnAuroraByTable:
         md = renderers.render_engineering_report_md(report)
         section = md.split("## Queries on Aurora by table", 1)[1].split("\n## ", 1)[0]
         row = next(line for line in section.splitlines() if "wp.wp_postmeta" in line)
-        assert "…" in row
-        # No partial word right before the ellipsis.
-        clipped = row.split("|")[-2].strip()
-        assert clipped.endswith("…")
-        before_ellipsis = clipped[: -len("…")].rstrip()
-        assert long_reason.startswith(before_ellipsis)
-        next_char_index = len(before_ellipsis)
-        assert next_char_index == len(long_reason) or long_reason[next_char_index] == " "
+        assert "…" not in row
+        assert long_reason in row
 
 
 class TestGenericQueryGroupsTable:

@@ -126,7 +126,9 @@ def _trace_md(trace: dict[str, Any], row: dict[str, Any]) -> list[str]:
         out.append(f"- Runner-up: {escaping.md_text(runner['explanation'])}{basis}")
     for better in trace.get("outscored_by") or []:
         if isinstance(better, dict) and better.get("explanation"):
-            out.append(f"- Scored higher: {escaping.md_text(better['explanation'])}")
+            # #951: the explanation starts "<engine> scored higher", so no label
+            # repeats it.
+            out.append(f"- {escaping.md_text(better['explanation'])}")
     tied = trace.get("tied_engine_names") or []
     if tied:
         out.append(

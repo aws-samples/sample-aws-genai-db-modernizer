@@ -113,6 +113,8 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 - Complexity vs. atomicity (Lua scripts vs. simple commands)
 - Data duplication vs. query simplicity
 
+Write `description` and `impact` as plain, declarative facts; the engineering report quotes them verbatim. State a consistency or staleness window by its mechanism and its bound: what ends it, its limit when there is one, and the read that avoids it. Never "can take a moment", "briefly", "for a short time", "may see", "where possible" or "if that matters". For example: "After a settings change the cached option stays until the owner write path deletes its key, and for at most the one-hour TTL if that delete fails." or "A denormalized term entry is rebuilt by the write that changes either source row; a read that must see that change before the rebuild reads the owner database, which serves every cache miss."
+
 ## Output Requirements
 
 Return a complete `ElastiCacheModelOutputContract` with:

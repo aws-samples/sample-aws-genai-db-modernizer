@@ -1359,17 +1359,17 @@ TABLE_SOURCES_SHOWN = 25
 
 
 def _replica_risk(source: str, replicas: list[str], reads: list[str]) -> str:
-    """The eventual-consistency risk of a replicated table, naming its replica reads."""
-    named = ", ".join(reads[:REPLICA_READS_NAMED])
-    more = len(reads) - REPLICA_READS_NAMED
-    if more > 0:
-        named += f" and {more} more"
+    """The eventual-consistency risk of a replicated table: the mechanism, its
+    bound and the mitigation (#951). The reads are counted, not listed: their
+    ids are ``replica_read_query_ids``, next to this text."""
     noun = "read" if len(reads) == 1 else "reads"
+    source_name = display_engine(source)
     return (
         f"Eventually consistent: {len(reads)} {noun} on "
-        f"{', '.join(display_engine(e) for e in replicas)} ({named}) read a copy kept in "
-        f"sync from {display_engine(source)} via CDC, so a read can miss a write until it "
-        "replicates."
+        f"{', '.join(display_engine(e) for e in replicas)} read a copy kept in sync from "
+        f"{source_name} via CDC, so each sees a write only after CDC applies it, behind by "
+        f"the replication lag; a read that must see its own write should read from "
+        f"{source_name}."
     )
 
 

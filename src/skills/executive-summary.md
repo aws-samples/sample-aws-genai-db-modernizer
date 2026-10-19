@@ -38,9 +38,10 @@ Sentences 1-2, the architecture: which engines, and what role each engine plays 
 
 Sentences 3-4, what changes for the team. The source database is the relational engine named in the input's `source_database`, and the CTO's team is used to strong consistency, JOINs, GROUP BY, and ad-hoc queries. If the target architecture changes any of that, explain what is different and what it means in practice. For example:
 
-- If search data flows through a pipeline, say that search results may be a few seconds behind writes and explain this is normal for this pattern.
-- If JOINs were replaced by denormalized tables, explain that adding a new query dimension later means a schema change, not just a new SQL query.
-- If eventual consistency applies, explain what that feels like to a user.
+- If search data flows through a pipeline, say what the search index shows: every write once the pipeline has delivered it, and name the pipeline (for example DynamoDB Streams into OpenSearch Ingestion).
+- If JOINs were replaced by denormalized tables, say that a new way of looking data up is a new index or table, where today it is a new SQL query.
+- If eventual consistency applies, state its mechanism and its bound, and what a read that must see its latest write does instead (for example: "An index read returns a write once DynamoDB has applied it to the index; a read that must see the write it just made reads the base table with a strongly consistent read." or "A cached value stays until the write path deletes its key, and at most for its TTL.").
+- Never describe a window as "a moment", "briefly", "for a short time" or "may": name what ends it.
 
 Frame these as "here is what is different and why it is worth it", not as risks. You are helping them understand the new world, not scaring them. If the risk level is low and trade-offs are minor, keep it brief or skip it.
 

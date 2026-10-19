@@ -226,7 +226,9 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 
 Every trade-off must trace back to specific tables and queries. Common trade-offs: denormalization decisions, GSI fan-out replacing JOINs, composite sort key designs, eventual consistency on GSI reads, hot partition mitigations, patterns moved to unsupported.
 
-Write `description` and `impact` as plain, declarative facts, not hedged ("typically", "generally", "usually") or phrased as outside advice to the reader ("is recommended before migration", "it is suggested that", "should be considered"). State the consequence and, if there is one, the concrete action ("re-read the base item with a strongly consistent GetItem if the window matters"). The engineering report quotes this text verbatim to the customer.
+Write `description` and `impact` as plain, declarative facts, not hedged ("typically", "generally", "usually") or phrased as outside advice to the reader ("is recommended before migration", "it is suggested that", "should be considered"). State the consequence and, if there is one, the concrete action. The engineering report quotes this text verbatim to the customer.
+
+State a consistency or staleness window by its mechanism and its bound: what ends it, its limit when there is one, and the read that avoids it. Never "can take a moment", "briefly", "for a short time", "may see", "where possible" or "if that matters". For example: "The GSI is eventually consistent: a query on it returns a write once DynamoDB has applied it to the index. A caller that must see the write it just made reads the base item with a strongly consistent GetItem." or "After a settings change the cached option stays until the owner write path deletes its key, and for at most the one-hour TTL if that delete fails." A size decision states the figure that decides it: a column kept inline names the table's `avg_row_size_bytes` against the 400 KB item limit, never "typical values are far smaller".
 
 `validation_passed` — `true` only if all of the following hold:
 
