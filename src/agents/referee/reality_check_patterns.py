@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 
 from src.agents.referee.reality_check_records import _queries
+from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use as running_engines
 
@@ -78,6 +79,14 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
 }
 
 
+# Which engines each pattern names, by catalog role (#1081): a read side for CQRS is a
+# search read model, a cache or a key-value store; a materialized view is a search read
+# model; event-driven sync is suggested for a primary that is not a key-value store.
+CQRS_READ_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role=("search", "cache", "key_value"))
+VIEW_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="search")
+NO_EVENT_SYNC_PRIMARY_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="key_value")
+
+
 def _detect_architectural_patterns(
     assignments: list[dict],
     committed_engines: set[str],
@@ -113,7 +122,7 @@ def _detect_architectural_patterns(
     else:
         primary_has_writes = write_engines == {primary}
 
-    read_secondaries = [e for e in secondaries if e in ("opensearch", "elasticache", "dynamodb")]
+    read_secondaries = [e for e in secondaries if e in CQRS_READ_ENGINES]
     if primary_has_writes and read_secondaries:
         pattern = deepcopy(ARCHITECTURAL_PATTERNS["CQRS"])
         pattern["applies_to"] = {
@@ -122,12 +131,12 @@ def _detect_architectural_patterns(
         }
         patterns.append(pattern)
 
-    # Check for Materialized View pattern
-    if "opensearch" in secondaries:
+    # Check for Materialized View pattern: one per search read model in use
+    for view in sorted(e for e in secondaries if e in VIEW_ENGINES):
         pattern = deepcopy(ARCHITECTURAL_PATTERNS["MATERIALIZED_VIEW"])
         pattern["applies_to"] = {
             "source_engine": primary,
-            "view_engine": "opensearch",
+            "view_engine": view,
         }
         patterns.append(pattern)
 
@@ -138,7 +147,7 @@ def _detect_architectural_patterns(
             "engines": list(active_engines.keys()),
         }
         patterns.append(pattern)
-    elif len(active_engines) == 2 and primary != "dynamodb":
+    elif len(active_engines) == 2 and primary not in NO_EVENT_SYNC_PRIMARY_ENGINES:
         # Event sourcing when using non-serverless primary
         pattern = deepcopy(ARCHITECTURAL_PATTERNS["EVENT_SOURCING"])
         pattern["applies_to"] = {

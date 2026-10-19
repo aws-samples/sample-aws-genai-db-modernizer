@@ -180,10 +180,6 @@ _CONTRACT = (
 # Module-level constants (tables and single values) that name an engine id or a pattern
 # type in a literal.   path: (names, why it is still there)
 ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
-    "src/agents/referee/aurora_choice.py": (
-        frozenset({"EXACT_TIE_RULE_REASON"}),
-        _WORDING + ": the reason text an exact Aurora tie records (ADR-031 Decision 6)",
-    ),
     "src/shared/capability_labels.py": (
         frozenset({"CAPABILITY_REDESIGN_HINTS"}),
         _WORDING + ": how to redesign a query a fallback rule placed (#729)",
@@ -472,24 +468,11 @@ INLINE_PATTERN_LITERALS: dict[str, tuple[int, str]] = {
 }
 
 
-_INLINE_ENGINE_ROUTING = (
-    "engine-specific branches inside routing code: behaviour, not data, so #921 left them; "
-    "each becomes an engine-file field or a role lookup in its own step (#1081)"
-)
 # Engine-id string literals inside function bodies (not a module constant, class
 # attribute, docstring or catalog lookup key), counted per file in NUMERIC_DIRS: the
 # shape of a hard-coded routing branch (``if engine == "dynamodb": ...``).
 # path: (count, why)
 INLINE_ENGINE_LITERALS: dict[str, tuple[int, str]] = {
-    "src/agents/referee/aurora_choice.py": (10, _INLINE_ENGINE_ROUTING + ": the Aurora choice"),
-    "src/agents/referee/reality_check_floors.py": (
-        7,
-        _INLINE_ENGINE_ROUTING + ": OpenSearch and cost-share floors",
-    ),
-    "src/agents/referee/reality_check_patterns.py": (6, _INLINE_ENGINE_ROUTING),
-    "src/agents/referee/reality_check_rules.py": (2, _INLINE_ENGINE_ROUTING),
-    "src/agents/referee/assignment_overrides.py": (1, _INLINE_ENGINE_ROUTING),
-    "src/agents/referee/table_assignments.py": (1, _INLINE_ENGINE_ROUTING),
     "src/agents/referee/migration_wave_builders.py": (2, _WORDING),
     "src/agents/referee/reality_check_summary.py": (1, _WORDING),
     "src/agents/referee/synthesis_grounding.py": (3, _WORDING),
@@ -757,6 +740,127 @@ def _count_drift(found: dict[str, int], pinned: dict[str, int]) -> dict[str, tup
         for path in sorted(set(found) | set(pinned))
         if found.get(path, 0) != pinned.get(path, 0)
     }
+
+
+# The routing decision code: every module of src/agents/referee/ but the ones whose engine
+# literals INLINE_ENGINE_LITERALS lists as wording (the synthesis and wave text). It names
+# no engine at all (#1081): no engine id or display name in a string literal anywhere in
+# it (a module constant or a catalog lookup key included; docstrings excepted), and no
+# attribute named after an engine id (an enum member such as a per-engine reason code).
+# An engine-specific rule is an engine-file field or a role lookup instead.
+ROUTING_DIR = "src/agents/referee/"
+# Attributes named after an engine the routing code may still read, with why.
+# path: (attribute names, why)
+ENGINE_NAMED_ATTRIBUTES: dict[str, tuple[frozenset[str], str]] = {
+    "src/agents/referee/assignment_resolver.py": (
+        frozenset({"AURORA_FALLBACK"}),
+        "the move-ledger pass of the relational fallback (MovePass, a contract vocabulary): "
+        "it names the pass, not the engine the fallback picks",
+    ),
+}
+
+
+def _routing_files(sources: Iterable[tuple[str, str]]) -> Iterable[tuple[str, str]]:
+    wording = set(INLINE_ENGINE_LITERALS)
+    for rel, source in sources:
+        if rel.startswith(ROUTING_DIR) and rel not in wording:
+            yield rel, source
+
+
+def _engine_names_in_routing(sources: Iterable[tuple[str, str]]) -> dict[str, list[str]]:
+    """``path -> ["line: name", ...]`` for every engine an engine-neutral routing module
+    names in a string literal or an attribute (see ``ROUTING_DIR``)."""
+    names = ENGINE_IDS | ENGINE_DISPLAY_NAMES
+    words = {e.upper() for e in ENGINE_IDS}
+    found: dict[str, list[str]] = defaultdict(list)
+    for rel, source in _routing_files(sources):
+        tree = ast.parse(source)
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+        }
+        allowed = ENGINE_NAMED_ATTRIBUTES.get(rel, (frozenset(), ""))[0]
+        for node in ast.walk(tree):
+            if id(node) in docstrings:
+                continue
+            text = _literal_string(node) if isinstance(node, (ast.Constant, ast.BinOp)) else None
+            line = getattr(node, "lineno", 0)
+            if text in names:
+                found[rel].append(f"{line}: {text!r}")
+            elif (
+                isinstance(node, ast.Attribute)
+                and node.attr not in allowed
+                and any(f"_{w}_" in f"_{node.attr}_" for w in words)
+            ):
+                found[rel].append(f"{line}: .{node.attr}")
+    return dict(found)
+
+
+class TestRoutingCodeNamesNoEngine:
+    """#1081: the routing decision code reads every engine-specific rule from the catalog."""
+
+    def test_no_engine_is_named_in_the_routing_code(self) -> None:
+        sources = [
+            (path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8"))
+            for path in sorted((SRC / "agents" / "referee").glob("*.py"))
+        ]
+        found = _engine_names_in_routing(sources)
+        assert not found, (
+            "Routing code names an engine. Read the rule from the catalog instead (an "
+            "engine-file field, a role lookup, a catalog accessor keyed on a catalog-derived "
+            f"engine): {found}"
+        )
+
+    @pytest.mark.passes_on_main
+    def test_only_wording_modules_keep_engine_literals(self) -> None:
+        routing = {p for p in INLINE_ENGINE_LITERALS if p.startswith(ROUTING_DIR)}
+        assert all(INLINE_ENGINE_LITERALS[p][1].startswith(_WORDING) for p in routing), routing
+
+    @pytest.mark.passes_on_main
+    def test_every_listed_attribute_is_still_read(self) -> None:
+        for rel, (attrs, why) in ENGINE_NAMED_ATTRIBUTES.items():
+            source = (ROOT / rel).read_text(encoding="utf-8")
+            assert why.strip() and all(f".{a}" in source for a in attrs), rel
+
+    @pytest.mark.passes_on_main
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            'def f(engine):\n    return engine == "dynamodb"\n',
+            'def f(engines):\n    return [e for e in engines if e in ("opensearch",)]\n',
+            'X = catalog.engine_threshold("opensearch", "min_calls_per_second")\n',
+            'def f():\n    return catalog.engine_threshold("opensearch", "x")\n',
+            'def f(engine):\n    return engine == "Open" + "Search"\n',
+            "def f(engine):\n    return ReasonCode.FLOOR_OPENSEARCH\n",
+            "def f(engine):\n    return Pass.DYNAMODB\n",
+        ],
+    )
+    def test_a_new_engine_name_in_routing_code_fails(self, snippet: str) -> None:
+        found = _engine_names_in_routing([(ROUTING_DIR + "new_rule.py", snippet)])
+        assert list(found) == [ROUTING_DIR + "new_rule.py"], snippet
+
+    @pytest.mark.passes_on_main
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            '"""Docstrings may name DynamoDB and "opensearch"."""\n',
+            "def f(engine):\n    return engine in catalog.denormalized_join_engines()\n",
+            "def f(qa):\n    return qa.dynamodb_hint, ENGINE_LIST\n",
+            "X = MovePass.AURORA_FALLBACK\n",
+        ],
+    )
+    def test_engine_neutral_code_passes(self, snippet: str) -> None:
+        rel = ROUTING_DIR + ("assignment_resolver.py" if "AURORA_FALLBACK" in snippet else "x.py")
+        assert _engine_names_in_routing([(rel, snippet)]) == {}, snippet
+
+    @pytest.mark.passes_on_main
+    def test_a_wording_module_is_outside_this_check(self) -> None:
+        wording = next(p for p in INLINE_ENGINE_LITERALS if p.startswith(ROUTING_DIR))
+        assert _engine_names_in_routing([(wording, 'X = "dynamodb"\n')]) == {}
 
 
 class TestNoRoutingRuleOutsideTheCatalog:

@@ -17,16 +17,15 @@ from typing import TYPE_CHECKING
 from src.agents.referee.move_ledger import MoveLedger, apply_to_assignment, best_other, ledger_for
 from src.agents.referee.reality_check_records import _queries, engine_changes
 from src.agents.referee.reality_check_rules import (
-    AURORA_ENGINES,
     _group_eligible_engines,
     _move_scores_text,
     _moving_group_scores,
     _moving_members,
-    _query_has_join,
     _resolver_score,
     _tie_unresolved_note,
     _trace_ladder,
     engine_base_cost,
+    join_blocked_on,
     may_absorb,
     tie_reason_code,
 )
@@ -90,44 +89,74 @@ def _mandatory_cost_share_reason(engine: str, qas: list[dict], total_queries: in
 # floor (#304, cache_overlay.HOT_READ_MIN_CALLS_PER_SECOND).
 # ---------------------------------------------------------------------------
 
-# Minimum combined traffic (calls/s) across every query OpenSearch would own,
-# before its fixed monthly cost (ENGINE_BASE_COST["opensearch"]) is worth a
-# standing domain. 1.0 is the ElastiCache hot-read floor's own value
-# (cache_overlay.HOT_READ_MIN_CALLS_PER_SECOND): below one call/s, a cached
-# entry (or a search index) is read a few times before the next miss pays the
-# same cost as never having it, so one call/s is the lowest traffic worth a
-# dedicated store at all. On the wordpress reference sample, the 4 queries
-# OpenSearch was recommended for totalled well under 1 call/s combined.
-OPENSEARCH_MIN_CALLS_PER_SECOND = catalog.engine_threshold("opensearch", "min_calls_per_second")
+
+@dataclass(frozen=True)
+class FloorRule:
+    """One engine's own justification floor, read from its file (#326, #1081).
+
+    ``min_calls_per_second``: the combined traffic (calls/s) across every query the
+    engine would own before its fixed monthly cost is worth a standing store; for
+    OpenSearch 1.0, the ElastiCache hot-read floor's own value (below one call/s, an
+    index is read a few times before the next miss pays the same cost as never having
+    it; on the wordpress sample, the 4 queries OpenSearch was recommended for totalled
+    well under 1 call/s). ``native_override_min_calls_per_second``: the higher floor when
+    the source engine's own text search already serves the pattern (10x: that index is
+    already paid for by the primary cluster). ``min_corpus_rows_avg``: an average result
+    size that marks a corpus large enough for a dedicated index to earn its cost below
+    the traffic floor (a result-size proxy: the collector gives no per-table document
+    count, only each query's ``rows_returned_avg``). ``reason_code``: the move-ledger
+    reason a move off the engine records.
+    """
+
+    kind: str
+    reason_code: ReasonCode
+    min_calls_per_second: float
+    native_override_min_calls_per_second: float
+    min_corpus_rows_avg: float
+
+
+def _floor_rules() -> dict[str, FloorRule]:
+    rules: dict[str, FloorRule] = {}
+    for engine, floor in catalog.justification_floors().items():
+        try:
+            code = ReasonCode(floor.reason_code)
+        except ValueError as exc:
+            raise catalog.CatalogError(
+                f"{engine}.toml: justification_floor.reason_code {floor.reason_code!r} is not "
+                "a move-ledger ReasonCode"
+            ) from exc
+        rules[engine] = FloorRule(
+            kind=floor.kind,
+            reason_code=code,
+            **{
+                name: float(catalog.engine_threshold(engine, name))
+                for name in (
+                    "min_calls_per_second",
+                    "native_override_min_calls_per_second",
+                    "min_corpus_rows_avg",
+                )
+            },
+        )
+    return rules
+
+
+# Every engine with a floor of its own, from its file's ``justification_floor`` (#1081).
+# Built at import, so a bad reason code fails before any assessment runs.
+FLOOR_RULES: dict[str, FloorRule] = _floor_rules()
 
 # Source database engines whose own text search (MySQL FULLTEXT via
 # MATCH...AGAINST, Postgres tsvector/pg_trgm) already covers these patterns
 # for free -- the Aurora engines' native, basic full-text support. A
-# dedicated OpenSearch domain must clear a higher traffic bar than
-# OPENSEARCH_MIN_CALLS_PER_SECOND to be worth it anyway. The source engines whose own
-# dialect an Aurora engine is (the Aurora engine files' ``source_engines``).
+# dedicated search engine must clear the higher
+# ``native_override_min_calls_per_second`` floor to be worth it anyway. The source
+# engines whose own dialect an Aurora engine is (the Aurora engine files'
+# ``source_engines``).
 NATIVE_TEXT_SEARCH_SOURCE_ENGINES = frozenset(catalog.source_engine_dialects())
 
-# The traffic floor a native-text-search source engine's queries must clear
-# before OpenSearch is justified despite the source already covering the
-# pattern. 10x the base floor: the source engine's own index is free (already
-# paid for by the primary cluster), so a second, dedicated search engine only
-# earns its $150+/mo on top of that if the traffic is an order of magnitude
-# higher, not merely above the floor that justifies a search engine starting
-# from nothing.
-OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND = catalog.engine_threshold(
-    "opensearch", "native_override_min_calls_per_second"
-)
 
-# A query returning this many rows on average, even below the traffic floor,
-# signals a corpus large enough that a dedicated index can still earn its
-# cost (e.g. a low-traffic but very large full-text search over millions of
-# rows). This is a result-size proxy, not a corpus-size one: the collector
-# gives no table-level document-count stat, only rows_returned_avg (how much
-# a query's own result set averages), which is the only per-query signal
-# available -- a query that returns a small page from a huge corpus looks
-# the same as one that returns everything from a small one.
-OPENSEARCH_MIN_CORPUS_ROWS_AVG = catalog.engine_threshold("opensearch", "min_corpus_rows_avg")
+def search_floor_engines() -> frozenset[str]:
+    """The engines whose floor is ``search_depth`` (real search depth plus traffic)."""
+    return frozenset(e for e, rule in FLOOR_RULES.items() if rule.kind == "search_depth")
 
 
 def _query_has_search_depth(query_text: str | None, source_engine: str | None = None) -> bool:
@@ -147,37 +176,57 @@ def closed_to_pinned_search(
     kept_by_customer: Iterable[str],
     source_engine: str | None = None,
 ) -> dict[str, set[str]]:
-    """The queries that may not join an OpenSearch a customer pin keeps (#860).
+    """The queries that may not join a search-depth engine a customer pin keeps (#860).
 
-    The pin pays OpenSearch's standing cost, not a query's sync scope: a query
+    The pin pays the engine's standing cost, not a query's sync scope: a query
     with no real search depth fails the per-query #326 check whatever the
     cost, so Phase 2 never pulls it onto the pinned read model (this floor
-    would only move it off again).
+    would only move it off again). One entry per pinned engine with a
+    ``search_depth`` floor.
     """
-    engine = "opensearch"
-    if engine not in set(kept_by_customer):
-        return {}
+    shallow = {
+        qa["query_id"]
+        for qa in query_assignments
+        if not _query_has_search_depth(
+            query_map.get(qa["query_id"], {}).get("query_text"), source_engine
+        )
+    }
+    by_id = {qa["query_id"]: qa for qa in query_assignments}
     return {
-        engine: {
-            qa["query_id"]
-            for qa in query_assignments
-            if qa["assigned_engine"] != engine
-            and not _query_has_search_depth(
-                query_map.get(qa["query_id"], {}).get("query_text"), source_engine
-            )
-        }
+        engine: {qid for qid in shallow if by_id[qid]["assigned_engine"] != engine}
+        for engine in sorted(search_floor_engines() & set(kept_by_customer))
     }
 
 
-def opensearch_justification(
+def justification_verdicts(
+    engine: str,
     qas: list[dict],
     query_map: dict[str, dict],
     source_engine: str | None,
     *,
     standing_cost_paid: bool = False,
 ) -> dict[str, tuple[bool, str]]:
-    """Per-query verdict on whether OpenSearch earns its place for each query
-    it owns (#326, review of #375 finding B1).
+    """Per-query verdict on whether ``engine`` earns its place for each query it owns,
+    by its own floor (``FLOOR_RULES``, #1081); ``KeyError`` for an engine with none.
+    Only the ``search_depth`` kind exists (:func:`search_depth_justification`)."""
+    rule = FLOOR_RULES[engine]
+    if rule.kind != "search_depth":  # pragma: no cover - the loader knows no other kind
+        raise ValueError(f"{engine}: unknown justification floor {rule.kind!r}")
+    return search_depth_justification(
+        engine, qas, query_map, source_engine, standing_cost_paid=standing_cost_paid
+    )
+
+
+def search_depth_justification(
+    engine: str,
+    qas: list[dict],
+    query_map: dict[str, dict],
+    source_engine: str | None,
+    *,
+    standing_cost_paid: bool = False,
+) -> dict[str, tuple[bool, str]]:
+    """Per-query verdict on whether a search-depth engine (OpenSearch today) earns its
+    place for each query it owns (#326, review of #375 finding B1).
 
     A query with no real search depth never earns a place on its own,
     regardless of traffic -- it is judged, and reported, independently of
@@ -212,7 +261,7 @@ def opensearch_justification(
     if standing_cost_paid:
         paid = (
             f"{len(deep_qids)} queries need relevance ranking/fuzzy matching/facets, on an "
-            "OpenSearch domain the customer's own choice keeps"
+            f"{display_engine(engine)} domain the customer's own choice keeps"
         )
         verdicts.update({qid: (True, paid) for qid in deep_qids})
         return verdicts
@@ -221,13 +270,11 @@ def opensearch_justification(
     total_cps = sum(float(q.get("calls_per_second") or 0) for q in deep_rows.values())
     total_rows_avg = sum(float(q.get("rows_returned_avg") or 0) for q in deep_rows.values())
     native = (source_engine or "").lower() in NATIVE_TEXT_SEARCH_SOURCE_ENGINES
-    floor = (
-        OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND
-        if native
-        else OPENSEARCH_MIN_CALLS_PER_SECOND
-    )
+    rule = FLOOR_RULES[engine]
+    floor = rule.native_override_min_calls_per_second if native else rule.min_calls_per_second
+    min_rows = rule.min_corpus_rows_avg
 
-    if total_cps < floor and total_rows_avg < OPENSEARCH_MIN_CORPUS_ROWS_AVG:
+    if total_cps < floor and total_rows_avg < min_rows:
         source_name = SOURCE_ENGINE_DISPLAY_NAMES.get(
             (source_engine or "").lower(), source_engine or ""
         )
@@ -240,8 +287,8 @@ def opensearch_justification(
             f"{native_note}combined traffic {total_cps:.2f} calls/s across "
             f"{len(deep_qids)} queries with real search depth is below the {floor:g} calls/s "
             f"floor (and the {total_rows_avg:.0f}-row average result size is below the "
-            f"{OPENSEARCH_MIN_CORPUS_ROWS_AVG:g}-row floor) for a "
-            f"${engine_base_cost('opensearch'):.0f}/mo standing domain"
+            f"{min_rows:g}-row floor) for a "
+            f"${engine_base_cost(engine):.0f}/mo standing domain"
         )
         for qid in deep_qids:
             verdicts[qid] = (False, reason)
@@ -250,7 +297,7 @@ def opensearch_justification(
     reason = (
         f"{len(deep_qids)} queries need relevance ranking/fuzzy matching/facets at "
         f"{total_cps:.2f} calls/s (average result size {total_rows_avg:.0f} rows), clearing "
-        f"the {floor:g} calls/s floor or the {OPENSEARCH_MIN_CORPUS_ROWS_AVG:g}-row floor"
+        f"the {floor:g} calls/s floor or the {min_rows:g}-row floor"
     )
     for qid in deep_qids:
         verdicts[qid] = (True, reason)
@@ -268,7 +315,7 @@ def _workload_ever_justified(
     ``None`` when no justification floor applies to ``engine`` at all (only
     OpenSearch has one, #326) -- the caller must not claim or deny a saving
     based on this when it's ``None``. ``True`` when at least one of the
-    engine's own first-assignment queries clears ``opensearch_justification``
+    engine's own first-assignment queries clears ``justification_verdicts``
     (real search depth plus traffic or corpus size); ``False`` when none do.
 
     Judged once, here, against the engine's queries *before* any reality
@@ -279,10 +326,17 @@ def _workload_ever_justified(
     (carried on each consolidation record) to avoid presenting that removal
     as an infrastructure saving.
     """
-    if engine != "opensearch" or not first_assignment_qas:
+    if engine not in FLOOR_RULES or not first_assignment_qas:
         return None
-    verdicts = opensearch_justification(first_assignment_qas, query_map, source_engine)
+    verdicts = justification_verdicts(engine, first_assignment_qas, query_map, source_engine)
     return any(justified for justified, _ in verdicts.values())
+
+
+def _floor_reason_code(engine: str) -> ReasonCode:
+    """The ledger reason a floor move off ``engine`` records: its own floor's code (its
+    file's ``justification_floor.reason_code``), else the cost-share floor's (#616, #1081)."""
+    rule = FLOOR_RULES.get(engine)
+    return rule.reason_code if rule is not None else ReasonCode.FLOOR_COST_SHARE
 
 
 @dataclass(frozen=True)
@@ -329,7 +383,7 @@ def _apply_justification_floors(
     the workload pays for the engine -- the cost-share floor (#167) and
     OpenSearch's traffic/corpus floor (#326) -- do not run for it. OpenSearch's
     per-query search-depth check does: a query with no real search depth still
-    leaves a pinned OpenSearch (``opensearch_justification``'s
+    leaves a pinned OpenSearch (``justification_verdicts``'s
     ``standing_cost_paid``).
 
     Mutates ``revised``, ``consolidations``, ``unique_value_assessment``,
@@ -368,12 +422,12 @@ def _apply_justification_floors(
     # -------------------------------------------------------------------
     # A pinned engine's cost is paid (#860): only OpenSearch's depth check stays.
     floor_scope = (mandatory_committed_engines - customer_kept_engines) | (
-        {"opensearch"} & committed_engines
+        set(FLOOR_RULES) & committed_engines
     )
     for engine in sorted(floor_scope & committed_engines):
         # Grouped by actual CURRENT ownership, not by any one signal (#475
         # review, suggestion 1) -- deliberately different from the
-        # resolver's own ``opensearch_justification`` call
+        # resolver's own ``justification_verdicts`` call
         # (``assignment_resolver._build_signal_overrides``), which groups by
         # the signal's own candidate queries before any assignment exists.
         # This floor asks a later question: does the engine's workload AS IT
@@ -389,8 +443,9 @@ def _apply_justification_floors(
         # one deep query must not be sunk by a shallow one sitting next to it,
         # and vice versa); a single engine-wide (justified, reason) for any
         # other mandatory engine, applied to every one of its queries.
-        if engine == "opensearch":
-            verdicts = opensearch_justification(
+        if engine in FLOOR_RULES:
+            verdicts = justification_verdicts(
+                engine,
                 current_qas,
                 query_map,
                 resolved_source_engine,
@@ -603,11 +658,7 @@ def _apply_justification_floors(
                             rqa,
                             target_engine,
                             pass_=MovePass.FLOOR,
-                            reason_code=(
-                                ReasonCode.FLOOR_OPENSEARCH
-                                if engine == "opensearch"
-                                else ReasonCode.FLOOR_COST_SHARE
-                            ),
+                            reason_code=_floor_reason_code(engine),
                             score_before=floor_move.score_before,
                             score_after=floor_move.score_after,
                             runner_up=floor_move.runner_up,
@@ -779,11 +830,7 @@ def _find_best_absorber_for_query(
         # now. A join that was already on DynamoDB, or arrived there from
         # Aurora (a key-scoped 2-table join a v1 fit score chose on its own
         # merits), is unaffected; this only blocks a *consolidation* onto it.
-        if (
-            target_engine == "dynamodb"
-            and source_engine not in AURORA_ENGINES
-            and _query_has_join(query_map.get(qid, {}))
-        ):
+        if join_blocked_on(target_engine, (source_engine,), query_map.get(qid, {})):
             continue
 
         # #502 review round 5, finding N3 / #490/#549: ranked by the

@@ -73,6 +73,7 @@ from src.contracts.assignment_models import (
     ValidationResult,
 )
 from src.contracts.move_ledger import EngineScore, MoveActor, MoveEvidence, MovePass, ReasonCode
+from src.shared.cache_engines import DEFAULT_CACHE_ENGINE
 from src.shared.capability_labels import capability_gap_phrase
 from src.shared.contract_versioning import load_contract, stamp_artifact_version
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, display_engine
@@ -603,7 +604,7 @@ def apply_assignment_overrides(
     )
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_by_id = {q.get("query_id"): q for q in queries}
-    cache = available_cache_engine(analysis_outputs) or "elasticache"
+    cache = available_cache_engine(analysis_outputs) or DEFAULT_CACHE_ENGINE
     source_engine = source_database_engine(collector_output)
     heavy = write_heavy_tables(queries, source_engine)
     # The settled-workload count ``fallback_owner`` passes on to an unresolved

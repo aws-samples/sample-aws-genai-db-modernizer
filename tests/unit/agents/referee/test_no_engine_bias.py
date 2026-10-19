@@ -146,16 +146,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "engine was already decided by the resolver/tie_break before this runs."
     ),
     (
-        "table_assignments.py",
-        "derive_table_assignments",
-        RULE_LITERAL_PREFERENCE,
-    ): (
-        "global_fallback='aurora' only fires when the whole assignment has no "
-        "owner engine anywhere (logged as a warning); a degenerate-input "
-        "placeholder for the table summary field, not a competitive pick "
-        "among engines that could serve the query."
-    ),
-    (
         "reality_check_patterns.py",
         "_detect_architectural_patterns",
         RULE_MINMAX_COUNT_OR_NAME,
@@ -398,17 +388,6 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "fallback_owner's pick (owner_decision since #616 returns what it compared): "
         "singleton guard, tied[0] runs only when len(tied) == 1; real ties go through "
         "break_tie (#549)."
-    ),
-    (
-        "aurora_choice.py",
-        "choose_heterogeneous_engine",
-        RULE_LITERAL_PREFERENCE,
-    ): (
-        "Two literal branches. The exact tie with no deciding feature is "
-        "the maintainer-approved final tie-break (ADR-031 Decision 6 "
-        "amendment, 2026-10-14, #656), traced as such. The feature-tipped "
-        "branches stay one-sided by design pending dialect-aware scoring "
-        "(#445, tracked, open)."
     ),
 }
 

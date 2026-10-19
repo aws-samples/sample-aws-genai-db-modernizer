@@ -72,6 +72,36 @@ Fields:
 - ``complexity_by_feature_count`` (optional, #921): the complexity points a table earns
   for showing 1, 2, ... of the patterns whose entry on this engine is a
   ``complexity_feature`` (the last value for any higher count; the Aurora SQL features).
+
+The engine-specific routing branches #1081 moved out of the routing code:
+
+- ``justification_floor`` (optional table): the reality check's floor this engine must
+  clear to keep a query, beyond the cost-share floor every other mandatory engine faces.
+  ``kind`` names the floor (``search_depth``: real search depth plus the engine's
+  ``min_calls_per_second``, ``native_override_min_calls_per_second`` and
+  ``min_corpus_rows_avg`` thresholds, #326), ``reason_code`` the move-ledger
+  ``ReasonCode`` value a move off the engine records (checked against ``ReasonCode``
+  where the floors are built, ``reality_check_floors.FLOOR_RULES``), and ``why`` the
+  reason. Any number of engines may carry a floor of a known kind; each must define the
+  kind's thresholds (``justification_floor_engines``). An engine with
+  ``override_needs_justification`` must carry one, since that is the floor its signal
+  override is judged by.
+- ``joins_need_denormalized_design`` (#375 finding B2): a join query the reality check
+  consolidates away from an engine that is neither one of these nor relational never
+  lands here, since serving it needs a denormalised design nothing proposes yet
+  (``denormalized_join_engines``).
+- ``exact_tie_preferred`` (ADR-031 Decision 6 Amendment 1, #656): for a heterogeneous
+  source, the relational engine that wins an exact tie on total adjusted score that no
+  source feature breaks. This is a named-engine preference held as data: a maintainer
+  rule, not an engine property (``exact_tie_engine``).
+- ``short_name`` (optional): the short name the reason text uses for the engine's
+  dialect (``"PostgreSQL"``); the display name when unset.
+
+There are at most two active relational engines (the heterogeneous Aurora choice of
+ADR-031 Decision 6 compares exactly two), and when there are two, ``exact_tie_preferred``
+is set on exactly one of them and on no other engine; the loader rejects anything else.
+Which engine each source feature favours is per-feature data in ``routing.toml``
+(``[heterogeneous_features.<id>]``), not an engine flag.
 """
 
 from __future__ import annotations
@@ -167,6 +197,28 @@ class AbsorbOnly(BaseModel):
     capabilities: tuple[str, ...] = ()
 
 
+# The justification floors an engine file can name (``JustificationFloor.kind``), each
+# with the thresholds the engine's file must define for it.
+FLOOR_THRESHOLDS: Mapping[str, tuple[str, ...]] = {
+    "search_depth": (
+        "min_calls_per_second",
+        "native_override_min_calls_per_second",
+        "min_corpus_rows_avg",
+    ),
+}
+JustificationFloorKind = Literal["search_depth"]
+
+
+class JustificationFloor(BaseModel):
+    """The reality check's own floor for one engine (#326, #1081)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: JustificationFloorKind
+    reason_code: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
+    why: str = Field(min_length=1, pattern=r"^[^\n]+$")
+
+
 class EngineEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -186,6 +238,27 @@ class EngineEntry(BaseModel):
     absorbs_only: AbsorbOnly | None = None
     override_needs_justification: bool = False
     complexity_by_feature_count: tuple[int, ...] = ()
+    justification_floor: JustificationFloor | None = None
+    joins_need_denormalized_design: bool = False
+    exact_tie_preferred: bool = False
+    short_name: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _a_justified_override_has_a_floor(self) -> EngineEntry:
+        if self.override_needs_justification and self.justification_floor is None:
+            raise ValueError(f"{self.id}: override_needs_justification needs a justification_floor")
+        return self
+
+    @model_validator(mode="after")
+    def _a_floor_has_its_thresholds(self) -> EngineEntry:
+        if self.justification_floor is not None:
+            needed = FLOOR_THRESHOLDS[self.justification_floor.kind]
+            if missing := [t for t in needed if t not in self.thresholds]:
+                raise ValueError(
+                    f"{self.id}: justification_floor {self.justification_floor.kind} needs "
+                    f"thresholds {missing}"
+                )
+        return self
 
     @model_validator(mode="after")
     def _roles_that_never_own(self) -> EngineEntry:
@@ -246,7 +319,32 @@ def load_engine_catalog(directory: Path = CATALOG_DIR) -> tuple[EngineEntry, ...
             raise CatalogError(f"{field} values repeat: {sorted(orders)}")
     _one_cost_weight(entries)
     _one_engine_per_source(entries)
+    _the_relational_choice(entries)
     return tuple(sorted(entries, key=lambda e: e.display_order))
+
+
+def _the_relational_choice(entries: Iterable[EngineEntry]) -> None:
+    """At most two active relational engines, and with two, ``exact_tie_preferred`` on
+    exactly one of them and on no other engine (ADR-031 Decision 6 and its Amendment 1:
+    the heterogeneous Aurora choice compares exactly two, #1081)."""
+    entries = list(entries)
+    relational = {e.id for e in entries if e.status in ACTIVE and e.role == "relational"}
+    if len(relational) > 2:
+        raise CatalogError(
+            f"{len(relational)} active relational engines {sorted(relational)}: the "
+            "heterogeneous Aurora choice (ADR-031 Decision 6) compares exactly two; adding "
+            "a third needs a new Decision 6 rule first"
+        )
+    flagged = sorted(e.id for e in entries if e.exact_tie_preferred)
+    if set(flagged) - relational:
+        raise CatalogError(
+            f"exact_tie_preferred is set on {flagged}: only an active relational engine"
+        )
+    if len(flagged) > 1 or (len(relational) == 2 and not flagged):
+        raise CatalogError(
+            f"exact_tie_preferred must be set on exactly one active relational engine, not "
+            f"{flagged}"
+        )
 
 
 def _one_engine_per_source(entries: Iterable[EngineEntry]) -> None:
@@ -345,6 +443,28 @@ def engine_threshold(engine: str, name: str) -> int | float:
 def engine_entry(engine: str) -> EngineEntry | None:
     """The engine file for ``engine``, or ``None`` for an id the catalog does not know."""
     return next((e for e in engines() if e.id == engine), None)
+
+
+def justification_floors() -> dict[str, JustificationFloor]:
+    """Every active engine's own ``justification_floor``, by engine id (#1081)."""
+    return {
+        e.id: e.justification_floor
+        for e in engines()
+        if e.status in ACTIVE and e.justification_floor is not None
+    }
+
+
+def denormalized_join_engines() -> frozenset[str]:
+    """The active engines with ``joins_need_denormalized_design`` (#375, #1081)."""
+    return frozenset(
+        e.id for e in engines() if e.status in ACTIVE and e.joins_need_denormalized_design
+    )
+
+
+def exact_tie_engine() -> str | None:
+    """The relational engine that wins an exact heterogeneous Aurora tie (ADR-031 Decision 6
+    Amendment 1), or None with fewer than two relational engines (#1081)."""
+    return next((e.id for e in engines() if e.exact_tie_preferred), None)
 
 
 def source_engine_dialects() -> dict[str, str]:

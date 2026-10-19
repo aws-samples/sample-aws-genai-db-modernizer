@@ -49,6 +49,12 @@ cost = 0.10
 
 # The justification floors a standing OpenSearch domain must clear (#326, #921): a text
 # search signal alone never keeps the engine (reality_check_floors.opensearch_justification).
+# The floor itself, and the ledger reason a move off OpenSearch records (#616, #1081):
+[justification_floor]
+kind = "search_depth"
+reason_code = "floor.opensearch"
+why = "A standing search domain earns a query only with real search depth (relevance ranking, fuzzy matching or a facet) and enough traffic or result size to pay for it (#326)."
+
 [thresholds.min_calls_per_second]
 value = 1.0
 why = "Combined calls/s across every query OpenSearch would own before its fixed cost is worth a standing domain: the cache overlay's hot-read floor, the lowest traffic worth a dedicated store (#326)."

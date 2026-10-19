@@ -92,7 +92,7 @@ def _make_collector(query_ids: list[str], extra: dict[str, dict] | None = None) 
 
 # A query_text/calls_per_second pair that clears the OpenSearch justification
 # floor (#326): real search depth (MATCH...AGAINST) at traffic above
-# OPENSEARCH_MIN_CALLS_PER_SECOND, with no source engine metadata (so the
+# OpenSearch's min_calls_per_second floor, with no source engine metadata (so the
 # native-source-engine override does not apply). Tests that assert OpenSearch
 # keeps a mandatory query use this so they test mandatory protection itself,
 # not the justification floor (covered separately below).
@@ -1422,22 +1422,22 @@ class TestWorkloadEverJustified:
 
 
 class TestOpenSearchJustificationFunction:
-    """Direct tests of opensearch_justification() (#326). It now returns a
+    """Direct tests of search_depth_justification() (#326). It now returns a
     per-query {query_id: (justified, reason)} dict (review finding B1)."""
 
     def test_no_depth_fails(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE name LIKE ?", "calls_per_second": 10.0}
         }
-        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        justified, reason = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
         assert "no search predicate" in reason
 
     def test_depth_but_low_traffic_fails(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1446,12 +1446,12 @@ class TestOpenSearchJustificationFunction:
                 "calls_per_second": 0.01,
             }
         }
-        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        justified, reason = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
         assert "calls/s" in reason
 
     def test_depth_and_traffic_passes(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1460,7 +1460,7 @@ class TestOpenSearchJustificationFunction:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
 
@@ -1470,7 +1470,7 @@ class TestOpenSearchPerQueryDepth:
     sink a deep one, and the floor is judged only across the deep ones)."""
 
     def test_one_deep_query_does_not_unlock_a_shallow_one(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "deep"}, {"query_id": "shallow"}]
         query_map = {
@@ -1483,14 +1483,14 @@ class TestOpenSearchPerQueryDepth:
                 "calls_per_second": 5.0,
             },
         }
-        verdicts = opensearch_justification(qas, query_map, None)
+        verdicts = search_depth_justification("opensearch", qas, query_map, None)
         assert verdicts["shallow"][0] is False
         assert verdicts["deep"][0] is True
 
     def test_shallow_key_lookup_does_not_sink_a_real_search_at_high_traffic(self):
         """Review finding B1: a key lookup sitting next to a real `@@ plainto_tsquery`
         search at 50 calls/s must not drop the search too -- only the lookup moves."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "search"}, {"query_id": "lookup"}]
         query_map = {
@@ -1503,12 +1503,12 @@ class TestOpenSearchPerQueryDepth:
                 "calls_per_second": 0.5,
             },
         }
-        verdicts = opensearch_justification(qas, query_map, None)
+        verdicts = search_depth_justification("opensearch", qas, query_map, None)
         assert verdicts["lookup"][0] is False
         assert verdicts["search"][0] is True
 
     def test_bare_group_by_is_not_a_facet(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1517,11 +1517,11 @@ class TestOpenSearchPerQueryDepth:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
     def test_search_predicate_with_group_by_in_same_query_is_a_facet(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1533,11 +1533,11 @@ class TestOpenSearchPerQueryDepth:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_create_extension_is_not_search(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1546,21 +1546,21 @@ class TestOpenSearchPerQueryDepth:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
     def test_tsvector_document_construction_is_not_search(self):
         """A plain to_tsvector() call with no @@ match is building a document, not searching."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {"q1": {"query_text": "SELECT to_tsvector($1, $2)", "calls_per_second": 20.0}}
-        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        justified, reason = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
         assert "no search predicate" in reason
 
     def test_large_corpus_justifies_below_the_traffic_floor(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1570,11 +1570,11 @@ class TestOpenSearchPerQueryDepth:
                 "rows_returned_avg": 5000,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_small_corpus_and_low_traffic_fails(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1584,7 +1584,7 @@ class TestOpenSearchPerQueryDepth:
                 "rows_returned_avg": 10,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
 
@@ -1593,18 +1593,18 @@ class TestOpenSearchFuzzyMatchRegex:
     pattern's own wildcard and missed the real pg_trgm "%" operator."""
 
     def test_like_prefix_wildcard_is_not_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE name LIKE 'abc%'", "calls_per_second": 50.0}
         }
-        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        justified, reason = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
         assert "no search predicate" in reason
 
     def test_like_both_sided_wildcard_is_not_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1613,33 +1613,33 @@ class TestOpenSearchFuzzyMatchRegex:
                 "calls_per_second": 50.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
     def test_modulo_on_a_parameter_is_not_fuzzy_matching_inside_a_literal(self):
         """id % $2 used to match the old regex purely because of the literal check
         order; confirm a literal containing a percent sign is not mistaken for it."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE tag = 'sale%'", "calls_per_second": 50.0}
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
     def test_real_trigram_operator_is_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE title % $1", "calls_per_second": 5.0}
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_real_trigram_operator_against_a_literal_is_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1648,11 +1648,11 @@ class TestOpenSearchFuzzyMatchRegex:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_similarity_function_is_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1661,11 +1661,11 @@ class TestOpenSearchFuzzyMatchRegex:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_word_similarity_function_is_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
@@ -1674,53 +1674,53 @@ class TestOpenSearchFuzzyMatchRegex:
                 "calls_per_second": 5.0,
             }
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_modulo_against_a_parameter_followed_by_a_comparison_is_not_fuzzy_matching(self):
         """A second review of #375: `id % $2 = 0` is modulo arithmetic, not the
         pg_trgm similarity operator -- the real operator is a boolean predicate
         on its own, never immediately followed by a comparison operator."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE id % $2 = 0", "calls_per_second": 50.0}
         }
-        justified, reason = opensearch_justification(qas, query_map, None)["q1"]
+        justified, reason = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
         assert "no search predicate" in reason
 
     def test_modulo_against_a_parameter_followed_by_arithmetic_is_not_fuzzy_matching(self):
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE id % $2 + 1 = 0", "calls_per_second": 50.0}
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is False
 
     def test_pg_trgm_word_similarity_right_threshold_operator_is_fuzzy_matching(self):
         """The pg_trgm `%>` ("right word is similar enough") operator."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE title %> $1", "calls_per_second": 5.0}
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
     def test_pg_trgm_word_similarity_left_threshold_operator_is_fuzzy_matching(self):
         """The pg_trgm `<%` ("left word is similar enough") operator."""
-        from src.agents.referee.reality_check import opensearch_justification
+        from src.agents.referee.reality_check import search_depth_justification
 
         qas = [{"query_id": "q1"}]
         query_map = {
             "q1": {"query_text": "SELECT * FROM t WHERE $1 <% title", "calls_per_second": 5.0}
         }
-        justified, _ = opensearch_justification(qas, query_map, None)["q1"]
+        justified, _ = search_depth_justification("opensearch", qas, query_map, None)["q1"]
         assert justified is True
 
 

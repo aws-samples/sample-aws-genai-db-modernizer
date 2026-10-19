@@ -17,6 +17,14 @@ from src.shared import catalog
 
 # The active engines whose catalog ``role`` is ``cache`` (src/catalog/engines, #492).
 CACHE_ENGINES: frozenset[str] = catalog.engine_ids(status=catalog.ACTIVE, role="cache")
+# The cache engine a customer cache request uses when the analysis names none (#1081):
+# the catalog's one active cache-role engine. The rule is "exactly one": a second cache
+# engine needs a catalog field to say which is the default, so it fails here, at import.
+if len(CACHE_ENGINES) != 1:
+    raise catalog.CatalogError(
+        f"exactly one active cache engine is the default cache engine, not {sorted(CACHE_ENGINES)}"
+    )
+(DEFAULT_CACHE_ENGINE,) = CACHE_ENGINES
 
 
 def cache_threshold(name: str) -> int | float:

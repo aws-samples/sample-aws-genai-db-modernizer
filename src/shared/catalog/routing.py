@@ -5,7 +5,13 @@ missing or mistyped field fails at import time):
 
 - ``src/catalog/routing.toml``: the routing thresholds every engine shares
   (``[thresholds.<name>]``: ``value`` and ``why``). A threshold for one engine alone is in
-  that engine's file (``engines.EngineEntry.thresholds``).
+  that engine's file (``engines.EngineEntry.thresholds``). It also holds the source
+  features that tip the heterogeneous Aurora choice (ADR-031 Decision 6, #381, #1081):
+  ``[heterogeneous_features.<id>]`` with the active relational engine the feature
+  ``favours``, its ``basis`` (``workload``: read from the collected schema and queries,
+  decides first; ``dialect``: a property of the source engine, consulted only when no
+  workload feature decides) and ``why``. The keys are the features
+  ``aurora_choice.detect_heterogeneous_features`` reports, in the order they are listed.
 - ``src/catalog/gates.toml``: the hard gates (ADR-031 Decision 2 steps 2 and 3).
   ``[capabilities.<id>]`` gives the ``engines`` that have the capability, the query
   ``facts`` and ``triage_signals`` that require it, an optional ``pattern_capability``
@@ -46,10 +52,21 @@ _ONE_LINE = r"^[^\n]+$"
 _ID = r"^[a-z][a-z0-9_]*$"
 
 
+class HeterogeneousFeature(BaseModel):
+    """One source feature of the heterogeneous Aurora choice and the engine it favours."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    favours: str = Field(pattern=_ID)
+    basis: Literal["workload", "dialect"]
+    why: str = Field(min_length=1, pattern=_ONE_LINE)
+
+
 class RoutingFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     thresholds: dict[str, Threshold]
+    heterogeneous_features: dict[str, HeterogeneousFeature] = Field(default_factory=dict)
 
 
 class HardCapability(BaseModel):
@@ -160,7 +177,15 @@ def _load[M: BaseModel](path: Path, model: type[M]) -> M:
 
 
 def load_routing_file(path: Path = ROUTING_FILE) -> RoutingFile:
+    """``routing.toml``; each heterogeneous feature favours an active relational engine."""
     loaded = _load(path, RoutingFile)
+    relational = engine_ids(status=ACTIVE, role="relational")
+    for name, feature in loaded.heterogeneous_features.items():
+        if feature.favours not in relational:
+            raise CatalogError(
+                f"{path.name}: heterogeneous_features.{name} favours {feature.favours!r}, "
+                "not an active relational engine"
+            )
     return loaded
 
 
@@ -243,6 +268,11 @@ def threshold(name: str) -> int | float:
     if entry is None:
         raise KeyError(f"routing.toml has no thresholds.{name}")
     return entry.value
+
+
+def heterogeneous_features() -> dict[str, HeterogeneousFeature]:
+    """The heterogeneous Aurora choice's source features, in file order (#1081)."""
+    return dict(routing_file().heterogeneous_features)
 
 
 def hard_capabilities() -> dict[str, HardCapability]:

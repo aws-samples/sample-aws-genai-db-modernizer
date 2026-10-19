@@ -29,6 +29,7 @@ source whose own dialect leans MySQL-compatible. #445 tracks adding it.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -57,6 +58,12 @@ AURORA_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
 # fallback's default any more, now that the fallback has none of its own.
 MARGIN_RATIO = catalog.threshold("aurora_choice_margin_ratio")
 
+# The relational engine an exact tie goes to: the engine file with ``exact_tie_preferred``
+# (ADR-031 Decision 6 Amendment 1; catalog data since #1081, so this module names no
+# engine). Which engine each source feature favours is per-feature data (below).
+EXACT_TIE_ENGINE = catalog.exact_tie_engine()
+
+
 # ADR-031 Decision 6 amendment (maintainer decision, 2026-10-14, #656): when the two
 # Aurora engines tie EXACTLY on total adjusted score for a heterogeneous source,
 # Aurora PostgreSQL wins. This is a stated maintainer rule, not a score or a feature,
@@ -69,38 +76,50 @@ MARGIN_RATIO = catalog.threshold("aurora_choice_margin_ratio")
 # exact tie -- expected to be rare. The chosen engine is NOT source-compatible for
 # a heterogeneous source (ADR-031 Decisions 2 and 13 stay inapplicable): whether it
 # can serve a query depends on that query's own operations, not on this choice.
+# The engines and the preferred dialect are named from the catalog: "tie between Aurora
+# MySQL and Aurora PostgreSQL; PostgreSQL preferred ..." (the engine file's ``short_name``).
+def _short_name(engine: str | None) -> str:
+    entry = catalog.engine_entry(engine) if engine else None
+    if entry is None:
+        return "no engine"
+    return entry.short_name or entry.display_name
+
+
 EXACT_TIE_RULE_REASON = (
-    f"tie between {display_engine('aurora_mysql')} and {display_engine('aurora_postgresql')}; "
-    "PostgreSQL preferred on a tie by maintainer rule, ADR-031 Decision 6"
+    f"tie between {' and '.join(display_engine(e) for e in sorted(AURORA_ENGINES))}; "
+    f"{_short_name(EXACT_TIE_ENGINE)} preferred on a tie by maintainer rule, ADR-031 Decision 6"
 )
 
-# Source features that tip a close Aurora MySQL vs Aurora PostgreSQL call (#381 design):
-# sequences, MERGE and JSON all have more direct PostgreSQL equivalents than MySQL ones,
-# and multiple schemas per database map onto PostgreSQL schemas (MySQL has none). These
-# are workload-based: they come from the collected schema/queries themselves, so a close
+# Source features that tip a close or tied heterogeneous Aurora call (#381 design), each
+# with the engine it favours: ``routing.toml``'s ``[heterogeneous_features.<id>]`` (#1081).
+# Sequences, MERGE and JSON have more direct PostgreSQL equivalents than MySQL ones, and
+# several schemas per database map onto PostgreSQL schemas; every feature favours Aurora
+# PostgreSQL today (the workload-feature step is under review in #445).
+#
+# ``workload`` features come from the collected schema/queries themselves, so a close
 # call for *any* heterogeneous source (SQL Server, Oracle, DB2) can be tipped by them.
-# Every one of them favours aurora_postgresql today; a future engine added to the pool
-# would need its own column in ``choose_heterogeneous_engine``, not just a new entry here.
 # Recursive CTEs are not one (#920, catalog PR C): MySQL 8.0, which Aurora MySQL version 3
 # is compatible with, has WITH RECURSIVE, so both engines' analyses credit a recursive CTE
 # in their scores (the cte-recursive pattern) and it no longer tips the call. An older
 # trace may still name it (``FEATURE_LABELS`` keeps its label).
-PRIMARY_FEATURE_SIGNALS: tuple[str, ...] = (
-    "sequences",
-    "merge_statements",
-    "json_usage",
-    "multiple_schemas",
+#
+# A ``dialect`` feature (Babelfish, SQL Server wire-protocol compatibility, which exists
+# only for Aurora PostgreSQL) is a property of the *source dialect*, not of the collected
+# workload: every SQL Server source reports it as True regardless of what the workload
+# actually does. Letting it count with the workload features would mean every close call
+# for a SQL Server source resolves on dialect alone, never on the workload (#381 review)
+# -- so it is consulted only when no workload feature decided it either way (see
+# ``_tie_break_features`` below).
+FEATURE_FAVOURS: dict[str, str] = {
+    name: f.favours for name, f in catalog.heterogeneous_features().items()
+}
+PRIMARY_FEATURE_SIGNALS: tuple[str, ...] = tuple(
+    name for name, f in catalog.heterogeneous_features().items() if f.basis == "workload"
 )
-
-# Babelfish (SQL Server wire-protocol compatibility) only exists for Aurora PostgreSQL,
-# but unlike the signals above it is a property of the *source dialect*, not of the
-# collected workload: every SQL Server source reports it as True regardless of what the
-# workload actually does. Letting it sit in the same list as the workload-based signals
-# would mean every close call for a SQL Server source resolves on dialect alone, never on
-# the workload (#381 review) -- so it is kept out of ``PRIMARY_FEATURE_SIGNALS`` and only
-# consulted by ``choose_heterogeneous_engine`` as the last-resort tie-break, when no
-# workload-based feature decided it either way (see ``_tie_break_features`` below).
-FEATURE_SIGNALS: tuple[str, ...] = (*PRIMARY_FEATURE_SIGNALS, "babelfish_compatible")
+DIALECT_FEATURE_SIGNALS: tuple[str, ...] = tuple(
+    name for name, f in catalog.heterogeneous_features().items() if f.basis == "dialect"
+)
+FEATURE_SIGNALS: tuple[str, ...] = (*PRIMARY_FEATURE_SIGNALS, *DIALECT_FEATURE_SIGNALS)
 
 # Human-readable labels for FEATURE_SIGNALS (#381 review): any user-visible text that
 # lists which feature(s) tipped a choice -- wave 1's rationale
@@ -183,25 +202,31 @@ def source_database_version(collector_output: Mapping) -> str | None:
     return str(version) if version else None
 
 
-def _tie_break_features(features: Mapping[str, bool] | None) -> list[str]:
-    """Features that tip (or reinforce) a close/tied call toward Aurora PostgreSQL.
+def _tie_break_features(features: Mapping[str, bool] | None) -> tuple[str | None, list[str]]:
+    """The engine the reported source features favour, and the features that favour it.
 
-    A workload-based feature (``PRIMARY_FEATURE_SIGNALS``) decides first: it comes
-    directly from the collected schema/queries, not from the source engine alone.
-    Babelfish compatibility (SQL Server only) is consulted only as a last resort, when
-    no workload-based feature is present -- it is a property of the source *dialect*,
-    reported ``True`` for every SQL Server source regardless of what the workload
-    actually does, so letting it decide on equal footing with the workload-based
-    signals would mean every close call for a SQL Server source resolves on dialect
-    alone, never on the workload (#381 review).
+    Each feature counts for the engine it favours (``FEATURE_FAVOURS``, catalog data).
+    The workload features (``PRIMARY_FEATURE_SIGNALS``) decide first: the engine more of
+    them favour wins. Only when they decide nothing (none reported, or as many on each
+    side) are the dialect features (``DIALECT_FEATURE_SIGNALS``, Babelfish) counted the
+    same way -- a property of the source *dialect*, reported for every SQL Server source
+    regardless of what the workload actually does, so letting it decide on equal footing
+    with the workload features would mean every close call for a SQL Server source
+    resolves on dialect alone, never on the workload (#381 review). ``(None, [])`` when no
+    feature decides.
     """
-    active = features or {}
-    primary = sorted(k for k, v in active.items() if v and k in PRIMARY_FEATURE_SIGNALS)
-    if primary:
-        return primary
-    if active.get("babelfish_compatible"):
-        return ["babelfish_compatible"]
-    return []
+    active = {k for k, v in (features or {}).items() if v}
+    for tier in (PRIMARY_FEATURE_SIGNALS, DIALECT_FEATURE_SIGNALS):
+        present = sorted(f for f in tier if f in active)
+        counts = Counter(FEATURE_FAVOURS[f] for f in present)
+        if not counts:
+            continue
+        top = max(counts.values())
+        leaders = [engine for engine, n in counts.items() if n == top]
+        if len(leaders) == 1:
+            (winner,) = leaders
+            return winner, [f for f in present if FEATURE_FAVOURS[f] == winner]
+    return None, []
 
 
 def choose_heterogeneous_engine(
@@ -244,56 +269,64 @@ def choose_heterogeneous_engine(
             "reason": "only one Aurora engine competed",
         }
 
-    mysql_total = float(totals.get("aurora_mysql", 0.0))
-    pg_total = float(totals.get("aurora_postgresql", 0.0))
-    margin = pg_total - mysql_total
-    larger = max(mysql_total, pg_total)
+    # The rules are catalog data (ADR-031 Decision 6 and its Amendment 1, #1081): the
+    # engine each source feature favours, and the engine an exact tie no feature breaks
+    # goes to. The trace's margin is the tie-preferred engine's total minus the other's.
+    # The catalog loader guarantees two active relational engines and one tie engine.
+    preferred = EXACT_TIE_ENGINE
+    if len(engines) != 2 or preferred is None or preferred not in engines:
+        raise AssertionError(
+            "the catalog loader guarantees two relational engines, one of them "
+            f"exact_tie_preferred: {engines}"
+        )
+    favoured, active = _tie_break_features(features)
+    if favoured not in engines:
+        favoured, active = None, []
+    (other,) = (e for e in engines if e != preferred)
+    total = {e: float(totals.get(e, 0.0)) for e in engines}
+    margin = total[preferred] - total[other]
+    larger = max(total.values())
     is_close = larger <= 0 or abs(margin) <= MARGIN_RATIO * larger
+    higher = preferred if margin > 0 else other
+    side_by_side = " vs ".join(f"{total[e]:.1f}" for e in engines)
 
-    if mysql_total == pg_total:
-        active = _tie_break_features(features)
-        # Every feature in the pool favours Aurora PostgreSQL today (#445), so the
-        # winner is the same either way; what differs is WHAT decided it. A feature
-        # is checked first (ADR-031 Decision 6 amendment ordering), and only an
+    if margin == 0:
+        # A feature is checked first (ADR-031 Decision 6 amendment ordering), and only an
         # exact tie that no feature breaks falls to the maintainer rule.
-        winner = "aurora_postgresql"
         deciding_features = active
-        if active:
+        if favoured is not None:
+            winner = favoured
             reason = (
-                f"exact tie on total adjusted score ({pg_total:.1f} each); "
+                f"exact tie on total adjusted score ({larger:.1f} each); "
                 f"tipped by: {describe_features(active)}"
             )
         else:
+            winner = preferred
             reason = (
                 f"{EXACT_TIE_RULE_REASON} (exact tie on total adjusted score, "
-                f"{pg_total:.1f} each, and no deciding feature)"
+                f"{larger:.1f} each, and no deciding feature)"
             )
+    elif is_close and favoured is not None:
+        winner = favoured
+        deciding_features = active
+        reason = (
+            f"close on total adjusted score ({side_by_side}); "
+            f"tipped by: {describe_features(active)}"
+        )
     elif is_close:
-        active = _tie_break_features(features)
-        if active:
-            winner = "aurora_postgresql"
-            deciding_features = active
-            reason = (
-                f"close on total adjusted score ({mysql_total:.1f} vs {pg_total:.1f}); "
-                f"tipped by: {describe_features(active)}"
-            )
-        else:
-            deciding_features = []
-            winner = "aurora_mysql" if mysql_total > pg_total else "aurora_postgresql"
-            reason = (
-                "close on total adjusted score with no deciding feature, so the higher total "
-                f"wins ({mysql_total:.1f} vs {pg_total:.1f})"
-            )
+        deciding_features = []
+        winner = higher
+        reason = (
+            "close on total adjusted score with no deciding feature, so the higher total "
+            f"wins ({side_by_side})"
+        )
     else:
         deciding_features = []
-        winner = "aurora_mysql" if mysql_total > pg_total else "aurora_postgresql"
-        reason = f"higher total adjusted score wins ({mysql_total:.1f} vs {pg_total:.1f})"
+        winner = higher
+        reason = f"higher total adjusted score wins ({side_by_side})"
 
     return winner, {
-        "totals": {
-            "aurora_mysql": round(mysql_total, 2),
-            "aurora_postgresql": round(pg_total, 2),
-        },
+        "totals": {e: round(total[e], 2) for e in engines},
         "margin": round(margin, 2),
         "deciding_features": deciding_features,
         "reason": reason,

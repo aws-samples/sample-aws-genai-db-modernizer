@@ -2,6 +2,8 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from src.agents.referee.assignment_resolver import (
     AssignmentResolver,
     RoutingTrace,
@@ -50,7 +52,7 @@ def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> di
 
 
 def _give_real_search_depth(collector: dict, query_id: str = "q1", cps: float = 5.0) -> None:
-    """Mutate a collector fixture's query so ``opensearch_justification`` (#326)
+    """Mutate a collector fixture's query so ``search_depth_justification`` (#326)
     agrees it clears the floor: a real relevance-ranking match (``MATCH ...
     AGAINST``), not a bare ``LIKE``, at traffic above the 1 call/s floor.
     Needed because the text_search signal override is now gated on this
@@ -1485,7 +1487,7 @@ class TestOpenSearchScoresTheQueryNotTheTable:
 
 class TestTextSearchOverrideNeedsJustification:
     """#475/#326/#480: the text_search signal override only pins OpenSearch
-    when ``reality_check.opensearch_justification`` agrees the query has
+    when ``reality_check.search_depth_justification`` agrees the query has
     real search depth and clears the traffic/corpus floor -- the same rule
     the reality check later applies, so the override and the floor never
     disagree. A signal alone (any ``LIKE``, including a parameterized
@@ -1600,10 +1602,11 @@ class TestTextSearchOverrideNeedsJustification:
         assert q1.assigned_engine == "opensearch"
         assert q1.signal_override == "text_search"
 
+    @pytest.mark.passes_on_main
     def test_large_corpus_at_low_traffic_still_overrides(self):
         """The row-count (corpus-size) branch of the floor: a real search at
         well under 1 call/s still clears the floor when its average result
-        set is large (``OPENSEARCH_MIN_CORPUS_ROWS_AVG``), mirroring reality
+        set is large (OpenSearch's ``min_corpus_rows_avg``), mirroring reality
         check's own ``test_large_corpus_justifies_below_the_traffic_floor``.
         """
         resolver = AssignmentResolver()

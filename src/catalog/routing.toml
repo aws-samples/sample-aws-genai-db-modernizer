@@ -33,3 +33,33 @@ why = "An engine left with this many queries or fewer (and no hard capability re
 [thresholds.aurora_choice_margin_ratio]
 value = 0.05
 why = "For a heterogeneous source, Aurora totals within this share of the larger one are close enough for source features to decide; on the reference samples both Aurora engines scored byte-identically (#381, ADR-031 Decision 6)."
+
+# The source features that tip a close or tied heterogeneous Aurora call (ADR-031
+# Decision 6, #381), each with the engine it favours (#1081). The choice counts the
+# features present on each side; a workload feature decides first, and the dialect one
+# only when no workload feature does. Every one favours Aurora PostgreSQL today; the
+# workload-feature step is still under review in #445.
+[heterogeneous_features.sequences]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "Sequences (CREATE SEQUENCE, NEXT VALUE FOR, NEXTVAL) map onto PostgreSQL sequences; MySQL has none and needs AUTO_INCREMENT or a table emulation (#381)."
+
+[heterogeneous_features.merge_statements]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "MERGE runs on PostgreSQL 15 and later; MySQL has no MERGE and needs INSERT ... ON DUPLICATE KEY UPDATE rewrites (#381)."
+
+[heterogeneous_features.json_usage]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "JSON columns and functions map onto PostgreSQL's jsonb with its indexes and operators more directly than onto MySQL's JSON type (#381; both engines store JSON, so this direction is under review in #445)."
+
+[heterogeneous_features.multiple_schemas]
+favours = "aurora_postgresql"
+basis = "workload"
+why = "Several schemas in one database map onto PostgreSQL schemas; in MySQL a schema is a database, so they split into several (#381)."
+
+[heterogeneous_features.babelfish_compatible]
+favours = "aurora_postgresql"
+basis = "dialect"
+why = "Babelfish, the SQL Server wire-protocol and T-SQL compatibility layer, exists only for Aurora PostgreSQL; every SQL Server source reports it, so it decides only when no workload feature does (#381; maintainer decision recorded on #445)."

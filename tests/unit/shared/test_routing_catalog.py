@@ -83,10 +83,11 @@ class TestThresholdsKeepTheirValues:
         assert isinstance(consolidation_validator.ORPHAN_ENGINE_THRESHOLD, int)
 
     def test_the_engine_thresholds(self) -> None:
+        rule = reality_check_floors.FLOOR_RULES["opensearch"]
         assert (
-            reality_check_floors.OPENSEARCH_MIN_CALLS_PER_SECOND,
-            reality_check_floors.OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND,
-            reality_check_floors.OPENSEARCH_MIN_CORPUS_ROWS_AVG,
+            rule.min_calls_per_second,
+            rule.native_override_min_calls_per_second,
+            rule.min_corpus_rows_avg,
         ) == (1.0, 10.0, 1000.0)
         assert (
             HOT_READ_MIN_CALLS_PER_SECOND,

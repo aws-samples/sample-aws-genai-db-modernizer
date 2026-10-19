@@ -11,6 +11,13 @@ source_engines = ["postgresql", "postgres"]
 # Complexity points for a table using 1, or 2 or more, of the SQL features whose pattern
 # entry is a complexity_feature: more Aurora features, a closer relational fit (#921).
 complexity_by_feature_count = [10, 15]
+# For a heterogeneous source (SQL Server, Oracle, DB2), an exact tie that no source
+# feature breaks goes to Aurora PostgreSQL: a maintainer rule, a named-engine preference
+# held as data (ADR-031 Decision 6 Amendment 1, 2026-10-14, #656; in the catalog since
+# #1081). Which engine each source feature favours is in routing.toml.
+exact_tie_preferred = true
+# The dialect's short name in reason text ("PostgreSQL preferred on a tie ...").
+short_name = "PostgreSQL"
 
 [colors]
 ui = "#9c5700"

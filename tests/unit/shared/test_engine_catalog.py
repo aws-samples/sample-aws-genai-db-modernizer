@@ -544,3 +544,123 @@ class TestGeneratedUiModule:
         assert module.main(["--check"]) == 1
         assert module.main([]) == 0
         assert module.main(["--check"]) == 0
+
+
+RELATIONAL = VALID.replace('role = "key_value"', 'role = "relational"')
+
+
+def _top(text: str, fields: str) -> str:
+    """``text`` with top-level ``fields`` written before its first table."""
+    return text.replace("\n[colors]", f"\n{fields}\n[colors]", 1)
+
+
+class TestTheRoutingBranchesAreCatalogData:
+    """#1081: the engine-specific routing rules are engine-file fields the loader checks."""
+
+    def _relational(self, tmp_path: Path, a: str = "", b: str = "", n: int = 2) -> None:
+        for i, extra in enumerate([a, b, ""][:n], start=1):
+            name = f"rel_{i}"
+            _write(tmp_path, name, _top(RELATIONAL.format(id=name, order=i), extra))
+
+    def test_one_of_two_relational_engines_holds_the_tie_rule(self, tmp_path: Path) -> None:
+        self._relational(tmp_path, b='exact_tie_preferred = true\nshort_name = "Two"\n')
+        entries = {e.id: e for e in load_engine_catalog(tmp_path)}
+        assert entries["rel_2"].exact_tie_preferred and entries["rel_2"].short_name == "Two"
+
+    def test_two_relational_engines_need_the_tie_rule(self, tmp_path: Path) -> None:
+        self._relational(tmp_path)
+        with pytest.raises(CatalogError, match="must be set on exactly one"):
+            load_engine_catalog(tmp_path)
+
+    def test_the_tie_rule_is_on_one_engine_only(self, tmp_path: Path) -> None:
+        flag = "exact_tie_preferred = true\n"
+        self._relational(tmp_path, a=flag, b=flag)
+        with pytest.raises(CatalogError, match="must be set on exactly one"):
+            load_engine_catalog(tmp_path)
+
+    def test_the_tie_rule_is_never_on_a_non_relational_engine(self, tmp_path: Path) -> None:
+        _write(tmp_path, "kv", _top(VALID.format(id="kv", order=1), "exact_tie_preferred = true\n"))
+        with pytest.raises(CatalogError, match="only an active relational engine"):
+            load_engine_catalog(tmp_path)
+
+    def test_a_third_relational_engine_fails_at_load(self, tmp_path: Path) -> None:
+        self._relational(tmp_path, a="exact_tie_preferred = true\n", n=3)
+        with pytest.raises(CatalogError, match="compares exactly two"):
+            load_engine_catalog(tmp_path)
+
+    @pytest.mark.passes_on_main
+    def test_the_source_feature_direction_is_not_an_engine_flag(self, tmp_path: Path) -> None:
+        self._relational(tmp_path, a="exact_tie_preferred = true\nsource_features_favour = true\n")
+        with pytest.raises(CatalogError, match="source_features_favour"):
+            load_engine_catalog(tmp_path)
+
+    FLOOR = (
+        '\n[justification_floor]\nkind = "search_depth"\nreason_code = "floor.x"\n'
+        'why = "Earns its place."\n'
+    )
+    THRESHOLDS = "".join(
+        f'\n[thresholds.{name}]\nvalue = 1.0\nwhy = "A floor."\n'
+        for name in (
+            "min_calls_per_second",
+            "native_override_min_calls_per_second",
+            "min_corpus_rows_avg",
+        )
+    )
+
+    def test_a_floor_loads_with_its_thresholds(self, tmp_path: Path) -> None:
+        _write(tmp_path, "s", VALID.format(id="s", order=1) + self.FLOOR + self.THRESHOLDS)
+        (entry,) = load_engine_catalog(tmp_path)
+        assert entry.justification_floor is not None
+        assert entry.justification_floor.reason_code == "floor.x"
+
+    def test_a_floor_needs_its_thresholds(self, tmp_path: Path) -> None:
+        _write(tmp_path, "s", VALID.format(id="s", order=1) + self.FLOOR)
+        with pytest.raises(CatalogError, match="needs thresholds"):
+            load_engine_catalog(tmp_path)
+
+    def test_two_engines_may_carry_a_floor_of_the_same_kind(self, tmp_path: Path) -> None:
+        for i, name in enumerate(("s1", "s2"), start=1):
+            _write(tmp_path, name, VALID.format(id=name, order=i) + self.FLOOR + self.THRESHOLDS)
+        floors = [e.justification_floor for e in load_engine_catalog(tmp_path)]
+        assert [f.kind for f in floors if f] == ["search_depth", "search_depth"]
+
+    def test_an_unknown_floor_kind_fails(self, tmp_path: Path) -> None:
+        text = VALID.format(id="s", order=1) + self.FLOOR.replace("search_depth", "vibes")
+        _write(tmp_path, "s", text + self.THRESHOLDS)
+        with pytest.raises(CatalogError, match="justification_floor.kind"):
+            load_engine_catalog(tmp_path)
+
+    def test_a_justified_override_needs_a_floor(self, tmp_path: Path) -> None:
+        text = _top(VALID.format(id="s", order=1), "override_needs_justification = true\n")
+        _write(tmp_path, "s", text)
+        with pytest.raises(CatalogError, match="needs a justification_floor"):
+            load_engine_catalog(tmp_path)
+
+    def test_every_shipped_floor_reason_code_is_a_ledger_reason(self) -> None:
+        from src.agents.referee.reality_check_floors import FLOOR_RULES
+        from src.contracts.move_ledger import ReasonCode
+
+        assert FLOOR_RULES and all(
+            isinstance(r.reason_code, ReasonCode) for r in FLOOR_RULES.values()
+        )
+
+
+class TestTheHeterogeneousFeatures:
+    """#1081: each source feature records the engine it favours (``routing.toml``)."""
+
+    def test_every_feature_favours_an_active_relational_engine(self) -> None:
+        relational = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
+        features = catalog.heterogeneous_features()
+        assert features and all(f.favours in relational for f in features.values())
+
+    def test_a_feature_favouring_another_engine_fails_at_load(self, tmp_path: Path) -> None:
+        from src.shared.catalog.routing import ROUTING_FILE, load_routing_file
+
+        text = ROUTING_FILE.read_text(encoding="utf-8").replace(
+            'favours = "aurora_postgresql"\nbasis = "dialect"',
+            'favours = "dynamodb"\nbasis = "dialect"',
+        )
+        bad = tmp_path / "routing.toml"
+        bad.write_text(text, encoding="utf-8")
+        with pytest.raises(CatalogError, match="not an active relational engine"):
+            load_routing_file(bad)

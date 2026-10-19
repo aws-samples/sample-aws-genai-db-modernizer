@@ -44,15 +44,14 @@ from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.capability_registry import triage_query_capabilities
 from src.agents.referee.move_ledger import MoveLedger, ledger_for
 from src.agents.referee.reality_check_floors import (
+    FLOOR_RULES,
     NATIVE_TEXT_SEARCH_SOURCE_ENGINES,
-    OPENSEARCH_MIN_CALLS_PER_SECOND,
-    OPENSEARCH_MIN_CORPUS_ROWS_AVG,
-    OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND,
     _apply_justification_floors,
     _find_best_absorber_for_query,
     _workload_ever_justified,
     closed_to_pinned_search,
-    opensearch_justification,
+    justification_verdicts,
+    search_depth_justification,
 )
 from src.agents.referee.reality_check_patterns import (
     ARCHITECTURAL_PATTERNS,
@@ -102,10 +101,8 @@ __all__ = [
     "ARCHITECTURAL_PATTERNS",
     "AURORA_ENGINES",
     "ENGINE_BASE_COST",
+    "FLOOR_RULES",
     "NATIVE_TEXT_SEARCH_SOURCE_ENGINES",
-    "OPENSEARCH_MIN_CALLS_PER_SECOND",
-    "OPENSEARCH_MIN_CORPUS_ROWS_AVG",
-    "OPENSEARCH_NATIVE_OVERRIDE_MIN_CALLS_PER_SECOND",
     "SPECIALIST_ABSORB_CAPABILITIES",
     "SPECIALIST_ABSORB_SIGNALS",
     "TARGET_ENGINE_COUNT",
@@ -131,7 +128,8 @@ __all__ = [
     "_workload_ever_justified",
     "format_pattern_recommendation",
     "may_absorb",
-    "opensearch_justification",
+    "justification_verdicts",
+    "search_depth_justification",
     "patterns_for_assignment",
     "refresh_patterns_and_recommendations",
     "run_reality_check",

@@ -62,6 +62,24 @@ def max_burden_per_unique_query(engine: str) -> float:
 
 # Set of Aurora engine identifiers: the active relational engines (catalog role).
 AURORA_ENGINES = set(catalog.engine_ids(status=catalog.ACTIVE, role="relational"))
+# The engines a join consolidated away from a non-relational engine never lands on: their
+# files' ``joins_need_denormalized_design`` (review of #375, finding B2; #1081).
+DENORMALIZED_JOIN_ENGINES = catalog.denormalized_join_engines()
+
+
+def join_blocked_on(target: str, current: Iterable[str], query: Mapping) -> bool:
+    """Whether a join query on ``current`` may not consolidate onto ``target`` (review of
+    #375, finding B2; one definition since #1081): ``target`` needs a denormalised design
+    for a join (its file's ``joins_need_denormalized_design``), nothing proposes one yet,
+    and the query is leaving engines none of which is relational or such an engine. A
+    join already on one of them, or arriving from a relational engine, is unaffected.
+    With a tied ``current`` set, any tied engine of either kind lifts the block, so an
+    arbitrary placeholder pick cannot decide it."""
+    return (
+        target in DENORMALIZED_JOIN_ENGINES
+        and not (set(current) & (DENORMALIZED_JOIN_ENGINES | AURORA_ENGINES))
+        and _query_has_join(dict(query))
+    )
 
 
 def _query_has_join(query: dict) -> bool:
@@ -260,15 +278,6 @@ def _query_eligible_engines(
     required_caps = (query_capabilities or {}).get(qid, [])
     query = query_map.get(qid, qa)
     current_set = {current_engine} if isinstance(current_engine, str) else set(current_engine)
-    # Named for what it gates, not what it checks (#502 review round 5):
-    # this is true exactly when considering ``e`` for ``qid`` would be a
-    # *consolidation onto* ``e`` away from an engine that is neither
-    # DynamoDB nor Aurora -- the join-on-DynamoDB block below only applies
-    # to that case, never to a join query already on DynamoDB or Aurora.
-    # With a tied set, this is False (not "leaving") as soon as ANY tied
-    # engine is dynamodb/Aurora -- the best case for dynamodb's own
-    # eligibility, so an arbitrary OTHER placeholder pick can't block it.
-    leaving_non_aurora_non_dynamodb_engine = not (current_set & ({"dynamodb"} | AURORA_ENGINES))
 
     def ok(e: str) -> bool:
         if _resolver_score(trace_by_query, qid, e) is None:
@@ -292,11 +301,7 @@ def _query_eligible_engines(
         waived_caps = {str(w.get("capability")) for w in waived}
         if not can_engine_serve_capability(e, [c for c in required_caps if c not in waived_caps]):
             return False
-        if (
-            e == "dynamodb"
-            and leaving_non_aurora_non_dynamodb_engine
-            and _query_has_join(query_map.get(qid, {}))
-        ):
+        if join_blocked_on(e, current_set, query_map.get(qid, {})):
             return False
         return True
 

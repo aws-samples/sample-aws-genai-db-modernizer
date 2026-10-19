@@ -15,7 +15,7 @@ from src.agents.referee.aurora_choice import (
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.tie_break import settled_counts as settled_workload_counts
-from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+from src.agents.referee.triage import BASELINE, SOURCE_ENGINE_TO_AURORA
 from src.contracts.assignment_models import (
     AuroraEngineChoice,
     QueryAssignment,
@@ -235,10 +235,11 @@ def derive_table_assignments(
     if global_fallback is None:
         logger.warning(
             "derive_table_assignments: no retained engine, and no owner engine anywhere in "
-            "the assignment; falling back to the generic 'aurora' placeholder as primary_engine "
-            "for a table with no owner engine of its own."
+            "the assignment; falling back to the generic %r placeholder as primary_engine "
+            "for a table with no owner engine of its own.",
+            BASELINE,
         )
-        global_fallback = "aurora"
+        global_fallback = BASELINE
 
     engine_of = {qa.query_id: qa.assigned_engine for qa in query_assignments}
     write_engines: dict[str, set[str]] = defaultdict(set)

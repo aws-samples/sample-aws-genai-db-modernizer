@@ -45,6 +45,24 @@ From each engine file: the source engines whose own dialect it is, whether it sc
 | Aurora PostgreSQL | `postgresql`, `postgres` | no | - | no | 10, 15 |
 | Aurora MySQL | `mysql`, `mariadb` | no | - | no | 10, 15 |
 
+Engine-specific routing rules, each an engine-file field the routing code reads instead of naming the engine (#1081):
+
+| Engine | Rule |
+|---|---|
+| DynamoDB | a join consolidated away from engines none of which is relational or flagged like this one never lands here (it needs a denormalised design) |
+| OpenSearch | justification floor `search_depth` (ledger reason `floor.opensearch`): A standing search domain earns a query only with real search depth (relevance ranking, fuzzy matching or a facet) and enough traffic or result size to pay for it (#326). |
+| Aurora PostgreSQL | wins an exact heterogeneous Aurora tie no feature breaks, by maintainer rule (ADR-031 Decision 6 Amendment 1): a named-engine preference held as data |
+
+The source features that tip a close or tied heterogeneous Aurora call (`routing.toml`, ADR-031 Decision 6): the choice counts the features on each side, the workload ones first and the dialect ones only when no workload feature decides.
+
+| Feature | Favours | Basis | Why |
+|---|---|---|---|
+| `sequences` | Aurora PostgreSQL | workload | Sequences (CREATE SEQUENCE, NEXT VALUE FOR, NEXTVAL) map onto PostgreSQL sequences; MySQL has none and needs AUTO_INCREMENT or a table emulation (#381). |
+| `merge_statements` | Aurora PostgreSQL | workload | MERGE runs on PostgreSQL 15 and later; MySQL has no MERGE and needs INSERT ... ON DUPLICATE KEY UPDATE rewrites (#381). |
+| `json_usage` | Aurora PostgreSQL | workload | JSON columns and functions map onto PostgreSQL's jsonb with its indexes and operators more directly than onto MySQL's JSON type (#381; both engines store JSON, so this direction is under review in #445). |
+| `multiple_schemas` | Aurora PostgreSQL | workload | Several schemas in one database map onto PostgreSQL schemas; in MySQL a schema is a database, so they split into several (#381). |
+| `babelfish_compatible` | Aurora PostgreSQL | dialect | Babelfish, the SQL Server wire-protocol and T-SQL compatibility layer, exists only for Aurora PostgreSQL; every SQL Server source reports it, so it decides only when no workload feature does (#381; maintainer decision recorded on #445). |
+
 ## Thresholds
 
 The routing thresholds and floors: shared ones from `src/catalog/routing.toml`, an engine's own from its file's `[thresholds.<name>]`.

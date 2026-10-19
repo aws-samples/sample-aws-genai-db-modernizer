@@ -405,6 +405,62 @@ def _threshold_rows(owner: str, thresholds: dict) -> list[str]:
     ]
 
 
+def _engine_rule_rows(entries: tuple[EngineEntry, ...]) -> list[str]:
+    """The engine-specific routing rules the engine files hold, and the heterogeneous
+    Aurora choice's features (#1081)."""
+    labels = {e.id: e.display_name for e in entries}
+    rows: list[str] = []
+    for e in entries:
+        if e.status != "active":
+            continue
+        rules = []
+        if e.justification_floor is not None:
+            floor = e.justification_floor
+            rules.append(
+                f"justification floor `{floor.kind}` (ledger reason `{floor.reason_code}`): "
+                f"{floor.why}"
+            )
+        if e.joins_need_denormalized_design:
+            rules.append(
+                "a join consolidated away from engines none of which is relational or "
+                "flagged like this one never lands here (it needs a denormalised design)"
+            )
+        if e.exact_tie_preferred:
+            rules.append(
+                "wins an exact heterogeneous Aurora tie no feature breaks, by maintainer rule "
+                "(ADR-031 Decision 6 Amendment 1): a named-engine preference held as data"
+            )
+        rows += [f"| {md_cell(e.display_name)} | {md_cell(rule)} |" for rule in rules]
+    features = [
+        f"| `{name}` | {md_cell(labels.get(f.favours, f.favours))} | {f.basis} | {md_cell(f.why)} |"
+        for name, f in routing_file().heterogeneous_features.items()
+    ]
+    out: list[str] = []
+    if rows:
+        out += [
+            "",
+            "Engine-specific routing rules, each an engine-file field the routing code reads "
+            "instead of naming the engine (#1081):",
+            "",
+            "| Engine | Rule |",
+            "|---|---|",
+            *rows,
+        ]
+    if features:
+        out += [
+            "",
+            "The source features that tip a close or tied heterogeneous Aurora call "
+            "(`routing.toml`, ADR-031 Decision 6): the choice counts the features on each "
+            "side, the workload ones first and the dialect ones only when no workload "
+            "feature decides.",
+            "",
+            "| Feature | Favours | Basis | Why |",
+            "|---|---|---|---|",
+            *features,
+        ]
+    return out
+
+
 def _routing_sections(entries: tuple[EngineEntry, ...]) -> list[str]:
     """The engine routing properties, thresholds, hard gates and triage signals (#921)."""
     out = [
@@ -437,6 +493,7 @@ def _routing_sections(entries: tuple[EngineEntry, ...]) -> list[str]:
             + (", ".join(str(x) for x in e.complexity_by_feature_count) or "-")
             + " |"
         )
+    out += _engine_rule_rows(entries)
     out += [
         "",
         "## Thresholds",

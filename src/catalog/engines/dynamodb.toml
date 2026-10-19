@@ -6,6 +6,10 @@ ui_picker_order = 1
 status = "active"
 role = "key_value"
 system_of_record = true
+# A join query the reality check consolidates away from an engine that is neither DynamoDB
+# nor relational never lands here: it needs a denormalised design, which nothing proposes
+# yet (review of #375, finding B2; #1081).
+joins_need_denormalized_design = true
 
 [colors]
 ui = "#3184e8"

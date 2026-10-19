@@ -79,7 +79,7 @@ from src.agents.referee.query_scoring import (
     score_query_for_engine,
     waiver_table,
 )
-from src.agents.referee.reality_check import opensearch_justification
+from src.agents.referee.reality_check import justification_verdicts
 from src.agents.referee.routing_trace import RoutingTrace
 from src.agents.referee.table_assignments import (
     derive_table_assignments,
@@ -156,7 +156,7 @@ SIGNAL_ENGINE_OVERRIDES: dict[str, str] = {
 # visible wildcard, to OpenSearch regardless of traffic or search depth --
 # exactly the mechanism that kept 4 shallow, low-traffic admin-search queries
 # on a standing OpenSearch domain in a maintainer's run (#326). Reusing
-# ``reality_check_floors.opensearch_justification`` keeps the override and the
+# ``reality_check_floors.justification_verdicts`` keeps the override and the
 # reality-check floor applying the same rule, instead of two copies that can
 # drift. Scoped by override engine, not by signal name, so a future signal
 # that also maps to opensearch gets the same gate for free: the engine file's
@@ -1115,7 +1115,7 @@ class AssignmentResolver:
         - The signal has specific query_ids attached
         - For a ``JUSTIFICATION_GATED_OVERRIDE_ENGINES`` target (opensearch,
           #475): the #326 justification floor
-          (``reality_check_floors.opensearch_justification``) agrees, per query,
+          (``reality_check_floors.justification_verdicts``) agrees, per query,
           that the signal reflects real search depth and enough traffic or
           corpus size -- a signal alone (e.g. any ``LIKE``, including a
           parameterized ``LIKE ?`` with no visible wildcard) is not enough to
@@ -1144,14 +1144,14 @@ class AssignmentResolver:
                 # for -- never diluted or inflated by a query that might
                 # independently win OpenSearch on its own score, or by one
                 # this signal has nothing to do with. The reality check's own
-                # mandatory-engine floor (below, ``opensearch_justification``
+                # mandatory-engine floor (below, ``justification_verdicts``
                 # called with ``current_qas``) asks a different, later
                 # question -- does the engine's CURRENT, possibly-absorbed
                 # workload still earn its place -- so it groups by actual
                 # ownership instead; the two are intentionally not the same
                 # population.
-                verdicts = opensearch_justification(
-                    [{"query_id": qid} for qid in qids], query_map, source_engine
+                verdicts = justification_verdicts(
+                    override_engine, [{"query_id": qid} for qid in qids], query_map, source_engine
                 )
                 qids = [qid for qid in qids if verdicts.get(qid, (False, ""))[0]]
             for qid in qids:
