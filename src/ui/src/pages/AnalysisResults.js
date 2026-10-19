@@ -43,6 +43,8 @@ import QueryDecisionTrace from "../components/QueryDecisionTrace";
 import QueryRoutingTable from "../components/QueryRoutingTable";
 import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
+import NoOpenRisksNote from "../components/NoOpenRisksNote";
+import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
@@ -2394,6 +2396,13 @@ const AnalysisResultsPage = memo(() => {
                 risk's severity is none of the four known ones -- matching
                 the deck's "only show UNRATED when present" rule, rather than
                 an always-empty fifth tab on every ordinary run. */}
+            {!(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
+              <NoOpenRisksSection
+                synthesis={resultsData?.synthesis}
+                caveat={resultsData?.no_open_risks_caveat}
+                title={t('analysis-results.risk-assessment.title')}
+              />
+            )}
             {(openRisks.length > 0 || resolvedRisksList.length > 0 || overallRiskLevel) && (
               <Container header={<Header variant="h2" description={t('analysis-results.risk-assessment.description')}>{t('analysis-results.risk-assessment.title')}</Header>}>
                 <SpaceBetween size="m">
@@ -2402,6 +2411,11 @@ const AnalysisResultsPage = memo(() => {
                       {t('analysis-results.risk-assessment.overall-risk')}: {overallRiskLevel}
                     </StatusIndicator>
                   )}
+                  <NoOpenRisksNote
+                    synthesis={resultsData?.synthesis}
+                    shownRisks={openRisks}
+                    caveat={resultsData?.no_open_risks_caveat}
+                  />
                   <Tabs
                     tabs={[
                       ...RISK_SEVERITIES,

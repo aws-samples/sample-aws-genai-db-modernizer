@@ -68,8 +68,8 @@ def resolved_risk_label(risk: dict[str, Any]) -> str:
 # The headline reminder every deliverable's no-open-risk state carries (#434
 # review): "0 open risks" must never read as "0 migration risk" when the
 # analysis never modeled production traffic, peak load or compliance in the
-# first place. The engineering report and the executive report state it; the UI's
-# no-open-risk state does not yet (#996).
+# first place. The engineering report, the executive report and the results page
+# (which gets it from the /results payload, #996) state it.
 NO_OPEN_RISKS_CAVEAT = (
     "No open risks is not the same as no migration risk: this analysis reads schema and "
     "query patterns only and does not model traffic bursts, peak load or compliance "

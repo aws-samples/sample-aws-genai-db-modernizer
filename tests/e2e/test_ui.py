@@ -533,6 +533,57 @@ def test_results_page_states_the_resolved_risks_by_severity(
     assert checked, "no sample resolved a risk"
 
 
+def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#996: the sentence the engineering report prints under "no open risks" is on the
+    results page too, in the risk section, and only for a report with no open risk."""
+    from src.report.risks import NO_OPEN_RISKS_CAVEAT
+
+    for r in all_runs:
+        facts = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"]
+        no_open = facts["open_risk_count"] == 0
+        md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
+        assert (NO_OPEN_RISKS_CAVEAT in md) == no_open, r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        page.locator("#migration-roadmap-section").wait_for()
+        note = page.locator("#no-open-risks-note")
+        assert note.count() == (1 if no_open else 0), r.db
+        if no_open:
+            assert note.inner_text().strip() == NO_OPEN_RISKS_CAVEAT, r.db
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_results_page_states_the_caveat_even_with_no_other_risk_content(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#996: a report with no risks, no resolved risks and no overall level still gets a
+    risk section holding the no-open-risks sentence, as the engineering report prints it."""
+    from src.report.risks import NO_OPEN_RISKS_CAVEAT
+
+    r = all_runs[0]
+
+    def strip_risks(route: object) -> None:
+        response = route.fetch()  # type: ignore[attr-defined]
+        body = response.json()
+        body["synthesis"]["risk_assessment"] = {}
+        body["synthesis"]["facts"].update(open_risk_count=0, resolved_risk_count=0)
+        route.fulfill(response=response, json=body)  # type: ignore[attr-defined]
+
+    page.route(re.compile(rf"/assessments/{r.job_id}/results$"), strip_risks)
+    ev = _watch(page)
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    page.wait_for_load_state("networkidle")
+    page.locator("#migration-roadmap-section").wait_for()
+    note = page.locator("#no-open-risks-note")
+    assert note.count() == 1
+    assert note.inner_text().strip() == NO_OPEN_RISKS_CAVEAT
+    assert page.get_by_role("heading", name="Risk assessment").count() == 1
+    assert ev == {"console": [], "pageerror": [], "failed": []}, ev
+
+
 def test_ui_shows_only_the_product_name(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

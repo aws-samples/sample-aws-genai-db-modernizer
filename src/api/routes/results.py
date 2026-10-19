@@ -11,7 +11,9 @@ from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME
 from src.report.facts import report_facts
+from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
+from src.report.risks import NO_OPEN_RISKS_CAVEAT
 from src.shared.database_name import validate_database_name
 from src.shared.prose_style import collector_identifiers
 
@@ -65,6 +67,15 @@ async def get_results(job_id: str = Depends(job_id_param)):
     ):
         synthesis["facts"] = report_facts(synthesis)
 
+    # #996: the deterministic summary stored by an older run can name the other targets
+    # by raw engine id and word its risk and access-pattern counts the old way. The
+    # engineering report relabels it at render time with ``label_summary_counts``, only
+    # when the summary is the deterministic one; this payload does the same, so the UI
+    # only prints the text and the two agree. A generated summary is left as written.
+    summary = synthesis.get("summary")
+    if isinstance(summary, str) and summary == synthesis.get("summary_deterministic"):
+        synthesis["summary"] = label_summary_counts(summary, synthesis)
+
     triage = s3_service.read_triage(db_name, job_id)
 
     return {
@@ -72,6 +83,9 @@ async def get_results(job_id: str = Depends(job_id_param)):
         "status": "COMPLETED",
         "synthesis": synthesis,
         "triage_summary": triage,
+        # #996: the one definition of the no-open-risks sentence the engineering and
+        # executive reports print; the results page shows it when no risk is open.
+        "no_open_risks_caveat": NO_OPEN_RISKS_CAVEAT,
     }
 
 

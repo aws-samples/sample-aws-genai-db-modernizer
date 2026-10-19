@@ -297,3 +297,68 @@ class TestGetSchemaDesigns:
         response = client.get("/api/v1/assessments/job-1/schema-designs")
         assert response.status_code == 200
         assert len(response.json()["schema_designs"]) == 0
+
+
+class TestResultsPageWording:
+    """#996: wording the retired HTML report showed, now carried by the /results payload."""
+
+    def test_older_summary_names_other_targets_by_display_name(self, mock_services):
+        text = (
+            "Aurora MySQL serves 67.5% of queries. Other targets evaluated: documentdb "
+            "(consolidated into aurora_mysql by the reality check), opensearch (no queries "
+            "assigned). The plan has three waves."
+        )
+        mock_services["s3"].read_synthesis.return_value = {
+            "summary": text,
+            "summary_deterministic": text,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["synthesis"]["summary"] == (
+            "Aurora MySQL serves 67.5% of queries. Other targets evaluated: DocumentDB "
+            "(consolidated into Aurora MySQL by the reality check), OpenSearch (no queries "
+            "assigned). The plan has three waves."
+        )
+
+    def test_older_risk_count_phrase_reads_as_the_engineering_report_does(self, mock_services):
+        text = "8 risk(s) identified (overall: LOW; 4 resolved by the assignment)."
+        mock_services["s3"].read_synthesis.return_value = {
+            "summary": text,
+            "summary_deterministic": text,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["synthesis"]["summary"] == (
+            "8 open risk(s) (overall: LOW); 4 more were resolved by the assignment."
+        )
+
+    def test_generated_summary_is_left_as_written(self, mock_services):
+        generated = "Other targets evaluated: documentdb (no queries assigned)."
+        mock_services["s3"].read_synthesis.return_value = {
+            "summary": generated,
+            "summary_deterministic": "A different deterministic summary.",
+        }
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["synthesis"]["summary"] == generated
+
+    def test_summary_without_the_clause_or_absent_is_untouched(self, mock_services):
+        text = "documentdb is mentioned here, outside the clause."
+        mock_services["s3"].read_synthesis.return_value = {
+            "summary": text,
+            "summary_deterministic": text,
+        }
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["synthesis"]["summary"] == text
+        mock_services["s3"].read_synthesis.return_value = {"ranking": []}
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert "summary" not in body["synthesis"]
+
+    def test_payload_carries_the_shared_no_open_risks_sentence(self, mock_services):
+        from src.report.risks import NO_OPEN_RISKS_CAVEAT
+
+        mock_services["s3"].read_synthesis.return_value = {"ranking": []}
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["no_open_risks_caveat"] == NO_OPEN_RISKS_CAVEAT
