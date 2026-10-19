@@ -206,8 +206,10 @@ def _aurora_wave(
             # tie, or a close call with no deciding feature). "Selected" is accurate
             # whichever of those the trace in ``decision`` (if present) turns out to be.
             f"and the assignment resolver selected {target_name} to serve it.{decision} "
-            "This is a cross-engine move: SQL dialect and schema conversion, not a 1:1 "
-            "carry-over. "
+            # #1120: one story with the wave's not-yet-optimized note: the dialect and
+            # the types are converted, the data model stays as it is.
+            "This is a cross-engine move: the SQL dialect and the data types are "
+            "converted and the data model stays as it is, so it is not a 1:1 carry-over. "
             f"{n} {_query_noun(n)} ({share:.1f}%) remain on {target_name} once later waves "
             f"have moved their share; later waves move subsets of these {len(tables)} "
             f"tables and views out of {target_name}."
@@ -222,7 +224,8 @@ def _aurora_wave(
             )
         gate = (
             f"Cross-engine move: validate the schema and query translation to {target_name} "
-            "(SQL dialect and data model conversion, not a 1:1 carry-over) before cutover."
+            "(SQL dialect and data types converted, with the current data model) before "
+            "cutover."
         )
         title = f"Move off {source_name} to {target_name} (cross-engine)"
         engines = [retained_engine]

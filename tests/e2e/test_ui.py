@@ -368,6 +368,25 @@ def test_results_page_shows_the_reports_wave_plan(
                 )
                 assert shown_gate == f"Gate before the next wave: {gates[n]}", (r.db, n)
                 assert gate.locator("[data-gate-hide]").count() == len(lists[n]), (r.db, n)
+        # #1120: a cross-engine wave 1 states the facts layer's note and lists every
+        # relational gap by feature, as both reports do; no other wave does.
+        notes = {str(w["wave"]): w.get("heterogeneous_note") for w in report["facts"]["waves"]}
+        listed = {
+            str(w["wave"]) for w in report["facts"]["waves"] if w.get("lists_relational_gaps")
+        }
+        all_gaps = (report["facts"].get("relational_gaps") or {}).get("gaps") or []
+        for c in cards:
+            n = str(c.get_attribute("data-wave"))
+            note = c.locator("[data-figure=wave-heterogeneous-note]")
+            shown_gaps = c.locator("[data-figure=wave-gap]").all_inner_texts()
+            gaps = all_gaps if n in listed else []
+            if notes.get(n):
+                assert note.inner_text() == notes[n], (r.db, n)
+                assert len(shown_gaps) == len(gaps), (r.db, n)
+                for shown_gap, gap in zip(shown_gaps, gaps, strict=True):
+                    assert shown_gap.startswith(f"{gap['feature']} ("), (r.db, n, shown_gap)
+            else:
+                assert note.count() == 0 and shown_gaps == [], (r.db, n)
         count = report["facts"]["migration_wave_count"]
         assert f"Migration roadmap ({count} waves)" in section.inner_text(), r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)

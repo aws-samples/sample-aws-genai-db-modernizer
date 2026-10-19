@@ -250,3 +250,60 @@ test('a saved report written before gate_parts (the shared fixture) renders ever
     expect(gate.querySelector('button')).toBeNull();
   });
 });
+
+// #1120: a cross-engine wave 1 states the facts layer's note and lists the detected
+// relational gaps (facts.relational_gaps) under it, as the reports do.
+const NOTE = 'Wave 1 is not yet optimized for heterogeneous migrations: it converts all 5 source '
+  + 'tables from SQL Server to Aurora PostgreSQL with their current data model.';
+const heterogeneous = {
+  migration_waves: [
+    { wave: 1, title: 'Move off SQL Server to Aurora PostgreSQL (cross-engine)', engines: ['aurora_postgresql'], query_count: 4, workload_share_percent: 40, table_count: 5 },
+    { wave: 2, title: 'Move to DynamoDB', engines: ['dynamodb'], query_count: 6, workload_share_percent: 60, table_count: 3 },
+  ],
+  facts: {
+    migration_wave_count: 2,
+    waves: [
+      { wave: 1, served_tables: 5, heterogeneous_note: NOTE, lists_relational_gaps: true },
+      { wave: 2, served_tables: 3, heterogeneous_note: null },
+    ],
+    relational_gaps: {
+      gaps: [
+        { rule_id: 'sqlserver-top-clause', feature: 'TOP row limits', impact: 'needs_rewrite', reason: 'TOP (n) becomes LIMIT n.' },
+        { rule_id: 'sqlserver-babelfish-option', feature: 'Babelfish for Aurora PostgreSQL', impact: 'informational', reason: 'Babelfish accepts T-SQL.' },
+      ],
+    },
+  },
+};
+
+test('a cross-engine wave 1 shows the not-yet-optimized note and every relational gap', () => {
+  render(heterogeneous);
+  const first = container.querySelector('[data-wave="1"]');
+  expect(first.querySelector('[data-figure="wave-heterogeneous-note"]').textContent).toBe(NOTE);
+  expect([...first.querySelectorAll('[data-figure="wave-gap"]')].map(g => g.textContent)).toEqual([
+    'TOP row limits (needs a rewrite): TOP (n) becomes LIMIT n.',
+    'Babelfish for Aurora PostgreSQL (informational): Babelfish accepts T-SQL.',
+  ]);
+  const second = container.querySelector('[data-wave="2"]');
+  expect(second.querySelector('[data-figure="wave-heterogeneous-note"]')).toBeNull();
+  expect(second.querySelector('[data-figure="wave-gap"]')).toBeNull();
+});
+
+test('a wave 1 with no note lists no gaps, even when the gap check found some', () => {
+  const homogeneous = {
+    ...heterogeneous,
+    facts: { ...heterogeneous.facts, waves: heterogeneous.facts.waves.map(w => ({ ...w, heterogeneous_note: null })) },
+  };
+  render(homogeneous);
+  expect(container.querySelector('[data-figure="wave-heterogeneous-note"]')).toBeNull();
+  expect(container.querySelector('[data-figure="wave-gap"]')).toBeNull();
+});
+
+test('a gap check for another engine is not listed under wave 1', () => {
+  const other = {
+    ...heterogeneous,
+    facts: { ...heterogeneous.facts, waves: heterogeneous.facts.waves.map(w => ({ ...w, lists_relational_gaps: false })) },
+  };
+  render(other);
+  expect(container.querySelector('[data-figure="wave-heterogeneous-note"]').textContent).toBe(NOTE);
+  expect(container.querySelector('[data-figure="wave-gap"]')).toBeNull();
+});

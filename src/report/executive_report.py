@@ -86,6 +86,7 @@ from .formatting import (
     plural_noun,
     plural_verb,
 )
+from .relational_gaps import heterogeneous_wave, impact_label, wave_gaps
 from .risks import (
     NO_OPEN_RISKS_CAVEAT,
     _repeats,
@@ -127,6 +128,11 @@ H_RECOMMENDATION = "The recommendation"
 H_NUMBERS = "The numbers"
 H_WHY = "Why this architecture"
 H_WAVES = "Migration waves"
+# #1120: where the reasons behind the gap list are (they name target functions).
+L_GAP_REASONS = (
+    "What to do about each gap, and where it was found: the engineering report's "
+    "Migration roadmap (wave 1) and Risk register."
+)
 H_RISKS = "Risks"
 H_DECISIONS = "Decisions needed"
 H_NEXT = "Next steps"
@@ -808,7 +814,9 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
                 total=total,
             )
         )
-        notes = " ".join(_engine_role_notes_md(engines, migrated))
+        notes = " ".join(
+            _engine_role_notes_md(engines, migrated, wave_one=heterogeneous_wave(report))
+        )
         if notes:
             flow += [_gap(8), Paragraph(_md_markup(notes), st["small"])]
     return flow
@@ -959,6 +967,25 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         gate = without_table_names(w.get("gate"), names)
         if gate:
             content.append(_labelled("Gate before the next wave", gate, st["small"]))
+        if wf is not None and wf.get("heterogeneous_note"):
+            # #1120: the note and the detected gaps by feature and impact. The reasons
+            # name target functions (jsonb_to_recordset, gen_random_uuid): they stay in
+            # the engineering report, like every identifier.
+            content.append(_para(wf["heterogeneous_note"], st["body"]))
+            gaps = wave_gaps(report, n)
+            if gaps:
+                content.append(
+                    _labelled(
+                        "Relational gaps",
+                        "; ".join(
+                            f"{g.get('feature') or g.get('rule_id')} "
+                            f"({impact_label(g.get('impact'))})"
+                            for g in gaps
+                        ),
+                        st["small"],
+                    )
+                )
+                content.append(_para(L_GAP_REASONS, st["small"]))
         if wf is not None:
             content.append(
                 _labelled(

@@ -38,7 +38,12 @@ from typing import Any
 from src.shared import catalog
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.capability_labels import capability_label, flag_redesign_hints, redesign_hints
-from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
+from src.shared.catalog.gaps import GAP_IMPACTS
+from src.shared.engine_names import (
+    ENGINE_DISPLAY_NAMES,
+    SOURCE_ENGINE_DISPLAY_NAMES,
+    display_engine,
+)
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
 
@@ -192,9 +197,10 @@ def is_migrating_wave(wave: dict[str, Any]) -> bool:
 
     Wave 1 (``homogeneity`` set) carries the whole collected schema to Aurora:
     it is not a purpose-built-engine move, and its tables are a superset of
-    every later wave's, so it never counts towards "Tables migrate" (#321
-    review, finding 4). The cache and search/analytics waves move nothing
-    (``moves_from`` is empty).
+    every later wave's (#321 review, finding 4). A homogeneous wave 1 never
+    counts towards "Tables migrate"; a cross-engine one counts in full, once
+    (:func:`cross_engine_wave_one`, #1120). The cache and search/analytics
+    waves move nothing (``moves_from`` is empty).
     """
     return bool(wave.get("moves_from")) and wave.get("homogeneity") is None
 
@@ -244,6 +250,8 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
         "views": None,
         "tables_only": None,
         "critical_high_risks": 0,
+        "heterogeneous_note": None,
+        "lists_relational_gaps": False,
     }
     owners = _owner_entries(wave)
     outside: dict[str, dict[str, Any]] = {}
@@ -289,6 +297,141 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
     out["moving_by_engine"] = moving_by_engine or None
     out["served_by_engine"] = served_by_engine
     return out
+
+
+# Each impact as the note's count phrase, singular and plural ("1 needs a rewrite", "5
+# need a rewrite"); one entry per GAP_IMPACTS value (tests/unit/report/
+# test_heterogeneous_wave_one.py).
+_IMPACT_VERBS: dict[str, tuple[str, str]] = {
+    "blocks_move": ("blocks the move", "block the move"),
+    "needs_rewrite": ("needs a rewrite", "need a rewrite"),
+    "behaves_differently": ("behaves differently", "behave differently"),
+    "informational": ("is informational", "are informational"),
+}
+
+
+def _gap_sentence(relational_gaps: Mapping[str, Any] | None) -> str:
+    """ " The relational gap check found 11 gaps in this conversion: 5 need a rewrite,
+    ..." for the heterogeneous wave-1 note; empty with no gap check (#1120).
+
+    The counts are the gap check's own ``gaps_by_impact``, so the facts layer states one
+    figure per impact."""
+    if relational_gaps is None:
+        return ""
+    stored = relational_gaps.get("gaps_by_impact")
+    counts = {
+        k: int(n)
+        for k, n in (stored.items() if isinstance(stored, Mapping) else ())
+        if k in _IMPACT_VERBS and isinstance(n, int) and not isinstance(n, bool) and n > 0
+    }
+    total = sum(counts.values())
+    if not total:
+        return " The relational gap check found no gaps in this conversion."
+    parts = [
+        f"{counts[k]} {_IMPACT_VERBS[k][0 if counts[k] == 1 else 1]}"
+        for k in GAP_IMPACTS
+        if k in counts
+    ]
+    noun = "gap" if total == 1 else "gaps"
+    return (
+        f" The relational gap check found {total} {noun} in this conversion: "
+        f"{', '.join(parts)}."
+    )
+
+
+def heterogeneous_wave_note(
+    wave: Mapping[str, Any], tables: int, relational_gaps: Mapping[str, Any] | None
+) -> str:
+    """What a cross-engine wave 1 does and what the plan has not analyzed yet (#1120).
+
+    Until a heterogeneous SQL-to-SQL analysis exists, wave 1 converts every source
+    table to the chosen Aurora engine with its current data model (the wave's
+    rationale and gate say the same). Every deliverable states this sentence under
+    wave 1, then lists the detected relational gaps (``facts.relational_gaps``, #471).
+    ``relational_gaps`` is the gap check for wave 1's own engine, or None.
+    """
+    engines = [str(e) for e in wave.get("engines") or [] if e]
+    target = display_engine(engines[0]) if engines else "Aurora"
+    source_ids = [str(e) for e in wave.get("moves_from") or [] if e]
+    if not source_ids and relational_gaps and relational_gaps.get("source_engine"):
+        source_ids = [str(relational_gaps["source_engine"])]
+    source = (
+        f" from {SOURCE_ENGINE_DISPLAY_NAMES.get(source_ids[0], display_engine(source_ids[0]))}"
+        if source_ids
+        else ""
+    )
+    what = "the 1 source table" if tables == 1 else f"all {tables} source tables"
+    model = "its current data model" if tables == 1 else "their current data model"
+    return (
+        f"Wave 1 is not yet optimized for heterogeneous migrations: it converts {what}"
+        f"{source} to {target} with {model}, and the plan does not yet analyze how to "
+        f"redesign the schema or the queries for {target}.{_gap_sentence(relational_gaps)}"
+    )
+
+
+def apply_cross_engine_wave_one(
+    waves: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    engines: list[dict[str, Any]],
+    tables_analyzed: int | None,
+    relational_gaps: Mapping[str, Any] | None,
+) -> int | None:
+    """Count a cross-engine wave 1 in full (#1120); the tables it moves, or None.
+
+    For the wave's facts ``row``: ``moving_tables`` / ``moving_by_engine`` are every
+    source table (views not included), ``heterogeneous_note`` states the move, and
+    ``lists_relational_gaps`` says whether the gap check is this wave's (its
+    ``target_engine`` is the wave's engine; a gap check for the other Aurora engine is
+    neither counted nor listed). The chosen engine's row in ``engines`` gets every
+    source table as its Scope and ``tables_migrate``. Rows are changed in place.
+    Synthesis calls it from :func:`compute_report_facts`; the facts reader calls it for
+    a block stored before these fields existed (``src.report.facts.report_facts``).
+    """
+    found = cross_engine_wave_one(waves, rows)
+    if found is None:
+        return None
+    wave1, row = found
+    tables_only = row.get("tables_only")
+    moved: int = (
+        int(tables_only)
+        if tables_only is not None
+        else (tables_analyzed if tables_analyzed is not None else int(row["served_tables"]))
+    )
+    target = row["engines"][0]
+    gaps = (
+        relational_gaps
+        if relational_gaps is not None and relational_gaps.get("target_engine") == target
+        else None
+    )
+    row["moving_tables"] = moved
+    row["moving_by_engine"] = {target: moved}
+    row["heterogeneous_note"] = heterogeneous_wave_note(wave1, moved, gaps)
+    row["lists_relational_gaps"] = gaps is not None
+    for e in engines:
+        if e["engine"] == target and e["role"] == MIGRATION_TARGET:
+            e["engine_source_tables"] = moved
+            e["tables_migrate"] = moved
+            shared = e.get("shared_source_tables")
+            if shared is not None and shared <= moved:
+                # "incl. shared" counts tables beyond the engine's own; it now has all.
+                e["shared_source_tables"] = None
+    return moved
+
+
+def cross_engine_wave_one(
+    waves: list[dict[str, Any]], rows: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """``(wave, its facts row)`` of a cross-engine wave 1, or None (#1120).
+
+    A heterogeneous source (SQL Server, Oracle, Db2) has no Aurora engine of its own
+    dialect; the resolver picks one (#381) and wave 1 converts every source table to
+    it. ``homogeneity="heterogeneous"`` (no Aurora engine picked) names no engine to
+    move the tables to, so it is not one.
+    """
+    for w, row in zip(waves, rows, strict=True):
+        if w.get("homogeneity") == "cross_engine" and row["engines"]:
+            return w, row
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1953,6 +2096,12 @@ def compute_report_facts(
     migration_total = sum(e["tables_migrate"] for e in engines if e["role"] == MIGRATION_TARGET)
     wave_total = sum(row["moving_tables"] or 0 for row in wave_rows if row["migrating"])
     tables_migrate = migration_total or wave_total
+    # #1120: a cross-engine wave 1 moves every source table (not its views) to the
+    # chosen Aurora engine. Every later wave moves a subset of those tables on, so
+    # "Tables migrate" counts each table once: all of them.
+    moved = apply_cross_engine_wave_one(waves, wave_rows, engines, tables_analyzed, relational_gaps)
+    if moved is not None:
+        tables_migrate = moved
     costs = [e["monthly_cost_usd"] for e in engines if e["monthly_cost_usd"] is not None]
     tied = [t for t in (report.get("tied_queries") or []) if isinstance(t, dict)]
     risks = risk_facts(report)

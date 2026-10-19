@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from src.contracts.collector_output import DatabaseEngine
 from src.shared.catalog import CatalogError
 from src.shared.catalog.gaps import (
     AURORA_TARGETS,
+    GAP_IMPACT_LABELS,
     GAP_IMPACTS,
     SOURCE_ENGINES,
     aurora_version_lines,
@@ -181,3 +183,15 @@ def test_the_rule_catalog_page_lists_every_rule() -> None:
     for rule in gap_rules():
         assert f"### {rule.id}" in page
         assert f"[`{rule.id}`](#{rule.id})" in page
+
+
+def test_the_results_page_names_each_impact_as_the_reports_do() -> None:
+    """#1120: the UI's gap list labels each impact with the words the engineering
+    and executive reports use (``GAP_IMPACT_LABELS``), one string per impact."""
+    en = json.loads(
+        (Path(__file__).resolve().parents[3] / "src/ui/src/locales/en.json").read_text()
+    )
+    prefix = "analysis-results.waves.gap-impact."
+    shown = {k[len(prefix) :]: v for k, v in en.items() if k.startswith(prefix)}
+    assert shown == dict(GAP_IMPACT_LABELS)
+    assert set(GAP_IMPACT_LABELS) == set(GAP_IMPACTS)

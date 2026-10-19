@@ -12,6 +12,8 @@ from .engine_roles import _RELATIONAL_ENGINES
 from .facts import report_facts
 from .facts import wave_facts_by_number as _facts_by_wave
 from .formatting import _completed_designs, fmt_num, plural_noun
+from .relational_gaps import impact_label, wave_gaps
+from .risks import filtered_risks
 from .waves import (  # noqa: F401 -- re-exported for renderers
     _RELATIONAL_TO_SOURCE_ENGINE,
     _legacy_migration_waves,
@@ -321,5 +323,74 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
         gate = _gate_text(w, wf, replicated)
         out.append(f"- Gate before the next wave: {escaping.md_text(gate or '-')}")
+        out += _heterogeneous_lines_md(report, wf)
         out.append("")
+    return out
+
+
+def _evidence_md(gap: dict[str, Any], cap: int = 8) -> str:
+    """ " Found in: `t1`, `t2`; queries `q1`; procedure `p1`" for one gap, each list
+    cut at ``cap`` names."""
+
+    def names(items: list[str]) -> str:
+        shown = ", ".join(f"`{escaping.md_code(x)}`" for x in items[:cap])
+        return shown + (f" (+{len(items) - cap} more)" if len(items) > cap else "")
+
+    parts = []
+    tables = [str(t) for t in gap.get("tables") or []]
+    if tables:
+        parts.append(names(tables))
+    queries = [str(q) for q in gap.get("queries") or []]
+    if queries:
+        parts.append(f"{plural_noun(len(queries), 'query', 'queries')} {names(queries)}")
+    by_kind: dict[str, list[str]] = {}
+    for o in gap.get("objects") or []:
+        if isinstance(o, dict) and o.get("id"):
+            by_kind.setdefault(str(o.get("kind") or "object"), []).append(str(o["id"]))
+    for kind, ids in by_kind.items():
+        parts.append(f"{plural_noun(len(ids), kind)} {names(ids)}")
+    return f" Found in: {'; '.join(parts)}" if parts else ""
+
+
+def _register_gap_features(report: dict[str, Any]) -> set[str]:
+    """The gap features whose reason the Risk register states: each detail line of a
+    ``relational.gaps`` risk opens with its gap's feature (#1149)."""
+    return {
+        str(d).split(": ", 1)[0]
+        for r in filtered_risks(report)
+        if r.get("rule") == "relational.gaps"
+        for d in r.get("details") or []
+        if ": " in str(d)
+    }
+
+
+def _heterogeneous_lines_md(report: dict[str, Any], wf: dict[str, Any]) -> list[str]:
+    """A cross-engine wave 1's note and its relational gaps, one line each (#1120).
+
+    #1170 (state it once): a gap whose ``relational.gaps`` risk gives its reason and
+    documentation in the Risk register names only its impact and where it was found
+    here; any other gap (an informational one raises no risk) keeps its reason."""
+    note = wf.get("heterogeneous_note")
+    if not note:
+        return []
+    out = [f"- {escaping.md_text(note)}"]
+    gaps = wave_gaps(report, int(wf.get("wave") or 0))
+    if gaps:
+        in_register = _register_gap_features(report)
+        out.append(
+            "- Relational gaps (the Risk register gives the reason and documentation of "
+            "each one it lists):"
+            if any(g.get("feature") in in_register for g in gaps)
+            else "- Relational gaps:"
+        )
+        for g in gaps:
+            listed = g.get("feature") in in_register
+            reason = "" if listed else f": {escaping.md_text(g.get('reason') or '')}"
+            evidence = _evidence_md(g)
+            if listed and evidence:
+                evidence = "." + evidence
+            out.append(
+                f"  - {escaping.md_text(g.get('feature') or g.get('rule_id') or '-')} "
+                f"({impact_label(g.get('impact'))}){reason}{evidence}"
+            )
     return out

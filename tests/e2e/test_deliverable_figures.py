@@ -348,3 +348,37 @@ def test_designed_engineering_report_figures(designed_job: PipelineResult) -> No
         "engineering report",
         _problems(report, figs, _engineering_required),
     )
+
+
+NOT_OPTIMIZED = "Wave 1 is not yet optimized for heterogeneous migrations"
+
+
+def test_a_heterogeneous_wave_1_says_it_is_not_yet_optimized(run: PipelineResult) -> None:
+    """#1120: on a cross-engine source (trailgear), wave 1 states the facts layer's note
+    and lists every detected relational gap, in the engineering report and in the
+    executive report (by feature, no table names); a homogeneous sample shows neither."""
+    report = _report_json(run)
+    facts = report.get("facts") or {}
+    wave1 = next(w for w in _waves(report) if w.get("homogeneity") is not None)
+    note = next(w for w in facts["waves"] if w["wave"] == wave1["wave"])["heterogeneous_note"]
+    md = run.deliverable("engineering-report.md").read_text()
+    start = md.index(f"### Wave {wave1['wave']}:")
+    md_wave1 = md_plain(md[start : md.index("\n### ", start + 1)])
+    pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
+    m = re.search(rf"WAVE {wave1['wave']} (.*?)(?=WAVE \d+ |$)", pdf)
+    assert m, "the executive report shows no wave 1 card"
+    pdf_wave1 = m.group(1)
+    if wave1.get("homogeneity") != "cross_engine":
+        assert note is None
+        assert NOT_OPTIMIZED not in md and NOT_OPTIMIZED not in pdf
+        return
+    assert note and note.startswith(NOT_OPTIMIZED)
+    assert norm(note) in md_wave1
+    assert norm(note) in pdf_wave1
+    row = next(w for w in facts["waves"] if w["wave"] == wave1["wave"])
+    assert row["lists_relational_gaps"], "the gap check targets wave 1's engine"
+    gaps = (facts.get("relational_gaps") or {}).get("gaps") or []
+    assert gaps, "the heterogeneous sample finds relational gaps"
+    for gap in gaps:
+        assert norm(gap["feature"]) in md_wave1, gap["rule_id"]
+        assert norm(gap["feature"]) in pdf_wave1, gap["rule_id"]

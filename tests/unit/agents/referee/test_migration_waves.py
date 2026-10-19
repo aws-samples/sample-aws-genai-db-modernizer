@@ -382,7 +382,7 @@ class TestAuroraWave:
         assert aurora["moves_from"] == ["sqlserver"]
         assert "cross-engine" in aurora["rationale"]
         assert "Cross-engine move" in aurora["gate"]
-        assert "SQL dialect and data model conversion" in aurora["gate"]
+        assert "SQL dialect and data types converted, with the current data model" in aurora["gate"]
         assert aurora["title"] == "Move off SQL Server to Aurora MySQL (cross-engine)"
         assert "Sqlserver" not in aurora["rationale"]
         assert "SQL Server" in aurora["rationale"]

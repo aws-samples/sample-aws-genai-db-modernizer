@@ -206,6 +206,16 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
                 # #1169: the Scope cell states how many of them migrate; how the rest
                 # split is checked against the wave plan in ``invariant_violations``.
                 exp[f"migrate:{e}"] = exp.get(f"migrate:{e}", 0) + moving_by.get(e, 0)
+    first = next(
+        (w for w in report.get("migration_waves") or [] if w.get("homogeneity") == "cross_engine"),
+        None,
+    )
+    if first and first.get("engines") and report.get("source_table_count") is not None:
+        # #1120: a cross-engine wave 1 moves every source table to the chosen Aurora
+        # engine. Every later wave moves a subset of those tables on, so the total
+        # counts each table once: the tables analyzed.
+        exp[f"tables:{first['engines'][0]}"] = int(report["source_table_count"])
+        tables_migrate = int(report["source_table_count"])
     exp["tables_migrate"] = tables_migrate
     exp.update(_expected_map_split(report))
 

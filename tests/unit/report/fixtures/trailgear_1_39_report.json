@@ -1,0 +1,2453 @@
+{
+ "agent_type": "referee-synthesis",
+ "assignment_summary": {
+  "aurora_engine_choice": {
+   "deciding_features": [
+    "json_usage",
+    "merge_statements",
+    "multiple_schemas",
+    "sequences"
+   ],
+   "engine": "aurora_postgresql",
+   "margin": 32.0,
+   "reason": "close on total adjusted score (7262.0 vs 7294.0); tipped by: JSON usage, MERGE statements, multiple schemas, sequences",
+   "source_engine": "sqlserver",
+   "totals": {
+    "aurora_mysql": 7262.0,
+    "aurora_postgresql": 7294.0
+   }
+  },
+  "co_dependency_groups": 3,
+  "in_scope_count": 95,
+  "query_count": 95,
+  "source": "reality_check",
+  "status": "auto_generated",
+  "tie_unresolved_count": 0,
+  "version": 2
+ },
+ "auto_decided_choices": [],
+ "cache_overlay": {
+  "call_share_percent": 73.1,
+  "calls_per_second": 133.638,
+  "dropped_query_ids": [],
+  "engine": "elasticache",
+  "max_rows_avg": 100.0,
+  "min_calls_per_second": 1.0,
+  "notes": [],
+  "owners": {
+   "aurora_postgresql": 4,
+   "dynamodb": 12
+  },
+  "patterns": {
+   "point_lookup": 13,
+   "reference_read": 1,
+   "session_lookup": 1,
+   "top_n": 1
+  },
+  "query_count": 16,
+  "safety_net_notes": []
+ },
+ "considered_not_recommended": [
+  {
+   "absorbed_by": "dynamodb",
+   "engine": "documentdb"
+  }
+ ],
+ "contract_version": "1.39",
+ "database_name": "trailgear",
+ "facts": {
+  "access_pattern_totals": {
+   "cache_layer_pattern_count": 0,
+   "listed_pattern_count": 0,
+   "owned_pattern_count": 0
+  },
+  "auto_decided_by_engine": [],
+  "auto_decided_choice_count": 0,
+  "auto_decided_query_count": 0,
+  "close_calls": {
+   "close_call_query_count": 22,
+   "engine_pairs": [
+    {
+     "alternative": "aurora_postgresql",
+     "engine": "dynamodb",
+     "exact_tie_count": 0,
+     "group_mean_count": 6,
+     "max_gap": 4.0,
+     "min_gap": 2.4,
+     "more_query_count": 9,
+     "pair_query_count": 14,
+     "query_ids": [
+      "0xAF48C75729669E37",
+      "0xE99A571BCB104F13",
+      "0x1627583149DCA7D1",
+      "0x3BE9AE87BC4E81FC",
+      "0x452800B927B9ECC9"
+     ]
+    },
+    {
+     "alternative": "dynamodb",
+     "engine": "aurora_postgresql",
+     "exact_tie_count": 0,
+     "group_mean_count": 0,
+     "max_gap": 4.0,
+     "min_gap": 1.0,
+     "more_query_count": 3,
+     "pair_query_count": 8,
+     "query_ids": [
+      "0x459FA64B551E3BF2",
+      "0x49E7C049AB9A41E9",
+      "0x5903995B9B42F531",
+      "0x9A123DFBF60D59A1",
+      "0xB1C89B1D2C60B6CD"
+     ]
+    }
+   ],
+   "margin_points": 5.0,
+   "settled_tie_count": 0
+  },
+  "critical_high_risk_count": 2,
+  "critical_high_risk_types": [
+   "MIGRATION_COMPLEXITY",
+   "PERFORMANCE_DEGRADATION"
+  ],
+  "critical_high_risks_by_engine": {
+   "dynamodb": 2
+  },
+  "critical_high_root_cause": null,
+  "design_review_reroute_count": 0,
+  "engine_cost_total_usd": 620.93,
+  "engine_count": 3,
+  "engines": [
+   {
+    "cached_call_share_percent": null,
+    "cached_queries": null,
+    "engine": "dynamodb",
+    "engine_source_tables": 29,
+    "monthly_cost_usd": 106.47,
+    "rationale": "86% mean fit across 48 queries (29 rated tables), led by key-value lookups (18 of 48).",
+    "role": "Migration target",
+    "shared_source_tables": null,
+    "signal_overrides": [],
+    "tables_migrate": 23,
+    "target_objects": null,
+    "workload_percent": 50.5
+   },
+   {
+    "cached_call_share_percent": null,
+    "cached_queries": null,
+    "engine": "aurora_postgresql",
+    "engine_source_tables": 0,
+    "monthly_cost_usd": 348.34,
+    "rationale": "78% mean fit across 47 queries (23 rated tables; 8 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search, multi-table joins and recursive queries (19 of 47).",
+    "role": "Migration target",
+    "shared_source_tables": null,
+    "signal_overrides": [],
+    "tables_migrate": 0,
+    "target_objects": null,
+    "workload_percent": 49.5
+   },
+   {
+    "cached_call_share_percent": 73.1,
+    "cached_queries": 16,
+    "engine": "elasticache",
+    "engine_source_tables": null,
+    "monthly_cost_usd": 166.12,
+    "rationale": "Cache layer for 16 hot reads (73.1% of calls), mostly point lookups, cache-aside in front of Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 43% mean cache fit across 16 cached reads (14 rated tables). These reads total 133.638 calls/s, above the 1 calls/s hot-read floor.",
+    "role": "Cache layer",
+    "shared_source_tables": null,
+    "signal_overrides": [],
+    "tables_migrate": 0,
+    "target_objects": null,
+    "workload_percent": null
+   }
+  ],
+  "in_scope_query_count": 95,
+  "migration_wave_count": 3,
+  "moving_query_count": 95,
+  "no_migration": {
+   "cached_call_share_percent": 73.1,
+   "critical_high_risks": 0,
+   "engines": [
+    "elasticache"
+   ],
+   "workload_percent": 0.0
+  },
+  "open_risk_count": 7,
+  "open_risks_by_severity": {
+   "HIGH": 2,
+   "LOW": 1,
+   "MEDIUM": 4
+  },
+  "open_risks_by_type": {
+   "migration complexity": 1,
+   "performance degradation": 6
+  },
+  "pending_choice_count": 0,
+  "pending_choice_pairs": [],
+  "pending_choice_query_count": 0,
+  "post_schema_reroute_count": 0,
+  "projected_monthly_cost_usd": 620.93,
+  "query_trace": {
+   "ever_tied_query_count": 4,
+   "full_trace_cap": 200,
+   "full_trace_count": 11,
+   "has_ledger": true,
+   "listed_queries": [
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x3BE9AE87BC4E81FC",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x40955C4670CBE099",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x57083C831FBABE20",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x61AC3BDB0619D600",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x81DCD6D1C8D0F021",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x88BF8EE1D634B98E",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": true,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0xBD93E181B8152322",
+     "tied": false
+    },
+    {
+     "in_full": true,
+     "moved": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x15D031C45243CE16",
+     "tied": true
+    },
+    {
+     "in_full": true,
+     "moved": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x459FA64B551E3BF2",
+     "tied": true
+    },
+    {
+     "in_full": true,
+     "moved": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x49E7C049AB9A41E9",
+     "tied": true
+    },
+    {
+     "in_full": true,
+     "moved": false,
+     "open_tie": false,
+     "overridden": false,
+     "pinned": false,
+     "query_id": "0x881A717BC852EFF8",
+     "tied": true
+    }
+   ],
+   "listed_query_count": 11,
+   "moved_query_count": 7,
+   "not_in_full_count": 0,
+   "open_tie_query_count": 0,
+   "overridden_query_count": 0,
+   "pinned_query_count": 0,
+   "traced_query_count": 95,
+   "unlisted_query_count": 84,
+   "unlisted_rules": [
+    {
+     "label": "highest score",
+     "rule": "highest_score",
+     "rule_query_count": 61
+    },
+    {
+     "label": "write group: one source of truth",
+     "rule": "group.write",
+     "rule_query_count": 15
+    },
+    {
+     "label": "co-dependency group",
+     "rule": "group.mean",
+     "rule_query_count": 8
+    }
+   ]
+  },
+  "reality_check_decisions": [
+   {
+    "detail": "DocumentDB provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+    "engine": "documentdb",
+    "index": 0,
+    "kind": "consolidation",
+    "query_ids": [],
+    "title": "Consolidated 3 queries from DocumentDB \u2192 Aurora PostgreSQL",
+    "with_removed_engine": true
+   },
+   {
+    "detail": "DocumentDB provides no unique capabilities over DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+    "engine": "documentdb",
+    "index": 1,
+    "kind": "consolidation",
+    "query_ids": [],
+    "title": "Consolidated 4 queries from DocumentDB \u2192 DynamoDB",
+    "with_removed_engine": true
+   }
+  ],
+  "reality_check_trade_offs": [
+   {
+    "description_now": null,
+    "from_engine": "documentdb",
+    "index": 0,
+    "queries_moved_back": 0,
+    "queries_still_moved": 3,
+    "reversed": false,
+    "to_engine": "aurora_postgresql"
+   },
+   {
+    "description_now": null,
+    "from_engine": "documentdb",
+    "index": 1,
+    "queries_moved_back": 0,
+    "queries_still_moved": 4,
+    "reversed": false,
+    "to_engine": "dynamodb"
+   }
+  ],
+  "relational_gaps": {
+   "gaps": [
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), JSON and XML",
+     "feature": "APPLY joins and OPENJSON or OPENXML",
+     "impact": "needs_rewrite",
+     "objects": [],
+     "queries": [
+      "0xBE098518D277706D"
+     ],
+     "reason": "CROSS APPLY and OUTER APPLY become LATERAL joins, and OPENJSON and OPENXML become the target's JSON or XML table functions (jsonb_to_recordset or JSON_TABLE).",
+     "rule_id": "sqlserver-apply-and-openjson",
+     "tables": [
+      "trailgear.UserSession"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), String functions; AWS Schema Conversion Tool User Guide",
+     "feature": "T-SQL string, null and other built-in functions",
+     "impact": "needs_rewrite",
+     "objects": [],
+     "queries": [
+      "0x2E662F4226763682"
+     ],
+     "reason": "These T-SQL functions have other names on the target, and ISNULL exists on Aurora MySQL with a different meaning, so each call is converted (COALESCE, LENGTH, POSITION, gen_random_uuid() or UUID(), COUNT).",
+     "rule_id": "sqlserver-builtin-functions",
+     "tables": [
+      "trailgear.EventLog"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Date and time functions",
+     "feature": "T-SQL date and time functions",
+     "impact": "needs_rewrite",
+     "objects": [],
+     "queries": [
+      "0x03C29A33A3001282",
+      "0x0A837586245ECABF",
+      "0x0FD5E4FBDB00BC80",
+      "0x13AA5401A639D6C8",
+      "0x189D9A37D7049292",
+      "0x226531F7A5D653B6",
+      "0x2BDF3D0068BE8972",
+      "0x2E662F4226763682",
+      "0x6D59919566F79336",
+      "0x73F8029840AFB793",
+      "0x82069B7FF9562750",
+      "0x8A009697B65D7D5E",
+      "0x8BBAEC4CCECE4C82",
+      "0x8E6C17DA57EAB252",
+      "0x9384BE0D7308E52A",
+      "0x9D11480F1E01B771",
+      "0x9D3CA0D2E70ACB70",
+      "0xADF0BF17E0DB6B8F",
+      "0xCA34070C2B7E419E",
+      "0xE4494B567754BF54",
+      "0xEAD44A73702298B8",
+      "0xF65F1E1A98E68919"
+     ],
+     "reason": "T-SQL date functions have other names or argument orders on the target, and DATEDIFF exists on Aurora MySQL with a different meaning, so each call is converted.",
+     "rule_id": "sqlserver-date-functions",
+     "tables": [
+      "trailgear.Customer",
+      "trailgear.EventLog",
+      "trailgear.LoyaltyAccount",
+      "trailgear.OrderStatusHistory",
+      "trailgear.PriceChangeLog",
+      "trailgear.ProductPrice",
+      "trailgear.ProductReview",
+      "trailgear.PurchaseOrder",
+      "trailgear.SalesOrder",
+      "trailgear.Shipment",
+      "trailgear.StockLevel",
+      "trailgear.StockMovement",
+      "trailgear.Ticket",
+      "trailgear.TicketMessage",
+      "trailgear.UserSession",
+      "unknown"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation); AWS Schema Conversion Tool User Guide",
+     "feature": "TOP row limits",
+     "impact": "needs_rewrite",
+     "objects": [],
+     "queries": [
+      "0x379374773D5DC0F7",
+      "0x41A1D5EE8655B412",
+      "0x459FA64B551E3BF2",
+      "0x81F4636814626738",
+      "0x9D11480F1E01B771",
+      "0xACF0D651EE90E274",
+      "0xBF0498C3B5E8BD52",
+      "0xE696BB9DC3E68FD7",
+      "0xE715A6116BCB0673"
+     ],
+     "reason": "TOP (n) becomes LIMIT n, and a DELETE or UPDATE with TOP becomes a keyed subquery.",
+     "rule_id": "sqlserver-top-clause",
+     "tables": [
+      "trailgear.Customer",
+      "trailgear.EventLog",
+      "trailgear.KnowledgeArticle",
+      "trailgear.Product",
+      "trailgear.ProductPrice",
+      "trailgear.ProductReview",
+      "trailgear.SalesOrder",
+      "trailgear.SalesOrderLine",
+      "trailgear.UserSession"
+     ]
+    },
+    {
+     "docs": "AWS DMS User Guide, Converting database schemas using DMS Schema Conversion; AWS Schema Conversion Tool User Guide",
+     "feature": "T-SQL procedures, functions and triggers",
+     "impact": "needs_rewrite",
+     "objects": [
+      {
+       "id": "ufn_EffectivePrice",
+       "kind": "function"
+      },
+      {
+       "id": "usp_CancelOrder",
+       "kind": "procedure"
+      },
+      {
+       "id": "usp_PlaceOrder",
+       "kind": "procedure"
+      },
+      {
+       "id": "usp_RecalculateLoyaltyTier",
+       "kind": "procedure"
+      },
+      {
+       "id": "usp_ReserveStock",
+       "kind": "procedure"
+      },
+      {
+       "id": "trg_ProductPrice_Audit",
+       "kind": "trigger"
+      },
+      {
+       "id": "trg_SalesOrder_Status",
+       "kind": "trigger"
+      }
+     ],
+     "queries": [],
+     "reason": "T-SQL routines are converted to the target's procedural language (PL/pgSQL on Aurora PostgreSQL, stored programs on Aurora MySQL): a schema conversion tool converts most of the code, and the rest is rewritten by hand.",
+     "rule_id": "sqlserver-tsql-routines",
+     "tables": [
+      "ProductPrice",
+      "SalesOrder"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Collations",
+     "feature": "Case-insensitive text comparison",
+     "impact": "behaves_differently",
+     "objects": [],
+     "queries": [],
+     "reason": "SQL Server compares text case-insensitively under its default collation, and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change.",
+     "rule_id": "sqlserver-case-insensitive-comparison",
+     "tables": []
+    },
+    {
+     "docs": "PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation)",
+     "feature": "MERGE statements on Aurora PostgreSQL",
+     "impact": "behaves_differently",
+     "objects": [],
+     "queries": [
+      "0x2BDF3D0068BE8972"
+     ],
+     "reason": "PostgreSQL 15 and later run MERGE, with differences from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING (PostgreSQL 17), so check each statement.",
+     "rule_id": "sqlserver-merge-to-postgresql",
+     "tables": [
+      "trailgear.StockLevel",
+      "trailgear.StockMovement"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Query hints and table hints",
+     "feature": "T-SQL table and query hints",
+     "impact": "behaves_differently",
+     "objects": [],
+     "queries": [
+      "0x0925DBE7DF1D692B",
+      "0x15D031C45243CE16",
+      "0x2E662F4226763682",
+      "0x459FA64B551E3BF2",
+      "0x49E7C049AB9A41E9",
+      "0x579133B43C5DF08B",
+      "0x81F4636814626738",
+      "0x8533DCED4BCE003A",
+      "0x88BF8EE1D634B98E",
+      "0xACF0D651EE90E274",
+      "0xE91230F18C2A3D0B",
+      "0xEC9117529C12152F"
+     ],
+     "reason": "Neither target has T-SQL table or query hints, so they are dropped: readers never block writers under the targets' multi-version concurrency, so NOLOCK's dirty reads go away.",
+     "rule_id": "sqlserver-table-and-query-hints",
+     "tables": [
+      "trailgear.Brand",
+      "trailgear.EventLog",
+      "trailgear.Product",
+      "trailgear.ProductCategory",
+      "trailgear.ProductImage",
+      "trailgear.ProductPrice",
+      "trailgear.ProductReview",
+      "trailgear.SalesOrder",
+      "trailgear.TicketMessage"
+     ]
+    },
+    {
+     "docs": "SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation), Data types",
+     "feature": "Data types that change behaviour",
+     "impact": "behaves_differently",
+     "objects": [
+      {
+       "id": "trailgear.CustomerAddress.IsDefault",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.FeatureFlag.Enabled",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Product.IsActive",
+       "kind": "column"
+      }
+     ],
+     "queries": [],
+     "reason": "These types map to the nearest target type: datetimeoffset keeps the instant but not the original offset, money becomes numeric(19,4), and bit becomes boolean (Aurora PostgreSQL) or BIT(1) (Aurora MySQL), so check the code that compares or formats them.",
+     "rule_id": "sqlserver-types-behave-differently",
+     "tables": [
+      "trailgear.CustomerAddress",
+      "trailgear.FeatureFlag",
+      "trailgear.Product"
+     ]
+    },
+    {
+     "docs": "Amazon Aurora User Guide, Working with Babelfish for Aurora PostgreSQL",
+     "feature": "Babelfish for Aurora PostgreSQL",
+     "impact": "informational",
+     "objects": [],
+     "queries": [],
+     "reason": "Babelfish for Aurora PostgreSQL accepts T-SQL and SQL Server's wire protocol (TDS), which can keep much of this code unchanged: check its list of supported features before planning a full conversion.",
+     "rule_id": "sqlserver-babelfish-option",
+     "tables": []
+    },
+    {
+     "docs": "AWS Schema Conversion Tool User Guide, data type mappings",
+     "feature": "Data types the conversion maps",
+     "impact": "informational",
+     "objects": [
+      {
+       "id": "trailgear.Brand.Name",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.CreatedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.Email",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.FirstName",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.LastName",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.ModifiedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Customer.Preferences",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerAddress.City",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerAddress.Line1",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerAddress.Region",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerNote.Body",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerNote.CreatedBy",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.CustomerNote.CreatedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.EventLog.EventTime",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.EventLog.Payload",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.FeatureFlag.Rollout",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.KnowledgeArticle.Body",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.KnowledgeArticle.PublishedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.KnowledgeArticle.Tags",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.KnowledgeArticle.Title",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.LoyaltyAccount.ModifiedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.OrderStatusHistory.ChangedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Payment.CapturedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.PriceChangeLog.ChangedBy",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.PriceChangeLog.ChangedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Product.Description",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Product.ModifiedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Product.Name",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Product.Specs",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductCategory.Name",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductPrice.ValidFrom",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductPrice.ValidTo",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductReview.Body",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductReview.CreatedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductReview.Rating",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.ProductReview.Title",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.PurchaseOrder.OrderedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.SalesOrder.OrderDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Shipment.DeliveredDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Shipment.ShippedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.StockLevel.ModifiedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.StockMovement.MovedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.StoreSetting.SettingValue",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Supplier.ContactEmail",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Supplier.Name",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Ticket.ClosedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Ticket.OpenedDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Ticket.Priority",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Ticket.Subject",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.TicketMessage.Author",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.TicketMessage.Body",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.TicketMessage.SentDate",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.UserSession.CartJson",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.UserSession.ExpiresAt",
+       "kind": "column"
+      },
+      {
+       "id": "trailgear.Warehouse.Name",
+       "kind": "column"
+      }
+     ],
+     "queries": [],
+     "reason": "These types are converted to the target's matching type (for example nvarchar to varchar in UTF-8, datetime2 to timestamp, tinyint to smallint on Aurora PostgreSQL): check precision and range in the conversion report.",
+     "rule_id": "sqlserver-types-mapped",
+     "tables": [
+      "trailgear.Brand",
+      "trailgear.Customer",
+      "trailgear.CustomerAddress",
+      "trailgear.CustomerNote",
+      "trailgear.EventLog",
+      "trailgear.FeatureFlag",
+      "trailgear.KnowledgeArticle",
+      "trailgear.LoyaltyAccount",
+      "trailgear.OrderStatusHistory",
+      "trailgear.Payment",
+      "trailgear.PriceChangeLog",
+      "trailgear.Product",
+      "trailgear.ProductCategory",
+      "trailgear.ProductPrice",
+      "trailgear.ProductReview",
+      "trailgear.PurchaseOrder",
+      "trailgear.SalesOrder",
+      "trailgear.Shipment",
+      "trailgear.StockLevel",
+      "trailgear.StockMovement",
+      "trailgear.StoreSetting",
+      "trailgear.Supplier",
+      "trailgear.Ticket",
+      "trailgear.TicketMessage",
+      "trailgear.UserSession",
+      "trailgear.Warehouse"
+     ]
+    }
+   ],
+   "gaps_by_impact": {
+    "behaves_differently": 4,
+    "blocks_move": 0,
+    "informational": 2,
+    "needs_rewrite": 5
+   },
+   "rules_checked": 13,
+   "source_engine": "sqlserver",
+   "source_line": null,
+   "source_version": "15.0.4322.2",
+   "target_engine": "aurora_postgresql",
+   "target_lines": [],
+   "version_checked": false
+  },
+  "removed_engines": [
+   {
+    "engine": "documentdb",
+    "moved_to": [
+     "aurora_postgresql",
+     "dynamodb"
+    ],
+    "reasons": [
+     "Consolidated 3 queries from DocumentDB \u2192 Aurora PostgreSQL: DocumentDB provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+     "Consolidated 4 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities over DynamoDB. DocumentDB does not run today, so no saving is claimed."
+    ]
+   }
+  ],
+  "resolved_risk_count": 6,
+  "resolved_risks_by_severity": {
+   "HIGH": 2,
+   "MEDIUM": 4
+  },
+  "source_of_truth_reroute_count": 0,
+  "source_table_count": 30,
+  "source_view_count": 1,
+  "table_basis": {
+   "basis_table_count": 30,
+   "design_coverage": "none",
+   "designed_engines": [],
+   "mapped_tables": 0,
+   "mapped_tables_by_role": {},
+   "pending_engines": [
+    "dynamodb",
+    "aurora_postgresql"
+   ]
+  },
+  "table_sources": {
+   "more_replicated_count": 0,
+   "replicated_table_count": 17,
+   "replicated_tables": [
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 8,
+     "replica_read_query_ids": [
+      "0x0253E46183218663",
+      "0x288281D96014BDB3",
+      "0x3C54363B02897844",
+      "0x41A1D5EE8655B412",
+      "0x579133B43C5DF08B",
+      "0x6EFF5BA5380ED4CE",
+      "0x7D9CCE936F5D81BA",
+      "0x930174356CDABACA"
+     ],
+     "risk": "Eventually consistent: 8 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.SalesOrder",
+     "write_query_count": 2
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 6,
+     "replica_read_query_ids": [
+      "0x2F5F5C962A1DA875",
+      "0x31648DAA008826FB",
+      "0x90135B217561BD91",
+      "0x9384BE0D7308E52A",
+      "0xBBD5DC4AA525028E",
+      "0xD34F972E18B8D979"
+     ],
+     "risk": "Eventually consistent: 6 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.Ticket",
+     "write_query_count": 2
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 4,
+     "replica_read_query_ids": [
+      "0x2F5F5C962A1DA875",
+      "0x8533DCED4BCE003A",
+      "0x90135B217561BD91",
+      "0xD34F972E18B8D979"
+     ],
+     "risk": "Eventually consistent: 4 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.TicketMessage",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 3,
+     "replica_read_query_ids": [
+      "0x15D031C45243CE16",
+      "0x459FA64B551E3BF2",
+      "0x881A717BC852EFF8"
+     ],
+     "risk": "Eventually consistent: 3 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.ProductReview",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 3,
+     "replica_read_query_ids": [
+      "0x0253E46183218663",
+      "0x288281D96014BDB3",
+      "0x41A1D5EE8655B412"
+     ],
+     "risk": "Eventually consistent: 3 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.SalesOrderLine",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x31648DAA008826FB",
+      "0x379374773D5DC0F7"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.Customer",
+     "write_query_count": 2
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x2FC4D600D5887E4E",
+      "0x930174356CDABACA"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.CustomerAddress",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x2E662F4226763682",
+      "0xBF0498C3B5E8BD52"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.EventLog",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x7D9CCE936F5D81BA",
+      "0xB1C89B1D2C60B6CD"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.Payment",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x36FF9EB2213DAF52",
+      "0x9A123DFBF60D59A1"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.PurchaseOrder",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x36FF9EB2213DAF52",
+      "0x5903995B9B42F531"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.PurchaseOrderLine",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x7D9CCE936F5D81BA",
+      "0xEA2423F36607A6FE"
+     ],
+     "risk": "Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.Shipment",
+     "write_query_count": 2
+    },
+    {
+     "replica_engines": [
+      "dynamodb"
+     ],
+     "replica_read_count": 2,
+     "replica_read_query_ids": [
+      "0x09ED89392748F2BA",
+      "0xBD93E181B8152322"
+     ],
+     "risk": "Eventually consistent: 2 reads on DynamoDB read a copy kept in sync from Aurora PostgreSQL via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from Aurora PostgreSQL.",
+     "source_of_truth": "aurora_postgresql",
+     "table": "trailgear.StockLevel",
+     "write_query_count": 2
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 1,
+     "replica_read_query_ids": [
+      "0x6EFF5BA5380ED4CE"
+     ],
+     "risk": "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.OrderStatusHistory",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 1,
+     "replica_read_query_ids": [
+      "0x40955C4670CBE099"
+     ],
+     "risk": "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.PriceChangeLog",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 1,
+     "replica_read_query_ids": [
+      "0x2BDF3D0068BE8972"
+     ],
+     "risk": "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.StockMovement",
+     "write_query_count": 1
+    },
+    {
+     "replica_engines": [
+      "aurora_postgresql"
+     ],
+     "replica_read_count": 1,
+     "replica_read_query_ids": [
+      "0xBE098518D277706D"
+     ],
+     "risk": "Eventually consistent: 1 read on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+     "source_of_truth": "dynamodb",
+     "table": "trailgear.UserSession",
+     "write_query_count": 3
+    }
+   ],
+   "single_engine_table_count": 2,
+   "single_engine_tables": [
+    "trailgear.LoyaltyAccount",
+    "trailgear.ProductPrice"
+   ],
+   "split_write_table_count": 0,
+   "written_table_count": 19
+  },
+  "tables_migrate": 23,
+  "tied_query_count": 0,
+  "trade_off_count": 2,
+  "unreviewed_move_count": 0,
+  "unservable": {
+   "fallback_query_count": 0,
+   "flagged_query_count": 0,
+   "gated_everywhere_query_count": 0,
+   "held_query_count": 0,
+   "more_unservable_count": 0,
+   "no_fit_query_count": 0,
+   "unservable_queries": [],
+   "unservable_query_count": 0
+  },
+  "waves": [
+   {
+    "critical_high_risks": 0,
+    "engines": [
+     "aurora_postgresql"
+    ],
+    "kept_in_sync": [],
+    "kept_in_sync_tables": null,
+    "migrating": false,
+    "moving_by_engine": null,
+    "moving_tables": null,
+    "served_by_engine": null,
+    "served_tables": 31,
+    "shared_in_wave": [],
+    "tables_only": 30,
+    "views": 1,
+    "wave": 1
+   },
+   {
+    "critical_high_risks": 0,
+    "engines": [
+     "elasticache"
+    ],
+    "kept_in_sync": [],
+    "kept_in_sync_tables": 0,
+    "migrating": false,
+    "moving_by_engine": null,
+    "moving_tables": 0,
+    "served_by_engine": null,
+    "served_tables": 0,
+    "shared_in_wave": [],
+    "tables_only": null,
+    "views": null,
+    "wave": 2
+   },
+   {
+    "critical_high_risks": 2,
+    "engines": [
+     "dynamodb"
+    ],
+    "kept_in_sync": [
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.Brand"
+     },
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.KnowledgeArticle"
+     },
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.Product"
+     },
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.Promotion"
+     },
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.StockLevel"
+     },
+     {
+      "owner": "aurora_postgresql",
+      "sync": "CDC",
+      "table": "trailgear.Supplier"
+     }
+    ],
+    "kept_in_sync_tables": 6,
+    "migrating": true,
+    "moving_by_engine": {
+     "dynamodb": 23
+    },
+    "moving_tables": 23,
+    "served_by_engine": {
+     "dynamodb": 29
+    },
+    "served_tables": 29,
+    "shared_in_wave": [],
+    "tables_only": null,
+    "views": null,
+    "wave": 3
+   }
+  ],
+  "workload_total_percent": 100.0
+ },
+ "flagged_unservable": [],
+ "job_id": "base-trai",
+ "migration_waves": [
+  {
+   "cutover_query_count": 95,
+   "engines": [
+    "aurora_postgresql"
+   ],
+   "fronts": null,
+   "gate": "Cross-engine move: validate the schema and query translation to Aurora PostgreSQL (SQL dialect and data model conversion, not a 1:1 carry-over) before cutover.",
+   "gate_parts": [
+    {
+     "items": [],
+     "text": "Cross-engine move: validate the schema and query translation to Aurora PostgreSQL (SQL dialect and data model conversion, not a 1:1 carry-over) before cutover."
+    }
+   ],
+   "homogeneity": "cross_engine",
+   "moves_from": [
+    "sqlserver"
+   ],
+   "owned_counts_by_engine": null,
+   "query_count": 47,
+   "rationale": "The source SQL Server database (15.0.4322.2) has no Aurora engine of its own dialect: Aurora MySQL and Aurora PostgreSQL both competed on the collected workload, and the assignment resolver selected Aurora PostgreSQL to serve it. Aurora MySQL scored 7262.0 and Aurora PostgreSQL 7294.0 in total adjusted query fit; tipped by JSON usage, MERGE statements, multiple schemas, sequences. This is a cross-engine move: SQL dialect and schema conversion, not a 1:1 carry-over. 47 queries (49.5%) remain on Aurora PostgreSQL once later waves have moved their share; later waves move subsets of these 31 tables and views out of Aurora PostgreSQL.",
+   "serves_from": [],
+   "share_basis": "queries",
+   "table_count": 31,
+   "table_counts_by_engine": null,
+   "table_groups": null,
+   "table_owners": null,
+   "tables": [
+    "trailgear.Brand",
+    "trailgear.Customer",
+    "trailgear.CustomerAddress",
+    "trailgear.CustomerNote",
+    "trailgear.EventLog",
+    "trailgear.FeatureFlag",
+    "trailgear.KnowledgeArticle",
+    "trailgear.LoyaltyAccount",
+    "trailgear.OrderStatusHistory",
+    "trailgear.Payment",
+    "trailgear.PriceChangeLog",
+    "trailgear.Product",
+    "trailgear.ProductCategory",
+    "trailgear.ProductImage",
+    "trailgear.ProductPrice",
+    "trailgear.ProductReview",
+    "trailgear.Promotion",
+    "trailgear.PurchaseOrder",
+    "trailgear.PurchaseOrderLine",
+    "trailgear.SalesOrder",
+    "trailgear.SalesOrderLine",
+    "trailgear.Shipment",
+    "trailgear.StockLevel",
+    "trailgear.StockMovement",
+    "trailgear.StoreSetting",
+    "trailgear.Supplier",
+    "trailgear.Ticket",
+    "trailgear.TicketMessage",
+    "trailgear.UserSession",
+    "trailgear.Warehouse",
+    "vw_ActiveProduct"
+   ],
+   "title": "Move off SQL Server to Aurora PostgreSQL (cross-engine)",
+   "wave": 1,
+   "workload_share_percent": 49.5
+  },
+  {
+   "cutover_query_count": null,
+   "engines": [
+    "elasticache"
+   ],
+   "fronts": "aurora_postgresql",
+   "gate": "Cache hit rate and invalidation verified against Aurora PostgreSQL.",
+   "gate_parts": [
+    {
+     "items": [],
+     "text": "Cache hit rate and invalidation verified against Aurora PostgreSQL."
+    }
+   ],
+   "homogeneity": null,
+   "moves_from": [],
+   "owned_counts_by_engine": null,
+   "query_count": 16,
+   "rationale": "16 hot reads (73.1% of calls), cache-aside in front of Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads: no data migration, fully reversible. It takes the read pressure off before the data migrations that follow. These reads belong to queries that move in wave 3 (DynamoDB) and wave 1 (Aurora PostgreSQL); this share overlaps the owner shares, which alone sum to 100%.",
+   "serves_from": [],
+   "share_basis": "calls",
+   "table_count": 0,
+   "table_counts_by_engine": null,
+   "table_groups": null,
+   "table_owners": null,
+   "tables": [],
+   "title": "Cache hot reads with ElastiCache",
+   "wave": 2,
+   "workload_share_percent": 73.1
+  },
+  {
+   "cutover_query_count": null,
+   "engines": [
+    "dynamodb"
+   ],
+   "fronts": null,
+   "gate": "Dual-write/backfill validated and query parity confirmed per table group. 16 tables (trailgear.Customer, trailgear.CustomerAddress, trailgear.EventLog, trailgear.OrderStatusHistory, trailgear.Payment, trailgear.PriceChangeLog, trailgear.ProductReview, trailgear.PurchaseOrder, trailgear.PurchaseOrderLine, trailgear.SalesOrder, trailgear.SalesOrderLine, trailgear.Shipment, trailgear.StockMovement, trailgear.Ticket, trailgear.TicketMessage, trailgear.UserSession) stay dual-read by Aurora PostgreSQL queries, which remain on Aurora PostgreSQL; DynamoDB owns them, so keep the Aurora PostgreSQL copy in sync from DynamoDB via CDC. 8 queries read 6 tables (trailgear.Brand, trailgear.KnowledgeArticle, trailgear.Product, trailgear.Promotion, trailgear.StockLevel, trailgear.Supplier) Aurora PostgreSQL owns (wave 1) and keeps owning; keep a DynamoDB copy of them in sync via CDC.",
+   "gate_parts": [
+    {
+     "items": [
+      "trailgear.Customer",
+      "trailgear.CustomerAddress",
+      "trailgear.EventLog",
+      "trailgear.OrderStatusHistory",
+      "trailgear.Payment",
+      "trailgear.PriceChangeLog",
+      "trailgear.ProductReview",
+      "trailgear.PurchaseOrder",
+      "trailgear.PurchaseOrderLine",
+      "trailgear.SalesOrder",
+      "trailgear.SalesOrderLine",
+      "trailgear.Shipment",
+      "trailgear.StockMovement",
+      "trailgear.Ticket",
+      "trailgear.TicketMessage",
+      "trailgear.UserSession"
+     ],
+     "text": "Dual-write/backfill validated and query parity confirmed per table group. 16 tables"
+    },
+    {
+     "items": [
+      "trailgear.Brand",
+      "trailgear.KnowledgeArticle",
+      "trailgear.Product",
+      "trailgear.Promotion",
+      "trailgear.StockLevel",
+      "trailgear.Supplier"
+     ],
+     "text": " stay dual-read by Aurora PostgreSQL queries, which remain on Aurora PostgreSQL; DynamoDB owns them, so keep the Aurora PostgreSQL copy in sync from DynamoDB via CDC. 8 queries read 6 tables"
+    },
+    {
+     "items": [],
+     "text": " Aurora PostgreSQL owns (wave 1) and keeps owning; keep a DynamoDB copy of them in sync via CDC."
+    }
+   ],
+   "homogeneity": null,
+   "moves_from": [
+    "aurora_postgresql"
+   ],
+   "owned_counts_by_engine": null,
+   "query_count": 48,
+   "rationale": "48 key-value and point-lookup queries (50.5% of query patterns) across 1 table group, where co-dependent tables move together: the pattern DynamoDB fits best, and the smallest-blast-radius data migration available once the cache wave has absorbed the read pressure.",
+   "serves_from": [],
+   "share_basis": "queries",
+   "table_count": 29,
+   "table_counts_by_engine": null,
+   "table_groups": [
+    {
+     "kind": "independent",
+     "query_count": 48,
+     "tables": [
+      "trailgear.Brand",
+      "trailgear.Customer",
+      "trailgear.CustomerAddress",
+      "trailgear.CustomerNote",
+      "trailgear.EventLog",
+      "trailgear.FeatureFlag",
+      "trailgear.KnowledgeArticle",
+      "trailgear.LoyaltyAccount",
+      "trailgear.OrderStatusHistory",
+      "trailgear.Payment",
+      "trailgear.PriceChangeLog",
+      "trailgear.Product",
+      "trailgear.ProductImage",
+      "trailgear.ProductPrice",
+      "trailgear.ProductReview",
+      "trailgear.Promotion",
+      "trailgear.PurchaseOrder",
+      "trailgear.PurchaseOrderLine",
+      "trailgear.SalesOrder",
+      "trailgear.SalesOrderLine",
+      "trailgear.Shipment",
+      "trailgear.StockLevel",
+      "trailgear.StockMovement",
+      "trailgear.StoreSetting",
+      "trailgear.Supplier",
+      "trailgear.Ticket",
+      "trailgear.TicketMessage",
+      "trailgear.UserSession",
+      "trailgear.Warehouse"
+     ]
+    }
+   ],
+   "table_owners": [
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.Brand"
+    },
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.KnowledgeArticle"
+    },
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.Product"
+    },
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.Promotion"
+    },
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.StockLevel"
+    },
+    {
+     "owner": "aurora_postgresql",
+     "sync": "CDC",
+     "table": "trailgear.Supplier"
+    }
+   ],
+   "tables": [
+    "trailgear.Brand",
+    "trailgear.Customer",
+    "trailgear.CustomerAddress",
+    "trailgear.CustomerNote",
+    "trailgear.EventLog",
+    "trailgear.FeatureFlag",
+    "trailgear.KnowledgeArticle",
+    "trailgear.LoyaltyAccount",
+    "trailgear.OrderStatusHistory",
+    "trailgear.Payment",
+    "trailgear.PriceChangeLog",
+    "trailgear.Product",
+    "trailgear.ProductImage",
+    "trailgear.ProductPrice",
+    "trailgear.ProductReview",
+    "trailgear.Promotion",
+    "trailgear.PurchaseOrder",
+    "trailgear.PurchaseOrderLine",
+    "trailgear.SalesOrder",
+    "trailgear.SalesOrderLine",
+    "trailgear.Shipment",
+    "trailgear.StockLevel",
+    "trailgear.StockMovement",
+    "trailgear.StoreSetting",
+    "trailgear.Supplier",
+    "trailgear.Ticket",
+    "trailgear.TicketMessage",
+    "trailgear.UserSession",
+    "trailgear.Warehouse"
+   ],
+   "title": "Move key-value and point-lookup queries to DynamoDB",
+   "wave": 3,
+   "workload_share_percent": 50.5
+  }
+ ],
+ "needs_deeper_analysis": false,
+ "pending_engine_choices": [],
+ "post_schema_reroutes": [],
+ "prose_style_rejections": [],
+ "query_groups": [],
+ "ranking": [
+  {
+   "access_patterns": 0,
+   "aggregate_count": 7,
+   "analysis_confidence": 70,
+   "anti_patterns_detected": 4,
+   "assigned_queries": 48,
+   "assigned_queries_in_scope": 48,
+   "assignment_reason_summary": [
+    "highest fit for DynamoDB",
+    "write group: one source of truth \u2192 DynamoDB",
+    "reality check: consolidated from DocumentDB \u2192 DynamoDB (no unique value: DocumentDB scores 77.0, DynamoDB scores 67.0)"
+   ],
+   "complexity_score": null,
+   "confidence_score": 70,
+   "cost_score": null,
+   "migration_complexity_avg": "MEDIUM",
+   "monthly_cost_usd": 106.47,
+   "pattern_groups": 0,
+   "pattern_score": null,
+   "patterns_detected": 8,
+   "performance_score": null,
+   "rationale": "86% mean fit across 48 queries (29 rated tables), led by key-value lookups (18 of 48).",
+   "routed_confidence": 86,
+   "routed_confidence_basis": "owned_queries",
+   "routed_confidence_evidence": "table",
+   "routed_lead": "key_value_lookups",
+   "routed_lead_count": 18,
+   "routed_queries": 48,
+   "routed_queries_without_table_evidence": 0,
+   "routed_tables": 29,
+   "schema_design_available": false,
+   "tables_analyzed": 30,
+   "tables_highly_suitable": 18,
+   "tables_marginal": 0,
+   "tables_not_suitable": 8,
+   "tables_suitable": 4,
+   "target": "dynamodb",
+   "target_tables": 0,
+   "weight": 0.519,
+   "workload_percent": 50.5
+  },
+  {
+   "access_patterns": 0,
+   "aggregate_count": 0,
+   "analysis_confidence": 76,
+   "anti_patterns_detected": 5,
+   "assigned_queries": 47,
+   "assigned_queries_in_scope": 47,
+   "assignment_reason_summary": [
+    "highest fit for Aurora PostgreSQL",
+    "co-dependency group \u2192 Aurora PostgreSQL | DynamoDB lacks required capability: aggregation; ElastiCache lacks required capability: aggregation",
+    "reality check: Aurora PostgreSQL is kept; DocumentDB no longer qualifies for this query, so the earlier scores tie is resolved"
+   ],
+   "complexity_score": null,
+   "confidence_score": 76,
+   "cost_score": null,
+   "migration_complexity_avg": "LOW",
+   "monthly_cost_usd": 348.34,
+   "pattern_groups": 0,
+   "pattern_score": null,
+   "patterns_detected": 13,
+   "performance_score": null,
+   "rationale": "78% mean fit across 47 queries (23 rated tables; 8 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search, multi-table joins and recursive queries (19 of 47).",
+   "routed_confidence": 78,
+   "routed_confidence_basis": "owned_queries",
+   "routed_confidence_evidence": "partial",
+   "routed_lead": "time_series",
+   "routed_lead_count": 13,
+   "routed_queries": 47,
+   "routed_queries_without_table_evidence": 8,
+   "routed_tables": 23,
+   "schema_design_available": false,
+   "tables_analyzed": 30,
+   "tables_highly_suitable": 14,
+   "tables_marginal": 3,
+   "tables_not_suitable": 0,
+   "tables_suitable": 13,
+   "target": "aurora_postgresql",
+   "target_tables": 0,
+   "weight": 0.557,
+   "workload_percent": 49.5
+  },
+  {
+   "access_patterns": 0,
+   "aggregate_count": 0,
+   "analysis_confidence": 63,
+   "anti_patterns_detected": 0,
+   "assigned_queries": 0,
+   "assigned_queries_in_scope": 0,
+   "assignment_reason_summary": [],
+   "cache_call_share_percent": 73.1,
+   "cache_calls_per_second": 133.638,
+   "cache_min_calls_per_second": 1.0,
+   "cache_overlay_owners": {
+    "aurora_postgresql": 4,
+    "dynamodb": 12
+   },
+   "cache_overlay_queries": 16,
+   "complexity_score": null,
+   "confidence_score": 63,
+   "cost_score": null,
+   "migration_complexity_avg": "LOW",
+   "monthly_cost_usd": 166.12,
+   "pattern_groups": 0,
+   "pattern_score": null,
+   "patterns_detected": 4,
+   "performance_score": null,
+   "rationale": "Cache layer for 16 hot reads (73.1% of calls), mostly point lookups, cache-aside in front of Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 43% mean cache fit across 16 cached reads (14 rated tables). These reads total 133.638 calls/s, above the 1 calls/s hot-read floor.",
+   "role": "cache_layer",
+   "routed_confidence": 43,
+   "routed_confidence_basis": "cached_reads",
+   "routed_confidence_evidence": "table",
+   "routed_lead": "point_lookup",
+   "routed_lead_count": 13,
+   "routed_queries": 16,
+   "routed_queries_without_table_evidence": 0,
+   "routed_tables": 14,
+   "schema_design_available": false,
+   "tables_analyzed": 30,
+   "tables_highly_suitable": 5,
+   "tables_marginal": 13,
+   "tables_not_suitable": 0,
+   "tables_suitable": 12,
+   "target": "elasticache",
+   "target_tables": 0,
+   "weight": 0.725,
+   "workload_percent": 0.0
+  }
+ ],
+ "reality_check": {
+  "after_distribution": {
+   "aurora_postgresql": 47,
+   "dynamodb": 48
+  },
+  "architectural_patterns": [],
+  "before_distribution": {
+   "aurora_postgresql": 44,
+   "documentdb": 7,
+   "dynamodb": 44
+  },
+  "consolidations": [
+   {
+    "action": "full",
+    "from_engine": "documentdb",
+    "moved_back_query_ids": [],
+    "moved_query_ids": [
+     "0x40955C4670CBE099",
+     "0x81DCD6D1C8D0F021",
+     "0x88BF8EE1D634B98E"
+    ],
+    "queries_retained": [],
+    "query_count": 3,
+    "reason": "DocumentDB provides no unique capabilities over Aurora PostgreSQL",
+    "removal_saving_claimed": false,
+    "retention_reason": null,
+    "saved_cost_estimate": 0.0,
+    "to_engine": "aurora_postgresql",
+    "workload_justified": null
+   },
+   {
+    "action": "full",
+    "from_engine": "documentdb",
+    "moved_back_query_ids": [],
+    "moved_query_ids": [
+     "0x3BE9AE87BC4E81FC",
+     "0x57083C831FBABE20",
+     "0x61AC3BDB0619D600",
+     "0xBD93E181B8152322"
+    ],
+    "queries_retained": [],
+    "query_count": 4,
+    "reason": "DocumentDB provides no unique capabilities over DynamoDB",
+    "removal_saving_claimed": false,
+    "retention_reason": null,
+    "saved_cost_estimate": 0.0,
+    "to_engine": "dynamodb",
+    "workload_justified": null
+   }
+  ],
+  "recommendations": [
+   "Consolidated 3 queries from DocumentDB \u2192 Aurora PostgreSQL: DocumentDB provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "Consolidated 4 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities over DynamoDB. DocumentDB does not run today, so no saving is claimed."
+  ],
+  "sweep_decisions": [],
+  "validation_incomplete": []
+ },
+ "recommended_architecture": {
+  "architecture_type": "HYBRID_WITH_CACHE",
+  "databases": [
+   {
+    "confidence_score": 70,
+    "rationale": "86% mean fit across 48 queries (29 rated tables), led by key-value lookups (18 of 48).",
+    "routed_confidence": 86,
+    "service": "dynamodb",
+    "table_count": 0,
+    "tables": []
+   },
+   {
+    "confidence_score": 76,
+    "rationale": "78% mean fit across 47 queries (23 rated tables; 8 queries without table-level evidence), pinned by a utility or DDL statement, aggregation, full-text or pattern search, multi-table joins and recursive queries (19 of 47).",
+    "routed_confidence": 78,
+    "service": "aurora_postgresql",
+    "table_count": 0,
+    "tables": []
+   },
+   {
+    "confidence_score": 63,
+    "rationale": "Cache layer for 16 hot reads (73.1% of calls), mostly point lookups, cache-aside in front of Aurora PostgreSQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 43% mean cache fit across 16 cached reads (14 rated tables). These reads total 133.638 calls/s, above the 1 calls/s hot-read floor.",
+    "routed_confidence": 43,
+    "service": "elasticache",
+    "table_count": 0,
+    "tables": []
+   }
+  ],
+  "rationale": "Hybrid architecture: DynamoDB for primary data storage and ElastiCache for caching hot data. Schema design was not run, so no tables are allocated yet."
+ },
+ "risk_assessment": {
+  "mitigation_strategies": [
+   "RISK-001 (HIGH, DynamoDB; trailgear.UserSession): Cover the 1 remaining query in the DynamoDB schema design or route it to an engine that serves it.",
+   "RISK-007 (HIGH, DynamoDB; trailgear.Brand, trailgear.FeatureFlag, trailgear.PriceChangeLog and 3 more): Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+   "Load-test the queries behind RISK-001, RISK-002, RISK-003, RISK-004, RISK-005 and RISK-006 on DynamoDB and Aurora PostgreSQL with production-scale data before cutover.",
+   "Add in-scope access patterns for the 6 queries the DynamoDB schema design does not serve (RISK-007), or route them to an engine that serves them.",
+   "Use blue-green deployment with rollback for the tables behind the critical or high risks: trailgear.Brand, trailgear.FeatureFlag, trailgear.PriceChangeLog, trailgear.Product, trailgear.StoreSetting, trailgear.UserSession, trailgear.Warehouse.",
+   "After wave 1 (Aurora PostgreSQL): compare the latency of 95 queries with their source baseline (weighted average 21.63 ms) and check the engine sustains the design rate of 26.1 requests/s before starting wave 2.",
+   "After wave 2 (ElastiCache): track the cache hit rate for the 16 hot reads it fronts on Aurora PostgreSQL (73.1% of calls, 133.6 calls/s) and compare their latency with the source before starting wave 3.",
+   "After wave 3 (DynamoDB): compare the latency of 48 queries with their source baseline."
+  ],
+  "overall_risk_level": "HIGH",
+  "resolved_risks": [
+   {
+    "affected_tables": [
+     "trailgear.Product"
+    ],
+    "description": "[aurora_postgresql] Moved to DynamoDB: Single-row SELECT by primary key at very high frequency (more than 30 calls/second). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas (Amazon Aurora User Guide, Replication with Amazon Aurora).",
+    "engine": "aurora_postgresql",
+    "query_ids": [
+     "0xEC9117529C12152F"
+    ],
+    "reason": "the Aurora PostgreSQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+    "resolved_on": "dynamodb",
+    "severity": "HIGH"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Brand",
+     "trailgear.FeatureFlag",
+     "trailgear.PriceChangeLog",
+     "trailgear.StoreSetting",
+     "trailgear.Warehouse"
+    ],
+    "description": "[aurora_postgresql] Moved to DynamoDB: Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it (Amazon Aurora User Guide, What is Amazon Aurora).",
+    "engine": "aurora_postgresql",
+    "query_ids": [
+     "0x226531F7A5D653B6",
+     "0x3BE9AE87BC4E81FC",
+     "0x57083C831FBABE20",
+     "0x61AC3BDB0619D600",
+     "0xFDB1D8615B27F96D"
+    ],
+    "reason": "the Aurora PostgreSQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+    "resolved_on": "dynamodb",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Brand",
+     "trailgear.FeatureFlag",
+     "trailgear.PriceChangeLog",
+     "trailgear.StoreSetting",
+     "trailgear.Warehouse"
+    ],
+    "description": "[aurora_postgresql] Moved to DynamoDB: Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora).",
+    "engine": "aurora_postgresql",
+    "query_ids": [
+     "0x226531F7A5D653B6",
+     "0x3BE9AE87BC4E81FC",
+     "0x57083C831FBABE20",
+     "0x61AC3BDB0619D600",
+     "0xFDB1D8615B27F96D"
+    ],
+    "reason": "the Aurora PostgreSQL analysis recommended DynamoDB for these queries and the assignment moved them there",
+    "resolved_on": "dynamodb",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Customer",
+     "trailgear.KnowledgeArticle",
+     "trailgear.Product",
+     "trailgear.SalesOrder",
+     "trailgear.SalesOrderLine"
+    ],
+    "description": "[dynamodb] The first rows of a whole table in some order (ORDER BY with a row limit and no key value). A DynamoDB Scan returns items in no particular order, so the first rows by any order need every item read and sorted by the application (Amazon DynamoDB Developer Guide, Scanning tables).",
+    "engine": "dynamodb",
+    "query_ids": [
+     "0x379374773D5DC0F7",
+     "0x41A1D5EE8655B412",
+     "0xE696BB9DC3E68FD7",
+     "0xE715A6116BCB0673"
+    ],
+    "reason": "the queries run as SQL on Aurora PostgreSQL",
+    "resolved_on": "aurora_postgresql",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.CustomerAddress",
+     "trailgear.EventLog",
+     "trailgear.Product",
+     "trailgear.ProductCategory",
+     "trailgear.PurchaseOrder",
+     "trailgear.PurchaseOrderLine",
+     "trailgear.SalesOrder",
+     "trailgear.SalesOrderLine",
+     "trailgear.StockLevel",
+     "trailgear.StockMovement",
+     "trailgear.Supplier",
+     "trailgear.Ticket",
+     "trailgear.TicketMessage"
+    ],
+    "description": "[dynamodb] GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join (one key's COUNT or SUM is a Query on that key, not this pattern). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads (Select = COUNT), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store (Amazon DynamoDB API Reference, Query).",
+    "engine": "dynamodb",
+    "query_ids": [
+     "0x2BDF3D0068BE8972",
+     "0x2E662F4226763682",
+     "0x2F5F5C962A1DA875",
+     "0x36FF9EB2213DAF52",
+     "0x41A1D5EE8655B412",
+     "0x579133B43C5DF08B",
+     "0x6429CA3F0184378A",
+     "0x930174356CDABACA",
+     "0x9384BE0D7308E52A",
+     "0xD34F972E18B8D979",
+     "0xFCADCD1EDFC1863A"
+    ],
+    "reason": "the queries run as SQL on Aurora PostgreSQL",
+    "resolved_on": "aurora_postgresql",
+    "severity": "HIGH"
+   },
+   {
+    "affected_tables": [
+     "trailgear.StockLevel",
+     "trailgear.StockMovement"
+    ],
+    "description": "[dynamodb] A write wider than one transaction: more than 100 items, or rows a range, join, subquery or a filter with no key anchor picks (a write by a non-unique key column is a key-scoped Query plus batch write, not this). DynamoDB TransactWriteItems holds up to 100 items and 4 MB across tables (Amazon DynamoDB Developer Guide, Amazon DynamoDB Transactions).",
+    "engine": "dynamodb",
+    "query_ids": [
+     "0x2BDF3D0068BE8972"
+    ],
+    "reason": "the queries run as SQL on Aurora PostgreSQL",
+    "resolved_on": "aurora_postgresql",
+    "severity": "MEDIUM"
+   }
+  ],
+  "risks": [
+   {
+    "affected_tables": [
+     "trailgear.UserSession"
+    ],
+    "description": "[dynamodb] Flagged by the Aurora PostgreSQL analysis for 1 query now on DynamoDB: High-frequency reads of small, rarely-changing data (config, sessions, feature flags). Aurora serves them natively from memory once read (MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared_buffers), so a cache in front is a latency choice. (0% of queries resolved by schema design, 1 remaining)",
+    "mitigation": "Cover the 1 remaining query in the DynamoDB schema design or route it to an engine that serves it.",
+    "query_ids": [
+     "0xE5DB9EF048E7DBAC"
+    ],
+    "reattributed_from": "aurora_postgresql",
+    "risk_id": "RISK-001",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "HIGH"
+   },
+   {
+    "affected_tables": [
+     "trailgear.KnowledgeArticle",
+     "trailgear.Product",
+     "trailgear.ProductReview"
+    ],
+    "description": "[aurora_postgresql] Full-text search patterns using LIKE '%term%' or similar constructs. Guidance only: the scan an unindexed substring match needs is priced once, as its own pattern, and a word search is not penalised (PostgreSQL documentation, pg_trgm). (0% of queries resolved by schema design, 3 remaining)",
+    "mitigation": "Load-test the text search in the 3 flagged queries on Aurora PostgreSQL with production-scale data and review its text index and search configuration where latency or result quality misses the target.",
+    "query_ids": [
+     "0x881A717BC852EFF8",
+     "0xE696BB9DC3E68FD7",
+     "0xE715A6116BCB0673"
+    ],
+    "risk_id": "RISK-002",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Brand",
+     "trailgear.PriceChangeLog"
+    ],
+    "description": "[aurora_postgresql] Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it (Amazon Aurora User Guide, What is Amazon Aurora). (0% of queries resolved by schema design, 2 remaining)",
+    "mitigation": "Load-test the 2 flagged queries on Aurora PostgreSQL with production-scale data before cutover and tune indexes or query plans where the measured latency misses the target.",
+    "query_ids": [
+     "0x40955C4670CBE099",
+     "0x88BF8EE1D634B98E"
+    ],
+    "risk_id": "RISK-003",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Brand",
+     "trailgear.PriceChangeLog"
+    ],
+    "description": "[aurora_postgresql] Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them (Amazon Aurora User Guide, What is Amazon Aurora). (0% of queries resolved by schema design, 2 remaining)",
+    "mitigation": "Load-test the 2 flagged queries on Aurora PostgreSQL with production-scale data before cutover and tune indexes or query plans where the measured latency misses the target.",
+    "query_ids": [
+     "0x40955C4670CBE099",
+     "0x88BF8EE1D634B98E"
+    ],
+    "risk_id": "RISK-004",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.UserSession"
+    ],
+    "description": "[dynamodb] A write wider than one transaction: more than 100 items, or rows a range, join, subquery or a filter with no key anchor picks (a write by a non-unique key column is a key-scoped Query plus batch write, not this). DynamoDB TransactWriteItems holds up to 100 items and 4 MB across tables (Amazon DynamoDB Developer Guide, Amazon DynamoDB Transactions). (0% of queries resolved by schema design, 1 remaining)",
+    "mitigation": "Writes of up to 100 known items run as one TransactWriteItems call. A wider write needs batches of at most 100 items or a retry-safe multi-step flow.",
+    "query_ids": [
+     "0x9D11480F1E01B771"
+    ],
+    "risk_id": "RISK-005",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "MEDIUM"
+   },
+   {
+    "affected_tables": [
+     "trailgear.KnowledgeArticle",
+     "trailgear.Product",
+     "trailgear.ProductReview"
+    ],
+    "description": "[aurora_postgresql] 3 queries use a leading-wildcard LIKE or a regular expression on Aurora PostgreSQL: SELECT r.[ReviewID], r.[Rating], r.[Title] FROM [ProductReview] r WHERE r.[Prod\u2026; SELECT TOP (10) [ArticleID], [Title] FROM [KnowledgeArticle] WHERE [Body] LIKE\u2026; SELECT TOP (24) [ProductID], [Sku], [Name] FROM [Product] WHERE [Name] LIKE '%'\u2026. Aurora PostgreSQL indexes a leading-wildcard LIKE and a regular expression with a pg_trgm trigram index (GIN or GiST), an extension to create (the PostgreSQL documentation of pg_trgm describes its index support for LIKE, ILIKE, ~ and ~*). 3 of them are word searches.",
+    "mitigation": "Create the pg_trgm extension and a GIN trigram index on the column (CREATE EXTENSION pg_trgm), which serves this LIKE, word searches included; full-text search (to_tsvector) also ranks word matches.",
+    "query_ids": [
+     "0x881A717BC852EFF8",
+     "0xE696BB9DC3E68FD7",
+     "0xE715A6116BCB0673"
+    ],
+    "risk_id": "RISK-006",
+    "risk_type": "PERFORMANCE_DEGRADATION",
+    "severity": "LOW"
+   },
+   {
+    "affected_tables": [
+     "trailgear.Brand",
+     "trailgear.FeatureFlag",
+     "trailgear.PriceChangeLog",
+     "trailgear.Product",
+     "trailgear.StoreSetting",
+     "trailgear.Warehouse"
+    ],
+    "coverage_gap": true,
+    "description": "[dynamodb] Schema design gap: 6 queries assigned to DynamoDB have no in-scope access pattern: INSERT INTO [Audit].[PriceChangeLog] ([ProductID], [OldPrice], [NewPrice], [C...; SELECT [BrandID], [Name], [Country] FROM [Brand]; SELECT [FlagKey], [Enabled], [Rollout] FROM [FeatureFlag]; and 3 more (0% of queries resolved by schema design, 6 remaining)",
+    "mitigation": "Add in-scope access patterns for these queries to the DynamoDB schema design, or route them to an engine that serves them.",
+    "query_ids": [
+     "0x226531F7A5D653B6",
+     "0x3BE9AE87BC4E81FC",
+     "0x57083C831FBABE20",
+     "0x61AC3BDB0619D600",
+     "0xEC9117529C12152F",
+     "0xFDB1D8615B27F96D"
+    ],
+    "risk_id": "RISK-007",
+    "risk_type": "MIGRATION_COMPLEXITY",
+    "severity": "HIGH"
+   }
+  ]
+ },
+ "schema_designs": {
+  "aurora_postgresql": {
+   "status": "not_available"
+  },
+  "dynamodb": {
+   "status": "not_available"
+  },
+  "elasticache": {
+   "status": "not_available"
+  }
+ },
+ "source_table_count": 30,
+ "status": "completed",
+ "summary": "Analyzed 30 source tables and 95 query patterns across 3 target database(s). The source SQL Server database has no Aurora engine of its own dialect: Aurora MySQL and Aurora PostgreSQL both competed on the collected workload, and Aurora PostgreSQL was selected to serve it (a cross-engine, dialect-and-schema conversion, not a 1:1 carry-over). Workload split: DynamoDB handles 48 queries (50.5%), Aurora PostgreSQL handles 47 queries (49.5%). Cache layer: ElastiCache fronts 16 hot reads (73.1% of calls) cache-aside and owns no queries. Estimated monthly cost: $620.93. 7 open migration risks (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: trailgear.Shipment, trailgear.ProductCategory, trailgear.Product (+1 more). Other targets evaluated: DocumentDB (consolidated into DynamoDB by the reality check).",
+ "summary_deterministic": "Analyzed 30 source tables and 95 query patterns across 3 target database(s). The source SQL Server database has no Aurora engine of its own dialect: Aurora MySQL and Aurora PostgreSQL both competed on the collected workload, and Aurora PostgreSQL was selected to serve it (a cross-engine, dialect-and-schema conversion, not a 1:1 carry-over). Workload split: DynamoDB handles 48 queries (50.5%), Aurora PostgreSQL handles 47 queries (49.5%). Cache layer: ElastiCache fronts 16 hot reads (73.1% of calls) cache-aside and owns no queries. Estimated monthly cost: $620.93. 7 open migration risks (overall: HIGH); 6 more were resolved by the assignment. Top query groups by throughput: trailgear.Shipment, trailgear.ProductCategory, trailgear.Product (+1 more). Other targets evaluated: DocumentDB (consolidated into DynamoDB by the reality check).",
+ "summary_input_budget": null,
+ "summary_llm": null,
+ "summary_source": "deterministic",
+ "summary_validation_warnings": [],
+ "table_mappings": [],
+ "table_sources": [
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x31648DAA008826FB",
+      "0x379374773D5DC0F7"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.Customer",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x13AA5401A639D6C8",
+    "0xADF0BF17E0DB6B8F"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x2FC4D600D5887E4E",
+      "0x930174356CDABACA"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.CustomerAddress",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x2218E444EC65F83F"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x2E662F4226763682",
+      "0xBF0498C3B5E8BD52"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.EventLog",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x6D59919566F79336"
+   ]
+  },
+  {
+   "replicas": [],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.LoyaltyAccount",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x189D9A37D7049292"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x6EFF5BA5380ED4CE"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.OrderStatusHistory",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x0A837586245ECABF"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x7D9CCE936F5D81BA",
+      "0xB1C89B1D2C60B6CD"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.Payment",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0xDEE229669414560B"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x40955C4670CBE099"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.PriceChangeLog",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x226531F7A5D653B6"
+   ]
+  },
+  {
+   "replicas": [],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.ProductPrice",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0xE4494B567754BF54",
+    "0xF65F1E1A98E68919"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x15D031C45243CE16",
+      "0x459FA64B551E3BF2",
+      "0x881A717BC852EFF8"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.ProductReview",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x0FD5E4FBDB00BC80"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x36FF9EB2213DAF52",
+      "0x9A123DFBF60D59A1"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.PurchaseOrder",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x82069B7FF9562750"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x36FF9EB2213DAF52",
+      "0x5903995B9B42F531"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.PurchaseOrderLine",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0xDF6E4A3F9D131492"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x0253E46183218663",
+      "0x288281D96014BDB3",
+      "0x3C54363B02897844",
+      "0x41A1D5EE8655B412",
+      "0x579133B43C5DF08B",
+      "0x6EFF5BA5380ED4CE",
+      "0x7D9CCE936F5D81BA",
+      "0x930174356CDABACA"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.SalesOrder",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x452800B927B9ECC9",
+    "0x8E6C17DA57EAB252"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x0253E46183218663",
+      "0x288281D96014BDB3",
+      "0x41A1D5EE8655B412"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.SalesOrderLine",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x2B4EADE45A4ED8B5"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x7D9CCE936F5D81BA",
+      "0xEA2423F36607A6FE"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.Shipment",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0xAF48C75729669E37",
+    "0xE99A571BCB104F13"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "dynamodb",
+     "read_query_ids": [
+      "0x09ED89392748F2BA",
+      "0xBD93E181B8152322"
+     ]
+    }
+   ],
+   "source_of_truth": "aurora_postgresql",
+   "table": "trailgear.StockLevel",
+   "write_engines": [
+    "aurora_postgresql"
+   ],
+   "write_query_ids": [
+    "0x2BDF3D0068BE8972",
+    "0xEAD44A73702298B8"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x2BDF3D0068BE8972"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.StockMovement",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x9D3CA0D2E70ACB70"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x2F5F5C962A1DA875",
+      "0x31648DAA008826FB",
+      "0x90135B217561BD91",
+      "0x9384BE0D7308E52A",
+      "0xBBD5DC4AA525028E",
+      "0xD34F972E18B8D979"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.Ticket",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x73F8029840AFB793",
+    "0xCA34070C2B7E419E"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0x2F5F5C962A1DA875",
+      "0x8533DCED4BCE003A",
+      "0x90135B217561BD91",
+      "0xD34F972E18B8D979"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.TicketMessage",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x03C29A33A3001282"
+   ]
+  },
+  {
+   "replicas": [
+    {
+     "engine": "aurora_postgresql",
+     "read_query_ids": [
+      "0xBE098518D277706D"
+     ]
+    }
+   ],
+   "source_of_truth": "dynamodb",
+   "table": "trailgear.UserSession",
+   "write_engines": [
+    "dynamodb"
+   ],
+   "write_query_ids": [
+    "0x0FB58D2872D5E89F",
+    "0x7E5D883FF93A2794",
+    "0x9D11480F1E01B771"
+   ]
+  }
+ ],
+ "tco_analysis": {
+  "assumptions": [
+   "On-demand capacity mode for all target databases",
+   "Region: us-east-1",
+   "Current RDS cost estimated from instance class (actual billing may differ)",
+   "Does not include data transfer, backups, or global tables"
+  ],
+  "cost_breakdown": [
+   {
+    "database": "aurora_postgresql",
+    "monthly_cost_usd": 348.34,
+    "pricing_mode": "on-demand"
+   },
+   {
+    "database": "dynamodb",
+    "monthly_cost_usd": 106.47,
+    "pricing_mode": "on-demand"
+   },
+   {
+    "database": "elasticache",
+    "monthly_cost_usd": 166.12,
+    "pricing_mode": "on-demand"
+   }
+  ],
+  "current_cost_known": false,
+  "current_monthly_cost": 0.0,
+  "eliminated_engine_costs": null,
+  "projected_monthly_cost": 620.93,
+  "retired_engine_savings": null,
+  "savings_percent": 0.0
+ },
+ "tied_queries": [],
+ "timestamp": "2026-10-19T13:31:27.480501Z",
+ "trade_offs": [
+  {
+   "description": "Consolidated 3 queries from DocumentDB \u2192 Aurora PostgreSQL: DocumentDB provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "engine": "reality-check",
+   "impact": "Consolidated 3 queries from DocumentDB \u2192 Aurora PostgreSQL: DocumentDB provides no unique capabilities over Aurora PostgreSQL. No saving is claimed: DocumentDB does not run today; it was a candidate this plan considered and does not recommend.",
+   "query_ids": [],
+   "source_tables": [],
+   "target_tables": []
+  },
+  {
+   "description": "Consolidated 4 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities over DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+   "engine": "reality-check",
+   "impact": "Consolidated 4 queries from DocumentDB \u2192 DynamoDB: DocumentDB provides no unique capabilities over DynamoDB. DocumentDB does not run today, so no saving is claimed.",
+   "query_ids": [],
+   "source_tables": [],
+   "target_tables": []
+  }
+ ],
+ "unresolved_names": {
+  "count": 0,
+  "names": []
+ }
+}

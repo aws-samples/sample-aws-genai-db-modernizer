@@ -6,7 +6,9 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Badge from "@cloudscape-design/components/badge";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import { displayEngine } from "../utils/engineNames";
-import { migrationWaves, waveCount, waveHeadline, waveTitle } from "../utils/migrationWaves";
+import {
+  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveTitle,
+} from "../utils/migrationWaves";
 
 /**
  * "Migration roadmap" (#957): report.json's migration waves, the same ones the
@@ -22,6 +24,10 @@ import { migrationWaves, waveCount, waveHeadline, waveTitle } from "../utils/mig
  * expands in place (#1028). The lists come from the wave's `gate_parts`, which
  * the producer splits out of the gate; a report written before them shows the
  * gate string as it is. Nothing here parses the gate's prose.
+ *
+ * A cross-engine wave 1 also shows the facts layer's note that it is not yet
+ * optimized for heterogeneous migrations, and the relational gaps the check found
+ * (#1120), as both reports do.
  *
  * Callers pass `t` (the page's own `useTranslation` function), like
  * QueryRoutingTable.
@@ -142,6 +148,25 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                 {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
                 {wave.gate && (
                   <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
+                )}
+                {heterogeneousNote(synthesis, wave) && (
+                  <div data-figure="wave-heterogeneous-note">{heterogeneousNote(synthesis, wave)}</div>
+                )}
+                {waveGaps(synthesis, wave).length > 0 && (
+                  <div>
+                    <Box variant="h4">{t('analysis-results.waves.gaps')}</Box>
+                    <ul>
+                      {waveGaps(synthesis, wave).map(gap => (
+                        <li key={gap.rule_id} data-figure="wave-gap">
+                          {t('analysis-results.waves.gap', {
+                            feature: gap.feature || gap.rule_id,
+                            impact: t(`analysis-results.waves.gap-impact.${gap.impact}`),
+                            reason: gap.reason || '',
+                          })}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
                 {(wave.tables || []).length > 0 && (
                   <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">

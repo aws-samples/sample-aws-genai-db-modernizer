@@ -19954,6 +19954,22 @@
                             "kind": "array"
                           }
                         },
+                        "heterogeneous_note": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
                         "kept_in_sync": {
                           "required": false,
                           "schema": {
@@ -20005,6 +20021,13 @@
                                 "type": "null"
                               }
                             ]
+                          }
+                        },
+                        "lists_relational_gaps": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
                           }
                         },
                         "migrating": {
@@ -23597,8 +23620,8 @@
         }
       }
     },
-    "schema_hash": "62e5e19933473fcb75215f44231a138102e34f99f3d43634dbebf640bf2c360c",
-    "version": "1.47"
+    "schema_hash": "6f8523d6b011151b8ae483e645630d6d13dd42d463b7306bca9c52975e319731",
+    "version": "1.48"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

@@ -15,6 +15,7 @@ from typing import Any
 
 from src.shared.report_facts import (
     access_pattern_facts,
+    apply_cross_engine_wave_one,
     compute_report_facts,
     engine_served_split,
     engine_table_split_facts,
@@ -37,8 +38,10 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     one written before 1.38 no per-kind ``unservable`` counts (#888), one written
     before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
     the contract has them empty while queries have a full trace), and one written before
-    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169); those figures are
-    filled in from ``query_groups``, ``ranking``, the resolved risks and the traces, the rest stays as stored.
+    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), and one
+    written before #1120 no cross-engine wave 1 figures or note; those figures are
+    filled in from ``query_groups``, ``ranking``, the resolved risks, the traces and the
+    migration waves, the rest stays as stored.
     """
     facts = report.get("facts")
     if isinstance(facts, dict) and isinstance(facts.get("engines"), list):
@@ -103,8 +106,41 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing["retired_in_use_engines"] = retired_in_use_engine_facts(
                 report, facts.get("removed_engines") or []
             )
+        waves = facts.get("waves")
+        if isinstance(waves, list) and any(
+            isinstance(w, dict) and "heterogeneous_note" not in w for w in waves
+        ):
+            # A block written before #1120: a cross-engine wave 1 counted in full
+            # and its note, from the same function synthesis calls.
+            missing.update(_cross_engine_backfill(report, facts))
         return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
+
+
+def _cross_engine_backfill(report: dict[str, Any], facts: dict[str, Any]) -> dict[str, Any]:
+    """The #1120 wave and engine figures for a facts block stored before them."""
+    rows = [
+        {"heterogeneous_note": None, "lists_relational_gaps": False, **w}
+        for w in facts["waves"]
+        if isinstance(w, dict)
+    ]
+    engines = [dict(e) for e in facts["engines"] if isinstance(e, dict)]
+    waves = resolve_migration_waves(report)
+    by_number = {int(w.get("wave") or 0): w for w in waves}
+    matched = [by_number.get(int(r.get("wave") or 0)) or {} for r in rows]
+    analyzed = facts.get("source_table_count")
+    moved = apply_cross_engine_wave_one(
+        matched,
+        rows,
+        engines,
+        analyzed if isinstance(analyzed, int) and not isinstance(analyzed, bool) else None,
+        facts.get("relational_gaps"),
+    )
+    out: dict[str, Any] = {"waves": rows}
+    if moved is not None:
+        out["engines"] = engines
+        out["tables_migrate"] = moved
+    return out
 
 
 def wave_facts_by_number(report: dict[str, Any]) -> dict[int, dict[str, Any]]:

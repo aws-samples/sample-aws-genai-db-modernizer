@@ -41,6 +41,7 @@ from src.shared.catalog import (  # noqa: E402
     engines,
 )
 from src.shared.catalog.gaps import (  # noqa: E402
+    GAP_IMPACT_LABELS,
     GAP_IMPACTS,
     AuroraVersionLines,
     GapRule,
@@ -285,12 +286,7 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-_IMPACT_LABELS = {
-    "blocks_move": "Blocks the move",
-    "needs_rewrite": "Needs a rewrite",
-    "behaves_differently": "Behaves differently",
-    "informational": "Informational",
-}
+_IMPACT_LABELS = {k: v[:1].upper() + v[1:] for k, v in GAP_IMPACT_LABELS.items()}
 
 _MATCH_LABELS = (
     ("calls", "calls"),

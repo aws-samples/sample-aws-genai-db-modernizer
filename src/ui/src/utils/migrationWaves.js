@@ -88,3 +88,19 @@ export function waveHeadline(t, synthesis, wave) {
 export function waveTitle(wave) {
   return wave.title || (wave.engines || []).map(displayEngine).join(', ');
 }
+
+// #1120: a cross-engine wave 1's note (facts.waves[].heterogeneous_note) and the
+// relational gaps listed under it (facts.relational_gaps.gaps) when its facts say the
+// gap check is its own (lists_relational_gaps). Any other wave has neither. Read as
+// stored; nothing is counted.
+export function heterogeneousNote(synthesis, wave) {
+  const wf = waveFacts(synthesis, wave);
+  return (wf && wf.heterogeneous_note) || null;
+}
+
+export function waveGaps(synthesis, wave) {
+  const wf = waveFacts(synthesis, wave);
+  if (!wf || !wf.heterogeneous_note || !wf.lists_relational_gaps) return [];
+  const gaps = synthesis.facts.relational_gaps && synthesis.facts.relational_gaps.gaps;
+  return (Array.isArray(gaps) ? gaps : []).filter(g => g && typeof g === 'object');
+}

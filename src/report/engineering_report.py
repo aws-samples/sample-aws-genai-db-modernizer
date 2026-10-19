@@ -41,6 +41,7 @@ from .formatting import (
     plural_verb,
 )
 from .query_traces import query_traces_md
+from .relational_gaps import heterogeneous_wave
 from .risks import (
     NO_OPEN_RISKS_CAVEAT,
     _repeats,
@@ -587,6 +588,7 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
             target_engines,
             migrated,
             sources_pointer=bool((facts.get("table_sources") or {}).get("written_table_count")),
+            wave_one=heterogeneous_wave(report),
         )
         if notes:
             out += [" ".join(notes), ""]
@@ -631,11 +633,19 @@ def _code_list(tables: list[str], cap: int = 20) -> str:
 
 
 def _engine_role_notes_md(
-    engines: list[dict[str, Any]], migrated: int, sources_pointer: bool = False
+    engines: list[dict[str, Any]],
+    migrated: int,
+    sources_pointer: bool = False,
+    wave_one: dict[str, Any] | None = None,
 ) -> list[str]:
     """What the retained, search and migration-target roles mean for this plan, and
     what "incl. shared" counts; one sentence each, only for roles the plan has. The
-    cache layer has its own section."""
+    cache layer has its own section.
+
+    ``wave_one`` is a cross-engine wave 1's facts row (#1120): its engine receives
+    every source table, and the later waves move some of them on, so the
+    migration-target sentence says that instead of "the N tables assigned to" every
+    target."""
     notes: list[str] = []
     retained = [e["engine"] for e in engines if e["role"] == "Retained"]
     if retained:
@@ -652,7 +662,16 @@ def _engine_role_notes_md(
             "built after its owners."
         )
     targets = [e["engine"] for e in engines if e["role"] == "Migration target"]
-    if targets:
+    first = [str(e) for e in (wave_one or {}).get("engines") or []][:1]
+    if targets and first and first[0] in targets:
+        later = ", ".join(escaping.md_text(display_engine(x)) for x in targets if x != first[0])
+        moved = int((wave_one or {}).get("moving_tables") or 0)
+        notes.append(
+            f"Wave 1 moves {'the' if moved == 1 else 'all'} {moved} source "
+            f"{plural_noun(moved, 'table')} to {escaping.md_text(display_engine(first[0]))}"
+            + (f"; later waves move some of them on to {later}." if later else ".")
+        )
+    elif targets:
         names = ", ".join(escaping.md_text(display_engine(x)) for x in targets)
         notes.append(
             f"The migration moves the {migrated} {plural_noun(migrated, 'table')} assigned "

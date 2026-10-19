@@ -48,6 +48,7 @@ __all__ = [
     "AURORA_VERSIONS_FILE",
     "GAPS_DIR",
     "GAP_IMPACTS",
+    "GAP_IMPACT_LABELS",
     "SOURCE_ENGINES",
     "AuroraVersionLines",
     "GapImpact",
@@ -72,6 +73,16 @@ GAP_IMPACTS: tuple[GapImpact, ...] = (
     "behaves_differently",
     "informational",
 )
+# Each impact as a deliverable names it in a gap list, lower case ("TOP row limits
+# (needs a rewrite)", #1120); the rule-catalog page capitalizes it. The results page's
+# ``analysis-results.waves.gap-impact.*`` strings are the same words
+# (tests/unit/shared/test_gap_catalog.py keeps them in step).
+GAP_IMPACT_LABELS: dict[GapImpact, str] = {
+    "blocks_move": "blocks the move",
+    "needs_rewrite": "needs a rewrite",
+    "behaves_differently": "behaves differently",
+    "informational": "informational",
+}
 # The collector's source engines (src.contracts.collector_output.DatabaseEngine).
 SOURCE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "sqlserver", "oracle", "db2"})
 AURORA_TARGETS = frozenset({"aurora_mysql", "aurora_postgresql"})

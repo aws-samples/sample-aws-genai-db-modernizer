@@ -444,6 +444,18 @@ Version History:
 - 1.47 (2026-10-20, #377): No field of its own. The query traces' rule values gain
   ``gate.key_scoped_count`` (move ledger): a key-scoped count placed on the engine its
   table's writes are on (ADR-031 Decision 2 Amendment 12).
+- 1.48 (2026-10-20, #1120): A cross-engine wave 1 (SQL Server, Oracle or Db2 converted
+  to the chosen Aurora engine) moves every source table, counted in full and once:
+  ``facts.waves[].moving_tables`` / ``moving_by_engine`` are set for it, the chosen
+  engine's ``engine_source_tables`` and ``tables_migrate`` are the source tables, and
+  ``facts.tables_migrate`` is that count (every later wave moves a subset of them on).
+  Added ``WaveFacts.heterogeneous_note``: the plain statement that wave 1 is not yet
+  optimized for heterogeneous migrations, with the relational gap counts
+  (``gaps_by_impact``), and ``WaveFacts.lists_relational_gaps``: the gap check targets
+  wave 1's engine, so every deliverable lists ``facts.relational_gaps`` under wave 1.
+  Backward compatible: None / False for every other wave; a stored facts block without
+  them gets them, and the wave 1 counts, from the facts reader
+  (``src.report.facts.report_facts``, ADR-032 Decision 4).
 """
 
 from datetime import datetime
@@ -999,7 +1011,9 @@ class WaveFacts(BaseModel):
         description=(
             "Tables one of the wave's engines durably owns, the sum of "
             "owned_counts_by_engine for the merged wave (#581); for a read-model wave, "
-            "the served tables not kept in sync from an owner. None for wave 1"
+            "the served tables not kept in sync from an owner; for a cross-engine wave 1, "
+            "every source table, views not included (#1120). None for a homogeneous or "
+            "heterogeneous wave 1"
         ),
     )
     kept_in_sync_tables: int | None = Field(
@@ -1033,6 +1047,25 @@ class WaveFacts(BaseModel):
     )
     critical_high_risks: int = Field(
         0, ge=0, description="Open CRITICAL/HIGH risks on the wave's engines"
+    )
+    heterogeneous_note: str | None = Field(
+        None,
+        description=(
+            "Cross-engine wave 1 only (#1120): wave 1 is not yet optimized for "
+            "heterogeneous migrations (it converts every source table to the chosen "
+            "Aurora engine with its current data model), with the relational gap counts. "
+            "Every deliverable prints it under wave 1, followed by facts.relational_gaps "
+            "when lists_relational_gaps is set"
+        ),
+    )
+    lists_relational_gaps: bool = Field(
+        False,
+        description=(
+            "Cross-engine wave 1 only (#1120): facts.relational_gaps is the gap check for "
+            "this wave's engine, so the deliverables list its gaps under this wave and the "
+            "note states their counts. False when the gap check targets another engine, "
+            "when there is none, and for every other wave"
+        ),
     )
 
 
@@ -1729,7 +1762,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.47",
+        default="1.48",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
