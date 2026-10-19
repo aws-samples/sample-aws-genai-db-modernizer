@@ -52,6 +52,11 @@ rule                       severity  raised when
                            HIGH      at ``HOT_PARTITION_HIGH_PCT`` or more; one per engine
 ``design.trade_offs``      MEDIUM    an engine's schema design records trade-offs to review;
                                      one risk per engine
+``relational.gaps``        HIGH      the relational gap check finds gaps that block the move to
+                                     wave 1's engine (``facts.relational_gaps``, #1149)
+                           MEDIUM    gaps that need a rewrite before cutover
+                           LOW       gaps that behave differently; one risk per impact, in
+                                     Wave 1, only for a gap check against wave 1's engine
 =========================  ========  ==========================================================
 
 Design trade-offs are model-written prose with no validated category
@@ -73,13 +78,14 @@ The wording is the code's own, plain and assertive: no dashes as punctuation,
 no hedges. A risk's description and mitigation quote no model text; its
 ``details`` carry the design's own texts, as data.
 
-``routing.flagged`` reads only fields ``report.json`` carries, so it lives in
-``src.shared.migration_risk_rules`` (with :data:`RULES` and the wave-gate
-lines): the deliverables raise it for a report synthesized before it existed
-(``backfill_report_risks``), with the same function synthesis calls.
+``routing.flagged`` and ``relational.gaps`` read only fields ``report.json``
+carries, so they live in ``src.shared.migration_risk_rules`` (with :data:`RULES`
+and the wave-gate lines): the deliverables raise them for a report synthesized
+before they existed (``backfill_report_risks``), with the same functions
+synthesis calls.
 
-Facts on main that no rule reads yet are listed in :data:`PENDING_FACT_HOOKS`,
-each a follow-up that needs its own rule, severity and test.
+Every fact on main the register should read has its rule; a new one is listed in
+:data:`PENDING_FACT_HOOKS` until it has its own rule, severity and test.
 """
 
 from __future__ import annotations
@@ -93,37 +99,30 @@ from src.agents.referee.cache_overlay import is_write_query
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.migration_risk_rules import (
     GATE_IDS_NAMED,
+    LISTED_ITEMS,
     RULES,
     RiskRule,
     flagged_unservable_risks,
     last_risk_number,
+    listed_items,
     make_risk,
     number_risks,
+    relational_gap_risks,
     wave_gate_strategies,
+    wave_of_engine,
 )
-from src.shared.migration_risk_rules import wave_of_engine as _wave_of_engine
 from src.shared.report_facts import CLOSE_CALL_MARGIN, RELATIONAL_ENGINES, wave_facts
 from src.shared.risk_severity import overall_risk_level
-from src.shared.unsupported_pattern import (
-    unsupported_pattern_ids,
-    unsupported_pattern_label,
-)
+from src.shared.unsupported_pattern import unsupported_pattern_ids, unsupported_pattern_label
 
 # A hot partition at or above this utilization is HIGH; below it (but at risk,
 # above 80%) it is MEDIUM.
 HOT_PARTITION_HIGH_PCT = 95.0
 
-# A risk's text names at most this many short labels (an app-layer feature),
-# then how many more.
-LISTED_ITEMS = 5
 
-
-# Facts the risk register does not read yet (landed on main while #950 was
-# open). Each needs its own rule above (severity, test); until then nothing
-# reads the field.
-PENDING_FACT_HOOKS: dict[str, str] = {
-    "facts.relational_gaps": "#1079: version and feature gaps for the relational move",
-}
+# Facts the risk register does not read yet. Each needs its own rule above
+# (severity, test); until then nothing reads the field. Empty since #1149.
+PENDING_FACT_HOOKS: dict[str, str] = {}
 
 
 def _n(count: int, one: str, many: str) -> str:
@@ -210,7 +209,6 @@ def _context(
     writes = {q for q in engine_of if is_write_query(collected.get(q) or {}, source_engine)}
     # A wave with no number is left out: no risk can name its gate.
     waves = [w for w in migration_waves or [] if isinstance(w, dict) and _wave_number(w)]
-    wave_of_engine = _wave_of_engine(waves)
     retained = frozenset(
         str(e) for w in waves if w.get("homogeneity") is not None for e in w.get("engines") or []
     )
@@ -219,7 +217,7 @@ def _context(
         engine_of=engine_of,
         tables_of=tables_of,
         writes=writes,
-        wave_of_engine=wave_of_engine,
+        wave_of_engine=wave_of_engine(waves),
         retained=retained or frozenset(RELATIONAL_ENGINES),
     )
 
@@ -645,7 +643,7 @@ def _app_layer_risks(
                 "design.app_layer",
                 engine,
                 f"{_n(k, 'source object needs', 'source objects need')} application code on "
-                f"{display_engine(engine)}{listed}: {_listed(kinds)}. The schema carries "
+                f"{display_engine(engine)}{listed}: {listed_items(kinds)}. The schema carries "
                 f"{_them(k)} over without the database logic.",
                 f"Move the logic of each one into the application before the {_gate(wave)}, "
                 "as the schema design's note for it says.",
@@ -756,13 +754,6 @@ def _item(text: str) -> str:
     return _MARKER_RE.sub("", " ".join(str(text or "").split())).rstrip(" .;")
 
 
-def _listed(items: list[str]) -> str:
-    """Items joined by "; ", the first ``LISTED_ITEMS`` then how many more."""
-    shown = list(items[:LISTED_ITEMS])
-    more = len(items) - len(shown)
-    return "; ".join(shown) + (f"; and {more} more" if more > 0 else "")
-
-
 # ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
@@ -783,6 +774,7 @@ def build_migration_risks(
     normalise: Callable[[Iterable[str]], set[str]] | None = None,
     table_sources: list[dict[str, Any]] | None = None,
     flagged_unservable: list[dict[str, Any]] | None = None,
+    relational_gaps: Mapping[str, Any] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -795,8 +787,9 @@ def build_migration_risks(
     to its table; ``normalise`` maps table names to the collector's ids;
     ``table_sources`` is report.json's ``table_sources`` (None for an
     assignment written before write groups); ``flagged_unservable`` its
-    ``flagged_unservable`` rows (#888, #1148); ``source_engine`` is the dialect
-    the queries' text is read in.
+    ``flagged_unservable`` rows (#888, #1148); ``relational_gaps`` the gap check
+    ``facts.relational_gaps`` stores (#1079, #1149); ``source_engine`` is the
+    dialect the queries' text is read in.
     """
     norm = normalise or (lambda names: {str(n) for n in names if n})
     # One engine id per engine, whichever variant an artifact wrote (#950).
@@ -822,6 +815,7 @@ def build_migration_risks(
             ctx.wave_of_engine,
             ctx.tables_of,
         ),
+        *relational_gap_risks(relational_gaps, ctx.waves),
     ]
     return number_risks(risks, start_id)
 
@@ -841,6 +835,7 @@ def add_migration_risks(risk_assessment: dict[str, Any], risks: list[dict[str, A
 
 __all__ = [
     "GATE_IDS_NAMED",
+    "LISTED_ITEMS",
     "RULES",
     "RiskRule",
     "add_migration_risks",

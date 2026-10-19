@@ -45,7 +45,36 @@ def test_synthesis_writes_the_gaps_of_the_retained_aurora_engine(tmp_path) -> No
     SynthesisOutputContract.model_validate(report)
 
 
-def test_the_gaps_change_nothing_else_in_the_report(tmp_path) -> None:
+def _without_risks(report: dict[str, Any]) -> dict[str, Any]:
+    """The report less its risk register and what states it: the summary's risk
+    count and the facts block's risk figures."""
+    out = {k: v for k, v in report.items() if k not in _RISK_STATED}
+    facts = {k: v for k, v in report["facts"].items() if k not in _RISK_FACTS}
+    facts["waves"] = [
+        {k: v for k, v in w.items() if k != "critical_high_risks"} for w in facts["waves"]
+    ]
+    facts["no_migration"] = {
+        k: v for k, v in facts["no_migration"].items() if k != "critical_high_risks"
+    }
+    out["facts"] = facts
+    return out
+
+
+_RISK_STATED = {"risk_assessment", "summary", "summary_deterministic", "timestamp"}
+_RISK_FACTS = {
+    "relational_gaps",
+    "open_risk_count",
+    "open_risks_by_severity",
+    "critical_high_risk_count",
+    "critical_high_risks_by_engine",
+    "critical_high_risk_types",
+    "open_risks_by_type",
+}
+
+
+def test_the_gaps_change_only_the_risk_register(tmp_path) -> None:
+    """#1149: the gaps raise their Wave 1 risks (before the summary, which counts
+    them); nothing else in the report changes."""
     clean = _report(
         tmp_path / "a", {"engine": "mysql", "version": "8.0.36"}, [{"table_id": "users"}]
     )
@@ -56,10 +85,13 @@ def test_the_gaps_change_nothing_else_in_the_report(tmp_path) -> None:
     )
     assert clean["facts"]["relational_gaps"]["gaps"] == []
     assert gapped["facts"]["relational_gaps"]["gaps"]
-    for report in (clean, gapped):
-        report["facts"].pop("relational_gaps")
-        report.pop("timestamp")
-    assert gapped == clean
+    assert _without_risks(gapped) == _without_risks(clean)
+    stored = gapped["risk_assessment"]["risks"]
+    added = [r for r in stored if r.get("rule") == "relational.gaps"]
+    assert [r for r in stored if r not in added] == clean["risk_assessment"]["risks"]
+    assert [(r["wave"], r["affected_tables"]) for r in added] == [(1, ["users"])]
+    assert f"{len(stored)} open migration risks" in gapped["summary_deterministic"]
+    assert gapped["facts"]["open_risk_count"] == len(stored)
 
 
 def test_a_report_rebuilt_without_the_collection_has_no_gaps() -> None:

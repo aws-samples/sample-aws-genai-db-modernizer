@@ -585,6 +585,18 @@ def _all_kinds() -> list[dict[str, Any]]:
                 "reason_category": "full_scan",
             }
         ],
+        relational_gaps={
+            "target_engine": AURORA,
+            "gaps": [
+                {
+                    "feature": "TOP row limits",
+                    "impact": "needs_rewrite",
+                    "reason": "TOP becomes LIMIT.",
+                    "tables": ["db.a"],
+                    "queries": ["a1"],
+                }
+            ],
+        },
         start_id=7,
     )
 
@@ -671,9 +683,8 @@ def test_the_wording_is_plain() -> None:
         assert not find_style_hits(body), (text, find_style_hits(body))
 
 
-def test_pending_fact_hooks_name_their_pull_requests() -> None:
-    assert set(PENDING_FACT_HOOKS) == {"facts.relational_gaps"}
-    assert all(re.match(r"#\d+: ", v) for v in PENDING_FACT_HOOKS.values())
+def test_every_pending_fact_hook_has_its_rule() -> None:
+    assert PENDING_FACT_HOOKS == {}
 
 
 # ---------------------------------------------------------------------------

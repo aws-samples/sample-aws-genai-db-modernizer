@@ -232,3 +232,39 @@ def test_a_real_old_report_states_one_risk_count_everywhere(tmp_path: Path) -> N
     assert "**RISK-004**" in md
     data = json.loads(out["assessment-data"].content)
     assert len(data["risk_assessment"]["risks"]) == 4
+
+
+def test_an_older_report_renders_the_relational_gap_risks_it_never_stored(tmp_path: Path) -> None:
+    """#1149: the gap risks a stored ``facts.relational_gaps`` raises are rendered for a
+    report synthesized before ``relational.gaps``, with each gap's reason in full in
+    the engineering report."""
+    from src.shared.report_facts import compute_report_facts
+
+    s = LocalArtifactStore(base_dir=str(tmp_path))
+    report = json.loads(FIXTURE.read_text())
+    report["migration_waves"] = [
+        {"wave": 1, "engines": ["aurora_postgresql"], "tables": ["db.t"], "table_count": 1}
+    ]
+    gaps = {
+        "source_engine": "sqlserver",
+        "target_engine": "aurora_postgresql",
+        "gaps": [
+            {
+                "rule_id": "top",
+                "feature": "TOP row limits",
+                "impact": "needs_rewrite",
+                "reason": "TOP becomes LIMIT on the target.",
+                "docs": "Playbook",
+                "tables": ["db.t"],
+                "queries": ["q1"],
+            }
+        ],
+    }
+    report["facts"] = compute_report_facts(report, relational_gaps=gaps)
+    s.write_json(KEY, report)
+    out = {d.name: d for d in dl.render_deliverables(s, JOB, DB, KEY).items}
+    data = json.loads(out["assessment-data"].content)
+    [risk] = [r for r in data["risk_assessment"]["risks"] if r.get("rule") == "relational.gaps"]
+    assert risk["risk_id"] == "RISK-029" and risk["severity"] == "MEDIUM" and risk["wave"] == 1
+    md = out["engineering-report"].content.decode("utf-8")
+    assert "**RISK-029**" in md and "TOP becomes LIMIT on the target." in md

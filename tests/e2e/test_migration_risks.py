@@ -34,10 +34,13 @@ pytestmark = pytest.mark.deterministic
 EXPECTED_RULES: dict[str, list[str]] = {
     "wordpress": ["sync.wave", "routing.close_calls"],
     "discourse": ["sync.wave", "routing.tie_open", "routing.close_calls"],
-    "trailgear": ["sync.wave", "routing.close_calls"],
+    # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 5 gaps that need a
+    # rewrite and 4 that behave differently (wordpress and discourse have one
+    # informational gap each, which raises none).
+    "trailgear": ["sync.wave", "routing.close_calls", "relational.gaps", "relational.gaps"],
 }
 # The open risks each sample lists (analysis risks and migration risks).
-EXPECTED_OPEN = {"wordpress": 3, "discourse": 11, "trailgear": 9}
+EXPECTED_OPEN = {"wordpress": 3, "discourse": 11, "trailgear": 11}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -288,3 +291,39 @@ def _pdf_risk_tiles(pdf: str) -> str:
     m = re.search(r"Overall risk.{0,200}", norm(pdf))
     assert m, "no risk tiles"
     return m.group(0)
+
+
+# ---------------------------------------------------------------------------
+# The relational move's gaps (#1149)
+# ---------------------------------------------------------------------------
+
+
+def test_the_gap_risks_agree_with_the_relational_gap_facts(run: PipelineResult) -> None:
+    """On every sample: one ``relational.gaps`` risk per non-informational impact of
+    ``facts.relational_gaps``, in Wave 1, listing exactly those gaps, and only when
+    the gap check's target is wave 1's engine."""
+    report = _report(run)
+    gaps = report["facts"].get("relational_gaps") or {}
+    wave1 = next(w for w in report["migration_waves"] if w["wave"] == 1)
+    raised = [r for r in _new(report) if r["rule"] == "relational.gaps"]
+    if gaps.get("target_engine") != wave1["engines"][0]:
+        assert raised == [], run.db
+        return
+    severity = {"blocks_move": "HIGH", "needs_rewrite": "MEDIUM", "behaves_differently": "LOW"}
+    want = [
+        (severity[impact], n)
+        for impact, n in gaps["gaps_by_impact"].items()
+        if impact in severity and n
+    ]
+    assert [(r["severity"], len(r["details"])) for r in raised] == want, run.db
+    md = run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
+    for r in raised:
+        assert r["wave"] == 1 and "Wave 1 gate" in r["mitigation"]
+        for detail in r["details"]:
+            assert md_text(detail) in md, detail[:60]
+        # The executive report states the risk, never a gap's reason or documentation.
+        assert norm(r["risk_id"]) in pdf
+        for g in gaps["gaps"]:
+            if g["impact"] in severity:
+                assert norm(g["reason"]) not in pdf, g["rule_id"]

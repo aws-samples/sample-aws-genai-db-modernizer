@@ -25,6 +25,12 @@ rule                       severity  raised when
                            MEDIUM    every such query on the engine is held there by a pin the
                                      customer set on its table's writes (kind ``held``):
                                      changing the pin is the way to move it
+``relational.gaps``        HIGH      the relational gap check (``facts.relational_gaps``, #1079)
+                                     finds gaps that block the move to wave 1's engine
+                           MEDIUM    gaps that need a rewrite before cutover
+                           LOW       gaps that behave differently on the target; one risk per
+                                     impact, in Wave 1; an informational gap raises none, and
+                                     a gap check for another engine than wave 1's raises none
 =========================  ========  ==========================================================
 """
 
@@ -45,6 +51,10 @@ from src.shared.risk_severity import overall_risk_level, severity_rank
 # A wave-gate strategy line names its risk ids up to this many, else counts them.
 GATE_IDS_NAMED = 5
 
+# A risk's text names at most this many short labels (an app-layer feature, a
+# relational gap), then how many more.
+LISTED_ITEMS = 5
+
 
 @dataclass(frozen=True)
 class RiskRule:
@@ -63,6 +73,7 @@ RULES: dict[str, RiskRule] = {
     "routing.flagged": RiskRule(
         "HIGH", "MIGRATION_COMPLEXITY", "flagged queries no other engine takes"
     ),
+    "relational.gaps": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "relational gaps"),
     "cache.dropped": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "dropped cache reads"),
     "cache.unsupported": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "unsupported cache patterns"),
     "design.app_layer": RiskRule("MEDIUM", "OPERATIONAL_RISK", "logic moved to the application"),
@@ -73,6 +84,15 @@ RULES: dict[str, RiskRule] = {
 # A flagged query held on its engine by a customer pin (#1033): the pin, not a
 # missing engine, keeps it there.
 HELD_ONLY_SEVERITY = "MEDIUM"
+
+
+# A relational gap's impact -> its risk's severity (#1149); an informational gap
+# raises none.
+GAP_RISK_SEVERITY: dict[str, str] = {
+    "blocks_move": "HIGH",
+    "needs_rewrite": "MEDIUM",
+    "behaves_differently": "LOW",
+}
 
 
 def n_of(count: int, one: str, many: str) -> str:
@@ -120,6 +140,13 @@ _STATES_RISKS = re.compile(
     r"|\b(?:overall|critical|high|medium|low)\b[^.;]{0,30}\brisk",
     re.IGNORECASE,
 )
+
+
+def listed_items(items: list[str]) -> str:
+    """Items joined by "; ", the first ``LISTED_ITEMS`` then how many more."""
+    shown = list(items[:LISTED_ITEMS])
+    more = len(items) - len(shown)
+    return "; ".join(shown) + (f"; and {more} more" if more > 0 else "")
 
 
 def gate_of(wave: int | None) -> str:
@@ -281,6 +308,111 @@ def _flagged_risk(
 
 
 # ---------------------------------------------------------------------------
+# The relational move's version and feature gaps (#1149)
+# ---------------------------------------------------------------------------
+
+
+def _gap_head(impact: str, k: int, name: str) -> str:
+    if impact == "blocks_move":
+        return f"{n_of(k, 'relational gap blocks', 'relational gaps block')} the move to {name}"
+    if impact == "needs_rewrite":
+        return (
+            f"{n_of(k, 'relational gap needs', 'relational gaps need')} a rewrite before "
+            f"cutover to {name}"
+        )
+    return f"{n_of(k, 'relational gap behaves', 'relational gaps behave')} differently on {name}"
+
+
+def _gap_steps(impact: str, k: int, name: str) -> str:
+    if impact == "blocks_move":
+        return (
+            f"Before the Wave 1 gate, replace {these(k, 'feature', 'features')} outside the "
+            f"database or remove {them(k)}, as each gap's reason says: the move cannot finish "
+            "while the source uses them."
+        )
+    if impact == "needs_rewrite":
+        return (
+            "Before the Wave 1 gate, change the schema, the queries and the routines each gap "
+            f"names, as its reason says, and test them on {name}."
+        )
+    return (
+        f"Before the Wave 1 gate, test the queries and objects each gap names on {name} and "
+        "compare their results with the source."
+    )
+
+
+def _gap_detail(gap: Mapping[str, Any]) -> str:
+    """One gap in full: its feature, reason, documentation and the objects it was found in."""
+    text = f"{gap.get('feature')}: {str(gap.get('reason') or '').strip()}"
+    docs = str(gap.get("docs") or "").strip()
+    if docs:
+        text += f" Documentation: {docs}."
+    objects = [
+        f"{o.get('kind')} {o.get('id')}"
+        for o in gap.get("objects") or []
+        if isinstance(o, Mapping) and o.get("id")
+    ]
+    if objects:
+        text += f" Found in {', '.join(objects)}."
+    return text
+
+
+def relational_gap_risks(
+    relational_gaps: Mapping[str, Any] | None,
+    migration_waves: Iterable[Any] | None,
+) -> list[dict[str, Any]]:
+    """One ``relational.gaps`` risk per impact (most severe first), in Wave 1.
+
+    Raised only when the gap check's ``target_engine`` is wave 1's engine (the
+    rule #1145 applies to wave 1's note): a check run against another Aurora
+    engine is neither counted nor listed. Severity is the impact's
+    (:data:`GAP_RISK_SEVERITY`); an informational gap raises none. The text names
+    each gap's feature (a catalog label, up to ``LISTED_ITEMS``); its reason,
+    documentation and objects are in ``details``. Evidence tables are the gaps'
+    tables that wave 1 moves, so a table id the check could not resolve is left out.
+    """
+    if not isinstance(relational_gaps, Mapping):
+        return []
+    wave1 = next(
+        (w for w in migration_waves or [] if isinstance(w, Mapping) and wave_number(w) == 1),
+        None,
+    )
+    engines = [canonical_engine_id(str(e)) for e in (wave1 or {}).get("engines") or [] if e]
+    target = canonical_engine_id(str(relational_gaps.get("target_engine") or ""))
+    if not engines or target != engines[0]:
+        return []
+    moved = {str(t) for t in (wave1 or {}).get("tables") or []}
+    by_impact: dict[str, list[Mapping[str, Any]]] = {}
+    for g in relational_gaps.get("gaps") or []:
+        if isinstance(g, Mapping) and g.get("feature") and g.get("impact") in GAP_RISK_SEVERITY:
+            by_impact.setdefault(str(g["impact"]), []).append(g)
+    name = display_engine(target)
+    out: list[dict[str, Any]] = []
+    for impact in GAP_RISK_SEVERITY:
+        gaps = by_impact.get(impact)
+        if not gaps:
+            continue
+        k = len(gaps)
+        features = [str(g["feature"]) for g in gaps]
+        tables = {str(t) for g in gaps for t in g.get("tables") or [] if t}
+        out.append(
+            make_risk(
+                "relational.gaps",
+                target,
+                f"Wave 1: {_gap_head(impact, k, name)}: {listed_items(features)}. Each gap's "
+                "reason and where it was found are in the engineering report.",
+                _gap_steps(impact, k, name),
+                tables & moved if moved else tables,
+                {str(q) for g in gaps for q in g.get("queries") or [] if q},
+                1,
+                severity=GAP_RISK_SEVERITY[impact],
+                details=[_gap_detail(g) for g in gaps],
+            )
+        )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Numbering and the wave-gate lines
 # ---------------------------------------------------------------------------
 
@@ -361,7 +493,12 @@ def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     """rule -> the unnumbered risks the rules here raise from ``report`` alone."""
     waves = wave_of_engine(report.get("migration_waves"))
     tables = report_query_tables(report)
-    return {"routing.flagged": flagged_unservable_risks(report, waves, tables)}
+    facts = report.get("facts")
+    gaps = facts.get("relational_gaps") if isinstance(facts, Mapping) else None
+    return {
+        "routing.flagged": flagged_unservable_risks(report, waves, tables),
+        "relational.gaps": relational_gap_risks(gaps, report.get("migration_waves")),
+    }
 
 
 # A wave-gate strategy line (``wave_gate_strategies``), whatever its labels.

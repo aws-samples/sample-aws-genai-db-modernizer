@@ -226,6 +226,37 @@ class TestGetResults:
         assert synthesis["facts"]["open_risk_count"] == 4
         assert synthesis["risk_assessment"]["overall_risk_level"] == "HIGH"
 
+    def test_an_older_report_gains_the_relational_gap_risks(self, mock_services):
+        # #1149: a report synthesized before relational.gaps existed shows the risks its
+        # stored facts.relational_gaps raise, as the deliverables do.
+        report = {
+            "migration_waves": [{"wave": 1, "engines": ["aurora_postgresql"], "tables": ["db.t"]}],
+            "risk_assessment": {"overall_risk_level": "LOW", "risks": []},
+        }
+        gaps = {
+            "source_engine": "sqlserver",
+            "target_engine": "aurora_postgresql",
+            "gaps": [
+                {
+                    "rule_id": "top",
+                    "feature": "TOP row limits",
+                    "impact": "needs_rewrite",
+                    "reason": "TOP becomes LIMIT.",
+                    "docs": "Playbook",
+                    "tables": ["db.t"],
+                    "queries": ["q1"],
+                }
+            ],
+        }
+        report["facts"] = compute_report_facts(report, relational_gaps=gaps)
+        mock_services["s3"].read_synthesis.return_value = report
+        mock_services["s3"].read_triage.return_value = {}
+        synthesis = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]
+        [risk] = synthesis["risk_assessment"]["risks"]
+        assert (risk["rule"], risk["severity"], risk["wave"]) == ("relational.gaps", "MEDIUM", 1)
+        assert risk["details"][0].startswith("TOP row limits: TOP becomes LIMIT.")
+        assert synthesis["facts"]["open_risk_count"] == 1
+
     def test_keeps_stored_access_pattern_totals(self, mock_services):
         totals = {"owned_pattern_count": 9, "cache_layer_pattern_count": 0}
         mock_services["s3"].read_synthesis.return_value = {

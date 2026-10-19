@@ -185,7 +185,8 @@ class TestMigrationWaves:
         # #1108: facts.query_trace.trace_groups added (1.41)
         # #1169: the Migration map split and kept-in-sync counts (1.42)
         # #1148: routing.flagged, FlaggedUnservableQuery.source_tables (1.43)
-        assert report["contract_version"] == "1.43"
+        # #1149: relational.gaps risks (1.44)
+        assert report["contract_version"] == "1.44"
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
 

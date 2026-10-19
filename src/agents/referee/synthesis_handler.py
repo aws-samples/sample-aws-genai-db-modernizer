@@ -296,6 +296,8 @@ def run_synthesis_deterministic(
         triage_query_capabilities(data.triage),
     )
 
+    # #471: the relational move's gaps, read before the risks, which raise them (#1149).
+    relational_gaps = _relational_gaps(data)
     # #950: the risks the migration's shape carries (tables kept in sync, close
     # calls, pending ties, design trade-offs, ...), from the facts built above,
     # before the summary states the risk count.
@@ -315,6 +317,7 @@ def run_synthesis_deterministic(
             normalise=table_normaliser(data),
             table_sources=sources,
             flagged_unservable=flagged_unservable,
+            relational_gaps=relational_gaps,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -469,6 +472,7 @@ def run_synthesis_deterministic(
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
         "flagged_unservable": flagged_unservable,
+        "relational_gaps": relational_gaps,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
         "cache_overlay": cache_overlay,
@@ -813,6 +817,21 @@ def _engine_choices(data: SynthesisData) -> dict:
     }
 
 
+def _relational_gaps(data: SynthesisData) -> dict | None:
+    """The relational move's gap check against wave 1's Aurora engine (#471), from
+    the collection; None without one."""
+    if not data.collector:
+        return None
+    return detect_relational_gaps(
+        data.collector,
+        retained_engine_for(
+            data.collector,
+            (data.assignment or {}).get("query_assignments") or [],
+            (data.assignment or {}).get("aurora_engine_choice"),
+        ),
+    )
+
+
 def _tied_queries(assignment: dict | None) -> list[dict]:
     """The queries an exact tie no rule decided keeps on a placeholder engine (#503)."""
     return [
@@ -955,16 +974,11 @@ def _write_synthesis_report(
     # #471: the relational move's version and feature gaps against wave 1's Aurora
     # engine (the one retained_engine_for names), from the collection; routing never
     # reads them.
-    relational_gaps = None
-    if data.collector:
-        relational_gaps = detect_relational_gaps(
-            data.collector,
-            retained_engine_for(
-                data.collector,
-                (data.assignment or {}).get("query_assignments") or [],
-                (data.assignment or {}).get("aurora_engine_choice"),
-            ),
-        )
+    # Synthesis computes it once, before the risks (#1149); an older caller's
+    # result without it gets it here.
+    relational_gaps = (
+        result["relational_gaps"] if "relational_gaps" in result else _relational_gaps(data)
+    )
     output_data["facts"] = compute_report_facts(
         output_data,
         view_ids=view_ids,

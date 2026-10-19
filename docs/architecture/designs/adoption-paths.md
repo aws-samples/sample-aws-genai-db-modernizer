@@ -70,7 +70,7 @@ Every input is already deterministic and already read by synthesis. No new routi
 | Cache overlay | `cache_overlay` (reads, call share, owners) | quickest win, cache step |
 | Per-engine monthly cost | `tco_analysis.cost_breakdown` through `report_facts.engine_costs` | path cost |
 | Wave 1 homogeneity and the Aurora choice | `migration_waves[0].homogeneity`, `Assignment.aurora_engine_choice` | relational step, staged relational move |
-| Version and feature gaps | #471: `facts.relational_gaps` (contract 1.35), per gap its feature, impact (`blocks_move`, `needs_rewrite`, `behaves_differently`, `informational`), tables, queries and objects; no deliverable renders it yet | relational step gate, staged relational move |
+| Version and feature gaps | #471: `facts.relational_gaps` (contract 1.35), per gap its feature, impact (`blocks_move`, `needs_rewrite`, `behaves_differently`, `informational`), tables, queries and objects; the risk register raises one Wave 1 risk per impact (#1149) | relational step gate, staged relational move |
 | Capability and ownership gates on R | the customer gate's checks (`src/agents/referee/assignment_overrides.py`), which reject an override onto an engine that cannot serve or own a query | whether a path can leave a query on R |
 
 ## 6. Move units (exact rule)

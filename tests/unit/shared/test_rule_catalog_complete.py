@@ -372,13 +372,12 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _BUDGET,
     ),
     "src/agents/referee/migration_risks.py": (
-        frozenset({"HOT_PARTITION_HIGH_PCT", "LISTED_ITEMS"}),
-        "a risk-severity threshold and an output budget for the report's risk register "
-        "(#950), not a routing rule",
+        frozenset({"HOT_PARTITION_HIGH_PCT"}),
+        "a risk-severity threshold for the report's risk register (#950), not a routing rule",
     ),
     "src/shared/migration_risk_rules.py": (
-        frozenset({"GATE_IDS_NAMED"}),
-        "an output budget for the risk register's wave-gate lines (#950, moved in #1148), "
+        frozenset({"GATE_IDS_NAMED", "LISTED_ITEMS"}),
+        "two output budgets for the risk register's text (#950, moved in #1148 and #1149), "
         "not a routing rule",
     ),
     "src/agents/referee/synthesis_report.py": (

@@ -425,6 +425,14 @@ Version History:
   (``backfill_report_risks``). ``FlaggedUnservableQuery.source_tables``: the tables
   the query reads, the risk's evidence. Backward compatible: ``source_tables``
   defaults to empty; an older report's risk takes its tables from its query groups.
+- 1.44 (2026-10-19, #1149, ADR-032): ``Risk.rule`` gains ``relational.gaps``: one
+  Wave 1 risk per impact of the relational move's gaps (``facts.relational_gaps``,
+  1.35), HIGH for a gap that blocks the move, MEDIUM for one that needs a rewrite,
+  LOW for one that behaves differently, none for an informational one, and only
+  when the gap check's target engine is wave 1's engine; each gap's reason,
+  documentation and objects are in ``Risk.details``. Raised by
+  ``src.shared.migration_risk_rules`` from the facts block, so the deliverables and
+  the results payload raise it for a report written before 1.44. No field changes.
 """
 
 from datetime import datetime
@@ -1687,7 +1695,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.43",
+        default="1.44",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
