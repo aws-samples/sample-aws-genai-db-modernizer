@@ -14,6 +14,9 @@ from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT
 
 from . import escaping
 from .architecture import (
+    KEPT_IN_SYNC_NOTE,
+    KEPT_IN_SYNC_SOURCES_NOTE,
+    MAP_SPLIT_NOTE,
     SHARED_TABLES_LABEL,
     SHARED_TABLES_NOTE,
     _architecture_engines,
@@ -572,7 +575,11 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
             "a search read model); the rest stay on the engine that runs them today.",
             "",
         ]
-        notes = _engine_role_notes_md(target_engines, migrated)
+        notes = _engine_role_notes_md(
+            target_engines,
+            migrated,
+            sources_pointer=bool((facts.get("table_sources") or {}).get("written_table_count")),
+        )
         if notes:
             out += [" ".join(notes), ""]
         # First appearance of a fit figure in this report (inside "Why", e.g. "30%
@@ -588,7 +595,36 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
-def _engine_role_notes_md(engines: list[dict[str, Any]], migrated: int) -> list[str]:
+def _map_gaps_md(basis: dict[str, Any], migrated: int) -> str:
+    """#1169: the moving tables the schema design has no target table for yet, and the
+    rows it maps to a migration target that no query routed there reads."""
+    out = ""
+    missing = [str(t) for t in basis.get("migrating_tables_not_mapped_names") or []]
+    n = int(basis.get("migrating_tables_not_mapped") or 0)
+    if n:
+        out += (
+            f" The schema design has no target table yet for {n} of the {migrated} "
+            f"{plural_noun(migrated, 'table')} that "
+            f"{plural_verb(migrated, 'migrates', 'migrate')}: {_code_list(missing)}."
+        )
+    for eng, tables in (basis.get("mapped_tables_not_served") or {}).items():
+        name = escaping.md_text(display_engine(eng))
+        out += (
+            f" Rows the schema design maps to {name} that no query routed to {name} reads "
+            f"stay on the source engine: {_code_list([str(t) for t in tables])}."
+        )
+    return out
+
+
+def _code_list(tables: list[str], cap: int = 20) -> str:
+    """Table names as code spans: the first ``cap``, then how many more."""
+    shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:cap])
+    return shown + (f" (+{len(tables) - cap} more)" if len(tables) > cap else "")
+
+
+def _engine_role_notes_md(
+    engines: list[dict[str, Any]], migrated: int, sources_pointer: bool = False
+) -> list[str]:
     """What the retained, search and migration-target roles mean for this plan, and
     what "incl. shared" counts; one sentence each, only for roles the plan has. The
     cache layer has its own section."""
@@ -616,6 +652,10 @@ def _engine_role_notes_md(engines: list[dict[str, Any]], migrated: int) -> list[
         )
     if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in engines):
         notes.append(escaping.md_text(SHARED_TABLES_NOTE))
+    if any(e.get("kept_in_sync") or e.get("moves_to") for e in engines):
+        notes.append(escaping.md_text(KEPT_IN_SYNC_NOTE))
+        if sources_pointer:
+            notes.append(escaping.md_text(KEPT_IN_SYNC_SOURCES_NOTE))
     return notes
 
 
@@ -767,12 +807,19 @@ def render_engineering_report_md(
             if written
             else ""
         )
+        split = _mapping_split(report, mappings)
+        basis = facts.get("table_basis") or {}
+        split_note = (
+            f" {MAP_SPLIT_NOTE}"
+            if (basis.get("mapped_tables_by_move") or {}).get("kept_in_sync")
+            else ""
+        )
+        gaps = _map_gaps_md(basis, int(facts.get("tables_migrate") or 0))
         out += [
-            f"## Migration map ({mapped} {plural_noun(mapped, 'table')}"
-            f"{_mapping_split(report, mappings)})",
+            f"## Migration map ({mapped} {plural_noun(mapped, 'table')}{split})",
             "",
             "Recommended engine is each table's summary label: the queries decide where "
-            f"they run, and several engines can serve one table.{owner_pointer}",
+            f"they run, and several engines can serve one table.{split_note}{gaps}{owner_pointer}",
             "",
             f"| Source table | Recommended engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
             "|---|---|---|---|---|",

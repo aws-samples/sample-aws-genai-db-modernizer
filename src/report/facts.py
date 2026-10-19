@@ -16,6 +16,9 @@ from typing import Any
 from src.shared.report_facts import (
     access_pattern_facts,
     compute_report_facts,
+    engine_served_split,
+    engine_table_split_facts,
+    map_split_facts,
     query_move_facts,
     query_trace_facts,
     resolved_risk_severity_facts,
@@ -30,9 +33,10 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
 
     A block written before contract 1.26 has no ``access_pattern_totals`` (#792), one
     written before 1.28 no query move counts and no resolved risks by severity (#1020),
-    one written before 1.38 no per-kind ``unservable`` counts (#888), and one written
+    one written before 1.38 no per-kind ``unservable`` counts (#888), one written
     before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
-    the contract has them empty while queries have a full trace); those figures are
+    the contract has them empty while queries have a full trace), and one written before
+    1.42 no Migration map split and no per-engine kept-in-sync counts (#1169); those figures are
     filled in from ``query_groups``, ``ranking``, the resolved risks and the traces, the rest stays as stored.
     """
     facts = report.get("facts")
@@ -44,6 +48,36 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             missing.update(query_move_facts(report, facts["engines"]))
         if "resolved_risks_by_severity" not in facts:
             missing.update(resolved_risk_severity_facts(report))
+        basis = facts.get("table_basis")
+        if isinstance(basis, dict) and "mapped_tables_by_move" not in basis:
+            # A block written before 1.42 (#1169): the map's split, from the same function.
+            missing["table_basis"] = {
+                **basis,
+                **map_split_facts(
+                    [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)],
+                    {str(e.get("engine")): str(e.get("role")) for e in facts["engines"]},
+                    resolve_migration_waves(report),
+                ),
+            }
+        if any(isinstance(e, dict) and "kept_in_sync_tables" not in e for e in facts["engines"]):
+            # And each migration target's split of its served tables (#1169).
+            split = engine_served_split(resolve_migration_waves(report))
+            missing["engines"] = [
+                (
+                    {
+                        **e,
+                        **engine_table_split_facts(
+                            str(e.get("engine")),
+                            e.get("engine_source_tables"),
+                            int(e.get("tables_migrate") or 0),
+                            split,
+                        ),
+                    }
+                    if isinstance(e, dict) and "kept_in_sync_tables" not in e
+                    else e
+                )
+                for e in facts["engines"]
+            ]
         unservable = facts.get("unservable")
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.

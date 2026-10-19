@@ -316,9 +316,55 @@ def label_other_targets(text: str) -> str:
     return _OTHER_TARGETS_SENTENCE.sub(sub, text)
 
 
+# "18 source tables mapped to DynamoDB." (before #1169) and "The schema design's table
+# map lists 18 source tables (DynamoDB)." (since): the design's table map, which is
+# neither the tables an engine's queries read nor the tables that migrate.
+_MAPPED_TABLES = re.compile(
+    r"(?:\b(\d+) source tables? mapped to ([^.]+)\.)"
+    r"|(?:The schema design's table map lists (\d+) source tables? \(([^)]+)\)\.)"
+)
+
+
+def label_mapped_tables(text: str, report: dict[str, Any] | None = None) -> str:
+    """Restate the summary's table-map count with each migration target's served and
+    migrating tables from the facts layer (#1169). Only a count that equals
+    ``table_basis.mapped_tables`` is restated; idempotent."""
+    if not report:
+        return text
+    from .facts import report_facts  # the facts reader imports this module's helpers
+
+    facts = report_facts(report)
+    mapped = (facts.get("table_basis") or {}).get("mapped_tables")
+    split = "; ".join(
+        f"{display_engine(e['engine'])}\u2019s queries read {e['engine_source_tables']} "
+        f"source {plural_noun(e['engine_source_tables'], 'table')}, {e.get('tables_migrate', 0)} "
+        f"of which {plural_verb(e.get('tables_migrate', 0), 'migrates', 'migrate')}"
+        for e in facts.get("engines") or []
+        if e.get("role") == "Migration target" and e.get("engine_source_tables") is not None
+    )
+
+    def sub(m: re.Match[str]) -> str:
+        n = int(m.group(1) or m.group(3))
+        engines = m.group(2) or m.group(4)
+        if n != mapped:
+            return m.group(0)
+        head = (
+            f"The schema design's table map lists {n} source "
+            f"{plural_noun(n, 'table')} ({engines})"
+        )
+        return f"{head}; {split}." if split else f"{head}."
+
+    if "\u2019s queries read" in text:
+        return text
+    return _MAPPED_TABLES.sub(sub, text)
+
+
 def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str:
-    """Name what each count in the deterministic summary counts (#255, #258, #544)."""
-    return label_other_targets(label_resolved_risks(label_in_scope_access_patterns(text, report)))
+    """Name what each count in the deterministic summary counts (#255, #258, #544, #1169)."""
+    return label_mapped_tables(
+        label_other_targets(label_resolved_risks(label_in_scope_access_patterns(text, report))),
+        report,
+    )
 
 
 # #393/#536/#1034: five independent high-confidence checks can reject the generated

@@ -98,7 +98,9 @@ INPUT_KEYS = frozenset(
 # so a renderer cannot recount the listed traces behind ``facts.query_trace``.
 RECORD_INPUT_KEYS = frozenset({"query_traces"})
 # The architecture rows ``architecture._architecture_engines`` builds from facts.
-ROW_KEYS = frozenset({"migrates", "workload", "cost", "cached_queries", "cached_call_share"})
+ROW_KEYS = frozenset(
+    {"migrates", "kept_in_sync", "workload", "cost", "cached_queries", "cached_call_share"}
+)
 # Facts fields whose name renderers also use for an unrelated value, so owning
 # the name everywhere would flag that value instead: ``engines`` (also every
 # wave's and the no-migration step's engine-id lists), ``waves`` (also the

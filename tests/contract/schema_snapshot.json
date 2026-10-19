@@ -18158,6 +18158,23 @@
                             ]
                           }
                         },
+                        "kept_in_sync_tables": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "monthly_cost_usd": {
                           "required": false,
                           "schema": {
@@ -18167,6 +18184,25 @@
                                 "kind": "scalar",
                                 "minimum": 0,
                                 "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "moves_to_tables": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "additional": {
+                                  "kind": "scalar",
+                                  "type": "integer"
+                                },
+                                "kind": "object"
                               },
                               {
                                 "kind": "scalar",
@@ -19219,6 +19255,16 @@
                           "type": "integer"
                         }
                       },
+                      "mapped_tables_by_move": {
+                        "required": false,
+                        "schema": {
+                          "additional": {
+                            "kind": "scalar",
+                            "type": "integer"
+                          },
+                          "kind": "object"
+                        }
+                      },
                       "mapped_tables_by_role": {
                         "required": false,
                         "schema": {
@@ -19227,6 +19273,37 @@
                             "type": "integer"
                           },
                           "kind": "object"
+                        }
+                      },
+                      "mapped_tables_not_served": {
+                        "required": false,
+                        "schema": {
+                          "additional": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          },
+                          "kind": "object"
+                        }
+                      },
+                      "migrating_tables_not_mapped": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "migrating_tables_not_mapped_names": {
+                        "required": false,
+                        "schema": {
+                          "items": {
+                            "kind": "scalar",
+                            "type": "string"
+                          },
+                          "kind": "array"
                         }
                       },
                       "pending_engines": {
@@ -23242,8 +23319,8 @@
         }
       }
     },
-    "schema_hash": "2f255619875b71568841d4ac4463113f3764781ce9c5c40db08230c667e480d6",
-    "version": "1.41"
+    "schema_hash": "3f66bdd68f3c05e7425a9f43cf29c5a3e38a32505fd61ff691262a8df3c02d2a",
+    "version": "1.42"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

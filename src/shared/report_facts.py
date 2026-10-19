@@ -296,6 +296,61 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
 # ---------------------------------------------------------------------------
 
 
+def engine_served_split(waves: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each migration target's served tables that it does not own, split the way the
+    wave plan splits them (#581, #1169).
+
+    ``kept_in_sync``: tables an engine outside the wave owns; they stay with their
+    owner and are kept in sync from it (``wave_facts``' ``kept_in_sync``).
+    ``moves_to``: owner -> tables another engine of the same wave owns; they move in
+    that wave, to that owner (``wave_facts``' ``shared_in_wave``). An engine's own
+    tables are its wave's ``moving_by_engine``, so served = own + moves_to +
+    kept_in_sync. Only migrating waves with a per-engine split count.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for w in waves:
+        wf = wave_facts(w)
+        served_by = wf["served_by_engine"]
+        moving_by = wf["moving_by_engine"] or {}
+        if not wf["migrating"] or served_by is None:
+            continue
+        engines = wf["engines"]
+        for e in engines:
+            moves_to: dict[str, int] = {}
+            # In a two-engine wave an entry owned by the other engine is one this
+            # engine serves; with more engines it cannot be attributed, so none is.
+            if len(engines) == 2:
+                for o in wf["shared_in_wave"]:
+                    owner = str(o["owner"])
+                    if owner != e:
+                        moves_to[owner] = moves_to.get(owner, 0) + 1
+            row = out.setdefault(e, {"moves_to": {}, "kept_in_sync": 0})
+            for owner, k in moves_to.items():
+                row["moves_to"][owner] = row["moves_to"].get(owner, 0) + k
+            row["kept_in_sync"] += max(
+                int(served_by.get(e) or 0) - int(moving_by.get(e) or 0) - sum(moves_to.values()),
+                0,
+            )
+    return out
+
+
+def engine_table_split_facts(
+    engine: str, source_tables: int | None, migrates: int, split: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """``kept_in_sync_tables`` and ``moves_to_tables`` for one migration target (#1169);
+    None for an engine that states no served count."""
+    if not isinstance(source_tables, int) or isinstance(source_tables, bool):
+        return {"kept_in_sync_tables": None, "moves_to_tables": None}
+    row = split.get(engine)
+    if row is None:
+        # No migrating wave splits it (a report written before waves did).
+        return {"kept_in_sync_tables": max(source_tables - migrates, 0), "moves_to_tables": {}}
+    return {
+        "kept_in_sync_tables": int(row["kept_in_sync"]),
+        "moves_to_tables": dict(sorted(row["moves_to"].items())),
+    }
+
+
 def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The full target architecture, one entry per engine, ordered by workload.
 
@@ -331,6 +386,7 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
         for e, k in (wf["moving_by_engine"] or {}).items():
             wave_owned[e] = wave_owned.get(e, 0) + k
 
+    split = engine_served_split(waves)
     rows: list[dict[str, Any]] = []
     for r in ranking:
         eng = r.get("target")
@@ -384,6 +440,9 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
                 "shared_source_tables": shared_tables,
                 "target_objects": objs,
                 "tables_migrate": int(migrates or 0),
+                # #1169: the served tables it does not own, split as its wave splits
+                # them, so the Scope cell adds up and agrees with the wave plan.
+                **engine_table_split_facts(str(eng), source_tables, int(migrates or 0), split),
                 "monthly_cost_usd": costs.get(eng),
                 # Synthesis's per-engine rationale, built from the routed workload
                 # (#152); the ranking entry carries it for engines `databases` omits
@@ -424,6 +483,97 @@ def _tables_analyzed(report: dict[str, Any], waves: list[dict[str, Any]]) -> int
     return len(tables)
 
 
+# The migration map's split of its tables (#1169), in the order the heading states it.
+MAP_MIGRATE = "migrate"
+MAP_KEPT_IN_SYNC = "kept_in_sync"
+MAP_CACHE_LAYER = "cache_layer"
+MAP_SEARCH_READ_MODEL = "search_read_model"
+MAP_STAYS = "stays"
+MAP_OTHER = "other"
+MAP_SPLIT_ORDER = (
+    MAP_MIGRATE,
+    MAP_KEPT_IN_SYNC,
+    MAP_CACHE_LAYER,
+    MAP_SEARCH_READ_MODEL,
+    MAP_STAYS,
+    MAP_OTHER,
+)
+_MAP_BY_ROLE = {
+    MIGRATION_TARGET: MAP_MIGRATE,
+    CACHE_LAYER: MAP_CACHE_LAYER,
+    SEARCH_READ_MODEL: MAP_SEARCH_READ_MODEL,
+    RETAINED: MAP_STAYS,
+}
+
+
+def _migrating_wave_tables(
+    waves: list[dict[str, Any]],
+) -> tuple[set[str], set[str], set[str]]:
+    """(tables a migrating wave moves, tables one keeps in sync and none moves, the
+    engines of the migrating waves that list their tables)."""
+    moving: set[str] = set()
+    synced: set[str] = set()
+    waved: set[str] = set()
+    for w in waves:
+        if not is_migrating_wave(w):
+            continue
+        tables = {str(t) for t in (w.get("tables") or []) if t}
+        engines = {str(e) for e in (w.get("engines") or []) if e}
+        if tables:
+            waved |= engines
+        outside = {str(o["table"]) for o in _owner_entries(w) if str(o["owner"]) not in engines}
+        moving |= tables - outside
+        synced |= outside
+    return moving, synced - moving, waved
+
+
+def map_split_facts(
+    mappings: list[dict[str, Any]], roles: Mapping[str, str], waves: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """The mapped tables split by what the plan does with them (#1169).
+
+    ``mapped_tables_by_move``: ``migrate`` counts a mapped table a migrating wave moves
+    (one of the wave's engines owns it), the tables behind "N tables migrate";
+    ``kept_in_sync`` one a migrating wave serves while an engine outside that wave
+    owns it (the wave plan's rule, #581). The rest follow the role of their
+    recommended engine: ``cache_layer``, ``search_read_model``, ``stays`` (on the
+    source engine) and ``other``. A row mapped to a migration target whose wave does
+    not serve it stays, and is named in ``mapped_tables_not_served`` (engine -> tables).
+    A migration target with no migrating wave that lists its tables (a report written
+    before waves did) counts its mapped tables as ``migrate``, as ``tables_migrate``
+    counts its design's tables.
+
+    ``migrating_tables_not_mapped`` (and ``..._names``): the moving tables no row
+    lists, the tables a schema design has no target table for yet.
+    """
+    moving, synced, waved = _migrating_wave_tables(waves)
+    by_move: dict[str, int] = {}
+    not_served: dict[str, list[str]] = {}
+    for m in mappings:
+        table = str(m.get("source_table") or "")
+        engine = str(m.get("recommended_database") or "")
+        role = roles.get(engine, OTHER_ROLE)
+        if table in moving:
+            kind = MAP_MIGRATE
+        elif table in synced:
+            kind = MAP_KEPT_IN_SYNC
+        elif role == MIGRATION_TARGET and engine in waved:
+            kind = MAP_STAYS
+            not_served.setdefault(engine, []).append(table)
+        else:
+            kind = _MAP_BY_ROLE.get(role, MAP_OTHER)
+        by_move[kind] = by_move.get(kind, 0) + 1
+    missing = (
+        sorted(moving - {str(m.get("source_table") or "") for m in mappings}) if mappings else []
+    )
+    return {
+        "mapped_tables_by_move": by_move,
+        "migrating_tables_not_mapped": len(missing),
+        "migrating_tables_not_mapped_names": missing,
+        "mapped_tables_not_served": {e: sorted(t) for e, t in sorted(not_served.items())},
+    }
+
+
 def table_basis(
     report: dict[str, Any], engines: list[dict[str, Any]], waves: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -446,14 +596,15 @@ def table_basis(
     """
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     roles = {e["engine"]: e["role"] for e in engines}
-    # The migration map's own split ("21 migrate, 1 to the cache layer", #258):
-    # a table mapped to the cache layer needs no data migration.
+    # Mapped tables per role of their recommended engine (#258). The migration map's
+    # heading reads ``mapped_tables_by_move`` instead (#1169).
     by_role: dict[str, int] = {}
     for m in mappings:
         role = roles.get(str(m.get("recommended_database") or ""), OTHER_ROLE)
         if role not in (MIGRATION_TARGET, CACHE_LAYER, RETAINED, SEARCH_READ_MODEL):
             role = OTHER_ROLE
         by_role[role] = by_role.get(role, 0) + 1
+    split = map_split_facts(mappings, roles, waves)
     schema_designs = report.get("schema_designs") or {}
     targets = [e["engine"] for e in engines if e["role"] == MIGRATION_TARGET]
     designed = [e for e in targets if (schema_designs.get(e) or {}).get("status") == "completed"]
@@ -466,6 +617,7 @@ def table_basis(
             "designed_engines": designed,
             "pending_engines": [],
             "mapped_tables_by_role": by_role,
+            **split,
         }
     return {
         "basis_table_count": _tables_analyzed(report, waves),
@@ -474,6 +626,7 @@ def table_basis(
         "designed_engines": designed if mappings else [],
         "pending_engines": pending if mappings else targets,
         "mapped_tables_by_role": by_role,
+        **split,
     }
 
 

@@ -25,6 +25,7 @@ from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.engine_choices import reroute_summary
 from src.report.engineering_report import render_engineering_report_md
 from src.report.facts import report_facts
+from src.report.formatting import label_summary_counts
 from src.shared.report_facts import compute_report_facts
 from tests.executive_pdf import executive_text
 
@@ -686,3 +687,206 @@ def test_595_no_reality_check_decision_no_section() -> None:
     report = _with_facts(report)
     assert report["facts"]["reality_check_decisions"] == []
     assert "### reality-check" not in render_engineering_report_md(report)
+
+
+# --------------------------------------------------------------------------
+# #1169: every table count says what it counts
+# --------------------------------------------------------------------------
+
+
+def _mapped_merged_report() -> dict[str, Any]:
+    """The merged report with a table map: t1 (DynamoDB) and t3 (DocumentDB) move,
+    t4 (labelled DynamoDB) is kept in sync from Aurora, t5 is mapped to the cache
+    layer, t6 (labelled DynamoDB) no migrating wave serves, and t2, which moves,
+    has no row."""
+    report = _merged_report()
+    report["ranking"].append({"target": "elasticache", "confidence_score": 60})
+    report["cache_overlay"] = {"engine": "elasticache", "query_count": 1}
+    report["table_mappings"] = [
+        {"source_table": "db.t1", "recommended_database": "dynamodb"},
+        {"source_table": "db.t3", "recommended_database": "aurora_mysql"},
+        {"source_table": "db.t4", "recommended_database": "dynamodb"},
+        {"source_table": "db.t5", "recommended_database": "elasticache"},
+        {"source_table": "db.t6", "recommended_database": "dynamodb"},
+    ]
+    return report
+
+
+def test_1169_the_map_split_counts_on_the_waves_basis() -> None:
+    """A mapped table migrates when its wave moves it, whatever its summary label."""
+    basis = _with_facts(_mapped_merged_report())["facts"]["table_basis"]
+    assert basis["mapped_tables_by_move"] == {
+        "migrate": 2,
+        "kept_in_sync": 1,
+        "cache_layer": 1,
+        "stays": 1,
+    }
+    assert basis["migrating_tables_not_mapped"] == 1
+    # The role split is unchanged: it still counts summary labels.
+    assert basis["mapped_tables_by_role"]["Migration target"] == 3
+
+
+def test_1169_the_map_split_adds_up_to_the_tables_that_migrate() -> None:
+    facts = _with_facts(_mapped_merged_report())["facts"]
+    basis = facts["table_basis"]
+    assert (
+        basis["mapped_tables_by_move"]["migrate"] + basis["migrating_tables_not_mapped"]
+        == facts["tables_migrate"]
+        == 3
+    )
+
+
+def test_1169_a_report_without_wave_tables_splits_by_role() -> None:
+    """Before waves listed their tables, a migration target's table counts as moving."""
+    report = _mapped_merged_report()
+    for w in report["migration_waves"]:
+        w.pop("tables", None)
+        w.pop("table_owners", None)
+    basis = _with_facts(report)["facts"]["table_basis"]
+    assert basis["mapped_tables_by_move"] == {"migrate": 3, "stays": 1, "cache_layer": 1}
+    assert basis["migrating_tables_not_mapped"] == 0
+
+
+def test_1169_no_table_map_no_split() -> None:
+    basis = _with_facts(_merged_report())["facts"]["table_basis"]
+    assert basis["mapped_tables_by_move"] == {}
+    assert basis["migrating_tables_not_mapped"] == 0
+
+
+def test_1169_each_migration_target_splits_its_served_tables_as_the_wave_does() -> None:
+    """#581's rule: a table another engine of the same wave owns moves to that engine;
+    only an owner outside the wave makes a table kept in sync."""
+    facts = _with_facts(_merged_report())["facts"]
+    engines = {e["engine"]: e for e in facts["engines"]}
+    # DocumentDB serves t2 (DynamoDB owns it), t3 (its own) and t4 (Aurora owns it).
+    doc = engines["documentdb"]
+    assert (doc["engine_source_tables"], doc["tables_migrate"]) == (3, 1)
+    assert doc["moves_to_tables"] == {"dynamodb": 1}
+    assert doc["kept_in_sync_tables"] == 1
+    assert engines["dynamodb"]["kept_in_sync_tables"] == 0
+    assert engines["dynamodb"]["moves_to_tables"] == {}
+    assert engines["aurora_mysql"]["kept_in_sync_tables"] is None
+    # The one definition: the wave plan's kept-in-sync count is the same table.
+    wave = next(w for w in facts["waves"] if w["wave"] == 2)
+    assert wave["kept_in_sync_tables"] == 1
+    for e in ("dynamodb", "documentdb"):
+        row = engines[e]
+        assert row["engine_source_tables"] == (
+            row["tables_migrate"]
+            + sum(row["moves_to_tables"].values())
+            + row["kept_in_sync_tables"]
+        )
+
+
+def test_1169_the_reports_print_the_stored_split() -> None:
+    """The heading, the map intro and the Scope cell read the facts: change them and
+    the text follows."""
+    report = _with_facts(_mapped_merged_report())
+    basis = report["facts"]["table_basis"]
+    basis["mapped_tables_by_move"] = {"migrate": 7, "kept_in_sync": 4}
+    basis["migrating_tables_not_mapped"] = 2
+    basis["migrating_tables_not_mapped_names"] = ["db.x", "db.y"]
+    basis["mapped_tables_not_served"] = {"dynamodb": ["db.z"]}
+    for e in report["facts"]["engines"]:
+        if e["engine"] == "documentdb":
+            e["kept_in_sync_tables"] = 9
+            e["moves_to_tables"] = {"dynamodb": 5}
+    md = render_engineering_report_md(report)
+    assert "## Migration map (5 tables: 7 migrate, 4 kept in sync)" in md
+    assert (
+        "The schema design has no target table yet for 2 of the 3 tables that migrate: "
+        "`db.x`, `db.y`."
+    ) in md
+    assert (
+        "Rows the schema design maps to DynamoDB that no query routed to DynamoDB reads "
+        "stay on the source engine: `db.z`."
+    ) in md
+    cell = "3 source tables served: 1 migrate, 5 move to DynamoDB, 9 kept in sync"
+    assert f"| {cell} |" in md
+    assert "Served counts the source tables" in md
+    assert cell in executive_text(report)
+
+
+def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
+    report = _with_facts(_mapped_merged_report())
+    report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "stays": 1}
+    md = render_engineering_report_md(report)
+    assert "Migrate counts the mapped tables a migration wave moves" not in md
+    report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "kept_in_sync": 1}
+    md = render_engineering_report_md(report)
+    assert "Migrate counts the mapped tables a migration wave moves" in md
+
+
+def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
+    md = render_engineering_report_md(_with_facts(_mapped_merged_report()))
+    assert (
+        "## Migration map (5 tables: 2 migrate, 1 kept in sync, 1 to the cache layer, "
+        "1 stay on the source engine)"
+    ) in md
+    assert "no target table yet for 1 of the 3 tables that migrate: `db.t2`." in md
+    assert (
+        "Rows the schema design maps to DynamoDB that no query routed to DynamoDB reads "
+        "stay on the source engine: `db.t6`."
+    ) in md
+    assert "Migrate counts the mapped tables a migration wave moves" in md
+    assert _tables_migrate(md) == "3"
+
+
+def test_1169_a_scope_cell_with_nothing_kept_in_sync_stays_plain() -> None:
+    report = _merged_report()
+    wave = report["migration_waves"][1]
+    wave["tables"] = ["db.t1", "db.t3"]
+    wave["table_count"] = 2
+    wave["table_owners"] = []
+    wave["table_counts_by_engine"] = {"dynamodb": 1, "documentdb": 1}
+    wave["owned_counts_by_engine"] = {"dynamodb": 1, "documentdb": 1}
+    md = render_engineering_report_md(_with_facts(report))
+    assert md.count("| 1 source table |") == 2
+    assert "kept in sync |" not in md
+    assert "Served counts the source tables" not in md
+
+
+def test_1169_a_facts_block_written_before_1_42_gets_the_split() -> None:
+    """An older stored block has none of the fields: the reader fills them in."""
+    report = _with_facts(_mapped_merged_report())
+    for e in report["facts"]["engines"]:
+        e.pop("kept_in_sync_tables")
+        e.pop("moves_to_tables")
+    basis = report["facts"]["table_basis"]
+    for key in (
+        "mapped_tables_by_move",
+        "migrating_tables_not_mapped",
+        "migrating_tables_not_mapped_names",
+        "mapped_tables_not_served",
+    ):
+        del basis[key]
+    facts = report_facts(report)
+    assert facts["table_basis"]["mapped_tables_by_move"]["migrate"] == 2
+    assert facts["table_basis"]["migrating_tables_not_mapped_names"] == ["db.t2"]
+    assert facts["table_basis"]["mapped_tables_not_served"] == {"dynamodb": ["db.t6"]}
+    doc = {e["engine"]: e for e in facts["engines"]}["documentdb"]
+    assert (doc["kept_in_sync_tables"], doc["moves_to_tables"]) == (1, {"dynamodb": 1})
+    md = render_engineering_report_md(report)
+    assert "## Migration map (5 tables: 2 migrate, 1 kept in sync," in md
+    assert "3 source tables served: 1 migrate, 1 move to DynamoDB, 1 kept in sync" in md
+
+
+def test_1169_the_summary_names_the_table_map_and_states_the_split() -> None:
+    """The summary's table-map count is restated with each migration target's served
+    and migrating tables from the facts; an old report's wording is restated too."""
+    for sentence in (
+        "5 source tables mapped to Aurora MySQL, DynamoDB, ElastiCache.",
+        "The schema design's table map lists 5 source tables (Aurora MySQL, DynamoDB, "
+        "ElastiCache).",
+    ):
+        report = _with_facts(_mapped_merged_report())
+        out = label_summary_counts(f"Analyzed 5 source tables. {sentence}", report)
+        assert (
+            "The schema design's table map lists 5 source tables (Aurora MySQL, DynamoDB, "
+            "ElastiCache); DynamoDB’s queries read 2 source tables, 2 of which migrate; "
+            "DocumentDB’s queries read 3 source tables, 1 of which migrates."
+        ) in out
+        assert label_summary_counts(out, report) == out
+    # A count that is not the table map's is left alone.
+    other = "7 source tables mapped to DynamoDB."
+    assert label_summary_counts(other, _with_facts(_mapped_merged_report())) == other

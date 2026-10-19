@@ -200,9 +200,14 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
             tables_migrate += moving
             for e, k in wave_moving_by_engine(w).items():
                 exp[f"wave{n}:moving:{e}"] = k
+            moving_by = wave_moving_by_engine(w)
             for e, k in wave_served_by_engine(w).items():
                 exp[f"tables:{e}"] = exp.get(f"tables:{e}", 0) + k
+                # #1169: the Scope cell states how many of them migrate; how the rest
+                # split is checked against the wave plan in ``invariant_violations``.
+                exp[f"migrate:{e}"] = exp.get(f"migrate:{e}", 0) + moving_by.get(e, 0)
     exp["tables_migrate"] = tables_migrate
+    exp.update(_expected_map_split(report))
 
     tco = report.get("tco_analysis") or {}
     for row in tco.get("cost_breakdown") or []:
@@ -269,6 +274,106 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
     if owned:
         exp["queries_moved"] = (sum(owned.values()) - stays, sum(owned.values()))
     return exp
+
+
+def _expected_map_split(report: dict[str, Any]) -> dict[str, int]:
+    """#1169: the Migration map heading's split, from ``table_mappings`` and the waves.
+
+    A mapped table migrates when a migrating wave moves it (one of the wave's engines
+    owns it), is kept in sync when a migrating wave serves it and an engine outside the
+    wave owns it, and is ``map:rest`` otherwise (the cache layer, the search read model
+    or the source engine). ``map:not_mapped`` counts the moving tables with no row."""
+    mappings = [m for m in report.get("table_mappings") or [] if isinstance(m, dict)]
+    if not mappings:
+        return {}
+    moving: set[str] = set()
+    synced: set[str] = set()
+    for w in report.get("migration_waves") or []:
+        if isinstance(w, dict) and migrating(w):
+            kept = wave_synced_tables(w)
+            moving |= {str(t) for t in w.get("tables") or []} - kept
+            synced |= kept
+    synced -= moving
+    mapped = [str(m.get("source_table")) for m in mappings]
+    n_migrate = sum(1 for t in mapped if t in moving)
+    n_synced = sum(1 for t in mapped if t in synced)
+    return {
+        "map:total": len(mapped),
+        "map:migrate": n_migrate,
+        "map:kept_in_sync": n_synced,
+        "map:rest": len(mapped) - n_migrate - n_synced,
+        "map:not_mapped": len(moving - set(mapped)),
+    }
+
+
+_MAP_HEADING_RE = re.compile(r"^Migration map \(([\d,]+) tables?(?:: (.+))?\)$")
+_MAP_PART_RE = re.compile(r"^([\d,]+) (.+)$")
+_NOT_MAPPED_RE = re.compile(
+    r"The schema design has no target table yet for ([\d,]+) of the ([\d,]+) tables? "
+    r"that migrates?: (.+?)\.(?: |$)"
+)
+# "137 source tables served: 69 migrate, 27 move to DocumentDB, 41 kept in sync"
+# (#1169), or "18 source tables" when the engine owns every table it serves.
+_SCOPE_SPLIT_RE = re.compile(r"([\d,]+) source tables?(?: served: ([^()$]+?))?(?: \(|$)")
+_SCOPE_PART_RE = re.compile(rf"^([\d,]+) (migrate|kept in sync|move to ({_NAMES_RE}))$")
+
+
+def migration_map(f: Figures, heading: str, body: str) -> None:
+    """#1169: the Migration map heading's counts, and the moving tables it has no row for."""
+    m = _MAP_HEADING_RE.match(heading)
+    if not m:
+        f.add("map:total", UNREADABLE, "Migration map heading")
+        return
+    total = _int(m.group(1))
+    f.add("map:total", total, "Migration map heading")
+    split = {"migrate": total} if m.group(2) is None else {}
+    for part in (m.group(2) or "").split(", ") if m.group(2) else []:
+        p = _MAP_PART_RE.match(part)
+        if not p:
+            f.add("map:unparsed", part, "Migration map heading")
+            continue
+        kind = {"migrate": "migrate", "kept in sync": "kept_in_sync"}.get(p.group(2), "rest")
+        split[kind] = split.get(kind, 0) + _int(p.group(1))
+    for kind in ("migrate", "kept_in_sync", "rest"):
+        f.add(f"map:{kind}", split.get(kind, 0), "Migration map heading")
+    intro = md_plain(body.split("| Source table", 1)[0])
+    n = _NOT_MAPPED_RE.search(intro)
+    f.add("map:not_mapped", _int(n.group(1)) if n else 0, "Migration map intro")
+    if n:
+        f.add("tables_migrate", _int(n.group(2)), "Migration map intro")
+        named = re.findall(r"`([^`]+)`", n.group(3))
+        if "more)" not in n.group(3):
+            f.add("map:not_mapped", len(named), "Migration map intro names")
+
+
+def scope_split(f: Figures, eng: str, cell: str, where: str) -> None:
+    """A migration target's Scope cell (#1169): served, and of those how many migrate,
+    move to another engine of the same wave (``moveto:<engine>:<owner>``) and are
+    kept in sync from an owner outside the wave."""
+    m = _SCOPE_SPLIT_RE.match(cell.strip())
+    if not m:
+        return
+    served = _int(m.group(1))
+    f.add(f"tables:{eng}", served, where)
+    if m.group(2) is None:
+        f.add(f"migrate:{eng}", served, where)
+        f.add(f"synced:{eng}", 0, where)
+        return
+    parts: dict[str, int] = {}
+    for part in m.group(2).split(", "):
+        p = _SCOPE_PART_RE.match(part.strip())
+        if not p:
+            f.add(f"tables:{eng}:unparsed", part, where)
+            continue
+        key = (
+            f"moveto:{eng}:{engine_id(p.group(3))}"
+            if p.group(3)
+            else {"migrate": f"migrate:{eng}", "kept in sync": f"synced:{eng}"}[p.group(2)]
+        )
+        parts[key] = parts.get(key, 0) + _int(p.group(1))
+    parts.setdefault(f"synced:{eng}", 0)
+    for key, n in parts.items():
+        f.add(key, n, where)
 
 
 _QUERIES_MOVED_RE = re.compile(r"([\d,]+) of ([\d,]+) quer(?:y|ies) moves? to a new engine")
@@ -342,6 +447,23 @@ def invariant_violations(
                                 f"more than the wave's {total}",
                             )
                         )
+    # #1169: the map's tables that migrate plus the moving tables it has no row for
+    # are the tables that migrate.
+    for migrate, where in figs.get("map:migrate", []):
+        for not_mapped, _ in figs.get("map:not_mapped", []):
+            for total, _ in figs.get("tables_migrate", []):
+                if all(isinstance(v, int) for v in (migrate, not_mapped, total)) and (
+                    migrate + not_mapped != total
+                ):
+                    out.append(
+                        (
+                            "map:reconcile",
+                            f"{label} {where}: {migrate} mapped tables migrate and "
+                            f"{not_mapped} moving tables have no row, not the {total} tables "
+                            "that migrate",
+                        )
+                    )
+    out += _scope_wave_violations(report, figs, label)
     for key in figs:
         m = re.match(r"(wave\d+):served$", key)
         if not m:
@@ -358,6 +480,81 @@ def invariant_violations(
                                 f"sync, which is not the {served} it serves",
                             )
                         )
+    return out
+
+
+def _first(figs: dict[str, list[tuple[Any, str]]], key: str) -> Any:
+    vals = [v for v, _ in figs.get(key, []) if isinstance(v, int) and not isinstance(v, bool)]
+    return vals[0] if vals else None
+
+
+def _scope_wave_violations(
+    report: dict[str, Any], figs: dict[str, list[tuple[Any, str]]], label: str
+) -> list[tuple[str, str]]:
+    """#1169: one definition of "kept in sync", the wave plan's (#581).
+
+    Each migration target's Scope cell adds up (served = migrate + moved to another
+    engine of its wave + kept in sync). Per migrating wave, the tables its engines say
+    move to one another are the wave's in-wave shared tables, and their kept-in-sync
+    counts are the wave's own: equal for a one-engine wave; for a merged wave each
+    engine's count is at most the wave's, and the wave's at most their sum (two
+    engines can read the same outside-owned table, which the wave counts once)."""
+    out: list[tuple[str, str]] = []
+    for key in [k for k in figs if re.match(r"tables:[\w]+$", k)]:
+        eng = key.split(":", 1)[1]
+        served, migrate, synced = (
+            _first(figs, key),
+            _first(figs, f"migrate:{eng}"),
+            _first(figs, f"synced:{eng}"),
+        )
+        moved = sum(_first(figs, k) or 0 for k in figs if k.startswith(f"moveto:{eng}:"))
+        if None not in (served, migrate, synced) and migrate + moved + synced != served:
+            out.append(
+                (
+                    f"scope:{eng}:reconcile",
+                    f"{label}: {eng}'s Scope says {migrate} migrate, {moved} move to another "
+                    f"engine and {synced} kept in sync, which is not the {served} it serves",
+                )
+            )
+    for w in report.get("migration_waves") or []:
+        if not (isinstance(w, dict) and migrating(w)):
+            continue
+        engines = [str(e) for e in w.get("engines") or []]
+        synced = [_first(figs, f"synced:{e}") for e in engines]
+        if any(v is None for v in synced):
+            continue
+        wave_synced = len(wave_synced_tables(w))
+        n = w.get("wave")
+        if len(engines) == 1:
+            ok = synced[0] == wave_synced
+        else:
+            ok = max(synced) <= wave_synced <= sum(synced)
+        if not ok:
+            out.append(
+                (
+                    f"wave{n}:scope_synced",
+                    f"{label}: wave {n} keeps {wave_synced} tables in sync, its engines' "
+                    f"Scope cells say {dict(zip(engines, synced, strict=True))}",
+                )
+            )
+        shared = sum(
+            1
+            for o in w.get("table_owners") or []
+            if isinstance(o, dict) and o.get("owner") in engines
+        )
+        moved = sum(
+            _first(figs, k) or 0
+            for k in figs
+            if k.startswith("moveto:") and k.split(":")[1] in engines
+        )
+        if len(engines) == 2 and moved != shared:
+            out.append(
+                (
+                    f"wave{n}:scope_moves",
+                    f"{label}: wave {n}'s engines say {moved} tables move to the other "
+                    f"engine, the wave lists {shared} owned inside it",
+                )
+            )
     return out
 
 
@@ -614,9 +811,7 @@ def engineering_figures(md_text: str) -> Figures:
         m = re.match(r"^([\d,]+) cached reads?\b", md_plain(row[2]))
         if m:
             f.add(f"cached_reads:{eng}", _int(m.group(1)), "Target engines Workload")
-        m = re.match(r"^([\d,]+) source tables?\b", md_plain(row[3]))
-        if m:
-            f.add(f"tables:{eng}", _int(m.group(1)), "Target engines Scope")
+        scope_split(f, eng, md_plain(row[3]), "Target engines Scope")
     f.add("engine_count", len(targets), "Target engines table")
 
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
@@ -666,6 +861,8 @@ def engineering_figures(md_text: str) -> Figures:
                 # wave's sync risk), not an engine.
                 if md_plain(eng_heading) != "(general)":
                     f.name(engine_id(md_plain(eng_heading)), "Risk register")
+        if heading.startswith("Migration map"):
+            migration_map(f, heading, body)
         if heading.startswith("Migration trade-offs"):
             for x in re.findall(r"Consolidated [\d,]+ quer(?:y|ies) from (\w+) →", md_plain(body)):
                 if engine_id(x) not in targets:
@@ -767,6 +964,11 @@ def pdf_figures(text: str) -> Figures:
             f.add(f"cost:{eng}", _usd(cost), "Cost by engine")
         t = re.search(r"Total \$([\d,]+\.\d\d)", table)
         f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
+    # #1169: each migration target's Scope cell in the engine table.
+    for row in re.finditer(rf"({_NAMES_RE}) Migration target ([^$]{{0,120}}?)(?= \$|$)", text):
+        scope = re.search(r"[\d,]+ source tables?.*$", row.group(2))
+        if scope:
+            scope_split(f, engine_id(row.group(1)), scope.group(0), "Engine table Scope")
     m = re.search(r"Total [\d.]+% ([\d,]+) tables? migrates?", text)
     f.add("tables_migrate", _int(m.group(1)) if m else UNREADABLE, "Engines table Total")
     queries_moved(f, text, "Queries moved tile")

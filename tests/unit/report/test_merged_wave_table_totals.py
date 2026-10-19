@@ -52,9 +52,10 @@ def test_fixture_has_a_merged_wave_with_no_table_overlap(report: dict[str, Any])
 
 def test_architecture_engines_credits_each_engine_its_own_share(report: dict[str, Any]) -> None:
     rows = {e["engine"]: e for e in architecture._architecture_engines(report)}
-    # Scope shows each engine's own SERVED count -- never the union (200/200).
-    assert rows["dynamodb"]["scope"] == "118 source tables"
-    assert rows["documentdb"]["scope"] == "82 source tables"
+    # Scope shows each engine's own SERVED count -- never the union (200/200) --
+    # and, since #1169, how many of those migrate and how many are kept in sync.
+    assert rows["dynamodb"]["scope"] == "118 source tables served: 108 migrate, 10 kept in sync"
+    assert rows["documentdb"]["scope"] == "82 source tables served: 73 migrate, 9 kept in sync"
     # "Tables migrate" counts only the OWNED (physically moving) subset --
     # a served-but-not-owned table stays on its real owner, kept in sync.
     assert rows["dynamodb"]["migrates"] == 108
@@ -93,10 +94,12 @@ def test_engineering_report_and_architecture_rows_agree_on_the_split(
     "deliverables agree" invariant, specifically for the merged wave."""
     md = renderers.render_engineering_report_md(report)
     dynamo_row = re.search(
-        r"^\| DynamoDB \| Migration target \| [\d.]+% \| (\d+) source tables? \|", md, re.M
+        r"^\| DynamoDB \| Migration target \| [\d.]+% \| (\d+) source tables? served:", md, re.M
     )
     doc_row = re.search(
-        r"^\| DocumentDB \| Migration target \| [\d.]+% \| (\d+) source tables? \|", md, re.M
+        r"^\| DocumentDB \| Migration target \| [\d.]+% \| (\d+) source tables? served:",
+        md,
+        re.M,
     )
     assert dynamo_row is not None, md
     assert doc_row is not None, md
@@ -104,5 +107,5 @@ def test_engineering_report_and_architecture_rows_agree_on_the_split(
     assert int(doc_row.group(1)) == 82
 
     rows = {e["engine"]: e for e in architecture._architecture_engines(report)}
-    assert rows["dynamodb"]["scope"] == "118 source tables"
-    assert rows["documentdb"]["scope"] == "82 source tables"
+    assert rows["dynamodb"]["scope"].startswith("118 source tables served:")
+    assert rows["documentdb"]["scope"].startswith("82 source tables served:")

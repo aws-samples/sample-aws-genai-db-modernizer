@@ -3255,7 +3255,13 @@ def build_summary(
     # Table mapping summary
     if table_mappings:
         engines_used = sorted({display_name(m["recommended_database"]) for m in table_mappings})
-        parts.append(f"{len(table_mappings)} source tables mapped to {', '.join(engines_used)}.")
+        # #1169: say what it counts, the design's table map, not the tables an engine
+        # serves or moves (the deliverables add those from the facts layer).
+        parts.append(
+            f"The schema design's table map lists "
+            f"{_count(len(table_mappings), 'source table', 'source tables')} "
+            f"({', '.join(engines_used)})."
+        )
 
     # Cost
     if tco["projected_monthly_cost"] > 0:

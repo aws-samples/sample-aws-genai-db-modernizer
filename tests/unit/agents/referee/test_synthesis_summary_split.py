@@ -247,8 +247,13 @@ def test_consolidated_engine_is_named_by_display_name() -> None:
 
 def test_source_table_mapping_is_stated_once() -> None:
     text = _summary()
-    assert text.count("source tables mapped") == 1
-    assert "22 source tables mapped to Aurora MySQL, DynamoDB, ElastiCache." in text
+    assert text.count("table map lists") == 1
+    # #1169: it names what it counts, the design's table map.
+    assert (
+        "The schema design's table map lists 22 source tables "
+        "(Aurora MySQL, DynamoDB, ElastiCache)." in text
+    )
+    assert "source tables mapped to" not in text
 
 
 def test_without_assignment_the_top_engine_summary_is_kept() -> None:
@@ -260,7 +265,7 @@ def test_without_assignment_the_top_engine_summary_is_kept() -> None:
     assert "Top recommendation: ElastiCache with 50% average fit." in text
     assert "Schema design produced 10 target tables with 13 in-scope access patterns" in text
     assert "Other targets evaluated: DynamoDB (50%), Aurora MySQL (50%)." in text
-    assert text.count("source tables mapped") == 1
+    assert text.count("table map lists") == 1
 
 
 def _rationale(data: SynthesisData, target: str) -> str:

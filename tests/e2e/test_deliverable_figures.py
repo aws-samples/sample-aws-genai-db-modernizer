@@ -18,7 +18,10 @@ out of each (``tests/e2e/deliverable_figures.py``) and compares every one with
 - risk counts by severity;
 - the tied-query count;
 - the engines the reality check removed;
-- the queries that move to a new engine (#949).
+- the queries that move to a new engine (#949);
+- the Migration map heading's tables that migrate, are kept in sync or stay, and
+  each migration target's Scope cell split, whose kept-in-sync counts must agree
+  with the wave plan's (#1169).
 
 The same checks also run on a wordpress job with a schema design for every kept
 engine (``designed_run``, #949): the deterministic samples never run schema
@@ -112,6 +115,9 @@ def _pdf_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {"cost:total", "tables_migrate", "tied", "engine_count"}
     req |= {"choices", "auto_decided", "auto_decided_queries"} & set(exp)
     req |= {f"cost:{e}" for e in final_architecture(report)}
+    # #1169: each migration target's Scope cell says how many of its tables migrate.
+    req |= {k for k in exp if k.startswith(("tables:", "migrate:"))}
+    req |= {f"synced:{k.split(':', 1)[1]}" for k in exp if k.startswith("migrate:")}
     return req
 
 
@@ -123,7 +129,10 @@ def _engineering_required(report: dict[str, Any], exp: dict[str, Any]) -> set[st
         | ({"choices", "auto_decided", "auto_decided_queries"} & set(exp))
     )
     req |= {f"queries:{e}" for e in final_architecture(report) if e.startswith("aurora")}
-    req |= {k for k in exp if k.startswith("tables:")}
+    req |= {k for k in exp if k.startswith(("tables:", "migrate:"))}
+    req |= {f"synced:{k.split(':', 1)[1]}" for k in exp if k.startswith("migrate:")}
+    # #1169: the Migration map heading's split and the moving tables it has no row for.
+    req |= {k for k in exp if k.startswith("map:")}
     for w in _waves(report):
         req.add(f"wave{w['wave']}:queries")
         if w.get("table_count"):

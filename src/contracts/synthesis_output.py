@@ -407,6 +407,15 @@ Version History:
   engine ties". ``listed_queries`` still lists every query. Backward
   compatible: both default to empty / 0, and a stored block without groups
   gets them from ``src.report.facts.report_facts``.
+- 1.42 (2026-10-19, #1169): ``EngineFacts.kept_in_sync_tables`` and
+  ``moves_to_tables`` split a migration target's served tables it does not own the
+  way the wave plan does (owner outside the wave: kept in sync; owner in the same
+  wave: moves to that owner). ``TableBasis.mapped_tables_by_move`` is the Migration
+  map heading's split (migrate, kept in sync, cache layer, search read model, stays),
+  with ``migrating_tables_not_mapped`` (and ``_names``), the moving tables the map has
+  no row for, and ``mapped_tables_not_served``, the rows mapped to a migration target
+  that no query routed there reads. Backward compatible: they default to None, empty
+  and 0, and the facts reader fills them in for an older block.
 """
 
 from datetime import datetime
@@ -918,6 +927,23 @@ class EngineFacts(BaseModel):
     tables_migrate: int = Field(
         0, ge=0, description="Source tables that move to it (owned, not only served; #568)"
     )
+    kept_in_sync_tables: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Migration target only: of engine_source_tables, the tables an engine outside "
+            "its migration wave owns, kept in sync from that owner (the wave plan's rule, "
+            "#581, #1169). None when it states no served count"
+        ),
+    )
+    moves_to_tables: dict[str, int] | None = Field(
+        None,
+        description=(
+            "Migration target only: owner -> its served tables another engine of the same "
+            "wave owns; they move in that wave, to that owner (#1169). engine_source_tables "
+            "= tables_migrate + these + kept_in_sync_tables"
+        ),
+    )
     monthly_cost_usd: float | None = Field(None, ge=0)
     rationale: str = Field("", description="Why the engine is in the target (#152)")
     signal_overrides: list[str] = Field(
@@ -1061,6 +1087,35 @@ class TableBasis(BaseModel):
         description=(
             "Mapped tables per role of their engine (#258: '21 migrate, 1 to the cache "
             "layer'); 'Other' for an engine with no role in the architecture"
+        ),
+    )
+    mapped_tables_by_move: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Mapped tables by what the plan does with them, the Migration map heading's "
+            "split (#1169): migrate (a migrating wave moves it, as counted by "
+            "tables_migrate), kept_in_sync (a migrating wave serves it, another engine "
+            "owns it), cache_layer, search_read_model, stays (on the source engine) "
+            "and other"
+        ),
+    )
+    migrating_tables_not_mapped: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Tables a migration wave moves that no table_mappings row lists (#1169), so "
+            "mapped_tables_by_move['migrate'] plus this is the waves' moving count"
+        ),
+    )
+    migrating_tables_not_mapped_names: list[str] = Field(
+        default_factory=list,
+        description="Those tables by name: the schema design has no target table for them yet",
+    )
+    mapped_tables_not_served: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Engine -> tables the schema design maps to that migration target although no "
+            "query routed to it reads them; they stay on the source engine (#1169)"
         ),
     )
 
@@ -1616,7 +1671,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.41",
+        default="1.42",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
