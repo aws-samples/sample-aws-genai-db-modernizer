@@ -526,3 +526,80 @@ def test_a_human_cannot_skip_the_check_with_a_bot_like_name() -> None:
         author_emails={"humansha1": "dependabot@example.com"},
     )
     assert len(mod.check_range("origin/main..HEAD", run=run)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Failure help: a copyable example that itself passes (#1156).
+# ---------------------------------------------------------------------------
+
+
+def test_example_message_passes_the_checker() -> None:
+    assert mod.check_message(mod.EXAMPLE_MESSAGE) == []
+    assert len(mod.EXAMPLE_MESSAGE.splitlines()[0]) <= mod.MAX_SUBJECT_LENGTH
+
+
+def test_failure_output_names_the_rule_and_prints_a_passing_example(
+    tmp_path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    msg_file = tmp_path / "msg"
+    msg_file.write_text("feat: no body and no trailer\n")
+    assert mod.main([str(msg_file)]) == 1
+    out = capsys.readouterr().out
+    assert "body has 0 non-blank line(s)" in out
+    assert "must end with a 'Closes #N' or 'Refs #N' trailer" in out
+    printed = [
+        line[4:] for line in out.split("passes", 1)[1].splitlines() if line.startswith("    ")
+    ]
+    assert mod.check_message("\n".join(printed) + "\n") == []
+
+
+def test_passing_message_prints_no_example(tmp_path, capsys: pytest.CaptureFixture[str]) -> None:
+    msg_file = tmp_path / "msg"
+    msg_file.write_text(_msg("feat: ok"))
+    assert mod.main([str(msg_file)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_contributing_md_shows_the_same_example() -> None:
+    contributing = (mod.REPO_ROOT / "CONTRIBUTING.md").read_text()
+    assert mod.EXAMPLE_MESSAGE.strip() in contributing
+
+
+def _main_output(tmp_path, capsys, message: str) -> tuple[int, str]:
+    msg_file = tmp_path / "msg"
+    msg_file.write_text(message)
+    code = mod.main([str(msg_file)])
+    return code, capsys.readouterr().out
+
+
+def test_subject_of_72_chars_passes_without_help(tmp_path, capsys) -> None:
+    code, out = _main_output(tmp_path, capsys, _msg("a" * 72))
+    assert (code, out) == (0, "")
+
+
+def test_subject_of_73_chars_fails_and_prints_the_example(tmp_path, capsys) -> None:
+    code, out = _main_output(tmp_path, capsys, _msg("a" * 73))
+    assert code == 1
+    assert "subject is 73 characters" in out
+    assert "Closes #123" in out
+
+
+def test_refs_trailer_message_passes_without_help(tmp_path, capsys) -> None:
+    code, out = _main_output(tmp_path, capsys, _msg("feat: ok", trailer="Refs #5"))
+    assert (code, out) == (0, "")
+
+
+@pytest.mark.parametrize("subject", ["Merge branch 'x' into main", "fixup! feat: earlier"])
+def test_skipped_messages_print_nothing(tmp_path, capsys, subject: str) -> None:
+    code, out = _main_output(tmp_path, capsys, f"{subject}\n")
+    assert (code, out) == (0, "")
+
+
+def test_range_failures_print_the_example_once_after_all_violations(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        mod, "check_range", lambda rev_range, **kw: ["aaa1111: bad", "bbb2222: bad"]
+    )
+    assert mod.main(["--range", "origin/main..HEAD"]) == 1
+    out = capsys.readouterr().out
+    assert out.count("A message that passes") == 1
+    assert out.rindex("bbb2222: bad") < out.index("A message that passes")

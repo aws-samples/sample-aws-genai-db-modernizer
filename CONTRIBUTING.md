@@ -215,6 +215,21 @@ Common scopes in this project:
 - `contracts` - Contract models (Pydantic)
 - `infra` - Infrastructure/deployment
 
+### Example
+
+A message that passes the check (copy it and change the words):
+
+```text
+fix(api): handle timeout errors in job status
+
+The job status endpoint returned a 500 when the store timed out.
+Catch the timeout and return a 503 with a retry hint.
+
+Closes #123
+```
+
+A follow-up commit that leaves the issue open ends with `Refs #123` instead of `Closes #123`. When the check fails, it prints the failed rules and this same example.
+
 ### Rules
 
 1. Use imperative mood: "add" not "added" or "adds"

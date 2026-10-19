@@ -78,6 +78,18 @@ DEFAULT_COMMENT_CHAR = "#"
 # validates the message being written right now.
 RULE_EFFECTIVE_DATE = datetime(2026, 10, 13, 0, 0, 0, tzinfo=UTC)
 
+# One ready-to-copy message that passes every rule above. Printed after a
+# failure and mirrored in CONTRIBUTING.md's Commit Message Format; a test
+# keeps it passing the checker.
+EXAMPLE_MESSAGE = (
+    "fix(api): handle timeout errors in job status\n"
+    "\n"
+    "The job status endpoint returned a 500 when the store timed out.\n"
+    "Catch the timeout and return a 503 with a retry hint.\n"
+    "\n"
+    "Closes #123\n"
+)
+
 _FIXUP_PREFIXES = ("fixup!", "squash!", "amend!")
 
 # Dependabot writes its own commit messages (long body, no issue trailer); the
@@ -336,6 +348,17 @@ def check_range(rev_range: str, *, run: GitRunner = _run_git) -> list[str]:
     return violations
 
 
+def failure_help() -> str:
+    """Return the example message printed under the failed rules."""
+    indented = "\n".join(f"    {line}".rstrip() for line in EXAMPLE_MESSAGE.splitlines())
+    return (
+        "\nA message that passes (subject at most 72 characters, 2-4 body lines, "
+        "one 'Closes #N' or 'Refs #N' trailer):\n\n"
+        f"{indented}\n\n"
+        "See CONTRIBUTING.md, Commit Message Format."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -361,6 +384,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for violation in violations:
         print(f"commit message check failed: {violation}")
+    if violations:
+        print(failure_help())
     return 1 if violations else 0
 
 
