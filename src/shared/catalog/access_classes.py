@@ -64,6 +64,7 @@ QUERY_FACTS = frozenset(
         "stored_routine",
         "upsert",
         "prefix_regex",
+        "json_access",
     }
 )
 # The fact that marks a write (ADR-031 Decision 2 step 3: an engine that is not a

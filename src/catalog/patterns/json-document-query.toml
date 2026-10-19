@@ -32,8 +32,8 @@ concerns = [
     "JSON_EXTRACT at query time should be replaced by top-level fields at write time",
 ]
 table_bonus = 8
-# Schema flexibility reduces migration complexity.
-complexity_feature = true
+# The routing credit is per query (a [[features]] entry on the json_access fact in
+# access_classes.toml), never a table-level complexity credit (#1102, ADR-031 Decision 14).
 
 [engines.opensearch]
 kind = "unscored"
@@ -57,7 +57,8 @@ concerns = [
     "Deeply nested JSONB paths may not be indexable; consider flattening hot paths.",
 ]
 table_bonus = 10
-complexity_feature = true
+# The routing credit is per query (a [[features]] entry on the json_access fact in
+# access_classes.toml), never a table-level complexity credit (#1102, ADR-031 Decision 14).
 
 # Detection signals: JSON_EXTRACT, JSON_CONTAINS, ->> operator
 [engines.aurora_mysql]
@@ -71,7 +72,8 @@ concerns = [
     "JSON column indexes require generated columns or multi-valued index syntax.",
 ]
 table_bonus = 10
-complexity_feature = true
+# The routing credit is per query (a [[features]] entry on the json_access fact in
+# access_classes.toml), never a table-level complexity credit (#1102, ADR-031 Decision 14).
 
 [engines.neptune]
 kind = "future"

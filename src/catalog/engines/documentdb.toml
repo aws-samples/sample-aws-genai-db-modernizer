@@ -6,9 +6,8 @@ ui_picker_order = 2
 status = "active"
 role = "document"
 system_of_record = true
-# Complexity points for a table showing a flexible-shape pattern (a complexity_feature
-# entry): schema flexibility reduces migration complexity (#921).
-complexity_by_feature_count = [10]
+# No complexity_by_feature_count: no DocumentDB pattern is a table-level complexity
+# credit (#1102, ADR-031 Decision 14); JSON reads are rated per query.
 
 [colors]
 ui = "#1d8102"

@@ -52,6 +52,7 @@ stays with the caller: it needs the collection's table list.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Iterable
@@ -1060,12 +1061,24 @@ def _is_json_access(node: exp.Expr) -> bool:
     if isinstance(node, exp.Cast | exp.TryCast):
         return bool(node.to.is_type(exp.DataType.Type.JSON, exp.DataType.Type.JSONB))
     if isinstance(node, exp.ArrayContainsAll):  # PostgreSQL ``@>`` on a JSON document
-        return any(
-            isinstance(side, exp.Literal) and bool(side.is_string) for side in node.args.values()
-        )
+        return any(_is_json_document_literal(side) for side in node.args.values())
     if isinstance(node, exp.Anonymous):
-        return bool(node.name.lower().startswith("json"))
+        # A json* call, or SQL Server's ISJSON (review of #1118).
+        name = node.name.lower()
+        return bool(name.startswith("json") or name == "isjson")
     return False
+
+
+def _is_json_document_literal(node: object) -> bool:
+    """A string literal that is a JSON document, the operand of a JSON ``@>``. A
+    PostgreSQL array literal such as ``'{a,b}'`` on a ``text[]`` column is not JSON
+    (review of #1118); ``'{}'`` is both, and stays JSON."""
+    if not (isinstance(node, exp.Literal) and node.is_string):
+        return False
+    try:
+        return isinstance(json.loads(node.this), dict | list)
+    except ValueError:
+        return False
 
 
 def _is_multi_table_write(node: exp.Expr) -> bool:

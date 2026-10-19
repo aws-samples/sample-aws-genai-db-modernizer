@@ -39,7 +39,7 @@ From each engine file: the source engines whose own dialect it is, whether it sc
 | Engine | Source engines | Pattern only | Absorbs only | Override needs justification | Complexity by feature count |
 |---|---|---|---|---|---|
 | DynamoDB | - | no | - | no | - |
-| DocumentDB | - | no | - | no | 10 |
+| DocumentDB | - | no | - | no | - |
 | OpenSearch | - | yes | signal `text_search`, signal `aggregations`, capability `text_pattern_match` | yes | - |
 | ElastiCache | - | no | - | no | - |
 | Aurora PostgreSQL | `postgresql`, `postgres` | no | - | no | 10, 15 |
@@ -486,9 +486,9 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
-- DocumentDB, fit 80 (documentdb-06): A query that reads JSON paths \(JSON\_EXTRACT, -&gt;&gt;, JSON\_VALUE\): the data is already semi-structured, and each path maps to a document field. Table bonus: +8 pattern match. Counts toward the engine's feature complexity bonus.
-- Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries, combining document flexibility with relational joins. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
-- Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths. Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
+- DocumentDB, fit 80 (documentdb-06): A query that reads JSON paths \(JSON\_EXTRACT, -&gt;&gt;, JSON\_VALUE\): the data is already semi-structured, and each path maps to a document field. Table bonus: +8 pattern match.
+- Aurora PostgreSQL, fit 85 (aurora-pg-03): JSONB operations \(-&gt;&gt;, @&gt;, jsonb\_agg, jsonb\_build\_object\) for semi-structured data within relational context. Aurora PG provides GIN-indexed JSONB queries, combining document flexibility with relational joins. Table bonus: +10 pattern match.
+- Aurora MySQL, fit 85 (aurora-mysql-01): JSON document queries using JSON\_EXTRACT, JSON\_CONTAINS, or -&gt;&gt; operator. Aurora MySQL 8.0+ provides multi-valued indexes on JSON arrays and generated columns for indexing JSON paths. Table bonus: +10 pattern match.
 - No effect on: DynamoDB, OpenSearch, ElastiCache.
 - Not modelled yet (future enhancement): Neptune, Keyspaces.
 

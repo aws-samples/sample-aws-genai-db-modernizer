@@ -183,7 +183,7 @@ _TIMESTAMP_COLUMN_RE = re.compile(rf"\b(?:{TIMESTAMP_COLUMN_NAMES})\b", re.IGNOR
 # fallback, and ``query_shape``'s shape check on comment- and literal-stripped text).
 RANGE_PREDICATE_RE = re.compile(r"\bBETWEEN\b|(?<![<>=!@\-])(?:<=|>=|<|>)(?![<>=@])", re.IGNORECASE)
 _JSON_ACCESS_RE = re.compile(
-    r"\bjsonb?_\w+\s*\(|->>?|#>|::jsonb?\b|@>\s*'|\bopenjson\s*\(|\bfor\s+json\b|\bis\s+json\b",
+    r"\bjsonb?_\w+\s*\(|->>?|#>|::jsonb?\b|@>\s*'|\bopenjson\s*\(|\bisjson\s*\(|\bfor\s+json\b|\bis\s+json\b",
     re.IGNORECASE,
 )
 _RANKING_WINDOW_FUNCTION_RE = re.compile(

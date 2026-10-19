@@ -309,6 +309,13 @@ class TestTheFactsAddedFor893:
             ("SELECT * FROM t WHERE doc ? 'k'", "postgresql", "json_access", False),
             ("SELECT * FROM t WHERE doc @> '{\"a\": 1}'", "postgresql", "json_access", True),
             ("SELECT * FROM t WHERE tags @> ARRAY[1]", "postgresql", "json_access", False),
+            # Review of #1118: a PostgreSQL array literal is not a JSON document, an
+            # empty '{}' stays JSON, and SQL Server's ISJSON is a JSON read.
+            ("SELECT * FROM t WHERE tags @> '{a,b}'", "postgresql", "json_access", False),
+            ("SELECT * FROM t WHERE doc @> '[1, 2]'", "postgresql", "json_access", True),
+            ("SELECT * FROM t WHERE doc @> '{}'", "postgresql", "json_access", True),
+            ("SELECT * FROM t WHERE ISJSON(doc) = 1", "sqlserver", "json_access", True),
+            ("SELECT 'isjson(doc)' FROM t", "sqlserver", "json_access", False),
             ("SELECT jsonb_build_object('a', 1)", "postgresql", "json_access", True),
             ("SELECT doc::jsonb FROM t", "postgresql", "json_access", True),
             ("SELECT * FROM t FOR JSON PATH", "sqlserver", "json_access", True),

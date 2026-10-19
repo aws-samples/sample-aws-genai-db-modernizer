@@ -135,11 +135,19 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     ``0xBE098518D277706D`` (``UserSession s CROSS APPLY OPENJSON(s.[CartJson])``), is a
     lateral join, so the lateral-join feature rates it on both engines at each one's
     documented credit (Aurora PostgreSQL 85, Aurora MySQL 80): +4 and +2 on its pattern
-    dimension, so the lead grows by 2 and the features still decide."""
+    dimension, so the lead grows by 2 and the features still decide.
+
+    #1102 (a JSON read is a per-query feature, no longer a table-level complexity
+    credit): 7251 to 7281. Both Aurora engines lose the JSON complexity tier on
+    ``Product`` alike (its complexity score 95 to 85 on each), 13 points on each total
+    over the seven ``Product`` queries (1 to 3 each). The JSON query ``0xBE098518D277706D``
+    (``OPENJSON``) now gets each engine's JSON fit (85 on both) per query: Aurora MySQL's
+    80 ``LATERAL`` credit rises to 85 and it gains 2, Aurora PostgreSQL already had 85.
+    The lead goes from 32 to 30 and the features still decide."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7262.0, 7294.0)
+    assert (mysql, pg) == (7251.0, 7281.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"

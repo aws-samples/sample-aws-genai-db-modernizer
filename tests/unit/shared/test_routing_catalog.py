@@ -374,8 +374,8 @@ PRE_921_FEATURES = {
         "multi-table-update",
         "group-concat-pivot",
         "stored-routine",
-        "json-document-query",
         # #984: full text and the upsert are per-query features now, not table-level ones.
+        # #1102: so is a JSON read (json-document-query).
     },
     "aurora_postgresql": {
         "cte-recursive",
@@ -384,12 +384,12 @@ PRE_921_FEATURES = {
         "multi-table-update",
         "group-concat-pivot",
         "stored-routine",
-        "json-document-query",  # #967: was jsonb-operations
+        # #1102: json-document-query (was jsonb-operations, #967) is a per-query feature now.
         "array-operations",
     },
-    # #967: flexible-schema is json-document-query; polymorphic-data's credit is not carried
-    # into variant-attributes, which would widen it to typed-entity reads (Decision 14).
-    "documentdb": {"json-document-query"},
+    # #967: polymorphic-data's credit is not carried into variant-attributes, which would
+    # widen it to typed-entity reads; #1102: json-document-query (was flexible-schema) is a
+    # per-query feature now. DocumentDB has no table-level complexity credit (Decision 14).
 }
 
 
@@ -445,7 +445,11 @@ class TestTheTableBonusesKeepTheirValues:
             ("aurora_postgresql", ["upsert-conflict"], 0),
             ("aurora_mysql", ["upsert-duplicate-key"], 0),
             ("aurora_postgresql", ["upsert-conflict", "full-text-native"], 0),
-            ("documentdb", ["variant-attributes", "json-document-query"], 10),
+            # #1102: a JSON read no longer counts toward a table's complexity anywhere.
+            ("documentdb", ["variant-attributes", "json-document-query"], 0),
+            ("aurora_postgresql", ["json-document-query"], 0),
+            ("aurora_mysql", ["json-document-query"], 0),
+            ("aurora_mysql", ["json-document-query", "cte-recursive"], 10),
             ("dynamodb", ["key-value-lookup"], 0),
         ],
     )
@@ -561,6 +565,94 @@ class TestTheTableBonusesKeepTheirValues:
         assert class_score(key_scoped, "aurora_postgresql") == class_score(
             key_scoped, "aurora_mysql"
         )
+
+    JSON_ENGINES = {"aurora_postgresql": 85, "aurora_mysql": 85, "documentdb": 80}
+
+    def test_no_table_level_json_credit_remains(self) -> None:
+        """#1102, ADR-031 Decision 14: a query's pattern dimension is its own class, so a
+        JSON read is never a table-level complexity credit on any engine; it rates the
+        JSON query itself, as a [[features]] entry on the json_access fact."""
+        from src.shared.catalog.access_classes import access_classes, feature_patterns
+        from src.shared.catalog.engines import engine_entry
+        from src.shared.catalog.patterns import pattern
+
+        entry = pattern("json-document-query")
+        for engine, support in entry.engines.items():
+            assert not support.complexity_feature, engine
+            assert support.complexity_bonus == 0, engine
+            assert feature_complexity_bonus(engine, ["json-document-query"]) == 0, engine
+        assert {e for e, s in entry.engines.items() if s.kind == "fit"} == set(self.JSON_ENGINES)
+        # DocumentDB has no table-level complexity credit left, so none can come back
+        # without a catalog error (a complexity_feature needs the engine's tiers).
+        documentdb = engine_entry("documentdb")
+        assert documentdb is not None and documentdb.complexity_by_feature_count == ()
+        facts = {f.pattern: f.fact for f in feature_patterns()}
+        assert facts.get("json-document-query") == "json_access"
+        assert "json-document-query" not in {p for c in access_classes() for p in c.patterns}
+
+    def test_a_json_read_credits_the_json_query_not_its_table(self) -> None:
+        """#1102: the JSON query gets each engine's documented JSON fit, in any class; a
+        query without the fact gets nothing from it, and no engine without a JSON fit
+        gains anything."""
+        from src.shared.catalog.access_classes import access_classes, class_score
+
+        json_fact = frozenset({"json_access"})
+        for access_class in access_classes():
+            for engine, fit in self.JSON_ENGINES.items():
+                base = class_score(access_class, engine)
+                if base == 0:
+                    # Not pinned: a feature fit lifting a class the engine scores 0
+                    # (DocumentDB's unanchored join, 0 to 80 today) is pending the
+                    # maintainer decision in #1123 (cap feature fits by class).
+                    continue
+                assert class_score(access_class, engine, json_fact) == max(base, fit)
+            for engine in ("dynamodb", "opensearch", "elasticache"):
+                assert class_score(access_class, engine, json_fact) == class_score(
+                    access_class, engine
+                ), (access_class.id, engine)
+        # A key read of a JSON table: the class alone, then the JSON read itself.
+        key_lookup = next(c for c in access_classes() if c.id == "key_lookup")
+        for engine in AURORA:
+            assert class_score(key_lookup, engine) == 80
+            assert class_score(key_lookup, engine, json_fact) == 85
+        # Both Aurora engines get the same JSON credit (Decision 6).
+        assert self.JSON_ENGINES["aurora_postgresql"] == self.JSON_ENGINES["aurora_mysql"]
+
+    @pytest.mark.parametrize(
+        ("text", "source", "shown"),
+        [
+            ("SELECT doc->>'a' FROM t WHERE a = 1", "postgresql", True),
+            ("SELECT JSON_EXTRACT(doc, '$.a') FROM t WHERE a = 1", "mysql", True),
+            ("SELECT * FROM t WHERE doc @> '{\"a\": 1}'", "postgresql", True),
+            ("SELECT doc FROM t WHERE a = 1", "postgresql", False),
+            ("SELECT doc FROM t WHERE a = 1", "mysql", False),
+            ("SELECT * FROM t WHERE note = 'a->b'", "postgresql", False),
+            ("SELECT * FROM t -- JSON_EXTRACT(doc, '$.a')", "mysql", False),
+        ],
+    )
+    def test_the_classifier_sets_the_json_fact(self, text: str, source: str, shown: bool) -> None:
+        """The json_access class fact comes from the classifier on the query's own text,
+        read in the source's dialect; a plain read of the same table does not get it."""
+        from src.agents.referee.access_pattern import SchemaKeys, classify_query
+
+        collector = {
+            "database_schema": {
+                "tables": [
+                    {
+                        "table_id": "app.t",
+                        "table_name": "t",
+                        "columns": [
+                            {"column_name": "a", "data_type": "int"},
+                            {"column_name": "doc", "data_type": "json"},
+                        ],
+                        "primary_key": ["a"],
+                    }
+                ]
+            }
+        }
+        keys = SchemaKeys.from_collector(collector)
+        query = {"query_text": text, "query_type": "SELECT", "tables_accessed": ["app.t"]}
+        assert ("json_access" in classify_query(query, keys, source).facts) is shown
 
     def test_the_upsert_fact(self) -> None:
         from src.tools.sql.query_facts import query_facts

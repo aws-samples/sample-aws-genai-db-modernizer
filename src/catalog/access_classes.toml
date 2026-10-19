@@ -130,3 +130,11 @@ why = "A full-text match (tsvector with a GIN index) is served natively by Auror
 pattern = "fulltext-search"
 fact = "full_text"
 why = "A full-text match (MATCH ... AGAINST over a FULLTEXT index) is served natively by Aurora MySQL, at its documented rating."
+
+# A JSON read rates the query that reads or builds JSON itself, in any class (#1102), on
+# each engine at its documented fit (Aurora PostgreSQL and Aurora MySQL 85, DocumentDB 80);
+# no other query on the table earns anything from it (Decision 14).
+[[features]]
+pattern = "json-document-query"
+fact = "json_access"
+why = "A query that reads or builds JSON (a JSON function or operator, a cast to JSON, a JSON containment) is served by the engines that index and query JSON paths, each at its own documented rating."
