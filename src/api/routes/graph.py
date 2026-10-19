@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -68,12 +69,20 @@ RETRY_AFTER_S = "1"
 # once rather than on every request (#819). A new version shows up on the
 # first read after the entry expires.
 EFFECTIVE_VERSION_TTL_S = 2.0
-_effective_versions: dict[tuple[str, str], tuple[float, int]] = {}
+# A failed rebuild backs off this long (seconds) per job (#848), so reads while
+# the artifact store is failing keep serving the previous graph instead of
+# rebuilding on every request.
+REBUILD_BACKOFF_S = 2.0
+# Cap on the per-job version, failure-backoff and refresh-lock maps (#848).
+MAX_TRACKED_JOBS = 128
+_effective_versions: OrderedDict[tuple[str, str], tuple[float, int]] = OrderedDict()
 _effective_versions_lock = threading.Lock()
+_rebuild_failures: OrderedDict[tuple[str, str], float] = OrderedDict()
+_rebuild_failures_lock = threading.Lock()
 # One refresh of an open graph per job at a time, so concurrent reads after a
 # new assignment version wait for one rebuild instead of each taking the
 # exclusive lock to re-check.
-_refresh_locks: dict[tuple[str, str], threading.Lock] = {}
+_refresh_locks: OrderedDict[tuple[str, str], threading.Lock] = OrderedDict()
 _refresh_locks_guard = threading.Lock()
 
 
@@ -159,8 +168,11 @@ def _effective_assignment_version(db_name: str, job_id: str) -> int | None:
     now = time.monotonic()
     with _effective_versions_lock:
         hit = _effective_versions.get(key)
-    if hit is not None and now - hit[0] < EFFECTIVE_VERSION_TTL_S:
-        return hit[1]
+        if hit is not None:
+            if 0 <= now - hit[0] < EFFECTIVE_VERSION_TTL_S:
+                _effective_versions.move_to_end(key)
+                return hit[1]
+            del _effective_versions[key]
     _, store, _ = _services()
     try:
         version = resolve_effective_assignment_version(store, db_name, job_id)
@@ -174,8 +186,46 @@ def _effective_assignment_version(db_name: str, job_id: str) -> int | None:
         )
         return None
     with _effective_versions_lock:
+        for old_key, (ts, _) in list(_effective_versions.items()):
+            if not (0 <= now - ts < EFFECTIVE_VERSION_TTL_S):
+                del _effective_versions[old_key]
         _effective_versions[key] = (now, version)
+        _effective_versions.move_to_end(key)
+        while len(_effective_versions) > MAX_TRACKED_JOBS:
+            _effective_versions.popitem(last=False)
     return version
+
+
+def _in_rebuild_backoff(db_name: str, job_id: str) -> bool:
+    """True when a rebuild for this job failed within ``REBUILD_BACKOFF_S``."""
+    key = (db_name, job_id)
+    now = time.monotonic()
+    with _rebuild_failures_lock:
+        failed_at = _rebuild_failures.get(key)
+        if failed_at is None:
+            return False
+        if 0 <= now - failed_at < REBUILD_BACKOFF_S:
+            return True
+        del _rebuild_failures[key]
+        return False
+
+
+def _record_rebuild_failure(db_name: str, job_id: str) -> None:
+    key = (db_name, job_id)
+    now = time.monotonic()
+    with _rebuild_failures_lock:
+        for old_key, ts in list(_rebuild_failures.items()):
+            if not (0 <= now - ts < REBUILD_BACKOFF_S):
+                del _rebuild_failures[old_key]
+        _rebuild_failures[key] = now
+        _rebuild_failures.move_to_end(key)
+        while len(_rebuild_failures) > MAX_TRACKED_JOBS:
+            _rebuild_failures.popitem(last=False)
+
+
+def _clear_rebuild_failure(db_name: str, job_id: str) -> None:
+    with _rebuild_failures_lock:
+        _rebuild_failures.pop((db_name, job_id), None)
 
 
 def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
@@ -202,9 +252,13 @@ def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
     finally:
         writer.close()
     complete = stats.get("complete", True)
+    if complete:
+        _clear_rebuild_failure(db_name, job_id)
+    else:
+        _record_rebuild_failure(db_name, job_id)
     if not complete and _is_populated_file(path):
         # An artifact could not be read: keep the previous graph (and its
-        # stamp), so the next read retries instead of serving a partial one.
+        # stamp), so a later read retries instead of serving a partial one.
         logger.warning(
             "graph rebuild for %s/%s was incomplete; keeping the previous graph", db_name, job_id
         )
@@ -217,7 +271,7 @@ def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
     for leftover in _sidecars(building)[1:]:
         Path(leftover).unlink(missing_ok=True)
     if not complete:
-        # No previous graph: serve this unstamped one, which the next read
+        # No previous graph: serve this unstamped one, which a later read
         # rebuilds; never upload it for other API tasks to reuse.
         return stats
     try:
@@ -232,14 +286,21 @@ def _sidecars(path: str) -> tuple[str, str, str]:
     return path, f"{path}.wal", f"{path}.shadow"
 
 
-def _prepare_graph_file(db_name: str, job_id: str, path: str) -> None:
+def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool = False) -> None:
     """Make ``path`` hold this job's graph: local file -> store download -> build+upload.
 
     A local or downloaded graph is used only when it was built from the job's
     current effective assignment version; otherwise it is rebuilt (#819).
-    When that version can't be read, a current-revision graph is used as it is.
+    When that version can't be read, or a rebuild for this job is in back-off
+    (#848), a current-revision graph is used as it is.
     """
-    version = _effective_assignment_version(db_name, job_id)
+    if refreshed and Path(path).exists():
+        return
+    version = (
+        None
+        if _in_rebuild_backoff(db_name, job_id)
+        else _effective_assignment_version(db_name, job_id)
+    )
     if _is_populated_file(path, version):
         return
     _, _, persistence = _services()
@@ -291,9 +352,11 @@ def graph_lease(job_id: str) -> Iterator[tuple[GraphStore, str]]:
     cache, _, _ = _services()
     db_name = _resolve_db_name(job_id)
     _require_graph_path(cache, db_name, job_id)
-    _refresh_if_behind(cache, db_name, job_id)
+    refreshed = _refresh_if_behind(cache, db_name, job_id)
     with cache.reader(
-        db_name, job_id, lambda path: _prepare_graph_file(db_name, job_id, path)
+        db_name,
+        job_id,
+        lambda path: _prepare_graph_file(db_name, job_id, path, refreshed=refreshed),
     ) as store:
         yield store, db_name
 
@@ -308,24 +371,28 @@ def _require_graph_path(cache: GraphStoreCache, db_name: str, job_id: str) -> st
         raise HTTPException(status_code=404, detail="Assessment not found") from exc
 
 
-def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> None:
+def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> bool:
     """Rebuild an open graph built from an earlier assignment version (#819).
 
     A customer edit, a reality check or a post-schema reroute writes a new
     assignment version without touching the graph, so an already-open handle
     can lag behind. A graph that is not open yet is checked by
     ``_prepare_graph_file`` when the reader opens it. When the version can't
-    be read, the open graph is served as it is.
+    be read, or a failed rebuild is in back-off (#848), the open graph is
+    served as it is. Returns True when ``cache.exclusive`` was taken so the
+    following ``cache.reader`` does not repeat the rebuild on the same read.
     """
-    if not cache.is_open(db_name, job_id):
-        return
+    if not cache.is_open(db_name, job_id) or _in_rebuild_backoff(db_name, job_id):
+        return False
     version = _effective_assignment_version(db_name, job_id)
     if version is None or _open_graph_is_current(cache, db_name, job_id, version):
-        return
+        return False
     with _refresh_lock(db_name, job_id):
-        # Another request may have rebuilt it while this one waited.
-        if _open_graph_is_current(cache, db_name, job_id, version):
-            return
+        # Another request may have rebuilt it (or failed and backed off) while this one waited.
+        if _in_rebuild_backoff(db_name, job_id) or _open_graph_is_current(
+            cache, db_name, job_id, version
+        ):
+            return False
         with cache.exclusive(db_name, job_id) as path:
             if not _is_populated_file(path, version):
                 logger.info(
@@ -334,7 +401,10 @@ def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> Non
                     job_id,
                     version,
                 )
-                _build_graph_file(db_name, job_id, path)
+                stats = _build_graph_file(db_name, job_id, path)
+                if isinstance(stats, dict) and not stats.get("complete", True):
+                    _record_rebuild_failure(db_name, job_id)
+        return True
 
 
 def _open_graph_is_current(cache: GraphStoreCache, db_name: str, job_id: str, version: int) -> bool:
@@ -347,8 +417,22 @@ def _open_graph_is_current(cache: GraphStoreCache, db_name: str, job_id: str, ve
 
 
 def _refresh_lock(db_name: str, job_id: str) -> threading.Lock:
+    key = (db_name, job_id)
     with _refresh_locks_guard:
-        return _refresh_locks.setdefault((db_name, job_id), threading.Lock())
+        lock = _refresh_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _refresh_locks[key] = lock
+        _refresh_locks.move_to_end(key)
+        excess = len(_refresh_locks) - MAX_TRACKED_JOBS
+        if excess > 0:
+            for old_key, old_lock in list(_refresh_locks.items()):
+                if excess <= 0 or old_key == key:
+                    break
+                if not old_lock.locked():
+                    del _refresh_locks[old_key]
+                    excess -= 1
+        return lock
 
 
 def get_graph_for_job(job_id: str = Depends(job_id_param)) -> Iterator[tuple[GraphStore, str]]:

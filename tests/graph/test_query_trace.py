@@ -560,15 +560,20 @@ class TestSavedGraphFollowsTheAssignment:
         monkeypatch.setattr(graph_routes, "artifact_store", store)
         monkeypatch.setattr(graph_routes, "graph_persistence", persistence)
         monkeypatch.setattr(graph_routes, "_resolve_db_name", lambda job_id: "wordpress")
-        # Every read sees the store as it is now; the TTL has its own test.
+        # Every read sees the store as it is now; the TTL and backoff have their own tests.
         monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 0.0)
+        monkeypatch.setattr(graph_routes, "REBUILD_BACKOFF_S", 0.0)
         graph_routes._effective_versions.clear()
+        graph_routes._rebuild_failures.clear()
+        graph_routes._refresh_locks.clear()
         app = FastAPI()
         app.include_router(graph_routes.router)
         self.store, self.persistence = store, persistence
         yield TestClient(app), files, cache
         cache.close_all()
         graph_routes._effective_versions.clear()
+        graph_routes._rebuild_failures.clear()
+        graph_routes._refresh_locks.clear()
 
     @staticmethod
     def _trace(client: TestClient, qid: str) -> dict:
@@ -755,3 +760,102 @@ class TestSavedGraphFollowsTheAssignment:
             ("aurora_mysql", 3)
         }
         assert builds == ["job"] and exclusives == ["job"]
+
+    def test_a_failed_refresh_does_not_rebuild_twice_and_backs_off(
+        self, served, sample, monkeypatch
+    ):
+        """#848: a failed refresh neither repeats on the same read nor rebuilds on every read while the store fails."""
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        clock = [1000.0]
+        monkeypatch.setattr(graph_routes.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(graph_routes, "REBUILD_BACKOFF_S", 3.0)
+        builds: list[str] = []
+        real_build = graph_routes._build_graph_file
+        monkeypatch.setattr(
+            graph_routes,
+            "_build_graph_file",
+            lambda db, job, path: builds.append(job) or real_build(db, job, path),
+        )
+
+        self._customer_edit(files, sample, qid)
+        v3 = "wordpress/job/assignment/v3/assignment.json"
+        self.store.fail_reads[v3] = 99
+        for _ in range(3):
+            during = self._trace(client, qid)
+            assert (during["final_engine"], during["effective_version"]) == ("dynamodb", 2)
+        assert builds == ["job"]  # one build across three reads while v3 is unreadable
+
+        # Even if the handle is closed during backoff, reopening serves the saved v2 file as-is.
+        cache.close_all()
+        clock[0] += 1.0
+        assert self._trace(client, qid)["effective_version"] == 2
+        assert builds == ["job"]
+
+        self.store.fail_reads.clear()
+        assert self._trace(client, qid)["effective_version"] == 2  # still within the backoff
+        assert builds == ["job"]
+
+        clock[0] += 2.5
+        after = self._trace(client, qid)
+        assert (after["final_engine"], after["effective_version"]) == ("aurora_mysql", 3)
+        assert builds == ["job", "job"]
+
+    def test_a_failed_refresh_is_not_repeated_by_the_same_read_even_without_backoff(
+        self, served, sample, monkeypatch
+    ):
+        """#848: with no back-off window, one read still builds once (not once to refresh and once to reopen)."""
+        client, files, cache = served  # the fixture sets REBUILD_BACKOFF_S to 0.0
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        builds: list[str] = []
+        real_build = graph_routes._build_graph_file
+        monkeypatch.setattr(
+            graph_routes,
+            "_build_graph_file",
+            lambda db, job, path: builds.append(job) or real_build(db, job, path),
+        )
+        self._customer_edit(files, sample, qid)
+        self.store.fail_reads["wordpress/job/assignment/v3/assignment.json"] = 99
+        assert self._trace(client, qid)["effective_version"] == 2
+        assert builds == ["job"]
+        assert self._trace(client, qid)["effective_version"] == 2
+        assert builds == ["job", "job"]  # one build per read, never two
+
+    def test_per_job_tracking_maps_are_bounded(self, served, monkeypatch):
+        """#848: _effective_versions, _rebuild_failures and _refresh_locks evict old jobs beyond MAX_TRACKED_JOBS."""
+        monkeypatch.setattr(graph_routes, "MAX_TRACKED_JOBS", 4)
+        monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 60.0)
+        monkeypatch.setattr(graph_routes, "REBUILD_BACKOFF_S", 60.0)
+
+        held = graph_routes._refresh_lock("wordpress", "job-0")
+        held.acquire()
+        try:
+            for i in range(10):
+                job = f"job-{i}"
+                graph_routes._effective_assignment_version("wordpress", job)
+                graph_routes._record_rebuild_failure("wordpress", job)
+                if i > 0:
+                    graph_routes._refresh_lock("wordpress", job)
+
+            assert len(graph_routes._effective_versions) == 4
+            assert ("wordpress", "job-0") not in graph_routes._effective_versions
+            assert ("wordpress", "job-9") in graph_routes._effective_versions
+
+            assert len(graph_routes._rebuild_failures) == 4
+            assert ("wordpress", "job-0") not in graph_routes._rebuild_failures
+            assert ("wordpress", "job-9") in graph_routes._rebuild_failures
+
+            # Held lock is never evicted while locked; idle oldest ones are.
+            assert len(graph_routes._refresh_locks) == 4
+            assert graph_routes._refresh_locks.get(("wordpress", "job-0")) is held
+            assert ("wordpress", "job-1") not in graph_routes._refresh_locks
+            assert ("wordpress", "job-9") in graph_routes._refresh_locks
+        finally:
+            held.release()
+
+        graph_routes._refresh_lock("wordpress", "job-10")
+        assert len(graph_routes._refresh_locks) == 4
+        assert ("wordpress", "job-0") not in graph_routes._refresh_locks
+        assert ("wordpress", "job-10") in graph_routes._refresh_locks
