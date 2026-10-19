@@ -35,6 +35,15 @@ on:
       - ".github/workflows/docs.yml"
   workflow_dispatch: {}
 
+concurrency:
+  # A newer push to a pull request cancels that pull request's older run
+  # (#1174). merge_group, push and schedule runs are never cancelled: the
+  # group is unique per run for them (a shared group would drop pending
+  # runs). The required
+  # `test` and `e2e` checks come from the replacing run's own jobs.
+  group: ${{ github.workflow }}-${{ github.event.number && format('pr-{0}', github.event.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
