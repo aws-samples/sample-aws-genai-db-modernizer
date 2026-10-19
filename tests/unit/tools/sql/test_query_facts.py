@@ -631,3 +631,19 @@ class TestCrossApplyIsALateralJoin:
 
     def test_not_in_a_string_literal(self) -> None:
         assert not query_facts("SELECT 'cross apply' FROM t", "sqlserver").lateral_join
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT [cross apply] FROM t",
+            'SELECT "outer apply" FROM t',
+            "SELECT t.[cross   apply] FROM [dbo].[t] t",
+        ],
+    )
+    def test_not_in_a_quoted_identifier(self, text: str) -> None:
+        """#1098: a bracketed or double-quoted name is an identifier, not the join."""
+        assert not query_facts(text, "sqlserver").lateral_join
+
+    def test_a_bracketed_name_next_to_a_real_apply_still_reads_it(self) -> None:
+        text = "SELECT [cross apply] FROM [t] CROSS APPLY dbo.f([t].[id]) x"
+        assert query_facts(text, "sqlserver").lateral_join

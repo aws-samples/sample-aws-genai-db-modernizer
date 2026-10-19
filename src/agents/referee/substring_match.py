@@ -16,8 +16,9 @@ parameterised pattern (``LIKE $1``) is not a leading wildcard here (#912).
 
 A regular expression (the ``pattern_match`` fact: ``REGEXP``, ``~``, ``~*``, ``SIMILAR
 TO``) is the same scan on an engine with no index for it, under the same rule and
-threshold (#982). It is never a word search, and the facts name no column for it, so the
-largest table the query reads counts (and the trace says so). A ``scan`` engine whose
+threshold (#982). It is never a word search, and it is sized like a ``LIKE``: by the table
+that holds the column it tests (the ``regex_matches`` fact, #1098), or, when that column
+cannot be traced, by the largest table the query reads (and the trace says so). A ``scan`` engine whose
 entry has ``prefix_regex_index`` (DocumentDB) loses nothing on a query whose only scan
 is a prefix regular expression (the ``prefix_regex`` fact): an index serves it.
 
@@ -56,6 +57,7 @@ from src.shared.catalog.patterns import (
 )
 from src.shared.engine_names import display_engine
 from src.tools.sql.query_facts import (
+    RegexMatch,
     WildcardLike,
     locate_column,
     query_facts,
@@ -82,7 +84,8 @@ class SubstringMatch:
     """One query with a leading-wildcard ``LIKE``, and whether its scan matters.
 
     ``word_search``: every such predicate in it is a word search on a text column.
-    ``table_rows``: the row count of the table the scanned ``LIKE`` column is in (the
+    ``table_rows``: the row count of the table the scanned column (of a ``LIKE`` or a
+    regular expression) is in (the
     largest, when several are scanned); the largest table the query reads for a column
     that could not be traced to one; None when none is known.
     ``scan_matters``: not a word search, and both ``scan_threshold`` values reached.
@@ -198,9 +201,9 @@ class _Schema:
         return next((c for c in columns if str(c.get("column_name") or "").lower() == name), None)
 
 
-_REGEX_READING = (
-    "a regular expression names no column the facts trace, so the largest table the query "
-    "reads counts"
+_LARGEST_TABLE = ", so the largest table the query reads counts"
+_UNPARSED_REGEX_READING = (
+    f"a regular expression in a statement the parser could not read names no column{_LARGEST_TABLE}"
 )
 _OLDER_READING = (
     ", so the largest table the query reads counts and a column type not found is read as text"
@@ -230,12 +233,8 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
         if word:
             word = _is_text_column(like.column, query_tables)
         return _LikeReading(word, _rows(query_tables), tuple(notes))
-    rows = _row_count(schema.by_id[table_id])
-    if rows is None:
-        notes.append(
-            f"table {schema.by_id[table_id].get('table_name') or table_id} has no collected "
-            "row count, so the scan cannot be sized and is not penalised"
-        )
+    rows, unsized = _table_rows(schema, table_id)
+    notes.extend(unsized)
     if word and like.column is not None:
         column = schema.column(table_id, like.column)
         data_type = column.get("data_type") if column is not None else None
@@ -248,6 +247,43 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
             "type is not the expression's, so it is read as text"
         )
     return _LikeReading(word, rows, tuple(notes))
+
+
+def _table_rows(schema: _Schema, table_id: str) -> tuple[int | None, tuple[str, ...]]:
+    """The collected row count of ``table_id``, and the note when there is none."""
+    rows = _row_count(schema.by_id[table_id])
+    if rows is not None:
+        return rows, ()
+    name = schema.by_id[table_id].get("table_name") or table_id
+    return None, (
+        f"table {name} has no collected row count, so the scan cannot be sized and is not "
+        "penalised",
+    )
+
+
+def _read_regex(match: RegexMatch, schema: _Schema, query_tables: list[Mapping]) -> _LikeReading:
+    """One regular expression, from the table that holds the column it tests (#1098);
+    the largest table the query reads when it can't be traced. Never a word search."""
+    if match.use is None:
+        note = (
+            f"a regular expression tests a constant against a pattern read from a column{_LARGEST_TABLE}"
+            if match.column_pattern
+            else f"a regular expression's tested expression names no single column{_LARGEST_TABLE}"
+        )
+        return _LikeReading(False, _rows(query_tables), (note,))
+    table_id, why = locate_column(
+        match.use,
+        schema.table_id,
+        lambda t, name: schema.column(t, name) is not None,
+    )
+    if table_id is None:
+        note = (
+            f"column {match.use.name} of a regular expression was not traced to one collected "
+            f"table ({why}){_LARGEST_TABLE}"
+        )
+        return _LikeReading(False, _rows(query_tables), (note,))
+    rows, unsized = _table_rows(schema, table_id)
+    return _LikeReading(False, rows, unsized)
 
 
 def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
@@ -268,8 +304,10 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
         query_tables = _query_tables(query, tables)
         readings = [_read_like(like, schema, query_tables) for like in likes]
         regex_only = facts.pattern_match and all(r.word_search for r in readings)
-        if facts.pattern_match:
-            readings.append(_LikeReading(False, _rows(query_tables), (_REGEX_READING,)))
+        if facts.regex_matches:
+            readings.extend(_read_regex(m, schema, query_tables) for m in facts.regex_matches)
+        elif facts.pattern_match:  # the regex fallback names no column
+            readings.append(_LikeReading(False, _rows(query_tables), (_UNPARSED_REGEX_READING,)))
         word = all(r.word_search for r in readings)
         cps = float(query.get("calls_per_second") or 0.0)
         scanned = [r.rows for r in readings if not r.word_search]

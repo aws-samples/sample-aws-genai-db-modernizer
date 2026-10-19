@@ -556,3 +556,74 @@ class TestTheTestedColumnOfALeadingWildcardLike:
         assert restored is not None
         assert restored[0].wildcard_likes == sql_facts(sql, "mysql").wildcard_likes
         assert restored[0].wildcard_likes[0].use is not None
+
+
+class TestTheTestedColumnOfARegularExpression:
+    """#1098: ``SqlFacts.regex_matches`` names the column each regular-expression or
+    ``SIMILAR TO`` match tests and its candidate tables, as ``wildcard_likes`` does."""
+
+    @staticmethod
+    def _tables(use):
+        return [[t.name for t in level] for level in use.scopes]
+
+    @pytest.mark.parametrize(
+        ("predicate", "engine"),
+        [
+            ("u.name REGEXP 'x'", "mysql"),
+            ("u.name RLIKE 'x'", "mysql"),
+            ("REGEXP_LIKE(u.name, 'x')", "mysql"),
+            ("u.name ~ 'x'", "postgresql"),
+            ("u.name ~* 'x'", "postgresql"),
+            ("u.name !~ 'x'", "postgresql"),
+            ("u.name SIMILAR TO 'x%'", "postgresql"),
+            ("lower(u.name) ~ 'x'", "postgresql"),
+        ],
+    )
+    def test_each_form_names_its_column_and_table(self, predicate, engine):
+        sql = f"SELECT 1 FROM posts p JOIN users u ON u.id = p.uid WHERE {predicate}"
+        facts = sql_facts(sql, engine)
+        assert facts.pattern_match
+        (match,) = facts.regex_matches
+        assert (match.use.name, self._tables(match.use)) == ("name", [["users"]])
+
+    def test_an_expression_over_several_columns_names_none(self):
+        (match,) = sql_facts("SELECT 1 FROM t WHERE concat(a, b) REGEXP 'x'", "mysql").regex_matches
+        assert match.use is None
+
+    def test_a_column_on_the_pattern_side_is_flagged(self):
+        (match,) = sql_facts("SELECT 1 FROM t WHERE 'abc' ~ title", "postgresql").regex_matches
+        assert match.use is None and match.column_pattern
+        (plain,) = sql_facts("SELECT 1 FROM t WHERE title ~ 'abc'", "postgresql").regex_matches
+        assert not plain.column_pattern
+
+    @pytest.mark.parametrize(
+        ("sql", "engine"),
+        [
+            ("SELECT 1 FROM t WHERE REGEXP_LIKE(name, 'x', 'i')", "oracle"),
+            ("SELECT 1 FROM t WHERE REGEXP_LIKE(name, 'x')", "db2"),
+            ("SELECT 1 FROM t WHERE REGEXP_LIKE(name, 'x')", "sqlserver"),
+            ("SELECT 1 FROM t WHERE name REGEXP 'x'", "mariadb"),
+        ],
+    )
+    def test_the_other_source_dialects_name_the_column(self, sql, engine):
+        (match,) = sql_facts(sql, engine).regex_matches
+        assert match.use.name == "name"
+
+    def test_one_entry_per_match_in_text_order(self):
+        facts = sql_facts("SELECT 1 FROM t WHERE a REGEXP 'x' AND b REGEXP 'y'", "mysql")
+        assert [m.use.name for m in facts.regex_matches] == ["a", "b"]
+
+    def test_none_without_a_regex_and_none_on_the_regex_fallback(self):
+        assert sql_facts("SELECT 1 FROM t WHERE a LIKE '%x'", "mysql").regex_matches == ()
+        broken = sql_facts("SELECT 1 FROM t WHERE a REGEXP 'x' AND (((", "mysql")
+        assert broken.pattern_match and broken.regex_matches == ()
+
+    def test_it_survives_the_stored_form(self):
+        from src.tools.sql.stored_facts import readings_from_stored, stored_reading
+
+        sql = "SELECT 1 FROM posts p WHERE p.title ~ 'x'"
+        stored = stored_reading(sql, "postgresql", read_sql(sql, "postgresql"))
+        restored = readings_from_stored(stored, sql, "postgresql")
+        assert restored is not None
+        assert restored[0].regex_matches == sql_facts(sql, "postgresql").regex_matches
+        assert restored[0].regex_matches[0].use is not None

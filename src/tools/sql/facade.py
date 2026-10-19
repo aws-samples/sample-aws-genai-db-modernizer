@@ -67,6 +67,7 @@ from src.tools.sql.refs import ColumnUse, TableRef
 from src.tools.sql.regex_facts import (
     TIMESTAMP_COLUMN_NAME_RE,
     WORDS_RE,
+    RegexMatch,
     WildcardLike,
     regex_aggregate_function_count,
     regex_fulltext_search,
@@ -318,6 +319,10 @@ class SqlFacts:
             true, in order, with the column it tests and whether it is a word
             search (:class:`~src.tools.sql.regex_facts.WildcardLike`, #493);
             ``wildcard_leading`` is ``bool(wildcard_likes)``.
+        regex_matches: Each match that makes ``pattern_match`` true, in order, with
+            the column it tests and that column's candidate tables
+            (:class:`~src.tools.sql.regex_facts.RegexMatch`, #1098). Empty on the regex
+            fallback, which never knows the tables.
         write_targets: The tables the text writes, lower-cased bare names in
             first-seen order: the target of every ``INSERT`` (``REPLACE``),
             ``UPDATE``, ``DELETE``, ``MERGE`` and ``TRUNCATE``, a
@@ -357,6 +362,7 @@ class SqlFacts:
     json_access: bool = False
     multi_table_write: bool = False
     wildcard_likes: tuple[WildcardLike, ...] = ()
+    regex_matches: tuple[RegexMatch, ...] = ()
     write_targets: tuple[str, ...] = ()
 
     @property
@@ -871,6 +877,11 @@ def _facts_from_statements(
     aggregate_function_count = sum(1 for node in nodes if _is_aggregate_function(node))
     kinds = {_text_search_kind(node) for node in nodes}
     likes = tuple(like for statement in statements for like in _wildcard_likes(statement))
+    regexes = (
+        tuple(match for statement in statements for match in _regex_matches(statement))
+        if "pattern" in kinds
+        else ()
+    )
     windows = [node.this for node in nodes if isinstance(node, exp.Window)]
     return SqlFacts(
         join_count=join_count,
@@ -879,6 +890,7 @@ def _facts_from_statements(
         has_subquery=sum(1 for node in nodes if isinstance(node, exp.Select)) > 1,
         wildcard_leading=bool(likes),
         wildcard_likes=likes,
+        regex_matches=regexes,
         parsed_by="sqlglot",
         fallback_reason=None,
         dialect=dialect,
@@ -1679,14 +1691,36 @@ def _wildcard_like(
         word = len(value) > 2 and value.endswith("%") and bool(WORDS_RE.match(value[1:-1]))
     else:
         word = len(pieces) == 3 and values[0] == "%" and _is_bind(pieces[1]) and values[2] == "%"
-    # The one column the predicate tests: the bare column, or the only column inside a
-    # function of it (``lower(title)``); an expression over several names none.
-    tested = {id(c): c for c in node.this.find_all(exp.Column) if c.name and not _is_bind(c)}
-    use = None
-    if len(tested) == 1:
-        (only,) = tested.values()
-        use = ColumnUse(only.name, _column_scopes(only, levels, ctes))
-    return WildcardLike(column=column, word_search=word, use=use)
+    return WildcardLike(
+        column=column, word_search=word, use=_tested_column(node.this, levels, ctes)
+    )
+
+
+def _tested_column(
+    subject: exp.Expr, levels: dict[int, _ColumnScope | None], ctes: dict[str, int]
+) -> ColumnUse | None:
+    """The one column a predicate tests: the bare column, or the only column inside a
+    function of it (``lower(title)``); an expression over several names none."""
+    tested = {id(c): c for c in subject.find_all(exp.Column) if c.name and not _is_bind(c)}
+    if len(tested) != 1:
+        return None
+    (only,) = tested.values()
+    return ColumnUse(only.name, _column_scopes(only, levels, ctes))
+
+
+def _regex_matches(statement: exp.Expr) -> list[RegexMatch]:
+    """Each regular-expression or ``SIMILAR TO`` match of a statement, with the column it
+    tests and that column's candidate tables (:class:`~src.tools.sql.regex_facts.RegexMatch`)."""
+    ctes = {c.alias_or_name.lower(): -1 for c in statement.find_all(exp.CTE)}
+    levels: dict[int, _ColumnScope | None] = {}
+    out = []
+    for node in statement.walk():
+        if not isinstance(node, _PATTERN_MATCH_NODES):
+            continue
+        use = _tested_column(node.this, levels, ctes)
+        column_pattern = use is None and _tested_column(node.expression, levels, ctes) is not None
+        out.append(RegexMatch(use=use, column_pattern=column_pattern))
+    return out
 
 
 LikeKind = Literal["leading_wildcard", "prefix", "parameter", "other"]

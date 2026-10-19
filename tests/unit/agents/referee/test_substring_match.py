@@ -536,12 +536,12 @@ class TestARegularExpressionIsTheSameScan:
     def test_any_other_regex_costs_documentdb_the_scan(self, text: str) -> None:
         assert _penalties(_collector(text, source="postgresql"))["documentdb"] == self.PENALTY
 
-    def test_the_trace_says_the_table_is_approximated(self) -> None:
+    def test_a_traced_regex_is_read_without_an_approximation(self) -> None:
         (match,) = substring_matches(
             _collector("SELECT id FROM users WHERE email REGEXP 'x'")
         ).values()
         assert not match.word_search
-        assert any("regular expression" in note for note in match.approximations)
+        assert match.approximations == ()
 
     def test_a_wildcard_like_with_a_word_search_and_a_regex_is_still_scanned(self) -> None:
         text = "SELECT id FROM posts WHERE title LIKE '%term%' AND email REGEXP 'x'"
@@ -624,3 +624,152 @@ class TestPrefixRegexFact:
         assert {e: s for e, s in prefix.items() if e != "documentdb"} == {
             e: s for e, s in any_regex.items() if e != "documentdb"
         }
+
+
+REGEX_JOIN = "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE {} REGEXP 'x.y'"
+
+
+class TestARegularExpressionIsSizedByTheTableOfItsColumn:
+    """#1098: a regular expression's scan is sized by the table that holds the column it
+    tests, as #942 does for a LIKE, not by the largest table the query reads."""
+
+    def _match(self, text: str, **kwargs):
+        return substring_matches(_schema_collector(text, tables=JOIN_TABLES, **kwargs))["q1"]
+
+    def test_a_regex_on_the_small_table_of_a_join_does_not_scan_the_large_one(self) -> None:
+        match = self._match(REGEX_JOIN.format("t.label"))
+        assert (match.table_rows, match.scan_matters, match.approximations) == (SMALL, False, ())
+        penalties, _ = scan_adjustments(
+            _schema_collector(REGEX_JOIN.format("t.label"), tables=JOIN_TABLES)
+        )
+        assert penalties == {}
+
+    def test_a_regex_on_the_large_table_is_a_scan_that_matters(self) -> None:
+        match = self._match(REGEX_JOIN.format("o.note"))
+        assert (match.table_rows, match.scan_matters, match.approximations) == (BIG, True, ())
+
+    def test_an_unqualified_column_and_a_function_of_it_name_its_table(self) -> None:
+        for column in ("label", "lower(t.label)"):
+            match = self._match(REGEX_JOIN.format(column))
+            assert (match.table_rows, match.scan_matters, match.approximations) == (
+                SMALL,
+                False,
+                (),
+            ), column
+
+    def test_each_dialect_form_reads_its_column(self) -> None:
+        forms = [
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label ~ 'x.y'",
+                "postgresql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label ~* 'x.y'",
+                "postgresql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label SIMILAR TO 'x%'",
+                "postgresql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label RLIKE 'x.y'",
+                "mysql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE REGEXP_LIKE(t.label, 'x')",
+                "mysql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label REGEXP 'x'",
+                "mariadb",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label !~* 'x'",
+                "postgresql",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id "
+                "WHERE REGEXP_LIKE(t.label, 'x', 'i')",
+                "oracle",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE REGEXP_LIKE(t.label, 'x')",
+                "db2",
+            ),
+            (
+                "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE REGEXP_LIKE(t.label, 'x')",
+                "sqlserver",
+            ),
+        ]
+        for text, source in forms:
+            match = self._match(text, source=source)
+            assert (match.table_rows, match.approximations) == (SMALL, ()), text
+
+    def test_an_ambiguous_column_keeps_the_largest_table_and_says_so(self) -> None:
+        match = self._match(REGEX_JOIN.format("id"))
+        assert (match.table_rows, match.scan_matters) == (BIG, True)
+        (note,) = match.approximations
+        assert "column id of a regular expression was not traced" in note
+        assert "largest table the query reads counts" in note
+
+    def test_an_expression_over_two_columns_keeps_the_largest_table(self) -> None:
+        match = self._match(REGEX_JOIN.format("concat(o.note, t.label)"))
+        assert (match.table_rows, match.scan_matters) == (BIG, True)
+        assert "names no single column" in match.approximations[0]
+
+    def test_a_column_on_the_pattern_side_keeps_the_largest_table_and_says_why(self) -> None:
+        match = self._match(REGEX_JOIN.replace("{} REGEXP 'x.y'", "'abc' REGEXP t.label"))
+        assert (match.table_rows, match.scan_matters) == (BIG, True)
+        (note,) = match.approximations
+        assert "pattern read from a column" in note and "names no single column" not in note
+
+    def test_a_column_no_collected_table_holds_keeps_the_largest_table(self) -> None:
+        text = (
+            "WITH c AS (SELECT label FROM tags) SELECT * FROM orders o, c WHERE c.label REGEXP 'x'"
+        )
+        match = self._match(text)
+        assert (match.table_rows, match.scan_matters) == (BIG, True)
+        assert "was not traced" in match.approximations[0]
+
+    def test_a_statement_the_parser_cannot_read_keeps_the_largest_table(self) -> None:
+        text = "SELECT * FROM orders o JOIN tags t ON t.id = o.id WHERE t.label REGEXP 'x' AND ((("
+        match = self._match(text)
+        assert (match.table_rows, match.scan_matters) == (BIG, True)
+        assert any("could not read" in n for n in match.approximations)
+
+    def test_a_traced_table_with_no_row_count_is_not_sized(self) -> None:
+        tables: list[tuple[str, int | None, list[tuple[str, str]]]] = [
+            ("orders", BIG, [("id", "bigint")]),
+            ("tags", None, [("id", "bigint"), ("label", "varchar(40)")]),
+        ]
+        collector = _schema_collector(REGEX_JOIN.format("t.label"), tables=tables)
+        match = substring_matches(collector)["q1"]
+        assert (match.table_rows, match.scan_matters) == (None, False)
+        assert "table tags has no collected row count" in match.approximations[0]
+
+    def test_each_regex_is_read_on_its_own_table(self) -> None:
+        both = (
+            "SELECT * FROM orders o JOIN tags t ON t.id = o.id "
+            "WHERE t.label REGEXP 'x' AND o.note REGEXP 'y'"
+        )
+        match = self._match(both)
+        assert (match.table_rows, match.scan_matters, match.approximations) == (BIG, True, ())
+
+    def test_a_like_and_a_regex_are_each_read_on_their_own_table(self) -> None:
+        text = (
+            "SELECT * FROM orders o JOIN tags t ON t.id = o.id "
+            "WHERE o.note LIKE '%word%' AND t.label REGEXP 'x'"
+        )
+        match = self._match(text)
+        # The word search on the large table is not scanned; the regex scans the small one.
+        assert (match.word_search, match.table_rows, match.scan_matters) == (False, SMALL, False)
+
+    def test_the_trace_text_passes_the_customer_wording_guard(self) -> None:
+        from src.tools.validation.customer_text_guard import scan_text
+
+        for column in ("id", "concat(o.note, t.label)"):
+            _, notes = scan_adjustments(
+                _schema_collector(REGEX_JOIN.format(column), tables=JOIN_TABLES)
+            )
+            for note in notes.values():
+                assert scan_text(note, strict_reason_codes=False) == [], note

@@ -60,6 +60,7 @@ from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING
 
 from src.shared.sql_comments import strip_leading_comments
+from src.shared.sql_spans import comments_literals_and_identifiers_for, sub_spans
 from src.shared.unsupported_pattern import is_dedup_only_group_by, strip_comments_and_literals
 from src.tools.sql.facade import AccessFacts, ColumnUse, SqlFacts, TableRef, query_readings
 from src.tools.sql.regex_facts import (
@@ -67,6 +68,7 @@ from src.tools.sql.regex_facts import (
     IN_LIST_RE,
     SELECT_WORD_RE,
     TIMESTAMP_COLUMN_NAME_RE,
+    RegexMatch,
     WildcardLike,
     has_match_against,
     regex_range_predicate,
@@ -80,6 +82,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ColumnTypes",
     "QueryFacts",
+    "RegexMatch",
     "TimestampColumnReading",
     "WildcardLike",
     "is_timestamp_type",
@@ -779,6 +782,12 @@ class QueryFacts:
         return self.pattern_match and self._parsed.prefix_regex
 
     @cached_property
+    def regex_matches(self) -> tuple[RegexMatch, ...]:
+        """Each regular-expression or ``SIMILAR TO`` match, with the column it tests
+        (``SqlFacts.regex_matches``, #1098); empty on the regex fallback."""
+        return self._parsed.regex_matches if self.pattern_match else ()
+
+    @cached_property
     def similarity_match(self) -> bool:
         """A trigram similarity function (``SqlFacts.similarity_match``)."""
         return self._has("similarity") and self._parsed.similarity_match
@@ -1013,16 +1022,17 @@ class QueryFacts:
         """``JOIN LATERAL (``, ``, LATERAL (`` or ``LATERAL (``, outside comments and string
         literals (the class score reads it too since #985, so a word in a value is not one);
         on a SQL Server source, ``CROSS APPLY`` or ``OUTER APPLY`` too (#982): the same
-        correlated join, which both Aurora engines run as ``LATERAL``."""
+        correlated join, which both Aurora engines run as ``LATERAL``. The ``APPLY`` reading
+        also blanks quoted identifiers, so a bracketed name such as ``[cross apply]`` is
+        not one (#1098)."""
         if self._has("lateral") and _LATERAL_JOIN_RE.search(
             strip_comments_and_literals(self._text, self._source_engine)
         ):
             return True
         if self._source_engine.strip().lower() != "sqlserver" or not self._has("apply"):
             return False
-        return bool(
-            _TSQL_APPLY_RE.search(strip_comments_and_literals(self._text, self._source_engine))
-        )
+        grammar = comments_literals_and_identifiers_for(self._source_engine)
+        return bool(_TSQL_APPLY_RE.search(sub_spans(self._text, grammar, lambda _span: " ")))
 
     @cached_property
     def on_conflict_or_returning(self) -> bool:

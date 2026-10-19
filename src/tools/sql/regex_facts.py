@@ -242,6 +242,22 @@ class WildcardLike:
     use: ColumnUse | None = None
 
 
+@dataclass(frozen=True)
+class RegexMatch:
+    """One regular-expression or ``SIMILAR TO`` match (``SqlFacts.regex_matches``, #1098).
+
+    ``use``: the column it tests (the bare column, or the only column inside a function
+    of it such as ``lower(title)``) with the tables it can belong to, the way
+    :attr:`WildcardLike.use` names a ``LIKE``'s, so a reader can size the scan by the
+    table that holds it. None when the parser could not name one column.
+    ``column_pattern``: ``use`` is None because the tested value is a constant and the
+    pattern is read from a column (``'abc' ~ title``).
+    """
+
+    use: ColumnUse | None = None
+    column_pattern: bool = False
+
+
 def _literal_value(part: str) -> str | None:
     part = part.strip()
     if part[:1] in ("N", "n") and part[1:2] in ("'", '"'):
