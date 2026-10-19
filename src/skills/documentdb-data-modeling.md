@@ -222,6 +222,6 @@ Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaroun
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.
 - None of these words: robust, seamless, leverage, ensure, comprehensive, crucial, pivotal, delve, holistic, streamline, empower, elevate, journey, furthermore, moreover, notably, importantly, essentially, ultimately, truly.
-- No hedges: "not the only one", "typically", "generally", "might", "could potentially" ("generally available" is fine). State the fact.
+- No hedges: "not the only one", "typically", "generally", "might", "could potentially", "a moment", "briefly", "if that matters", "for a short time", "where possible", "typical values are far smaller", "may see the old value", "roughly", "usually", "likely" ("generally available" is fine). State the fact. A softener on an effect is fine only with its bound in the sentence ("stale until the TTL expires", "up to about 1 s behind"), and "roughly" only before a figure ("roughly 40%").
 - None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
 - Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.

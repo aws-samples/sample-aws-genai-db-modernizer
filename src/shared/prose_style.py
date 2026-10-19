@@ -11,7 +11,12 @@ place every check finds them:
   empty-value placeholder (``| — |``, ``| -- |``);
 - filler words (``robust``, ``seamless``, ``leverage``, ``ensure``, ...);
 - hedges (``not the only one``, ``typically``, ``generally`` (but not
-  "generally available"), ``might``, ``could potentially``);
+  "generally available"), ``might``, ``could potentially``, ``if that matters``,
+  ``where possible``, and ``a moment``, ``briefly``, ``for a short time``,
+  ``may see the old value``, ``typical values are far smaller`` unless the
+  sentence states the bound: a number with a unit, ``until``, ``up to``), and
+  the figureless estimates ``usually``, ``likely`` and ``roughly`` (``roughly``
+  before a number is a stated estimate and stays);
 - constructions (``not just/not only ... but``, ``it's worth noting``,
   ``here's``, ``let's``);
 - an all-caps severity label inside prose (``CRITICAL/HIGH``, ``HIGH risks``);
@@ -97,6 +102,20 @@ HEDGES: tuple[str, ...] = (
     "generally",
     "might",
     "could potentially",
+    # Vague softeners on an effect or a limit (#1109). Each is a hedge only
+    # while the sentence states no bound; see ``_BOUNDED_HEDGES``.
+    "a moment",
+    "briefly",
+    "if that matters",
+    "for a short time",
+    "where possible",
+    "typical values are far smaller",
+    "may see the old value",
+    # Soft estimates that carry no figure (#1109, from a real model run).
+    # "roughly" is allowed before a number, which is a stated estimate.
+    "roughly",
+    "usually",
+    "likely",
 )
 
 # (label, pattern): constructions that read as machine-written.
@@ -309,11 +328,47 @@ def replace_dashes(text: str, identifiers: Iterable[str] = ()) -> str:
 # --- the matcher ------------------------------------------------------------
 
 _FILLER_RE = re.compile(r"\b(" + "|".join(FILLER_WORDS) + r")\b", re.IGNORECASE)
+# Two-word hedges are kept as word lists and joined here, so no prose pattern
+# holds a SQL keyword as a regex literal (the SQL-detector guard, #893).
+_WORD_HEDGES: tuple[tuple[str, ...], ...] = (("where", "possible"),)
+_WORD_HEDGE_PATTERN = "|".join(r"\s+".join(words) for words in _WORD_HEDGES)
 _HEDGE_RE = re.compile(
     r"\b(not\s+the\s+only\s+one|typically|generally(?!\s+available)|might"
-    r"|could\s+potentially)\b",
+    r"|could\s+potentially"
+    r"|if\s+(?:that|it|this)\s+matters|usually|likely"
+    r"|roughly(?!\s+[~$]?\d)|" + _WORD_HEDGE_PATTERN + r")\b",
     re.IGNORECASE,
 )
+_ABBREVIATION_RE = re.compile(r"\b(?:e\.g|i\.e|etc|vs|approx)\.", re.IGNORECASE)
+# Hedges on the size of an effect or limit. They are kept when the same
+# sentence states the bound (rubric rule, #1075: "stale until the TTL expires",
+# "up to about 1 s behind", "a read can miss a write for 2 s"), and rejected
+# when it does not ("can take a moment", "briefly stale").
+_BOUNDED_HEDGE_RE = re.compile(
+    r"\b(a\s+moment|briefly|for\s+a\s+(?:short|brief)\s+(?:time|while|period)"
+    r"|typical\s+values\s+are\s+(?:far|much)\s+smaller"
+    r"|may\s+see\s+the\s+(?:old|stale|previous)\s+value)\b",
+    re.IGNORECASE,
+)
+_BOUND_RE = re.compile(
+    r"\buntil\b|\bup\s+to\b|\bwithin\b|\bat\s+most\b"
+    r"|\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|minutes?|mins?|hours?|h|days?|%)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _states_a_bound(text: str, start: int, end: int) -> bool:
+    """True when the sentence around ``text[start:end]`` states a bound. The
+    full stop of "e.g.", "i.e." and "etc." does not end a sentence."""
+    text = _ABBREVIATION_RE.sub(lambda m: m.group(0)[:-1] + "_", text)
+    left = max(text.rfind(". ", 0, start), text.rfind("\n", 0, start), text.rfind(";", 0, start))
+    rights = [
+        i for i in (text.find(". ", end), text.find("\n", end), text.find(";", end)) if i >= 0
+    ]
+    right = min(rights) if rights else len(text)
+    return bool(_BOUND_RE.search(text[left + 1 : right]))
+
+
 _CONSTRUCTION_RES = tuple((label, re.compile(p, re.IGNORECASE)) for label, p in CONSTRUCTIONS)
 _SEV = "|".join(SEVERITY_LABELS)
 # A severity label: two of them paired ("CRITICAL/HIGH", "HIGH or CRITICAL"),
@@ -361,6 +416,10 @@ def find_style_hits(text: str, identifiers: Iterable[str] = ()) -> list[StyleHit
     for m in _HEDGE_RE.finditer(prose):
         term = " ".join(m.group(0).lower().split())
         hits.append(StyleHit("hedge", term, _excerpt(text, m.start(), m.end())))
+    for m in _BOUNDED_HEDGE_RE.finditer(prose):
+        if not _states_a_bound(text, m.start(), m.end()):
+            term = " ".join(m.group(0).lower().split())
+            hits.append(StyleHit("hedge", term, _excerpt(text, m.start(), m.end())))
     for label, rx in _CONSTRUCTION_RES:
         for m in rx.finditer(prose):
             hits.append(StyleHit("construction", label, _excerpt(text, m.start(), m.end())))
@@ -432,7 +491,10 @@ def style_list_markdown() -> str:
             "colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, "
             "30s-60s) is fine. Put commands, flags and code in backticks.",
             f"- None of these words: {words}.",
-            f'- No hedges: {hedges} ("generally available" is fine). State the fact.',
+            f'- No hedges: {hedges} ("generally available" is fine). State the fact. '
+            "A softener on an effect is fine only with its bound in the sentence "
+            '("stale until the TTL expires", "up to about 1 s behind"), and "roughly" '
+            'only before a figure ("roughly 40%").',
             '- None of these constructions: "not just ... but", "not only ... but", '
             '"it\'s worth noting", "here\'s", "let\'s".',
             '- Severity in plain lowercase ("critical or high risks"), never an '

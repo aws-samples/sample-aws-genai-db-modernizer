@@ -5,6 +5,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.api.dependencies import job_id_param, validated_filename
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
@@ -12,6 +13,7 @@ from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME
 from src.report.facts import report_facts
 from src.report.renderers import resolve_migration_waves
 from src.shared.database_name import validate_database_name
+from src.shared.prose_style import collector_identifiers
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
@@ -279,4 +281,15 @@ async def get_schema_designs(job_id: str = Depends(job_id_param)):
     if not s3_service:
         raise HTTPException(status_code=503, detail="Services not configured")
     designs = s3_service.read_all_schema_designs(db_name, job_id)
-    return {"schema_designs": designs}
+    # The UI's trade-offs tab and explorer read these designs directly, so the
+    # model's customer prose goes through the same plain-prose list the report
+    # uses (#1109); the design on disk keeps the model's text.
+    collector = s3_service.read_collector(db_name, job_id)
+    names = collector_identifiers(collector if isinstance(collector, dict) else None)
+    cleaned = []
+    for design in designs:
+        content, _ = clean_schema_design_prose(
+            str(design.get("target_type", "")), design.get("content"), names
+        )
+        cleaned.append({**design, "content": content})
+    return {"schema_designs": cleaned}

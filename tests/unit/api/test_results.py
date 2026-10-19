@@ -273,6 +273,25 @@ class TestGetSchemaDesigns:
         assert len(data["schema_designs"]) == 1
         assert data["schema_designs"][0]["target_type"] == "dynamodb"
 
+    def test_trade_off_prose_goes_through_the_style_list(self, mock_services):
+        raw = "Reads typically hit the cache, roughly 2x faster."
+        mock_services["s3"].read_collector.return_value = {}
+        mock_services["s3"].read_all_schema_designs.return_value = [
+            {
+                "target_type": "dynamodb",
+                "content": {
+                    "trade_offs": [
+                        {"description": "Posts keyed by topic.", "impact": raw},
+                        {"description": "Counts are kept.", "impact": "Counts update on write."},
+                    ]
+                },
+            }
+        ]
+        response = client.get("/api/v1/assessments/job-1/schema-designs")
+        trade_offs = response.json()["schema_designs"][0]["content"]["trade_offs"]
+        assert "typically" not in trade_offs[0]["impact"]
+        assert trade_offs[1]["impact"] == "Counts update on write."
+
     def test_returns_empty_when_none(self, mock_services):
         mock_services["s3"].read_all_schema_designs.return_value = []
         response = client.get("/api/v1/assessments/job-1/schema-designs")

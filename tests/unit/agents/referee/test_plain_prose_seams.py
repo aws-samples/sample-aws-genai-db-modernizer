@@ -367,3 +367,67 @@ class TestSchemaDesignProseRoundThree:
         }
         cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
         assert cleaned == schema and rejections == []
+
+
+JUDGE_HEDGES = (
+    ("Failover can take a moment.", "a moment"),
+    ("The cache is briefly stale.", "briefly"),
+    ("Add a replica if that matters.", "if that matters"),
+    ("Readers see old data for a short time.", "for a short time"),
+    ("Batch writes where possible.", "where possible"),
+    ("Typical values are far smaller.", "typical values are far smaller"),
+    ("A reader may see the old value.", "may see the old value"),
+    ("Writes cost roughly more.", "roughly"),
+    ("Reads usually hit the cache.", "usually"),
+    ("The hot key is likely to throttle.", "likely"),
+    ("Reads typically hit the cache.", "typically"),
+)
+BOUNDED_TEXT = "A reader may see the old value until the TTL expires, roughly 2x slower."
+
+
+class TestJudgeHedgesAtEverySeam:
+    def test_synthesis_summary(self) -> None:
+        for hedge, term in JUDGE_HEDGES:
+            llm = f"DynamoDB serves the key lookups. {hedge}"
+            out = apply_synthesis_llm_output(_det(), {"executive_summary": llm})
+            assert out["summary_source"] == "deterministic_fallback", hedge
+            assert out["executive_summary"] == DET_SUMMARY
+            assert any(
+                "plain-prose style list" in w and f'"{term}"' in w
+                for w in out["summary_validation_warnings"]
+            ), hedge
+        ok = apply_synthesis_llm_output(
+            _det(), {"executive_summary": f"DynamoDB serves the key lookups. {BOUNDED_TEXT}"}
+        )
+        assert ok["summary_source"] == "llm"
+
+    def test_reality_check_summary(self) -> None:
+        base = ACCURATE_SUMMARIES["run-ui"]
+        for hedge, term in JUDGE_HEDGES:
+            result = TestRealityCheckSummary()._result(base + " " + hedge)
+            finalize_executive_summary(result)
+            assert result["executive_summary_source"] == "deterministic_fallback", hedge
+            assert any(
+                f'"{term}"' in w for w in result["executive_summary_validation_warnings"]
+            ), hedge
+        result = TestRealityCheckSummary()._result(base + " " + BOUNDED_TEXT)
+        finalize_executive_summary(result)
+        assert result["executive_summary_source"] == "llm"
+
+    def test_schema_design_trade_offs_and_unsupported_fixes(self) -> None:
+        for hedge, term in JUDGE_HEDGES:
+            schema = {
+                "trade_offs": [{"description": "Posts keyed by topic_id.", "impact": hedge}],
+                "unsupported_patterns": [
+                    {"pattern_type": "aggregation", "workaround": hedge, "reason": "No GROUP BY."}
+                ],
+            }
+            cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
+            assert find_style_hits(cleaned["trade_offs"][0]["impact"]) == [], hedge
+            fix = cleaned["unsupported_patterns"][0]["workaround"]
+            assert fix != hedge and find_style_hits(fix) == []
+            assert len(rejections) == 2 and all(f'("{term}")' in r for r in rejections), hedge
+            assert schema["trade_offs"][0]["impact"] == hedge  # the design on disk is unchanged
+        schema = {"trade_offs": [{"description": "x", "impact": BOUNDED_TEXT}]}
+        cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
+        assert cleaned["trade_offs"][0]["impact"] == BOUNDED_TEXT and not rejections

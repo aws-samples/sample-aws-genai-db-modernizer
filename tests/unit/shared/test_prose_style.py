@@ -300,3 +300,73 @@ def test_the_style_list_prompt_names_every_word() -> None:
     text = style_list_markdown()
     for word in ("robust", "ensure", "journey", "truly", "might", "could potentially"):
         assert word in text
+
+
+# --- the judge's cited hedges (#1109) ----------------------------------------
+
+JUDGE_HEDGES = [
+    ("A failover can take a moment.", "a moment"),
+    ("The replica is briefly stale.", "briefly"),
+    ("Add a second index if that matters.", "if that matters"),
+    ("Readers see old data for a short time.", "for a short time"),
+    ("Batch the writes where possible.", "where possible"),
+    ("Item sizes are capped; typical values are far smaller.", "typical values are far smaller"),
+    ("A reader may see the old value.", "may see the old value"),
+    # From a real model run: figureless estimates in schema-design trade-offs.
+    ("Writes cost roughly more.", "roughly"),
+    ("Reads usually hit the cache.", "usually"),
+    ("The hot key is likely to throttle.", "likely"),
+]
+
+
+@pytest.mark.parametrize("text, term", JUDGE_HEDGES)
+def test_each_judge_cited_hedge_is_found(text: str, term: str) -> None:
+    assert ("hedge", term) in _kinds(text)
+
+
+@pytest.mark.parametrize("text, term", JUDGE_HEDGES)
+def test_each_judge_cited_hedge_is_in_the_prompt_list(text: str, term: str) -> None:
+    from src.shared.prose_style import style_list_markdown
+
+    assert f'"{term}"' in style_list_markdown()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A read can miss a write until it replicates.",
+        "The cache is briefly stale, up to about 1 s behind.",
+        "Reads are briefly stale, e.g. for 30 s.",
+        "A reader may see the old value, i.e. until the TTL expires.",
+        "A reader may see the old value until the TTL expires.",
+        "A reader may see the old value for 2 s after a write.",
+        "A failover takes a moment, about 30 seconds.",
+        "Readers see old data for a short time (at most 5 minutes).",
+        "The item limit is 400 KB; typical values are far smaller, near 2 KB at 99%.",
+        "If the read rate grows more than 5 times, shard.",
+        "Where `possible` stays in code, nothing changes.",
+        "Writes cost roughly 2x more on the global index.",
+        "The table is roughly $40 a month, about 1.5 GB.",
+        "The result is unlikely to change.",
+        "The moment table holds one row per event.",
+        "This is a momentary lock on `if_that_matters`.",
+    ],
+)
+def test_bounded_forms_and_unrelated_words_are_kept(text: str) -> None:
+    assert find_style_hits(text) == []
+
+
+def test_a_bound_in_another_sentence_does_not_excuse_the_hedge() -> None:
+    hits = find_style_hits("The TTL is 60 s. A reader may see the old value.")
+    assert ("hedge", "may see the old value") in {(h.kind, h.term) for h in hits}
+
+
+def test_clean_model_prose_rejects_a_judge_hedge_with_the_term_recorded() -> None:
+    res = clean_model_prose("Failover can take a moment.", "fallback")
+    assert not res.accepted and res.text == "fallback"
+    assert "hedge:a moment" in res.reason
+
+
+def test_an_abbreviation_does_not_hide_a_hedge_in_the_next_sentence() -> None:
+    hits = find_style_hits("Use a TTL, e.g. 60 s. A reader may see the old value.")
+    assert ("hedge", "may see the old value") in {(h.kind, h.term) for h in hits}
