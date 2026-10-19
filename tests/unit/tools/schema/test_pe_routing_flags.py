@@ -260,6 +260,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
         ):
             orch._run_post_schema_routing(self.JOB, self.DB)
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_flagged_query_goes_to_the_best_remaining_engine(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         self._seed(store)
@@ -298,6 +299,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
         engine_of = {qa["query_id"]: qa["assigned_engine"] for qa in v2["query_assignments"]}
         assert engine_of["q-1"] == "documentdb"
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_new_version_and_every_design_agree(self, tmp_path) -> None:
         """#713 round 2: the engine a query left is redesigned on the new
         version (never copied forward with the moved query), the engine it
@@ -324,6 +326,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
         }
 
     @pytest.mark.usefixtures("table_confidence_scores")  # #728: scores per table
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rerouted_version_never_claims_customer_approval(self, tmp_path) -> None:
         """#713 round 2: the customer approved v1, not the move; v2 has its own
         status and lists the move with the version that was approved."""
@@ -350,6 +353,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
         assert (reroute["score_before"], reroute["score_after"]) == (90, 70)
 
     @pytest.mark.usefixtures("table_confidence_scores")  # #728: scores per table
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_every_pass_is_kept_in_the_router_output(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         self._seed(store)
@@ -362,6 +366,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
         assert store.read_json(f"{prefix}/pass-0/router_output.json")["routings"]
         assert store.read_json(f"{prefix}/pass-1/router_output.json")["routings"] == []
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_failed_redesign_rolls_back_to_the_approved_routing(self, tmp_path) -> None:
         """#713 round 2: the effective version never pairs the move with a
         pre-move design. v3 restates v1 and carries its designs."""
@@ -392,6 +397,7 @@ class TestTheOrchestratorRoutesAFlagByScore:
 
 
 class TestKeptEnginesAreReReadEveryPass:
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_an_engine_an_earlier_pass_emptied_is_never_a_destination(self, tmp_path) -> None:
         """#713 review round 3: pass 0 moves DocumentDB's only query away, so on
         pass 1 DocumentDB (best for q-2 at 99) is no longer a kept engine."""

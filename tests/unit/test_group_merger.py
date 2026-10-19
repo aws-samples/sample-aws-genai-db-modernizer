@@ -12,6 +12,7 @@ from src.agents.schema_design.group_merger import (
     merge_warnings,
 )
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
 
 class TestMergeGroupDrafts:
@@ -769,6 +770,14 @@ class TestDynamoDBPerDraftRenames:
         assert result["validation_passed"] is True
 
 
+# A draft that passes the output contract, so these merges go through the gate (#1186).
+_VALID_POSTS_DRAFT = ddb_design(
+    [ddb_table("wp_posts", "wordpress.wp_posts", "post_id")],
+    [ddb_pattern("DDB-AP-1", "wp_posts", "wordpress.wp_posts", "q-posts")],
+    database="wordpress",
+)
+
+
 class TestMergeSchemaGroupsCarriesExcludedQueries:
     """#276/#369: a query --split left out of every group (no source table)
     must still be visible on the merged schema output, not silently dropped
@@ -804,15 +813,7 @@ class TestMergeSchemaGroupsCarriesExcludedQueries:
         )
         store.write_json(
             f"{self.BASE}/schema_draft_group_0.json",
-            {
-                "table_definitions": [],
-                "access_patterns": [],
-                "unsupported_patterns": [],
-                "migration_notes": [],
-                "hot_partition_analysis": [],
-                "trade_offs": [],
-                "validation_failures": [],
-            },
+            _VALID_POSTS_DRAFT,
         )
 
         merged = merge_schema_groups("job-001", "wordpress", "dynamodb", store)
@@ -850,15 +851,7 @@ class TestMergeSchemaGroupsCarriesExcludedQueries:
         )
         store.write_json(
             f"{self.BASE}/schema_draft_group_0.json",
-            {
-                "table_definitions": [],
-                "access_patterns": [],
-                "unsupported_patterns": [],
-                "migration_notes": [],
-                "hot_partition_analysis": [],
-                "trade_offs": [],
-                "validation_failures": [],
-            },
+            _VALID_POSTS_DRAFT,
         )
 
         merged = merge_schema_groups("job-001", "wordpress", "dynamodb", store)

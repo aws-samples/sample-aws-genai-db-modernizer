@@ -140,6 +140,7 @@ class TestThePostSchemaRouterVersionsCarryTheCurrentVersion:
         return prefix
 
     @pytest.mark.parametrize("stored", STORED_VERSIONS, ids=["pre-1.15", "1.14"])
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rerouted_version(self, tmp_path, stored) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed(store, stored)
@@ -152,6 +153,7 @@ class TestThePostSchemaRouterVersionsCarryTheCurrentVersion:
         assert router["contract_version"] == "1.4"
 
     @pytest.mark.parametrize("stored", STORED_VERSIONS, ids=["pre-1.15", "1.14"])
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rollback_version(self, tmp_path, stored) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed(store, stored)

@@ -356,6 +356,7 @@ def test_the_orchestrator_keeps_the_held_records_in_router_output(tmp_path) -> N
     assert router["terminal"] == []
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_held_records_of_every_pass_are_kept(tmp_path) -> None:
     """Pass 0 holds q-1 (its table's write group holds the pinned q-4) and moves
     q-2 onto DynamoDB, which is redesigned; pass 1 sees no flag on the new

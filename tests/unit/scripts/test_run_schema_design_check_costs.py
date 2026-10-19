@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from scripts import _sandbox, run_schema_design
+from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
 DB, JOB = "wordpress", "job-001"
 
@@ -64,8 +65,17 @@ def _write_draft(root: Path, draft: dict, rel: str = "v1/schema_draft_group_0.js
     return path
 
 
+def _valid(hot: list[dict]) -> dict:
+    """A draft that passes the output contract too (#1186), with ``hot``."""
+    design = ddb_design(
+        [ddb_table("Options", "wordpress.wp_options")],
+        [ddb_pattern("DDB-AP-1", "Options", "wordpress.wp_options", "q1")],
+    )
+    return {**design, "hot_partition_analysis": hot}
+
+
 def test_check_costs_passes_and_leaves_the_draft_untouched(monkeypatch, capsys, tmp_path):
-    draft = {"hot_partition_analysis": HOT_PARTITIONS, "validation_passed": False}
+    draft = {**_valid(HOT_PARTITIONS), "validation_passed": False}
     path = _write_draft(tmp_path, draft)
     before = path.read_text()
 
@@ -75,6 +85,7 @@ def test_check_costs_passes_and_leaves_the_draft_untouched(monkeypatch, capsys, 
     assert status["status"] == "complete"
     assert status["passed"] is True
     assert status["errors"] == []
+    assert status["contract_errors"] == []
     assert status["draft"] == str(path)
     assert len(status["results"]) == 1
     assert path.read_text() == before
@@ -181,10 +192,8 @@ def test_sandbox_contains_the_check_costs_path(tmp_path):
 
 
 def test_check_costs_accepts_several_drafts_in_one_call(monkeypatch, capsys, tmp_path):
-    passing = {"hot_partition_analysis": HOT_PARTITIONS}
-    failing = {
-        "hot_partition_analysis": [{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}]
-    }
+    passing = _valid(HOT_PARTITIONS)
+    failing = _valid([{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}])
     p0 = _write_draft(tmp_path, passing, rel="v1/schema_draft_group_0.json")
     p1 = _write_draft(tmp_path, failing, rel="v1/schema_draft_group_1.json")
 

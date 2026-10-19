@@ -88,7 +88,7 @@ For each pattern the base table key cannot serve:
 Before finalising, estimate the RCU/s or WCU/s each partition key value receives at `design_rps` and run the cost check (see `hot_partition_analysis` below): it computes the utilization against `design_metrics.dynamodb_partition_limits` and flags every value above the at-risk threshold. Apply mitigation (shard suffix, time-bucket PK) where it flags one and update the key design.
 
 **Step 6 — Settle the structure of each table**
-Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `index_name`, `partition_key` as a list of `KeyDefinition`, `sort_key` and `projection`), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` or `entities`.
+Before Phase 2b, settle each table's structural `TableDefinition` fields: `table_name`, `source_tables`, `aggregate_pattern` (`identifying_relationship` | `item_collection` | `separate`), `partition_key`, `sort_key`, `gsis` (each with `index_name`, `partition_key` as a list of `KeyDefinition`, `sort_key` and `projection`), `item_count` and `item_size_bytes`. Phase 2b adds `attributes` (`identifying_relationship` and `separate` tables) or `entities` (`item_collection` tables only), never both and never neither.
 
 ---
 
@@ -189,7 +189,7 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 - `gsis`: multi-attribute keys only; `partition_key` and `sort_key` are `list[KeyDefinition]`
 - `item_count`: sum of `row_count` across all consolidated source tables
 - `item_size_bytes`: weighted average across item types
-- **Single-entity tables** (`aggregate_pattern != item_collection`): populate `attributes` — one `AttributeDefinition` per DynamoDB attribute. Each attribute carries its full ETL lineage: `source_table`, `source_column`, and exactly one of `join`, `calculation`, or plain copy. Add `transformation` when the value needs reformatting. Set `denormalized=true` + `justification` for any attribute copied from a different entity.
+- **Single-entity tables** (`aggregate_pattern` is `identifying_relationship` or `separate`): populate `attributes` — one `AttributeDefinition` per DynamoDB attribute — and leave `entities` null. This holds even when the sort key is a composite string such as `ITEM#{order_item_id}`: the key schema lives in `partition_key` and `sort_key`, and the contract rejects `entities` on any table that is not an `item_collection`. If the table really holds several entity types, its `aggregate_pattern` is `item_collection`. Each attribute carries its full ETL lineage: `source_table`, `source_column`, and exactly one of `join`, `calculation`, or plain copy. Add `transformation` when the value needs reformatting. Set `denormalized=true` + `justification` for any attribute copied from a different entity.
 - **Item collection tables** (`aggregate_pattern = item_collection`): populate `entities` instead — one `EntityDefinition` per entity type. Each entity has `pk_template` (e.g. `"DISCUSSION#{id}"`), `sk_template` (e.g. `"POST#{id}"`), and its own `attributes` list. Do not populate `attributes` at the table level.
 - **ETL lineage — join type decision tree** (determines how to populate each attribute from the source database; follow top to bottom, use first match):
   1. Value lives in the same row → no join, direct `source_column`

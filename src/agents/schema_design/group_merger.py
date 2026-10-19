@@ -27,9 +27,10 @@ from src.agents.schema_design.dynamodb_merge import (
     pattern_id_maps,
     rewrite_pattern_ids,
 )
+from src.agents.schema_design.output_contract import write_schema_output
 from src.contracts.schema_design_input import ExcludedQuery
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
-from src.shared.contract_versioning import ContractVersionError, stamp_artifact_version
+from src.shared.contract_versioning import ContractVersionError
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -301,7 +302,7 @@ def merge_schema_groups(
                 excluded_queries=[ExcludedQuery.model_validate(q) for q in excluded_queries],
             )
             skipped = placeholder.model_dump(mode="json")
-            store.write_json(f"{base_key}/schema_output.json", skipped)
+            skipped = write_schema_output(store, f"{base_key}/schema_output.json", skipped, engine)
             print(
                 f"[schema-merge/{engine}] No groups to merge: all "
                 f"{len(excluded_queries)} assigned queries touch no source table. "
@@ -376,10 +377,11 @@ def merge_schema_groups(
     if excluded_queries:
         merged["excluded_queries"] = excluded_queries
 
-    # Write merged draft (the version comes from the contract, not the drafts)
+    # Write merged draft (the version comes from the contract, not the drafts).
+    # It must pass the engine's output contract first: an invalid design raises
+    # SchemaContractError and is never written (#1186).
     output_key = f"{base_key}/schema_output.json"
-    merged = stamp_artifact_version(output_key, merged)
-    store.write_json(output_key, merged)
+    merged = write_schema_output(store, output_key, merged, engine)
 
     maps = pattern_id_maps(drafts) if engine == "dynamodb" else []
     _consolidate_design_traces(

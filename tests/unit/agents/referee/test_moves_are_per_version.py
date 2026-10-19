@@ -171,6 +171,7 @@ class TestThePostSchemaRouterDoesNotInheritV1Moves:
         store.write_json(key, {**v1, "moves": moves})
         return prefix
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rerouted_version_holds_only_its_own_moves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed_with_moves(store)
@@ -183,6 +184,7 @@ class TestThePostSchemaRouterDoesNotInheritV1Moves:
         ]
         assert len(store.read_json(f"{prefix}/assignment/v1/assignment.json")["moves"]) == 4
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rollback_version_holds_only_its_own_moves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         prefix = self._seed_with_moves(store)

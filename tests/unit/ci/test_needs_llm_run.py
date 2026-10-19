@@ -356,9 +356,6 @@ REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
     ),
     "src/agents/interaction.py": "reads and writes question/answer files; no input content",
     "src/tools/analysis/llm_advisor_base.py": "Bedrock-only advisor, in BEDROCK_SMOKE",
-    "src/shared/contract_versioning.py": (
-        "checks and stamps contract_version only; never changes what a model is given"
-    ),
     "src/tools/sql/query_facts.py": (
         "the ElastiCache agent imports its timestamp-column trace helper (#935); the facts "
         "reach analysis.json through the analysis tools, which are in E2E_LLM, so gating the "

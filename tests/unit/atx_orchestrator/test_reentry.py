@@ -118,6 +118,7 @@ class TestRedispatch:
             {"index_designs": [], "assignment_version": 1},
         )
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_copies_unaffected_forward_and_flags_affected(self, store) -> None:
         self._seed_v1_schema(store)
         # v2 re-entry: q3 moved opensearch -> aurora_postgresql. dynamodb unchanged,
@@ -143,6 +144,7 @@ class TestRedispatch:
         # eliminated opensearch is NOT carried forward.
         assert not store.exists(f"{DB}/{JOB}/schema-opensearch/v2/schema_output.json")
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_reused_engines_marked_succeeded_and_parent_running(self, store) -> None:
         # After reopen resets the schema view to NOT_STARTED, redispatch must
         # re-mark the copied-forward engines SUCCEEDED (reused) and the parent box

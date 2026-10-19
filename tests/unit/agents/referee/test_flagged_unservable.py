@@ -374,6 +374,7 @@ def test_the_orchestrator_keeps_the_terminal_records_in_router_output(tmp_path) 
     ]
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_terminal_records_of_every_pass_are_kept(tmp_path) -> None:
     """Pass 0 moves q-1 off DynamoDB and leaves q-2 terminal (it needs a
     capability DynamoDB and DocumentDB lack, so no other kept engine can take

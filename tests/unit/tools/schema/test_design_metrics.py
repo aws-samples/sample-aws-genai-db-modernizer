@@ -640,6 +640,7 @@ def test_check_costs_script_reads_the_group_metrics(tmp_path):
     assert _group_design_metrics(tmp_path / "draft.json") is None
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_finalize_keeps_a_design_whose_numbers_disagree_but_fails_it(tmp_path: Path, monkeypatch):
     """Headless matches Bedrock: the design is written, marked failed, the phase goes on."""
     from src.agents.schema_design import handler

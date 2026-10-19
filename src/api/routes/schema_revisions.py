@@ -257,6 +257,7 @@ async def put_schema_revision(
         )
 
     # Concurrency check passes — execute the revision pipeline
+    from src.agents.schema_design.output_contract import SchemaContractError
     from src.agents.schema_design.revision_handler import VerificationError, execute_revision
 
     try:
@@ -271,6 +272,18 @@ async def put_schema_revision(
         raise HTTPException(
             status_code=422,
             detail={"message": str(e), "verification": e.result.model_dump(mode="json")},
+        ) from None
+    except SchemaContractError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": (
+                    "The revision would introduce errors against the engine's output "
+                    "contract, so nothing was written. Change the revision, or re-run "
+                    "schema design for this engine."
+                ),
+                "errors": e.errors,  # field paths and contract messages only (#143)
+            },
         ) from None
 
     return SchemaResponse(schema_output=new_schema, meta=meta)

@@ -17,6 +17,7 @@ import pytest
 from scripts import run_schema_design
 from src.agents.schema_design import handler
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
 DB, JOB = "mydb", "job-001"
 
@@ -48,16 +49,18 @@ _OTHER = {
 }
 
 
-def _design(engine: str, table: str, query: str) -> dict:
+def _design(engine: str, table: str, query: str, name: str = "Main") -> dict:
     """A minimal design for ``engine`` referencing ``table`` and ``query``."""
     common = {"trade_offs": [{"description": "d", "impact": "i"}], "validation_passed": True}
     if engine == "dynamodb":
-        body = {
-            "table_definitions": [{"table_name": "Main", "source_tables": [table]}],
-            "access_patterns": [
-                {"pattern_id": "DDB-AP-1", "query_ids": [query], "source_tables": [table]}
-            ],
-        }
+        # A design that passes the contract, so the merge tests below go through
+        # the output-contract gate (#1186).
+        return ddb_design(
+            [ddb_table(name, table)],
+            [ddb_pattern("DDB-AP-1", name, table, query)],
+            job_id=JOB,
+            database=DB,
+        )
     elif engine == "documentdb":
         body = {
             "collections": [{"collection_name": "c", "source_tables": [table]}],
@@ -128,6 +131,7 @@ _FINALIZE_ENGINES = sorted(
 
 
 @pytest.mark.parametrize("engine", _FINALIZE_ENGINES)
+@pytest.mark.usefixtures("schema_contract_off")
 def test_finalize_in_scope_design_is_complete(engine, monkeypatch, capsys, tmp_path, contract_ok):
     store = _store(tmp_path, engine)
     store.write_json(
@@ -144,6 +148,7 @@ def test_finalize_in_scope_design_is_complete(engine, monkeypatch, capsys, tmp_p
 
 
 @pytest.mark.parametrize("engine", _FINALIZE_ENGINES)
+@pytest.mark.usefixtures("schema_contract_off")
 def test_finalize_out_of_scope_design_fails_validation(
     engine, monkeypatch, capsys, tmp_path, contract_ok
 ):
@@ -165,6 +170,7 @@ def test_finalize_out_of_scope_design_fails_validation(
     assert all(e in written["validation_failures"] for e in status["errors"])
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_finalize_without_assignment_skips_scope_check(monkeypatch, capsys, tmp_path, contract_ok):
     store = LocalArtifactStore(base_dir=str(tmp_path))
     store.write_json(
@@ -203,7 +209,12 @@ def test_merge_out_of_scope_design_fails_validation(monkeypatch, capsys, tmp_pat
     store = _store(tmp_path, "dynamodb")
     _write_groups(
         store,
-        [_design("dynamodb", "mydb.users", "q-users"), _design("dynamodb", "orders", "q-orders")],
+        [
+            _design("dynamodb", "mydb.users", "q-users"),
+            # Its own table name: two complete designs named Main would be a
+            # merge conflict, which is not what this test is about.
+            _design("dynamodb", "orders", "q-orders", name="Orders"),
+        ],
     )
 
     code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
@@ -275,6 +286,7 @@ def test_handler_finalize_with_real_dynamodb_contract(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_finalize_reports_unsupported_pattern_ids_as_warnings(
     monkeypatch, capsys, tmp_path, contract_ok
 ):
@@ -293,6 +305,7 @@ def test_finalize_reports_unsupported_pattern_ids_as_warnings(
     assert not written.get("validation_failures")
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_hand_fixed_design_refinalizes_clean(monkeypatch, capsys, tmp_path, contract_ok):
     """Out-of-scope finalize, then the response is fixed by editing the written
     output (stale scope messages and validation_passed=false copied along) and
@@ -379,6 +392,7 @@ def _bedrock_store(tmp_path: Path, engine: str) -> LocalArtifactStore:
 
 
 @pytest.mark.parametrize("engine", ["documentdb", "aurora_mysql"])
+@pytest.mark.usefixtures("schema_contract_off")
 def test_bedrock_out_of_scope_design_fails_validation(engine, monkeypatch, capsys, tmp_path):
     store = _bedrock_store(tmp_path, engine)
     design = _design(engine, "mydb.orders", "q-orders")
@@ -396,6 +410,7 @@ def test_bedrock_out_of_scope_design_fails_validation(engine, monkeypatch, capsy
     assert all(e in written["validation_failures"] for e in status["errors"])
 
 
+@pytest.mark.usefixtures("schema_contract_off")  # a minimal DocumentDB design
 def test_bedrock_in_scope_design_is_complete(monkeypatch, capsys, tmp_path):
     store = _bedrock_store(tmp_path, "documentdb")
     design = _design("documentdb", "mydb.users", "q-users")
@@ -453,10 +468,10 @@ def test_bedrock_grouped_path_returns_merge_violations(monkeypatch, tmp_path):
 def _overlapping_drafts() -> list[dict]:
     """Two groups each give mydb.users its own table, with different key schemas."""
     first = _design("dynamodb", "mydb.users", "q-users")
-    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id"}
+    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id", "attribute_type": "S"}
     second = _design("dynamodb", "mydb.users", "q-users")
     second["table_definitions"][0].update(
-        table_name="UsersByEmail", partition_key={"attribute_name": "email"}
+        table_name="UsersByEmail", partition_key={"attribute_name": "email", "attribute_type": "S"}
     )
     return [first, second]
 
@@ -464,9 +479,12 @@ def _overlapping_drafts() -> list[dict]:
 def _conflicting_drafts() -> list[dict]:
     """Two groups use the table name Main for different designs (a true conflict)."""
     first = _design("dynamodb", "mydb.users", "q-users")
-    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id"}
+    first["table_definitions"][0]["partition_key"] = {"attribute_name": "id", "attribute_type": "S"}
     second = _design("dynamodb", "mydb.users", "q-users")
-    second["table_definitions"][0]["partition_key"] = {"attribute_name": "email"}
+    second["table_definitions"][0]["partition_key"] = {
+        "attribute_name": "email",
+        "attribute_type": "S",
+    }
     return [first, second]
 
 

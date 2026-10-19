@@ -391,7 +391,9 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     elif (
         record is None
         or record.get("draft_hashes") != _hashes(groups)
-        or not store.exists(output_key)
+        # A merge that refused on the contract wrote no output (#1186): it
+        # still failed on these drafts, so it is not pending.
+        or (not store.exists(output_key) and record.get("status") == "complete")
     ):
         status, next_step = "merge_pending", "every group draft is readable; run --merge"
     else:
@@ -406,6 +408,9 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
             extra["errors"] = list(
                 record.get("errors") or [f"--merge printed {record.get('status')}"]
             )
+            for field in ("contract_failure", "names"):
+                if record.get(field):
+                    extra[field] = record[field]
         else:
             status = "merged"
             next_step = "merged output is current; re-run --merge only after editing a draft"
@@ -466,13 +471,19 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
             )
             return
 
-    report = run_schema_merge(
-        job_id=job_id,
-        database_name=db,
-        target_type=engine,
-        store=store,
-        assignment_version=assignment_version,
-    )
+    from src.agents.schema_design.output_contract import SchemaContractError
+
+    try:
+        report = run_schema_merge(
+            job_id=job_id,
+            database_name=db,
+            target_type=engine,
+            store=store,
+            assignment_version=assignment_version,
+        )
+    except SchemaContractError as exc:
+        _refuse_merge(store, base_key, engine, groups, exc, assignment_version)
+        return
 
     fields = _scope_fields(report, _local_path(store, f"{base_key}/schema_output.json"))
     store.write_json(
@@ -485,6 +496,56 @@ def run_merge(store, job_id: str, db: str, engine: str, assignment_version: int)
         },
     )
     _output({**fields, "assignment_version": assignment_version})
+
+
+def _refuse_merge(store, base_key, engine, groups, exc, assignment_version: int) -> None:
+    """Record and print a merge the output contract refused; nothing was written (#1186).
+
+    No ``output_path``: there is no output of these drafts. ``contract_failure``
+    says where to fix it: ``drafts`` when a group draft fails the contract
+    itself (the Merge fix task edits it), ``merge`` when every draft passes and
+    only the merged design fails (no draft edit can fix that: the phase fails).
+    ``names`` frames the model-written names of the items the errors are about.
+    """
+    from src.agents.schema_design.output_contract import contract_errors, frame_contract_names
+
+    drafts_fail = any(
+        contract_errors(
+            store.read_json(f"{base_key}/schema_draft_group_{g['group_index']}.json"), engine
+        )
+        for g in groups
+    )
+    fields: dict = {
+        "status": "validation_failed",
+        "errors": exc.errors,
+        "contract_failure": "drafts" if drafts_fail else "merge",
+    }
+    names = frame_contract_names(exc.named)
+    if names:
+        fields["names"] = names
+    store.write_json(
+        f"{base_key}/{_MERGE_RECORD}",
+        {**fields, "warnings": [], "draft_hashes": _hashes(groups)},
+    )
+    _output({**fields, "assignment_version": assignment_version})
+
+
+def _refused_merge_errors(store, base_key: str) -> list[str]:
+    """The contract errors of the last ``--merge``, when it refused the current drafts.
+
+    Empty when there is no merge record, the drafts changed since, or that merge
+    wrote its output (a contract refusal writes nothing, so an older output may
+    still be on disk).
+    """
+    from src.agents.schema_design.output_contract import CONTRACT_PREFIX
+
+    record = _read_record(store, f"{base_key}/{_MERGE_RECORD}")
+    if not record or not store.exists(f"{base_key}/groups_manifest.json"):
+        return []
+    groups = _group_entries(store, base_key, store.read_json(f"{base_key}/groups_manifest.json"))
+    if record.get("draft_hashes") != _hashes(groups):
+        return []
+    return [e for e in record.get("errors") or [] if str(e).startswith(CONTRACT_PREFIX)]
 
 
 _DYNAMODB_FINALIZE_MESSAGE = (
@@ -506,15 +567,30 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     if engine == "dynamodb":
         from src.agents.schema_design.group_merger import merge_failures, merge_warnings
         from src.agents.schema_design.handler import ScopeReport, apply_schema_scope
-        from src.shared.contract_versioning import stamp_artifact_version
+        from src.agents.schema_design.output_contract import contract_errors, write_schema_output
 
-        output_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}/schema_output.json"
+        base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+        output_key = f"{base_key}/schema_output.json"
         if not store.exists(output_key):
             _error(_DYNAMODB_FINALIZE_MESSAGE)
         merged = store.read_json(output_key)
+        # A design that fails the contract is never finalized or rewritten (#1186),
+        # nor is an earlier output once the last --merge of the current drafts
+        # refused them: that output is not the design of these drafts.
+        errors = contract_errors(merged, engine) or _refused_merge_errors(store, base_key)
+        if errors:
+            _output(
+                {
+                    "status": "validation_failed",
+                    "errors": errors,
+                    "output_path": output_key,
+                    "assignment_version": assignment_version,
+                }
+            )
+            return
         checked, report = apply_schema_scope(store, db, job_id, engine, merged, assignment_version)
         if checked != merged:  # new violations, or stale ones cleared after a hand fix
-            store.write_json(output_key, stamp_artifact_version(output_key, checked))
+            write_schema_output(store, output_key, checked, engine)
         # Merge failures (#223) recorded by --merge fail finalize too; they clear
         # only by fixing the group drafts and re-running --merge.
         report = ScopeReport(
@@ -632,6 +708,7 @@ def run_check_costs(
     if engine != "dynamodb":
         _error("--check-costs is only available for --engine dynamodb")
 
+    from src.agents.schema_design.output_contract import contract_errors
     from src.tools.schema.dynamodb_cost_check import check_draft_costs
 
     group_results = []
@@ -646,7 +723,13 @@ def run_check_costs(
         if not isinstance(payload, dict):
             _error(f"draft {draft!r} must be a JSON object")
         metrics = _group_design_metrics(path)
-        group_results.append({"draft": draft, **check_draft_costs(payload, metrics)})
+        result = {"draft": draft, **check_draft_costs(payload, metrics)}
+        # The draft must pass the output contract too, as a Bedrock group draft
+        # does: --merge refuses a design that fails it (#1186).
+        result["contract_errors"] = contract_errors(payload, engine)
+        if result["contract_errors"]:
+            result["passed"] = False
+        group_results.append(result)
 
     if len(group_results) == 1:
         _output({"status": "complete", **group_results[0]})

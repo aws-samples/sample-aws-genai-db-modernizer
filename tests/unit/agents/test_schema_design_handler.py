@@ -46,6 +46,7 @@ def artifact_store(tmp_path):
 
 
 class TestSchemaDesignHandler:
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_reads_collector_and_analysis_from_store(self, artifact_store):
         """Handler reads both collector and analysis outputs from ArtifactStore."""
         with patch(
@@ -58,6 +59,7 @@ class TestSchemaDesignHandler:
 
         # If we got here without error, reads succeeded
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_writes_output_and_trace_to_store(self, artifact_store):
         """Handler writes schema_output.json and design_trace.json via ArtifactStore."""
         with patch(
@@ -71,6 +73,7 @@ class TestSchemaDesignHandler:
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/schema_output.json")
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/design_trace.json")
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_versioned_output_path_when_assignment_version_set(self, artifact_store):
         """When assignment_version > 0, output goes to versioned path."""
         # Write assignment artifact with queries assigned to dynamodb
@@ -104,6 +107,7 @@ class TestSchemaDesignHandler:
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/v2/schema_output.json")
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/v2/design_trace.json")
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_passes_paths_to_dispatch(self, artifact_store):
         """Handler passes collector_path and analysis_path to _dispatch_schema_agent."""
         captured_paths = {}
@@ -132,6 +136,7 @@ class TestSchemaDesignHandler:
         assert captured_paths["collector"].endswith(".json")
         assert captured_paths["analysis"].endswith(".json")
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_decision_trace_is_an_argument_never_an_env_var(self, artifact_store):
         """#1054: the DocumentDB decision trace goes to the agent as an argument;
         no environment variable carries it while the agent runs."""
@@ -166,6 +171,7 @@ class TestSchemaDesignHandler:
         assert seen["env"] is None
         assert not os.path.exists(seen["decision_trace_path"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_cleans_up_temp_files_after_run(self, artifact_store):
         """Handler cleans up temp files after agent completes."""
         captured_paths = {}

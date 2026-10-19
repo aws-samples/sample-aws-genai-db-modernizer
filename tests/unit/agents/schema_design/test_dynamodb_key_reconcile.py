@@ -13,11 +13,7 @@ from __future__ import annotations
 import json
 
 from src.agents.schema_design.dynamodb_key_reconcile import GSI_LIMIT
-from src.agents.schema_design.group_merger import (
-    merge_failures,
-    merge_group_drafts,
-    merge_warnings,
-)
+from src.agents.schema_design.group_merger import merge_failures, merge_group_drafts, merge_warnings
 from src.contracts.dynamodb_model_output import AccessPattern, TableDefinition
 
 ORDERS = "shop.orders"
@@ -121,11 +117,14 @@ def _ap(
 
 
 def _draft(tables: list[dict], aps: list[dict], trade_offs: list[dict] | None = None) -> dict:
+    """A group draft; with an access pattern it passes the output contract (#1186)."""
     return {
+        "job_id": "job-001",
+        "source_database": "wordpress",
         "table_definitions": tables,
         "access_patterns": aps,
         "hot_partition_analysis": [],
-        "trade_offs": trade_offs or [],
+        "trade_offs": [{"description": "d", "impact": "i"}] if trade_offs is None else trade_offs,
         "validation_passed": True,
         "validation_failures": [],
     }
@@ -643,8 +642,8 @@ class TestOrderAndNoise:
     def test_mechanical_changes_go_to_the_notes_not_the_trade_offs(self):
         notes: list[str] = []
         src = "discourse.users"
-        g0 = _draft([_single("users", src, "user_id", attrs=[_attr("user_id", src, "id")])], [])
-        g1 = _draft([_single("users", src, "id", attrs=[_attr("id", src, "id")])], [])
+        g0 = _draft([_single("users", src, "user_id", attrs=[_attr("user_id", src, "id")])], [], [])
+        g1 = _draft([_single("users", src, "id", attrs=[_attr("id", src, "id")])], [], [])
 
         merged = merge_group_drafts([g0, g1], "dynamodb", notes=notes)
 
@@ -1656,8 +1655,11 @@ class TestMergeTrace:
         store = LocalArtifactStore(str(tmp_path))
         base = "shop/job-1/schema-dynamodb/v1"
         src = "discourse.users"
+        # Valid drafts (one access pattern between them), so the merged design
+        # also goes through the output-contract gate (#1186).
+        read = _ap("DDB-AP-1", "users", "GetItem", "PK=user_id", source=src)
         drafts = [
-            _draft([_single("users", src, "user_id", attrs=[_attr("user_id", src, "id")])], []),
+            _draft([_single("users", src, "user_id", attrs=[_attr("user_id", src, "id")])], [read]),
             _draft([_single("users", src, "id", attrs=[_attr("id", src, "id")])], []),
         ]
         if collector is not None:
@@ -1687,7 +1689,10 @@ class TestMergeTrace:
 
         store, base = self._store(tmp_path, {"database_schema": {"tables": []}})
         merge_schema_groups("job-1", "shop", "dynamodb", store)
-        same = _draft([_single("users", "discourse.users", "user_id")], [])
+        same = _draft(
+            [_single("users", "discourse.users", "user_id")],
+            [_ap("DDB-AP-1", "users", "GetItem", "PK=user_id", source="discourse.users")],
+        )
         for i in (0, 1):
             store.write_json(f"{base}/schema_draft_group_{i}.json", same)
 

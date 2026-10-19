@@ -25,7 +25,9 @@ from datetime import UTC, datetime
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
 from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.schema_design import output_contract
 from src.agents.schema_design.group_trace import scope_decision_trace
+from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
 from src.agents.schema_design.scope import (
     EMPTY_REPORT,
     ScopeReport,
@@ -36,7 +38,6 @@ from src.contracts.analysis_output import key_scoped_writes_in_scope
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
-from src.shared.contract_versioning import stamp_artifact_version
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 from src.tools.schema.design_metrics import (
@@ -306,31 +307,8 @@ def validate_schema_design_output(output: dict, target_type: str) -> dict:
     Returns ``{"valid": True}`` on success, or
     ``{"valid": False, "errors": [str(e)]}`` on validation failure.
     """
-    from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
-    from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
-    from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
-    from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
-    from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
-    from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
-
-    _ENGINE_CONTRACTS: dict[str, type] = {
-        "dynamodb": DynamoDBModelOutputContract,
-        "documentdb": DocumentDBModelOutputContract,
-        "opensearch": OpenSearchModelOutputContract,
-        "elasticache": ElastiCacheModelOutputContract,
-        "aurora_postgresql": AuroraPostgresqlModelOutputContract,
-        "aurora_mysql": AuroraMySQLModelOutputContract,
-    }
-
-    contract_cls = _ENGINE_CONTRACTS.get(target_type)
-    if contract_cls is None:
-        return {"valid": False, "errors": [f"No contract registered for engine: {target_type}"]}
-
-    try:
-        contract_cls.model_validate(output)  # type: ignore[attr-defined]
-        return {"valid": True}
-    except Exception as exc:  # pydantic ValidationError
-        return {"valid": False, "errors": [str(exc)]}
+    errors = output_contract.contract_errors(output, target_type)
+    return {"valid": False, "errors": errors} if errors else {"valid": True}
 
 
 def finalize_schema_design(
@@ -420,7 +398,10 @@ def finalize_schema_design(
     )
 
     output_key = f"{prefix}/schema-{target_type}/v{version}/schema_output.json"
-    store.write_json(output_key, stamp_artifact_version(output_key, output))
+    try:
+        write_schema_output(store, output_key, output, target_type)
+    except SchemaContractError as exc:  # nothing is written (#1186)
+        return {"status": "validation_failed", "errors": exc.errors}
 
     status = scope_status(report, output_key)
     if delta_summary is not None:
@@ -717,7 +698,7 @@ def run_schema_design(
             )
         else:
             out_key = f"{database_name}/{job_id}/schema-{target_type}/schema_output.json"
-        store.write_json(out_key, placeholder.model_dump(mode="json"))
+        write_schema_output(store, out_key, placeholder.model_dump(mode="json"), target_type)
         print(f"[schema-design/{target_type}] Placeholder written to {out_key}")
         return EMPTY_REPORT
 
@@ -769,7 +750,8 @@ def run_schema_design(
     output_data, report = apply_schema_scope(
         store, database_name, job_id, target_type, output_data, assignment_version
     )
-    store.write_json(output_key, stamp_artifact_version(output_key, output_data))
+    # An answer that fails the contract fails the phase, never lands (#1186).
+    write_schema_output(store, output_key, output_data, target_type)
 
     # Write design trace via ArtifactStore
     if trace_json:
@@ -905,6 +887,9 @@ def run_schema_merge(
     merge's review notes (a source table several groups modelled independently)
     are returned as ``warnings`` and never fail the merge.
 
+    A merged design that fails the engine's output contract is not written and
+    raises :class:`SchemaContractError` (#1186), for every caller.
+
     Requirements: 6.3
     """
     import time
@@ -921,13 +906,26 @@ def run_schema_merge(
 
     artifact_version = assignment_version if assignment_version > 0 else 1
 
-    merged = merge_schema_groups(
-        job_id=job_id,
-        database_name=database_name,
-        engine=target_type,
-        store=store,
-        schema_version=artifact_version,
-    )
+    try:
+        merged = merge_schema_groups(
+            job_id=job_id,
+            database_name=database_name,
+            engine=target_type,
+            store=store,
+            schema_version=artifact_version,
+        )
+    except SchemaContractError as exc:
+        # Nothing was written (#1186). Re-raised so no caller can carry on as
+        # if the engine were designed: the local orchestrator, the schema-merge
+        # entrypoint and ATX fail the phase with these errors, and the external
+        # --merge turns them into a correction turn.
+        print(
+            f"[schema-merge/{target_type}] ❌ merged design fails the output contract "
+            f"({len(exc.errors)} error(s)); nothing written:"
+        )
+        for message in exc.errors:
+            print(f"  - {message}")
+        raise
 
     # merge_schema_groups also consolidates the per-group design traces into
     # design_trace.json (with DynamoDB pattern IDs renumbered like the drafts).
@@ -939,7 +937,7 @@ def run_schema_merge(
     if checked != merged:
         merged = checked
         output_key = f"{base_key}/schema_output.json"
-        store.write_json(output_key, stamp_artifact_version(output_key, merged))
+        write_schema_output(store, output_key, merged, target_type)
     violations = report.violations + merge_failures(merged)
     report = ScopeReport(violations, report.warnings + merge_warnings(merged))
 
@@ -1307,7 +1305,7 @@ def run_schema_design_with_injected(
         output_data = _merge_cascade_output(existing, output_data, target_type)
         print(f"[schema-design/{target_type}] Merged cascade output with existing schema")
 
-    store.write_json(output_key, stamp_artifact_version(output_key, output_data))
+    write_schema_output(store, output_key, output_data, target_type)
 
     elapsed = time.time() - start_time
     print(

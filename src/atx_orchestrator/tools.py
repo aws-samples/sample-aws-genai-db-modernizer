@@ -41,7 +41,7 @@ from src.atx_orchestrator.runtime.job_plan import (
     register_steps_from_server,
 )
 from src.contracts.phase_models import Phase, PhaseStatus
-from src.shared.contract_versioning import load_contract, stamp_artifact_version
+from src.shared.contract_versioning import load_contract
 
 logger = logging.getLogger(__name__)
 
@@ -2268,8 +2268,22 @@ def _copy_schema_forward(
     if isinstance(output, dict):
         output["assignment_version"] = new_version
     new_key = f"{base_new}/schema_output.json"
-    # A patched copy, so today's version, not the one copied (#1018).
-    store.write_json(new_key, stamp_artifact_version(new_key, output))  # type: ignore[attr-defined]
+    # A patched copy, so today's version, not the one copied (#1018). A saved
+    # design that fails its contract is not carried forward (#1186): the engine
+    # is designed again instead, like one with nothing to copy.
+    from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
+
+    try:
+        write_schema_output(store, new_key, output, engine)  # type: ignore[arg-type]
+    except SchemaContractError as exc:
+        logger.warning(
+            "ATX: v%s %s design fails its contract (%d error(s)); designing it again on v%s",
+            prev_version,
+            engine,
+            len(exc.errors),
+            new_version,
+        )
+        return False
     trace_src = f"{base_prev}/design_trace.json"
     if store.exists(trace_src):  # type: ignore[attr-defined]
         store.write_json(  # type: ignore[attr-defined]

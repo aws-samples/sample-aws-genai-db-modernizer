@@ -177,6 +177,7 @@ Make **at most 3 `--merge` attempts in total**:
 
 - `"status": "drafts_pending"` from `--merge`: it refused and wrote nothing (`missing_groups` have no draft, `invalid_groups` an unreadable one). This does not count as a `--merge` attempt; handle it like `drafts_pending` from `--status` above.
 - `"status": "complete"` with no `DynamoDB merge review: …` entry in `warnings`: set `phase_status.schema_design_dynamodb` = "complete". Other `warnings` never fail the phase.
+- `"status": "validation_failed"` with `"contract_failure": "merge"` (from `--merge`, or from `--status` as `merge_failed`): every group draft passes the output contract and only the merged design fails it, so no draft edit can fix it. Do not dispatch a fix subagent: set `phase_status.schema_design_dynamodb` = "failed", a phase failure with reason `merged design fails its output contract: <errors>`.
 - `"status": "validation_failed"`, or `complete` with `DynamoDB merge review: …` warnings while attempts remain: dispatch one fix subagent, wait for it, then re-run `--merge`. Pass it the `errors` and `warnings` from the `--merge` line exactly as printed:
 
   ```text

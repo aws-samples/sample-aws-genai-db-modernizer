@@ -18,15 +18,16 @@ from __future__ import annotations
 
 import logging
 
+from src.agents.schema_design.output_contract import ContractIssue, write_schema_output
 from src.contracts.schema_revision_models import (
     ChangelogEntry,
     PatternAction,
     SchemaRevisionRequest,
     SchemaVersionMeta,
     TableModification,
+    VerificationIssue,
     VerificationResult,
 )
-from src.shared.contract_versioning import stamp_artifact_version
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,35 @@ def generate_changelog(
 # ---------------------------------------------------------------------------
 
 
+def _contract_tolerated(
+    current_schema: dict, new_schema: dict, engine: str, current_version: int
+) -> dict[tuple[str, str | None], tuple[str, ContractIssue]]:
+    """The revised design's contract errors a revision may keep, each with its warning.
+
+    Raises :class:`SchemaContractError` (writing nothing) for any other error:
+    one the revision introduced.
+    """
+    from src.agents.schema_design.output_contract import SchemaContractError, contract_issues
+
+    already = {issue.key for issue in contract_issues(current_schema, engine)}
+    emptied = bool(current_schema.get("access_patterns")) and not new_schema.get("access_patterns")
+    tolerated: dict[tuple[str, str | None], tuple[str, ContractIssue]] = {}
+    introduced = []
+    for issue in contract_issues(new_schema, engine):
+        if issue.key in already:
+            tolerated[issue.key] = (f"{issue.message} (already in v{current_version})", issue)
+        elif emptied and issue.message.startswith("Contract: access_patterns: "):
+            tolerated[issue.key] = (
+                f"{issue.message} (the revision removed every access pattern)",
+                issue,
+            )
+        else:
+            introduced.append(issue)
+    if introduced:
+        raise SchemaContractError(engine, introduced)
+    return tolerated
+
+
 class VerificationError(Exception):
     """Raised when revision verification produces hard errors."""
 
@@ -531,6 +561,26 @@ def execute_revision(
     if not verification.passed:
         raise VerificationError(verification)
 
+    # 6b. The revised design against its contract (#1186). Only errors this
+    # revision introduces refuse it (nothing is written); errors the saved
+    # design already had, and an emptied design (every access pattern dropped
+    # or reassigned, written as before), are kept as warnings on the new version.
+    tolerated = _contract_tolerated(current_schema, new_schema, engine, current_version)
+    for message, issue in tolerated.values():
+        verification.warnings.append(
+            VerificationIssue(
+                category="consistency",
+                severity="warning",
+                message=message,
+                affected_tables=(
+                    [issue.name] if issue.name and issue.name_field == "table_name" else []
+                ),
+                affected_patterns=(
+                    [issue.name] if issue.name and issue.name_field == "pattern_id" else []
+                ),
+            )
+        )
+
     # 7. Generate changelog
     changelog = generate_changelog(current_schema, new_schema, engine)
 
@@ -549,7 +599,9 @@ def execute_revision(
     # 9. Write artifacts
     base_path = f"{database_name}/{job_id}/schema-{engine}/v{new_version}"
     schema_key = f"{base_path}/schema_output.json"
-    store.write_json(schema_key, stamp_artifact_version(schema_key, new_schema))
+    # The revised design must still pass the engine's contract; a revision that
+    # breaks it raises SchemaContractError and writes nothing (#1186).
+    write_schema_output(store, schema_key, new_schema, engine, tolerated=tolerated.keys())
 
     store.write_json(f"{base_path}/version_meta.json", meta.model_dump(mode="json"))
     store.write_json(f"{base_path}/revision_request.json", request.model_dump(mode="json"))

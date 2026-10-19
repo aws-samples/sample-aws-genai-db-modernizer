@@ -13,6 +13,8 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.agents.schema_design.handler import (
     finalize_schema_design,
     prepare_schema_design_input,
@@ -440,6 +442,7 @@ class TestRunSchemaDesignLlmModeExternal:
         result = run_schema_design("job-001", "mydb", "dynamodb", store, llm_mode="external")
         assert result.violations == [] and result.warnings == []
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_bedrock_mode_calls_dispatch(self):
         store = _base_store()
         with patch(
@@ -449,6 +452,7 @@ class TestRunSchemaDesignLlmModeExternal:
             run_schema_design("job-001", "mydb", "dynamodb", store, llm_mode="bedrock")
         mock_dispatch.assert_called_once()
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_default_mode_calls_dispatch(self):
         store = _base_store()
         with patch(

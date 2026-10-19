@@ -13,10 +13,7 @@ import logging
 from datetime import UTC, datetime
 
 from src.agents.referee.query_pattern import write_access_patterns
-from src.agents.referee.write_groups import (
-    assignment_placement_groups,
-    assignment_unit_weights,
-)
+from src.agents.referee.write_groups import assignment_placement_groups, assignment_unit_weights
 from src.contracts.phase_models import (
     PHASE_PREREQUISITES,
     SCHEMA_DESIGN_SKIP_REASON_NO_LLM,
@@ -828,11 +825,27 @@ class LocalOrchestrator(Orchestrator):
     def _copy_schema_artifacts(
         self, job_id: str, database_name: str, engine: str, src: int, dst: int
     ) -> None:
-        """Copy ``schema-<engine>/v<src>/*`` to ``v<dst>`` (an engine the moves left alone)."""
+        """Copy ``schema-<engine>/v<src>/*`` to ``v<dst>`` (an engine the moves left alone).
+
+        The design goes through the output-contract gate first (#1186): a saved
+        design that fails it raises :class:`SchemaContractError` before any file
+        of the engine is copied.
+        """
+        from src.agents.schema_design.output_contract import write_schema_output
+
         old_prefix = f"{database_name}/{job_id}/schema-{engine}/v{src}/"
-        for key in self.store.list_prefix(old_prefix):
-            new_key = f"{database_name}/{job_id}/schema-{engine}/v{dst}/" + key[len(old_prefix) :]
-            self.store.write_json(new_key, self.store.read_json(key))
+        new_prefix = f"{database_name}/{job_id}/schema-{engine}/v{dst}/"
+        keys = list(self.store.list_prefix(old_prefix))
+        design = old_prefix + "schema_output.json"
+        if design in keys:
+            write_schema_output(
+                self.store, new_prefix + "schema_output.json", self.store.read_json(design), engine
+            )
+        for key in keys:
+            if key != design:
+                self.store.write_json(
+                    new_prefix + key[len(old_prefix) :], self.store.read_json(key)
+                )
 
     def _schema_engines(self, job_id: str, database_name: str, version: int) -> set[str]:
         """Engines with a ``schema-<engine>/v<version>/`` directory."""
@@ -972,8 +985,21 @@ class LocalOrchestrator(Orchestrator):
         rollback_key = assignment_artifact_path(database_name, job_id, rollback)
         self.store.write_json(rollback_key, stamp_artifact_version(rollback_key, restated))
         write_access_patterns(self.store, database_name, job_id, rollback)
+        from src.agents.schema_design.output_contract import SchemaContractError
+
         for engine in designed:
-            self._copy_schema_artifacts(job_id, database_name, engine, version, rollback)
+            try:
+                self._copy_schema_artifacts(job_id, database_name, engine, version, rollback)
+            except SchemaContractError as exc:
+                # The restated design fails its contract (#1186): it is not
+                # copied, so v<rollback> has no design for the engine.
+                logger.error(
+                    "[router] v%d %s design fails its contract, not restated on v%d: %s",
+                    version,
+                    engine,
+                    rollback,
+                    "; ".join(exc.errors),
+                )
         logger.error(
             "[router] Redesign on v%d failed; v%d restates v%d with its designs",
             new_version,

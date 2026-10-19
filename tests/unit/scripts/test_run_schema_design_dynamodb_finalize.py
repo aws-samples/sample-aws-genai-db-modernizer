@@ -18,6 +18,7 @@ import pytest
 
 from scripts import run_schema_design
 from src.storage.local_store import LocalArtifactStore
+from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
 
 DB, JOB = "wordpress", "job-001"
 
@@ -51,7 +52,10 @@ def _run(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, root: P
 def test_finalize_reports_complete_when_merged_output_exists(monkeypatch, capsys, tmp_path):
     store = LocalArtifactStore(base_dir=str(tmp_path))
     output_key = f"{DB}/{JOB}/schema-dynamodb/v1/schema_output.json"
-    store.write_json(output_key, {"validation_passed": True})
+    store.write_json(
+        output_key,
+        ddb_design([ddb_table("T", f"{DB}.t")], [ddb_pattern("DDB-AP-1", "T", f"{DB}.t", "q1")]),
+    )
 
     code, status = _run(monkeypatch, capsys, tmp_path, "--finalize")
 

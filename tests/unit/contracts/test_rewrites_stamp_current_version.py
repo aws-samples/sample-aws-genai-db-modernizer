@@ -128,6 +128,7 @@ def test_the_reality_check_revision_writes_the_current_version(tmp_path: Path) -
 
 
 @pytest.mark.usefixtures("table_confidence_scores")
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_post_schema_reroute_writes_the_current_version(tmp_path: Path) -> None:
     from tests.unit.orchestrator import test_post_schema_move_ledger as reroute
 
@@ -143,6 +144,7 @@ def test_the_post_schema_reroute_writes_the_current_version(tmp_path: Path) -> N
 
 
 @pytest.mark.usefixtures("table_confidence_scores")
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_reroute_rollback_writes_the_current_version(tmp_path: Path) -> None:
     from tests.unit.orchestrator import test_post_schema_move_ledger as reroute
 
@@ -221,6 +223,7 @@ def _ddb_schema_key(version: int = 1) -> str:
     return f"mydb/job-1/schema-dynamodb/v{version}/schema_output.json"
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_dynamodb_finalize_scope_rewrite_writes_the_current_version(
     tmp_path: Path,
 ) -> None:
@@ -228,7 +231,10 @@ def test_the_dynamodb_finalize_scope_rewrite_writes_the_current_version(
     from src.agents.schema_design.handler import ScopeReport
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
-    stored = {"contract_version": current_version(DynamoDBModelOutputContract), "tables": []}
+    from tests.unit.agents.schema_design.valid_designs import ddb_design, ddb_pattern, ddb_table
+
+    design = ddb_design([ddb_table("T", "mydb.t")], [ddb_pattern("DDB-AP-1", "T", "mydb.t", "q")])
+    stored = {**design, "contract_version": current_version(DynamoDBModelOutputContract)}
     store.write_json(_ddb_schema_key(), stored)
 
     def flagged(store, db, job_id, engine, output, version):
@@ -244,6 +250,7 @@ def test_the_dynamodb_finalize_scope_rewrite_writes_the_current_version(
     assert written["contract_version"] == version
 
 
+@pytest.mark.usefixtures("schema_contract_off")
 def test_the_transform_copy_forward_writes_the_current_version(tmp_path: Path) -> None:
     from src.atx_orchestrator.tools import _copy_schema_forward
 

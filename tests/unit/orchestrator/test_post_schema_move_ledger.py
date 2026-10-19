@@ -87,6 +87,7 @@ def _rollback_run(store: LocalArtifactStore) -> None:
 
 class TestTheRerouteVersionHoldsItsOwnMoves:
     @pytest.mark.usefixtures("table_confidence_scores")  # #728: scores per table
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_one_post_schema_flag_move_per_moved_query(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -112,6 +113,7 @@ class TestTheRerouteVersionHoldsItsOwnMoves:
         # The flagged engine is gated by the flag, never scored as a candidate.
         assert ladder["dynamodb"].score is None and ladder["dynamodb"].gate
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_version_replays_from_v1_plus_its_moves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -122,6 +124,7 @@ class TestTheRerouteVersionHoldsItsOwnMoves:
         # v1's own Moves are not copied into v2.
         assert len(_version(store, 1)["moves"]) == 4
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_two_way_tie_settles_on_the_other_tied_engine(self, tmp_path) -> None:
         """#811: the other tied engine (DocumentDB, 55) comes before Aurora
         MySQL (70); one engine left is no tie, so the Move records the one it left."""
@@ -135,6 +138,7 @@ class TestTheRerouteVersionHoldsItsOwnMoves:
         assert move.evidence.previous_tied_engines == ["documentdb", "dynamodb"]
         assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_co_dependency_group_moves_as_one_unit_with_its_key(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -151,6 +155,7 @@ class TestTheRerouteVersionHoldsItsOwnMoves:
         assert all(m.evidence.group_scores for m in moves)
         assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_every_cascade_version_replays_in_turn(self, tmp_path) -> None:
         """The two-pass cascade of #713 review round 3: v2 and v3 each hold
         only their own pass's Moves, and v1 -> v2 -> v3 replays to v3."""
@@ -248,6 +253,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
     """#770 option (a): reverse Moves, so one replay rule covers every version."""
 
     @pytest.mark.usefixtures("table_confidence_scores")  # #728: scores per table
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_one_reverse_move_per_query_whose_engine_changes_back(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -275,6 +281,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         assert ladder["dynamodb"].gate == "model_flag"
         assert move.evidence.previous_tied_engines == []
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rollback_replays_to_the_version_it_restates(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -287,6 +294,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         # The abandoned reroute keeps its own Move; the rollback holds only its own.
         assert [m.query_id for m in _moves(_version(store, 2))] == ["q-1"]
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_rollback_restores_the_tie_the_reroute_cleared(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store, tied={"q-1": ["documentdb", "dynamodb"]})
@@ -297,6 +305,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         assert move.evidence.previous_tied_engines == []
         assert _replayed(store, 3) == move_ledger.state_of(_version(store, 1)["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_group_rollback_carries_the_group_key(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -313,6 +322,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         assert {m.group_key for m in moves} == {move_ledger.group_key(["q-1", "q-4"])}
         assert _replayed(store, 3) == move_ledger.state_of(_version(store, 1)["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_drifted_untouched_query_is_refused(self, tmp_path) -> None:
         """The rollback check is not circular: the reverse Moves come from the
         abandoned version's own Moves, so a query the reroute never moved that
@@ -333,6 +343,7 @@ class TestTheRollbackVersionRecordsTheMovesBack:
         with pytest.raises(RuntimeError, match="post-schema rollback"):
             LocalOrchestrator._rollback_moves(rerouted, drifted)
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_query_the_reroute_left_alone_gets_no_move(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed(store)
@@ -361,6 +372,7 @@ class TestTheRerouteKeepsTheTie:
     """#811: the post-schema reroute keeps a query's tie the way the reality
     check's model-flag path does (ADR-031 Decisions 11 Amendment 2 and 12)."""
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_tied_engine_comes_before_a_higher_scoring_one(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed_tie_case(
@@ -376,6 +388,7 @@ class TestTheRerouteKeepsTheTie:
         assert move.evidence.previous_tied_engines == ["documentdb", "dynamodb"]
         assert _replayed(store, 2) == move_ledger.state_of(_version(store, 2)["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_the_tie_minus_the_flagged_engine_is_kept(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed_tie_case(
@@ -396,6 +409,7 @@ class TestTheRerouteKeepsTheTie:
         assert router["routings"][0]["tied_engines"] == ["aurora_mysql", "documentdb"]
         assert _replayed(store, 2) == move_ledger.state_of(v2["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_an_untied_query_keeps_the_fresh_tie_the_scorer_leaves(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed_tie_case(store, {"dynamodb": 90, "documentdb": 70, "aurora_mysql": 70})
@@ -411,6 +425,7 @@ class TestTheRollbackAfterATieKeepingReroute:
     """#807 round-2 review note on #811: once a reroute can keep a tie, the
     rollback must tell "the tie was empty" from "the tie is unchanged"."""
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_query_with_no_tie_before_gets_no_tie_back(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed_tie_case(store, {"dynamodb": 90, "documentdb": 70, "aurora_mysql": 70})
@@ -425,6 +440,7 @@ class TestTheRollbackAfterATieKeepingReroute:
         assert v3["query_assignments"] == v1["query_assignments"]
         assert _replayed(store, 3) == move_ledger.state_of(v1["query_assignments"])
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_kept_tie_rolls_back_to_the_tie_before(self, tmp_path) -> None:
         store = LocalArtifactStore(base_dir=str(tmp_path))
         _seed_tie_case(
@@ -472,6 +488,7 @@ class TestTheRollbackAfterATieKeepingReroute:
         assert (back.to_engine, back.tied_engines) == ("aurora_mysql", ["a", "b"])
         assert back.evidence.previous_tied_engines == []
 
+    @pytest.mark.usefixtures("schema_contract_off")
     def test_a_move_whose_tie_record_disagrees_with_the_input_is_refused(self, tmp_path) -> None:
         """The reverse Moves never trust a tie the input does not have: a Move
         recording an earlier tie the restated version lacks fails loudly."""
