@@ -499,9 +499,24 @@ def test_experience_mode_is_recorded_after_the_state_file_exists() -> None:
     assert "Edit `experience_mode`" not in text
     phases_1_5 = text.split("### Phases 1-5", 1)[1].split("###", 1)[0]
     assert (
-        "run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}"
-        in (phases_1_5)
+        "run_assessment.py --file {collector_file} --db-from-file-name --mode {experience_mode}"
+        in phases_1_5
     )
+
+
+def test_database_name_comes_from_the_collect_line_not_the_model() -> None:
+    # #1096: the script derives the name from the collection file (the rule is
+    # src/shared/collection_database_name.py); the command reads it from the
+    # collect status line and never passes --db on the first command.
+    phases_1_5 = _modernize_text().split("### Phases 1-5", 1)[1].split("\n### ", 1)[0]
+    first = phases_1_5.split("```bash", 1)[1].split("```", 1)[0]
+    assert "--db-from-file-name" in first
+    assert "--db " not in first
+    assert "prints the name as `database_name` on the `collect` line" in phases_1_5
+    assert "database_name_source" in phases_1_5
+    assert "never derive it yourself" in phases_1_5
+    assert "Take `job_id` and `database_name` from the `collect` line" in phases_1_5
+    assert "(the script rejects any other name)" not in phases_1_5
 
 
 def test_merge_drafts_pending_is_handled_as_missing_groups_not_validation() -> None:

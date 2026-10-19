@@ -181,7 +181,7 @@ def test_error_before_the_job_exists_is_reported_inline(tmp_path):
 def test_uncaught_exception_becomes_an_error_status_line(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+        run_assessment, "phase_collect", lambda f, db, store, **kw: ("job-1", "wordpress")
     )
 
     def boom(*args, **kwargs):
@@ -214,7 +214,7 @@ def test_uncaught_exception_becomes_an_error_status_line(monkeypatch, tmp_path, 
 def test_keyboard_interrupt_still_prints_the_phase_error_line(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+        run_assessment, "phase_collect", lambda f, db, store, **kw: ("job-1", "wordpress")
     )
 
     def interrupted(*args, **kwargs):

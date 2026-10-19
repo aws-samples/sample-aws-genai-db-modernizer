@@ -2,7 +2,7 @@
 """Parse collector output and initialize a modernization job.
 
 Usage:
-    uv run python scripts/run_collect.py --file <collector-json> [--db <name>] [--artifact-root ./artifacts]
+    uv run python scripts/run_collect.py --file <collector-json> [--db <name> | --db-from-file-name] [--artifact-root ./artifacts]
 
 Outputs JSON to stdout:
     {"status": "complete", "job_id": "...", "database_name": "...", "tables": N, "queries": N}
@@ -18,10 +18,10 @@ import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.shared.database_name import (  # noqa: E402
-    DERIVED_DATABASE_NAME_ERROR,
-    validate_database_name,
+from src.shared.collection_database_name import (  # noqa: E402
+    resolve_database_name,
 )
+from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
@@ -81,6 +81,15 @@ def main() -> None:
     parser.add_argument("--file", required=True, help="Path to collector output JSON file")
     parser.add_argument("--db", default=None, help="Database name (auto-detected if not provided)")
     parser.add_argument(
+        "--db-from-file-name",
+        action="store_true",
+        help=(
+            "With --file and no --db: name the database from the collection file name "
+            "(the rule /modernize and /collect use) instead of preferring the file's own "
+            "metadata name"
+        ),
+    )
+    parser.add_argument(
         "--job-id",
         default=None,
         help="Job identifier (auto-generated if not provided)",
@@ -114,6 +123,9 @@ def main() -> None:
     violation = sandbox_violation(args)
     if violation:
         _error(violation)
+
+    if args.db is not None and args.db_from_file_name:
+        _error("--db and --db-from-file-name cannot be used together")
 
     if args.db is not None:
         try:
@@ -184,34 +196,21 @@ def main() -> None:
     job_id = args.job_id or str(uuid.uuid4())[:8]
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
 
+    # No --db: the file's own valid metadata name, else one derived from its file
+    # name (#1096). The status line says which.
+    db_source = "explicit"
+    db_name = args.db
+    if db_name is None:
+        db_name, db_source = resolve_database_name(
+            input_data, args.file, from_file_name=args.db_from_file_name
+        )
+    _set_job_context(store, db_name, job_id)
+
     if is_contract:
         # Already in collector contract format — use directly
         collector_data = input_data
-        db_name = args.db or (
-            collector_data.get("metadata", {})
-            .get("source_database", {})
-            .get("database_name", "unknown_db")
-        )
-        if args.db is None:
-            try:
-                db_name = validate_database_name(db_name)
-            except ValueError:
-                _error(DERIVED_DATABASE_NAME_ERROR)
-        _set_job_context(store, db_name, job_id)
     else:
         # Raw collection script output — parse with offline parser
-        db_name = args.db or input_data.get("metadata", {}).get("database_name", "unknown_db")
-        if not args.db and isinstance(input_data.get("metadata"), str):
-            meta = json.loads(input_data["metadata"])
-            db_name = meta.get("database_name", meta.get("schema_name", "unknown_db"))
-
-        if args.db is None:
-            try:
-                db_name = validate_database_name(db_name)
-            except ValueError:
-                _error(DERIVED_DATABASE_NAME_ERROR)
-        _set_job_context(store, db_name, job_id)
-
         # Upload raw file
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         store.write_json(upload_path, input_data)
@@ -309,6 +308,7 @@ def main() -> None:
             "status": "complete",
             "job_id": job_id,
             "database_name": db_name,
+            "database_name_source": db_source,
             "tables": len(tables),
             "queries": len(queries),
             **({"table_refs": table_refs} if table_refs is not None else {}),

@@ -10,13 +10,13 @@ import pytest
 
 from src.shared.database_name import (
     DATABASE_NAME_ERROR,
-    DERIVED_DATABASE_NAME_ERROR,
     validate_database_name,
 )
 
 
 @pytest.mark.parametrize(
-    "name", ["wordpress", "Demo_DB-42", "a", "a" * 128, "  wordpress  ", "abc\n", "\tabc\t"]
+    "name",
+    ["wordpress", "Demo_DB-42", "_-", "a-", "a", "a" * 128, "  wordpress  ", "abc\n", "\tabc\t"],
 )
 def test_accepts_valid_identifiers(name: str) -> None:
     assert validate_database_name(name) == name.strip()
@@ -41,6 +41,9 @@ def test_strips_trailing_newline_and_returns_the_stripped_value() -> None:
         "a/b",
         "a\\b",
         "a.b",
+        "-lead",
+        "--db",
+        "-",
         "café",
         "demo database",
         "a,b",
@@ -64,11 +67,6 @@ def test_rejects_non_string_values(name: object) -> None:
 def test_error_message_names_the_accepted_shape() -> None:
     assert "1 to 128" in DATABASE_NAME_ERROR
     assert "letters, digits, underscores or hyphens" in DATABASE_NAME_ERROR
-
-
-def test_derived_name_error_tells_the_caller_how_to_recover() -> None:
-    assert "metadata.database_name" in DERIVED_DATABASE_NAME_ERROR
-    assert "--db" in DERIVED_DATABASE_NAME_ERROR
 
 
 def test_error_message_never_echoes_the_rejected_value() -> None:

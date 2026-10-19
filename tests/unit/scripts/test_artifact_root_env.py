@@ -50,7 +50,7 @@ def test_run_assessment_artifact_root_defaults_to_artifact_dir_env(monkeypatch, 
 
     monkeypatch.setattr(local_store_module.LocalArtifactStore, "__init__", spy_init)
     monkeypatch.setattr(
-        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+        run_assessment, "phase_collect", lambda f, db, store, **kw: ("job-1", "wordpress")
     )
 
     def stop(*args, **kwargs):
@@ -86,7 +86,7 @@ def test_run_assessment_explicit_artifact_root_still_wins(monkeypatch, tmp_path)
 
     monkeypatch.setattr(local_store_module.LocalArtifactStore, "__init__", spy_init)
     monkeypatch.setattr(
-        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+        run_assessment, "phase_collect", lambda f, db, store, **kw: ("job-1", "wordpress")
     )
 
     def stop(*args, **kwargs):

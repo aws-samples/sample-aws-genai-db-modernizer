@@ -44,12 +44,12 @@ Every phase that involves LLM reasoning runs as a subagent (see Subagent Dispatc
 Run the deterministic pipeline in one command (no subagent needed):
 
 ```bash
-uv run python scripts/run_assessment.py --file {collector_file} --db {database_name} --mode {experience_mode}
+uv run python scripts/run_assessment.py --file {collector_file} --db-from-file-name --mode {experience_mode}
 ```
 
 When `--engines-in-use` was given, add `--engines-in-use {engines_in_use}` to that command.
 
-The database name is derived from the collector filename: drop `.json` and a trailing `-collection`, replace every character outside `[A-Za-z0-9_-]` with `_`, keep the first 128 characters, and use `database` if nothing is left (the script rejects any other name). Examples: `wordpress-collection.json` → `wordpress`, `my.app-collection.json` → `my_app`, `sales data.json` → `sales_data`. When a character was replaced or the name was cut, tell the user in one sentence which name it used, in every mode (`--mode ui` included), and continue (never ask).
+With `--db-from-file-name` the script names the database from the collector file name: drop `.json` and a trailing `-collection`, replace every character outside `[A-Za-z0-9_-]`, and a leading `-`, with `_`, keep the first 128 characters, and use `database` if nothing is left. It prints the name as `database_name` on the `collect` line, with `database_name_source` (`file_name`): take `{database_name}` from there, never derive it yourself, and pass it as `--db` in every later command. Examples: `wordpress-collection.json` → `wordpress`, `my.app-collection.json` → `my_app`, `sales data.json` → `sales_data`. When the name is not just the file name without `.json` and a trailing `-collection`, tell the user in one sentence which name it used, in every mode (`--mode ui` included), and continue (never ask).
 
 Its stdout is the whole tool result: one JSON status line per phase (`{"phase": "collect", ...}`, `"triage"`, `"analysis"`, `"assignment"`, `"reality_check"`), then one line that points at the progress log:
 
@@ -57,7 +57,7 @@ Its stdout is the whole tool result: one JSON status line per phase (`{"phase": 
 {"log": "artifacts/{database_name}/{job_id}/_logs/run_assessment.log", "log_offset": 1, "log_lines": 1376}
 ```
 
-- Take `job_id` from the `collect` line and the next step from the `reality_check` line. Run the command exactly as shown: do not pipe it through `tail` or anything else, and do not add `--verbose` (it prints the full progress to stdout, too large to see inline).
+- Take `job_id` and `database_name` from the `collect` line and the next step from the `reality_check` line. Run the command exactly as shown: do not pipe it through `tail` or anything else, and do not add `--verbose` (it prints the full progress to stdout, too large to see inline).
 - `status` is `"complete"`, `"awaiting_llm"` (reality check only, see below), `"skipped"` (`reason` says why; continue as if it completed) or `"error"`. You never need to open the paths a line names.
 - `"status": "error"` (or a non-zero exit) is a phase failure for that line's `phase`, with its `message` as the reason (see Error Handling). Only then, if the message is not enough, Read the `log` path with `offset` = `log_offset` and `limit` = `log_lines` (for a long log, just the last 200 lines of that range). A last line `{"log": null, "output_tail": ...}` means the job directory was never created; `output_tail` is the output.
 

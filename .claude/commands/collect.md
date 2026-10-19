@@ -26,12 +26,12 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 2. **Run collector**
 
    ```bash
-   uv run python scripts/run_collect.py --file <collector_file> --db {database_name}
+   uv run python scripts/run_collect.py --file <collector_file> --db-from-file-name
    ```
 
    When `--engines-in-use` was given, add `--engines-in-use <ids>` to the command.
 
-   The script auto-generates a `job_id` and returns it in the output JSON.
+   The script auto-generates a `job_id` and returns it in the output JSON, together with the `database_name` it derived from the file name (the same rule as `/modernize`). Never make up the name yourself.
 
 3. **Initialize state**
    Using the output from the script, create `.modernizer-state.json`:

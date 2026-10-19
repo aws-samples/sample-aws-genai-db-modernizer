@@ -1,7 +1,7 @@
 """/modernize derives a valid database name from any collection file name (#509).
 
-``/modernize`` takes no database name: it derives one from the collector file
-name and passes it as ``--db``. Since #420 a database name must match
+``/modernize`` takes no database name: the scripts derive one from the collector
+file name (#1096) and the command passes it on as ``--db``. Since #420 a database name must match
 ``DATABASE_NAME_PATTERN``, so a file such as ``my.app-collection.json`` used to
 produce ``my.app`` and the run failed at ``init``. The command must state the
 rewrite rule, and every example it gives must follow that rule and pass the
@@ -15,27 +15,26 @@ from pathlib import Path
 
 import pytest
 
-from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_name
+from src.shared.collection_database_name import database_name_from_collection_file
+from src.shared.database_name import validate_database_name
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODERNIZE = REPO_ROOT / ".claude" / "commands" / "modernize.md"
 
-ALLOWED_CLASS = DATABASE_NAME_PATTERN.split("{")[0]  # "[A-Za-z0-9_-]"
+ALLOWED_CLASS = "[A-Za-z0-9_-]"  # the rule's character class (the pattern also bars a leading -)
 EXAMPLE = re.compile(r"`([^`]+\.json)` → `([^`]*)`")
 
 
 def _rule_paragraph() -> str:
     text = MODERNIZE.read_text(encoding="utf-8")
-    paragraphs = [p for p in text.split("\n\n") if "database name is derived" in p]
+    paragraphs = [p for p in text.split("\n\n") if "With `--db-from-file-name`" in p]
     assert len(paragraphs) == 1, "expected one paragraph stating how the name is derived"
     return paragraphs[0]
 
 
 def derive(file_name: str) -> str:
-    """The rule the command states, as a reference implementation."""
-    stem = file_name.removesuffix(".json").removesuffix("-collection")
-    name = re.sub(r"[^A-Za-z0-9_-]", "_", stem)[:128]
-    return name or "database"
+    """The rule the command states; the scripts apply it (#1096)."""
+    return database_name_from_collection_file(file_name)
 
 
 @pytest.mark.parametrize(
@@ -46,6 +45,7 @@ def derive(file_name: str) -> str:
         ("sales data.json", "sales_data"),
         ("café.json", "caf_"),
         ("-collection.json", "database"),
+        ("-lead.json", "_lead"),
         ("a" * 200 + ".json", "a" * 128),
     ],
 )

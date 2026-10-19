@@ -23,7 +23,7 @@ class _StopAfterState(Exception):
 def _run(monkeypatch, tmp_path, *extra: str) -> dict:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        run_assessment, "phase_collect", lambda f, db, store: ("job-1", "wordpress")
+        run_assessment, "phase_collect", lambda f, db, store, **kw: ("job-1", "wordpress")
     )
 
     def stop(*args, **kwargs):

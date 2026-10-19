@@ -54,10 +54,10 @@ from src.shared.bedrock_guardrail import (  # noqa: E402
     describe_active_guardrail,
     exit_on_invalid_guardrail_config,
 )
-from src.shared.database_name import (  # noqa: E402
-    DERIVED_DATABASE_NAME_ERROR,
-    validate_database_name,
+from src.shared.collection_database_name import (  # noqa: E402
+    resolve_database_name,
 )
+from src.shared.database_name import validate_database_name  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
@@ -260,10 +260,12 @@ def phase_collect(
     db_name: str | None,
     store,
     engines_in_use: list[str] | None = None,
+    from_file_name: bool = False,
 ) -> tuple[str, str]:
     """Parse collector output and initialize artifacts. Returns (job_id, db_name).
 
     ``engines_in_use`` (#963): engine ids the operator declared as already running.
+    ``from_file_name`` (#1096): name the job from the file name, not its metadata.
     """
     from src.shared.engines_in_use import merge_engines_in_use
 
@@ -322,33 +324,18 @@ def phase_collect(
             _error("collect", str(exc))
 
     job_id = str(uuid.uuid4())[:8]
-    explicit_db = db_name  # already validated by _run() when the caller passed --db
+    # No --db: the file's own valid metadata name, else one derived from its file
+    # name (#1096). The collect status line says which.
+    db_source = "explicit"
+    if db_name is None:
+        db_name, db_source = resolve_database_name(
+            input_data, collector_file, from_file_name=from_file_name
+        )
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
 
     if is_contract:
         collector_data = input_data
-        db_name = explicit_db or (
-            collector_data.get("metadata", {})
-            .get("source_database", {})
-            .get("database_name", "unknown_db")
-        )
-        if explicit_db is None:
-            try:
-                db_name = validate_database_name(db_name)
-            except ValueError:
-                _error("collect", DERIVED_DATABASE_NAME_ERROR)
     elif is_raw:
-        db_name = explicit_db or input_data.get("metadata", {}).get("database_name", "unknown_db")
-        if not explicit_db and isinstance(input_data.get("metadata"), str):
-            meta = json.loads(input_data["metadata"])
-            db_name = meta.get("database_name", meta.get("schema_name", "unknown_db"))
-
-        if explicit_db is None:
-            try:
-                db_name = validate_database_name(db_name)
-            except ValueError:
-                _error("collect", DERIVED_DATABASE_NAME_ERROR)
-
         # Upload raw file
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         store.write_json(upload_path, input_data)
@@ -454,6 +441,7 @@ def phase_collect(
             "status": "complete",
             "job_id": job_id,
             "database_name": db_name,
+            "database_name_source": db_source,
             "tables": len(tables),
             "queries": len(queries),
             "artifact": artifact,
@@ -1059,6 +1047,15 @@ def main() -> None:
     parser.add_argument("--job-id", help="Existing job ID (skips collect phase)")
     parser.add_argument("--db", help="Database name (auto-detected from file if not provided)")
     parser.add_argument(
+        "--db-from-file-name",
+        action="store_true",
+        help=(
+            "With --file and no --db: name the database from the collection file name "
+            "(the rule /modernize and /collect use) instead of preferring the file's own "
+            "metadata name"
+        ),
+    )
+    parser.add_argument(
         "--llm-mode",
         default="external",
         choices=["none", "bedrock", "external"],
@@ -1191,6 +1188,9 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     if violation:
         _error("init", violation)
 
+    if args.db is not None and args.db_from_file_name:
+        _error("init", "--db and --db-from-file-name cannot be used together")
+
     if args.db is not None:
         try:
             args.db = validate_database_name(args.db)
@@ -1259,11 +1259,10 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
         # Full pipeline from collector file
         _start_phase("collect")
         declared = getattr(args, "engines_in_use_ids", None)
-        job_id, db_name = (
-            phase_collect(args.file, args.db, store, engines_in_use=declared)
-            if declared
-            else phase_collect(args.file, args.db, store)
-        )
+        collect_kwargs: dict = {"engines_in_use": declared} if declared else {}
+        if args.db_from_file_name:
+            collect_kwargs["from_file_name"] = True
+        job_id, db_name = phase_collect(args.file, args.db, store, **collect_kwargs)
         _attach_log(args.artifact_root, db_name, job_id)
         _set_job_context(store, db_name, job_id)
         state = {

@@ -336,6 +336,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _DETECTION + "; one value for OpenSearch's os-07 and Aurora's anti-04 (#493)",
     ),
     "src/agents/referee/routed_confidence.py": (frozenset({"LEAD_MIN_SHARE"}), _WORDING),
+    "src/shared/collection_database_name.py": (
+        frozenset({"_MAX_LENGTH"}),
+        "the artifact-path name length limit (#420, #1096), not a routing rule",
+    ),
     "src/shared/ranking.py": (frozenset({"PARTIAL_EVIDENCE_MIN_SHARE"}), _WORDING),
     "src/agents/referee/reality_check_request.py": (
         frozenset({"SQL_CHARS", "SQL_JSON_CHARS"}),

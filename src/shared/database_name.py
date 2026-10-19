@@ -13,25 +13,16 @@ from __future__ import annotations
 
 import re
 
-#: 1 to 128 ASCII letters, digits, underscores or hyphens -- no path
+#: 1 to 128 ASCII letters, digits, underscores or hyphens, not starting with a
+#: hyphen (so a name can never read as a command-line option) -- no path
 #: separators, no ``.`` (so ``.`` and ``..`` are rejected outright), no
 #: whitespace, no non-ASCII.
-DATABASE_NAME_PATTERN = r"[A-Za-z0-9_-]{1,128}"
+DATABASE_NAME_PATTERN = r"[A-Za-z0-9_][A-Za-z0-9_-]{0,127}"
 _DATABASE_NAME_RE = re.compile(DATABASE_NAME_PATTERN)
 
 DATABASE_NAME_ERROR = (
-    "database_name must contain 1 to 128 ASCII letters, digits, underscores or hyphens."
-)
-
-#: Real database names can be things like "Sales Data", "app.prod" or "café"
-#: -- names this validator correctly rejects as artifact-path components. A
-#: caller that derived the name from a collector file's own metadata (rather
-#: than an explicit --db) needs to be told how to recover, not just that the
-#: derived value was rejected.
-DERIVED_DATABASE_NAME_ERROR = (
-    "The collector file's metadata.database_name is not a valid artifact name "
-    "(it must contain 1 to 128 ASCII letters, digits, underscores or hyphens); "
-    "pass --db <name> to use a different one."
+    "database_name must contain 1 to 128 ASCII letters, digits, underscores or hyphens "
+    "and must not start with a hyphen."
 )
 
 
