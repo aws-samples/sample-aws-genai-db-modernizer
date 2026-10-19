@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
+from src.shared.database_name import validate_database_name
 from src.storage.artifact_store import ArtifactStore
 from src.storage.parallel import map_parallel
 
@@ -25,7 +26,10 @@ def _get_database_name(job_id: str) -> str:
     if not execution:
         raise HTTPException(status_code=404, detail="Assessment not found")
     db_name: str = execution.get("input", {}).get("database_name", "")
-    return db_name
+    try:
+        return validate_database_name(db_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Assessment not found") from exc
 
 
 def _journeys_page_from_graph(
@@ -50,6 +54,10 @@ def _journeys_page_from_graph(
             if skip >= total:
                 return total, []
             return total, graph_queries.query_journeys_page(store, skip, page_size)
+    except HTTPException as exc:
+        if exc.status_code == 404 and isinstance(exc.__cause__, ValueError):
+            raise
+        return None
     except RuntimeError as exc:
         mapped = graph_route.graph_error_to_http(exc)
         if mapped is not None:
@@ -98,7 +106,10 @@ def list_query_journeys(
 
     db_name = _get_database_name(job_id)
     prefix = f"{db_name}/{job_id}/query-journeys/"
-    all_keys = sorted(artifact_store.list_prefix(prefix))
+    try:
+        all_keys = sorted(artifact_store.list_prefix(prefix))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Assessment not found") from exc
 
     total = len(all_keys)
     if total == 0:
@@ -145,6 +156,9 @@ def get_query_journey(query_id: str, job_id: str = Depends(job_id_param)):
             return journey
         # Graph is available but has no such query — fall through to the artifact
         # (a legacy job may still have it), then 404.
+    except HTTPException as exc:
+        if exc.status_code == 404 and isinstance(exc.__cause__, ValueError):
+            raise
     except RuntimeError as exc:
         mapped = graph_route.graph_error_to_http(exc)
         if mapped is not None:

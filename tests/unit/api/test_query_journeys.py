@@ -444,3 +444,98 @@ def test_graph_memory_or_busy_error_is_a_retryable_503(mock_services, path, erro
     assert resp.json()["detail"] == expected
     mock_services["store"].read_json.assert_not_called()
     mock_services["store"].list_prefix.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/query-journeys", "/query-journeys/q_001"])
+@pytest.mark.parametrize("bad_db", ["../outside", "/tmp/outside", "a/b", "..", ""])
+def test_refused_graph_path_returns_404_not_artifact_fallback(
+    mock_services, tmp_path, monkeypatch, path, bad_db
+):
+    """#851: when the job's graph path is refused (e.g. invalid stored database_name),
+    query-journeys answers 404 without falling through to artifact_store."""
+    from src.api.routes import graph as graph_route
+    from src.graph import GraphStoreCache
+
+    cache = GraphStoreCache(base_dir=str(tmp_path / "root"))
+    monkeypatch.setattr(graph_route, "graph_cache", cache)
+    monkeypatch.setattr(graph_route, "artifact_store", mock_services["store"])
+    monkeypatch.setattr(graph_route, "graph_persistence", MagicMock())
+    monkeypatch.setattr(graph_route, "sfn_service", mock_services["sfn"])
+    mock_services["sfn"].describe_execution.return_value = {
+        "status": "SUCCEEDED",
+        "input": {"database_name": bad_db},
+    }
+
+    resp = client.get(f"/api/v1/assessments/job-1{path}")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Assessment not found"
+    mock_services["store"].list_prefix.assert_not_called()
+    mock_services["store"].read_json.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/query-journeys", "/query-journeys/q_001"])
+def test_refused_job_folder_in_graph_returns_404_without_listing_artifacts(
+    mock_services, tmp_path, monkeypatch, path
+):
+    """#851: when GraphStoreCache.local_path refuses a symlinked/escaped job folder,
+    query-journeys answers 404 without falling through to artifact_store."""
+    from src.api.routes import graph as graph_route
+    from src.graph import GraphStoreCache
+
+    cache = GraphStoreCache(base_dir=str(tmp_path / "root"))
+    monkeypatch.setattr(
+        cache,
+        "local_path",
+        MagicMock(side_effect=ValueError("graph path escapes the artifact root")),
+    )
+    monkeypatch.setattr(graph_route, "graph_cache", cache)
+    monkeypatch.setattr(graph_route, "artifact_store", mock_services["store"])
+    monkeypatch.setattr(graph_route, "graph_persistence", MagicMock())
+    monkeypatch.setattr(graph_route, "sfn_service", mock_services["sfn"])
+
+    resp = client.get(f"/api/v1/assessments/job-1{path}")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Assessment not found"
+    mock_services["store"].list_prefix.assert_not_called()
+    mock_services["store"].read_json.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/query-journeys", "/query-journeys/q_001"])
+@pytest.mark.parametrize("bad_db", ["../outside", "/tmp/outside", "a/b", "..", ""])
+def test_artifact_fallback_refuses_bad_database_name_with_404(
+    mock_services, monkeypatch, path, bad_db
+):
+    """#851: when the graph layer is absent, the artifact fallback also rejects an
+    invalid stored database_name with 404 before touching artifact_store."""
+    from src.api.routes import graph as graph_route
+
+    monkeypatch.setattr(graph_route, "graph_cache", None)
+    mock_services["sfn"].describe_execution.return_value = {
+        "status": "SUCCEEDED",
+        "input": {"database_name": bad_db},
+    }
+
+    resp = client.get(f"/api/v1/assessments/job-1{path}")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Assessment not found"
+    mock_services["store"].list_prefix.assert_not_called()
+    mock_services["store"].read_json.assert_not_called()
+
+
+def test_artifact_fallback_list_prefix_value_error_returns_404(mock_services, monkeypatch):
+    """#851: if artifact_store.list_prefix refuses the prefix with ValueError,
+    list_query_journeys answers 404 instead of 500."""
+    from src.api.routes import graph as graph_route
+
+    monkeypatch.setattr(graph_route, "graph_cache", None)
+    mock_services["store"].list_prefix.side_effect = ValueError(
+        "path escapes the artifact root: 'test_db/job-1/query-journeys/'"
+    )
+
+    resp = client.get("/api/v1/assessments/job-1/query-journeys")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Assessment not found"
