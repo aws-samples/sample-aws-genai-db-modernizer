@@ -437,7 +437,7 @@ class ScoringContext:
 
         def serves(query: Mapping) -> bool:
             if engine in NON_SYSTEM_OF_RECORD_ENGINES and (
-                is_write_query(query) or is_locking_read(query)
+                is_write_query(query) or is_locking_read(query, self.source_engine)
             ):
                 return False
             return _structural_gate(query, engine, self) is None

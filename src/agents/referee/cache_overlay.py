@@ -115,7 +115,7 @@ def is_write_query(query: Mapping) -> bool:
     return query_facts(str(query.get("query_text") or "")).write_statement_text
 
 
-def is_locking_read(query: Mapping) -> bool:
+def is_locking_read(query: Mapping, source_engine: str | None = None) -> bool:
     """True for a read that takes a row lock (``query_shape.locking_clause``).
 
     A locking read takes a row lock as part of a transaction -- the same
@@ -126,13 +126,16 @@ def is_locking_read(query: Mapping) -> bool:
     KEY UPDATE``, ``FOR SHARE``, ``FOR KEY SHARE``, MySQL ``LOCK IN SHARE
     MODE`` and a SQL Server ``WITH (UPDLOCK | HOLDLOCK | XLOCK |
     SERIALIZABLE)`` hint, matched after comments, literals and quoted
-    identifiers are removed. The UI engine picker runs the same rule
-    (``src/ui/src/utils/sqlLocking.js``, held to the same cases).
+    identifiers are removed, in ``source_engine``'s dialect (MySQL ``#`` comments,
+    PostgreSQL ``$$`` strings). The UI engine picker runs the same rule
+    (``src/ui/src/utils/sqlLocking.js``, held to the same cases) but not yet the
+    dialect: it reads every query in the common grammar, so it can only be stricter
+    than this check, never offer a pick the server rejects.
     """
-    return locking_clause(str(query.get("query_text") or "")) is not None
+    return locking_clause(str(query.get("query_text") or ""), source_engine) is not None
 
 
-def can_own(engine: str, query: Mapping | None = None) -> bool:
+def can_own(engine: str, query: Mapping | None = None, source_engine: str | None = None) -> bool:
     """Whether ``engine`` may own ``query`` (the write gate, #296, #303).
 
     A cache-only engine owns nothing; an engine that is not a system of record
@@ -142,12 +145,14 @@ def can_own(engine: str, query: Mapping | None = None) -> bool:
         return False
     if query is None or engine not in NON_SYSTEM_OF_RECORD_ENGINES:
         return True
-    return not (is_write_query(query) or is_locking_read(query))
+    return not (is_write_query(query) or is_locking_read(query, source_engine))
 
 
-def owner_candidates(engines: Iterable[str], query: Mapping | None = None) -> list[str]:
+def owner_candidates(
+    engines: Iterable[str], query: Mapping | None = None, source_engine: str | None = None
+) -> list[str]:
     """``engines`` that may own ``query``, in their given order."""
-    return [e for e in engines if can_own(e, query)]
+    return [e for e in engines if can_own(e, query, source_engine)]
 
 
 def write_heavy_tables(queries: Iterable[Mapping]) -> set[str]:
@@ -180,7 +185,7 @@ def cache_pattern(query: Mapping, source_engine: str = "") -> str | None:
     """
     text = str(query.get("query_text") or "")
     facts = query_facts(text, source_engine)
-    if facts.aggregation or facts.text_search or locking_clause(text):
+    if facts.aggregation or facts.text_search or locking_clause(text, source_engine):
         return None
     # A sequence fetch returns a new value on every call: a cached answer is wrong (#654).
     if is_sequence_fetch(text):
@@ -572,7 +577,7 @@ def owner_decision(
     counts = owner_counts or {}
     default = fallback_aurora_engine(source_engine)
     fallback_reason = no_serviceable_candidate_reason(default, source_engine)
-    candidates = sorted(owner_candidates(set(engines), query))
+    candidates = sorted(owner_candidates(set(engines), query, source_engine))
     if not candidates:
         return OwnerDecision(
             default, [], fallback_reason, fallback_rule=ReasonCode.FALLBACK_NO_OWNER

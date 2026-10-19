@@ -47,6 +47,7 @@ def _evaluate_engine_removal(
     source_compatible_engine: str | None = None,
     *,
     cost_model: QueryCostModel | None = None,
+    source_engine: str | None = None,
 ) -> tuple[bool, dict, float]:
     """Phase 1's per-engine question (#502 review): judged on ``engine``'s
     own native queries alone, using the resolver's own per-query scores
@@ -129,6 +130,7 @@ def _evaluate_engine_removal(
                 query_map,
                 query_capabilities,
                 tied_engines_by_qid,
+                source_engine=source_engine,
             ):
                 stranded.append(qid)
         return stranded
@@ -177,6 +179,7 @@ def _evaluate_engine_removal(
             query_map,
             query_capabilities,
             tied_engines_by_qid,
+            source_engine=source_engine,
         )
         if not eligible_alts:
             irreplaceable.append(qid)
@@ -279,6 +282,7 @@ def _removal_tiebreak_key(
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     source_compatible_engine: str | None = None,
     settled_counts: Mapping[str, int] | None = None,
+    source_engine: str | None = None,
 ) -> tuple[int, float]:
     """Data-driven tiebreaker between two candidates tied on burden-per-unique-
     query (#502 review round 5, finding N1; round 6 corrected the second
@@ -326,6 +330,7 @@ def _removal_tiebreak_key(
             query_map,
             query_capabilities,
             tied_engines_by_qid,
+            source_engine=source_engine,
         )
         if not alts:
             continue
@@ -370,6 +375,7 @@ def _settle_committed_engines(
     *,
     customer_kept_engines: Iterable[str] = (),
     cost_model: QueryCostModel | None = None,
+    source_engine: str | None = None,
 ) -> tuple[set[str], dict[str, dict]]:
     """Phase 1 (#502 review): settle which engines earn a place, independent
     of the order they happen to be evaluated in.
@@ -453,6 +459,7 @@ def _settle_committed_engines(
                 orphaned_qas,
                 source_compatible_engine,
                 cost_model=cost_model,
+                source_engine=source_engine,
             )
             # #502 review: no engine is "primary" anymore -- every engine is
             # judged the same way. The contract field stays (a breaking
@@ -495,6 +502,7 @@ def _settle_committed_engines(
                         tied_engines_by_qid,
                         source_compatible_engine,
                         settled_counts,
+                        source_engine=source_engine,
                     )
                     for c in tied
                 }
@@ -525,6 +533,7 @@ def _settle_committed_engines(
                     query_map,
                     query_capabilities,
                     tied_engines_by_qid,
+                    source_engine=source_engine,
                 )
                 for qa in native_qas + orphaned_qas
                 if qa["query_id"] not in mandatory_query_ids

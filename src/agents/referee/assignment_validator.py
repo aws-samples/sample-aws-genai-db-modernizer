@@ -14,6 +14,7 @@ Requirements: 3.1, 3.2, 3.3, 3.4
 from __future__ import annotations
 
 from src.agents.referee.assignment_resolver import build_co_dependency_groups
+from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, can_own
 from src.contracts.assignment_models import Assignment, ValidationResult
 from src.shared.engine_names import PLACEHOLDER_ENGINES, display_engine
@@ -63,6 +64,7 @@ class AssignmentValidator:
         # --- Hard ERROR: an engine that may not own the query owns it (#296) ---
         queries = collector_output.get("queries", {}).get("query_patterns", [])
         query_by_id = {q.get("query_id"): q for q in queries}
+        source_engine = source_database_engine(collector_output)
         for qa in assignment.query_assignments:
             if qa.assigned_engine in CACHE_OVERLAY_ENGINES:
                 errors.append(
@@ -70,7 +72,7 @@ class AssignmentValidator:
                     "layer and not a system of record. Assign it to the engine that stores "
                     "its data; the cache can still front it as a cache overlay."
                 )
-            elif not can_own(qa.assigned_engine, query_by_id.get(qa.query_id)):
+            elif not can_own(qa.assigned_engine, query_by_id.get(qa.query_id), source_engine):
                 errors.append(
                     f"ERROR: Query {qa.query_id} is a write owned by "
                     f"{display_engine(qa.assigned_engine)}, "

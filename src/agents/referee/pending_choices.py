@@ -361,7 +361,7 @@ def _choice_scores(
 
     def member_score(qid: str, engine: str) -> float | None:
         query = query_by_id.get(qid) or {"query_id": qid}
-        if not can_own(engine, query):
+        if not can_own(engine, query, ctx.source_engine):
             return None
         return score_query_for_engine(query, engine, ctx, exact=exact).score
 

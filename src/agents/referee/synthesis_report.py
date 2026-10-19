@@ -1097,6 +1097,7 @@ def build_risk_assessment(
         for q in data.source_queries
         if q.get("query_id")
     }
+    source_engine = source_database_engine(data.collector)
     covered_by = {
         engine: _covered_query_ids(artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
@@ -1411,7 +1412,10 @@ def build_risk_assessment(
             if (
                 pattern_ids
                 and _is_aggregation_unsupported_pattern(up)
-                and all(is_dedup_only_group_by(query_text.get(q, "")) for q in pattern_ids)
+                and all(
+                    is_dedup_only_group_by(query_text.get(q, ""), source_engine)
+                    for q in pattern_ids
+                )
             ):
                 risks.append(
                     {

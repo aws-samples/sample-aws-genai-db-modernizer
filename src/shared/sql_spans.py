@@ -33,9 +33,11 @@ __all__ = [
     "LITERALS_AND_COMMENTS",
     "MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS",
     "MYSQL_LITERALS_AND_COMMENTS",
+    "POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS",
     "POSTGRES_LITERALS_AND_COMMENTS",
     "QUOTED_IDENTIFIERS",
     "Grammar",
+    "comments_literals_and_identifiers_for",
     "literals_and_comments_for",
     "quoted_span_end",
     "spans",
@@ -158,6 +160,12 @@ def _end_with_dollar(text: str, start: int, opener: str) -> int:
     return _end_literals_and_comments(text, start, opener)
 
 
+def _end_postgres_comments_literals_and_identifiers(text: str, start: int, opener: str) -> int:
+    if opener.startswith("$"):
+        return _dollar_end(text, start, opener)
+    return _end_comments_literals_and_identifiers(text, start, opener)
+
+
 LITERALS_AND_COMMENTS = Grammar(re.compile(r"/\*|--|['\"]"), _end_literals_and_comments)
 # MySQL and MariaDB also end a line at ``#``; PostgreSQL reads ``#`` as an operator, so
 # only this grammar blanks it (#1101).
@@ -172,6 +180,11 @@ MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
 # PostgreSQL also quotes strings with ``$$...$$`` and ``$tag$...$tag$`` (#1101).
 POSTGRES_LITERALS_AND_COMMENTS = Grammar(
     re.compile(rf"/\*|--|['\"]|{_DOLLAR_OPENER}"), _end_with_dollar
+)
+# The same with PostgreSQL's dollar-quoted strings (#1114).
+POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
+    re.compile(rf"/\*|--|['\"`\[]|{_DOLLAR_OPENER}"),
+    _end_postgres_comments_literals_and_identifiers,
 )
 QUOTED_IDENTIFIERS = Grammar(re.compile(r"[\"`\[]"), _end_quoted_identifiers)
 # All of them in one scan, the span that opens first winning: ``/* */`` and ``--``
@@ -192,6 +205,18 @@ def literals_and_comments_for(source_engine: str | None) -> Grammar:
     if engine in ("postgresql", "postgres"):
         return POSTGRES_LITERALS_AND_COMMENTS
     return LITERALS_AND_COMMENTS
+
+
+def comments_literals_and_identifiers_for(source_engine: str | None) -> Grammar:
+    """The one-scan comment, literal and quoted-identifier grammar of a source engine,
+    chosen as :func:`literals_and_comments_for` chooses (``#`` for MySQL and MariaDB,
+    dollar quoting for PostgreSQL)."""
+    base = literals_and_comments_for(source_engine)
+    if base is MYSQL_LITERALS_AND_COMMENTS:
+        return MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS
+    if base is POSTGRES_LITERALS_AND_COMMENTS:
+        return POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS
+    return COMMENTS_LITERALS_AND_IDENTIFIERS
 
 
 def spans(text: str, grammar: Grammar) -> Iterator[tuple[int, int, str]]:

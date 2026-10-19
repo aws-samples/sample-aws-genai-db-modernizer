@@ -382,7 +382,7 @@ def scorer_ladder(query: Mapping, scoring_context: ScoringContext) -> list[Candi
             ladder.append(
                 CandidateScore(engine=engine, score=None, gate=result.gate_kind or "gate")
             )
-        elif not can_own(engine, query):
+        elif not can_own(engine, query, scoring_context.source_engine):
             ladder.append(CandidateScore(engine=engine, score=result.score, gate=GATE_KIND_WRITE))
         else:
             ladder.append(CandidateScore(engine=engine, score=result.score))
@@ -476,6 +476,7 @@ def _eligible_destinations(
     query_signals: Mapping[str, list[str]],
     query_map: Mapping[str, Mapping],
     query_capabilities: Mapping[str, list[str]],
+    source_engine: str | None = None,
 ) -> list[str]:
     """``scores``' own candidates (already proven serviceable by the shared
     scorer) filtered through the SAME eligibility rule Phase 2 uses
@@ -523,6 +524,7 @@ def _eligible_destinations(
             query_map_dict,
             capabilities_dict,
             tied_engines_by_qid,
+            source_engine=source_engine,
         )
     return _query_eligible_engines(
         qid,
@@ -533,6 +535,7 @@ def _eligible_destinations(
         signals_dict,
         query_map_dict,
         capabilities_dict,
+        source_engine=source_engine,
     )
 
 
@@ -794,6 +797,7 @@ def sanity_sweep(
                 query_signals or {},
                 query_map,
                 scoring_context.query_capabilities,
+                source_engine=scoring_context.source_engine,
             )
             if not eligible:
                 # Serviceable (the shared scorer's gates passed) but still

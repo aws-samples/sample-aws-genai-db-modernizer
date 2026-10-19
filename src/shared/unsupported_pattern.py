@@ -320,7 +320,7 @@ def strip_comments_and_literals(query_sql: str | None, source_engine: str | None
     return sub_spans(query_sql or "", literals_and_comments_for(source_engine), lambda _span: " ")
 
 
-def non_scalar_function_names(query_sql: str | None) -> set[str]:
+def non_scalar_function_names(query_sql: str | None, source_engine: str | None = None) -> set[str]:
     """Every function called in ``query_sql`` that is not on the scalar allowlist.
 
     Lower-cased names; empty when every call is one of the short list of
@@ -340,7 +340,7 @@ def non_scalar_function_names(query_sql: str | None) -> set[str]:
         for m in _QUOTED_FUNCTION_CALL_RE.finditer(original)
         if m.group(1).lower() not in _SCALAR_OPERATION_ALLOWLIST
     }
-    for match in _FUNCTION_CALL_RE.finditer(strip_comments_and_literals(original)):
+    for match in _FUNCTION_CALL_RE.finditer(strip_comments_and_literals(original, source_engine)):
         name = match.group(1).lower()
         if name not in _SCALAR_OPERATION_ALLOWLIST:
             names.add(name)

@@ -1020,7 +1020,9 @@ class QueryFacts:
             return True
         if self._source_engine.strip().lower() != "sqlserver" or not self._has("apply"):
             return False
-        return bool(_TSQL_APPLY_RE.search(strip_comments_and_literals(self._text)))
+        return bool(
+            _TSQL_APPLY_RE.search(strip_comments_and_literals(self._text, self._source_engine))
+        )
 
     @cached_property
     def on_conflict_or_returning(self) -> bool:

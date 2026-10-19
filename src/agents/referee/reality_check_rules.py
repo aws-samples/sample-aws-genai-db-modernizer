@@ -95,13 +95,14 @@ def may_absorb(
     query: dict,
     query_signals: dict[str, list[str]],
     query_capabilities: dict[str, list[str]] | None = None,
+    source_engine: str | None = None,
 ) -> bool:
     """Whether consolidation may move query ``qid`` onto ``engine`` (#296).
 
     The write gate (a cache owns nothing, a non-system-of-record engine owns no
     write), and specialist engines absorb only queries that need their specialty.
     """
-    if not can_own(engine, query):
+    if not can_own(engine, query, source_engine):
         return False
     signals = SPECIALIST_ABSORB_SIGNALS.get(engine)
     if signals is None:
@@ -217,6 +218,7 @@ def _query_eligible_engines(
     query_signals: dict[str, list[str]],
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
+    source_engine: str | None = None,
 ) -> list[str]:
     """``candidates`` that may actually own ``qid`` -- the ONE eligibility
     rule Phase 1 (which engines earn a place) and Phase 2 (where every
@@ -278,7 +280,7 @@ def _query_eligible_engines(
         # happened to be attached to it, moving it away for no score
         # reason at all).
         if e not in current_set and not may_absorb(
-            e, qid, query, query_signals, query_capabilities
+            e, qid, query, query_signals, query_capabilities, source_engine
         ):
             return False
         if not can_engine_serve_capability(e, required_caps):
@@ -319,6 +321,7 @@ def _group_eligible_engines(
     query_map: dict[str, dict],
     query_capabilities: dict[str, list[str]] | None,
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
+    source_engine: str | None = None,
 ) -> list[str]:
     """``candidates`` eligible to hold ``qid`` -- group-aware (#502 review
     round 5, finding G).
@@ -362,6 +365,7 @@ def _group_eligible_engines(
             query_signals,
             query_map,
             query_capabilities,
+            source_engine=source_engine,
         )
     members = _moving_members(qid, trace_by_query, mandatory_query_ids, current_engine_by_qid)
     return [
@@ -378,6 +382,7 @@ def _group_eligible_engines(
                 query_signals,
                 query_map,
                 query_capabilities,
+                source_engine=source_engine,
             )
             for m_qid in members
         )

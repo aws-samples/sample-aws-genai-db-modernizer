@@ -322,6 +322,7 @@ def run_reality_check(
         settled_counts,
         customer_kept_engines=kept_by_customer,
         cost_model=scoring_ctx.cost_model,
+        source_engine=resolved_source_engine,
     )
 
     # -------------------------------------------------------------------
@@ -350,6 +351,7 @@ def run_reality_check(
         closed_destinations=closed_to_pinned_search(
             query_assignments, query_map, kept_by_customer, resolved_source_engine
         ),
+        source_engine=resolved_source_engine,
     )
 
     # Mandatory-engine justification floor (#326, #167); see reality_check_floors.

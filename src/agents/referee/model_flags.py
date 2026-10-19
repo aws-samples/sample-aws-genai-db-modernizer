@@ -150,6 +150,7 @@ def route_flagged_unit(
         query_signals or {},
         query_map,
         scoring_context.query_capabilities,
+        source_engine=scoring_context.source_engine,
     )
     if not eligible:
         return UnitRouting(

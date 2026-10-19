@@ -465,6 +465,7 @@ def _apply_justification_floors(
                         for m in members
                         if to_move_by_id[m].get("tied_engines")
                     },
+                    source_engine=resolved_source_engine,
                 )
                 # The group's mean over its moving members (#894): the same
                 # numbers Phase 1 and 2 judge it on (Decision 7), never one
@@ -543,6 +544,7 @@ def _apply_justification_floors(
                 query_capabilities,
                 source_compatible_engine,
                 settled_counts,
+                source_dialect=resolved_source_engine,
             )
             if absorber is None:
                 floor_unplaced.append(qa)
@@ -704,6 +706,7 @@ def _find_best_absorber_for_query(
     query_capabilities: dict[str, list[str]] | None = None,
     source_compatible_engine: str | None = None,
     settled_counts: Mapping[str, int] | None = None,
+    source_dialect: str | None = None,
 ) -> dict | None:
     """Find the best committed engine to absorb a single query.
 
@@ -764,7 +767,9 @@ def _find_best_absorber_for_query(
         # Write gate (#296): a cache never owns a query, and an engine that is not
         # a system of record never owns a write; a specialist (OpenSearch) absorbs
         # only the queries its specialty serves
-        if not may_absorb(target_engine, qid, query, query_signals, query_capabilities):
+        if not may_absorb(
+            target_engine, qid, query, query_signals, query_capabilities, source_dialect
+        ):
             continue
 
         # Review of #375, finding B2: a join consolidated away from a

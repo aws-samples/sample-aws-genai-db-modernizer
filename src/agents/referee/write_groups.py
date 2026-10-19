@@ -82,7 +82,7 @@ def written_tables(
     if is_write_query(query):
         targets = set(query_facts(text, source_engine).write_targets)
         out.extend([t for t in tables if _bare(t) in targets] or tables)
-    if is_locking_read(query):
+    if is_locking_read(query, source_engine):
         out.extend(tables)
     return list(dict.fromkeys(out))
 

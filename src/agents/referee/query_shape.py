@@ -33,8 +33,11 @@ from src.agents.referee.access_pattern import KEY_LOOKUP, KEY_RANGE, KEY_SCOPED,
 from src.agents.referee.capability_registry import detect_required_capabilities
 from src.agents.referee.table_resolution import SourceScope
 from src.shared.sql_spans import (
-    COMMENTS_LITERALS_AND_IDENTIFIERS,
+    MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS,
+    MYSQL_LITERALS_AND_COMMENTS,
     QUOTED_IDENTIFIERS,
+    comments_literals_and_identifiers_for,
+    literals_and_comments_for,
     sub_spans,
 )
 from src.shared.unsupported_pattern import non_scalar_function_names, strip_comments_and_literals
@@ -251,7 +254,7 @@ _LOCKING_HINTS = frozenset({"UPDLOCK", "HOLDLOCK", "XLOCK", "SERIALIZABLE"})
 _ROW_SKIPPING_HINTS = frozenset({"READPAST"})
 
 
-def _normalized_sql(text: str) -> str:
+def _normalized_sql(text: str, source_engine: str | None) -> str:
     """``text`` with comments and literals blanked and quoted identifiers made ``ident``.
 
     One left-to-right pass in linear time (review of #871, ``sql_spans``): at each
@@ -259,11 +262,15 @@ def _normalized_sql(text: str) -> str:
     literal (``''`` and backslash escapes), or a ``"..."`` / `` `...` `` /
     ``[...]`` identifier -- is replaced whole, so a quote inside one never
     pairs with a quote outside it. An opener with no closer is plain text.
+
+    ``source_engine`` adds the dialect's own forms (#1114): MySQL and MariaDB ``#``
+    comments, PostgreSQL ``$$...$$`` strings. A backtick identifier is one span, so
+    the ``#`` of `` `order#items` `` is not a comment.
     """
     return sub_spans(
         text,
-        COMMENTS_LITERALS_AND_IDENTIFIERS,
-        lambda span: " " if span.startswith(("/*", "--", "'")) else " ident ",
+        comments_literals_and_identifiers_for(source_engine),
+        lambda span: " " if span.startswith(("/*", "--", "#", "'", "$")) else " ident ",
     )
 
 
@@ -295,13 +302,13 @@ def _without_locking_clauses(sql: str) -> str:
     )
 
 
-def skips_locked_rows(query_text: str | None) -> bool:
+def skips_locked_rows(query_text: str | None, source_engine: str | None = None) -> bool:
     """Whether ``query_text`` skips rows other transactions hold (``SKIP LOCKED``, ``READPAST``).
 
     Such a read returns an unknown row (a work-queue claim), so it is never a
     key-value lookup (review of #840).
     """
-    sql = _normalized_sql(query_text or "")
+    sql = _normalized_sql(query_text or "", source_engine)
     if any(
         " ".join((m.group("wait") or "").upper().split()) == "SKIP LOCKED"
         for m in _FOR_LOCKING_RE.finditer(sql)
@@ -310,7 +317,7 @@ def skips_locked_rows(query_text: str | None) -> bool:
     return any(_ROW_SKIPPING_HINTS.intersection(names) for names in _table_hint_lists(sql))
 
 
-def locking_clause(query_text: str | None) -> str | None:
+def locking_clause(query_text: str | None, source_engine: str | None = None) -> str | None:
     """The locking clause of ``query_text`` in canonical form, else ``None``.
 
     ``"FOR UPDATE"``, ``"FOR NO KEY UPDATE NOWAIT"``, ``"FOR UPDATE SKIP
@@ -321,7 +328,7 @@ def locking_clause(query_text: str | None) -> str | None:
     This is the transactional need a locking read records (#799). It changes
     :func:`single_table_access_shape` only through :func:`skips_locked_rows`.
     """
-    sql = _normalized_sql(query_text or "")
+    sql = _normalized_sql(query_text or "", source_engine)
     clauses = []
     for match in _FOR_LOCKING_RE.finditer(sql):
         words = ["FOR", " ".join(match.group("strength").upper().split())]
@@ -351,6 +358,25 @@ _SORT_ITEM_RE = re.compile(
 def _unquote_identifiers(text: str) -> str:
     """``"t"."id"`` / `` `id` `` / ``[id]`` -> ``t.id`` / ``id``, keeping the names."""
     return sub_spans(text, QUOTED_IDENTIFIERS, lambda span: span[1:-1].replace('""', '"'))
+
+
+def readable_sql(text: str, source_engine: str | None) -> str:
+    """``text`` without comments and literals, identifiers unquoted.
+
+    The same two steps whichever the dialect, in the order the dialect needs: MySQL's
+    ``#`` comments make unquoting first unsafe (it would expose the ``#`` of
+    `` `order#items` ``), so MySQL and MariaDB do both in one scan, in source order
+    (#1101). Every other engine unquotes first, as before.
+    """
+    if literals_and_comments_for(source_engine) is not MYSQL_LITERALS_AND_COMMENTS:
+        return strip_comments_and_literals(_unquote_identifiers(text), source_engine)
+
+    def read(span: str) -> str:
+        if span[0] in '"`[':
+            return span[1:-1].replace('""', '"')
+        return " "
+
+    return sub_spans(text, MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS, read)
 
 
 def _qualifier(match: re.Match[str]) -> str:
@@ -389,13 +415,13 @@ def _row_limit(sql: str) -> tuple[str, str | None, str] | None:
 
 
 def _primary_key_ordered_row_limit(
-    query_text: str | None, primary_key: Sequence[str]
+    query_text: str | None, primary_key: Sequence[str], source_engine: str | None
 ) -> tuple[str, str | None, str] | None:
     """:func:`_row_limit` of a read ordered by the table's own primary key, else ``None``."""
     key = [c.lower() for c in primary_key or []]
     if not key:
         return None
-    sql = strip_comments_and_literals(_unquote_identifiers(query_text or ""))
+    sql = readable_sql(query_text or "", source_engine)
     # A lock changes no row the read returns (#799): read the shape without it.
     sql = _without_locking_clauses(sql).strip()
     if _WHERE_WORD_RE.search(sql):
@@ -415,7 +441,9 @@ def _primary_key_ordered_row_limit(
     return limit
 
 
-def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]) -> str | None:
+def primary_key_ordered_limit(
+    query_text: str | None, primary_key: Sequence[str], source_engine: str | None = None
+) -> str | None:
     """The row limit of a read ordered by the table's own primary key, else ``None``.
 
     For ``SELECT ... ORDER BY <every primary_key column, in order>`` with a
@@ -430,7 +458,7 @@ def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]
     comparison with ``primary_key`` is case-insensitive. An empty
     ``primary_key`` (no key in the schema) never matches.
     """
-    limit = _primary_key_ordered_row_limit(query_text, primary_key)
+    limit = _primary_key_ordered_row_limit(query_text, primary_key, source_engine)
     if limit is None:
         return None
     n, _offset, qualifier = limit
@@ -438,7 +466,10 @@ def primary_key_ordered_limit(query_text: str | None, primary_key: Sequence[str]
 
 
 def is_primary_key_first_row_read(
-    query_text: str | None, primary_key: Sequence[str], limit_value: int | None = None
+    query_text: str | None,
+    primary_key: Sequence[str],
+    limit_value: int | None = None,
+    source_engine: str | None = None,
 ) -> bool:
     """Whether ``query_text`` reads exactly the first row in the table's primary-key order.
 
@@ -454,8 +485,8 @@ def is_primary_key_first_row_read(
     rows (``SKIP LOCKED``, ``READPAST``: the first row nobody else holds is
     an unknown row, review of #840).
     """
-    limit = _primary_key_ordered_row_limit(query_text, primary_key)
-    if limit is None or skips_locked_rows(query_text):
+    limit = _primary_key_ordered_row_limit(query_text, primary_key, source_engine)
+    if limit is None or skips_locked_rows(query_text, source_engine):
         return False
     n, _offset, qualifier = limit
     if qualifier:
@@ -511,6 +542,7 @@ def single_table_access_shape(
     limit_value: int | None = None,
     source: SourceScope | None = None,
     access_class: str | None = None,
+    text_is_readable: bool = False,
 ) -> str:
     """``CRUD``, ``ORDERED_ONE_TO_MANY`` or ``RELATIONAL`` for ``query``.
 
@@ -573,8 +605,13 @@ def single_table_access_shape(
     the class is a key-scoped read, a range or ordered read by key or a small
     reference-table read (:func:`_class_shape`); a read with no predicate is neutral,
     not CRUD. Without it (and for every write) the answer is the text check's.
+
+    ``text_is_readable`` says ``query_text`` already had its comments and literals
+    removed and identifiers unquoted (``readable_sql``), so no dialect's comment or
+    string syntax is scanned for again: an unquoted MySQL name such as
+    `` order#items `` would otherwise read as a ``#`` comment (#1114).
     """
-    reasons = _relational_reasons(query, primary_key, limit_value, source)
+    reasons = _relational_reasons(query, primary_key, limit_value, source, text_is_readable)
     if isinstance(reasons, str):
         shape = reasons
     else:
@@ -622,6 +659,7 @@ def _relational_reasons(
     primary_key: Sequence[str] | None,
     limit_value: int | None,
     source: SourceScope | None,
+    text_is_readable: bool = False,
 ) -> frozenset[str] | str:
     """Every reason the text check finds ``query`` relational (empty: CRUD), or a final
     answer (``RELATIONAL`` or ``ORDERED_ONE_TO_MANY``) no class can change."""
@@ -641,14 +679,24 @@ def _relational_reasons(
             reasons.add("aggregate")
         else:
             return RELATIONAL
-    functions = non_scalar_function_names(text)
+    # Text that is already readable has no comment or string left to find (#1114).
+    engine = None if text_is_readable or source is None else source.engine
+    functions = non_scalar_function_names(text, engine)
     if "aggregate" in reasons:
         # The aggregate's own function is the aggregate reason, not an engine feature.
         functions -= aggregate_function_names(text)
     if functions:
         return RELATIONAL
-    with_idents = sub_spans(text, QUOTED_IDENTIFIERS, lambda _span: " ident ")
-    sql = strip_comments_and_literals(with_idents)
+    # Comments gone and identifiers unquoted in one scan, in the source's dialect, so a
+    # ``#`` inside a backtick name is no comment and a ``#`` comment hides its quotes.
+    with_idents = sub_spans(
+        text,
+        comments_literals_and_identifiers_for(engine),
+        lambda span: (
+            " " if span.startswith(("/*", "--", "#")) else span if span[0] in "'$" else " ident "
+        ),
+    )
+    sql = strip_comments_and_literals(with_idents, engine)
     if _CTE_RE.search(sql):
         return RELATIONAL
     if len(SELECT_WORD_RE.findall(sql)) > (1 if query_type == "SELECT" else 0):
@@ -670,14 +718,14 @@ def _relational_reasons(
         if ranged:
             reasons.add("range")
         elif ORDER_BY_RE.search(sql):
-            if is_primary_key_first_row_read(text, primary_key or [], limit_value):
+            if is_primary_key_first_row_read(text, primary_key or [], limit_value, engine):
                 if not reasons:
                     return frozenset()
-            elif primary_key_ordered_limit(text, primary_key or []) is not None:
+            elif primary_key_ordered_limit(text, primary_key or [], engine) is not None:
                 return RELATIONAL if reasons else ORDERED_ONE_TO_MANY
             else:
                 reasons.add("order")
-    if not reasons and query_type == "SELECT" and skips_locked_rows(text):
+    if not reasons and query_type == "SELECT" and skips_locked_rows(text, engine):
         # SKIP LOCKED / READPAST returns an unknown row: at most neutral (#840).
         return ORDERED_ONE_TO_MANY
     return frozenset(reasons)

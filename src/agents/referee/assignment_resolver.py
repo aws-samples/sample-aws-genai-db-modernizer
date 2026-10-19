@@ -393,7 +393,7 @@ class AssignmentResolver:
             return {
                 e: s
                 for e, s in scores.get(qid, {}).items()
-                if can_own(e, query) and _score(qid, e) is not None
+                if can_own(e, query, source_engine) and _score(qid, e) is not None
             }
 
         def _evidence(
@@ -410,7 +410,7 @@ class AssignmentResolver:
                 analysis_outputs,
                 scores.get(qid, {}),
                 gates_by_query.get(qid, {}),
-                [e for e in analysis_outputs if not can_own(e, query)],
+                [e for e in analysis_outputs if not can_own(e, query, source_engine)],
             )
             return MoveEvidence(
                 candidates=ladder,
@@ -425,7 +425,7 @@ class AssignmentResolver:
             out: list[GroupGate] = []
             for engine in sorted(analysis_outputs):
                 for qid in sorted(group):
-                    if not can_own(engine, query_by_id.get(qid)):
+                    if not can_own(engine, query_by_id.get(qid), source_engine):
                         gate = GATE_KIND_WRITE
                     elif _score(qid, engine) is None:
                         gate = gates_by_query.get(qid, {}).get(engine) or "gated"
@@ -472,7 +472,9 @@ class AssignmentResolver:
             group_score = group_engine_scores(
                 group,
                 analysis_outputs,
-                lambda qid, e: _score(qid, e) if can_own(e, query_by_id.get(qid)) else None,
+                lambda qid, e: (
+                    _score(qid, e) if can_own(e, query_by_id.get(qid), source_engine) else None
+                ),
                 unit_weights,
             )
             candidates = list(group_score)
@@ -537,7 +539,7 @@ class AssignmentResolver:
             override_engine = signal_overrides.get(qid, {}).get("engine")
             if (
                 override_engine
-                and can_own(override_engine, query)
+                and can_own(override_engine, query, source_engine)
                 and _score(qid, override_engine) is not None
             ):
                 engine = signal_overrides[qid]["engine"]
@@ -569,7 +571,7 @@ class AssignmentResolver:
             query_scores = {
                 e: s
                 for e, s in scores.get(qid, {}).items()
-                if can_own(e, query) and _score(qid, e) is not None
+                if can_own(e, query, source_engine) and _score(qid, e) is not None
             }
             if query_scores:
                 top_score = max(query_scores.values())
@@ -822,7 +824,7 @@ class AssignmentResolver:
                     penalty = anti_pattern_map.get((qid, engine), 0)
                     used = scores.get(qid, {}).get(engine, 0)
                     adj = used - max(0, base - penalty)
-                    if not can_own(engine, query):
+                    if not can_own(engine, query, source_engine):
                         entry: dict[str, object] = {
                             "gate": GATE_KIND_WRITE,
                             "base": base,

@@ -326,7 +326,7 @@ def build_aurora_mysql_decision_trace(
                     q.get("query_text") or "", source_engine
                 ),
                 # A locking read's transactional need (#799): recorded, never scored.
-                "locking_clause": locking_clause(q.get("query_text") or ""),
+                "locking_clause": locking_clause(q.get("query_text") or "", source_engine),
             }
         )
 

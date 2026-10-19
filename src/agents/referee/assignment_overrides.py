@@ -223,7 +223,8 @@ def _gate_failure(
         exclusion = check_exclusions(query_id, query_text, engine)
         if exclusion:
             return GATE_KIND_HARD_EXCLUSION, exclusion.customer_message
-        return _ownership_failure(query, engine)
+        # No scoring context here, so no collector to name the dialect.
+        return _ownership_failure(query, engine, "")  # engine unknown: no collector
     result = score_query_for_engine({**(query or {}), "query_id": query_id}, engine, ctx)
     if result.gate_kind == GATE_KIND_HARD_EXCLUSION:
         exclusion = check_exclusions(query_id, query_text, engine, ctx.source_engine)
@@ -234,10 +235,12 @@ def _gate_failure(
         return GATE_KIND_CAPABILITY, capability_gap_phrase(missing)
     # The model-flag gate is skipped on purpose: a customer may override a
     # model's flag (ADR-031 Decision 11, Amendment 2).
-    return _ownership_failure(query, engine)
+    return _ownership_failure(query, engine, ctx.source_engine)
 
 
-def _ownership_failure(query: Mapping | None, engine: str) -> tuple[str, str] | None:
+def _ownership_failure(
+    query: Mapping | None, engine: str, source_engine: str | None
+) -> tuple[str, str] | None:
     """``(GATE_KIND_WRITE, reason)`` when ``engine`` may not own the query, else ``None``.
 
     ADR-031 Decision 2 step 3, the same ``can_own`` every routing stage and
@@ -245,9 +248,13 @@ def _ownership_failure(query: Mapping | None, engine: str) -> tuple[str, str] | 
     owns no write and no locking read (#812). The gate kind is the one the
     move ledger's candidate ladders record for it (``write_gate``).
     """
-    if query is None or can_own(engine, query):
+    if query is None or can_own(engine, query, source_engine):
         return None
-    kind = "a locking read" if is_locking_read(query) and not is_write_query(query) else "a write"
+    kind = (
+        "a locking read"
+        if is_locking_read(query, source_engine) and not is_write_query(query)
+        else "a write"
+    )
     return GATE_KIND_WRITE, f"is {kind}, and {display_engine(engine)} is not a system of record"
 
 
@@ -629,7 +636,7 @@ def apply_assignment_overrides(
         serviceable = {
             engine: score
             for engine in sorted(analysis_outputs)
-            if can_own(engine, query)
+            if can_own(engine, query, source_engine)
             and (score := score_query_for_engine(query, engine, ctx).score) is not None
         }
         return {
@@ -1433,6 +1440,7 @@ def reroute_split_writes(
     query_by_id = {q.get("query_id"): q for q in queries}
     qa_map = {qa.query_id: qa for qa in current.query_assignments}
     ctx = ScoringContext.from_pipeline(loaded.analysis_outputs, loaded.triage, collector_output)
+    source_engine = ctx.source_engine
     units = placement_groups(
         build_co_dependency_groups(
             queries, collector_output.get("database_schema", {}).get("tables", [])
@@ -1456,7 +1464,7 @@ def reroute_split_writes(
 
         def member_score(qid: str, engine: str) -> float | None:
             query = query_by_id.get(qid) or {"query_id": qid}
-            if not can_own(engine, query):
+            if not can_own(engine, query, source_engine):
                 return None
             return score_query_for_engine(query, engine, ctx).score
 

@@ -20,6 +20,7 @@ from src.agents.referee.query_shape import (
     locking_clause,
     primary_key_ordered_limit,
     single_table_access_shape,
+    skips_locked_rows,
 )
 
 SINGLE_TABLE_CRUD_SQL = [
@@ -785,3 +786,67 @@ class TestTheAccessClassSupersedesTheTextCheck:
         assert single_table_access_shape(write, access_class=self.KEY_SCOPED) == RELATIONAL
         point = _q("DELETE FROM t1 WHERE id = $1")
         assert single_table_access_shape(point, access_class=self.KEY_LOOKUP) == CRUD
+
+
+class TestSourceDialectInSqlHelpers:
+    """Every helper that strips comments and literals reads them in the source's dialect (#1114)."""
+
+    MYSQL_HASH = "SELECT id FROM t WHERE id = 1 # FOR UPDATE SKIP LOCKED\n"
+    MYSQL_HASH_BACKTICK = "SELECT `a#b` FROM t WHERE id = 1 FOR UPDATE"
+    PG_DOLLAR = "SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1"
+
+    def test_a_mysql_hash_comment_hides_a_locking_clause(self):
+        assert locking_clause(self.MYSQL_HASH, "mysql") is None
+        assert skips_locked_rows(self.MYSQL_HASH, "mysql") is False
+
+    def test_the_hash_is_not_a_comment_outside_mysql(self):
+        # Without the engine, or on another engine, `#` is not a comment: unchanged.
+        assert locking_clause(self.MYSQL_HASH, None) == "FOR UPDATE SKIP LOCKED"
+        assert locking_clause(self.MYSQL_HASH, "postgresql") == "FOR UPDATE SKIP LOCKED"
+
+    def test_a_hash_inside_a_backtick_name_is_not_a_comment(self):
+        assert locking_clause(self.MYSQL_HASH_BACKTICK, "mysql") == "FOR UPDATE"
+
+    def test_a_postgres_dollar_string_hides_a_locking_clause(self):
+        assert locking_clause(self.PG_DOLLAR, "postgresql") is None
+        assert locking_clause(self.PG_DOLLAR, None) == "FOR UPDATE"
+
+    def test_primary_key_order_reads_past_a_mysql_hash_comment(self):
+        sql = "SELECT * FROM t ORDER BY id # WHERE x = 1\n LIMIT 1"
+        assert primary_key_ordered_limit(sql, ["id"], "mysql") == "1"
+        assert is_primary_key_first_row_read(sql, ["id"], None, "mysql") is True
+        # Another engine reads `# WHERE` as code: a WHERE, so no ordered-limit read.
+        assert primary_key_ordered_limit(sql, ["id"], "postgresql") is None
+
+    def test_primary_key_order_keeps_a_hash_in_a_backtick_name(self):
+        sql = "SELECT `a#b` FROM t ORDER BY id LIMIT 1"
+        assert primary_key_ordered_limit(sql, ["id"], "mysql") == "1"
+
+    def test_a_function_in_a_mysql_hash_comment_is_not_called(self):
+        from src.shared.unsupported_pattern import non_scalar_function_names
+
+        sql = "SELECT a FROM t # GROUP_CONCAT(x)\n"
+        assert non_scalar_function_names(sql, "mysql") == set()
+        assert non_scalar_function_names(sql, None) == {"group_concat"}
+
+    def test_the_shape_of_a_query_follows_the_source_engine(self):
+        from src.agents.referee.table_resolution import SourceScope
+
+        query = {
+            "query_type": "SELECT",
+            "tables_accessed": ["t"],
+            "query_text": "SELECT a FROM t WHERE id = ? # SELECT 1 FROM u\n",
+        }
+        mysql = SourceScope(engine="mysql")
+        assert single_table_access_shape(query, source=mysql) == CRUD
+        assert single_table_access_shape(query) == RELATIONAL
+
+    def test_the_ownership_gate_reads_a_locking_clause_in_the_source_dialect(self):
+        from src.agents.referee.cache_overlay import can_own, is_locking_read
+
+        query = {"query_type": "SELECT", "query_text": self.MYSQL_HASH}
+        assert is_locking_read(query, "mysql") is False
+        assert can_own("opensearch", query, "mysql") is True
+        # Another engine reads the `#` line as code: a skip-locked locking read.
+        assert is_locking_read(query, "postgresql") is True
+        assert can_own("opensearch", query, "postgresql") is False

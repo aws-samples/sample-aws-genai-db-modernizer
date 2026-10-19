@@ -131,7 +131,7 @@ def _check(text: str) -> None:
     assert strip_comments_and_literals(text) == _old_strip(text), text[:120]
     assert _unquote_identifiers(text) == _old_unquote(text), text[:120]
     assert sub_spans(text, QUOTED_IDENTIFIERS, lambda _s: " ident ") == _old_ident(text), text[:120]
-    assert _normalized_sql(text) == _old_normalized_sql(text), text[:120]
+    assert _normalized_sql(text, None) == _old_normalized_sql(text), text[:120]
 
 
 def test_the_scans_answer_what_the_old_regexes_did_on_the_corpus(corpus):  # noqa: F811

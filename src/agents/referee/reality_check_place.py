@@ -141,6 +141,7 @@ def _place_settled_queries(
     tied_engines_by_qid: Mapping[str, list[str]] | None = None,
     ledger: MoveLedger | None = None,
     closed_destinations: Mapping[str, set[str]] | None = None,
+    source_engine: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Phase 2 (#502 review): place every query on its highest-scoring
     engine within the settled committed set, using the SAME per-query
@@ -297,6 +298,7 @@ def _place_settled_queries(
             query_map,
             query_capabilities,
             tied_engines_by_qid,
+            source_engine=source_engine,
         )
         takeable: dict[str, float] = {
             e: score
@@ -392,6 +394,7 @@ def _place_settled_queries(
                 query_map,
                 query_capabilities,
                 tied_engines_by_qid,
+                source_engine=source_engine,
             )
             # The group's scores over the members that move (#894): the same
             # numbers Phase 1 and the floor judge it on (Decision 7), so a
