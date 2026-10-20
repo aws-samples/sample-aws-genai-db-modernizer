@@ -43,7 +43,8 @@ import {
   survivingDistribution,
 } from "../utils/assignmentSummary";
 import { sourceEngineOf } from "../utils/sqlLocking";
-import { ENGINE_STYLES } from "../utils/engineColors";
+import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
+import EngineBadge from "../components/EngineBadge";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
@@ -75,12 +76,6 @@ const PAGE_SIZE = 25;
 // Helper: Engine badge component
 // ============================================
 
-function EngineBadge({ engine }) {
-  const config = ENGINE_COLORS[engine] || { badge: 'grey', label: engine };
-  return <Badge color={config.badge}>{config.label}</Badge>;
-}
-
-
 // ============================================
 // Helper: Distribution bar
 // ============================================
@@ -96,7 +91,7 @@ function DistributionBar({ distribution, eliminated = [] }) {
       {sorted.map(([engine, count]) => {
         const pct = (count / total) * 100;
         const isEliminated = eliminated.includes(engine);
-        const color = ENGINE_COLORS[engine]?.bg || '#555';
+        const color = engineHex(engine);
         return (
           <div
             key={engine}
@@ -867,11 +862,11 @@ const AssignmentGatePage = memo(() => {
                       <SpaceBetween size="xxs">
                         <Box fontSize="body-s">
                           <Box display="inline">
-                            <Badge color={ENGINE_COLORS[c.from_engine]?.badge || 'grey'}>{ENGINE_COLORS[c.from_engine]?.label || c.from_engine}</Badge>
+                            <EngineBadge engine={c.from_engine} />
                           </Box>
                           <Box display="inline" padding={{ horizontal: 'xs' }}>→</Box>
                           <Box display="inline">
-                            <Badge color={ENGINE_COLORS[c.to_engine]?.badge || 'grey'}>{ENGINE_COLORS[c.to_engine]?.label || c.to_engine}</Badge>
+                            <EngineBadge engine={c.to_engine} />
                           </Box>
                           <Box display="inline" padding={{ left: 's' }} fontWeight="bold">
                             {t('assignment-gate.optimization-details.queries-moved', { count: c.query_count })}
@@ -906,7 +901,7 @@ const AssignmentGatePage = memo(() => {
                               <Box display="inline" padding={{ left: 's' }}>
                                 {engineList.map((e, i) => (
                                   <Box key={i} display="inline" padding={{ right: 'xxs' }}>
-                                    <Badge color={ENGINE_COLORS[e]?.badge || 'grey'}>{ENGINE_COLORS[e]?.label || e}</Badge>
+                                    <EngineBadge engine={e} />
                                   </Box>
                                 ))}
                               </Box>
@@ -1191,8 +1186,8 @@ const AssignmentGatePage = memo(() => {
                               key={i}
                               className="signal-badge"
                               style={sig.engine ? {
-                                color: ENGINE_COLORS[sig.engine]?.bg || '#89bcf0',
-                                background: `${ENGINE_COLORS[sig.engine]?.bg || '#0972D3'}20`,
+                                color: engineHex(sig.engine),
+                                background: `${engineHex(sig.engine)}20`,
                               } : undefined}
                             >
                               {sig.signal.replace(/_/g, ' ')}
@@ -1269,9 +1264,9 @@ const AssignmentGatePage = memo(() => {
                           <Box variant="awsui-key-label" margin={{ bottom: 'xxs', top: 'xs' }}>{t('assignment-gate.row-detail.triage-signals')}</Box>
                           <SpaceBetween direction="horizontal" size="xxs">
                             {signals.map((sig, i) => (
-                              <Badge key={i} color={ENGINE_COLORS[sig.engine]?.badge || 'blue'}>
+                              <EngineBadge key={i} engine={sig.engine}>
                                 {sig.signal.replace(/_/g, ' ')}
-                              </Badge>
+                              </EngineBadge>
                             ))}
                           </SpaceBetween>
                         </div>

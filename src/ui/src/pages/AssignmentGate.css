@@ -85,25 +85,6 @@
   line-height: 1.5;
 }
 
-/* Engine badge (inline) */
-.engine-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #fff;
-  letter-spacing: 0.03em;
-}
-
-.engine-badge--dynamodb { background: #3184e8; }
-.engine-badge--documentdb { background: #1d8102; }
-.engine-badge--opensearch { background: #2ea597; }
-.engine-badge--elasticache { background: #d13212; }
-.engine-badge--neptune { background: #7d2105; }
-.engine-badge--keyspaces { background: #8b6ccb; }
-.engine-badge--aurora { background: #ec7211; }
-
 /* Summary hero section */
 .gate-hero {
   text-align: left;

@@ -63,6 +63,8 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 // src/shared/engine_names.py by tests/unit/report/test_engine_names_js_sync.py)
 // rather than this page's own hand-kept copy.
 import { ENGINE_LABELS } from "../utils/engineNames";
+import { badgeTextColor, engineHex } from "../utils/engineColors";
+import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
 import { accessPatternTotals, designTableCountOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
@@ -76,15 +78,10 @@ import { accessPatternTotals, designTableCountOf, openRiskCountAt, queryPatternC
 const JOURNEY_PAGE_SIZE = 200;
 const JOURNEY_MAX_PAGES = 50;
 
-const ENGINE_BADGE_COLORS = {
-  dynamodb: 'blue',
-  documentdb: 'green',
-  elasticache: 'red',
-  opensearch: 'grey',
-  neptune: 'red',
-  keyspaces: 'blue',
-  aurora: 'green',
-};
+// #1246: a trade-off's Mapping shows its source tables in a neutral grey (they belong to
+// the source database, no target engine) and its target tables in the tab engine's own
+// catalog colour -- before, the targets were red, ElastiCache's colour, on every tab.
+const SOURCE_TABLE_CHIP = '#5f6b7a';
 
 // #373: the severity colours the retired HTML decision report used -- red for the
 // error-level severities (CRITICAL and HIGH, kept equally severe, #270),
@@ -95,16 +92,6 @@ const RISK_BORDER_COLOR = {
   warning: '#ffc107',
   success: '#1d8102',
   stopped: '#9ba7b6',
-};
-
-const ENGINE_HEX = {
-  dynamodb: '#3184e8',
-  documentdb: '#1d8102',
-  opensearch: '#2ea597',
-  elasticache: '#d13212',
-  neptune: '#7d2105',
-  keyspaces: '#8b6ccb',
-  aurora: '#ec7211',
 };
 
 const OP_CATEGORY = {
@@ -1154,13 +1141,13 @@ const AnalysisResultsPage = memo(() => {
       id: 'engine',
       header: t('analysis-results.explorer.col-engine'),
       cell: item => (
-        <Badge color={ENGINE_BADGE_COLORS[item.engine] || 'grey'}>
+        <EngineBadge engine={item.engine}>
           {ENGINE_LABELS[item.engine] || item.engine}
           {/* #429 part 2: every cache-layer row carries this suffix, even
               inside its own section, so the role is unambiguous wherever the
               row is seen (e.g. a copied/zoomed screenshot of just the row). */}
           {item.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}
-        </Badge>
+        </EngineBadge>
       ),
       sortingField: 'engine',
       width: 140
@@ -1213,12 +1200,12 @@ const AnalysisResultsPage = memo(() => {
       cell: item => (
         <SpaceBetween direction="horizontal" size="xxs">
           {[...item.engines].map(e => (
-            <Badge key={e} color={ENGINE_BADGE_COLORS[e] || 'grey'}>
+            <EngineBadge key={e} engine={e}>
               {ENGINE_LABELS[e] || e}
               {/* #429 part 2: a source-table group's engines can include the
                   cache layer -- tag it the same way the pattern rows are. */}
               {e === cacheOverlay?.engine ? t('cache-layer.engine-badge-suffix') : ''}
-            </Badge>
+            </EngineBadge>
           ))}
         </SpaceBetween>
       ),
@@ -1280,7 +1267,7 @@ const AnalysisResultsPage = memo(() => {
 
     // Build metrics items dynamically
     const metricsItems = [];
-    if (ap.engine) metricsItems.push({ label: t('analysis-results.pattern-detail.engine'), value: <Badge color={ENGINE_BADGE_COLORS[ap.engine] || 'grey'}>{ENGINE_LABELS[ap.engine] || ap.engine}{ap.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}</Badge> });
+    if (ap.engine) metricsItems.push({ label: t('analysis-results.pattern-detail.engine'), value: <EngineBadge engine={ap.engine}>{ENGINE_LABELS[ap.engine] || ap.engine}{ap.isCacheLayer ? t('cache-layer.engine-badge-suffix') : ''}</EngineBadge> });
     if (ap.operation) metricsItems.push({ label: t('analysis-results.pattern-detail.operation'), value: ap.operation });
     if (ap.destTable) metricsItems.push({ label: t('analysis-results.pattern-detail.destination-table'), value: ap.destTable });
     if (ap.gsiName) metricsItems.push({ label: t('analysis-results.pattern-detail.gsi'), value: ap.gsiName });
@@ -1657,7 +1644,7 @@ const AnalysisResultsPage = memo(() => {
       id: engine,
       title: ENGINE_LABELS[engine] || engine,
       value: count,
-      color: ENGINE_HEX[engine] || '#5f6b7a',
+      color: engineHex(engine),
       engine: engine
     }));
   }, [filteredEngineDist]);
@@ -1814,7 +1801,7 @@ const AnalysisResultsPage = memo(() => {
                 width: '10px',
                 height: '10px',
                 borderRadius: '2px',
-                backgroundColor: ENGINE_HEX[cacheOverlay.engine] || '#5f6b7a',
+                backgroundColor: engineHex(cacheOverlay.engine),
                 marginRight: '6px',
                 verticalAlign: 'middle',
               }}
@@ -1942,10 +1929,10 @@ const AnalysisResultsPage = memo(() => {
                               owns no queries, but it is still a target engine
                               the deliverables name and price. */}
                           {targetEngines.map(({ engine, isCacheLayer }) => (
-                            <Badge key={engine} color={ENGINE_BADGE_COLORS[engine] || 'grey'}>
+                            <EngineBadge key={engine} engine={engine}>
                               {ENGINE_LABELS[engine] || engine}
                               {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                            </Badge>
+                            </EngineBadge>
                           ))}
                         </SpaceBetween>
                       </Box>
@@ -2009,10 +1996,10 @@ const AnalysisResultsPage = memo(() => {
                       const isCacheLayer = cb.database === cacheOverlay?.engine;
                       return (
                         <Box key={idx} textAlign="center">
-                          <Badge color={ENGINE_BADGE_COLORS[cb.database] || 'grey'}>
+                          <EngineBadge engine={cb.database}>
                             {ENGINE_LABELS[cb.database] || cb.database}
                             {isCacheLayer ? t('cache-layer.engine-badge-suffix', { defaultValue: ' (cache layer)' }) : ''}
-                          </Badge>
+                          </EngineBadge>
                           <Box fontSize="display-l" fontWeight="bold" margin={{ top: 'xs' }}>
                             ${cb.monthly_cost_usd?.toFixed(2)}
                           </Box>
@@ -2453,9 +2440,9 @@ const AnalysisResultsPage = memo(() => {
                                     <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                                       <StatusIndicator type={status}>{severity}</StatusIndicator>
                                       {engine !== '(general)' && (
-                                        <Badge color={ENGINE_BADGE_COLORS[engine] || 'grey'}>
+                                        <EngineBadge engine={engine}>
                                           {ENGINE_LABELS[engine] || engine}
-                                        </Badge>
+                                        </EngineBadge>
                                       )}
                                       {risk.risk_id && (
                                         <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
@@ -2582,12 +2569,12 @@ const AnalysisResultsPage = memo(() => {
                                               {tradeOff.source_tables?.length > 0 && (
                                                 <SpaceBetween direction="horizontal" size="xxs">
                                                   {tradeOff.source_tables.map((table, ti) => (
-                                                    <span key={ti} style={{
+                                                    <span key={ti} data-mapping="source" style={{
                                                       display: 'inline-block',
                                                       padding: '1px 4px',
                                                       fontSize: '10px',
-                                                      backgroundColor: '#0972d3',
-                                                      color: '#fff',
+                                                      backgroundColor: SOURCE_TABLE_CHIP,
+                                                      color: badgeTextColor(SOURCE_TABLE_CHIP),
                                                       borderRadius: '2px',
                                                       fontWeight: '500'
                                                     }}>
@@ -2602,12 +2589,12 @@ const AnalysisResultsPage = memo(() => {
                                               {tradeOff.target_tables?.length > 0 && (
                                                 <SpaceBetween direction="horizontal" size="xxs">
                                                   {tradeOff.target_tables.map((table, ti) => (
-                                                    <span key={ti} style={{
+                                                    <span key={ti} data-mapping="target" data-engine={engine} style={{
                                                       display: 'inline-block',
                                                       padding: '1px 4px',
                                                       fontSize: '10px',
-                                                      backgroundColor: '#d13212',
-                                                      color: '#fff',
+                                                      backgroundColor: engineHex(engine),
+                                                      color: badgeTextColor(engineHex(engine)),
                                                       borderRadius: '2px',
                                                       fontWeight: '500'
                                                     }}>

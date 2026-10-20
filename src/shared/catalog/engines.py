@@ -27,10 +27,9 @@ Fields:
 - ``role``: what the engine is for in the target architecture.
 - ``system_of_record``: whether the engine can durably own a table. A cache fronts hot
   reads and a search read model indexes data synced from an owner; neither owns.
-- ``colors.ui``: the live UI's hex colour (Sankey nodes, assignment gate).
-- ``colors.ui_badge``: the live UI's badge colour name.
-- ``colors.deck``: the executive report's accent hex (optional: an engine without one
-  reads in the report's grey, #1020).
+- ``colors.ui``: the engine's one colour (#1246): every UI view (badges, Sankey nodes,
+  the assignment gate, the roadmap, the trade-off mapping chips) and the executive
+  report's accents draw the engine in it, so a reader learns "colour = engine" once.
 - ``pricing`` (optional table, #494): the engine's cost inputs. ``base_monthly`` is the
   fixed monthly operating cost the reality check weighs (minimum cluster plus ops
   burden); ``extra_engine_burden_monthly`` is the non-monetary burden of running this
@@ -121,8 +120,6 @@ EngineStatus = Literal["active", "future", "legacy"]
 EngineRole = Literal[
     "relational", "key_value", "document", "search", "cache", "graph", "wide_column"
 ]
-# The colour names the UI's badge component accepts.
-BadgeColor = Literal["blue", "grey", "green", "red"]
 _HEX = r"^#[0-9A-Fa-f]{6}$"
 # The four score dimensions a weight profile weighs (ADR-031 Decision 5).
 SCORE_DIMENSIONS = ("pattern_match", "complexity", "performance", "cost")
@@ -139,8 +136,6 @@ class EngineColors(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     ui: str = Field(pattern=_HEX)
-    ui_badge: BadgeColor
-    deck: str | None = Field(default=None, pattern=_HEX)
 
 
 class EnginePricing(BaseModel):

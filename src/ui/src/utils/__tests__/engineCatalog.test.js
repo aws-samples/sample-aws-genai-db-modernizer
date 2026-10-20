@@ -5,8 +5,9 @@
  * here and has to be made on purpose.
  */
 import {
-  ENGINE_BADGE_COLORS, ENGINE_HEX, ENGINE_LABELS, ENGINE_PICKER_ORDER, CACHE_ENGINE_IDS,
+  ENGINE_HEX, ENGINE_LABELS, ENGINE_PICKER_ORDER, CACHE_ENGINE_IDS,
 } from '../engineCatalog.generated';
+import * as generated from '../engineCatalog.generated';
 import { ENGINE_LABELS as NAMES_LABELS } from '../engineNames';
 import { CACHE_ENGINES } from '../cacheLayer';
 import { NODE_COLORS } from '../../components/ChartSankey';
@@ -33,20 +34,24 @@ const NODE_COLORS_BEFORE = {
   neptune: '#7d2105',
   keyspaces: '#8b6ccb',
   aurora_mysql: '#9c5700',
-  aurora_postgresql: '#9c5700',
+  // #1246: Aurora PostgreSQL gets its own colour, so the two Aurora engines are told
+  // apart in every view and in the executive report's share bar.
+  aurora_postgresql: '#c33d69',
   aurora: '#ec7211',
 };
 
+// #1246 retired the named badge colours (colors.ui_badge): every engine badge is now
+// filled with the engine's one colour, so the gate's styles carry no `badge` any more.
 const ASSIGNMENT_GATE_COLORS_BEFORE = {
-  dynamodb: { bg: '#3184e8', badge: 'blue', label: 'DynamoDB' },
-  documentdb: { bg: '#1d8102', badge: 'green', label: 'DocumentDB' },
-  opensearch: { bg: '#2ea597', badge: 'grey', label: 'OpenSearch' },
-  elasticache: { bg: '#d13212', badge: 'red', label: 'ElastiCache' },
-  neptune: { bg: '#7d2105', badge: 'red', label: 'Neptune' },
-  keyspaces: { bg: '#8b6ccb', badge: 'blue', label: 'Keyspaces' },
-  aurora: { bg: '#ec7211', badge: 'green', label: 'Aurora' },
-  aurora_mysql: { bg: '#9c5700', badge: 'green', label: 'Aurora MySQL' },
-  aurora_postgresql: { bg: '#9c5700', badge: 'green', label: 'Aurora PostgreSQL' },
+  dynamodb: { bg: '#3184e8', label: 'DynamoDB' },
+  documentdb: { bg: '#1d8102', label: 'DocumentDB' },
+  opensearch: { bg: '#2ea597', label: 'OpenSearch' },
+  elasticache: { bg: '#d13212', label: 'ElastiCache' },
+  neptune: { bg: '#7d2105', label: 'Neptune' },
+  keyspaces: { bg: '#8b6ccb', label: 'Keyspaces' },
+  aurora: { bg: '#ec7211', label: 'Aurora' },
+  aurora_mysql: { bg: '#9c5700', label: 'Aurora MySQL' },
+  aurora_postgresql: { bg: '#c33d69', label: 'Aurora PostgreSQL' },
 };
 
 test('display names keep their values and order', () => {
@@ -63,26 +68,26 @@ test('Sankey node colours are unchanged for every node id', () => {
   expect(NODE_COLORS).toEqual(NODE_COLORS_BEFORE);
 });
 
-test('assignment gate colours, badges, labels and picker order are unchanged', () => {
+test('assignment gate colours, labels and picker order are unchanged', () => {
   // Key order matters: AssignmentGate.js builds its engine picker from it.
   expect(Object.entries(ENGINE_STYLES)).toEqual(Object.entries(ASSIGNMENT_GATE_COLORS_BEFORE));
 });
 
-test('every engine has a colour and a badge colour', () => {
+test('every engine has a colour, and the catalog exports no second palette', () => {
   Object.keys(ENGINE_LABELS).forEach((engine) => {
     expect(ENGINE_HEX[engine]).toMatch(/^#[0-9a-f]{6}$/i);
-    expect(['blue', 'grey', 'green', 'red']).toContain(ENGINE_BADGE_COLORS[engine]);
   });
+  // #1246: one colour per engine; the named badge palette is gone.
+  expect(generated.ENGINE_BADGE_COLORS).toBeUndefined();
 });
 
 test('every catalog engine is in the assignment gate picker, once', () => {
   // ENGINE_PICKER_ORDER is generated from every engine file, so a new catalog engine
-  // is in ENGINE_LABELS and here alike, and gets a colour, badge and label in the gate.
+  // is in ENGINE_LABELS and here alike, and gets a colour and label in the gate.
   expect([...ENGINE_PICKER_ORDER].sort()).toEqual(Object.keys(ENGINE_LABELS).sort());
   expect(Object.keys(ENGINE_STYLES)).toEqual(ENGINE_PICKER_ORDER);
   Object.values(ENGINE_STYLES).forEach((style) => {
     expect(style.bg).toBeDefined();
-    expect(style.badge).toBeDefined();
     expect(style.label).toBeDefined();
   });
 });

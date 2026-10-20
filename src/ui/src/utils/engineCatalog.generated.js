@@ -20,24 +20,11 @@ export const ENGINE_HEX = {
   documentdb: '#1d8102',
   opensearch: '#2ea597',
   elasticache: '#d13212',
-  aurora_postgresql: '#9c5700',
+  aurora_postgresql: '#c33d69',
   aurora_mysql: '#9c5700',
   neptune: '#7d2105',
   keyspaces: '#8b6ccb',
   aurora: '#ec7211',
-};
-
-// Live UI badge colour per engine id (colors.ui_badge).
-export const ENGINE_BADGE_COLORS = {
-  dynamodb: 'blue',
-  documentdb: 'green',
-  opensearch: 'grey',
-  elasticache: 'red',
-  aurora_postgresql: 'green',
-  aurora_mysql: 'green',
-  neptune: 'red',
-  keyspaces: 'blue',
-  aurora: 'green',
 };
 
 // Every engine id in the assignment gate's picker order (ui_picker_order).

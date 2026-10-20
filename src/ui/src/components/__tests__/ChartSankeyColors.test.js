@@ -11,10 +11,10 @@ global.IS_REACT_ACT_ENVIRONMENT = true;
 // and the Job summary.
 const DEFAULT_NODE_COLOR = '#0972D3';
 
-// The colour AssignmentGate.js already uses for both Aurora engines
-// (ENGINE_COLORS aurora_mysql / aurora_postgresql bg). This is the palette the
-// issue thread settled on: the live pages share #9c5700.
-const LIVE_UI_AURORA = '#9c5700';
+// Each Aurora engine's catalog colour (colors.ui). #476 settled on #9c5700 for both;
+// #1246 gave Aurora PostgreSQL its own, so the two read apart in every view.
+const LIVE_UI_AURORA_MYSQL = '#9c5700';
+const LIVE_UI_AURORA_POSTGRESQL = '#c33d69';
 
 let container, root;
 
@@ -47,8 +47,10 @@ const nodeFill = (label) =>
 test('colours both Aurora engines with the live UI palette instead of the default blue', () => {
   renderSankey(queryFlow({ dynamodb: 87, aurora_mysql: 49, aurora_postgresql: 12 }));
 
-  expect(nodeFill('Aurora MySQL (49)')).toBe(LIVE_UI_AURORA);
-  expect(nodeFill('Aurora PostgreSQL (12)')).toBe(LIVE_UI_AURORA);
+  expect(nodeFill('Aurora MySQL (49)')).toBe(LIVE_UI_AURORA_MYSQL);
+  expect(nodeFill('Aurora PostgreSQL (12)')).toBe(LIVE_UI_AURORA_POSTGRESQL);
+  // #1246: the two Aurora engines no longer share a colour.
+  expect(nodeFill('Aurora MySQL (49)')).not.toBe(nodeFill('Aurora PostgreSQL (12)'));
   expect(nodeFill('Aurora MySQL (49)')).not.toBe(DEFAULT_NODE_COLOR);
   expect(nodeFill('Aurora PostgreSQL (12)')).not.toBe(DEFAULT_NODE_COLOR);
   // ...and neither reads as DynamoDB, the colour the bug report mistook Aurora for.
@@ -61,6 +63,6 @@ test('colours the links into each Aurora engine with that engine colour', () => 
 
   // Links are drawn before the nodes; one link per queryFlow entry, in order.
   const links = Array.from(container.querySelectorAll('path'));
-  expect(links[0].getAttribute('stroke')).toBe(LIVE_UI_AURORA);
-  expect(links[1].getAttribute('stroke')).toBe(LIVE_UI_AURORA);
+  expect(links[0].getAttribute('stroke')).toBe(LIVE_UI_AURORA_MYSQL);
+  expect(links[1].getAttribute('stroke')).toBe(LIVE_UI_AURORA_POSTGRESQL);
 });

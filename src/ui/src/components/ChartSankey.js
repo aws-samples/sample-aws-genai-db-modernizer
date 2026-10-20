@@ -3,14 +3,15 @@ import { sankey, sankeyCenter, sankeyLinkHorizontal } from 'd3-sankey';
 import { displayEngine } from '../utils/engineNames';
 import { ENGINE_HEX } from '../utils/engineCatalog.generated';
 import { isCacheEngine } from '../utils/cacheLayer';
+import { DEFAULT_ENGINE_HEX } from '../utils/engineColors';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
 
 // Node colours: the source node's grey, then every engine's live UI colour from the
-// engine catalog (colors.ui, src/catalog/engines, #492). Aurora MySQL and Aurora
-// PostgreSQL both carry #9c5700 there (#476): before that, their node ids missed this
-// map and fell back to the default blue (#0972D3), which read as DynamoDB's #3184e8.
+// engine catalog (colors.ui, src/catalog/engines, #492). Before #476 the Aurora node
+// ids missed this map and fell back to a default blue that read as DynamoDB's #3184e8;
+// since #1246 Aurora MySQL (#9c5700) and Aurora PostgreSQL (#c33d69) differ too.
 export const NODE_COLORS = {
   patterns: '#5f6b7a',      // Gray for source
   ...ENGINE_HEX,
@@ -91,13 +92,14 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
       // peer owner) via the dashed outline and secondary caption below.
       const isCache = isCacheEngine(node.id);
       const isClickable = onNodeClick && !isSource && !isCache;
-      const nodeColor = NODE_COLORS[node.id] || '#0972D3';
+      const nodeColor = NODE_COLORS[node.id] || DEFAULT_ENGINE_HEX;
       const labelX = isSource ? node.x1 + 6 : node.x0 - 6;
       const labelAnchor = isSource ? 'start' : 'end';
 
       return (
         <g
           key={node.index}
+          data-sankey-node={node.id}
           onClick={isClickable ? () => onNodeClick(node.id) : undefined}
           style={{ cursor: isClickable ? 'pointer' : 'default', pointerEvents: 'all' }}
         >
@@ -147,7 +149,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
     return links.map((link, i) => {
       const path = linkGenerator(link);
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-      const linkColor = NODE_COLORS[targetId] || '#0972D3';
+      const linkColor = NODE_COLORS[targetId] || DEFAULT_ENGINE_HEX;
       // #330: a link into the cache layer is a cached-reads overlay on top of
       // its owner engine's flow, not a flow from the query source -- dash it
       // so it reads as a second, overlaid layer rather than another owner flow.

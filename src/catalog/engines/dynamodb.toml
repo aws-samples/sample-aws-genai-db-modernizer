@@ -13,8 +13,6 @@ joins_need_denormalized_design = true
 
 [colors]
 ui = "#3184e8"
-ui_badge = "blue"
-deck = "#FBD332"
 
 [pricing]
 base_monthly = 0

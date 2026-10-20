@@ -76,7 +76,6 @@ VALID = textwrap.dedent("""\
 
     [colors]
     ui = "#123456"
-    ui_badge = "blue"
     """)
 
 
@@ -98,7 +97,9 @@ class TestLoaderIsStrict:
             pytest.param(lambda t: t.replace('"active"', '"maybe"'), id="bad-status"),
             pytest.param(lambda t: t.replace('"key_value"', '"kv"'), id="bad-role"),
             pytest.param(lambda t: t.replace('"#123456"', '"blue"'), id="bad-hex"),
-            pytest.param(lambda t: t.replace('ui_badge = "blue"', 'ui_badge = "pink"'), id="badge"),
+            # #1246: one colour per engine; the retired second and third palettes fail loudly.
+            pytest.param(lambda t: t + 'ui_badge = "blue"\n', id="retired-ui-badge"),
+            pytest.param(lambda t: t + 'deck = "#FF5C85"\n', id="retired-deck"),
             pytest.param(lambda t: t.replace('"#123456"', '"#12345"'), id="short-hex"),
             pytest.param(lambda t: t + "[extra]\nx = 1\n", id="unknown-table"),
             pytest.param(lambda t: t.replace('"key_value"', '"cache"'), id="cache-claims-to-own"),

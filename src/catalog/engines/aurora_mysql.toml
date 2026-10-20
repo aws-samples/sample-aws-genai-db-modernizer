@@ -16,8 +16,6 @@ complexity_by_feature_count = [10, 15]
 
 [colors]
 ui = "#9c5700"
-ui_badge = "green"
-deck = "#FF5C85"
 
 [pricing]
 base_monthly = 250

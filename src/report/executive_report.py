@@ -186,10 +186,12 @@ PINK = HexColor("#FF5C85")
 ORANGE = HexColor("#FF693C")
 YELLOW = HexColor("#FBD332")
 
-# Each engine's accent, from the rule catalog (``colors.deck``); grey without one.
-ENGINE_COLOR: dict[str, Color] = {
-    e.id: HexColor(e.colors.deck) for e in catalog.engines() if e.colors.deck
-}
+# Each engine's colour, the rule catalog's one palette (``colors.ui``): the UI draws the
+# engine in the same colour (#1246). Grey for an id the catalog does not know. Some of
+# these colours are too dark to read as text on the report's dark cards, so the report
+# uses them for marks only (bar segments, a card's accent rule, the rule beside an
+# engine's table row) and writes engine names in white.
+ENGINE_COLOR: dict[str, Color] = {e.id: HexColor(e.colors.ui) for e in catalog.engines()}
 SEVERITY_COLOR: dict[str, Color] = {
     "CRITICAL": ORANGE,
     "HIGH": PINK,
@@ -638,9 +640,12 @@ class _Columns(Flowable):
 
 class _Bar(Flowable):
     """The target architecture as one stacked bar: each owner engine's share of the
-    workload, in its colour, labelled when the label fits inside its segment."""
+    workload, in its colour, labelled when the label fits inside its segment. Adjacent
+    segments are split by a thin gap in the page colour (#1246), so two neighbours stay
+    apart even when a narrow segment drops its label."""
 
     HEIGHT = 26.0
+    SEPARATOR = 1.5
 
     def __init__(self, segments: Sequence[tuple[Color, float, str]]) -> None:
         super().__init__()
@@ -655,13 +660,16 @@ class _Bar(Flowable):
         c = self.canv
         x = 0.0
         size = 9.5
-        for color, share, label in self.segments:
+        for i, (color, share, label) in enumerate(self.segments):
             w = self.width * share / 100.0  # facts: presentation (chart geometry)
             c.setFillColor(color)
             c.rect(x, 0, w, self.HEIGHT, stroke=0, fill=1)
+            if i:
+                c.setFillColor(BG)
+                c.rect(x, 0, self.SEPARATOR, self.HEIGHT, stroke=0, fill=1)
             text = printable(label)
             if pdfmetrics.stringWidth(text, font_for(True), size) <= w - 12:
-                c.setFillColor(INK)
+                c.setFillColor(_label_ink(color))
                 c.setFont(font_for(True), size)
                 c.drawString(x + 6, (self.HEIGHT - size) / 2 + 2, text)
             x += w
@@ -717,8 +725,10 @@ def _table(
     widths: Sequence[float],
     *,
     total: Sequence[Any] | None = None,
+    row_accents: Sequence[Color] | None = None,
 ) -> Table:
-    """A dark table in the deck's design; a cell is a string or a ready paragraph."""
+    """A dark table in the deck's design; a cell is a string or a ready paragraph.
+    ``row_accents``: one colour per row, drawn as a rule left of its first cell (#1246)."""
 
     def cell(v: Any, style: ParagraphStyle) -> Flowable:
         return v if isinstance(v, Flowable) else _para(v, style)
@@ -741,6 +751,10 @@ def _table(
                 ("TOPPADDING", (0, 0), (-1, -1), 5),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
             ]
+            + [
+                ("LINEBEFORE", (0, i), (0, i), ROW_ACCENT_WIDTH, color)
+                for i, color in enumerate(row_accents or (), start=1)
+            ]
         )
     )
     return t
@@ -748,6 +762,32 @@ def _table(
 
 def _gap(h: float = 10.0) -> Spacer:
     return Spacer(1, h)
+
+
+ROW_ACCENT_WIDTH = 4.0
+
+
+def _luminance(color: Color) -> float:
+    """WCAG relative luminance. The UI computes the same for its badges
+    (``contrastRatio`` in ``src/ui/src/utils/engineColors.js``); keep the two in step."""
+
+    def channel(v: float) -> float:
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+
+    return (
+        0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue)
+    )
+
+
+def contrast_ratio(a: Color, b: Color) -> float:
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _label_ink(fill: Color) -> Color:
+    """White or the card ink, whichever reads better on ``fill`` (#1246: the catalog's
+    darker engine colours, Aurora's tan among them, need white)."""
+    return WHITE if contrast_ratio(fill, WHITE) >= contrast_ratio(fill, INK) else INK
 
 
 def _engine_color(engine: str) -> Color:
@@ -790,7 +830,7 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         migrated = int(facts.get("tables_migrate") or 0)
         rows = [
             [
-                _para(display_engine(e["engine"]), st["head"], _engine_color(e["engine"])),
+                _para(display_engine(e["engine"]), st["head"]),
                 e["role"],
                 _share_text(e),
                 e["scope"],
@@ -813,6 +853,7 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
                 rows,
                 (2.2, 1.8, 2.6, 2.6, 1.4),
                 total=total,
+                row_accents=[_engine_color(e["engine"]) for e in engines],
             )
         )
         notes = " ".join(
@@ -884,7 +925,7 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
                 ("Engine", "Role", "Est. monthly"),
                 [
                     [
-                        _para(display_engine(e["engine"]), st["head"], _engine_color(e["engine"])),
+                        _para(display_engine(e["engine"]), st["head"]),
                         e["role"],
                         _fmt_usd(e.get("cost")),
                     ]
@@ -892,6 +933,7 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
                 ],
                 (3, 3, 2),
                 total=["Total", "", _fmt_usd(facts.get("engine_cost_total_usd"))],
+                row_accents=[_engine_color(e["engine"]) for e in arch],
             )
         )
     assumptions = [a for a in (tco.get("assumptions") or []) if isinstance(a, str) and a]
@@ -911,13 +953,14 @@ def _why(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> l
         reason = without_table_names(e.get("rationale"), names)
         rows.append(
             [
-                _para(display_engine(e["engine"]), st["head"], _engine_color(e["engine"])),
+                _para(display_engine(e["engine"]), st["head"]),
                 e["role"],
                 reason or "-",
             ]
         )
     if rows:
-        flow.append(_table(st, ("Engine", "Role", "Why"), rows, (2, 1.6, 8.4)))
+        accents = [_engine_color(e["engine"]) for e in _architecture_engines(report)]
+        flow.append(_table(st, ("Engine", "Role", "Why"), rows, (2, 1.6, 8.4), row_accents=accents))
         flow += [_gap(6), _para(WORKLOAD_FIT_DEFINITION, st["small"])]
     decisions = []
     for d in facts.get("reality_check_decisions") or []:
@@ -949,7 +992,7 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         count_phrase, table_phrase = _wave_headline_stats(w, wf)
         names_text = ", ".join(display_engine(e) for e in engines)
         content: list[Flowable] = [
-            _para(f"WAVE {n}", st["kicker"], accent),
+            _para(f"WAVE {n}", st["kicker"]),
             _para(without_table_names(w.get("title"), names) or names_text, st["card_title"]),
             _para(f"{count_phrase}{table_phrase}", st["body"]),
             _labelled("Engines", names_text, st["small"]),

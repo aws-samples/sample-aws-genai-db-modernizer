@@ -10,4 +10,3 @@ system_of_record = true
 
 [colors]
 ui = "#ec7211"
-ui_badge = "green"

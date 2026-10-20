@@ -3,9 +3,8 @@ import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import Badge from "@cloudscape-design/components/badge";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
-import { displayEngine } from "../utils/engineNames";
+import EngineBadge from "./EngineBadge";
 import {
   heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveTitle,
 } from "../utils/migrationWaves";
@@ -141,7 +140,7 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                 </Box>
                 <SpaceBetween direction="horizontal" size="xs">
                   {(wave.engines || []).map(engine => (
-                    <span key={engine} data-engine={engine}><Badge color="blue">{displayEngine(engine)}</Badge></span>
+                    <span key={engine} data-engine={engine}><EngineBadge engine={engine} /></span>
                   ))}
                 </SpaceBetween>
                 <div data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</div>

@@ -14,4 +14,3 @@ system_of_record = true
 
 [colors]
 ui = "#7d2105"
-ui_badge = "red"

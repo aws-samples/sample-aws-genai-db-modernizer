@@ -20,9 +20,7 @@ exact_tie_preferred = true
 short_name = "PostgreSQL"
 
 [colors]
-ui = "#9c5700"
-ui_badge = "green"
-deck = "#41B3FF"
+ui = "#c33d69"
 
 [pricing]
 base_monthly = 250

@@ -90,11 +90,6 @@ def render_js(entries: tuple[EngineEntry, ...]) -> str:
             "Live UI colour per engine id (colors.ui).",
             [(e.id, e.colors.ui) for e in entries],
         ),
-        _object(
-            "ENGINE_BADGE_COLORS",
-            "Live UI badge colour per engine id (colors.ui_badge).",
-            [(e.id, e.colors.ui_badge) for e in entries],
-        ),
         "// Every engine id in the assignment gate's picker order (ui_picker_order).\n"
         "export const ENGINE_PICKER_ORDER = ["
         + ", ".join(_js_string(e.id) for e in sorted(entries, key=lambda e: e.ui_picker_order))

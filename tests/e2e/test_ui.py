@@ -911,3 +911,54 @@ def test_query_routing_table_fits_its_card_at_1440(
         assert m["tableWidth"] <= m["visibleWidth"] + 1, (r.db, m)
         assert m["engineRight"] <= m["visibleRight"] + 1, (r.db, m)
         assert m["routingRight"] <= m["visibleRight"] + 1, (r.db, m)
+
+
+# #1246: one colour per engine on every view. Measured in the browser on the results
+# page and the pattern analysis page: every engine badge (cost cards, roadmap, explorer,
+# risks), every Sankey node and every trade-off Mapping target chip is drawn in the
+# engine's catalog colour (colors.ui), and source-table chips in a neutral grey.
+_ENGINE_COLOURS_JS = """() => {
+  const rgb = (el, prop) => getComputedStyle(el)[prop];
+  const badges = [...document.querySelectorAll('[data-engine-badge]')].map((el) => ({
+    engine: el.dataset.engineBadge, colour: rgb(el.firstElementChild, 'backgroundColor')}));
+  const nodes = [...document.querySelectorAll('svg g[data-sankey-node]')].map((g) => ({
+    engine: g.dataset.sankeyNode, colour: rgb(g.querySelector('rect'), 'fill')}));
+  const chips = [...document.querySelectorAll('[data-mapping]')].map((el) => ({
+    kind: el.dataset.mapping, engine: el.dataset.engine || null, colour: rgb(el, 'backgroundColor')}));
+  return {badges, nodes, chips};
+}"""
+
+
+def _rgb(hex_colour: str) -> str:
+    h = hex_colour.lstrip("#")
+    return f"rgb({int(h[0:2], 16)}, {int(h[2:4], 16)}, {int(h[4:6], 16)})"
+
+
+def test_each_engine_has_one_colour_across_the_ui(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    from src.shared import catalog
+
+    colour = {e.id: _rgb(e.colors.ui) for e in catalog.engines()}
+    neutral = _rgb("#5f6b7a")
+    page.set_viewport_size({"width": 1440, "height": 900})
+    seen: dict[str, int] = {"badges": 0, "nodes": 0, "chips": 0}
+    for r in all_runs:
+        _open_results(page, ui, r)
+        _expand_every_section(page)
+        found = page.evaluate(_ENGINE_COLOURS_JS)
+        for b in found["badges"]:
+            assert b["colour"] == colour.get(b["engine"], neutral), (r.db, b)
+        for n in found["nodes"]:
+            if n["engine"] in colour:
+                assert n["colour"] == colour[n["engine"]], (r.db, n)
+                seen["nodes"] += 1
+        for c in found["chips"]:
+            expected = neutral if c["kind"] == "source" else colour.get(c["engine"], neutral)
+            assert c["colour"] == expected, (r.db, c)
+        seen["badges"] += len(found["badges"])
+        seen["chips"] += len(found["chips"])
+        # The roadmap's wave badges are engine badges too: every wave engine is drawn.
+        waves = page.locator("[data-wave] [data-engine] [data-engine-badge]")
+        assert waves.count() > 0, r.db
+    assert seen["badges"] > 0 and seen["nodes"] > 0, seen
