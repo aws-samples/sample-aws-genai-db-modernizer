@@ -139,7 +139,7 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     },
     **{
         (f"src/tools/schema/{engine}_schema_agent.py", "load_agent_input", "decision_trace"): _TRACE
-        for engine in ("aurora_mysql", "aurora_postgresql", "elasticache")
+        for engine in ("aurora_mysql", "aurora_postgresql")
     },
     ("src/tools/schema/opensearch_schema_agent.py", "_project_input", "decision_trace"): _TRACE,
     ("src/agents/load_test/dynamodb/runner.py", "run", "summary"): _K6,

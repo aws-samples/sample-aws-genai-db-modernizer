@@ -16,6 +16,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `analysis-[^/]+/analysis\.json` | `AnalysisOutputContract` (`src.contracts.analysis_output`) |
 | `analysis-dynamodb/decision-trace\.json` | `DynamoDBDecisionTrace` (`src.contracts.dynamodb_decision_trace`) |
 | `analysis-documentdb/decision-trace\.json` | `DocumentDBDecisionTrace` (`src.contracts.documentdb_decision_trace`) |
+| `analysis-elasticache/decision-trace\.json` | `ElastiCacheDecisionTrace` (`src.contracts.elasticache_decision_trace`) |
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `reality-check/output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
@@ -59,7 +60,6 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `collector/sql_shadow\.json` | parser comparison (sqlglot facade vs regex table references, #557): a diagnostic rewritten every collect, read by no phase |
 | `analysis-aurora_mysql/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
 | `analysis-aurora_postgresql/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
-| `analysis-elasticache/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
 | `analysis-opensearch/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |

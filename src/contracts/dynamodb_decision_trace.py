@@ -47,6 +47,7 @@ from src.contracts.decision_trace_base import (
     PatternSummary,
     Relationship,
     TableGroup,
+    TimestampColumnsTrace,
     TraceSummary,
 )
 
@@ -102,25 +103,6 @@ class RecommendationDerivation(base.RecommendationDerivation):
     model_config = _KEEP_UNKNOWN
 
     segments_contributing: list[str]
-
-
-class TimestampNameFallback(BaseModel):
-    """A query on which some column was read by name although the collection has types."""
-
-    model_config = _KEEP_UNKNOWN
-
-    query_id: str
-    timestamp_column: bool
-    read_by_name: list[str]
-
-
-class TimestampColumnsTrace(BaseModel):
-    """How the timestamp-column fact was read (#935): by column type, or by name."""
-
-    model_config = _KEEP_UNKNOWN
-
-    read_by: str
-    name_fallbacks: list[TimestampNameFallback]
 
 
 class PkClassificationTrace(BaseModel):

@@ -81,6 +81,8 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "DerivationScores",
             "RecommendationDerivation",
             "TableGroup",
+            "TimestampNameFallback",
+            "TimestampColumnsTrace",
             "LlmAdvisorTrace",
             "ManyToManyRelationship",
             "ForeignKeyRelationship",
@@ -93,8 +95,6 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "TransactionShapeTrace",
             "QueryMatch",
             "RecommendationDerivation",
-            "TimestampNameFallback",
-            "TimestampColumnsTrace",
             "PkClassificationTrace",
             "AggregateTrace",
             "GsiCandidateTrace",
@@ -112,6 +112,10 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "DocumentDBCompatibilityTrace",
         )
     },
+    "elasticache_decision_trace.ElastiCacheDecisionTrace": (
+        "allow",
+        "the ElastiCache decision trace: unknown keys kept (#1191)",
+    ),
     **{
         f"synthesis_output.{name}": ("allow", _REPORT)
         for name in (

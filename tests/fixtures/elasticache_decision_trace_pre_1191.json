@@ -1,0 +1,11 @@
+{
+  "agent": "elasticache-analysis-agent",
+  "patterns_detected": 4,
+  "anti_patterns_detected": 1,
+  "tables_analyzed": 8,
+  "recommendations_generated": 8,
+  "timestamp_columns": {
+    "read_by": "column type",
+    "name_fallbacks": []
+  }
+}

@@ -13,6 +13,8 @@ from datetime import datetime
 
 from src.contracts.analysis_input import AnalysisInput
 from src.contracts.analysis_output import AgentMetadata, AnalysisOutputContract, TargetDatabase
+from src.contracts.decision_trace_base import TimestampColumnsTrace
+from src.contracts.elasticache_decision_trace import ElastiCacheDecisionTrace
 from src.tools.analysis.redis_analysis_tools import (
     analyze_caching_patterns,
     analyze_redis_use_cases,
@@ -57,14 +59,16 @@ def analyze_for_elasticache(
         cost_estimate=cost_estimate,
     )
 
-    decision_trace = {
-        "agent": "elasticache-analysis-agent",
-        "patterns_detected": len(workload_analysis.patterns_detected),
-        "anti_patterns_detected": len(workload_analysis.anti_patterns_detected or []),
-        "tables_analyzed": len(tables),
-        "recommendations_generated": len(table_recommendations),
+    # Built as its contract (#1191), and returned as the dict the one writer stores.
+    decision_trace = ElastiCacheDecisionTrace(
+        patterns_detected=len(workload_analysis.patterns_detected),
+        anti_patterns_detected=len(workload_analysis.anti_patterns_detected or []),
+        tables_analyzed=len(tables),
+        recommendations_generated=len(table_recommendations),
         # How the timestamp-column fact was read (#935): by type, or by name and why.
-        "timestamp_columns": timestamp_column_trace(collector_output),
-    }
+        timestamp_columns=TimestampColumnsTrace.model_validate(
+            timestamp_column_trace(collector_output)
+        ),
+    )
 
-    return output, decision_trace, None
+    return output, decision_trace.model_dump(mode="json"), None

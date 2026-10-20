@@ -12874,6 +12874,114 @@
     "schema_hash": "6c8366c465250e38c9a8e6f9dfa1c6ec3beebe5af26718382b13b4b70c1480fd",
     "version": "1.1"
   },
+  "elasticache_decision_trace.ElastiCacheDecisionTrace": {
+    "fields": {
+      "agent": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "anti_patterns_detected": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "integer"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "patterns_detected": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "integer"
+        }
+      },
+      "recommendations_generated": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "integer"
+        }
+      },
+      "tables_analyzed": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "integer"
+        }
+      },
+      "timestamp_columns": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "name_fallbacks": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "read_by_name": {
+                          "required": true,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "timestamp_column": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "read_by": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "schema_hash": "c6716d368acb82c7ac5b550e05be4a32ec746746ba75ecca2006ae424b850844",
+    "version": "1.0"
+  },
   "elasticache_model_output.ElastiCacheModelOutputContract": {
     "fields": {
       "access_patterns": {
