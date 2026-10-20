@@ -216,6 +216,24 @@ def designed_run(e2e_root: Path) -> PipelineResult:
     return result
 
 
+@pytest.fixture(scope="session")
+def designed_partial_run(e2e_root: Path) -> PipelineResult:
+    """The designed wordpress job whose DynamoDB map leaves moving tables out and maps
+    a table DynamoDB does not serve (``designed_run.run_partial_designed_wordpress``,
+    #1176), cached once per session like ``designed_run``."""
+    if _external_env() is not None:
+        pytest.skip("external-job mode: no deterministic designed run")
+    cached = _PIPELINE_CACHE.get("wordpress-designed-partial")
+    if cached is not None:
+        return cached
+    from tests.e2e.designed_run import run_partial_designed_wordpress
+
+    result = run_partial_designed_wordpress(e2e_root / "artifacts", "e2e-part")
+    _RESULTS.append(result)
+    _PIPELINE_CACHE["wordpress-designed-partial"] = result
+    return result
+
+
 def _ensure_port_free(port: int) -> None:
     """Fail fast, with a clear message, instead of silently talking to whatever
     (possibly stale) process is already listening on ``port``."""

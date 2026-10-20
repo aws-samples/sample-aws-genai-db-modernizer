@@ -313,9 +313,17 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
     assert "left in an unresolved tie" not in md
 
 
-def test_designed_report_json_is_consistent(designed_run: PipelineResult) -> None:
+@pytest.fixture(params=["designed_run", "designed_partial_run"])
+def designed_job(request: pytest.FixtureRequest) -> PipelineResult:
+    """The designed wordpress job, and its partial-map variant (#1176): a map that
+    misses moving tables and maps one DynamoDB does not serve."""
+    job: PipelineResult = request.getfixturevalue(request.param)
+    return job
+
+
+def test_designed_report_json_is_consistent(designed_job: PipelineResult) -> None:
     """#949: the same invariants on a job whose engines all have a schema design."""
-    report = _report_json(designed_run)
+    report = _report_json(designed_job)
     exp = expected_figures(report)
     as_observed = {k: [(v, "report.json")] for k, v in exp.items()}
     problems = report_invariant_violations(report)
@@ -323,18 +331,18 @@ def test_designed_report_json_is_consistent(designed_run: PipelineResult) -> Non
     _settle("wordpress-designed", "report.json", problems)
 
 
-def test_designed_pdf_report_figures(designed_run: PipelineResult) -> None:
+def test_designed_pdf_report_figures(designed_job: PipelineResult) -> None:
     """#949: with a schema design, the PDF's headline figures still agree with
     report.json: the retained core is not a migration target ("107 of 107 queries
     move"), and "N tables migrate" is the waves' figure, not the design map's."""
-    report = _report_json(designed_run)
-    text = " ".join(pdf_page_texts(str(designed_run.deliverable("executive-report.pdf"))))
+    report = _report_json(designed_job)
+    text = " ".join(pdf_page_texts(str(designed_job.deliverable("executive-report.pdf"))))
     _settle("wordpress-designed", "PDF", _problems(report, pdf_figures(text), _pdf_required))
 
 
-def test_designed_engineering_report_figures(designed_run: PipelineResult) -> None:
-    report = _report_json(designed_run)
-    figs = engineering_figures(designed_run.deliverable("engineering-report.md").read_text())
+def test_designed_engineering_report_figures(designed_job: PipelineResult) -> None:
+    report = _report_json(designed_job)
+    figs = engineering_figures(designed_job.deliverable("engineering-report.md").read_text())
     _settle(
         "wordpress-designed",
         "engineering report",

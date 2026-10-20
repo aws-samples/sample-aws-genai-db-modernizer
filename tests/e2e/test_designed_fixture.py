@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,17 +22,15 @@ import pytest
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.deliverable_figures import report_invariant_violations
-from tests.e2e.designed_run import dynamodb_served_tables, run_designed_wordpress
+from tests.e2e.designed_run import (
+    PARTIAL_EXTRA,
+    PARTIAL_LEAVE_OUT,
+    dynamodb_served_tables,
+    write_dynamodb_design,
+)
 from tests.e2e.pipeline import PipelineResult
 
 pytestmark = pytest.mark.deterministic
-
-# Three of the tables DynamoDB's wave moves, left out of the partial design's map.
-LEFT_OUT = [
-    "wordpress.wp_wc_product_meta_lookup",
-    "wordpress.wp_wc_reserved_stock",
-    "wordpress.wp_wc_tax_rate_classes",
-]
 
 
 def _report(r: PipelineResult) -> dict[str, Any]:
@@ -86,24 +86,51 @@ def test_the_designed_map_is_the_tables_dynamodb_reads(designed_run: PipelineRes
     assert basis["mapped_tables"] == len(served) and basis["design_coverage"] == "complete"
 
 
-@pytest.fixture(scope="module")
-def partial(tmp_path_factory: pytest.TempPathFactory) -> PipelineResult:
-    return run_designed_wordpress(
-        tmp_path_factory.mktemp("designed-partial"), "part-desi", dynamodb_leave_out=LEFT_OUT
-    )
-
-
-def test_a_design_whose_map_leaves_moving_tables_out(partial: PipelineResult) -> None:
+def test_a_design_whose_map_leaves_moving_tables_out(
+    designed_partial_run: PipelineResult,
+) -> None:
     """The explicit case the full fixture no longer covers: the design maps fewer
     tables than DynamoDB's wave moves. The map shows only the designed rows, its
     heading counts them, and report.json still meets every invariant."""
+    partial = designed_partial_run
     report = _report(partial)
     served = _served(partial)
-    assert set(LEFT_OUT) <= _moving(report), "the left-out tables must be ones the wave moves"
-    kept = [t for t in served if t not in LEFT_OUT]
+    assert set(PARTIAL_LEAVE_OUT) <= _moving(report), "the left-out tables are ones the wave moves"
+    assert not set(PARTIAL_EXTRA) & set(served), "the extra table is one DynamoDB does not serve"
+    kept = sorted({*(t for t in served if t not in PARTIAL_LEAVE_OUT), *PARTIAL_EXTRA})
     assert _mapped(report) == kept
     md = partial.deliverable("engineering-report.md").read_text(encoding="utf-8")
     assert f"## Migration map ({len(kept)} tables" in md
     assert _map_rows(md) == kept
     assert report["facts"]["table_basis"]["mapped_tables"] == len(kept)
     assert not report_invariant_violations(report)
+
+
+def test_a_map_that_leaves_every_table_out_writes_no_pattern(
+    designed_partial_run: PipelineResult, tmp_path: Path
+) -> None:
+    """No division by zero and no access pattern pointing at an unrelated table: a
+    design that maps none of DynamoDB's tables serves none of its queries."""
+    copy = tmp_path / "artifacts"
+    shutil.copytree(designed_partial_run.job_dir(), copy / "wordpress" / "part-copy")
+    store = LocalArtifactStore(base_dir=str(copy))
+    version = resolve_downstream_assignment_version(store, "wordpress", "part-copy")
+    served = dynamodb_served_tables(
+        store.read_json(f"wordpress/part-copy/assignment/v{version}/assignment.json")
+    )
+    assert write_dynamodb_design(store, "wordpress", "part-copy", version, served) == 0
+    design = store.read_json(f"wordpress/part-copy/schema-dynamodb/v{version}/schema_output.json")
+    assert design["table_definitions"] == [] and design["access_patterns"] == []
+
+
+def test_new_target_tables_key_on_the_source_tables_primary_key(
+    designed_run: PipelineResult,
+) -> None:
+    store = LocalArtifactStore(base_dir=str(designed_run.artifact_root))
+    version = resolve_downstream_assignment_version(store, "wordpress", designed_run.job_id)
+    design = store.read_json(
+        f"wordpress/{designed_run.job_id}/schema-dynamodb/v{version}/schema_output.json"
+    )
+    [table] = [t for t in design["table_definitions"] if t["table_name"] == "WcReservedStock"]
+    assert table["partition_key"]["attribute_name"] == "order_id"
+    assert table["sort_key"]["attribute_name"] == "product_id"

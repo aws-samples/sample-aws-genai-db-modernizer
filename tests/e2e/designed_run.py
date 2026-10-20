@@ -33,6 +33,26 @@ TEMPLATE_PATH = (
 )
 
 
+# The partial design (#1176 review): three of the tables DynamoDB's wave moves left
+# out of the map, and one table no DynamoDB query reads mapped, so the Migration map's
+# "no target table yet" and "no query routed to DynamoDB reads" sentences (#1173)
+# both have an e2e job.
+PARTIAL_LEAVE_OUT = (
+    "wordpress.wp_wc_product_meta_lookup",
+    "wordpress.wp_wc_reserved_stock",
+    "wordpress.wp_wc_tax_rate_classes",
+)
+PARTIAL_EXTRA = ("wordpress.wp_links",)
+
+
+def run_partial_designed_wordpress(artifact_root: Path, job_id: str) -> PipelineResult:
+    """The designed job with the partial DynamoDB map (``PARTIAL_LEAVE_OUT``,
+    ``PARTIAL_EXTRA``)."""
+    return run_designed_wordpress(
+        artifact_root, job_id, dynamodb_leave_out=PARTIAL_LEAVE_OUT, dynamodb_extra=PARTIAL_EXTRA
+    )
+
+
 def _bare(table: str) -> str:
     return table.rsplit(".", 1)[-1]
 
@@ -62,6 +82,7 @@ def write_dynamodb_design(
     job_id: str,
     version: int,
     leave_out: Collection[str] = (),
+    extra: Collection[str] = (),
 ) -> int:
     """Write a DynamoDB design for the version's DynamoDB queries; returns how
     many access patterns it has.
@@ -70,8 +91,12 @@ def write_dynamodb_design(
     target table per source table a DynamoDB query reads, so every mapped table
     is one DynamoDB serves and every table it serves is mapped. A table the
     committed design already defines keeps that definition (keys, attributes);
-    the others get a key-value table. ``leave_out`` drops source tables from the
-    map, for the explicit check of a design whose map misses tables it serves.
+    the others get a table keyed on the source table's own primary key (from the
+    collection). ``leave_out`` drops source tables from the map, for the explicit
+    check of a design whose map misses tables it serves: a query that reads only
+    left-out tables gets no access pattern (a real partial design would not serve
+    it). ``extra`` maps source tables no DynamoDB query reads, for the check of a
+    map row DynamoDB does not serve.
     """
     template = json.loads(TEMPLATE_PATH.read_text())
     assignment = store.read_json(f"{db}/{job_id}/assignment/v{version}/assignment.json")
@@ -82,41 +107,56 @@ def write_dynamodb_design(
     ]
     known = {_bare(t["source_tables"][0]): t for t in template["table_definitions"]}
     dropped = {_bare(t) for t in leave_out}
+    collected = {
+        _bare(str(t.get("table_id"))): t
+        for t in (
+            store.read_json(f"{db}/{job_id}/collector/output.json").get("database_schema") or {}
+        ).get("tables")
+        or []
+        if isinstance(t, dict) and t.get("table_id")
+    }
     definitions = []
-    for source in dynamodb_served_tables(assignment):
+    for source in sorted({*dynamodb_served_tables(assignment), *extra}):
         bare = _bare(source)
         if bare in dropped:
             continue
         if bare in known:
             definitions.append(copy.deepcopy(known[bare]))
             continue
-        key = f"{bare}_id"
+        # The source table's own primary key: the first column is the partition key,
+        # the second (if any) the sort key.
+        pk = [str(c) for c in (collected.get(bare) or {}).get("primary_key") or []] or ["id"]
+        key = pk[0]
+        sort = {"attribute_name": pk[1], "attribute_type": "S"} if len(pk) > 1 else None
         definitions.append(
             {
                 **copy.deepcopy(template["table_definitions"][0]),
                 "table_name": _target_name(source),
                 "source_tables": [bare],
                 "partition_key": {"attribute_name": key, "attribute_type": "N"},
-                "sort_key": None,
+                "sort_key": sort,
                 "attributes": [
                     {
                         **template["table_definitions"][0]["attributes"][0],
-                        "name": key,
+                        "name": column,
                         "source_table": bare,
-                        "source_column": key,
+                        "source_column": column,
                     }
+                    for column in pk[:2]
                 ],
             }
         )
     by_source = {d["source_tables"][0]: d["table_name"] for d in definitions}
     tables = [d["table_name"] for d in definitions]
 
-    def target_of(qa: dict, i: int) -> str:
+    def target_of(qa: dict) -> str | None:
         for t in qa.get("source_tables") or []:
             if _bare(str(t)) in by_source:
                 return str(by_source[_bare(str(t))])
-        return str(tables[i % len(tables)])
+        return None
 
+    # A query on left-out tables only has no target table, so no access pattern.
+    designed = [(qa, target) for qa in queries if (target := target_of(qa)) is not None]
     pattern = template["access_patterns"][0]
     design = copy.deepcopy(template)
     design["job_id"] = job_id
@@ -130,9 +170,9 @@ def write_dynamodb_design(
             "pattern_id": f"DDB-AP-{i + 1}",
             "query_ids": [qa["query_id"]],
             "source_tables": list(qa.get("source_tables") or pattern.get("source_tables") or []),
-            "table_name": target_of(qa, i),
+            "table_name": target,
         }
-        for i, qa in enumerate(queries)
+        for i, (qa, target) in enumerate(designed)
     ]
     design["trade_offs"] = [
         *design.get("trade_offs", []),
@@ -141,7 +181,7 @@ def write_dynamodb_design(
             "impact": "One table serves every access pattern.",
             "source_tables": [],
             "target_tables": tables[:1],
-            "query_ids": [queries[0]["query_id"]] if queries else [],
+            "query_ids": [designed[0][0]["query_id"]] if designed else [],
             "engine": "",
         },
     ]
@@ -309,14 +349,21 @@ def write_aurora_mysql_design(
 
 
 def run_designed_wordpress(
-    artifact_root: Path, job_id: str, dynamodb_leave_out: Collection[str] = ()
+    artifact_root: Path,
+    job_id: str,
+    dynamodb_leave_out: Collection[str] = (),
+    dynamodb_extra: Collection[str] = (),
 ) -> PipelineResult:
     """The designed wordpress job; ``dynamodb_leave_out`` drops source tables from
-    the DynamoDB design's table map (see ``write_dynamodb_design``)."""
+    the DynamoDB design's table map and ``dynamodb_extra`` adds ones DynamoDB does
+    not serve (see ``write_dynamodb_design``)."""
     result = run_pipeline("wordpress", artifact_root, job_id)
     store = LocalArtifactStore(base_dir=str(artifact_root))
     version = resolve_downstream_assignment_version(store, "wordpress", job_id)
-    assert write_dynamodb_design(store, "wordpress", job_id, version, dynamodb_leave_out) > 0
+    patterns = write_dynamodb_design(
+        store, "wordpress", job_id, version, dynamodb_leave_out, dynamodb_extra
+    )
+    assert patterns > 0 or dynamodb_leave_out
     write_elasticache_design(store, "wordpress", job_id, version)
     write_aurora_mysql_design(store, "wordpress", job_id, version)
     common = ["--job-id", job_id, "--db", "wordpress", "--artifact-root", str(artifact_root)]
