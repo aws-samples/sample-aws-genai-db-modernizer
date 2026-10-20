@@ -524,7 +524,7 @@ regenerates the snapshot.
 
 Many pull requests land on `main` every day, so a branch that was green yesterday can conflict or break today.
 
-- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version collisions, runs lint and tests (`--quick` skips the tests), and prints the `needs_llm_run` verdict.
+- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version collisions, runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
 - Rebase onto the latest main and re-test right before merging, not only when you opened the PR.
 - Take the next contract version at rebase time. If another PR already used your `contract_version`, bump to the next one and regenerate the schema snapshot.
 - Never hand-merge a generated snapshot (the routing snapshot, `tests/contract/schema_snapshot.json`, `tests/contract/value_set_snapshot.json`, rendered catalog docs). Take main's copy and regenerate it on top of it.

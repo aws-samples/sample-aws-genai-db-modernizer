@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # Cheap pre-merge failsafe: run before pushing or asking for a merge.
 #
-#   ./ci/pre_merge.sh [--quick]
+#   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]
 #
 # fetch main, count commits behind, check for merge conflicts without touching
-# the worktree, check contract versions, warn on stale generated files, then lint,
-# tests (skipped by --quick) and the needs_llm_run verdict. Exits non-zero on a
-# conflict, a lint or test failure, or a contract version problem.
+# the worktree, check contract versions, warn on stale generated files, list the
+# new and changed tests that pass on main's code, then lint, tests (skipped by
+# --quick) and the needs_llm_run verdict. Exits non-zero on a conflict, a lint or
+# test failure, a contract version problem, or (with --strict-main-tests) a new or
+# changed test that passes on main.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 quick=0
+main_tests=warn
 for arg in "$@"; do
   case "$arg" in
     --quick) quick=1 ;;
-    -h | --help) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "usage: ci/pre_merge.sh [--quick]" >&2; exit 2 ;;
+    --strict-main-tests) main_tests=strict ;;
+    --no-main-tests) main_tests=skip ;;
+    -h | --help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "usage: ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]" >&2; exit 2 ;;
   esac
 done
 
@@ -111,9 +116,91 @@ check_generated "contract schema snapshot" "tests/contract/schema_snapshot.json"
 check_generated "rendered catalog" "docs/architecture/rule-catalog.md|src/ui/src/utils/engineCatalog.generated.js" \
   uv run python scripts/render_catalog.py --check
 
-# f. Lint.
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+main_wt=""
+cleanup() {
+  rm -f "$tmp"
+  if [ -n "$main_wt" ]; then
+    git worktree remove --force "$main_wt" >/dev/null 2>&1 || true
+    rm -rf "$(dirname "$main_wt")"
+  fi
+}
+trap cleanup EXIT
+
+# f. New and changed tests against main's code (AGENTS.md self-review item 1): a
+# temporary worktree of main with this branch's committed tests/ tree runs them.
+if [ "$main_tests" = skip ]; then
+  note "skip main-tests: --no-main-tests"
+else
+  git worktree prune >/dev/null 2>&1 || true  # entries a killed earlier run left behind
+  plan="$(uv run python ci/main_tests.py changed "$base")" || plan="error"
+  run_ids=()
+  while IFS= read -r line; do run_ids+=("$line"); done < <(printf '%s\n' "$plan" | sed -n 's/^run //p')
+  marked_ids="$(printf '%s\n' "$plan" | sed -n 's/^marked //p')"
+  badmark="$(printf '%s\n' "$plan" | sed -n 's/^badmark //p')"
+  skipped="$(printf '%s\n' "$plan" | grep -c '^skip ' || true)"
+  extra=""
+  [ -n "$marked_ids" ] && extra="$extra; $(printf '%s\n' "$marked_ids" | wc -l | tr -d ' ') marked passes_on_main (listed below)"
+  [ "$skipped" -gt 0 ] && extra="$extra; $skipped e2e/integration file(s) not run"
+  details=""
+  [ -n "$marked_ids" ] && details="$(printf '%s\n' "$marked_ids" | sed 's/^/marked:   /')"
+  if [ -n "$badmark" ]; then
+    note "warn main-tests: a module-level pytestmark passes_on_main is not honoured; mark each test (its tests run as usual):"
+    printf '%s\n' "$badmark" | sed 's/^/       /'
+  fi
+  if [ "$plan" = error ]; then
+    note "warn main-tests: could not list the changed tests against $base"
+  elif [ "${#run_ids[@]}" -eq 0 ]; then
+    note "ok   main-tests: no new or changed committed test to run on $base$extra"
+  else
+    py="$(uv run python -c 'import sys; print(sys.executable)')"
+    main_wt="$(mktemp -d)/main"
+    head_sha="$(git rev-parse HEAD)"
+    if ! git worktree add -q --detach "$main_wt" "$base" >/dev/null 2>&1 \
+      || ! git -C "$main_wt" checkout -q "$head_sha" -- tests; then
+      note "warn main-tests: could not make a worktree of $base"
+    elif ! where="$(cd "$main_wt" && PYTHONPATH="$main_wt" "$py" -c 'import os, src; print(os.path.realpath(src.__path__[0]))' 2>/dev/null)" \
+      || [ "$where" != "$(cd "$main_wt" && pwd -P)/src" ]; then
+      note "warn main-tests: main's src/ did not shadow this branch's (got ${where:-nothing}); not run"
+    else
+      # One pytest per file, up to 4 at a time: with node ids, one file that fails to
+      # import on main stops pytest from running the others.
+      junits="$(dirname "$main_wt")/junit"
+      mkdir -p "$junits"
+      n=0
+      while IFS= read -r file; do
+        n=$((n + 1))
+        ids=()
+        for id in "${run_ids[@]}"; do if [ "${id%%::*}" = "$file" ]; then ids+=("$id"); fi; done
+        (cd "$main_wt" && PYTHONPATH="$main_wt" "$py" -m pytest -q -o addopts= -p no:cacheprovider \
+          -p no:xdist --junitxml="$junits/$n.xml" "${ids[@]}" >"$junits/$n.log" 2>&1) &
+        if [ $((n % 4)) -eq 0 ]; then wait; fi
+      done < <(printf '%s\n' "${run_ids[@]}" | sed 's/::.*//' | sort -u)
+      wait
+      if ! ls "$junits"/*.xml >/dev/null 2>&1; then
+        cat "$junits"/*.log 2>/dev/null | tail -n 20
+        note "warn main-tests: pytest wrote no report on $base's code (last lines above)"
+      else
+        report="$(uv run python ci/main_tests.py report "$junits" "${run_ids[@]}")"
+        count() { printf '%s\n' "$report" | grep -c "^$1 " || true; }
+        n_pass="$(count pass)"; n_noimport="$(count noimport)"; n_skipped="$(count skipped)"; n_fail="$(count fail)"
+        summary_line="${#run_ids[@]} new or changed test(s) on $base's code: $n_fail fail, $n_noimport fail only because their file does not import on main, $n_skipped skipped there, $n_pass pass$extra"
+        details="$(printf '%s\n%s\n' "$(printf '%s\n' "$report" | sed -n 's/^pass /passes:   /p; s/^noimport /noimport: /p; s/^skipped /skipped:  /p')" "$details")"
+        if [ "$n_pass" -eq 0 ]; then
+          note "ok   main-tests: $summary_line"
+        else
+          msg="main-tests: $summary_line. A test that passes on main does not show this change works; make it fail on main, or mark a guard of existing behaviour @pytest.mark.passes_on_main"
+          if [ "$main_tests" = strict ]; then fail "$msg"; else note "warn $msg"; fi
+        fi
+      fi
+    fi
+  fi
+  if [ -n "$(printf '%s' "$details" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "$details" | sed '/^$/d; s/^/       /'
+  fi
+fi
+
+# g. Lint.
 if ./ci/lint.sh >"$tmp" 2>&1; then
   note "ok   lint: ci/lint.sh passed"
 else
@@ -121,7 +208,7 @@ else
   fail "lint: ci/lint.sh failed (last lines above)"
 fi
 
-# g. Tests.
+# h. Tests.
 if [ "$quick" -eq 1 ]; then
   note "skip tests: --quick"
 elif ./ci/test.sh -q >"$tmp" 2>&1; then
@@ -131,7 +218,7 @@ else
   fail "tests: ci/test.sh -q failed (last lines above)"
 fi
 
-# h. Real-model runs the branch needs (informational).
+# i. Real-model runs the branch needs (informational).
 if verdict="$(./ci/needs_llm_run.sh "$base" 2>&1)"; then
   note "info llm: $(printf '%s\n' "$verdict" | grep -E '^[a-z0-9-]+: ' | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
 else

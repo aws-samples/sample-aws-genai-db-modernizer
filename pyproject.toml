@@ -145,6 +145,7 @@ markers = [
     "contract: marks tests as contract validation tests",
     "e2e: end-to-end tests that run the deterministic pipeline and render deliverables (tests/e2e; run via ci/e2e.sh)",
     "deterministic: e2e assertions that only hold for the no-LLM pipeline run (expected engines, phase statuses, journey == collected count)",
+    "passes_on_main: a new or changed test meant to pass on main's code too (it guards behaviour main already has); ci/pre_merge.sh does not run it there (#1155)",
 ]
 filterwarnings = [
     # Third-party: FastAPI's TestClient imports httpx via starlette, which warns

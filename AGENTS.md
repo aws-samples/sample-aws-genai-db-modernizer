@@ -106,7 +106,7 @@ and `ci/e2e-llm.sh` build it for you.
 | e2e-llm dry run | `E2E_LLM_DRY_RUN=1 E2E_LLM_TRANSCRIPT=<transcript.jsonl> ./ci/e2e-llm.sh chat wordpress` | everything after the model call, replayed from a saved transcript | free, needs an existing job under `artifacts/` |
 
 - Python change in `src/` or `scripts/`: `make lint` and `make test`.
-- Before pushing or asking for a merge: `./ci/pre_merge.sh` (fetch, behind count, conflict and contract-version checks, lint, tests, `needs_llm_run` verdict); see CONTRIBUTING.md's "Working with a fast-moving main".
+- Before pushing or asking for a merge: `./ci/pre_merge.sh` (fetch, behind count, conflict and contract-version checks, new tests against main, lint, tests, `needs_llm_run` verdict); see CONTRIBUTING.md's "Working with a fast-moving main".
 - A `tests/e2e` test that works only on the deterministic job (it skips when `run.external`) needs `@pytest.mark.deterministic`, or `e2e-llm` fails on `--fail-on-skip`; `tests/unit/ci/test_e2e_deterministic_markers.py` enforces it.
 - Pipeline output or `src/report/`: add `make e2e` (or
   `uv run pytest tests/e2e/test_pipeline.py -p no:xdist -q` for a quick pass).
@@ -232,7 +232,7 @@ This section is a pointer, not a restatement.
 
 Self-review checklist, from findings that recur in review. Each item says what to do, then why.
 
-1. Every new test fails on main. Run it against `origin/main`'s code; the reviewer will, and a test that passes there guards nothing.
+1. Every new test fails on main. Run it against `origin/main`'s code; the reviewer will, and a test that passes there guards nothing. `./ci/pre_merge.sh` (also with `--quick`) runs the branch's new and changed tests on main's code and lists the ones that pass there; mark a test that guards behaviour main already has `@pytest.mark.passes_on_main` (see ci/README.md).
 2. Revert each part of the fix and check that some test fails. If none fails, that part is untested.
 3. Cover the negative and edge cases: what must not change, ties, empty input, ambiguity. Bugs hide where the happy path does not look.
 4. The PR body states only what this branch shows: its own test counts, timings and drift. "Covered by existing tests" names the tests. Numbers from another branch mislead the reviewer.
@@ -240,7 +240,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
 6. After renaming an id, field or capability, old saved artifacts must still load (map the legacy value), with a test that loads an old file. Saved jobs outlive the code that wrote them.
 7. Check the change against every ADR decision it touches, not just the one in the issue. ADR text must never claim more than a guard enforces.
 8. Make timing and resource checks relative (a ratio against a same-process reference), so local runs match CI.
-9. Run `./ci/pre_merge.sh` before pushing: it checks conflicts, contract versions, lint, tests and the `needs_llm_run` verdict in one pass (see [ci/README.md](ci/README.md)).
+9. Run `./ci/pre_merge.sh` before pushing: it checks conflicts, contract versions, new tests against main, lint, tests and the `needs_llm_run` verdict in one pass (see [ci/README.md](ci/README.md)).
 10. Pass the source dialect or engine wherever SQL is parsed. A default dialect silently misparses other engines' syntax.
 11. Fill in the PR template's "Maintainer decision this implements" with a link to the issue comment that recorded the decision (or "None"), so the reviewer can check the PR against it.
 
