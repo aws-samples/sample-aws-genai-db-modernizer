@@ -793,3 +793,26 @@ def test_every_page_pointer_sits_inside_its_unless_chat_sentence() -> None:
         lead = paragraphs[i - 1]
         assert lead.startswith("Unless `{experience_mode}` is `chat`"), lead
         assert lead.endswith("Run"), lead
+
+
+def test_the_orchestrator_sets_single_pass_schema_status_from_the_script() -> None:
+    # #332: subagents reported complete without writing phase_status; the orchestrator
+    # now reads --status for every non-DynamoDB engine and sets it itself.
+    phase_6 = _modernize_text().split("**6b.", 1)[1].split("**6c.", 1)[0]
+    assert "--engine <engine> --status" in phase_6
+    assert "not from the subagent's report" in phase_6
+    assert (
+        '`"status": "complete"`: set `phase_status.schema_design_<engine>` = "complete"' in phase_6
+    )
+    for status in ("validation_failed", "finalize_pending", "not_finalized"):
+        assert f'"{status}"' in phase_6, status
+
+
+def test_error_handling_retries_every_non_complete_schema_status() -> None:
+    # #1294 review: not_finalized and finalize_pending fall under the one-retry rule too.
+    text = _modernize_text()
+    bullet = text.split("**Schema design under `--auto`:**", 1)[1].split("\n- ", 1)[0]
+    for status in ("validation_failed", "finalize_pending", "not_finalized"):
+        assert status in bullet, status
+    assert "Retry it once with a fresh subagent, then run `--status` again" in bullet
+    assert "MODERNIZE_RESULT: failed phase=schema_design_<engine>" in bullet

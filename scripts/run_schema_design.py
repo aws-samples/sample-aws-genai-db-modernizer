@@ -18,10 +18,11 @@ Usage:
 
 DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
 its final step. ``--finalize --engine dynamodb`` only reports whether the merged
-output exists (it never reads an LLM response). ``--status`` (DynamoDB only,
-read-only) lists the groups, which group drafts exist and whether ``--merge`` is
-still pending, so an orchestrator can decide its next step without listing or
-reading artifacts.
+output exists (it never reads an LLM response). ``--status`` (read-only) lists
+DynamoDB's groups, which group drafts exist and whether ``--merge`` is still
+pending; for any other engine it reports the verdict its last ``--finalize``
+printed (#332). Either way an orchestrator can decide its next step, and set
+``phase_status``, without listing or reading artifacts.
 
 Aurora engines use single-pass schema design. ``--split`` rejects them; omit
 that flag to prepare their external request or run them with Bedrock.
@@ -278,6 +279,22 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
 
 
 _MERGE_RECORD = "merge_record.json"
+# The verdict the last --finalize of a single-pass engine printed, and a digest of
+# the response it read, so --status can report it without trusting a subagent (#332).
+_FINALIZE_RECORD = "finalize_record.json"
+
+
+def _response_key(db: str, job_id: str, engine: str) -> str:
+    return f"{db}/{job_id}/llm_responses/schema_design_{engine}.json"
+
+
+def _digest(store, key: str) -> str | None:
+    import hashlib
+
+    try:
+        return hashlib.sha256(store.read_bytes(key)).hexdigest()
+    except (OSError, ValueError):
+        return None
 
 
 def _local_path(store, key: str) -> str:
@@ -370,7 +387,8 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
     printed, not from the output's ``validation_passed``.
     """
     if engine != "dynamodb":
-        _error("--status reports DynamoDB group drafts; other engines use --finalize")
+        _engine_status(store, job_id, db, engine, assignment_version)
+        return
     base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
     output_key = f"{base_key}/schema_output.json"
     fields: dict = {
@@ -427,6 +445,49 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
             "next": next_step,
         }
     )
+
+
+def _engine_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
+    """Report a single-pass engine's design state from its last ``--finalize`` (#332).
+
+    ``complete``: the last ``--finalize`` printed ``complete`` on the response that is
+    there now, and its output exists. ``validation_failed``: it printed that, with its
+    ``errors``. ``finalize_pending``: the response, or the written output, changed since
+    (a hand edit of either is caught by their digests). ``not_finalized``: no
+    ``--finalize`` has written this version's output yet, including one that stopped on
+    a missing response. Read-only, like the DynamoDB status: the orchestrator sets
+    ``phase_status`` from it, not from a subagent's report.
+    """
+    base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    output_key = f"{base_key}/schema_output.json"
+    fields: dict = {
+        "assignment_version": assignment_version,
+        "output_path": _local_path(store, output_key),
+    }
+    record = _read_record(store, f"{base_key}/{_FINALIZE_RECORD}")
+    extra: dict = {}
+    if record is None or (record.get("status") == "complete" and not store.exists(output_key)):
+        status, next_step = "not_finalized", f"run /design-schema-{engine}, then --finalize"
+    elif record.get("response_sha256") != _digest(
+        store, _response_key(db, job_id, engine)
+    ) or record.get("output_sha256") != _digest(store, output_key):
+        status, next_step = (
+            "finalize_pending",
+            "the response or the output changed since; run --finalize",
+        )
+    elif record.get("status") == "complete":
+        status, next_step = "complete", "the finalized output is current"
+    else:
+        status, next_step = (
+            "validation_failed",
+            "fix the response for these errors, then --finalize",
+        )
+        extra["errors"] = list(
+            record.get("errors") or [f"--finalize printed {record.get('status')}"]
+        )
+    if record and record.get("warnings"):
+        extra["warnings"] = record["warnings"]
+    _output({"status": status, **fields, **extra, "next": next_step})
 
 
 def _read_record(store, key: str) -> dict | None:
@@ -610,6 +671,17 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
         assignment_version=assignment_version,
     )
 
+    base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
+    store.write_json(
+        f"{base_key}/{_FINALIZE_RECORD}",
+        {
+            "status": result.get("status"),
+            "errors": list(result.get("errors") or []),
+            "warnings": list(result.get("warnings") or []),
+            "response_sha256": _digest(store, _response_key(db, job_id, engine)),
+            "output_sha256": _digest(store, f"{base_key}/schema_output.json"),
+        },
+    )
     _output({**result, "assignment_version": assignment_version})
 
 
@@ -783,7 +855,10 @@ def main() -> None:
     parser.add_argument(
         "--status",
         action="store_true",
-        help="Report which DynamoDB group drafts exist and whether --merge is pending (read-only)",
+        help=(
+            "Report design progress (read-only): DynamoDB's group drafts and whether --merge "
+            "is pending; for any other engine, the verdict of its last --finalize"
+        ),
     )
     parser.add_argument(
         "--check-costs",

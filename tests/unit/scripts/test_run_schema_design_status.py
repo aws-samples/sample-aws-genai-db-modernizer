@@ -245,30 +245,6 @@ def test_status_merge_pending_when_merge_record_is_missing(monkeypatch, capsys, 
     assert status["status"] == "merge_pending"
 
 
-def test_status_is_dynamodb_only(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "run_schema_design.py",
-            "--job-id",
-            JOB,
-            "--db",
-            DB,
-            "--engine",
-            "elasticache",
-            "--artifact-root",
-            str(tmp_path),
-            "--status",
-        ],
-    )
-    with pytest.raises(SystemExit) as exc:
-        run_schema_design.main()
-    status = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert exc.value.code == 1
-    assert status["status"] == "error"
-
-
 def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_path):
     def fake_split(*, job_id, database_name, target_type, store, assignment_version):
         _manifest(store)

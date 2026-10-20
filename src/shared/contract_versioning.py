@@ -313,6 +313,10 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "the last --merge of the DynamoDB group drafts (draft hashes, errors)",
     ),
     (
+        r"schema-[^/]+/v\d+/finalize_record\.json",
+        "the last --finalize of a single-pass engine (status, errors, response and output hashes)",
+    ),
+    (
         r"schema-[^/]+/v\d+/changelog\.json",
         "a schema revision's changelog, shown with the revision",
     ),

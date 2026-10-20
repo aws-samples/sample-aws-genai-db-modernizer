@@ -141,7 +141,14 @@ It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: pe
   Follow /design-schema-dynamodb **Group draft task** for job_id={job_id} db={database_name} assignment_version={N} group={G}. Input: {INPUT_FILE}, in Read pages {INPUT_PAGES}. Read the input with the Read tool, one call per page (`offset`, `limit`); search it with `uv run python scripts/search_artifacts.py <regex> <path>`; write the draft with one Write tool call. Never use `sed`, `cat`, `grep`, heredocs or other scripts to read, search or write files. Other groups' primary_tables: {OTHER_GROUPS}. Write only {DRAFT}. Do not run `--merge` or `--finalize` and do not update .modernizer-state.json. Unattended: do not ask the user anything. Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it.
   ```
 
-Wait for all of them to report (see Waiting Rule). A non-DynamoDB subagent that returns `failed` (it set `phase_status.schema_design_<engine>` = "failed" after its 3 attempts) is a phase failure for `schema_design_<engine>`: see Error Handling.
+Wait for all of them to report (see Waiting Rule). Then, for each non-DynamoDB engine, set `phase_status.schema_design_<engine>` yourself from the script, not from the subagent's report (it may not have written the state file):
+
+```bash
+uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine <engine> --status
+```
+
+- `"status": "complete"`: set `phase_status.schema_design_<engine>` = "complete".
+- `"status": "validation_failed"`, `"finalize_pending"` or `"not_finalized"`: set `phase_status.schema_design_<engine>` = "failed". That is a phase failure for `schema_design_<engine>`, with the line's `errors` (or its `status`) as the reason: see Error Handling. A subagent that returned `failed` after its 3 attempts ends here too.
 
 **6c. PE review** once every schema subagent from 6b has reported: the review Bedrock mode runs after every design. Its routing flags are what the post-schema reroute (6e) reads.
 
@@ -264,4 +271,4 @@ If any phase fails:
 - If abort: stop pipeline, preserve all artifacts produced so far
 - **With `--auto`:** do not ask. Retry the failed phase once with a fresh subagent; if it fails again, stop the pipeline, preserve artifacts, and end with the line `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.
 - **DynamoDB under `--auto`:** the retry for `schema_design_dynamodb` is one fresh group subagent per missing or invalid group (`drafts_pending`), or one more 6d round with a fresh fix subagent and a new budget of 3 `--merge` attempts (merge still `validation_failed` / `merge_failed`). The phase gets one retry in total. It gets no second one if a different failure follows the first. Set `phase_status.schema_design_dynamodb` = "failed" before retrying. If it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_dynamodb reason=<first error>`.
-- **Schema design under `--auto`:** a `/design-schema-<engine>` subagent returning `failed` (still failing after its 3 `--finalize`/`--merge` attempts) is a phase failure like any other. Retry it once with a fresh subagent; if it fails again, end with `MODERNIZE_RESULT: failed phase=schema_design_<engine> reason=<first validation error>`. Never mark that engine's schema design complete.
+- **Schema design under `--auto`:** any `--status` other than `"complete"` for a non-DynamoDB engine after 6b (`validation_failed`, `finalize_pending` or `not_finalized`: the subagent returned `failed` after its 3 `--finalize` attempts, or reported success without a current finalize) is a phase failure like any other. Retry it once with a fresh subagent, then run `--status` again; if it is still not `"complete"`, end with `MODERNIZE_RESULT: failed phase=schema_design_<engine> reason=<first validation error, or the status>`. Never mark that engine's schema design complete.

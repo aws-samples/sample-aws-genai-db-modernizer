@@ -70,6 +70,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | the schema design trace (model calls, merge notes, PE review): typed by #1258 |
 | `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | one DynamoDB group's design trace, merged into design_trace.json: typed by #1258 |
 | `schema-[^/]+/v\d+/merge_record\.json` | the last --merge of the DynamoDB group drafts (draft hashes, errors) |
+| `schema-[^/]+/v\d+/finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
 | `schema-[^/]+/v\d+/changelog\.json` | a schema revision's changelog, shown with the revision |
 | `schema-[^/]+/v\d+/revision_context\.json` | a schema revision's context for the designer, rewritten per revision |
 | `post-schema-router/external_run\.json` | external-mode post-schema routing pass record (depth, engines to design again) |
