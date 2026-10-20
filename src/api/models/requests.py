@@ -230,6 +230,11 @@ class CollectionOptions(BaseModel):
         return ",".join(parts)
 
 
+# ``source_database_type`` for an offline upload whose engine the collector reads from
+# the file's own metadata (#1177); the UI's default.
+DETECT_FROM_FILE = "auto"
+
+
 class AssessmentRequest(BaseModel):
     source_database_type: str
     database_name: str
@@ -306,6 +311,11 @@ class AssessmentRequest(BaseModel):
             )
         if self.collection_mode == "offline" and not self.offline_s3_key:
             raise ValueError("offline_s3_key is required for offline mode")
+        if self.source_database_type == DETECT_FROM_FILE and self.collection_mode != "offline":
+            raise ValueError(
+                f"source_database_type {DETECT_FROM_FILE!r} (detect from the file) needs "
+                "collection_mode offline: a live or DDL collection has no file to read it from"
+            )
         return self
 
 

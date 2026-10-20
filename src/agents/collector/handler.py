@@ -10,16 +10,14 @@ Called by entrypoint.py with env vars:
 import os
 import sys
 
-from src.contracts.collector_input import CollectorInput
+from src.contracts.collector_input import CollectionMode, CollectorInput
 from src.contracts.collector_output import CollectorOutputContract
 from src.storage.artifact_store import ArtifactStore
 
 
 def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None:
     """Run the collector agent. Reads config from env vars, writes output via ArtifactStore."""
-    engine = os.environ.get("ENGINE", "mysql")
     cluster_endpoint = os.environ.get("CLUSTER_ENDPOINT", "")
-    port = int(os.environ.get("PORT", "3306"))
     secret_arn = os.environ.get("SECRET_ARN", "")
     automation_instance_id = os.environ.get("AUTOMATION_INSTANCE_ID", "")
     region = os.environ.get("AWS_REGION", "us-east-1")
@@ -30,6 +28,9 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     if mode == "live" and (not cluster_endpoint or not secret_arn):
         print("ERROR: CLUSTER_ENDPOINT and SECRET_ARN are required for live mode", file=sys.stderr)
         sys.exit(1)
+
+    raw = _offline_collection(bucket, region) if mode == "offline" else None
+    engine, port = _engine_and_port(mode, raw)
 
     # Build CollectorInput from env vars
     input_data = {
@@ -77,7 +78,7 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     input_contract = CollectorInput.model_validate(input_data)
 
     print(f"Collector starting: engine={engine} endpoint={cluster_endpoint} mode={mode}")
-    result = _dispatch_collect(engine, input_contract)
+    result = _dispatch_collect(engine, input_contract, raw)
 
     # Write output per ADR-016: {database_name}/{job_id}/collector/output.json
     key = f"{database_name}/{job_id}/collector/output.json"
@@ -99,8 +100,82 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     )
 
 
-def _dispatch_collect(engine: str, input_contract: CollectorInput) -> CollectorOutputContract:
-    """Route to the correct collector based on engine type."""
+def _offline_collection(bucket: str, region: str) -> dict:
+    """The offline collection file, downloaded once: its metadata names the source
+    engine, and the collector builds the output from the same copy (#1177)."""
+    from src.tools.database.offline_parser import fetch_offline_json
+
+    raw = fetch_offline_json(
+        bucket=os.environ.get("OFFLINE_S3_BUCKET", bucket),
+        key=os.environ.get("OFFLINE_S3_KEY", ""),
+        region=region,
+    )
+    return raw if isinstance(raw, dict) else {}
+
+
+def _engine_and_port(mode: str, raw: dict | None) -> tuple[str, int]:
+    """The source engine and port, from the collection itself or ``ENGINE``/``PORT``.
+
+    Offline, the collection's own metadata wins when it names an engine
+    (``offline_ingest.resolve_offline_engine``, the detector every ingest path uses,
+    #1177): an upload form's ``ENGINE`` is a guess about a file the collector can read,
+    so a disagreement is reported on stderr and the file's engine used. A collection
+    that names none takes ``ENGINE``, else the detector's default. A live or DDL
+    collection has only ``ENGINE`` to go by, so the handler refuses to guess (it used
+    to assume MySQL). ``ENGINE=postgres`` reads as ``postgresql``. ``PORT`` defaults to
+    the engine's own default port, not MySQL's.
+    """
+    from src.agents.collector.offline_ingest import resolve_offline_engine
+    from src.tools.database.offline_parser import default_port, normalize_engine
+
+    declared = normalize_engine(os.environ.get("ENGINE", ""))
+    detected_port: int | None = None
+    if mode == "offline":
+        metadata = (raw or {}).get("metadata")
+        engine, detected_port, note = resolve_offline_engine(
+            metadata if isinstance(metadata, dict) else None, declared
+        )
+        if note:
+            print(f"WARNING: {note}", file=sys.stderr)
+    elif not declared:
+        print(f"ERROR: ENGINE is required for {mode} mode", file=sys.stderr)
+        sys.exit(1)
+    else:
+        engine = declared
+        if engine not in _LIVE_ENGINES:
+            print(
+                f"ERROR: {engine} has no {mode} collector; collect it with the offline "
+                "collection script and upload the file (COLLECTION_MODE=offline)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    port_env = os.environ.get("PORT", "").strip()
+    if port_env and port_env != "0":
+        return engine, int(port_env)
+    port = detected_port or default_port(engine)
+    if port is None:
+        print(f"ERROR: PORT is required for engine {engine!r}", file=sys.stderr)
+        sys.exit(1)
+    return engine, port
+
+
+# Engines with a live and DDL collector (_dispatch_collect). Every engine the
+# detector knows, DB2 included, has the shared offline one.
+_LIVE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "sqlserver", "oracle"})
+
+
+def _dispatch_collect(
+    engine: str, input_contract: CollectorInput, raw: dict | None = None
+) -> CollectorOutputContract:
+    """Route to the correct collector based on engine type.
+
+    Offline, every engine shares one collector (``mysql_collector.collect_offline``,
+    the shared offline builder), fed the copy of the file the handler already read.
+    """
+    if getattr(input_contract, "mode", None) == CollectionMode.offline:
+        from src.agents.collector.mysql_collector import collect_offline
+
+        return collect_offline(input_contract, raw)
     if engine in ("mysql", "mariadb"):
         if engine == "mariadb":
             from src.agents.collector.mariadb_collector import collect

@@ -147,70 +147,15 @@ def main():
 
         # Step 2: Parse offline collection locally (same as collector agent offline mode)
         print("[collector] Parsing raw collection output (offline mode)...")
-        from src.tools.database.offline_parser import (
-            detect_source_engine,
-            offline_version_label,
-            parse_offline_collection,
-        )
+        from src.tools.database.offline_parser import parse_offline_collection
 
         parsed = parse_offline_collection(input_data)
 
-        # Build collector contract output using the same builder functions
-        import time
+        # Build collector contract output with the shared builder (#1177)
+        from src.agents.collector.offline_ingest import build_offline_collector_output
 
-        from src.agents.collector.mysql_collector import (
-            _build_metrics,
-            _build_output,
-            _build_procedures,
-            _build_queries,
-            _build_tables,
-            _build_triggers,
-            _build_views,
-        )
-        from src.contracts.collector_input import CollectorInput
-
-        start = time.monotonic()
-        tables_built = _build_tables(parsed["tables"], db_name)
-        queries_built = _build_queries(parsed.get("queries", []))
-        views = _build_views(parsed.get("views", []))
-        procedures = _build_procedures(parsed.get("procedures", []))
-        triggers = _build_triggers(parsed.get("triggers", []))
-        metrics = _build_metrics(queries_built, None)
-
-        # Detect source engine from metadata version string
-        detected_engine, detected_port = detect_source_engine(parsed.get("metadata"))
-
-        inp = CollectorInput.model_validate(
-            {
-                "job_id": job_id,
-                "engine": detected_engine,
-                "cluster_endpoint": "offline",
-                "port": detected_port,
-                "database_name": db_name,
-                "mode": "offline",
-                "offline_config": {"s3_bucket": "local", "s3_key": upload_path},
-            }
-        )
-
-        offline_meta = parsed.get("metadata", {})
-        collector_data = json.loads(
-            _build_output(
-                inp,
-                start,
-                # #381: a short, human-readable version string (product_version, or
-                # the first line only of version/version_full) -- the full @@VERSION
-                # banner (newlines, tabs, build date) must never reach wave 1's
-                # user-visible rationale text.
-                version=offline_version_label(offline_meta),
-                db_size=offline_meta.get("database_size_gb"),
-                tables=tables_built,
-                queries=queries_built,
-                metrics=metrics,
-                rds_meta=None,
-                views=views,
-                procedures=procedures,
-                triggers=triggers,
-            ).model_dump_json()
+        collector_data = build_offline_collector_output(
+            parsed, job_id=job_id, database_name=db_name, s3_key=upload_path
         )
 
         tables = collector_data.get("database_schema", {}).get("tables", [])

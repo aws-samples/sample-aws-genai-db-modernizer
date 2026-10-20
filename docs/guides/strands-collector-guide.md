@@ -53,8 +53,10 @@ three cases:
   bundled sample fixtures, `docs/examples/wordpress/` and
   `docs/examples/discourse/`, provide.
 - A raw collection file (`collection_version` present, or a `queries` list)
-  — calls `parse_offline_collection` plus the engine collector's offline
-  `_build_*` helpers to build the contract from it. This is the output of
+  — calls `parse_offline_collection`, then the shared offline builder
+  (`src/agents/collector/offline_ingest.py::build_offline_collector_output`)
+  to build the contract from it, with the source engine the file's own
+  metadata names. This is the output of
   `collect-mysql.sql` / `collect-postgresql.sql` run against a real
   database.
 - Neither — the script errors out with "Unrecognized file format."
@@ -70,7 +72,11 @@ if is_contract:
     collector_data = input_data
 elif is_raw:
     parsed = parse_offline_collection(input_data)
-    # ... build a CollectorInput, call the mysql_collector _build_* helpers
+    # The shared offline builder: the source engine is the one the collection's
+    # metadata names (offline_parser.detect_source_engine, #1177)
+    collector_data = build_offline_collector_output(
+        parsed, job_id=job_id, database_name=db_name, s3_key=upload_path
+    )
 else:
     _error("collect", "Unrecognized file format.")
 ```

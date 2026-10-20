@@ -695,7 +695,7 @@ function DatabaseAnalysisForm() {
   // Offline upload state
   const [offlineFiles, setOfflineFiles] = useState([]);
   const [offlineDatabaseName, setOfflineDatabaseName] = useState("");
-  const [offlineSourceType, setOfflineSourceType] = useState({ label: "MySQL", value: "mysql" });
+  const [offlineSourceType, setOfflineSourceType] = useState({ label: t("create-analysis.offline.database-info.source-type-detect"), value: "auto" });
   const [offlineTargetDatabases, setOfflineTargetDatabases] = useState(
     () => ({ ...targetEngineSelection(true), elasticache: false }),
   );
@@ -1330,6 +1330,7 @@ function DatabaseAnalysisForm() {
                         selectedOption={offlineSourceType}
                         onChange={({ detail }) => setOfflineSourceType(detail.selectedOption)}
                         options={[
+                          { label: t("create-analysis.offline.database-info.source-type-detect"), value: "auto" },
                           { label: "MySQL", value: "mysql" },
                           { label: "PostgreSQL", value: "postgresql" },
                           { label: "MariaDB", value: "mariadb" },

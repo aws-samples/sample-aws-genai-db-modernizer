@@ -710,26 +710,33 @@ _ENGINE_PORTS: dict[str, int] = {
     "mysql": 3306,
     "mariadb": 3306,
     "postgresql": 5432,
-    "postgres": 5432,
     "sqlserver": 1433,
     "oracle": 1521,
     "db2": 50000,
 }
 
 
-def detect_source_engine(metadata: dict | None) -> tuple[str, int]:
-    """Return ``(engine, port)`` for an offline collection from its metadata.
+# Spellings of an engine id that collection scripts write, mapped to the id the
+# collector input contract accepts (``DatabaseEngine``): ``"postgres"`` used to be
+# returned as is and then refused by ``CollectorInput`` (#1177).
+_ENGINE_ALIASES: dict[str, str] = {"postgres": "postgresql"}
+
+
+def recognised_source_engine(metadata: dict | None) -> tuple[str, int] | None:
+    """``(engine, port)`` when an offline collection's metadata names its engine, else None.
 
     ``metadata.engine`` is checked first -- the SQL Server collector script sets it
     explicitly (#381: it used to be ignored, so every SQL Server offline collection was
-    mislabelled ``mysql``). Falling back to the server version string (``version``, or
+    mislabelled ``mysql``). Then the server version string (``version``, or
     ``version_full``/``product_version`` when the SQL Server script wrote those instead,
-    #381) when there is no explicit engine, or it is not one this function recognizes.
-    Anything that matches neither is treated as MySQL, the original (pre-#381) default
-    for every offline collection.
+    #381): PostgreSQL, SQL Server, Oracle, DB2 and MariaDB banners are recognised
+    (``scripts/collect-mysql.sql`` writes only ``VERSION()``, so a MariaDB server's
+    collection says ``10.11.6-MariaDB`` and nothing else, #1177). A plain MySQL version
+    number (``8.0.36``) is not recognised: it names no engine.
     """
     meta = metadata or {}
     engine = str(meta.get("engine") or "").strip().lower()
+    engine = _ENGINE_ALIASES.get(engine, engine)
     if engine in _ENGINE_PORTS:
         return engine, _ENGINE_PORTS[engine]
 
@@ -742,7 +749,38 @@ def detect_source_engine(metadata: dict | None) -> tuple[str, int]:
         return "sqlserver", 1433
     if "oracle" in version:
         return "oracle", 1521
-    return "mysql", 3306
+    if "db2" in version:
+        return "db2", 50000
+    if "mariadb" in version:
+        return "mariadb", 3306
+    return None
+
+
+def detect_source_engine(metadata: dict | None) -> tuple[str, int]:
+    """Return ``(engine, port)`` for an offline collection from its metadata.
+
+    :func:`recognised_source_engine`, else MySQL, the original (pre-#381) default for
+    every offline collection.
+
+    This is the one source-engine detector for every ingest path (#1177): the
+    library ingest, the scripts and the collector handler all call it, and
+    ``tests/unit/tools/database/test_one_source_engine_detector.py`` fails on a
+    second, inline guess anywhere in ``src/`` or ``scripts/``.
+    """
+    return recognised_source_engine(metadata) or ("mysql", 3306)
+
+
+def normalize_engine(engine: str | None) -> str:
+    """An engine id as the collector input contract spells it (``"postgres"`` reads as
+    ``"postgresql"``), lower-cased; ``""`` for none."""
+    key = str(engine or "").strip().lower()
+    return _ENGINE_ALIASES.get(key, key)
+
+
+def default_port(engine: str) -> int | None:
+    """The default port of a source engine id (``"postgres"`` reads as
+    ``"postgresql"``), or ``None`` for an engine this module does not know."""
+    return _ENGINE_PORTS.get(normalize_engine(engine))
 
 
 def offline_version_label(metadata: dict | None) -> str:

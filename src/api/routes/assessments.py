@@ -8,7 +8,11 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 
 from src.api.dependencies import database_name_param, job_id_param, validated_filename
-from src.api.models.requests import AssessmentRequest, PrepareAssessmentRequest
+from src.api.models.requests import (
+    DETECT_FROM_FILE,
+    AssessmentRequest,
+    PrepareAssessmentRequest,
+)
 from src.api.models.responses import (
     AgentStatus,
     AssessmentCreated,
@@ -232,7 +236,11 @@ async def create_assessment(request: AssessmentRequest):
         "secret_arn": request.connection.secret_reference() if request.connection else "",
         "automation_instance_id": "",
         "port": str(request.connection.port) if request.connection else "0",
-        "engine": request.source_database_type,
+        # The collector reads the engine from an offline file's own metadata, and the
+        # file wins over a declared engine that disagrees (#1177); "" asks it to detect.
+        "engine": (
+            "" if request.source_database_type == DETECT_FROM_FILE else request.source_database_type
+        ),
         "db_instance_identifier": "",
     }
 

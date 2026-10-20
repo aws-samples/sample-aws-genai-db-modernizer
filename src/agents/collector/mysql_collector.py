@@ -444,23 +444,44 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 # ---------------------------------------------------------------------------
 
 
-def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
-    start = time.monotonic()
+def collect_offline(inp: CollectorInput, raw: dict | None = None) -> CollectorOutputContract:
+    """Offline collection for any source engine (the collector handler's offline mode).
+
+    Every engine collector's offline mode is :func:`_collect_offline`, so the handler
+    calls it here for all of them, DB2 included, which has no live collector (#1177).
+    ``raw``: the collection the handler already downloaded (read once, not twice).
+    """
+    ckpt = _init_checkpoint_store(inp)
+    if ckpt.exists("output"):
+        logger.info("Job %s: final output already exists, returning cached", inp.job_id)
+        cached: CollectorOutputContract = load_contract(
+            CollectorOutputContract,
+            ckpt.load("output"),
+            artifact=f"collector checkpoint {inp.job_id}/output",
+        )
+        return cached
+    result = _collect_offline(inp, ckpt, raw=raw)
+    ckpt.save("output", result.model_dump(mode="json"))
+    return result
+
+
+def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> CollectorOutputContract:
+    """The offline collection, built by the shared offline builder (#1177) with the AWS
+    metrics this collector gathers for the instance."""
     region = inp.aws_config.region if inp.aws_config else "us-east-1"
     cred_mgr = _build_cred_mgr(inp)
     assert inp.offline_config is not None  # nosec B101 — type narrowing for mypy
 
-    from src.tools.database.offline_parser import (
-        fetch_offline_json,
-        offline_version_label,
-        parse_offline_collection,
-    )
+    from src.agents.collector.offline_ingest import build_offline_contract
+    from src.tools.database.offline_parser import fetch_offline_json, parse_offline_collection
 
     # Stage 1: parse offline JSON
     parsed = ckpt.load_or_run(
         "offline_schema",
         lambda: parse_offline_collection(
-            fetch_offline_json(
+            raw
+            if raw is not None
+            else fetch_offline_json(
                 bucket=inp.offline_config.s3_bucket,
                 key=inp.offline_config.s3_key,
                 region=region,
@@ -479,96 +500,8 @@ def _collect_offline(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     actual_db_name = (
         offline_meta.get("database_name") if isinstance(offline_meta, dict) else None
     ) or inp.database_name
-
-    tables = _build_tables(parsed["tables"], actual_db_name)
-    views = _build_views(parsed.get("views", []))
-    procedures = _build_procedures(parsed.get("procedures", []))
-    triggers = _build_triggers(parsed.get("triggers", []))
-
-    live_queries = _build_queries(
-        parsed.get("queries", []),
-        query_log_source=_offline_query_log_source(inp.engine.value),
-    )
-    aws_queries = aws_raw.get("query_patterns", [])
-    queries = _merge_into_queries(live_queries, aws_queries)
-
-    global_stats = parsed.get("global_stats", {})
-    pi_counters = global_stats or aws_raw.get("pi_counters", {})
-    cw_raw = aws_raw.get("cloudwatch", {})
-    em_data = aws_raw.get("enhanced_monitoring")
-    _enrich_patterns_from_pi_and_cw(queries, pi_counters, cw_raw, em_data)
-
-    # On-prem enrichment: if no CloudWatch, use native io_stats/wait_events
-    io_stats = parsed.get("io_stats", {})
-    native_waits = parsed.get("wait_events", [])
-    if native_waits and queries.query_patterns:
-        from src.contracts.collector_output import WaitEvent
-
-        # Compute the total wait time across all events so we can fall back
-        # to a computed percent when the SQL script hasn't provided one.
-        # The previous code used `avg_wait_ms` directly as `wait_time_percent`
-        # which is a units mismatch (ms vs percent) and produced values >100
-        # for any workload with mean wait latency >100ms.
-        total_wait_ms = sum(float(w.get("time_waited_ms") or 0) for w in native_waits) or 1.0
-
-        def _wait_percent(w: dict) -> float:
-            # Prefer the script-provided `wait_time_percent` field when
-            # present (added to collect-oracle.sql / collect-sqlserver.sql).
-            # Otherwise, derive percent = time_waited_ms / total_wait_ms * 100.
-            explicit = w.get("wait_time_percent")
-            if explicit is not None:
-                return min(100.0, max(0.0, float(explicit)))
-            time_ms = float(w.get("time_waited_ms") or 0)
-            return min(100.0, max(0.0, (time_ms / total_wait_ms) * 100))
-
-        wait_list = [
-            WaitEvent(
-                event_name=w.get("event", ""),
-                wait_time_ms=float(w.get("time_waited_ms") or 0),
-                wait_time_percent=_wait_percent(w),
-            )
-            for w in native_waits[:5]
-        ]
-        for p in queries.query_patterns:
-            if not p.wait_events:
-                p.wait_events = wait_list
-
-    rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
-    cw_metrics = _build_cloudwatch(cw_raw)
-    metrics = _build_metrics(queries, cw_metrics)
-
-    # Enrich metrics from native io_stats when CloudWatch unavailable
-    if io_stats and metrics.performance_metrics:
-        perf = metrics.performance_metrics
-        if not perf.read_iops_avg and io_stats.get("physical_reads_per_sec"):
-            perf.read_iops_avg = float(io_stats["physical_reads_per_sec"])
-        if not perf.write_iops_avg and io_stats.get("physical_writes_per_sec"):
-            perf.write_iops_avg = float(io_stats["physical_writes_per_sec"])
-
-    offline_meta = parsed.get("metadata", {})
-    # #381 review round 2: offline_version_label (not the raw metadata.version/
-    # version_full banner) -- a SQL Server @@VERSION banner embeds newlines, tabs
-    # and the edition/processor info, and duplicates the engine name in wave 1's
-    # rationale once migration_waves tries to dedupe a name it does not start with
-    # ("SQL Server Microsoft SQL Server 2019 ..."). Falls back to the AWS-reported
-    # engine version when the offline collection itself has no version at all.
-    offline_version = offline_version_label(offline_meta)
-    return _build_output(
-        inp,
-        start,
-        version=(
-            offline_version
-            if offline_version != "unknown"
-            else aws_raw.get("engine_version", "unknown")
-        ),
-        db_size=offline_meta.get("database_size_gb"),
-        tables=tables,
-        queries=queries,
-        metrics=metrics,
-        rds_meta=rds_meta,
-        views=views,
-        procedures=procedures,
-        triggers=triggers,
+    return build_offline_contract(
+        parsed, inp, table_database_name=actual_db_name, aws_raw=aws_raw or {}
     )
 
 

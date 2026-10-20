@@ -51,10 +51,13 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
     ("src/agents/collector/handler.py", "run_collector", "CollectorInput"): (
         "built in memory from the task's environment, not read from a file"
     ),
-    ("src/atx_orchestrator/core.py", "ingest_offline_collection", "CollectorInput"): _BUILT,
-    ("scripts/run_collect.py", "main", "CollectorInput"): _BUILT,
-    ("scripts/run_assessment.py", "phase_collect", "CollectorInput"): _BUILT,
-    ("scripts/test_local_phased.py", "main", "CollectorInput"): _BUILT,
+    # The one offline builder every ingest path calls (#1177): the library ingest,
+    # run_assessment.py, run_collect.py and test_local_phased.py each built it before.
+    (
+        "src/agents/collector/offline_ingest.py",
+        "build_offline_collector_output",
+        "CollectorInput",
+    ): _BUILT,
     (
         "src/agents/referee/reality_check_handler.py",
         "write_reality_check_result",
@@ -445,9 +448,11 @@ FILE_READ_SITES = _unchecked_file_reads()
 # ------------------------------------------------------------------ model reads
 
 
+@pytest.mark.passes_on_main
 def test_the_model_read_scan_is_not_vacuous() -> None:
-    """It sees the reads this issue routed and the built-in-memory exemptions."""
-    assert len(VALIDATE_SITES) >= 10
+    """It sees the reads this issue routed and the built-in-memory exemptions (nine
+    since #1177 folded the four offline CollectorInput builders into one)."""
+    assert len(VALIDATE_SITES) >= 9
     assert {s.cls for s in VALIDATE_SITES} >= {"CollectorInput", "SynthesisOutputContract"}
 
 

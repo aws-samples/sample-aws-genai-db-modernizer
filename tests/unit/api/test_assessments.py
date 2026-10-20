@@ -117,6 +117,35 @@ class TestCreateAssessment:
         }
         assert client.post("/api/v1/assessments", json=bad).status_code == 422
 
+    @pytest.mark.parametrize(("declared", "engine"), [("auto", ""), ("sqlserver", "sqlserver")])
+    def test_an_offline_upload_can_ask_the_collector_to_detect_the_engine(
+        self, mock_services, declared, engine
+    ):
+        """``auto`` (the UI's default, #1177) sends an empty ENGINE: the collector reads
+        the engine from the file. A declared engine is passed through (and the file
+        still wins when it names another)."""
+        mock_services["sfn"].start_execution.return_value = {
+            "execution_arn": "arn:test",
+            "start_date": "2026-02-23T14:00:00Z",
+        }
+        request = {
+            "source_database_type": declared,
+            "database_name": "test_db",
+            "collection_mode": "offline",
+            "offline_s3_key": "uploads/test.json",
+        }
+        assert client.post("/api/v1/assessments", json=request).status_code == 202
+        sfn_input = mock_services["sfn"].start_execution.call_args[0][1]
+        assert sfn_input["engine"] == engine
+        assert sfn_input["source_database_type"] == declared
+
+    @pytest.mark.parametrize("mode", ["live", "ddl"])
+    def test_detect_from_file_needs_an_offline_collection(self, mock_services, mode):
+        bad = {**VALID_REQUEST, "source_database_type": "auto", "collection_mode": mode}
+        resp = client.post("/api/v1/assessments", json=bad)
+        assert resp.status_code == 422
+        assert "needs collection_mode offline" in resp.text
+
     def test_live_mode_requires_connection(self, mock_services):
         bad = {
             "source_database_type": "mysql",

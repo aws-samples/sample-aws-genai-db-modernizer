@@ -307,23 +307,13 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
 
     Mirrors scripts/run_assessment.py::phase_collect exactly, but reads the raw
     input from a dict (sourced via ArtifactStore) instead of a local file, and
-    writes the result back through the ArtifactStore. Reuses the existing
-    builder functions — no new parsing logic.
+    writes the result back through the ArtifactStore. Builds the output with the
+    same ``build_offline_collector_output`` the scripts use (#1177), so the source
+    engine is the one ``offline_parser.detect_source_engine`` reads.
 
     Returns the collector output dict that was written.
     """
-    import time
-
-    from src.agents.collector.mysql_collector import (
-        _build_metrics,
-        _build_output,
-        _build_procedures,
-        _build_queries,
-        _build_tables,
-        _build_triggers,
-        _build_views,
-    )
-    from src.contracts.collector_input import CollectorInput
+    from src.agents.collector.offline_ingest import build_offline_collector_output
     from src.contracts.collector_output import CollectorOutputContract
     from src.shared.contract_versioning import carries_contract, stamp_artifact_version
     from src.tools.database.offline_parser import parse_offline_collection
@@ -346,49 +336,10 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
         collector_data = raw_input
     else:
         parsed = parse_offline_collection(raw_input)
-        start = time.monotonic()
-
-        tables_built = _build_tables(parsed["tables"], database_name)
-        queries_built = _build_queries(parsed.get("queries", []))
-        views = _build_views(parsed.get("views", []))
-        procedures = _build_procedures(parsed.get("procedures", []))
-        triggers = _build_triggers(parsed.get("triggers", []))
-        metrics = _build_metrics(queries_built, None)
-
-        version_str = (parsed.get("metadata", {}).get("version") or "").lower()
-        if "postgresql" in version_str or "postgres" in version_str:
-            detected_engine = "postgresql"
-            detected_port = 5432
-        else:
-            detected_engine = "mysql"
-            detected_port = 3306
-
-        inp = CollectorInput.model_validate(
-            {
-                "job_id": job_id,
-                "engine": detected_engine,
-                "cluster_endpoint": "offline",
-                "port": detected_port,
-                "database_name": database_name,
-                "mode": "offline",
-                "offline_config": {"s3_bucket": "local", "s3_key": "in-memory"},
-            }
-        )
-        offline_meta = parsed.get("metadata", {})
-        collector_data = json.loads(
-            _build_output(
-                inp,
-                start,
-                version=offline_meta.get("version", "unknown"),
-                db_size=offline_meta.get("database_size_gb"),
-                tables=tables_built,
-                queries=queries_built,
-                metrics=metrics,
-                rds_meta=None,
-                views=views,
-                procedures=procedures,
-                triggers=triggers,
-            ).model_dump_json()
+        # The one source-engine detector (#1177): this path used to guess on its own
+        # ("postgres" in the version string, else MySQL).
+        collector_data = build_offline_collector_output(
+            parsed, job_id=job_id, database_name=database_name, s3_key="in-memory"
         )
 
     collector_key = f"{database_name}/{job_id}/collector/output.json"
