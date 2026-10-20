@@ -10,7 +10,6 @@ wordpress job (schema designs, no model) adds the design rules.
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 import shutil
@@ -19,14 +18,14 @@ from typing import Any
 
 import pytest
 
-from src.agents.referee.migration_risks import RULES, wave_gate_strategies
+from src.agents.referee.migration_risks import RULES
 from src.report.escaping import md_text
-from src.shared.report_facts import refresh_risk_facts, risk_engine_and_body
+from src.shared.report_facts import risk_engine_and_body
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.deliverable_figures import norm, pdf_page_texts
 from tests.e2e.designed_run import UNSUPPORTED_CACHE_READ, run_designed_wordpress
-from tests.e2e.pipeline import PipelineResult, _run, run_pipeline
+from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
 
 pytestmark = pytest.mark.deterministic
 
@@ -98,7 +97,15 @@ def test_every_deliverable_shows_the_same_risks(run: PipelineResult) -> None:
     md = run.deliverable("engineering-report.md").read_text(encoding="utf-8")
     pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     data = json.loads(run.deliverable("assessment-data.json").read_text())
-    assert data["risk_assessment"]["risks"] == report["risk_assessment"]["risks"]
+    # A 1.41 row carries no tables of its own (``source_tables`` is 1.42): the risk takes
+    # what the report lists for those queries (``table_sources``, query groups), a subset.
+    backfilled = data["risk_assessment"]["risks"]
+    fresh_risks = report["risk_assessment"]["risks"]
+    assert [{**r, "affected_tables": None} for r in backfilled] == [
+        {**r, "affected_tables": None} for r in fresh_risks
+    ]
+    for b, f in zip(backfilled, fresh_risks, strict=True):
+        assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
     for r in risks:
         _, body = risk_engine_and_body(r["description"])
         assert f"**{r['risk_id']}**" in md and md_text(body) in md, r["risk_id"]
@@ -230,43 +237,54 @@ def test_a_flagged_and_a_held_query_are_one_high_risk_in_every_deliverable(
     assert data["risk_assessment"] == report["risk_assessment"]
 
 
+OLD_1_41 = REPO / "tests/unit/report/fixtures/wordpress_1_41_flagged_report.json"
+
+
 def test_a_report_from_before_the_rule_renders_the_same_risks(
     flagged: PipelineResult, tmp_path: Path
 ) -> None:
-    """A report synthesized before ``routing.flagged`` (the risk, its gate line
-    and its counts taken out) renders the same register as a new synthesis: the
-    deliverables backfill it from the report's own ``flagged_unservable``."""
+    """A real report main's code wrote before ``routing.flagged`` (contract 1.41, the
+    same wordpress job and router output as ``flagged``) renders the register a new
+    synthesis writes, and every deliverable states one risk count and level: the
+    summary's risk sentence, the risk posture and the executive report's tiles."""
     report = _report(flagged)
-    [risk] = _flagged(report)
-    old = copy.deepcopy(report)
-    assessment = old["risk_assessment"]
-    rule_risks = [r for r in assessment["risks"] if r.get("rule")]
-    assessment["risks"] = [r for r in assessment["risks"] if r != risk]
-    kept = [r for r in rule_risks if r != risk]
-    lines = wave_gate_strategies(rule_risks)
-    at = assessment["mitigation_strategies"].index(lines[0])
-    assessment["mitigation_strategies"][at : at + len(lines)] = wave_gate_strategies(kept)
-    old["contract_version"] = "1.40"
-    old["facts"] = refresh_risk_facts(report["facts"], old)
-    assert old["facts"]["open_risk_count"] == report["facts"]["open_risk_count"] - 1
     root = tmp_path / "artifacts"
-    key = flagged.report_json().relative_to(flagged.artifact_root)
-    shutil.copytree(flagged.job_dir(), root / flagged.db / flagged.job_id)
-    (root / key).write_text(json.dumps(old))
-    again = PipelineResult(db=flagged.db, job_id=flagged.job_id, artifact_root=root)
-    common = ["--job-id", flagged.job_id, "--db", flagged.db, "--artifact-root", str(root)]
+    key = root / "wordpress/probe-flag/synthesis/v2/report.json"
+    key.parent.mkdir(parents=True)
+    shutil.copyfile(OLD_1_41, key)
+    old = json.loads(key.read_text())
+    assert not [r for r in old["risk_assessment"]["risks"] if r.get("rule") == "routing.flagged"]
+    again = PipelineResult(db="wordpress", job_id="probe-flag", artifact_root=root)
+    common = ["--job-id", "probe-flag", "--db", "wordpress", "--artifact-root", str(root)]
     _run("report", ["scripts/run_report.py", *common], again)
     data = json.loads(again.deliverable("assessment-data.json").read_text())
-    assert data["risk_assessment"] == report["risk_assessment"]
+    # A 1.41 row carries no tables of its own (``source_tables`` is 1.42): the risk takes
+    # what the report lists for those queries (``table_sources``, query groups), a subset.
+    backfilled = data["risk_assessment"]["risks"]
+    fresh_risks = report["risk_assessment"]["risks"]
+    assert [{**r, "affected_tables": None} for r in backfilled] == [
+        {**r, "affected_tables": None} for r in fresh_risks
+    ]
+    for b, f in zip(backfilled, fresh_risks, strict=True):
+        assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
+    assert data["risk_assessment"]["overall_risk_level"] == "HIGH"
+    n = len(report["risk_assessment"]["risks"])
+    sentence = f"{n} open migration risks (overall: HIGH)"
+    assert sentence in data["summary"] and sentence in report["summary"]
     md = again.deliverable("engineering-report.md").read_text(encoding="utf-8")
-    assert f"**{risk['risk_id']}**" in md
-    fresh = flagged.deliverable("engineering-report.md").read_text(encoding="utf-8")
-    assert _risk_section(md) == _risk_section(fresh)
+    assert md_text(sentence) in md and "overall: MEDIUM" not in md
+    for r in backfilled:
+        assert f"**{r['risk_id']}**" in md
+    assert "Overall risk: HIGH" in md
+    pdf = " ".join(pdf_page_texts(str(again.deliverable("executive-report.pdf"))))
+    fresh_pdf = " ".join(pdf_page_texts(str(flagged.deliverable("executive-report.pdf"))))
+    for risk in report["risk_assessment"]["risks"]:
+        assert norm(risk["risk_id"]) in pdf
+    assert _pdf_risk_tiles(pdf) == _pdf_risk_tiles(fresh_pdf)
 
 
-def _risk_section(md: str) -> str:
-    """The engineering report from its risk posture to the section after its register."""
-    start = md.index("## Risk posture")
-    register = md.index("## Risk register", start)
-    end = md.find("\n## ", register + 1)
-    return md[start : end if end > 0 else len(md)]
+def _pdf_risk_tiles(pdf: str) -> str:
+    """The executive report's risk page head: the overall level and the open tile."""
+    m = re.search(r"Overall risk.{0,200}", norm(pdf))
+    assert m, "no risk tiles"
+    return m.group(0)

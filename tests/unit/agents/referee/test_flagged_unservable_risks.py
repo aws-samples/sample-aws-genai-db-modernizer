@@ -12,13 +12,15 @@ render time (``backfill_report_risks``).
 from __future__ import annotations
 
 import copy
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.agents.referee.migration_risks import RULES, build_migration_risks
-from src.shared.capability_labels import flag_redesign_hints
+from src.shared.capability_labels import FLAG_REDESIGN_HINTS
 from src.shared.migration_risk_rules import (
     HELD_ONLY_SEVERITY,
     backfill_report_risks,
@@ -61,9 +63,12 @@ def test_a_flagged_query_no_other_engine_takes_is_high_in_its_engines_wave() -> 
         "them, and no other engine the plan keeps can take them. Review reasons: it would "
         "need a client-side join (1); it would need a full scan (1)."
     )
-    # The reason category's redesign hint, once per category, in the mitigation.
+    # Each reason category's redesign hint once, the engine named once (review of #1203).
+    assert risk["mitigation"].count("For DynamoDB: ") == 1
     for category in ("full_scan", "client_side_join"):
-        assert flag_redesign_hints(DDB, category)[0] in risk["mitigation"]
+        hint = FLAG_REDESIGN_HINTS[category].rstrip(".").replace("the query", "each query")
+        assert hint in risk["mitigation"]
+    assert "the query" not in risk["mitigation"]
     assert risk["mitigation"].startswith("Before the Wave 3 gate, redesign these queries")
     assert "pin" not in risk["mitigation"]
 
@@ -117,6 +122,7 @@ def test_a_query_the_trace_already_lists_stays_with_the_unservable_rule() -> Non
         migration_waves=WAVES,
         query_assignments=[],
         source_queries=[],
+        source_engine="mysql",
         query_traces=traces,
         flagged_unservable=[_row("f1"), _row("f2")],
     )
@@ -153,6 +159,7 @@ def test_synthesis_passes_the_rows_and_the_wording_is_plain() -> None:
         migration_waves=WAVES,
         query_assignments=[],
         source_queries=[],
+        source_engine="mysql",
         flagged_unservable=[_row("f1"), _row("h1", cause="held_by_pin", category="other")],
         start_id=4,
     )
@@ -283,3 +290,65 @@ def test_a_rows_own_tables_win_over_the_fallback() -> None:
     assert risk["affected_tables"] == ["db.own"]
     [old] = _risks([_row("f1")])
     assert old["affected_tables"] == ["db.b"]
+
+
+def test_stored_gate_lines_with_other_labels_are_replaced_not_doubled() -> None:
+    """Review of #1203: a stored gate line whose labels differ from today's is replaced,
+    so a wave never gets two gate lines."""
+    old = _old_report()
+    old["risk_assessment"]["mitigation_strategies"][
+        1
+    ] = "Before the Wave 3 gate, close RISK-002 (an older label)."
+    lines = backfill_report_risks(old)["risk_assessment"]["mitigation_strategies"]
+    assert [x for x in lines if x.startswith("Before the Wave 3 gate")] == [
+        "Before the Wave 3 gate, close RISK-002 and RISK-004 (tables kept in sync and flagged "
+        "queries no other engine takes)."
+    ]
+    assert lines[0] == "Analysis line." and lines[-1].startswith("After wave 3")
+
+
+# A real report main's code wrote before routing.flagged (contract 1.41, origin/main
+# 50baac23): the wordpress job with a post-schema router output that keeps one DynamoDB
+# query as terminal and holds another by a pin (tests/e2e/test_migration_risks.py).
+OLD_1_41 = (
+    Path(__file__).resolve().parents[2] / "report/fixtures/wordpress_1_41_flagged_report.json"
+)
+
+
+def _real_old() -> dict[str, Any]:
+    report: dict[str, Any] = json.loads(OLD_1_41.read_text())
+    return report
+
+
+def test_a_real_old_reports_summary_states_the_backfilled_count_and_level() -> None:
+    old = _real_old()
+    assert old["contract_version"] == "1.41" and old["summary"] == old["summary_deterministic"]
+    assert "3 open migration risks (overall: MEDIUM); 5 more were resolved" in old["summary"]
+    new = backfill_report_risks(old)
+    ra = new["risk_assessment"]
+    assert (len(ra["risks"]), ra["overall_risk_level"]) == (4, "HIGH")
+    for key in ("summary", "summary_deterministic"):
+        assert "4 open migration risks (overall: HIGH); 5 more were resolved" in new[key]
+        assert "3 open migration risks" not in new[key]
+    assert new["summary_source"] == "deterministic"
+    assert new["facts"]["open_risk_count"] == 4
+
+
+def test_a_generated_summary_that_states_the_old_count_gives_way_to_the_fixed_one() -> None:
+    old = _real_old()
+    old["summary"] = "The plan moves 39 queries to DynamoDB. Three open risks remain, all medium."
+    old["summary_source"] = "llm"
+    new = backfill_report_risks(old)
+    assert new["summary"] == new["summary_deterministic"]
+    assert "4 open migration risks (overall: HIGH)" in new["summary"]
+    assert new["summary_source"] == "deterministic_fallback"
+    assert any("but the risk register has 4" in w for w in new["summary_validation_warnings"])
+
+
+def test_a_generated_summary_that_states_no_risk_count_is_kept() -> None:
+    old = _real_old()
+    old["summary"] = "The plan moves 39 queries to DynamoDB and keeps the rest on Aurora MySQL."
+    old["summary_source"] = "llm"
+    new = backfill_report_risks(old)
+    assert new["summary"] == old["summary"] and new["summary_source"] == "llm"
+    assert "4 open migration risks" in new["summary_deterministic"]

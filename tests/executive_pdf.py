@@ -121,7 +121,13 @@ _SQL_FRAGMENTS = (
     re.compile(r"\bselect\b[^.;]*?\bfrom\b", re.I),
     re.compile(r"\b(?:insert\s+into|delete\s+from)\b|\bupdate\s+\S+\s+set\b", re.I),
     re.compile(r"\bis\s+(?:not\s+)?null\b|\b\w+\s*\(\s*\*\s*\)", re.I),
-    re.compile(r"\b(?:group|order)\s+by\b|\bwhere\s+\S+\s*(?:=|<|>|\bin\b|\blike\b|\bis\b)", re.I),
+    # "where x is" only as a null test: the unservable intro's "keep each query where
+    # it is" is English (found by #1148's flagged-query fixture).
+    re.compile(
+        r"\b(?:group|order)\s+by\b"
+        r"|\bwhere\s+\S+\s*(?:=|<|>|\bin\b|\blike\b|\bis\s+(?:not\s+)?null\b)",
+        re.I,
+    ),
     re.compile(r"[\w.$]+\s*(?:=|<>|!=|<=|>=)\s*(?:\?|\$\d+|'[^']*'|\d+(?![\w.]))"),
     re.compile(r"\b(?:SELECT|FROM|WHERE|JOIN|HAVING)\b"),
 )

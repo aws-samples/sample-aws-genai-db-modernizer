@@ -215,3 +215,20 @@ def test_an_older_report_renders_the_flagged_query_risk_it_never_stored(tmp_path
     assert "**RISK-029**" in md and "although a review found DynamoDB cannot serve it" in md
     # The stored report is left as it was.
     assert "routing.flagged" not in json.dumps(s.read_json(KEY))
+
+
+def test_a_real_old_report_states_one_risk_count_everywhere(tmp_path: Path) -> None:
+    """Review of #1203: a report main's code wrote before ``routing.flagged`` (1.41)
+    renders with the backfilled risk, and its summary states the backfilled count
+    and level, not the stored ones."""
+    s = LocalArtifactStore(base_dir=str(tmp_path))
+    old = json.loads((FIXTURE.parent / "wordpress_1_41_flagged_report.json").read_text())
+    key = "wordpress/probe-flag/synthesis/v2/report.json"
+    s.write_json(key, old)
+    out = {d.name: d for d in dl.render_deliverables(s, "probe-flag", "wordpress", key).items}
+    md = out["engineering-report"].content.decode("utf-8")
+    assert "4 open migration risks \\(overall: HIGH\\)" in md
+    assert "3 open migration risks" not in md and "overall: MEDIUM" not in md
+    assert "**RISK-004**" in md
+    data = json.loads(out["assessment-data"].content)
+    assert len(data["risk_assessment"]["risks"]) == 4

@@ -1,5 +1,7 @@
 """Unit tests for results routes."""
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -211,6 +213,18 @@ class TestGetResults:
         ]
         assert synthesis["risk_assessment"]["overall_risk_level"] == "HIGH"
         assert synthesis["facts"]["open_risk_count"] == 2
+
+    def test_a_real_old_report_payload_states_the_backfilled_risk_count(self, mock_services):
+        # Review of #1203: the results page prints synthesis.summary, which must state
+        # the backfilled register's count and level (a 1.41 report main's code wrote).
+        fixture = Path(__file__).resolve().parents[1] / "report/fixtures"
+        old = json.loads((fixture / "wordpress_1_41_flagged_report.json").read_text())
+        mock_services["s3"].read_synthesis.return_value = old
+        mock_services["s3"].read_triage.return_value = {}
+        synthesis = client.get("/api/v1/assessments/job-1/results").json()["synthesis"]
+        assert "4 open migration risks (overall: HIGH)" in synthesis["summary"]
+        assert synthesis["facts"]["open_risk_count"] == 4
+        assert synthesis["risk_assessment"]["overall_risk_level"] == "HIGH"
 
     def test_keeps_stored_access_pattern_totals(self, mock_services):
         totals = {"owned_pattern_count": 9, "cache_layer_pattern_count": 0}

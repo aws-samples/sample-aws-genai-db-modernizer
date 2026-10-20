@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.contracts.synthesis_output import Risk
-from src.shared.capability_labels import flag_redesign_hints
+from src.shared.capability_labels import FLAG_REDESIGN_HINTS
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.flag_reasons import flag_reason_text
 from src.shared.report_facts import flagged_unservable_rows, refresh_risk_facts
@@ -91,6 +91,35 @@ def join_words(items: list[str]) -> str:
     if len(items) <= 1:
         return "".join(items)
     return ", ".join(items[:-1]) + f" and {items[-1]}"
+
+
+def risk_sentence(n_open: int, level: str, n_resolved: int) -> str:
+    """``8 open migration risks (overall: LOW); 4 more were resolved by the assignment.``
+
+    The deterministic summary's risk sentence. The resolved risks are not part of
+    the open ones; the Engineering Report lists them apart (#258).
+    """
+    text = f"{n_of(n_open, 'open migration risk', 'open migration risks')} (overall: {level})"
+    if n_resolved:
+        verb = "was" if n_resolved == 1 else "were"
+        text += f"; {n_resolved} more {verb} resolved by the assignment"
+    return text + "."
+
+
+# The risk sentence a stored deterministic summary carries: today's wording, and the
+# one before #258 ("8 risk(s) identified (overall: LOW; 4 resolved by the assignment).").
+_RISK_SENTENCE = re.compile(
+    r"\b\d+ open migration risks? \(overall: [A-Za-z]+\)"
+    r"(?:; \d+ more (?:was|were) resolved by the assignment)?\."
+    r"|\b\d+ risk\(s\) identified \(overall: [^;()]+(?:; \d+ resolved by the assignment)?\)\."
+)
+# A generated summary that states a risk count or an overall level: a number (or
+# "no") before "risk", or a severity word before "risk".
+_STATES_RISKS = re.compile(
+    r"\b(?:\d+|no|one|two|three|four|five|six|seven|eight|nine|ten)\b[^.;]{0,40}\brisks?\b"
+    r"|\b(?:overall|critical|high|medium|low)\b[^.;]{0,30}\brisk",
+    re.IGNORECASE,
+)
 
 
 def gate_of(wave: int | None) -> str:
@@ -177,6 +206,20 @@ def flagged_unservable_risks(
     return out
 
 
+def _hints(engine: str, categories: list[str], k: int) -> str:
+    """``For DynamoDB: give each query a key ...; store the data ...`` (the engine
+    named once, each reason category's redesign hint once, #888's wording)."""
+    texts = list(
+        dict.fromkeys(
+            FLAG_REDESIGN_HINTS.get(c, FLAG_REDESIGN_HINTS["other"]).rstrip(". ")
+            for c in categories
+        )
+    )
+    if k > 1:
+        texts = [t.replace("the query", "each query") for t in texts]
+    return f"For {display_engine(engine)}: " + "; ".join(texts) + "."
+
+
 def _writes_of(count: int) -> str:
     return "its table's writes" if count == 1 else "their tables' writes"
 
@@ -214,10 +257,9 @@ def _flagged_risk(
         for c, n in ordered
     )
     description = f"{head}{kinds} Review {'reason' if len(ordered) == 1 else 'reasons'}: {reasons}."
-    hints = list(dict.fromkeys(h for c, _ in ordered for h in flag_redesign_hints(engine, c)))
     steps = [
         f"Before the {gate_of(wave)}, redesign {these(k, 'query', 'queries')} or accept "
-        f"{name} for {them(k)}. {' '.join(hints)}"
+        f"{name} for {them(k)}. {_hints(engine, [c for c, _ in ordered], k)}"
     ]
     if held:
         steps.append(
@@ -291,8 +333,19 @@ def wave_gate_strategies(risks: list[dict[str, Any]]) -> list[str]:
 
 
 def report_query_tables(report: Mapping[str, Any]) -> dict[str, set[str]]:
-    """query id -> the tables it reads, as ``report.json``'s query groups list them."""
+    """query id -> the tables it uses, as ``report.json`` lists them: the query groups'
+    source queries, and ``table_sources`` (each table's writes and replica reads)."""
     out: dict[str, set[str]] = {}
+    for row in report.get("table_sources") or []:
+        if not isinstance(row, Mapping) or not row.get("table"):
+            continue
+        qids = [*(row.get("write_query_ids") or [])]
+        for replica in row.get("replicas") or []:
+            if isinstance(replica, Mapping):
+                qids += replica.get("read_query_ids") or []
+        for q in qids:
+            if q:
+                out.setdefault(str(q), set()).add(str(row["table"]))
     for g in report.get("query_groups") or []:
         if not isinstance(g, Mapping):
             continue
@@ -311,18 +364,70 @@ def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     return {"routing.flagged": flagged_unservable_risks(report, waves, tables)}
 
 
-def _with_gate_lines(strategies: list[Any], old: list[str], new: list[str]) -> list[Any]:
-    """``strategies`` with the stored wave-gate lines ``old`` replaced by ``new``."""
-    for i in range(len(strategies) - len(old) + 1):
-        if old and strategies[i : i + len(old)] == old:
-            return [*strategies[:i], *new, *strategies[i + len(old) :]]
-    # No stored gate lines (a report written before 1.40): they go before the
-    # post-wave checks, which start "After wave".
-    at = next(
-        (i for i, s in enumerate(strategies) if isinstance(s, str) and s.startswith("After wave ")),
-        len(strategies),
+# A wave-gate strategy line (``wave_gate_strategies``), whatever its labels.
+_GATE_LINE = re.compile(r"^Before (?:the Wave \d+ gate|cutover), close ")
+
+
+def _with_gate_lines(strategies: list[Any], new: list[str]) -> list[Any]:
+    """``strategies`` with every stored wave-gate line replaced by ``new``, at the
+    first one's place; with none stored (a report written before 1.40), before the
+    post-wave checks, which start "After wave". A stored line whose labels differ
+    from today's is replaced too, so no wave gets two gate lines."""
+    gate = [i for i, s in enumerate(strategies) if isinstance(s, str) and _GATE_LINE.match(s)]
+    if gate:
+        at = gate[0]
+    else:
+        at = next(
+            (
+                i
+                for i, s in enumerate(strategies)
+                if isinstance(s, str) and s.startswith("After wave ")
+            ),
+            len(strategies),
+        )
+    rest = [s for i, s in enumerate(strategies) if i not in set(gate)]
+    at -= sum(1 for i in gate if i < at)
+    return [*rest[:at], *new, *rest[at:]]
+
+
+def _with_risk_summary(report: dict[str, Any], out: dict[str, Any], added: int) -> None:
+    """The summary of ``out`` stating the backfilled register's risk count and level.
+
+    The deterministic summary's risk sentence is written again from the register
+    (``risk_sentence``, the sentence synthesis writes). A generated summary that
+    states a risk count or level was checked against the register it was written
+    with, so it gives way to that corrected deterministic summary, recorded as a
+    fallback with the reason; one that states none is kept. In place on ``out``."""
+    assessment = out["risk_assessment"]
+    risks = assessment.get("risks") or []
+    sentence = risk_sentence(
+        len(risks),
+        str(assessment.get("overall_risk_level") or "LOW"),
+        len(assessment.get("resolved_risks") or []),
     )
-    return [*strategies[:at], *new, *strategies[at:]]
+    stored = report.get("summary_deterministic")
+    fixed = (
+        _RISK_SENTENCE.sub(lambda _m: sentence, stored, count=1)
+        if isinstance(stored, str)
+        else stored
+    )
+    if fixed != stored:
+        out["summary_deterministic"] = fixed
+    summary = report.get("summary")
+    if not isinstance(summary, str) or not summary:
+        return
+    if summary == stored:
+        out["summary"] = fixed
+    elif _STATES_RISKS.search(summary) and isinstance(fixed, str) and fixed:
+        out["summary"] = fixed
+        out["summary_source"] = "deterministic_fallback"
+        out["summary_validation_warnings"] = [
+            *(report.get("summary_validation_warnings") or []),
+            f"[high confidence] The generated summary was checked against the risk register "
+            f"before {added} more {'risk was' if added == 1 else 'risks were'} raised for "
+            f"this report, but the risk register has {len(risks)} open risks (overall: "
+            f"{assessment.get('overall_risk_level')}).",
+        ]
 
 
 def backfill_report_risks(report: dict[str, Any]) -> dict[str, Any]:
@@ -332,8 +437,9 @@ def backfill_report_risks(report: dict[str, Any]) -> dict[str, Any]:
     the deliverables and the results payload read it through this, so it shows
     the same risk a new synthesis writes. The risks are numbered after the
     stored ones, the overall level only rises, the wave-gate lines are written
-    again over every rule risk, and the facts block's risk counts are recounted
-    (``report_facts.refresh_risk_facts``). A report that already carries a
+    again over every rule risk, the facts block's risk counts are recounted
+    (``report_facts.refresh_risk_facts``) and the summary states the new count
+    and level (``_with_risk_summary``). A report that already carries a
     rule's risks, or raises none, comes back unchanged (the same object).
     """
     assessment = report.get("risk_assessment")
@@ -367,12 +473,11 @@ def backfill_report_risks(report: dict[str, Any]) -> dict[str, Any]:
             "risks": risks,
             "overall_risk_level": max(level, computed, key=severity_rank),
             "mitigation_strategies": _with_gate_lines(
-                strategies,
-                wave_gate_strategies(old_rule_risks),
-                wave_gate_strategies([*old_rule_risks, *numbered]),
+                strategies, wave_gate_strategies([*old_rule_risks, *numbered])
             ),
         },
     }
+    _with_risk_summary(report, out, len(numbered))
     if isinstance(report.get("facts"), dict):
         out["facts"] = refresh_risk_facts(report["facts"], out)
     return out

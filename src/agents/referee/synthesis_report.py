@@ -48,6 +48,7 @@ from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailInterven
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_source_clause
+from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
@@ -3045,17 +3046,8 @@ def _in_scope_phrase(n_in: int, n_out: int) -> str:
     return text + (f" (plus {n_out} out of scope)" if n_out else "")
 
 
-def _risk_sentence(n_open: int, level: str, n_resolved: int) -> str:
-    """``8 open migration risks (overall: LOW); 4 more were resolved by the assignment.``
-
-    The resolved risks are not part of the open ones; the Engineering Report lists
-    them apart (#258).
-    """
-    text = f"{_count(n_open, 'open migration risk', 'open migration risks')} (overall: {level})"
-    if n_resolved:
-        verb = "was" if n_resolved == 1 else "were"
-        text += f"; {n_resolved} more {verb} resolved by the assignment"
-    return text + "."
+# The summary's risk sentence; one copy, which the render-time backfill rewrites too (#1148).
+_risk_sentence = risk_sentence
 
 
 def source_table_count(data: SynthesisData) -> int:
