@@ -35,6 +35,7 @@ REPO = Path(__file__).resolve().parents[2]
 _ANSWER = "a model's answer: an unknown key is refused (#976)"
 _ROUND_TRIP = "a read-back artifact that keeps unknown keys on a round trip (#976)"
 _TRACE = "a DynamoDB decision trace section: unknown keys kept (#973)"
+_TRACE_BASE = "a shared decision trace section: unknown keys kept (#1187)"
 _REPORT = "the synthesis report keeps unknown keys on a round trip"
 
 # "module.Class" -> (extra setting, why). Every other model uses "ignore".
@@ -70,16 +71,25 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
     "design_metrics.OpenSearchShardMetrics": ("allow", _ROUND_TRIP),
     "design_metrics.OpenSearchShardRules": ("allow", _ROUND_TRIP),
     **{
-        f"dynamodb_decision_trace.{name}": ("allow", _TRACE)
+        f"decision_trace_base.{name}": ("allow", _TRACE_BASE)
         for name in (
-            "DynamoDBDecisionTrace",
+            "DecisionTraceBase",
             "TraceSummary",
-            "TransactionShapeTrace",
             "QueryMatch",
             "PatternSummary",
             "DerivationScores",
             "RecommendationDerivation",
             "TableGroup",
+            "LlmAdvisorTrace",
+        )
+    },
+    **{
+        f"dynamodb_decision_trace.{name}": ("allow", _TRACE)
+        for name in (
+            "DynamoDBDecisionTrace",
+            "TransactionShapeTrace",
+            "QueryMatch",
+            "RecommendationDerivation",
             "TimestampNameFallback",
             "TimestampColumnsTrace",
             "PkClassificationTrace",

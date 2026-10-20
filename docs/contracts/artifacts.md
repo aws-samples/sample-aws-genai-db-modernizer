@@ -56,7 +56,11 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | Path pattern | Why it is not a contract |
 |---|---|
 | `collector/sql_shadow\.json` | parser comparison (sqlglot facade vs regex table references, #557): a diagnostic rewritten every collect, read by no phase |
-| `analysis-(?!dynamodb/)[^/]+/decision-trace\.json` | an untyped analysis decision trace (DynamoDB's is a contract): each engine's is typed by #1188, #1189, #1190 and #1191 |
+| `analysis-aurora_mysql/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
+| `analysis-aurora_postgresql/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
+| `analysis-documentdb/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
+| `analysis-elasticache/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
+| `analysis-opensearch/decision-trace\.json` | an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES) |
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |
 | `assignment/v\d+/access_patterns\.json` | each query's access-pattern class and scores as routing scored them (#728, #936): an audit record written with its assignment version |

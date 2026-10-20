@@ -50,17 +50,35 @@ SCAN_ROOTS = ("src", "scripts")
 VERSION_RE = re.compile(r"^\d+\.\d+$")
 _VALIDATE_METHODS = {"model_validate", "model_validate_json", "model_construct"}
 
+
 # (repo-relative path, enclosing function, variable) -> the model that call
 # site writes, for variables the resolver below cannot type from the code
 # (unannotated parameters). Each one is checked like a resolved site, and an
 # entry that no longer matches a call site fails ``test_no_stale_entries``.
-UNTYPED_WRITE_SITES: dict[tuple[str, str, str], type[BaseModel]] = {
+def _trace_contracts() -> tuple[type[BaseModel], ...]:
+    """Every engine's registered decision-trace contract (#1187)."""
+    from src.shared.catalog import engine_ids
+    from src.shared.contract_versioning import contract_for_artifact
+
+    found = (
+        contract_for_artifact(f"db/job/analysis-{engine}/decision-trace.json")
+        for engine in sorted(engine_ids(status="active"))
+    )
+    return tuple(model for model in found if model is not None)
+
+
+UNTYPED_WRITE_SITES: dict[tuple[str, str, str], type[BaseModel] | tuple[type[BaseModel], ...]] = {
     ("src/agents/load_test/handler.py", "_write_artifacts", "manifest"): InfrastructureManifest,
     ("src/agents/load_test/handler.py", "_write_artifacts", "seed_manifest"): SeedManifest,
     ("src/agents/load_test/handler.py", "_write_artifacts", "output"): LoadTestOutput,
     ("scripts/run_analysis.py", "_write_analysis_artifacts", "contract"): AnalysisOutputContract,
     # ``contract, trace, mermaid = analyze_fn(...)``: the engine's analysis entry point.
     ("src/atx_orchestrator/core.py", "run_analysis_core", "contract"): AnalysisOutputContract,
+    # The one decision-trace writer loads the trace through the contract registered for
+    # its path: any engine's typed trace.
+    ("src/agents/analysis/decision_trace.py", "write_decision_trace", "typed"): (
+        _trace_contracts()
+    ),
 }
 
 # Written contracts whose ``contract_version`` has a default but no pattern, with
@@ -264,7 +282,8 @@ def _resolve(variable: str, site: WriteSite, seen: frozenset[str] = frozenset())
 
 def _site_models(site: WriteSite) -> list[type[BaseModel]]:
     if site.key in UNTYPED_WRITE_SITES:
-        return [UNTYPED_WRITE_SITES[site.key]]
+        listed = UNTYPED_WRITE_SITES[site.key]
+        return list(listed) if isinstance(listed, tuple) else [listed]
     return [c for c in _resolve(site.variable, site) if isinstance(c, type)]
 
 

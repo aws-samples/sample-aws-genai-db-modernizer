@@ -7,6 +7,13 @@ dict, so a renamed field or a new denormalization ``subtype`` passed every
 guard; this model types it, and its ``contract_version`` is checked on read
 like every other stored contract (ADR-008 Decisions 1 and 4).
 
+The sections every engine's trace shares (``summary``, ``query_matches``,
+``pattern_summaries``, ``recommendation_derivations`` and the LLM advisor's core) are
+modelled once in ``src/contracts/decision_trace_base.py`` (#1187); this contract
+extends ``DecisionTraceBase`` and narrows a shared model where the DynamoDB trace
+writes more (a query's ``transaction_shape``, a required ``segments_contributing``,
+the advisor's key designs and strategies). The file it writes is unchanged.
+
 ``trace_version`` is the trace's own calibration version from before this
 contract (``"1.1"``); nothing checks it. ``contract_version`` is the version
 readers check.
@@ -30,9 +37,17 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
+from src.contracts import decision_trace_base as base
 from src.contracts.analysis_output import MigrationComplexity
+
+# The shared sections, re-exported: the DynamoDB trace writes them as the base has them.
+from src.contracts.decision_trace_base import (
+    PatternSummary,
+    TableGroup,
+    TraceSummary,
+)
 
 # The shapes ``src/agents/referee/transaction_shape.py`` classifies a write into.
 TransactionShapeKind = Literal["single item", "bounded", "key scoped", "unbounded"]
@@ -50,26 +65,11 @@ class DenormSubtype(str, Enum):
     ADJACENCY_LIST = "adjacency-list"
 
 
-def _is_none(value: object) -> bool:
-    return value is None
-
-
 # Every trace model keeps unknown keys, neither refused nor dropped: an older or
 # newer trace loads (ADR-008 Decision 5), and a writer's round trip through the
 # model loses no key a builder added without declaring it here.
-_KEEP_UNKNOWN = ConfigDict(extra="allow")
-
-
-class TraceSummary(BaseModel):
-    """Query and pattern counts for the run."""
-
-    model_config = _KEEP_UNKNOWN
-
-    queries_analyzed: int
-    queries_matched: int
-    queries_unmatched: int
-    patterns_detected: int
-    anti_patterns_detected: int
+_KEEP_UNKNOWN = base.KEEP_UNKNOWN
+_is_none = base.is_none
 
 
 class TransactionShapeTrace(BaseModel):
@@ -85,61 +85,22 @@ class TransactionShapeTrace(BaseModel):
     schema_note: str | None = Field(default=None, exclude_if=_is_none)
 
 
-class QueryMatch(BaseModel):
-    """The patterns and anti-patterns one query matched."""
+class QueryMatch(base.QueryMatch):
+    """The patterns and anti-patterns one query matched, and a write's transaction shape."""
 
     model_config = _KEEP_UNKNOWN
 
-    query_id: str
-    query_text_preview: str
-    matched_patterns: list[str]
-    matched_anti_patterns: list[str]
     # Written only for a write that has a shape; never written as null.
     transaction_shape: TransactionShapeTrace | None = Field(default=None, exclude_if=_is_none)
 
 
-class PatternSummary(BaseModel):
-    """One detected pattern, with its catalog base score."""
+class RecommendationDerivation(base.RecommendationDerivation):
+    """How one table's recommendation score was derived; the DynamoDB trace always names
+    the patterns behind it."""
 
     model_config = _KEEP_UNKNOWN
 
-    pattern_id: str
-    pattern_type: str
-    catalog_base_score: int | None
-    queries_matched_count: int
-    tables_involved: list[str]
-
-
-class DerivationScores(BaseModel):
-    """The four score dimensions of one table recommendation."""
-
-    model_config = _KEEP_UNKNOWN
-
-    pattern_match: int
-    complexity: int
-    performance: int
-    cost: int
-
-
-class RecommendationDerivation(BaseModel):
-    """How one table's recommendation score was derived."""
-
-    model_config = _KEEP_UNKNOWN
-
-    table_id: str
     segments_contributing: list[str]
-    score_breakdown: DerivationScores
-    weights_used: dict[str, float]
-    weighted_confidence: int
-
-
-class TableGroup(BaseModel):
-    """An FK-connected cluster of more than one table."""
-
-    model_config = _KEEP_UNKNOWN
-
-    group_root: str
-    tables: list[str]
 
 
 class TimestampNameFallback(BaseModel):
@@ -254,14 +215,11 @@ class DenormStrategy(BaseModel):
     )
 
 
-class LlmAdvisorTrace(BaseModel):
-    """What the LLM advisor did: ``skipped``, ``success``, ``awaiting_external``, ..."""
+class LlmAdvisorTrace(base.LlmAdvisorTrace):
+    """What the LLM advisor did, and the key designs and strategies it recommended."""
 
     model_config = _KEEP_UNKNOWN
 
-    status: str
-    duration_seconds: float
-    attempts: int
     aggregate_key_designs: list[AggregateKeyDesign]
     denormalization_strategies: list[DenormStrategy]
 
@@ -298,7 +256,7 @@ Relationship = Annotated[
 ]
 
 
-class DynamoDBDecisionTrace(BaseModel):
+class DynamoDBDecisionTrace(base.DecisionTraceBase):
     """``analysis-dynamodb/decision-trace.json``: how the DynamoDB analysis reached its result."""
 
     model_config = _KEEP_UNKNOWN

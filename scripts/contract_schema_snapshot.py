@@ -113,6 +113,10 @@ EXCLUDED_NO_DEFAULT: dict[str, str] = {
         "Projection of AnalysisOutputContract for schema design -- same "
         "reason as AgentCollectorInput above."
     ),
+    "decision_trace_base.DecisionTraceBase": (
+        "Shared core of the engines' decision-trace contracts (#1187); each "
+        "engine's trace model sets its own contract_version default."
+    ),
     "schema_design_output.SchemaDesignOutputBase": (
         "Shared envelope for engine-specific schema design outputs; no "
         "engine-specific contract currently subclasses it, so there is no "

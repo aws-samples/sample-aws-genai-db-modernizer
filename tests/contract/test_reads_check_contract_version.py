@@ -533,23 +533,39 @@ def test_the_registry_covers_every_written_contract() -> None:
 
 _PLACEHOLDER = "1"  # stands in for every value a path f-string interpolates
 
-# (file, name) -> the shape a path-prefix name holds where the renderer cannot see
-# it bound (a parameter set by the caller).
-PATH_HINTS: dict[tuple[str, str], str] = {
+
+def _trace_paths() -> tuple[str, ...]:
+    """Every analysis engine's decision-trace path."""
+    from src.shared.catalog import engine_ids
+
+    return tuple(
+        f"db/job/analysis-{engine}/decision-trace.json"
+        for engine in sorted(engine_ids(status="active"))
+    )
+
+
+# (file, name) -> the shape (or shapes) a path-prefix name holds where the renderer
+# cannot see it bound (a parameter set by the caller).
+PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
     ("src/agents/load_test/handler.py", "base"): "db/job/load-test-dynamodb/v1",
     # The one decision-trace writer takes the key from its callers (the analysis
-    # handler, scripts/run_analysis.py, the transform core); it writes through the model
-    # only the trace registered as a contract, the DynamoDB one (#973).
-    (
-        "src/agents/analysis/decision_trace.py",
-        "key",
-    ): "db/job/analysis-dynamodb/decision-trace.json",
+    # handler, scripts/run_analysis.py, the transform core); it writes a trace through
+    # the contract registered for its path and refuses an untyped one unless its engine
+    # is still pending (#973, #1187): any engine's trace path.
+    ("src/agents/analysis/decision_trace.py", "key"): _trace_paths(),
     # The group merger writes the merged design trace under its caller's version
     # folder (#1192's declared-artifact scan).
     ("src/agents/schema_design/group_merger.py", "base_key"): "db/job/schema-dynamodb/v1",
     # The container entrypoint's agent type, a module global set from the environment.
     ("src/agents/entrypoint.py", "AGENT_TYPE"): "collector",
 }
+
+# (file, function) of a writer whose model is the one registered for the path it is
+# given (``contract_for_artifact(key)``), so each model is written only to its own
+# paths, not to every path the writer can be given.
+PATH_CHOSEN_MODEL: frozenset[tuple[str, str]] = frozenset(
+    {("src/agents/analysis/decision_trace.py", "write_decision_trace")}
+)
 
 
 def _helper(name: str, tree: ast.Module) -> tuple[ast.FunctionDef, ast.Module, str] | None:
@@ -610,7 +626,8 @@ def _render(expr: ast.expr, ctx: _Ctx, depth: int = 0) -> list[str]:
         if expr.id in ctx.bound:
             return ctx.bound[expr.id]
         if (ctx.file, expr.id) in PATH_HINTS:
-            return [PATH_HINTS[(ctx.file, expr.id)]]
+            hint = PATH_HINTS[(ctx.file, expr.id)]
+            return [hint] if isinstance(hint, str) else list(hint)
         found: list[str] = []
         for value in _assignments(ctx.scope, expr.id):
             found += _render(value, ctx, depth + 1)
@@ -654,7 +671,12 @@ def _write_paths() -> list[tuple[str, int, str, list[str]]]:
         )
         shapes = _render(call.args[0], _Ctx(site.module_tree, site.path, scope, {}))
         for model in _site_models(site):
-            out.append((site.path, site.line, f"{model.__module__}.{model.__qualname__}", shapes))
+            own = shapes
+            if (site.path, site.function) in PATH_CHOSEN_MODEL:
+                own = [
+                    shape for shape in shapes if versioning.contract_for_artifact(shape) is model
+                ]
+            out.append((site.path, site.line, f"{model.__module__}.{model.__qualname__}", own))
     return out
 
 
