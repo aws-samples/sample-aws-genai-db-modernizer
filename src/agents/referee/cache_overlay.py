@@ -132,9 +132,10 @@ def is_locking_read(query: Mapping, source_engine: str | None = None) -> bool:
     SERIALIZABLE)`` hint, matched after comments, literals and quoted
     identifiers are removed, in ``source_engine``'s dialect (MySQL ``#`` comments,
     PostgreSQL ``$$`` strings). The UI engine picker runs the same rule
-    (``src/ui/src/utils/sqlLocking.js``, held to the same cases) but not yet the
-    dialect: it reads every query in the common grammar, so it can only be stricter
-    than this check, never offer a pick the server rejects.
+    (``src/ui/src/utils/sqlLocking.js``) in the same dialect, which it reads from
+    the collector payload's ``metadata.source_database.engine``; both are held to
+    the same cases (``locking_clause_cases.json``, whose ``engine`` field names
+    the dialect).
     """
     return locking_clause(str(query.get("query_text") or ""), source_engine) is not None
 

@@ -6,6 +6,12 @@
  * the server would reject. Both are held to the same cases by
  * `tests/unit/agents/referee/locking_clause_cases.json`.
  *
+ * The source engine (`metadata.source_database.engine` of the collector payload)
+ * picks the dialect, as `src/shared/sql_spans.py` does (#1143): MySQL and MariaDB
+ * add `#` line comments, PostgreSQL adds `$$...$$` / `$tag$...$tag$` strings, and
+ * every other engine (or none) keeps the common grammar. A case in the shared
+ * file with an `engine` runs in that dialect; one without runs in the common one.
+ *
  * Forms: `FOR UPDATE` / `FOR NO KEY UPDATE` / `FOR SHARE` / `FOR KEY SHARE` (with
  * an optional `OF <tables>` list and `NOWAIT` / `SKIP LOCKED`), MySQL `LOCK IN
  * SHARE MODE`, and a SQL Server `WITH (...)` table-hint list naming `UPDLOCK`,
@@ -41,9 +47,71 @@ function kw(words) {
     .join(S1);
 }
 
-// The openers normalizedSql looks for; whichever opens first wins.
-const SPAN_OPENER_RE = /\/\*|--|['"`[]/g;
+// The openers normalizedSql looks for; whichever opens first wins. Per dialect, as
+// src/shared/sql_spans.py's grammars: MySQL adds `#`, PostgreSQL adds a dollar quote
+// (`$$` or `$tag$`, a tag cannot start with a digit, and not inside a name like `a$b$`).
+const TAG_START = '(?![\\p{Nd}])[\\p{L}\\p{N}_]';
+const DOLLAR_OPENER = `(?<![\\p{L}\\p{N}_$])\\$(?:${TAG_START}${WORD}*)?\\$`;
+const DOLLAR_TOKEN_RE = new RegExp(`(?=(\\$(?:${TAG_START}${WORD}*)?\\$))`, 'gu');
+const COMMON_OPENER = "/\\*|--|['\"`[]";
+const MYSQL_OPENER = "/\\*|--|#|['\"`[]";
+const POSTGRES_OPENER = `/\\*|--|['"\`[]|${DOLLAR_OPENER}`;
+// A fresh regex per scan (it carries lastIndex), built from fixed sources only.
+const OPENER_RES = {
+  common: () => new RegExp(COMMON_OPENER, 'gu'),
+  mysql: () => new RegExp(MYSQL_OPENER, 'gu'),
+  postgres: () => new RegExp(POSTGRES_OPENER, 'gu'),
+};
 const SPAN_CLOSERS = { '`': '`', '[': ']', '/*': '*/' };
+
+/** The dialect of a source engine, chosen as sql_spans.literals_and_comments_for does. */
+function dialectOf(sourceEngine) {
+  const engine = String(sourceEngine ?? '').trim().toLowerCase();
+  if (engine === 'mysql' || engine === 'mariadb') {
+    return 'mysql';
+  }
+  if (engine === 'postgresql' || engine === 'postgres') {
+    return 'postgres';
+  }
+  return 'common';
+}
+
+/** The collection's source engine, lower-cased (query_facts.source_engine_of). */
+export function sourceEngineOf(collector) {
+  const engine = collector?.metadata?.source_database?.engine;
+  return String(engine ?? '').trim().toLowerCase();
+}
+
+/** Every `$tag$` token in `text` (overlaps included) with its start offsets, ascending. */
+function dollarTokens(text) {
+  const found = new Map();
+  for (const match of text.matchAll(DOLLAR_TOKEN_RE)) {
+    const list = found.get(match[1]);
+    if (list) {
+      list.push(match.index);
+    } else {
+      found.set(match[1], [match.index]);
+    }
+  }
+  return found;
+}
+
+/** End (exclusive) of the dollar-quoted string opening at `start`, or -1: its next same token. */
+function dollarEnd(tokens, start, opener) {
+  const positions = tokens.get(opener) || [];
+  const from = start + opener.length;
+  let low = 0;
+  let high = positions.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (positions[mid] < from) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low < positions.length ? positions[low] + opener.length : -1;
+}
 
 const STRENGTH = `(?<strength>${kw('NO KEY UPDATE')}|${kw('UPDATE')}|${kw('KEY SHARE')}|${kw('SHARE')})`;
 const LOCKED_TABLE = `(?:${WORD}|\\$)+(?:${S}\\.${S}(?:${WORD}|\\$)+)*`;
@@ -133,8 +201,10 @@ function quotedSpanEnd(text, start, quote) {
  * text; once one kind has no closer left, later openers of that kind are skipped
  * at once, so the scan stays linear.
  */
-function normalizedSql(text) {
-  const openers = new RegExp(SPAN_OPENER_RE.source, 'g');
+function normalizedSql(text, sourceEngine) {
+  const dialect = dialectOf(sourceEngine);
+  const openers = OPENER_RES[dialect]();
+  const tokens = dialect === 'postgres' ? dollarTokens(text) : null;
   const unclosed = new Set();
   const out = [];
   let last = 0;
@@ -144,9 +214,11 @@ function normalizedSql(text) {
     const opener = match[0];
     let end = -1;
     if (!unclosed.has(opener)) {
-      if (opener === '--') {
+      if (opener === '--' || opener === '#') {
         const newline = text.indexOf('\n', start);
         end = newline < 0 ? text.length : newline;
+      } else if (opener.startsWith('$')) {
+        end = dollarEnd(tokens, start, opener);
       } else if (opener in SPAN_CLOSERS) {
         const closer = SPAN_CLOSERS[opener];
         const found = text.indexOf(closer, start + opener.length);
@@ -161,7 +233,10 @@ function normalizedSql(text) {
     if (end < 0) {
       openers.lastIndex = start + 1;
     } else {
-      out.push(text.slice(last, start), opener === '--' || opener === '/*' || opener === "'" ? ' ' : ' ident ');
+      out.push(
+        text.slice(last, start),
+        ['--', '/*', '#', "'"].includes(opener) || opener.startsWith('$') ? ' ' : ' ident ',
+      );
       last = end;
       openers.lastIndex = end;
     }
@@ -181,9 +256,10 @@ function hintNames(hints) {
  * The locking clause of `queryText` in canonical form (`"FOR UPDATE"`,
  * `"FOR NO KEY UPDATE NOWAIT"`, `"LOCK IN SHARE MODE"`, `"WITH (UPDLOCK,
  * ROWLOCK)"`; several joined with `"; "`), or `null` when the read takes no lock.
+ * `sourceEngine` is the source database's engine, which sets the dialect.
  */
-export function lockingClause(queryText) {
-  const sql = normalizedSql(String(queryText ?? ''));
+export function lockingClause(queryText, sourceEngine) {
+  const sql = normalizedSql(String(queryText ?? ''), sourceEngine);
   const clauses = [];
   for (const match of sql.matchAll(new RegExp(FOR_LOCKING_SOURCE, 'gu'))) {
     const words = ['FOR', canonical(match.groups.strength)];
@@ -205,6 +281,6 @@ export function lockingClause(queryText) {
 }
 
 /** Whether `queryText` takes a row lock (the ownership gate's `is_locking_read`). */
-export function isLockingRead(queryText) {
-  return lockingClause(queryText) !== null;
+export function isLockingRead(queryText, sourceEngine) {
+  return lockingClause(queryText, sourceEngine) !== null;
 }

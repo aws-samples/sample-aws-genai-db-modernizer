@@ -7,7 +7,7 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { lockingClause } from '../sqlLocking';
+import { lockingClause, sourceEngineOf } from '../sqlLocking';
 import { engineOptionsForQuery } from '../assignmentSummary';
 
 // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
@@ -26,13 +26,32 @@ describe('lockingClause', () => {
   test.each(CASES.map((c) => [JSON.stringify(c.text), c]))(
     'matches the Python detector on %s',
     (_label, c) => {
-      expect(lockingClause(c.text)).toBe(c.clause);
+      expect(lockingClause(c.text, c.engine)).toBe(c.clause);
     },
   );
 
   test('the shared cases are loaded', () => {
     expect(CASES.length).toBeGreaterThan(40);
     expect(CASES.some((c) => c.clause === null)).toBe(true);
+  });
+
+  test('the shared cases name the dialects (#1143)', () => {
+    const engines = new Set(CASES.map((c) => c.engine));
+    ['mysql', 'mariadb', 'postgresql'].forEach((engine) => expect(engines).toContain(engine));
+    expect(engines).toContain(undefined);
+  });
+
+  test('the dialect changes the answer for the same text', () => {
+    expect(lockingClause('SELECT 1 # FOR UPDATE')).toBe('FOR UPDATE');
+    expect(lockingClause('SELECT 1 # FOR UPDATE', 'mysql')).toBeNull();
+    expect(lockingClause('SELECT $$ FOR UPDATE $$')).toBe('FOR UPDATE');
+    expect(lockingClause('SELECT $$ FOR UPDATE $$', 'postgresql')).toBeNull();
+  });
+
+  test('sourceEngineOf reads metadata.source_database.engine, lower-cased', () => {
+    expect(sourceEngineOf({ metadata: { source_database: { engine: ' MySQL ' } } })).toBe('mysql');
+    expect(sourceEngineOf({ metadata: {} })).toBe('');
+    expect(sourceEngineOf(null)).toBe('');
   });
 
   test('null and undefined take no lock', () => {
@@ -96,7 +115,9 @@ describe('engineOptionsForQuery reads the same lock', () => {
   test.each(CASES.map((c) => [JSON.stringify(c.text), c]))(
     'OpenSearch is offered for a SELECT only when it takes no lock: %s',
     (_label, c) => {
-      const values = engineOptionsForQuery(OPTIONS, 'SELECT', c.text).map((o) => o.value);
+      const values = engineOptionsForQuery(OPTIONS, 'SELECT', c.text, c.engine).map(
+        (o) => o.value,
+      );
       expect(values.includes('opensearch')).toBe(c.clause === null);
       expect(values).toContain('aurora_postgresql');
     },

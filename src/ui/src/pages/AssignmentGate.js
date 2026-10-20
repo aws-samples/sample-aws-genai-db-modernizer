@@ -42,6 +42,7 @@ import {
   engineOptionsForQuery,
   survivingDistribution,
 } from "../utils/assignmentSummary";
+import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES } from "../utils/engineColors";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
@@ -490,6 +491,10 @@ const AssignmentGatePage = memo(() => {
     patterns.forEach(q => { map[q.query_id] = q; });
     return map;
   }, [collectorData]);
+
+  // The source database's engine, from the collector payload: it sets the SQL
+  // dialect the locking-read check reads (#1143).
+  const sourceEngine = useMemo(() => sourceEngineOf(collectorData), [collectorData]);
 
   // Triage signal lookup: query_id → [{ signal, engine }]
   const querySignalsMap = useMemo(() => {
@@ -1114,6 +1119,7 @@ const AssignmentGatePage = memo(() => {
                 engineOptions,
                 details?.query_type,
                 details?.query_text,
+                sourceEngine,
               );
 
               return (

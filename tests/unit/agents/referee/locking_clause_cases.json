@@ -1,5 +1,5 @@
 {
-  "_comment": "Locking-read cases shared by src/agents/referee/query_shape.py's locking_clause (the ownership gate, cache_overlay.is_locking_read) and src/ui/src/utils/sqlLocking.js's lockingClause (the UI engine picker), so the server and the UI read a lock by one rule (#838). clause is the canonical clause, or null when the query takes no lock.",
+  "_comment": "Locking-read cases shared by src/agents/referee/query_shape.py's locking_clause (the ownership gate, cache_overlay.is_locking_read) and src/ui/src/utils/sqlLocking.js's lockingClause (the UI engine picker), so the server and the UI read a lock by one rule (#838). engine, when present, is the source database engine (metadata.source_database.engine) whose dialect reads the query (MySQL and MariaDB # comments, PostgreSQL $$ strings); a case without one is read in the common grammar (#1143). clause is the canonical clause, or null when the query takes no lock.",
   "cases": [
     {"text": "SELECT * FROM t WHERE id = $1 FOR NO KEY UPDATE", "clause": "FOR NO KEY UPDATE"},
     {"text": "SELECT * FROM t WHERE id = $1 FOR KEY SHARE", "clause": "FOR KEY SHARE"},
@@ -85,6 +85,31 @@
     {"text": "SELECT * FROM t WHERE n = 'a''' FOR UPDATE", "clause": "FOR UPDATE"},
     {"text": "SELECT * FROM t WHERE id = 1 AND n = 'x'' FOR UPDATE", "clause": "FOR UPDATE"},
     {"text": "SELECT \"a\"\" FOR UPDATE\" FROM t WHERE id = 1", "clause": null},
-    {"text": "SELECT * FROM t WHERE id = 1 AND \"x\"\" FOR UPDATE", "clause": "FOR UPDATE"}
+    {"text": "SELECT * FROM t WHERE id = 1 AND \"x\"\" FOR UPDATE", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = 1 # FOR UPDATE", "engine": "mysql", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 # FOR UPDATE", "engine": "mariadb", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 # FOR UPDATE", "engine": "MySQL", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 # FOR UPDATE", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = 1 # FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = 1 # note\nFOR UPDATE", "engine": "mysql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM `order#items` WHERE id = 1 FOR UPDATE", "engine": "mysql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE note = '#' AND id = 1 FOR UPDATE", "engine": "mysql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE note = 'FOR UPDATE' AND id = 1", "engine": "mysql", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 FOR UPDATE", "engine": "mysql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = 1 LOCK IN SHARE MODE # x", "engine": "mysql", "clause": "LOCK IN SHARE MODE"},
+    {"text": "SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1", "engine": "postgresql", "clause": null},
+    {"text": "SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1", "engine": "postgres", "clause": null},
+    {"text": "SELECT $tag$ FOR UPDATE $tag$ FROM t WHERE id = 1", "engine": "postgresql", "clause": null},
+    {"text": "SELECT $a$ FOR UPDATE $b$ FOR SHARE $a$ FROM t WHERE id = 1", "engine": "postgresql", "clause": null},
+    {"text": "SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1", "clause": "FOR UPDATE"},
+    {"text": "SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1", "engine": "mysql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = $1 FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE a = $1 AND b = $2 FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE id = 1 $$ FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM a$b$ WHERE id = 1 FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE j #> '{a}' = '1' FOR UPDATE", "engine": "postgresql", "clause": "FOR UPDATE"},
+    {"text": "SELECT * FROM t WHERE note = 'FOR UPDATE' AND id = $1", "engine": "postgresql", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 -- FOR UPDATE", "engine": "postgresql", "clause": null},
+    {"text": "SELECT * FROM t WHERE id = 1 FOR UPDATE", "engine": "oracle", "clause": "FOR UPDATE"}
   ]
 }

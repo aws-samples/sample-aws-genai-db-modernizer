@@ -261,10 +261,12 @@ function isWriteQuery(queryType, queryText) {
 /**
  * Drop OpenSearch from a list of engine `options` (`{ label, value }`) when
  * this query is a write or a locking read (same detection as the server).
+ * `sourceEngine` is the source database's engine (`sourceEngineOf(collector)`):
+ * the lock is read in its dialect, as the server reads it (#1143).
  * Returns `options` unchanged for a plain read.
  */
-export function engineOptionsForQuery(options, queryType, queryText) {
-  if (!isWriteQuery(queryType, queryText) && !isLockingRead(queryText)) {
+export function engineOptionsForQuery(options, queryType, queryText, sourceEngine) {
+  if (!isWriteQuery(queryType, queryText) && !isLockingRead(queryText, sourceEngine)) {
     return options;
   }
   return options.filter((option) => option.value !== 'opensearch');

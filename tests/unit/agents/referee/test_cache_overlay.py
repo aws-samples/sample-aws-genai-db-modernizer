@@ -490,15 +490,26 @@ class TestOwnershipGateUsesTheLockingClause:
     def test_gate_agrees_with_the_shared_cases(self, case):
         read = _q("r", case["text"], "SELECT")
         locked = case["clause"] is not None
-        assert locking_clause(case["text"]) == case["clause"]
-        assert is_locking_read(read) is locked
-        assert can_own("opensearch", read) is not locked
-        assert can_own("dynamodb", read)
-        assert can_own("aurora_postgresql", read)
+        engine = case.get("engine")
+        assert locking_clause(case["text"], engine) == case["clause"]
+        assert is_locking_read(read, engine) is locked
+        assert can_own("opensearch", read, engine) is not locked
+        assert can_own("dynamodb", read, engine)
+        assert can_own("aurora_postgresql", read, engine)
 
     def test_the_shared_cases_are_loaded(self):
         assert len(LOCKING_CASES) > 40
         assert any(c["clause"] is None for c in LOCKING_CASES)
+
+    def test_the_shared_cases_cover_the_dialects(self):
+        # #1143: the UI reads these same cases, so each dialect form needs one.
+        by_engine = {c.get("engine") for c in LOCKING_CASES}
+        assert {None, "mysql", "mariadb", "postgresql"} <= by_engine
+        texts = {(c["text"], c.get("engine")): c["clause"] for c in LOCKING_CASES}
+        assert texts["SELECT * FROM t WHERE id = 1 # FOR UPDATE", "mysql"] is None
+        assert texts["SELECT * FROM t WHERE id = 1 # FOR UPDATE", None] == "FOR UPDATE"
+        assert texts["SELECT $$ FOR UPDATE $$ FROM t WHERE id = 1", "postgresql"] is None
+        assert texts["SELECT * FROM t WHERE note = 'FOR UPDATE' AND id = 1", "mysql"] is None
 
     @pytest.mark.parametrize(
         "text",
