@@ -210,3 +210,36 @@ class TestWhichReferenceIsForwarded:
             (real_store / "test_db" / resp.json()["job_id"] / "_meta.json").read_text()
         )
         assert meta["input"]["secret_arn"] == ""
+
+
+class TestALiveRequestNeedsASecretReference:
+    """#1024: a live request naming no secret is refused up front, not in the collector."""
+
+    @pytest.mark.parametrize(
+        "given",
+        [{}, {"secret_arn": "", "secret_name": ""}, {"secret_arn": None, "secret_name": None}],
+        ids=["absent", "empty", "null"],
+    )
+    def test_no_reference_is_a_422_naming_both_fields(self, given, real_store) -> None:
+        resp = client.post("/api/v1/assessments", json=_live_request(**given))
+
+        assert resp.status_code == 422, resp.text
+        assert "connection.secret_arn" in resp.text
+        assert "connection.secret_name" in resp.text
+        assert not (real_store / "test_db").exists()
+
+    @pytest.mark.passes_on_main  # what #1024 must keep accepting
+    @pytest.mark.parametrize(
+        "given",
+        [{"secret_arn": SECRET_ARN}, {"secret_name": SECRET_NAME}],
+        ids=["arn", "name"],
+    )
+    def test_either_reference_alone_is_enough(self, given, real_store) -> None:
+        resp = client.post("/api/v1/assessments", json=_live_request(**given))
+        assert resp.status_code == 202, resp.text
+
+    @pytest.mark.passes_on_main  # what #1024 must keep accepting
+    def test_a_ddl_request_still_needs_no_reference(self, real_store) -> None:
+        body = {**_live_request(), "collection_mode": "ddl"}
+        resp = client.post("/api/v1/assessments", json=body)
+        assert resp.status_code == 202, resp.text

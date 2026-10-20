@@ -13,7 +13,12 @@ client = TestClient(app)
 VALID_REQUEST = {
     "source_database_type": "mysql",
     "database_name": "test_db",
-    "connection": {"host": "localhost", "port": 3306, "database": "test"},
+    "connection": {
+        "host": "localhost",
+        "port": 3306,
+        "database": "test",
+        "secret_name": "app/db",  # pragma: allowlist secret
+    },
 }
 
 MOCK_EXECUTION = {

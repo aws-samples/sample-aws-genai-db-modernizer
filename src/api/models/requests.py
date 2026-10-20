@@ -293,6 +293,17 @@ class AssessmentRequest(BaseModel):
     def validate_connection_required(self):
         if self.collection_mode in ("live", "ddl") and not self.connection:
             raise ValueError("connection is required for live and ddl modes")
+        # Live collection reads the database credentials from one secret, so a live
+        # request must name it; otherwise it only fails later, in the collector (#1024).
+        if (
+            self.collection_mode == "live"
+            and self.connection
+            and not self.connection.secret_reference()
+        ):
+            raise ValueError(
+                "live mode needs a secret reference: set connection.secret_arn or "
+                "connection.secret_name"
+            )
         if self.collection_mode == "offline" and not self.offline_s3_key:
             raise ValueError("offline_s3_key is required for offline mode")
         return self
