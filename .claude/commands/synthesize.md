@@ -60,9 +60,13 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 5. **Present report**
    Show:
    - Engine ranking, in report order (largest workload share first, cache layer last),
-     with each engine's `routed_confidence` presented as its workload fit: the mean
-     fit of the queries routed to it (cache layer: of the reads it fronts). Say "no
-     table-level evidence" when `routed_confidence_evidence` is `signal_only`.
+     with each owning engine's `routed_confidence` presented as its workload fit: the
+     mean fit of the queries routed to it. Say "no table-level evidence" when
+     `routed_confidence_evidence` is `signal_only`. The cache layer (`role`
+     `cache_layer`) owns no queries, so its `routed_confidence` is its cache fit, the
+     mean fit of the cached reads it fronts: write it as "N% cache fit across its
+     cached reads", as the reports and the results page do, never in a workload fit
+     column or list next to the owners' figures, so it is not compared with them.
      `analysis_confidence` is the average over every analyzed table, kept for audit;
      do not present it as the engine's fit
    - Architecture recommendation (single/multi/hybrid)

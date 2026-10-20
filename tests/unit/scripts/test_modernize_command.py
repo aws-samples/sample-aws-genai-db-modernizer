@@ -831,3 +831,16 @@ def test_error_handling_retries_every_non_complete_schema_status() -> None:
         assert status in bullet, status
     assert "Retry it once with a fresh subagent, then run `--status` again" in bullet
     assert "MODERNIZE_RESULT: failed phase=schema_design_<engine>" in bullet
+
+
+def test_the_cache_layer_fit_is_never_presented_as_a_workload_fit() -> None:
+    # Issue #1251: a final summary showed ElastiCache "Workload fit 41%" next to
+    # the owners' 73% and 85%, so the cache layer read as a weak choice.
+    synthesize = (COMMANDS_DIR / "synthesize.md").read_text()
+    present = synthesize.split("5. **Present report**", 1)[1].split("6. **Update state**", 1)[0]
+    present = " ".join(present.split())
+    assert "each owning engine's `routed_confidence` presented as its workload fit" in present
+    assert '"N% cache fit across its cached reads"' in present
+    assert "never in a workload fit column or list next to the owners' figures" in present
+    completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
+    assert "the cache layer's figure is its cache fit, never shown as a workload fit" in completion

@@ -233,7 +233,7 @@ Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask t
 
 ### Completion
 
-Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO) and the deliverables the synthesize step rendered, all in one folder, <!-- deliverables-list -->`./artifacts/{db}/{job}/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each file, who it is for and the assignment version<!-- /deliverables-list -->. If the `/synthesize` subagent reported `cache_safety_net_notes`, relay them verbatim: they explain why the cache layer is smaller than at the assignment gate.
+Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO; the cache layer's figure is its cache fit, never shown as a workload fit next to the owners', as `/synthesize` step 5 says) and the deliverables the synthesize step rendered, all in one folder, <!-- deliverables-list -->`./artifacts/{db}/{job}/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each file, who it is for and the assignment version<!-- /deliverables-list -->. If the `/synthesize` subagent reported `cache_safety_net_notes`, relay them verbatim: they explain why the cache layer is smaller than at the assignment gate.
 
 Unless `{experience_mode}` is `chat`, add that the full interactive report is on the job's results page. Run
 
