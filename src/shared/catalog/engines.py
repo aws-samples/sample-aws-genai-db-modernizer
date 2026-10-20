@@ -34,13 +34,17 @@ Fields:
   fixed monthly operating cost the reality check weighs (minimum cluster plus ops
   burden); ``extra_engine_burden_monthly`` is the non-monetary burden of running this
   engine beyond the target engine count; ``max_burden_per_unique_query`` is the cut-off
-  above which that burden per uniquely-served query makes the engine removable;
-  ``acu_price_per_hour``, ``storage_price_per_gb_month`` and ``instance_hourly`` (instance
-  type to hourly price) are the unit prices cost estimation multiplies.
-  ``read_unit_price_per_million`` / ``read_unit_bytes`` and
-  ``write_unit_price_per_million`` / ``write_unit_bytes`` are an engine's per-request
-  prices (USD per million units, and the bytes one unit reads or writes); an engine
-  billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
+  above which that burden per uniquely-served query makes the engine removable.
+  ``list_prices`` names the configuration of the price table
+  (``src/catalog/prices.toml``, #1196) the engine is priced on, for example
+  ``aurora_mysql.io_optimized``; the loader merges that section in, so its list prices
+  are never written in an engine file (the loader rejects one that sets them):
+  ``acu_price_per_hour``, ``storage_price_per_gb_month``,
+  ``instance_hourly`` (instance type to hourly price), ``instance_memory_gib`` and
+  ``backup_price_per_gb_month``, ``cross_az_transfer_price_per_gb``, and the per-request prices
+  ``read_unit_price_per_million`` / ``write_unit_price_per_million`` (USD per million
+  units). ``read_unit_bytes`` / ``write_unit_bytes`` (the bytes one unit reads or
+  writes) stay in the engine file; an engine billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
   the engine's buffer cache is not billed. The per-query cost dimension
   (``src.agents.referee.query_cost``, #494) and the cost estimates read them. An engine
   with no ``pricing`` table gets the ``EnginePricing`` defaults.
@@ -110,9 +114,11 @@ import tomllib
 from collections.abc import Iterable, Mapping
 from functools import cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from src.shared.catalog.prices import PRICES_FILE, PriceTable, load_price_table
 
 CATALOG_DIR = Path(__file__).resolve().parents[2] / "catalog" / "engines"
 
@@ -132,6 +138,17 @@ DEFAULT_SCORE_WEIGHTS: Mapping[str, float] = {
 }
 
 
+# A price-table configuration's name as the deliverables state it (#1196).
+CONFIGURATION_LABELS: Mapping[str, str] = {
+    "standard": "Standard",
+    "io_optimized": "I/O-Optimized",
+    "on_demand": "on-demand",
+    "managed": "managed domain",
+    "valkey": "Valkey",
+    "redis_oss": "Redis OSS",
+}
+
+
 class EngineColors(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -148,14 +165,26 @@ class EnginePricing(BaseModel):
     base_monthly: float = Field(default=100, ge=0)
     extra_engine_burden_monthly: float = Field(default=300, ge=0)
     max_burden_per_unique_query: float = Field(default=100, ge=0)
+    list_prices: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
     acu_price_per_hour: float | None = Field(default=None, ge=0)
     storage_price_per_gb_month: float | None = Field(default=None, ge=0)
     instance_hourly: dict[str, float] = Field(default_factory=dict)
+    instance_memory_gib: dict[str, float] = Field(default_factory=dict)
+    backup_price_per_gb_month: float | None = Field(default=None, ge=0)
+    cross_az_transfer_price_per_gb: float | None = Field(default=None, ge=0)
     read_unit_price_per_million: float | None = Field(default=None, ge=0)
     read_unit_bytes: int | None = Field(default=None, gt=0)
     write_unit_price_per_million: float | None = Field(default=None, ge=0)
     write_unit_bytes: int | None = Field(default=None, gt=0)
     reads_billed_on_cache_miss_only: bool = False
+
+    @property
+    def configuration(self) -> str | None:
+        """The priced configuration as the deliverables state it ("I/O-Optimized")."""
+        if self.list_prices is None:
+            return None
+        config = self.list_prices.partition(".")[2]
+        return CONFIGURATION_LABELS.get(config, config)
 
     @model_validator(mode="after")
     def _a_unit_price_has_its_unit_size(self) -> EnginePricing:
@@ -287,7 +316,44 @@ class CatalogError(ValueError):
     """The engine catalog on disk is inconsistent (raised at import time)."""
 
 
-def load_engine_catalog(directory: Path = CATALOG_DIR) -> tuple[EngineEntry, ...]:
+# The EnginePricing fields only the price table sets (#1196).
+LIST_PRICE_FIELDS = frozenset(
+    {
+        "acu_price_per_hour",
+        "storage_price_per_gb_month",
+        "instance_hourly",
+        "instance_memory_gib",
+        "backup_price_per_gb_month",
+        "cross_az_transfer_price_per_gb",
+        "read_unit_price_per_million",
+        "write_unit_price_per_million",
+    }
+)
+
+
+def _with_list_prices(data: dict[str, Any], prices: PriceTable) -> dict[str, Any]:
+    """``data`` with its ``[pricing] list_prices`` section of the price table merged in."""
+    pricing = data.get("pricing")
+    if not isinstance(pricing, Mapping):
+        return data
+    written = sorted(LIST_PRICE_FIELDS & set(pricing))
+    if written:
+        raise ValueError(
+            f"list prices come from {PRICES_FILE.name} (#1196), not the engine file: {written}"
+        )
+    path = pricing.get("list_prices")
+    if not isinstance(path, str):
+        return data
+    section = prices.section(path)
+    unknown = sorted(set(section) - LIST_PRICE_FIELDS)
+    if unknown:
+        raise ValueError(f"[{path}] in {PRICES_FILE.name} sets non-price fields: {unknown}")
+    return {**data, "pricing": {**pricing, **section}}
+
+
+def load_engine_catalog(
+    directory: Path = CATALOG_DIR, prices_file: Path = PRICES_FILE
+) -> tuple[EngineEntry, ...]:
     """Every engine file in ``directory``, validated, in ``display_order``.
 
     A deleted engine file is not detected here: the only lists to check it against are
@@ -295,13 +361,17 @@ def load_engine_catalog(directory: Path = CATALOG_DIR) -> tuple[EngineEntry, ...
     (a release gate) fails instead, naming the contract enums, triage sets and runners
     that still name the engine.
     """
+    try:
+        prices = load_price_table(prices_file)
+    except (OSError, tomllib.TOMLDecodeError, ValueError) as exc:
+        raise CatalogError(f"{prices_file.name}: {exc}") from exc
     entries: list[EngineEntry] = []
     for path in sorted(directory.glob("*.toml")):
         try:
             with path.open("rb") as fh:
                 data = tomllib.load(fh)
-            entry = EngineEntry.model_validate(data)
-        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            entry = EngineEntry.model_validate(_with_list_prices(data, prices))
+        except (tomllib.TOMLDecodeError, ValueError, KeyError) as exc:
             raise CatalogError(f"{path.name}: {exc}") from exc
         if entry.id != path.stem:
             raise CatalogError(f"{path.name}: id {entry.id!r} does not match the file name")

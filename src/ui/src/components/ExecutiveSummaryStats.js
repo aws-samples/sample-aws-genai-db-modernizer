@@ -35,11 +35,33 @@ import { displayEngine } from '../utils/engineNames';
  * (no_engine_in_scope_query_count, in_scope_query_count, query_total_count): "65 of
  * 107 queries placed on an engine; 42 have no engine in scope", and the projected cost
  * says it excludes them; nothing shows when count is 0 or absent.
+ *
+ * `priceList` is the report's `facts.price_list` (#1196): the projected-cost tile
+ * states the list prices' source, region and retrieval date under the figure (each
+ * engine's date when the estimates were priced from different tables), and nothing
+ * for a report written before it.
  */
+// The price date(s) as the facts layer stated them; it only formats (ADR-032).
+function priceListLine(t, priceList) {
+  if (!priceList) return null;
+  const dates = Object.entries(priceList.engine_dates || {});
+  let when = priceList.retrieved_on;
+  if (!when && dates.length === 0) return null;
+  if (!when) when = dates.map(([engine, date]) => `${date} (${displayEngine(engine)})`).join(', ');
+  const undated = (priceList.undated_engines || []).map(displayEngine).join(', ');
+  return t('analysis-results.executive-summary.price-list', {
+    source: priceList.source,
+    region: priceList.region,
+    pricingModel: priceList.pricing_model,
+    date: when,
+  }) + (undated ? t('analysis-results.executive-summary.price-list-undated', { engines: undated }) : '');
+}
+
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
   targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns, engineScope,
   noEngineInScope,
+  priceList,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -50,6 +72,7 @@ const ExecutiveSummaryStats = memo(({
   // $0.00 projection is a figure and shows.
   const hasProjectedCost = typeof projectedCost === 'number' && Number.isFinite(projectedCost);
   const retiredList = Array.isArray(retiredEngines) ? retiredEngines : [];
+  const priceLine = priceListLine(t, priceList);
   return (
     <ColumnLayout columns={4} variant="text-grid">
       <div data-tile="database">
@@ -121,6 +144,11 @@ const ExecutiveSummaryStats = memo(({
               <span data-figure="cost-excludes-no-engine">
                 {t('analysis-results.executive-summary.cost-excludes-no-engine', { count: noEngineInScope.count })}
               </span>
+            </Box>
+          )}
+          {priceLine && (
+            <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+              <span data-figure="price-list">{priceLine}</span>
             </Box>
           )}
         </div>

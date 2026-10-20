@@ -18,11 +18,11 @@ ui = "#3184e8"
 base_monthly = 0
 extra_engine_burden_monthly = 300
 max_burden_per_unique_query = 100
-# On-demand request prices, us-east-1 (aws.amazon.com/dynamodb/pricing/on-demand/): a read
-# request unit reads up to 4 KB, a write request unit writes up to 1 KB.
-read_unit_price_per_million = 0.125
+# On-demand (#1196): the request and storage prices are the price table's
+# (src/catalog/prices.toml). A read request unit reads up to 4 KB, a write request unit
+# writes up to 1 KB (aws.amazon.com/dynamodb/pricing/on-demand/).
+list_prices = "dynamodb.on_demand"
 read_unit_bytes = 4096
-write_unit_price_per_million = 0.625
 write_unit_bytes = 1024
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine

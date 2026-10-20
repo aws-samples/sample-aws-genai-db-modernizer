@@ -29,6 +29,7 @@ from src.contracts.analysis_output import (
 )
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
+from src.shared.catalog.prices import HOURS_PER_MONTH, price_basis
 from src.tools.analysis.aurora_common_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     CACHE_READ_CPS_THRESHOLD,
@@ -835,7 +836,7 @@ def estimate_aurora_costs(
     min_acu, max_acu = _estimate_acu_from_load(total_cps, query_count)
     # Average ACU usage (assume 60% of max during peak, 30% during off-peak)
     avg_acu = (min_acu + max_acu) / 2.0
-    serverless_compute_monthly = avg_acu * acu_price * 24 * 30
+    serverless_compute_monthly = avg_acu * acu_price * HOURS_PER_MONTH
     serverless_storage_monthly = max(total_size_gb, 1.0) * storage_price
     serverless_total = serverless_compute_monthly + serverless_storage_monthly
 
@@ -847,7 +848,7 @@ def estimate_aurora_costs(
         instance_type = "db.r6g.large"
 
     instance_price = prices.instance_hourly[instance_type]
-    provisioned_compute_monthly = instance_price * 24 * 30
+    provisioned_compute_monthly = instance_price * HOURS_PER_MONTH
     provisioned_storage_monthly = max(total_size_gb, 20.0) * storage_price
     provisioned_total = provisioned_compute_monthly + provisioned_storage_monthly
 
@@ -874,12 +875,16 @@ def estimate_aurora_costs(
             "recommended": (
                 "serverless_v2" if serverless_total <= provisioned_total else "provisioned"
             ),
+            # #1196: the price-table configuration every figure above is priced on.
+            "list_prices": prices.list_prices,
+            # #1196: the price table this estimate was priced from, by date.
+            "price_list": price_basis(),
         },
         pricing_assumptions=[
             f"Aurora {engine.title()} — {target_region}",
             f"Serverless v2: ${acu_price}/ACU-hr, {min_acu}-{max_acu} ACU range",
             f"Provisioned: {instance_type} at ${instance_price}/hr",
-            f"I/O-Optimized storage: ${storage_price}/GB/month",
+            f"Aurora {prices.configuration} storage: ${storage_price}/GB/month",
             f"Total data size: {total_size_gb:.2f} GB",
             f"Total query throughput: {total_cps:.1f} calls/second",
         ],

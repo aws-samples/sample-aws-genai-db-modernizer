@@ -60,6 +60,7 @@ from src.contracts.dynamodb_decision_trace import (
 )
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
+from src.shared.catalog.prices import SECONDS_PER_MONTH, price_basis
 from src.tools.analysis.dynamodb_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     DYNAMODB_ANTI_PATTERNS,
@@ -1393,15 +1394,15 @@ def estimate_dynamodb_costs(
         elif qt in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
             total_write_cps += cps
 
-    # On-demand pricing (us-east-1): the request unit prices are the engine file's
-    # (``src/catalog/engines/dynamodb.toml``, #494). Storage: $0.25 per GB-month
+    # On-demand pricing: the request unit and storage prices are the price table's
+    # (``src/catalog/prices.toml``, #1196), through the engine file's configuration.
     prices = catalog.pricing("dynamodb")
-    read_units_per_month = total_read_cps * 86400 * 30
-    write_units_per_month = total_write_cps * 86400 * 30
+    read_units_per_month = total_read_cps * SECONDS_PER_MONTH
+    write_units_per_month = total_write_cps * SECONDS_PER_MONTH
 
     read_cost = (read_units_per_month / 1_000_000) * (prices.read_unit_price_per_million or 0.0)
     write_cost = (write_units_per_month / 1_000_000) * (prices.write_unit_price_per_million or 0.0)
-    storage_cost = max(total_size_gb, 0.01) * 0.25  # Minimum for small DBs
+    storage_cost = max(total_size_gb, 0.01) * (prices.storage_price_per_gb_month or 0.0)
 
     total = round(read_cost + write_cost + storage_cost, 2)
 
@@ -1412,6 +1413,9 @@ def estimate_dynamodb_costs(
             "write_request_units": round(write_cost, 2),
             "storage_gb": round(storage_cost, 2),
             "pricing_mode": "on-demand",
+            "list_prices": prices.list_prices,
+            # #1196: the price table this estimate was priced from, by date.
+            "price_list": price_basis(),
         },
         pricing_assumptions=[
             "On-demand capacity mode (no provisioned throughput)",

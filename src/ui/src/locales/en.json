@@ -255,6 +255,8 @@
   "analysis-results.executive-summary.no-engine-in-scope_other": "{{placed}} of {{total}} queries placed on an engine; {{count}} have no engine in the customer's engine scope",
   "analysis-results.executive-summary.cost-excludes-no-engine_one": "Excludes the {{count}} query with no engine in the customer's engine scope, which keeps running on the source database.",
   "analysis-results.executive-summary.cost-excludes-no-engine_other": "Excludes the {{count}} queries with no engine in the customer's engine scope, which keep running on the source database.",
+  "analysis-results.executive-summary.price-list": "List prices: {{source}}, {{region}} {{pricingModel}}, retrieved {{date}}",
+  "analysis-results.executive-summary.price-list-undated": "; not recorded for {{engines}}",
   "analysis-results.executive-summary.current-cost": "Current monthly cost",
   "analysis-results.executive-summary.savings": "Savings",
   "analysis-results.executive-summary.retired-engines": "Retired by this plan",

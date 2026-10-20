@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "``facts.price_list`` (``PriceListFacts``): the source, region, pricing model and retrieval date of the price table (``src/catalog/prices.toml``) the TCO figures were estimated from, read from each analysis estimate (``engine_dates``; ``retrieved_on`` when they agree), so each deliverable states the price date. Backward compatible: defaults to None, the value an older report reads back as (its price date is unknown)."
+issue = 1196

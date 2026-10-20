@@ -15,7 +15,9 @@ ui = "#d13212"
 base_monthly = 50
 extra_engine_burden_monthly = 300
 max_burden_per_unique_query = 100
-# A cluster is billed by its nodes, not per request (#494).
+# A cluster is billed by its nodes, not per request (#494): node-based Valkey, priced from
+# the price table (src/catalog/prices.toml, #1196).
+list_prices = "elasticache.valkey"
 
 # The cache overlay's floors (#296, #304, #921): which reads a cache layer fronts.
 [thresholds.hot_read_min_calls_per_second]

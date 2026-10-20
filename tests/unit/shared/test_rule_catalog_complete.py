@@ -489,6 +489,14 @@ INLINE_ENGINE_LITERALS: dict[str, tuple[int, str]] = {
         1,
         _PLUMBING + ": the engine's own cost estimate reads its I/O price (#494)",
     ),
+    "src/tools/analysis/opensearch_analysis_tools.py": (
+        1,
+        _PLUMBING + ": the engine's own cost estimate reads its list prices (#1196)",
+    ),
+    "src/tools/analysis/redis_analysis_tools.py": (
+        1,
+        _PLUMBING + ": the engine's own cost estimate reads its list prices (#1196)",
+    ),
 }
 
 

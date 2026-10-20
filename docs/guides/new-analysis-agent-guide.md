@@ -443,13 +443,15 @@ Each target has different pricing models. The cost estimation function should:
 
 ### Target-specific guidance
 
-| Target | Default pricing | Key inputs |
+Never write a price in the estimator. Every list price comes from the one dated price table, `src/catalog/prices.toml` (us-east-1, on-demand), written by `uv run python scripts/refresh_prices.py` from the public AWS Price List files. The engine file names the configuration it is priced on (`[pricing] list_prices = "<engine>.<configuration>"`), and the estimator reads the figures through `catalog.pricing(engine)`. A new engine adds its section to the script's `SPECS` and runs the script. Bill a month as `HOURS_PER_MONTH` (730) and request volumes over `SECONDS_PER_MONTH` (`src.shared.catalog.prices`), and record the table's date in the estimate (`cost_components["price_list"] = price_basis()`), so the deliverables can state it.
+
+| Target | Default pricing (price table section) | Key inputs |
 |--------|----------------|------------|
-| DynamoDB | On-demand ($0.125/M RRU, $0.625/M WRU, $0.25/GB) | calls_per_second, read/write ratio, total size |
-| ElastiCache | cache.r6g.large ($0.166/hr) | working set size, connections |
-| DocumentDB | db.r6g.large ($0.348/hr) + I/O ($0.20/M) | storage, read/write IOPS |
-| OpenSearch | m6g.large.search ($0.167/hr) | index size, query rate |
-| Neptune | db.r6g.large ($0.348/hr) | vertex/edge count, traversal rate |
+| DynamoDB | On-demand request units and storage (`dynamodb.on_demand`) | calls_per_second, read/write ratio, total size |
+| ElastiCache | Node-based Valkey (`elasticache.valkey`) | working set size, connections |
+| DocumentDB | Instance plus Standard storage I/O (`documentdb.standard`) | storage, read/write IOPS |
+| OpenSearch | Managed domain on gp3 EBS (`opensearch.managed`) | index size, query rate |
+| Aurora | I/O-Optimized instance, ACU and storage (`aurora_<engine>.io_optimized`) | calls_per_second, total size |
 
 ---
 

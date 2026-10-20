@@ -26,14 +26,10 @@ ui = "#c33d69"
 base_monthly = 250
 extra_engine_burden_monthly = 300
 max_burden_per_unique_query = 100
-# Aurora I/O-Optimized bills no I/O per request, so no read or write unit price: a
-# query's traffic runs on the capacity its standing cost pays for (#494).
-acu_price_per_hour = 0.12
-storage_price_per_gb_month = 0.10
-
-[pricing.instance_hourly]
-"db.r6g.large" = 0.24
-"db.r6g.xlarge" = 0.48
+# Priced on Aurora I/O-Optimized (#1196): no I/O charge per request, so no read or write
+# unit price; a query's traffic runs on the capacity its standing cost pays for (#494).
+# The ACU, storage and instance prices are the price table's (src/catalog/prices.toml).
+list_prices = "aurora_postgresql.io_optimized"
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
 # (#1002); the first profile is the engine's default.

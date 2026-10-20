@@ -17,13 +17,21 @@ from src.contracts.load_test_models import (
     SeedSummary,
     TestConfig,
 )
+from src.shared import catalog
 from src.storage.artifact_store import ArtifactStore
 from src.storage.parallel import run_parallel
 
 logger = structlog.get_logger()
 
-RRU_PRICE = 0.25 / 1_000_000
-WRU_PRICE = 1.25 / 1_000_000
+
+def _request_unit_prices(engine: str) -> tuple[float, float]:
+    """``engine``'s on-demand price of one read and one write request unit: the price
+    table's (src/catalog/prices.toml, #1196), through the engine catalog."""
+    prices = catalog.pricing(engine)
+    return (
+        (prices.read_unit_price_per_million or 0.0) / 1_000_000,
+        (prices.write_unit_price_per_million or 0.0) / 1_000_000,
+    )
 
 
 def create_engine_components(
@@ -378,6 +386,8 @@ def _build_pattern_results(
     metrics = summary.get("metrics", {})
     results: list[PatternResult] = []
     seen: set[str] = set()
+    # The consumed-capacity metrics are DynamoDB request units.
+    rru_price, wru_price = _request_unit_prices("dynamodb")
 
     for ap in access_patterns:
         for qid in ap.get("query_ids", []) or ap.get("source_query_ids", []):
@@ -449,7 +459,7 @@ def _build_pattern_results(
                     error_count=error_count,
                     error_rate_pct=error_rate,
                     throttle_count=0,
-                    cost_per_operation_usd=(rcu_avg * RRU_PRICE) + (wcu_avg * WRU_PRICE),
+                    cost_per_operation_usd=(rcu_avg * rru_price) + (wcu_avg * wru_price),
                     consumed_capacity_avg=rcu_avg + wcu_avg,
                     code_artifact_path=f"{base}/scenarios/{qid}.js",
                 )

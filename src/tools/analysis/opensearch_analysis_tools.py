@@ -44,7 +44,9 @@ from src.contracts.opensearch_decision_trace import (
     TraceSummary,
     WorkloadClassificationTrace,
 )
+from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
+from src.shared.catalog.prices import HOURS_PER_MONTH, price_basis
 from src.tools.analysis.opensearch_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     OPENSEARCH_SEARCH_WEIGHTS,
@@ -818,9 +820,15 @@ def estimate_opensearch_costs(
 
     total_size_gb = sum((t.get("size_mb") or 0.0) for t in tables) / 1024.0
 
-    # r6g.large.search: ~$0.167/hr, 2 data nodes, gp3 EBS: $0.024/GB/month
-    instance_cost = 2 * 0.167 * 24 * 30  # 2 nodes × hourly × hours/day × days/month
-    storage_cost = max(total_size_gb * 1.2, 20.0) * 0.024  # 1.2x overhead, min 20GB, gp3 rate
+    # A managed domain: 2 data nodes on gp3 EBS. Both prices are the price table's
+    # (src/catalog/prices.toml, #1196).
+    prices = catalog.pricing("opensearch")
+    instance_type = "r6g.large.search"
+    instance_hourly = prices.instance_hourly[instance_type]
+    gp3_price = prices.storage_price_per_gb_month or 0.0
+    instance_cost = 2 * instance_hourly * HOURS_PER_MONTH  # 2 nodes
+    storage_gb = max(total_size_gb * 1.2, 20.0)  # 1.2x overhead, min 20GB
+    storage_cost = storage_gb * gp3_price
 
     monthly = instance_cost + storage_cost
 
@@ -829,13 +837,16 @@ def estimate_opensearch_costs(
         cost_components={
             "instance_cost_usd": round(instance_cost, 2),
             "storage_cost_usd": round(storage_cost, 2),
-            "instance_type": "r6g.large.search",
+            "instance_type": instance_type,
             "data_nodes": 2,
-            "storage_gb": round(max(total_size_gb * 1.2, 20.0), 2),
+            "storage_gb": round(storage_gb, 2),
+            "list_prices": prices.list_prices,
+            # #1196: the price table this estimate was priced from, by date.
+            "price_list": price_basis(),
         },
         pricing_assumptions=[
-            "2 r6g.large.search data nodes ($0.167/hr each)",
-            "gp3 EBS storage at $0.024/GB/month",
+            f"2 {instance_type} data nodes (${instance_hourly}/hr each)",
+            f"gp3 EBS storage at ${gp3_price}/GB/month",
             "20% storage overhead for OpenSearch index structures",
             "Minimum 20 GB storage assumed",
             f"Region: {target_region}",

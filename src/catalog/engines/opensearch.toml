@@ -27,7 +27,9 @@ ui = "#2ea597"
 base_monthly = 150
 extra_engine_burden_monthly = 300
 max_burden_per_unique_query = 100
-# A domain is billed by its instances and storage, not per request (#494).
+# A domain is billed by its instances and storage, not per request (#494): a managed
+# domain on gp3 EBS, priced from the price table (src/catalog/prices.toml, #1196).
+list_prices = "opensearch.managed"
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
 # (#1002); the first profile is the engine's default.

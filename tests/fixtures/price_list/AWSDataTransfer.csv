@@ -1,0 +1,7 @@
+"FormatVersion","v1.0"
+"Disclaimer","This pricing list is for informational purposes only. All prices are subject to the additional terms included in the pricing pages on http://aws.amazon.com. All Free Tier prices are also subject to the terms included at https://aws.amazon.com/free/"
+"Publication Date","2026-09-16T13:22:08Z"
+"Version","20260916132208"
+"OfferCode","AWSDataTransfer"
+"SKU","OfferTermCode","RateCode","TermType","PriceDescription","EffectiveDate","StartingRange","EndingRange","Unit","PricePerUnit","Currency","RelatedTo","Product Family","serviceCode","Transfer Type","From Location","From Location Type","To Location","To Location Type","usageType","operation","From Region Code","serviceName","To Region Code"
+"PNUBVW4CPC8XA46W","JRTCKXETXF","PNUBVW4CPC8XA46W.JRTCKXETXF.6YS6EN2CT7","OnDemand","$0.010 per GB - regional data transfer - in/out/between EC2 AZs or using elastic IPs or ELB","2026-06-01","0","Inf","GB","0.0100000000","USD","UFS3N56WEYYKUV47","Data Transfer","AWSDataTransfer","IntraRegion","US East (N. Virginia)","AWS Region","US East (N. Virginia)","AWS Region","DataTransfer-Regional-Bytes","","us-east-1","AWS Data Transfer","us-east-1"

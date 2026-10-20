@@ -252,11 +252,18 @@ class TestPricingIsInTheCatalog:
                 assert e.pricing.max_burden_per_unique_query == 100, e.id
 
     def test_unit_prices(self) -> None:
+        """Aurora is priced on I/O-Optimized, as its engine files say (#1196): the price
+        list's I/O-Optimized ACU, storage and instance rates, not Standard's."""
         pg, my = catalog.pricing("aurora_postgresql"), catalog.pricing("aurora_mysql")
         for p in (pg, my):
-            assert (p.acu_price_per_hour, p.storage_price_per_gb_month) == (0.12, 0.10)
-        assert pg.instance_hourly == {"db.r6g.large": 0.24, "db.r6g.xlarge": 0.48}
-        assert my.instance_hourly == {"db.r6g.large": 0.22, "db.r6g.xlarge": 0.44}
+            assert p.list_prices is not None and p.list_prices.endswith(".io_optimized")
+            assert p.configuration == "I/O-Optimized"
+            assert (p.acu_price_per_hour, p.storage_price_per_gb_month) == (0.16, 0.225)
+            assert p.instance_hourly == {
+                "db.t4g.medium": 0.095,
+                "db.r6g.large": 0.338,
+                "db.r6g.xlarge": 0.675,
+            }
 
     def test_request_unit_prices(self) -> None:
         """The per-request prices the per-query cost dimension reads (#494 slice 2): the
@@ -287,10 +294,44 @@ class TestPricingIsInTheCatalog:
         with pytest.raises(CatalogError):
             load_engine_catalog(tmp_path)
 
+    def test_an_engine_file_never_states_a_list_price(self, tmp_path: Path) -> None:
+        """List prices live in the one price table (#1196), never in an engine file."""
+        src = (ROOT / "src/catalog/engines/dynamodb.toml").read_text()
+        (tmp_path / "dynamodb.toml").write_text(
+            src.replace(
+                "read_unit_bytes = 4096\n",
+                "read_unit_bytes = 4096\n" "read_unit_price_per_million = 0.125\n",
+            )
+        )
+        with pytest.raises(CatalogError, match="list prices come from prices.toml"):
+            load_engine_catalog(tmp_path)
+
+    def test_an_unknown_price_configuration_fails_at_load(self, tmp_path: Path) -> None:
+        src = (ROOT / "src/catalog/engines/dynamodb.toml").read_text()
+        (tmp_path / "dynamodb.toml").write_text(
+            src.replace('"dynamodb.on_demand"', '"dynamodb.provisioned"')
+        )
+        with pytest.raises(CatalogError, match=r"no \[dynamodb.provisioned\] section"):
+            load_engine_catalog(tmp_path)
+
+    def test_aurora_on_standard_needs_its_io_unit_sizes(self, tmp_path: Path) -> None:
+        """Standard bills each I/O, so its section carries request prices, and an engine
+        file switched to it without the unit sizes fails instead of pricing I/O at 0."""
+        src = (ROOT / "src/catalog/engines/aurora_mysql.toml").read_text()
+        (tmp_path / "aurora_mysql.toml").write_text(
+            src.replace('"aurora_mysql.io_optimized"', '"aurora_mysql.standard"')
+        )
+        with pytest.raises(CatalogError, match="needs read_unit_bytes"):
+            load_engine_catalog(tmp_path)
+
     def test_the_cost_estimates_read_the_request_prices_from_the_catalog(self) -> None:
         for rel, needles in {
             "src/tools/analysis/dynamodb_analysis_tools.py": ["* 0.125", "* 0.625"],
-            "src/tools/analysis/documentdb_analysis_tools.py": ["* 0.20"],
+            "src/tools/analysis/documentdb_analysis_tools.py": ["* 0.20", "0.348", "* 0.10"],
+            "src/tools/analysis/opensearch_analysis_tools.py": ["0.167", "0.024"],
+            "src/tools/analysis/redis_analysis_tools.py": ["0.113", "0.226", "* 0.085", "* 0.01"],
+            "src/tools/analysis/aurora_common_analysis_tools.py": ["0.12", "0.22", "0.44"],
+            "src/agents/load_test/handler.py": ["0.25 /", "1.25 /"],
         }.items():
             text = (ROOT / rel).read_text(encoding="utf-8")
             for needle in needles:

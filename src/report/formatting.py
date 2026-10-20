@@ -212,6 +212,31 @@ def _retired_in_use_lines(facts: dict[str, Any]) -> list[tuple[str, str, str]]:
     ]
 
 
+def price_list_text(facts: dict[str, Any]) -> str:
+    """ "AWS Price List, us-east-1 on-demand, retrieved 2026-10-19" or "" with none (#1196).
+
+    The price table the TCO's estimates were priced from (``facts.price_list``). When the
+    estimates used different tables, each engine's date is named ("retrieved 2026-10-19
+    (Aurora MySQL), 2026-07-01 (DynamoDB)"), and an estimate that recorded none is said
+    so. A report written before the fact existed has none, and states no date."""
+    basis = facts.get("price_list")
+    if not isinstance(basis, dict):
+        return ""
+    dates = basis.get("engine_dates") or {}
+    if basis.get("retrieved_on"):
+        when = f"retrieved {basis['retrieved_on']}"
+    elif dates:
+        when = "retrieved " + ", ".join(
+            f"{date} ({display_engine(engine)})" for engine, date in dates.items()
+        )
+    else:
+        return ""
+    undated = basis.get("undated_engines") or []
+    if undated:
+        when += "; not recorded for " + ", ".join(display_engine(e) for e in undated)
+    return f"{basis['source']}, {basis['region']} {basis['pricing_model']}, {when}"
+
+
 def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:
     """engine -> design summary, only for engines whose design completed."""
     sd = report.get("schema_designs") or {}

@@ -7,3 +7,4 @@ log "isort"; uv run isort --profile=black --line-length=100 --check-only src/ te
 log "mypy";  uv run mypy src/
 log "commands"; uv run python scripts/validate_skills.py
 log "catalog"; uv run python scripts/render_catalog.py --check
+log "prices"; uv run python scripts/refresh_prices.py --check-age
