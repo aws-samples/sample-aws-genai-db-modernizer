@@ -16,12 +16,12 @@ ui = "#1d8102"
 base_monthly = 200
 extra_engine_burden_monthly = 300
 max_burden_per_unique_query = 100
-# Standard storage I/O price, us-east-1 (aws.amazon.com/documentdb/pricing/): a read I/O is
-# one 8 KB page read from storage, so a read served from the buffer cache costs none; a
-# write I/O is a 4 KB unit.
-read_unit_price_per_million = 0.20
+# Priced on Standard storage (#1196): the I/O, storage and instance prices are the price
+# table's (src/catalog/prices.toml). A read I/O is one 8 KB page read from storage, so a
+# read served from the buffer cache costs none; a write I/O is a 4 KB unit
+# (aws.amazon.com/documentdb/pricing/).
+list_prices = "documentdb.standard"
 read_unit_bytes = 8192
-write_unit_price_per_million = 0.20
 write_unit_bytes = 4096
 reads_billed_on_cache_miss_only = true
 

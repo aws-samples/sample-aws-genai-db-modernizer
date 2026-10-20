@@ -2605,6 +2605,7 @@ def compute_report_facts(
     signal_overrides: Mapping[str, Iterable[str]] | None = None,
     relational_gaps: Mapping[str, Any] | None = None,
     engine_scope: Iterable[str] | None = None,
+    price_list: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -2620,6 +2621,9 @@ def compute_report_facts(
     which needs the collection: synthesis passes it, and a report rebuilt without the
     collection has None. ``engine_scope`` is the customer's scope triage recorded (#1328);
     synthesis passes it, and a report rebuilt without the triage has None.
+    ``price_list`` is the price table every cost figure was estimated from
+    (``src.shared.catalog.prices.estimates_price_basis``, #1196): synthesis passes it, and
+    a report rebuilt later has None, since today's table may not be the one its figures used.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -2743,6 +2747,8 @@ def compute_report_facts(
         "engine_scope": (
             engine_scope_display_order(engine_scope) if engine_scope is not None else None
         ),
+        # #1196: the source, region and date of the list prices behind every cost figure.
+        "price_list": dict(price_list) if price_list is not None else None,
     }
 
 

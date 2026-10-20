@@ -218,3 +218,31 @@ describe('the no-engine-in-scope line', () => {
     });
   });
 });
+
+// #1196: the projected-cost tile states the price table's source, region and date.
+const PRICE_LIST = { source: 'AWS Price List', region: 'us-east-1', pricing_model: 'on-demand', retrieved_on: '2026-10-19' };
+
+test('the projected-cost tile states the list prices it was estimated from', () => {
+  render({ priceList: PRICE_LIST });
+  expect(container.querySelector('[data-figure="price-list"]').textContent)
+    .toBe('List prices: AWS Price List, us-east-1 on-demand, retrieved 2026-10-19');
+});
+
+test('a report written before the price date existed states no date', () => {
+  [undefined, null, {}].forEach((priceList) => {
+    render({ priceList });
+    expect(container.querySelector('[data-figure="price-list"]')).toBeNull();
+    expect(container.querySelector('[data-tile="projected-cost"]').textContent).toBe('Projected cost$582.76/mo');
+  });
+});
+
+test('estimates priced from different tables name each engine\'s date', () => {
+  render({ priceList: {
+    source: 'AWS Price List', region: 'us-east-1', pricing_model: 'on-demand', retrieved_on: null,
+    engine_dates: { aurora_mysql: '2026-10-19', dynamodb: '2026-07-01' }, undated_engines: ['elasticache'],
+  } });
+  expect(container.querySelector('[data-figure="price-list"]').textContent).toBe(
+    'List prices: AWS Price List, us-east-1 on-demand, retrieved 2026-10-19 (Aurora MySQL), '
+    + '2026-07-01 (DynamoDB); not recorded for ElastiCache',
+  );
+});

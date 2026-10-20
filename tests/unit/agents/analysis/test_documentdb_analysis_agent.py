@@ -176,7 +176,8 @@ class TestCostEstimation:
 
     def test_includes_instance_cost(self):
         _, _, result, _ = _run(get_content_management_fixture())
-        assert result.cost_estimate.cost_components["instance"] > 200  # db.r6g.large ~$254/mo
+        # db.r6g.large at the Standard list price, $0.26315/hr (#1196)
+        assert result.cost_estimate.cost_components["instance"] == round(0.26315 * 730, 2)
 
 
 class TestEmbeddingCandidates:

@@ -41,6 +41,7 @@ from src.contracts.documentdb_decision_trace import (
 )
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
+from src.shared.catalog.prices import HOURS_PER_MONTH, SECONDS_PER_MONTH, price_basis
 from src.tools.analysis.documentdb_pattern_catalog import (
     DOCUMENTDB_ANTI_PATTERNS,
     DOCUMENTDB_PATTERNS,
@@ -756,18 +757,21 @@ def estimate_documentdb_costs(
         elif qt in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
             total_write_cps += cps
 
-    # DocumentDB pricing (us-east-1): db.r6g.large
-    instance_hourly = 0.348
-    instance_monthly = instance_hourly * 730  # ~$254
+    # Every price is the price table's (src/catalog/prices.toml, #1196), through the engine
+    # file's configuration (Standard storage).
+    prices = catalog.pricing("documentdb")
+    instance_type = "db.r6g.large"
+    instance_hourly = prices.instance_hourly[instance_type]
+    instance_monthly = instance_hourly * HOURS_PER_MONTH
 
-    read_ios_per_month = total_read_cps * 86400 * 30
-    write_ios_per_month = total_write_cps * 86400 * 30
-    # The I/O price is the engine file's (``src/catalog/engines/documentdb.toml``, #494);
-    # this estimate charges one I/O a call, read or write, as it always has.
-    io_price = catalog.pricing("documentdb").read_unit_price_per_million or 0.0
+    read_ios_per_month = total_read_cps * SECONDS_PER_MONTH
+    write_ios_per_month = total_write_cps * SECONDS_PER_MONTH
+    # This estimate charges one I/O a call, read or write, as it always has.
+    io_price = prices.read_unit_price_per_million or 0.0
     io_cost = ((read_ios_per_month + write_ios_per_month) / 1_000_000) * io_price
 
-    storage_cost = max(total_size_gb, 0.01) * 0.10
+    storage_price = prices.storage_price_per_gb_month or 0.0
+    storage_cost = max(total_size_gb, 0.01) * storage_price
 
     total = round(instance_monthly + io_cost + storage_cost, 2)
 
@@ -777,13 +781,17 @@ def estimate_documentdb_costs(
             "instance": round(instance_monthly, 2),
             "io_requests": round(io_cost, 2),
             "storage_gb": round(storage_cost, 2),
-            "instance_type": "db.r6g.large",
+            "instance_type": instance_type,
+            # #1196: the price-table configuration every figure above is priced on.
+            "list_prices": prices.list_prices,
+            # #1196: the price table this estimate was priced from, by date.
+            "price_list": price_basis(),
         },
         pricing_assumptions=[
-            "Single db.r6g.large instance (no replicas)",
+            f"Single {instance_type} instance (no replicas) at ${instance_hourly}/hr",
             f"Region: {target_region}",
-            "I/O: $0.20 per million read/write requests",
-            "Storage: $0.10 per GB-month",
+            f"{prices.configuration} storage I/O: ${io_price} per million read/write requests",
+            f"Storage: ${storage_price} per GB-month",
             "No backups, snapshots, or data transfer included",
         ],
     )

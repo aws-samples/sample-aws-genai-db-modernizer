@@ -14,7 +14,9 @@ from src.contracts.analysis_output import (
     TableRecommendation,
     WorkloadAnalysis,
 )
+from src.shared import catalog
 from src.shared.cache_engines import HOT_READ_MIN_CALLS_PER_SECOND
+from src.shared.catalog.prices import HOURS_PER_MONTH, SECONDS_PER_MONTH, price_basis
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
@@ -391,15 +393,24 @@ def estimate_redis_costs(
     total_ops_per_sec = total_read_cps + total_write_cps
 
     # --- Instance selection based on memory + throughput ---
-    # Node-based pricing (r7g family, us-east-1 on-demand $/hr):
-    _catalog: list[tuple[str, float, float, int]] = [
-        # (type, memory_gb, hourly_rate, max_ops)
-        ("cache.r7g.medium", 6.38, 0.113, 25_000),
-        ("cache.r7g.large", 13.07, 0.226, 50_000),
-        ("cache.r7g.xlarge", 26.32, 0.452, 100_000),
-        ("cache.r7g.2xlarge", 52.82, 0.904, 200_000),
-        ("cache.r7g.4xlarge", 105.81, 1.808, 400_000),
-    ]
+    # Node-based Valkey, on-demand: each node's hourly price and memory are the price
+    # table's (src/catalog/prices.toml, #1196). The max_ops column has no AWS source (AWS
+    # publishes no requests-a-second figure per node type); sizing it is #1000's.
+    prices = catalog.pricing("elasticache")
+    node_max_ops = {
+        "cache.m7g.large": 25_000,
+        "cache.r7g.large": 50_000,
+        "cache.r7g.xlarge": 100_000,
+        "cache.r7g.2xlarge": 200_000,
+        "cache.r7g.4xlarge": 400_000,
+    }
+    _catalog: list[tuple[str, float, float, int]] = sorted(
+        (
+            (itype, prices.instance_memory_gib[itype], prices.instance_hourly[itype], ops)
+            for itype, ops in node_max_ops.items()
+        ),
+        key=lambda node: node[1],
+    )
 
     # Pick smallest instance that fits both memory and throughput
     # Reserve ~25% memory headroom for Redis overhead (fragmentation, buffers)
@@ -411,7 +422,7 @@ def estimate_redis_costs(
             break
 
     # --- Calculate costs ---
-    hours_per_month = 730
+    hours_per_month = HOURS_PER_MONTH
 
     # Primary node
     primary_cost = hourly_rate * hours_per_month
@@ -420,13 +431,14 @@ def estimate_redis_costs(
     replica_count = 1
     replica_cost = hourly_rate * hours_per_month * replica_count
 
-    # Backup storage: $0.085/GB-month, assume daily snapshot = ~cache size
-    backup_cost = cache_size_gb * 0.085
+    # Backup storage (the price table's), assume daily snapshot = ~cache size
+    backup_cost = cache_size_gb * (prices.backup_price_per_gb_month or 0.0)
 
-    # Data transfer: cross-AZ replication ~$0.01/GB, estimate based on write throughput
-    write_bytes_per_month = total_write_cps * 1024 * 86400 * 30  # assume 1KB avg write
+    # Data transfer: cross-AZ replication at the price table's regional transfer rate,
+    # estimated from write throughput
+    write_bytes_per_month = total_write_cps * 1024 * SECONDS_PER_MONTH  # assume 1KB avg write
     data_transfer_gb = write_bytes_per_month / (1024**3)
-    data_transfer_cost = data_transfer_gb * 0.01
+    data_transfer_cost = data_transfer_gb * (prices.cross_az_transfer_price_per_gb or 0.0)
 
     total = round(primary_cost + replica_cost + backup_cost + data_transfer_cost, 2)
 
@@ -439,9 +451,12 @@ def estimate_redis_costs(
             "data_transfer": round(data_transfer_cost, 2),
             "instance_type": inst_type,
             "replica_count": replica_count,
+            "list_prices": prices.list_prices,
+            # #1196: the price table this estimate was priced from, by date.
+            "price_list": price_basis(),
         },
         pricing_assumptions=[
-            f"Instance: {inst_type} ({inst_memory} GB) in {target_region}",
+            f"Instance: Valkey {inst_type} ({inst_memory} GiB, ${hourly_rate}/hr) in {target_region}",
             f"Estimated cache size: {cache_size_gb:.1f} GB (15% of {total_source_size_mb:.0f} MB source)",
             f"Estimated throughput: {total_ops_per_sec:.0f} ops/sec ({total_read_cps:.0f} reads + {total_write_cps:.0f} writes)",
             f"{replica_count} replica for high availability",

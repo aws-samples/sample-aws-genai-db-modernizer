@@ -21,7 +21,16 @@ step has one implementation.
 ## `lint.sh`
 
 Lint and type-check: ruff, black, isort, mypy, and the Claude Code command
-validator (`scripts/validate_skills.py`). Same commands and arguments as the
+validator (`scripts/validate_skills.py`), the rule catalog's generated files
+(`scripts/render_catalog.py --check`) and the price table's age
+(`scripts/refresh_prices.py --check-age`: it warns, never fails, when
+`src/catalog/prices.toml` was retrieved more than 45 days ago; refresh it with
+`uv run python scripts/refresh_prices.py`, #1196). The `Refresh prices` workflow
+(`.github/workflows/refresh-prices.yml`) runs that refresh on the 1st of every month and
+on demand, and opens or updates one pull request from `chore/price-table-refresh` when
+the table changes; 45 days is the longest gap between two runs (31) plus two weeks to
+merge its pull request. That pull request is opened with the workflow's own token, so
+close and reopen it to start the required checks. Same commands and arguments as the
 pre-commit hooks and the `lint` CI job, so a clean `pre-commit run --all-files`
 and a clean `ci/lint.sh` agree. No env vars. No prerequisites beyond `uv sync`.
 

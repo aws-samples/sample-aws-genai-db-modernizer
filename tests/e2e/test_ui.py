@@ -597,6 +597,25 @@ OPTIONAL_SECTIONS = {
 }
 
 
+def test_results_page_states_the_price_date(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1196: the projected-cost tile states the same price date report.json's
+    facts.price_list holds (the line the PDF and engineering reports print)."""
+    from src.report.formatting import price_list_text
+
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        assert (report.get("facts") or {}).get("price_list"), r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        shown = page.locator("[data-figure=price-list]")
+        shown.wait_for()
+        assert shown.inner_text().strip() == f"List prices: {price_list_text(report['facts'])}"
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
 def test_results_page_shows_the_headline_first(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

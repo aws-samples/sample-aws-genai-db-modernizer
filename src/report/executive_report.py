@@ -87,6 +87,7 @@ from .formatting import (
     fmt_num,
     plural_noun,
     plural_verb,
+    price_list_text,
 )
 from .query_patterns import query_pattern_count_text
 from .relational_gaps import heterogeneous_wave, wave_gap_groups
@@ -906,6 +907,9 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     cost_lines += [f"Retired by this plan: {statement}" for statement, _, _ in retired]
     # #1329: the projection leaves out the queries with no engine in the scope.
     cost_lines += [cost_exclusion_text(facts)] if cost_exclusion_text(facts) else []
+    prices = price_list_text(facts)
+    if prices:
+        cost_lines.append(f"List prices: {prices}")
     engines = facts.get("engines") or []
     removed = facts.get("removed_engines") or []
     removed_names = ", ".join(display_engine(r["engine"]) for r in removed)

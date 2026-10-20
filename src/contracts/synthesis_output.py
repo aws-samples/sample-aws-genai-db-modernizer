@@ -1761,6 +1761,30 @@ class RelationalGap(BaseModel):
     )
 
 
+class PriceListFacts(BaseModel):
+    """The list prices behind every cost figure (#1196): ``src.shared.catalog.prices``."""
+
+    source: str = Field(..., description='Where the prices come from ("AWS Price List")')
+    region: str = Field(..., description="The AWS Region the prices are for")
+    pricing_model: str = Field(..., description='The purchase option ("on-demand")')
+    retrieved_on: str | None = Field(
+        None,
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+        description=(
+            "The day the price table was read, when every dated estimate used the same "
+            "table; None when they differ (see engine_dates)"
+        ),
+    )
+    engine_dates: dict[str, str] = Field(
+        default_factory=dict,
+        description="Each priced engine's own price-table date, from its analysis estimate",
+    )
+    undated_engines: list[str] = Field(
+        default_factory=list,
+        description="Priced engines whose estimate recorded no date (written before #1196)",
+    )
+
+
 class RelationalGapFacts(BaseModel):
     """The relational move's version and feature gaps against its Aurora target (#471),
     computed once at synthesis by ``src.tools.analysis.relational_gaps``."""
@@ -1984,6 +2008,13 @@ class ReportFacts(BaseModel):
             "recorded), engine ids in the order the deliverables name them (by display "
             "name); every deliverable states 'Engines in scope: ... (customer's choice)'. "
             "None for a job with no scope, and for a report written before"
+        ),
+    )
+    price_list: PriceListFacts | None = Field(
+        None,
+        description=(
+            "The source, region and date of the list prices behind every cost figure "
+            "(#1196); None for a report written before it"
         ),
     )
 

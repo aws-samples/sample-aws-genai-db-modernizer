@@ -3,7 +3,7 @@
 wordpress (MySQL), discourse (PostgreSQL) and trailgear (SQL Server) each run one
 relational source and nothing else. Their plans analyse candidate engines and drop
 some (DocumentDB on wordpress and trailgear, OpenSearch on discourse); before #949
-the decision report read "Removes $367.39/mo by retiring DocumentDB" on wordpress and
+the decision report read "Removes $307.03/mo by retiring DocumentDB" on wordpress and
 listed $349.95/mo for DocumentDB on trailgear. A dropped candidate is kept in
 ``report.json`` as ``considered_not_recommended``, with no dollar figure.
 
@@ -88,8 +88,11 @@ def test_retiring_an_engine_the_source_runs_is_still_a_saving(
     collector = json.loads((in_use_run.job_dir() / "collector" / "output.json").read_text())
     assert collector["metadata"]["engines_in_use"] == ["documentdb"]
     report = _report(in_use_run)
+    # #1196: DocumentDB's own estimate at the db.r6g.large list price ($0.26315/hr, was
+    # $0.348: 367.39 - 0.08485 x 730 = 305.45), with its I/O billed over the same 730-hour
+    # month as its instance instead of 720 hours (+$1.58 of I/O): 307.03.
     assert report["tco_analysis"]["retired_engine_savings"] == [
-        {"database": "documentdb", "monthly_cost_usd": 367.39}
+        {"database": "documentdb", "monthly_cost_usd": 307.03}
     ]
     # #728: OpenSearch (one first-assigned time-bucket report) is the one candidate the
     # source does not run, so it is dropped with no saving; DocumentDB's is the saving.
@@ -97,11 +100,11 @@ def test_retiring_an_engine_the_source_runs_is_still_a_saving(
         {"engine": "opensearch", "absorbed_by": "aurora_mysql"}
     ]
     rc = json.loads((in_use_run.job_dir() / "reality-check" / "output.json").read_text())
-    assert [c["saved_cost_estimate"] for c in rc["consolidations"]] == [367.39, 0.0, 0.0]
+    assert [c["saved_cost_estimate"] for c in rc["consolidations"]] == [307.03, 0.0, 0.0]
     texts = _texts(in_use_run)
     for where in ("pdf", "engineering report"):
-        assert "Retired by this plan: DocumentDB (runs today), $367.39/mo" in texts[where], where
-    assert "Removes $367.39/mo by retiring DocumentDB" in texts["engineering report"]
+        assert "Retired by this plan: DocumentDB (runs today), $307.03/mo" in texts[where], where
+    assert "Removes $307.03/mo by retiring DocumentDB" in texts["engineering report"]
 
 
 def test_recording_an_engine_in_use_changes_no_routing(
@@ -146,19 +149,19 @@ def test_a_declared_and_retired_engine_has_its_own_statement_everywhere(
     report = _report(both_in_use_run)
     retired = {r["engine"]: r for r in report["facts"]["retired_in_use_engines"]}
     assert set(retired) == {"documentdb", "opensearch"}
-    assert retired["documentdb"]["monthly_cost_usd"] == 367.39
+    assert retired["documentdb"]["monthly_cost_usd"] == 307.03
     assert retired["opensearch"]["monthly_cost_usd"] is None
     assert report["considered_not_recommended"] == []
     summary = report["summary"]
     assert (
-        "Retired by this plan: DocumentDB (runs today), $367.39/mo; OpenSearch (runs today)"
+        "Retired by this plan: DocumentDB (runs today), $307.03/mo; OpenSearch (runs today)"
         in summary
     )
     assert "Other targets evaluated" not in summary
     texts = _texts(both_in_use_run)
     for where in ("pdf", "engineering report"):
         text = texts[where]
-        assert "Retired by this plan: DocumentDB (runs today), $367.39/mo" in text, where
+        assert "Retired by this plan: DocumentDB (runs today), $307.03/mo" in text, where
         assert (
             "Retired by this plan: OpenSearch (runs today), no saving counted (no queries justified it before the move)"
             in text

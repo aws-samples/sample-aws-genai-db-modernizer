@@ -1,0 +1,8 @@
+"FormatVersion","v1.0"
+"Disclaimer","This pricing list is for informational purposes only. All prices are subject to the additional terms included in the pricing pages on http://aws.amazon.com. All Free Tier prices are also subject to the terms included at https://aws.amazon.com/free/"
+"Publication Date","2026-10-16T18:56:53Z"
+"Version","20261016185653"
+"OfferCode","AmazonES"
+"SKU","OfferTermCode","RateCode","TermType","PriceDescription","EffectiveDate","StartingRange","EndingRange","Unit","PricePerUnit","Currency","LeaseContractLength","PurchaseOption","OfferingClass","Product Family","serviceCode","Location","Location Type","Instance Type","Current Generation","Instance Family","vCPU","Storage","Storage Media","usageType","operation","Compute type","ECU","Inference Region Type","Memory (GiB)","Model Service Tier","Model Type","Region Code","Requests","serviceName","Token Usage Type"
+"AN2E76YS3ZUMQAES","JRTCKXETXF","AN2E76YS3ZUMQAES.JRTCKXETXF.6YS6EN2CT7","OnDemand","USD 0.122/GB-month provisioned gp3 storage","2026-10-01","0","Inf","GB-Mo","0.1220000000","USD",,,,"Amazon OpenSearch Service Volume","AmazonES","US East (N. Virginia)","AWS Region",,,,,,"GP3","ES:GP3-Storage","ESDomain",,,,,,,"us-east-1",,"Amazon OpenSearch Service",
+"APHEN34B6RXZBBJB","JRTCKXETXF","APHEN34B6RXZBBJB.JRTCKXETXF.6YS6EN2CT7","OnDemand","$0.167 per r6g.large.search instance hour (or partial hour)","2026-10-01","0","Inf","Hrs","0.1670000000","USD",,,,"Amazon OpenSearch Service Instance","AmazonES","US East (N. Virginia)","AWS Region","r6g.large.search","Yes","Memory optimized","2","EBS Only",,"ESInstance:r6g.large","ESDomain",,"variable",,"16",,,"us-east-1",,"Amazon OpenSearch Service",

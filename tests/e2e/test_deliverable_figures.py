@@ -47,6 +47,8 @@ from typing import Any
 import pytest
 
 from src.agents.referee.table_assignments import retained_engine_for
+from src.report.formatting import price_list_text
+from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
 from src.tools.analysis.relational_gaps import detect_relational_gaps
@@ -220,6 +222,8 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
     recomputed = compute_report_facts(
         {k: v for k, v in report.items() if k != "facts"},
         relational_gaps=_relational_gaps_from_the_job(run, report),
+        # #1196: synthesis passes the price dates the estimates recorded, as it does the gaps.
+        price_list=_price_list_from_the_job(run, report),
     )
     assert stored == recomputed
 
@@ -237,6 +241,35 @@ def _relational_gaps_from_the_job(run: PipelineResult, report: dict[str, Any]) -
         assignment.get("aurora_engine_choice"),
     )
     return detect_relational_gaps(collector, target)
+
+
+def _price_list_from_the_job(run: PipelineResult, report: dict[str, Any]) -> Any:
+    """#1196: the price table each TCO engine's analysis estimate recorded."""
+    bases = {}
+    for row in (report.get("tco_analysis") or {}).get("cost_breakdown") or []:
+        engine = row["database"]
+        analysis = json.loads((run.job_dir() / f"analysis-{engine}" / "analysis.json").read_text())
+        bases[engine] = analysis["cost_estimate"]["cost_components"].get("price_list")
+    return estimates_price_basis(bases)
+
+
+def test_every_deliverable_states_the_price_date(run: PipelineResult) -> None:
+    """#1196: report.json states the price table each TCO figure was priced from, the one
+    its analysis estimate recorded, and the PDF and engineering reports both print it."""
+    report = _report_json(run)
+    basis = report["facts"]["price_list"]
+    assert basis == _price_list_from_the_job(run, report)
+    assert set(basis["engine_dates"]) == {
+        row["database"] for row in report["tco_analysis"]["cost_breakdown"]
+    }
+    assert basis["retrieved_on"] and basis["undated_engines"] == []
+    line = norm(f"List prices: {price_list_text(report['facts'])}")
+    texts = {
+        "engineering report": norm(md_plain(run.deliverable("engineering-report.md").read_text())),
+        "PDF": " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf")))),
+    }
+    for deliverable, text in texts.items():
+        assert line in text, (run.db, deliverable)
 
 
 def _rc_titles(report: dict[str, Any]) -> list[str]:

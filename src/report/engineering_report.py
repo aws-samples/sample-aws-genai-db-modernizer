@@ -45,6 +45,7 @@ from .formatting import (
     label_summary_counts,
     plural_noun,
     plural_verb,
+    price_list_text,
 )
 from .query_patterns import query_patterns_md
 from .query_traces import query_traces_md
@@ -854,6 +855,9 @@ def render_engineering_report_md(
             out.append(f"- Savings: {escaping.md_text(savings_text)}")
         if cost_exclusion_text(facts):
             out.append(f"- {cost_exclusion_text(facts)}")
+        prices_text = price_list_text(facts)
+        if prices_text:
+            out.append(f"- List prices: {escaping.md_text(prices_text)}")
         # #1076: an engine the source runs today that the plan retires, stated once.
         for statement, reason, _name in _retired_in_use_lines(facts):
             line = f"Retired by this plan: {statement}."

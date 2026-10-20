@@ -239,6 +239,17 @@ repos:
         files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js|docs/architecture/rule-catalog\.md)'
         pass_filenames: false
 
+  # The price table's age (#1196): warns only, so an old table never blocks a commit
+  - repo: local
+    hooks:
+      - id: price-table-age
+        name: Price table is recent (warns only)
+        entry: uv run python scripts/refresh_prices.py --check-age
+        language: system
+        always_run: true
+        verbose: true
+        pass_filenames: false
+
 # Configuration
 default_language_version:
   python: python3

@@ -1,0 +1,108 @@
+name: Refresh prices
+
+# Refreshes src/catalog/prices.toml, the one dated price table every cost
+# estimate reads (#1196), from the public AWS Price List bulk files
+# (scripts/refresh_prices.py downloads them over https from the price list
+# host; no AWS credentials). When the table differs from main's, it opens a
+# pull request from one fixed branch, or updates the one already open, so
+# there is never more than one refresh pull request. The refresh is still a
+# reviewed change: nothing here merges.
+#
+# Schedule: GitHub's cron has no "every 30 days", so it runs on the 1st of
+# every month (28 to 31 days apart). The table states retrieved_on, the day
+# of the run, so every run changes it and opens (or updates) the pull
+# request even when no price moved: that keeps the date the deliverables
+# state honest. scripts/refresh_prices.py's MAX_AGE_DAYS (the lint warning)
+# is 45: the longest gap between two runs (31 days) plus two weeks to review
+# and merge the pull request.
+#
+# A pull request opened with the job's GITHUB_TOKEN does not start other
+# workflows (GitHub's rule), so the required checks do not run on it until a
+# maintainer closes and reopens it (or pushes to it); the pull request body
+# says so. The repository setting "Allow GitHub Actions to create and approve
+# pull requests" must be on for the create step.
+
+on:
+  schedule:
+    - cron: '17 6 1 * *'
+  workflow_dispatch: {}
+
+# One refresh at a time; a second never cancels the first mid-push.
+concurrency:
+  group: refresh-prices
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BRANCH: chore/price-table-refresh
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install dependencies
+        run: uv sync --locked
+      - name: Refresh the price table
+        # Exits 1 with one line, and leaves the table untouched, when a
+        # download fails or a price cannot be read unambiguously.
+        run: uv run python scripts/refresh_prices.py
+      - name: Open or update the refresh pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          table=src/catalog/prices.toml
+          open_pr=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+          if git diff --quiet -- "$table"; then
+            echo "The price table matches main's; nothing to propose."
+            if [ -n "$open_pr" ]; then
+              gh pr close "$open_pr" --delete-branch \
+                --comment "main's price table already matches the price list; closing this refresh."
+            fi
+            exit 0
+          fi
+          retrieved=$(sed -n 's/^retrieved_on = //p' "$table")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$table"
+          git commit -q -F - <<EOF
+          chore(pricing): refresh the AWS price table ($retrieved)
+
+          The scheduled refresh read the public AWS Price List bulk files.
+          src/catalog/prices.toml is what scripts/refresh_prices.py wrote.
+
+          Refs #1196
+          EOF
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          {
+            echo "Refs #1196"
+            echo
+            echo "The scheduled refresh (.github/workflows/refresh-prices.yml) read the public AWS Price List on $retrieved and the price table differs from main's. Changed lines:"
+            echo
+            echo '```diff'
+            git diff --unified=0 origin/main -- "$table" | grep -E '^[-+][^-+]' || true
+            echo '```'
+            echo
+            echo "A pull request opened by a workflow does not start the required checks: close and reopen it to run them. If a per-request price (DynamoDB, DocumentDB) changed, routing's cost dimension moves and the routing snapshot test fails: explain each moved query (ADR-031) before merging. Every other changed figure moves the cost estimates only."
+          } > "$RUNNER_TEMP/body.md"
+          if [ -n "$open_pr" ]; then
+            gh pr edit "$open_pr" --title "chore(pricing): refresh the AWS price table ($retrieved)" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" --label "scope: internal" \
+              --title "chore(pricing): refresh the AWS price table ($retrieved)" --body-file "$RUNNER_TEMP/body.md"
+          fi

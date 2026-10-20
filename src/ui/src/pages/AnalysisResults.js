@@ -1930,6 +1930,7 @@ const AnalysisResultsPage = memo(() => {
                   engineScope={synthesis?.facts?.engine_scope}
                   noEngineInScope={noEngineInScopeOf(synthesis)}
                   queryPatterns={queryPatternCountsOf(synthesis)}
+                  priceList={synthesis?.facts?.price_list}
                   targetEngines={(
                     <>
                       <Box fontSize="heading-m">

@@ -80,6 +80,7 @@ from src.contracts.executive_summary_response import (
 from src.contracts.skipped_placeholders import SkippedSynthesisReport
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
+from src.shared.catalog.prices import estimates_price_basis
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
@@ -1248,6 +1249,16 @@ def _write_synthesis_report(
         relational_gaps=relational_gaps,
         # #1328: the customer's engine scope triage recorded; every deliverable states it.
         engine_scope=scope_of(data.triage),
+        # #1196: the price table each TCO figure's analysis estimate was priced from.
+        price_list=estimates_price_basis(
+            {
+                engine: (
+                    ((artifacts.analysis or {}).get("cost_estimate") or {}).get("cost_components")
+                    or {}
+                ).get("price_list")
+                for engine, artifacts in data.engines.items()
+            }
+        ),
     )
 
     output = SynthesisOutputContract.model_validate(output_data)

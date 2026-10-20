@@ -327,12 +327,12 @@ class TestAuroraMysqlCostEstimation:
         assert "serverless_v2" in cost.cost_components
         assert "provisioned" in cost.cost_components
 
-    def test_mysql_pricing_differs_from_pg(self, ecommerce_fixture):
-        # MySQL is slightly cheaper per-instance than PG
+    def test_mysql_is_priced_at_the_aurora_mysql_list_price(self, ecommerce_fixture):
+        # #1196: the AWS Price List prices Aurora MySQL and PostgreSQL instances the same
+        # (I/O-Optimized db.r6g.large $0.338/hr); the old $0.22 vs $0.24 had no source.
         result_mysql, _, _ = analyze_for_aurora_mysql(ecommerce_fixture)
         mysql_provisioned = result_mysql.cost_estimate.cost_components["provisioned"][
             "compute_monthly_usd"
         ]
-        # db.r6g.large MySQL = $0.22/hr vs PG = $0.24/hr
-        expected_mysql = 0.22 * 24 * 30
+        expected_mysql = 0.338 * 730
         assert abs(mysql_provisioned - expected_mysql) < 1.0
