@@ -5,8 +5,6 @@ Moved from the removed, unreachable ``redis_analysis_agent`` tests (#493): the
 same detection and scoring now run through the production entry point.
 """
 
-import time
-
 import pytest
 
 from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
@@ -23,6 +21,7 @@ from tests.fixtures.redis_pattern_fixtures import (
     get_session_store_fixture,
     get_timeseries_fixture,
 )
+from tests.unit.tools.sql._timing import assert_cost_ratio, max_scaling_ratio
 
 
 def test_redis_analysis_basic():
@@ -336,53 +335,65 @@ def test_gaming_vertical_all_patterns():
 # ---------------------------------------------------------------------------
 
 
-def _run_analysis(num_tables: int, num_queries: int, seed: int = 42):
-    """Helper: generate synthetic data and run full Redis analysis pipeline."""
+def _analysis_input(num_tables: int, num_queries: int, seed: int = 42) -> AnalysisInput:
+    """Synthetic collector output for the full Redis analysis pipeline."""
     collector_output = generate_collector_output(
         num_tables=num_tables, num_queries=num_queries, seed=seed
     )
-    analysis_input = AnalysisInput(
+    return AnalysisInput(
         job_id=f"bench-{num_tables}-{num_queries}",
         collector_output=collector_output,
         target_database=TargetDatabase.ELASTICACHE,
     )
-    start = time.perf_counter()
-    result = analyze_for_elasticache(analysis_input)[0]
-    elapsed = time.perf_counter() - start
-    return result, elapsed
+
+
+def _run_analysis(num_tables: int, num_queries: int, seed: int = 42):
+    return analyze_for_elasticache(_analysis_input(num_tables, num_queries, seed))[0]
+
+
+# The 20k-query run (the ingestion default) against one with an eighth of the
+# tables and queries: linear growth is about x8 (x7.6 to x8.3 measured, with and
+# without coverage) and quadratic growth in either about x64. The limit sits
+# halfway between, on a log scale (#1230).
+SCALE_MAX_COST_RATIO = max_scaling_ratio((625, 5000))
 
 
 @pytest.mark.slow
 class TestRedisAnalysisBenchmark:
-    """Performance benchmarks at increasing scale."""
+    """Scale: every table gets a recommendation, and cost grows linearly.
+
+    Cost is CPU time relative to a smaller run in the same process (AGENTS.md
+    checklist item 8): an absolute limit flaked under coverage on a loaded
+    runner (#1230)."""
 
     def test_100_queries_20_tables(self):
-        """100 queries / 20 tables completes in <1s."""
-        result, elapsed = _run_analysis(num_tables=20, num_queries=100)
-        assert elapsed < 1.0, f"Took {elapsed:.2f}s (limit 1s)"
+        result = _run_analysis(num_tables=20, num_queries=100)
         assert len(result.table_recommendations) == 20
 
     def test_1k_queries_200_tables(self):
-        """1k queries / 200 tables completes in <2s."""
-        result, elapsed = _run_analysis(num_tables=200, num_queries=1000)
-        assert elapsed < 2.0, f"Took {elapsed:.2f}s (limit 2s)"
+        result = _run_analysis(num_tables=200, num_queries=1000)
         assert len(result.table_recommendations) == 200
 
     def test_5k_queries_1k_tables(self):
-        """5k queries / 1k tables completes in <5s."""
-        result, elapsed = _run_analysis(num_tables=1000, num_queries=5000)
-        assert elapsed < 5.0, f"Took {elapsed:.2f}s (limit 5s)"
+        result = _run_analysis(num_tables=1000, num_queries=5000)
         assert len(result.table_recommendations) == 1000
 
     def test_20k_queries_5k_tables(self):
-        """20k queries / 5k tables completes in <15s."""
-        result, elapsed = _run_analysis(num_tables=5000, num_queries=20000)
-        assert elapsed < 15.0, f"Took {elapsed:.2f}s (limit 15s)"
-        assert len(result.table_recommendations) == 5000
+        """20k queries / 5k tables costs at most SCALE_MAX_COST_RATIO times
+        2.5k queries / 625 tables."""
+        large = _analysis_input(num_tables=5000, num_queries=20000)
+        small = _analysis_input(num_tables=625, num_queries=2500)
+        results = []
+        assert_cost_ratio(
+            lambda: results.append(analyze_for_elasticache(large)[0]),
+            lambda: analyze_for_elasticache(small),
+            max_ratio=SCALE_MAX_COST_RATIO,
+        )
+        assert len(results[-1].table_recommendations) == 5000
 
     def test_correctness_at_scale(self):
         """All pattern types detected, scores differentiated, fields populated at 5k/1k scale."""
-        result, _ = _run_analysis(num_tables=1000, num_queries=5000, seed=99)
+        result = _run_analysis(num_tables=1000, num_queries=5000, seed=99)
 
         # All 4 pattern types should be detected
         pattern_types = {p.pattern_type for p in result.workload_analysis.patterns_detected}
@@ -410,8 +421,8 @@ class TestRedisAnalysisBenchmark:
 
     def test_reproducibility(self):
         """Same seed produces identical results."""
-        result1, _ = _run_analysis(num_tables=200, num_queries=1000, seed=123)
-        result2, _ = _run_analysis(num_tables=200, num_queries=1000, seed=123)
+        result1 = _run_analysis(num_tables=200, num_queries=1000, seed=123)
+        result2 = _run_analysis(num_tables=200, num_queries=1000, seed=123)
 
         # Compare pattern counts
         assert len(result1.workload_analysis.patterns_detected) == len(

@@ -1,96 +1,120 @@
-"""Timing helpers for the SQL tools' scaling tests (#557).
+"""Timing helpers for the scaling tests (#557, #1230).
 
 Absolute time budgets flake on slow or loaded CI runners, where the same
-linear code can run 20-30x slower than on a laptop. These helpers assert
-the property that matters instead: time grows linearly with input size.
-A generous absolute ceiling still catches a real hang.
+linear code can run 20-30x slower than on a laptop, and slower again under
+coverage. These helpers assert the property that matters instead: cost grows
+linearly with input size, or stays within a ratio of a reference workload run
+in the same process. Nothing here compares a time with a fixed number of
+seconds, except a generous ceiling that only a real hang reaches.
 """
 
 from __future__ import annotations
 
+import gc
 import time
 from collections.abc import Callable
 
-# time(4 MB) / time(1 MB) is about 4 for linear code and about 16 for
-# quadratic code; 8 leaves room for a loaded CI runner without letting
-# quadratic pass.
-MAX_SCALING_RATIO = 8.0
+# The default input sizes: 0.5 MB and 4 MB of text. An 8x size step puts linear
+# code near x8 and quadratic code near x64, so the limit between them (their
+# geometric mean, about x22.6) leaves each a margin of nearly 3x (#1230).
+SIZES = (500_000, 4_000_000)
 # Only a hang (the quadratic regex took about an hour on 1 MB) gets near this.
 HANG_CEILING_S = 10.0
 
 
 def _timed(fn: Callable[[], object]) -> float:
-    """CPU time of ``fn`` in this process.
+    """CPU time of ``fn`` in this thread, with the cyclic garbage collector off.
 
     Wall-clock time also counts the time the process spends waiting for a
     core, which on a busy runner (a full xdist run, other suites in parallel)
-    is the dominant noise for runs this short. CPU time leaves that out.
+    is the dominant noise for runs this short. Process CPU time leaves that
+    out but still counts every other thread of the process, such as a server
+    or a native query thread an earlier test left running: that distorts the
+    ratio of two short runs (#1230). The thread's own CPU time counts only
+    ``fn``, which must therefore do its work on the calling thread.
+
+    Work ``fn`` hands to a thread pool or a subprocess is not counted, so such
+    work reads as near zero and a check over it passes vacuously: time only
+    code that runs on the calling thread.
+
+    A collection costs in proportion to every object the process holds, not to
+    ``fn``'s input, so one landing in a short run inflates it the most and
+    shrinks a ratio. ``timeit`` turns the collector off for the same reason.
+    The helpers therefore check algorithmic growth, not garbage-collection or
+    memory pressure, and a large run keeps its garbage until it returns.
     """
-    start = time.process_time()
-    fn()
-    return time.process_time() - start
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        start = time.thread_time()
+        fn()
+        return time.thread_time() - start
+    finally:
+        if enabled:
+            gc.enable()
+
+
+def max_scaling_ratio(sizes: tuple[int, int]) -> float:
+    """The limit for ``time(large) / time(small)``: halfway, on a log scale,
+    between linear growth (``large / small``) and quadratic growth (its square)."""
+    small, large = sizes
+    return float((large / small) ** 1.5)
 
 
 def assert_linear(
-    make_text: Callable[[int], str], fn: Callable[[str], object], max_rounds: int = 12
+    make_text: Callable[[int], str],
+    fn: Callable[[str], object],
+    max_rounds: int = 12,
+    *,
+    sizes: tuple[int, int] = SIZES,
+    backstop_s: float | None = None,
 ) -> None:
-    """``fn`` on a 4 MB input takes under MAX_SCALING_RATIO times its 1 MB time
-    (best of up to ``max_rounds`` each, after a warm-up of both), and the 1 MB
-    run stays under HANG_CEILING_S.
+    """``fn`` on ``make_text(large)`` takes under ``max_scaling_ratio(sizes)``
+    times its time on ``make_text(small)`` (best of up to ``max_rounds`` each,
+    after a warm-up of both), and the small run stays under HANG_CEILING_S.
 
-    The 1 MB and 4 MB runs alternate, so a burst of load from other tests on the
-    runner hits both sizes rather than skewing the ratio. Sampling stops as soon
-    as the ratio of the two best times is under the limit: more samples can only
-    lower a best time, so linear code passes in the first rounds on a quiet
-    machine and keeps getting chances on a noisy one, while quadratic code
-    (a ratio near 16 in every sample) never gets under the limit.
+    A growth check alone passes linear code of any constant factor. Where a
+    much slower linear implementation matters (a filter in front of an
+    endpoint), ``backstop_s`` also bounds the best large-input CPU time. Set it
+    orders of magnitude above the measured cost, so only a regression of that
+    size, never a slow or loaded runner, reaches it. Neither bound can stop a
+    hang: both are checked once ``fn`` returns.
+
+    The small and large runs alternate, so a burst of load from other tests on
+    the runner hits both sizes rather than skewing the ratio. Sampling stops as
+    soon as the ratio of the two best times is under the limit: more samples can
+    only lower a best time, so linear code passes in the first rounds on a quiet
+    machine and keeps getting chances on a noisy one, while quadratic code (a
+    ratio near the square of the size step in every sample) never gets under it.
     """
-    small, large = make_text(1_000_000), make_text(4_000_000)
+    small_n, large_n = sizes
+    limit = max_scaling_ratio(sizes)
+    small, large = make_text(small_n), make_text(large_n)
     fn(small)
     fn(large)
     t_small = t_large = float("inf")
     ratio = float("inf")
     for _ in range(max_rounds):
         t_small = min(t_small, _timed(lambda: fn(small)))
-        assert t_small < HANG_CEILING_S, f"1 MB took {t_small:.2f}s"
+        assert t_small < HANG_CEILING_S, f"size {small_n:,} took {t_small:.2f}s"
         t_large = min(t_large, _timed(lambda: fn(large)))
         ratio = t_large / max(t_small, 1e-6)
-        if ratio < MAX_SCALING_RATIO:
+        if ratio < limit and (backstop_s is None or t_large < backstop_s):
             return
+    if ratio < limit:
+        raise AssertionError(
+            f"size {large_n:,} took {t_large:.3f}s CPU at best, "
+            f"over the {backstop_s:g}s backstop: linear but far too slow"
+        )
     raise AssertionError(
-        f"4 MB took {t_large:.3f}s vs {t_small:.3f}s for 1 MB (x{ratio:.1f}): not linear"
+        f"size {large_n:,} took {t_large:.3f}s vs {t_small:.3f}s for size {small_n:,} "
+        f"(x{ratio:.1f}, limit x{limit:.1f}): not linear"
     )
 
 
-# A single run this many times over the budget is slow code, not load: fail at once
+# A single round this many times over the limit is slow code, not load: fail at once
 # instead of re-running it for every round.
 HOPELESS_FACTOR = 10.0
-
-
-def assert_fast(fn: Callable[[], object], budget_s: float, max_rounds: int = 12) -> None:
-    """``fn()`` uses under ``budget_s`` seconds of CPU time in at least one of
-    up to ``max_rounds`` runs.
-
-    For inputs built to make slow code hang (exponential backtracking, a
-    quadratic rescan of a huge input), where the budget is orders of magnitude
-    below what the slow code needs. Like ``assert_linear`` it measures CPU time
-    and keeps sampling until one run fits: more samples can only lower the best
-    time, so fast code passes on the first run on a quiet machine and keeps
-    getting chances on a busy one, while slow code is over budget in every run.
-    A single run over HOPELESS_FACTOR times the budget fails at once: load does
-    not make CPU time grow tenfold, so slow code is not re-run for every round.
-    """
-    best = float("inf")
-    for _ in range(max_rounds):
-        elapsed = _timed(fn)
-        best = min(best, elapsed)
-        if best < budget_s:
-            return
-        if elapsed > budget_s * HOPELESS_FACTOR:
-            raise AssertionError(
-                f"one run took {elapsed:.3f}s CPU, over {HOPELESS_FACTOR:g}x the {budget_s}s budget"
-            )
-    raise AssertionError(f"best of {max_rounds} runs took {best:.3f}s CPU, budget {budget_s}s")
 
 
 def assert_cost_ratio(
@@ -100,7 +124,8 @@ def assert_cost_ratio(
     max_rounds: int = 12,
 ) -> None:
     """``fn`` costs at most ``max_ratio`` times ``reference`` (CPU time, best of
-    up to ``max_rounds`` runs each, taken in the same process).
+    up to ``max_rounds`` runs each, taken in the same process; see ``_timed``
+    for what that time leaves out).
 
     An absolute budget measures the machine as much as the code: the same run
     takes 43 ms on a laptop and 255 ms on a CI runner. Both workloads slow down

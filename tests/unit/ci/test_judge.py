@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from ci.llm import judge
-from tests.unit.tools.sql._timing import assert_cost_ratio, assert_fast
+from tests.unit.tools.sql._timing import assert_cost_ratio, assert_linear
 
 DB, JOB = "acme", "job-1"
 
@@ -295,10 +295,12 @@ def test_oversized_adversarial_reply_errors_fast(tmp_path: Path) -> None:
 
 def test_brace_flood_within_length_limit_hits_the_decode_attempt_cap() -> None:
     # Unterminated, deeply nested candidates: each "{" fails to decode.
-    reply = '{"a": [' * 20_000
-    assert len(reply) <= judge.MAX_REPLY_CHARS
+    def flood(n: int) -> str:
+        return '{"a": [' * n
 
-    def parse() -> None:
+    assert len(flood(20_000)) <= judge.MAX_REPLY_CHARS
+
+    def parse(reply: str) -> None:
         try:
             judge.parse_judge_reply(reply)
         except judge.JudgeError as exc:
@@ -306,10 +308,10 @@ def test_brace_flood_within_length_limit_hits_the_decode_attempt_cap() -> None:
         else:
             raise AssertionError("expected JudgeError")
 
-    # CPU time of the parse alone (#887): a loaded machine slows wall-clock
-    # time, not CPU time. The capped scan takes about 60 ms; without the cap
-    # it takes minutes.
-    assert_fast(parse, budget_s=2.0)
+    # The capped scan grows linearly with the reply; without the cap every
+    # candidate rescans the rest of the reply, which is quadratic and takes
+    # minutes. Relative CPU time, so a loaded machine does not count (#887, #1230).
+    assert_linear(flood, parse, sizes=(2_500, 20_000))
 
 
 def test_front_matter_thresholds_are_honoured(tmp_path: Path) -> None:

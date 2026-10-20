@@ -10,7 +10,7 @@ from src.graph.cypher_guard import (
     bound_result_rows,
     validate_read_only_cypher,
 )
-from tests.unit.tools.sql._timing import assert_fast
+from tests.unit.tools.sql._timing import assert_linear
 
 ALLOWED = [
     "MATCH (q:Query) RETURN q.query_id",
@@ -164,25 +164,45 @@ def test_cookbook_queries_are_accepted():
         validate_read_only_cypher(cypher)
 
 
-def test_long_input_is_rejected_quickly():
-    """The filter is linear: worst-case inputs at and above the limit return fast."""
-    near_limit = [
-        "RETURN '" + "\\'" * (MAX_QUERY_LENGTH // 2 - 10) + "'",
-        "RETURN " + "/* */" * (MAX_QUERY_LENGTH // 5 - 2),
-        "RETURN " + "1+" * (MAX_QUERY_LENGTH // 2 - 10) + "1",
-        "RETURN " + "(" * (MAX_QUERY_LENGTH - 20),
-        "MATCH " + "CALL " * (MAX_QUERY_LENGTH // 5 - 2),
-        "x" * 1_000_000,
-    ]
-    for cypher in near_limit:
+# Worst-case shapes, by length: each fills ``n`` characters (#1230).
+WORST_CASE_SHAPES = {
+    "escaped quotes": lambda n: "RETURN '" + "\\'" * (n // 2 - 10) + "'",
+    "comments": lambda n: "RETURN " + "/* */" * (n // 5 - 2),
+    "operators": lambda n: "RETURN " + "1+" * (n // 2 - 10) + "1",
+    "parentheses": lambda n: "RETURN " + "(" * (n - 20),
+    "keywords": lambda n: "MATCH " + "CALL " * (n // 5 - 2),
+}
 
-        def run(cypher: str = cypher) -> None:
-            try:
-                validate_read_only_cypher(cypher)
-            except DisallowedStatementError:
-                pass
 
-        assert_fast(run, 0.5)
+# The filter guards the raw-query endpoint, so a much slower linear version must
+# not pass either. The worst shape costs about 1.5 ms of CPU on a laptop (3 ms
+# under coverage); this backstop is several hundred times that, so only an
+# order-of-magnitude regression, not a slow runner, reaches it.
+VALIDATE_BACKSTOP_S = 1.0
+
+
+def _validate(cypher: str) -> None:
+    try:
+        validate_read_only_cypher(cypher)
+    except DisallowedStatementError:
+        pass
+
+
+@pytest.mark.parametrize("shape", WORST_CASE_SHAPES.values(), ids=WORST_CASE_SHAPES.keys())
+def test_long_input_is_rejected_quickly(shape):
+    """The filter is linear: worst-case inputs up to the limit cost in proportion
+    to their length (relative CPU time, so a loaded runner does not count)."""
+    assert len(shape(MAX_QUERY_LENGTH)) <= MAX_QUERY_LENGTH
+    assert_linear(
+        shape,
+        _validate,
+        sizes=(MAX_QUERY_LENGTH // 8, MAX_QUERY_LENGTH),
+        backstop_s=VALIDATE_BACKSTOP_S,
+    )
+
+
+def test_input_over_the_limit_is_rejected_in_linear_time():
+    assert_linear(lambda n: "x" * n, _validate, sizes=(125_000, 1_000_000))
 
 
 @pytest.mark.parametrize(

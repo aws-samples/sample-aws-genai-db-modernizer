@@ -15,6 +15,7 @@ import pytest
 from src.tools.sql.bulk_load import bulk_load_table, copy_table, is_bulk_load
 from src.tools.sql.facade import table_references
 from src.tools.sql.regex_tables import regex_table_refs
+from tests.unit.tools.sql._timing import assert_linear
 
 BULK_LOADS = [
     # (sql, (qualifiers, table))
@@ -100,17 +101,36 @@ def test_a_copy_export_names_its_table_as_a_read():
     assert copy_table("COPY (SELECT 1 FROM wp_posts) TO STDOUT") is None
 
 
-def test_long_input_does_not_backtrack():
-    import time
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda n: "LOAD DATA " + "/* x */ " * (n // 8) + "INFILE",
+        lambda n: "LOAD DATA /*" + "*" * n,
+        lambda n: "COPY " + '"' * n,
+    ],
+    ids=["many comments", "unterminated comment", "many quotes"],
+)
+def test_long_input_does_not_backtrack(make):
+    """Cost grows linearly up to 200k characters, in CPU time relative to the
+    same shape at an eighth of the length (#1230): a wall-clock bound flaked."""
+    assert_linear(make, bulk_load_table, sizes=(25_000, 200_000))
 
-    for sql in (
-        "LOAD DATA " + "/* x */ " * 20000 + "INFILE",
-        "LOAD DATA /*" + "*" * 200000,
-        "COPY " + '"' * 100000,
-    ):
-        start = time.perf_counter()
-        bulk_load_table(sql)
-        assert time.perf_counter() - start < 1.0
+
+def test_the_growth_check_catches_a_quadratic_rescan():
+    """The check above still fails quadratic code on these inputs: the same scan
+    plus a rescan of the rest of the text from every other character (#1230)."""
+
+    def rescanning(sql: str):
+        for i in range(0, len(sql), 2):
+            sql.find("\0", i)
+        return bulk_load_table(sql)
+
+    with pytest.raises(AssertionError, match="not linear"):
+        assert_linear(
+            lambda n: "LOAD DATA " + "/* x */ " * (n // 8) + "INFILE",
+            rescanning,
+            sizes=(25_000, 200_000),
+        )
 
 
 def test_the_regex_fallback_still_scans_a_copy_export_query():

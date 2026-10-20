@@ -18,23 +18,23 @@ from src.shared.sql_comments import (
     strip_trailing_comments,
     unwrap_executable_comment,
 )
-from tests.unit.tools.sql._timing import assert_fast, assert_linear
-
-# CPU seconds one pathological input may use. Exponential backtracking needs hours,
-# so this is far from the slow code; it only has to clear a loaded runner.
-BUDGET_S = 1.0
+from tests.unit.tools.sql._timing import assert_linear
 
 # The two shapes code scanning reported (#808), plus the leading-comment
-# variants, at 100k characters.
+# variants, by length: each fills about ``n`` characters.
 PATHOLOGICAL = {
-    "many --": "--" * 50_000 + "\nx",
-    "many -- after code": "SELECT 1 " + "--" * 50_000 + "\nx",
-    "many *//*": "/*" + "*//*" * 25_000 + "x",
-    "many */ /*": "/*" + " */ /*" * 16_000 + "x",
-    "many /* unterminated": "/*" * 50_000,
-    "many /* with spaces, unterminated": "/* " * 33_000,
-    "many # lines": "#\n" * 50_000 + "x",
+    "many --": lambda n: "--" * (n // 2) + "\nx",
+    "many -- after code": lambda n: "SELECT 1 " + "--" * (n // 2) + "\nx",
+    "many *//*": lambda n: "/*" + "*//*" * (n // 4) + "x",
+    "many */ /*": lambda n: "/*" + " */ /*" * (n // 6) + "x",
+    "many /* unterminated": lambda n: "/*" * (n // 2),
+    "many /* with spaces, unterminated": lambda n: "/* " * (n // 3),
+    "many # lines": lambda n: "#\n" * (n // 2) + "x",
 }
+# Exponential backtracking needs hours at 100k characters. Each pathological
+# input is checked for linear growth up to that length, in CPU time relative to
+# the same input at an eighth of it, so a loaded runner does not count (#1230).
+PATHOLOGICAL_SIZES = (12_500, 100_000)
 
 
 class TestStripTrailingComments:
@@ -63,12 +63,12 @@ class TestStripTrailingComments:
     def test_strips_only_trailing_comments(self, text, expected):
         assert strip_trailing_comments(text) == expected
 
-    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
-    def test_pathological_input_finishes_fast(self, text):
-        def run() -> None:
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
             strip_trailing_comments(text)
 
-        assert_fast(run, BUDGET_S)
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "--" * (n // 2) + "\nx", strip_trailing_comments)
@@ -112,13 +112,13 @@ class TestStripLeadingComments:
             strip_leading_comments(text, hash_comments=True, strip_following_space=True) == expected
         )
 
-    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
-    def test_pathological_input_finishes_fast(self, text):
-        def run() -> None:
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
             strip_leading_comments(text)
             strip_leading_comments(text, hash_comments=True, strip_following_space=True)
 
-        assert_fast(run, BUDGET_S)
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "/* */" * (n // 5) + "x", strip_leading_comments)
@@ -184,13 +184,13 @@ class TestNestedBlockComments:
             "SELECT 1 /* a /* b */ c */"
         )
 
-    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
-    def test_pathological_input_finishes_fast(self, text):
-        def run() -> None:
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
             strip_leading_comments(text, nested=True)
             strip_trailing_comments(text, nested=True)
 
-        assert_fast(run, BUDGET_S)
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
     def test_scales_linearly(self):
         # A run of unterminated /* opens one nesting level each; rescanning the
@@ -272,14 +272,14 @@ class TestMySqlExecutableComments:
     def test_unwrap_executable_comment(self, text, expected):
         assert unwrap_executable_comment(text) == expected
 
-    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
-    def test_pathological_input_finishes_fast(self, text):
-        def run() -> None:
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
             strip_leading_comments(text, hash_comments=True, mysql_executable=True)
             unwrap_executable_comment(text)
             unwrap_executable_comment("/*!" + text)
 
-        assert_fast(run, BUDGET_S)
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
 
 class TestStripComments:
@@ -311,13 +311,13 @@ class TestStripComments:
     def test_hash_comments(self):
         assert strip_comments("A # b\nC", hash_comments=True) == "A  \nC"
 
-    @pytest.mark.parametrize("text", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
-    def test_pathological_input_finishes_fast(self, text):
-        def run() -> None:
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
             strip_comments(text)
             strip_comments(text, nested=True, hash_comments=True)
 
-        assert_fast(run, BUDGET_S)
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
     def test_scales_linearly(self):
         assert_linear(lambda n: "x /* " * (n // 5), strip_comments)

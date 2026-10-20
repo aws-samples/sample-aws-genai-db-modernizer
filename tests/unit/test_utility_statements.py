@@ -773,20 +773,21 @@ class TestSequenceReads:
 
 class TestCommentStrippingIsLinear:
     """#808: the trailing-comment regex backtracked exponentially on a run of
-    ``--`` or ``*//*``; every entry point that strips comments now finishes a
-    100k-character pathological input well under a second."""
+    ``--`` or ``*//*``; every entry point that strips comments now scans a
+    pathological input up to 100k characters in linear time (relative CPU
+    time, #1230)."""
 
     @pytest.mark.parametrize(
-        "text",
+        "make",
         [
             # Each case puts the run after code, where only the old trailing
             # regex reached it: a leading run was stripped by the (linear)
             # leading regex first, so it passed on the old code too (#814).
-            "SELECT 1 " + "--" * 50_000 + "\nx",
-            "SELECT last_value FROM badges_id_seq " + "--" * 50_000 + "\nx",
-            "SELECT 1 /*" + "*//*" * 25_000 + "x",
-            "SELECT last_value FROM badges_id_seq /*" + "*//*" * 25_000 + "x",
-            "/* lead */ SELECT 1 " + "--" * 50_000 + "\nx",
+            lambda n: "SELECT 1 " + "--" * n + "\nx",
+            lambda n: "SELECT last_value FROM badges_id_seq " + "--" * n + "\nx",
+            lambda n: "SELECT 1 /*" + "*//*" * (n // 2) + "x",
+            lambda n: "SELECT last_value FROM badges_id_seq /*" + "*//*" * (n // 2) + "x",
+            lambda n: "/* lead */ SELECT 1 " + "--" * n + "\nx",
         ],
         ids=[
             "dashes after code",
@@ -796,17 +797,20 @@ class TestCommentStrippingIsLinear:
             "dashes after a commented statement",
         ],
     )
-    def test_pathological_comments_finish_fast(self, text):
+    def test_pathological_comments_finish_fast(self, make):
         from src.agents.referee.utility_statements import is_sequence_state_read
         from src.tools.sql.query_facts import _strip_leading_comments
-        from tests.unit.tools.sql._timing import assert_fast
+        from tests.unit.tools.sql._timing import assert_linear
 
-        def run() -> None:
+        def run(text: str) -> None:
             is_sequence_state_read(text)
             is_utility_statement(text, ["unknown"])
             _strip_leading_comments(text)
 
-        assert_fast(run, 1.0)
+        # Plus an absolute backstop, so a much slower linear version fails too:
+        # the worst case costs about 20 ms of CPU on a laptop (35 ms under
+        # coverage), so 3 s is about a hundred times that.
+        assert_linear(make, run, sizes=(6_250, 50_000), backstop_s=3.0)
 
 
 class TestNestedCommentsFollowTheSourceDialect:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from src.tools.schema.aurora_common.constraint_translator import translate_default
-from tests.unit.tools.sql._timing import assert_fast
+from tests.unit.tools.sql._timing import assert_linear
 
 PG = "aurora_postgresql"
 MY = "aurora_mysql"
@@ -520,20 +520,19 @@ def test_unknown_source_drops_everything_else(value):
 @pytest.mark.parametrize("source", ["sqlserver", "oracle", "db2", "postgresql", "mysql", "x"])
 @pytest.mark.parametrize("shape", ["balanced", "unclosed", "unopened"])
 def test_deeply_nested_parentheses_finish_fast_and_are_dropped(source, shape):
-    depth = 50_000
-    value = {
-        "balanced": "(" * depth + "0" + ")" * depth,
-        "unclosed": "(" * depth + "0",
-        "unopened": "0" + ")" * depth,
-    }[shape]
-    results = []
-    assert_fast(
-        lambda: results.append(
-            translate_default(value, source_engine=source, target=PG, aurora_type="INTEGER")
-        ),
-        0.05,
-    )
-    result = results[-1]
+    def make(depth: int) -> str:
+        return {
+            "balanced": "(" * depth + "0" + ")" * depth,
+            "unclosed": "(" * depth + "0",
+            "unopened": "0" + ")" * depth,
+        }[shape]
+
+    def translate(value: str):
+        return translate_default(value, source_engine=source, target=PG, aurora_type="INTEGER")
+
+    # Cost grows linearly with the depth, up to 50k levels (relative timing, #1230).
+    assert_linear(make, translate, sizes=(6_250, 50_000))
+    result = translate(make(50_000))
     if source == "mysql" and shape == "unopened":
         # a MySQL default is literal text: "0)))..." is one quoted literal
         assert _single_pg_literal(result.clause)

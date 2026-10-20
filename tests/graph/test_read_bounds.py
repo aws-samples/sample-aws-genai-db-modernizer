@@ -344,13 +344,14 @@ def test_expensive_read_times_out_while_server_stays_responsive(tmp_path, monkey
             time.sleep(0.02)
 
         # Other requests are served meanwhile; extra raw queries are refused
-        # quickly instead of piling up.
+        # instead of piling up. "Meanwhile" is an order, not a number of
+        # seconds (#1230): each answer arrives while every slow query is still
+        # running, so none of them waited for a slot to free up.
         for _ in range(3):
-            started = time.monotonic()
             assert _request(port, "/ping", timeout=5) == (200, {"ok": True})
             status, body = _request(port, query_url, {"cypher": "RETURN 1 AS x"}, timeout=5)
             assert status == 429
-            assert time.monotonic() - started < 2
+            assert not results, "a request waited for a slow query to finish"
             assert all(w.is_alive() for w in workers)
 
         for worker in workers:
