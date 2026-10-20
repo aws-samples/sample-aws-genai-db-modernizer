@@ -101,6 +101,16 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   ``scripts/start_local_ui.py`` (to start, not ``--stop``) anywhere in the
   transcript -- fail. For ``--mode ui`` or ``--mode both``, no such tool_use
   ran, or no later tool_result reported ``"status": "ready"`` -- fail.
+* missing UI pointers (``--mode ui`` or ``--mode both``, #1242): the
+  orchestrator never ran ``scripts/start_local_ui.py --page summary`` or
+  ``--page results``, never quoted the ``ui_url`` either printed in its own
+  (top-level) text, or quoted the summary page only after schema design
+  started (``scripts/run_schema_design.py`` or a ``/design-schema-*``
+  dispatch) rather than at the approval gate -- a **warning**, not a failure,
+  until #1249 moves the gate text into script output: it prints to stderr and
+  is recorded as ``ui_pointer_warning`` (the reason) in summary.json and
+  results.json. It checks the URLs only, not the gate table or the
+  post-reality-check summary.
 
 On failure, check-transcript still prints the aggregated cost/turn/usage
 fields next to ``error``, and ``results`` copies them (plus
@@ -277,6 +287,108 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
         return False, (
             f"{mode} mode ran scripts/start_local_ui.py but no later tool_result reported "
             '{"status": "ready"}'
+        )
+    return True, None
+
+
+# The job pages `/modernize` points at in ui/both mode, each quoted from
+# `start_local_ui.py --page <page>` output (#1233, #1242).
+_UI_POINTER_PAGES = ("summary", "results")
+_UI_URL_RE = re.compile(r'"ui_url"\s*:\s*"([^"]+)"')
+
+
+def _phase6_starts(rtype: str, block: dict[str, Any]) -> bool:
+    """True for the tool_use that starts schema design: the DynamoDB split
+    script or a ``/design-schema-*`` subagent dispatch."""
+    if rtype != "assistant" or block.get("type") != "tool_use":
+        return False
+    input_ = block.get("input")
+    if not isinstance(input_, dict):
+        return False
+    command = input_.get("command")
+    if isinstance(command, str) and "scripts/run_schema_design.py" in command:
+        return True
+    prompt = input_.get("prompt")
+    return isinstance(prompt, str) and "/design-schema-" in prompt
+
+
+def _page_url_from_result(text: str) -> str | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = _UI_URL_RE.search(text)
+        return match.group(1) if match else None
+    if isinstance(parsed, dict) and isinstance(parsed.get("ui_url"), str):
+        return str(parsed["ui_url"])
+    return None
+
+
+def _mark_quoted(text: str, urls: dict[str, str], quoted_at: dict[str, int], position: int) -> None:
+    for page, url in urls.items():
+        if page not in quoted_at and url in text:
+            quoted_at[page] = position
+
+
+def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | None]:
+    """In ui/both mode the orchestrator quotes each job page's ``ui_url``
+    to the user (#1242): the summary page at the approval gate, before
+    schema design starts, and the results page at completion. Each URL must
+    come from a top-level ``start_local_ui.py --page <page>`` tool_result and
+    appear in a top-level assistant text block (or the final result text).
+    Subagent messages never count. Chat mode is never checked."""
+    if mode == "chat":
+        return True, None
+    pending: dict[str, str] = {}  # tool_use id -> page
+    urls: dict[str, str] = {}
+    quoted_at: dict[str, int] = {}
+    phase6_at: int | None = None
+    position = 0
+    for rec in records:
+        if rec.get("parent_tool_use_id") is not None:
+            continue
+        rtype = rec.get("type")
+        texts: list[str] = []
+        if rtype == "result" and isinstance(rec.get("result"), str):
+            texts.append(rec["result"])
+        content = (
+            rec.get("message", {}).get("content") if isinstance(rec.get("message"), dict) else None
+        )
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            position += 1
+            if phase6_at is None and _phase6_starts(str(rtype), block):
+                phase6_at = position
+            if rtype == "assistant" and block.get("type") == "text":
+                if isinstance(block.get("text"), str):
+                    _mark_quoted(block["text"], urls, quoted_at, position)
+            elif rtype == "assistant" and block.get("type") == "tool_use":
+                command = (block.get("input") or {}).get("command")
+                if isinstance(command, str) and "scripts/start_local_ui.py" in command:
+                    for page in _UI_POINTER_PAGES:
+                        if re.search(rf"--page[ =]{page}\b", command):
+                            pending[str(block.get("id"))] = page
+            elif rtype == "user" and block.get("type") == "tool_result":
+                page = pending.get(str(block.get("tool_use_id")))
+                url = _page_url_from_result(_text_from_content(block.get("content")))
+                if page and url:
+                    urls[page] = url
+        position += 1
+        for text in texts:
+            _mark_quoted(text, urls, quoted_at, position)
+    for page in _UI_POINTER_PAGES:
+        if page not in urls:
+            return False, (
+                f"{mode} mode never got a ui_url from scripts/start_local_ui.py --page {page}"
+            )
+        if page not in quoted_at:
+            return False, (
+                f"{mode} mode never quoted the {page}-page ui_url {urls[page]} to the user"
+            )
+    if phase6_at is not None and quoted_at["summary"] > phase6_at:
+        return False, (
+            f"{mode} mode quoted the summary-page ui_url only after schema design started, "
+            "not at the approval gate"
         )
     return True, None
 
@@ -873,6 +985,15 @@ def check_transcript(
     if not mode_ok:
         raise fail(mode_reason or "mode assertion failed")
 
+    # #1242: a warning, not a failure, until #1249 puts the gate text in script
+    # output the command quotes; the model still has to relay the URL itself.
+    pointers_ok, pointers_reason = check_ui_pointers(records, mode)
+    if not pointers_ok:
+        print(
+            f"warning: missing UI pointer (not a failure yet): {pointers_reason}", file=sys.stderr
+        )
+        fields = {**fields, "ui_pointer_warning": pointers_reason}
+
     if state_file is not None and state_file.is_file():
         try:
             state = json.loads(state_file.read_text())
@@ -987,6 +1108,7 @@ def build_results_row(
     rule_violations: dict[str, Any] | None = None
     unlisted_tool_denials: dict[str, Any] | None = None
     prevented_by_hook: dict[str, Any] | None = None
+    ui_pointer_warning: str | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -1019,6 +1141,8 @@ def build_results_row(
         unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
         prevented_raw = summary.get("prevented_by_hook")
         prevented_by_hook = prevented_raw if isinstance(prevented_raw, dict) else None
+        pointer_raw = summary.get("ui_pointer_warning")
+        ui_pointer_warning = pointer_raw if isinstance(pointer_raw, str) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -1088,6 +1212,7 @@ def build_results_row(
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
         "prevented_by_hook": prevented_by_hook,
+        "ui_pointer_warning": ui_pointer_warning,
         "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
         "pass": overall_pass,

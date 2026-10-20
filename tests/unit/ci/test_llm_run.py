@@ -1578,3 +1578,121 @@ def test_results_carry_prevented_by_hook(tmp_path: Path) -> None:
         git_sha="abc",
     )
     assert row["prevented_by_hook"] == {"count": 2, "commands": ["Bash: a", "Bash: b"]}
+
+
+# ---------------------------------------------------------------------------
+# check_transcript: UI pointers in ui/both mode (#1242)
+# ---------------------------------------------------------------------------
+
+_SUMMARY_URL = "http://localhost:3000/analysis/monitor/summary/dry00002"
+_RESULTS_URL = "http://localhost:3000/analysis/results/dry00002"
+
+
+def _ui_records() -> list[dict]:
+    records: list[dict] = run.iter_jsonl(FIXTURES / "synthetic-success-ui.jsonl")
+    return records
+
+
+def _drop_url_from_texts(records: list[dict], url: str) -> list[dict]:
+    """The same run, with ``url`` removed from every assistant text and result."""
+    out: list[dict] = json.loads(json.dumps(records))
+    for rec in out:
+        if rec.get("type") == "result":
+            rec["result"] = rec["result"].replace(url, "the page")
+        if rec.get("type") == "assistant":
+            for block in rec["message"]["content"]:
+                if block.get("type") == "text":
+                    block["text"] = block["text"].replace(url, "the page")
+    return out
+
+
+def test_both_mode_run_that_never_quotes_the_gate_url_warns(tmp_path: Path) -> None:
+    # The #1242 run: --page summary ran, its ui_url was never shown.
+    records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
+    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "never quoted the summary-page ui_url" in summary["ui_pointer_warning"]
+
+
+def test_run_that_never_asks_for_the_summary_page_warns(tmp_path: Path) -> None:
+    records = [
+        rec
+        for rec in _ui_records()
+        if "--page summary" not in json.dumps(rec) and _SUMMARY_URL not in json.dumps(rec)
+    ]
+    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "--page summary" in summary["ui_pointer_warning"]
+
+
+def test_run_that_never_quotes_the_results_url_warns(tmp_path: Path) -> None:
+    records = _drop_url_from_texts(_ui_records(), _RESULTS_URL)
+    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "never quoted the results-page ui_url" in summary["ui_pointer_warning"]
+
+
+def test_gate_url_quoted_only_after_schema_design_starts_warns(tmp_path: Path) -> None:
+    records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
+    records[-2]["message"]["content"][0]["text"] += f"\nSummary page: {_SUMMARY_URL}"
+    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "only after schema design started" in summary["ui_pointer_warning"]
+
+
+def test_gate_url_quoted_only_by_a_subagent_does_not_count(tmp_path: Path) -> None:
+    records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
+    subagent_text = {
+        "type": "assistant",
+        "parent_tool_use_id": "tu-agent",
+        "message": {"role": "assistant", "content": [{"type": "text", "text": _SUMMARY_URL}]},
+    }
+    records.insert(5, subagent_text)
+    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "never quoted the summary-page ui_url" in summary["ui_pointer_warning"]
+
+
+def test_design_schema_dispatch_also_marks_schema_design_start() -> None:
+    dispatch = {
+        "type": "tool_use",
+        "name": "Agent",
+        "input": {"prompt": "Run /design-schema-aurora-mysql for job_id=x"},
+    }
+    other = {
+        "type": "tool_use",
+        "name": "Agent",
+        "input": {"prompt": "Run /reality-check for job_id=x"},
+    }
+    assert run._phase6_starts("assistant", dispatch)
+    assert not run._phase6_starts("assistant", other)
+
+
+def test_chat_mode_needs_no_ui_pointers() -> None:
+    assert run.check_ui_pointers(_ui_records(), "chat") == (True, None)
+
+
+@pytest.mark.passes_on_main
+def test_a_run_that_quotes_both_urls_has_no_ui_pointer_warning() -> None:
+    summary = run.check_transcript(FIXTURES / "synthetic-success-ui.jsonl", "ui")
+    assert "ui_pointer_warning" not in summary
+
+
+def test_ui_pointer_warning_warns_on_stderr_and_never_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #1242 review: a warning until #1249 moves the gate text into script output.
+    records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
+    run.check_transcript(_transcript(tmp_path, records), "ui")
+    assert "warning: missing UI pointer" in capsys.readouterr().err
+
+
+def test_results_carry_the_ui_pointer_warning(tmp_path: Path) -> None:
+    summary_path = tmp_path / "summary.json"
+    _write_summary(
+        summary_path, ui_pointer_warning="ui mode never quoted the summary-page ui_url x"
+    )
+    row = run.build_results_row(
+        mode="ui",
+        fixture="wordpress",
+        transcript_summary_path=summary_path,
+        pytest_junit_paths=[],
+        judge_path=tmp_path / "judge.json",
+        git_sha="abc",
+    )
+    assert row["ui_pointer_warning"] == "ui mode never quoted the summary-page ui_url x"

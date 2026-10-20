@@ -10,7 +10,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 ## Arguments
 
 - `<collector_file>` — path to collector output JSON (required); the `.json` file (a bundled sample whose `.json` is not extracted yet, such as `docs/examples/wordpress/wordpress-collection.json`, is extracted from its tracked `.zip` by the script)
-- `--auto` — unattended run: never ask the user anything. Skips every decision gate (auto-approve) and means "decide for me": every pending engine choice is settled by the deterministic rule and recorded as decided automatically; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
+- `--auto` — unattended run: never ask the user anything. Skips every decision gate's question (auto-approve), never what the gate shows: the post-reality-check summary, the approval-gate table and the summary-page URL still appear. It also means "decide for me": every pending engine choice is settled by the deterministic rule and recorded as decided automatically; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
 - `--mode chat|ui|both` — experience mode. Default is `both`: results in chat with the local UI alongside. `--mode chat` is chat only, with no UI. `--mode ui` is UI-first: chat carries only the approval-gate numbers, UI pointers, the one-sentence database-name notice (Phases 1-5, only when the name was rewritten), and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
 - `--engines-in-use <ids>` — optional, comma-separated engine ids (for example `opensearch,elasticache`) of the other AWS databases the application already runs today. Never ask the user for it, with or without `--auto`: absent means only the source engine counts. Pass it through unchanged as `--engines-in-use {engines_in_use}` in Phases 1-5, and omit the flag when it was not given.
 
@@ -112,6 +112,8 @@ and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/mon
 
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
 Only proceed to schema design after user approval (unless `--auto`).
+
+With `--auto`, skip only that question: the summary (unless `ui`), the gate table and, unless `chat`, the summary-page `ui_url` are still shown, in that order, before Phase 6 starts.
 
 ### Phase 6: Schema Design (Parallel Subagents)
 

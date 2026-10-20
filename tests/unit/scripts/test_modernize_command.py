@@ -750,6 +750,21 @@ def test_approval_gate_points_at_the_job_summary_page_from_script_output() -> No
     assert "/analysis/monitor/summary/<job_id>" in decision_gate
 
 
+def test_auto_skips_only_the_gate_question_never_its_table_or_url() -> None:
+    # Issue #1242: an --auto --mode both run skipped the gate table and URL.
+    text = _modernize_text()
+    auto_arg = next(line for line in text.splitlines() if line.startswith("- `--auto`"))
+    assert "Skips every decision gate's question (auto-approve), never what the gate shows" in (
+        auto_arg
+    )
+    decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1]
+    decision_gate = decision_gate.split("### Phase 6", 1)[0]
+    assert "With `--auto`, skip only that question" in decision_gate
+    assert "summary-page `ui_url` are still shown, in that order, before Phase 6 starts" in (
+        decision_gate
+    )
+
+
 def test_completion_points_at_the_job_results_page_from_script_output() -> None:
     completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
     assert "uv run python scripts/start_local_ui.py --page results --job-id {job_id}" in (

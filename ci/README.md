@@ -220,7 +220,13 @@ make e2e-llm E2E_LLM_MODE=ui E2E_LLM_FIXTURE=discourse
 line -- and that the run's mode matches what actually happened (`chat` never
 started the local UI; `ui`/`both` started it via
 `scripts/start_local_ui.py` and got back a `{"status": "ready"}` tool
-result). Then the deliverable checks (`tests/e2e`, pointed at the headless
+result). In `ui`/`both` it also checks the UI pointers (#1242): the
+orchestrator's own text quotes the `ui_url` that
+`start_local_ui.py --page summary` printed, before schema design starts,
+and the one `--page results` printed. A miss only warns for now (stderr,
+and `ui_pointer_warning` in `summary.json` and `results.json`); it becomes a
+failure once #1249 moves the gate text into script output. It checks the
+URLs only, not the gate table or the summary. Then the deliverable checks (`tests/e2e`, pointed at the headless
 job via `E2E_ARTIFACT_ROOT`/`E2E_DB`/`E2E_JOB` -- see "external-job mode"
 under `e2e.sh`'s own test suite) and the judge run exactly as they do for a
 deterministic job.
