@@ -88,11 +88,21 @@ def test_retiring_an_engine_the_source_runs_is_still_a_saving(
     collector = json.loads((in_use_run.job_dir() / "collector" / "output.json").read_text())
     assert collector["metadata"]["engines_in_use"] == ["documentdb"]
     report = _report(in_use_run)
-    # #1196: DocumentDB's own estimate at the db.r6g.large list price ($0.26315/hr, was
-    # $0.348: 367.39 - 0.08485 x 730 = 305.45), with its I/O billed over the same 730-hour
-    # month as its instance instead of 720 hours (+$1.58 of I/O): 307.03.
+    # #1197: DocumentDB's read I/O is billed only on a buffer-cache miss, at wordpress'
+    # 99.99993% hit ratio, bounded (decision on #1222): wordpress reports no host memory,
+    # so only the floor applies and 1% of the reads are billed. Its estimate is $204.32
+    # (was $307.03 with every read billed, at the #1196 db.r6g.large list price).
     assert report["tco_analysis"]["retired_engine_savings"] == [
-        {"database": "documentdb", "monthly_cost_usd": 307.03}
+        {
+            "database": "documentdb",
+            "monthly_cost_usd": 204.32,
+            "read_io_hit_ratio_basis": "collection",
+            "collection_hit_ratio_pct": 99.99993,
+            "collection_hit_ratio_billed_pct": 99.0,
+            "source_memory_gb": None,
+            "target_memory_gb": 16.0,
+            "min_billed_miss_pct": 1.0,
+        }
     ]
     # #728: OpenSearch (one first-assigned time-bucket report) is the one candidate the
     # source does not run, so it is dropped with no saving; DocumentDB's is the saving.
@@ -100,11 +110,22 @@ def test_retiring_an_engine_the_source_runs_is_still_a_saving(
         {"engine": "opensearch", "absorbed_by": "aurora_mysql"}
     ]
     rc = json.loads((in_use_run.job_dir() / "reality-check" / "output.json").read_text())
-    assert [c["saved_cost_estimate"] for c in rc["consolidations"]] == [307.03, 0.0, 0.0]
+    assert [c["saved_cost_estimate"] for c in rc["consolidations"]] == [204.32, 0.0, 0.0]
     texts = _texts(in_use_run)
     for where in ("pdf", "engineering report"):
-        assert "Retired by this plan: DocumentDB (runs today), $307.03/mo" in texts[where], where
-    assert "Removes $307.03/mo by retiring DocumentDB" in texts["engineering report"]
+        assert "Retired by this plan: DocumentDB (runs today), $204.32/mo" in texts[where], where
+    assert "Removes $204.32/mo by retiring DocumentDB" in texts["engineering report"]
+    # #1197: the basis that figure rests on, with its bound, is stated from the report
+    # facts, in the engineering report and the PDF alike.
+    note = (
+        "DocumentDB's estimate bills a read I/O only on a buffer-cache miss, at the "
+        "source's instance-wide buffer-cache hit ratio (99.99993%), not scaled to the "
+        "target's memory (the source reported no memory size), billed at 99%. At least 1% "
+        "of every read is billed as a miss."
+    )
+    assert report["facts"]["cost_basis_notes"] == [note]
+    assert note in texts["engineering report"]
+    assert note in " ".join(texts["pdf"].split())
 
 
 def test_recording_an_engine_in_use_changes_no_routing(
@@ -149,21 +170,22 @@ def test_a_declared_and_retired_engine_has_its_own_statement_everywhere(
     report = _report(both_in_use_run)
     retired = {r["engine"]: r for r in report["facts"]["retired_in_use_engines"]}
     assert set(retired) == {"documentdb", "opensearch"}
-    assert retired["documentdb"]["monthly_cost_usd"] == 307.03
+    # #1197: DocumentDB's estimate bills 1% of wordpress' reads (the floor), $204.32.
+    assert retired["documentdb"]["monthly_cost_usd"] == 204.32
     assert retired["opensearch"]["monthly_cost_usd"] is None
     assert report["considered_not_recommended"] == []
     summary = report["summary"]
     # #1403: the executive summary states the saving in whole dollars; the PDF and the
     # engineering report keep the cents.
-    assert report["facts"]["executive_brief"]["retired_saving_whole_usd"] == {"documentdb": 307}
+    assert report["facts"]["executive_brief"]["retired_saving_whole_usd"] == {"documentdb": 204}
     assert (
-        "Retired by this plan: DocumentDB (runs today), $307/mo; OpenSearch (runs today)" in summary
+        "Retired by this plan: DocumentDB (runs today), $204/mo; OpenSearch (runs today)" in summary
     )
     assert "Other targets evaluated" not in summary
     texts = _texts(both_in_use_run)
     for where in ("pdf", "engineering report"):
         text = texts[where]
-        assert "Retired by this plan: DocumentDB (runs today), $307.03/mo" in text, where
+        assert "Retired by this plan: DocumentDB (runs today), $204.32/mo" in text, where
         assert (
             "Retired by this plan: OpenSearch (runs today), no saving counted (no queries justified it before the move)"
             in text

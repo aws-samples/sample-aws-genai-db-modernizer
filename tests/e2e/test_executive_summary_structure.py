@@ -25,10 +25,14 @@ from tests.e2e.pipeline import PipelineResult
 
 pytestmark = pytest.mark.deterministic
 
-# Each sample's projected monthly cost in whole dollars ($512.58, $537.06, $433.15). #1476
+# Each sample's projected monthly cost in whole dollars ($512.58, $535.27, $433.15). #1476
 # re-priced DynamoDB's request units by item size and read kind (was $505.02, $535.32,
 # $435.08): its row moves +$7.56 on wordpress, +$1.74 on discourse, -$1.93 on trailgear.
-WHOLE_DOLLARS = {"wordpress": 513, "discourse": 537, "trailgear": 433}
+# #1197 then bills DocumentDB reads from the collection-wide buffer-cache hit ratio the
+# collector now keeps (scaled by target over source memory, at least 1% billed as misses):
+# only discourse moves, by -$1.79 ($537.06 to $535.27); wordpress and trailgear are
+# unchanged.
+WHOLE_DOLLARS = {"wordpress": 513, "discourse": 535, "trailgear": 433}
 
 
 def _report(run: PipelineResult) -> dict:

@@ -922,6 +922,8 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
     prices = price_list_text(facts)
     if prices:
         cost_lines.append(f"List prices: {prices}")
+    # #1197: the read I/O basis a figure rests on (report facts, ADR-032).
+    cost_lines += [str(n) for n in facts.get("cost_basis_notes") or []]
     engines = facts.get("engines") or []
     removed = facts.get("removed_engines") or []
     removed_names = ", ".join(display_engine(r["engine"]) for r in removed)

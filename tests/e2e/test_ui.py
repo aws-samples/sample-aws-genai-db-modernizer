@@ -876,6 +876,49 @@ def test_results_page_states_the_distinct_query_patterns(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def test_results_page_states_the_cost_basis_the_deliverables_state(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1197: the read I/O basis DocumentDB's estimate rests on (the source's hit ratio,
+    its memory scaling and the billed-miss floor) is one report fact,
+    ``facts.cost_basis_notes``; the results page, the engineering report and the PDF
+    print the same sentences."""
+    from tests.e2e.deliverable_figures import md_plain, pdf_page_texts
+
+    checked = 0
+    for r in all_runs:
+        notes = json.loads((r.artifact_root / r.report["report"]).read_text())["facts"].get(
+            "cost_basis_notes"
+        )
+        if not notes:
+            # No note is the right answer for a source with no cost basis to state (a
+            # wordpress model run has no DocumentDB estimate): then nothing is printed.
+            md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
+            assert "- Cost basis:" not in md, r.db
+            ev = _watch(page)
+            page.goto(f"{ui}/analysis/results/{r.job_id}")
+            _loaded(page, r)
+            assert page.locator('[data-figure="cost-basis"]').count() == 0, r.db
+            assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+            continue
+        md = md_plain(r.deliverable("engineering-report.md").read_text(encoding="utf-8"))
+        pdf = " ".join(" ".join(pdf_page_texts(str(r.deliverable("executive-report.pdf")))).split())
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        _loaded(page, r)
+        lines = page.locator('[data-figure="cost-basis"]')
+        lines.first.wait_for(timeout=READY_MS)
+        assert [t.strip() for t in lines.all_inner_texts()] == notes, r.db
+        for note in notes:
+            assert f"- Cost basis: {note}" in md, (r.db, note)
+            assert note in pdf, (r.db, note)
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+        checked += 1
+    # The deterministic samples include one that states a basis; an external (model-run)
+    # job is a single source, which may state none.
+    assert checked or any(r.external for r in all_runs), "no sample states a cost basis"
+
+
 def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

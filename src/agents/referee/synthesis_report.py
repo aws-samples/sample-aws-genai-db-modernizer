@@ -79,6 +79,7 @@ from src.shared.report_facts import (
 from src.shared.risk_severity import overall_risk_level
 from src.shared.signal_labels import signal_noun
 from src.shared.skill_sections import skill_sections, skill_subsections
+from src.shared.source_cache import cost_basis_fields
 from src.shared.unsupported_pattern import (
     is_dedup_only_group_by,
     unsupported_pattern_ids,
@@ -939,6 +940,7 @@ def build_tco_analysis(
     data: SynthesisData,
     retired_costs: dict[str, float] | None = None,
     wave_one_engine: str | None = None,
+    retired_bases: dict[str, dict] | None = None,
 ) -> dict:
     """Aggregate cost estimates from all analysis outputs.
 
@@ -959,7 +961,9 @@ def build_tco_analysis(
     a candidate and dropped is never in it: the customer does not run it, so
     dropping it saves nothing (``considered_not_recommended`` names it instead).
     ``eliminated_engine_costs``, which listed those candidates before contract
-    1.25, is no longer written.
+    1.25, is no longer written. ``retired_bases`` (#1197) is each retired engine's
+    read I/O basis (:func:`src.shared.source_cache.cost_basis_fields`), carried onto
+    its row as each kept engine's is.
     """
     target_costs = []
     total_projected = 0.0
@@ -1003,6 +1007,8 @@ def build_tco_analysis(
                 "sizing": sizing,
                 # #1196: the price table the figure was priced from (ADR-032 Decision 6).
                 "price_list": components.get("price_list"),
+                # #1197: the read I/O basis, for an estimate that bills cache misses only.
+                **cost_basis_fields({"cost_components": components}),
             }
         )
         total_projected += monthly
@@ -1069,7 +1075,12 @@ def build_tco_analysis(
     }
     if retired_costs:
         result["retired_engine_savings"] = [
-            {"database": engine, "monthly_cost_usd": cost}
+            {
+                "database": engine,
+                "monthly_cost_usd": cost,
+                # #1197: the read I/O basis of the retired engine's own estimate.
+                **(retired_bases or {}).get(engine, {}),
+            }
             for engine, cost in sorted(retired_costs.items())
         ]
     return result

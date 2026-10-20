@@ -87,6 +87,7 @@ def build_offline_contract(
         _build_procedures,
         _build_queries,
         _build_rds_metadata,
+        _build_source_host,
         _build_tables,
         _build_triggers,
         _build_views,
@@ -113,20 +114,26 @@ def build_offline_contract(
     version = offline_version_label(offline_meta)
 
     if aws_raw is None:
-        metrics = _build_metrics(queries, None)
+        # #1197: the buffer-cache hit ratio and host figures the parser read.
+        metrics = _build_metrics(queries, None, source_host=_build_source_host(parsed))
         rds_meta = None
     else:
         queries = _merge_into_queries(queries, aws_raw.get("query_patterns", []))
         cw_raw = aws_raw.get("cloudwatch", {})
+        pi_counters = parsed.get("global_stats", {}) or aws_raw.get("pi_counters", {})
         _enrich_patterns_from_pi_and_cw(
-            queries,
-            parsed.get("global_stats", {}) or aws_raw.get("pi_counters", {}),
-            cw_raw,
-            aws_raw.get("enhanced_monitoring"),
+            queries, pi_counters, cw_raw, aws_raw.get("enhanced_monitoring")
         )
         _apply_native_waits(queries, parsed.get("wait_events", []))
         rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
-        metrics = _build_metrics(queries, _build_cloudwatch(cw_raw))
+        # #1197: the instance's ratio once, unrounded, never copied onto the queries.
+        metrics = _build_metrics(
+            queries,
+            _build_cloudwatch(cw_raw),
+            source_host=_build_source_host(
+                {"global_stats": pi_counters, "os_stats": parsed.get("os_stats")}
+            ),
+        )
         _apply_native_io_stats(metrics, parsed.get("io_stats", {}))
         if version == "unknown":
             # The AWS-reported engine version when the collection itself has none.

@@ -7433,6 +7433,126 @@
                   }
                 ]
               }
+            },
+            "source_host": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "buffer_cache_hit_ratio_pct": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "maximum": 100,
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "buffer_cache_read_requests": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "buffer_cache_reads_from_disk": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "committed_memory_gb": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "cpu_count": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 1,
+                              "type": "integer"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "physical_memory_gb": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
+              }
             }
           }
         }
@@ -8440,8 +8560,8 @@
         }
       }
     },
-    "schema_hash": "b4eb5af93c742369f3045cc7affbb0532a0d1dd9223d333ee20c33738ef7f870",
-    "version": "3.5"
+    "schema_hash": "84a215a9653b84b0100f3268ef3f2258d81d9cfc42076a3596afc1bb28eaeaaa",
+    "version": "3.6"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -22556,6 +22676,16 @@
                     "kind": "array"
                   }
                 },
+                "cost_basis_notes": {
+                  "required": false,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                },
                 "cost_caveat": {
                   "required": false,
                   "schema": {
@@ -29118,11 +29248,65 @@
                     "items": {
                       "kind": "object",
                       "properties": {
+                        "collection_hit_ratio_billed_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "collection_hit_ratio_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "database": {
                           "required": true,
                           "schema": {
                             "kind": "scalar",
                             "type": "string"
+                          }
+                        },
+                        "min_billed_miss_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "monthly_cost_usd": {
@@ -29148,6 +29332,22 @@
                               {
                                 "kind": "scalar",
                                 "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "read_io_hit_ratio_basis": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
                               }
                             ]
                           }
@@ -29235,6 +29435,40 @@
                               }
                             ]
                           }
+                        },
+                        "source_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "target_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
                         }
                       }
                     },
@@ -29271,11 +29505,65 @@
                     "items": {
                       "kind": "object",
                       "properties": {
+                        "collection_hit_ratio_billed_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "collection_hit_ratio_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "database": {
                           "required": true,
                           "schema": {
                             "kind": "scalar",
                             "type": "string"
+                          }
+                        },
+                        "min_billed_miss_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "monthly_cost_usd": {
@@ -29284,6 +29572,56 @@
                             "kind": "scalar",
                             "minimum": 0,
                             "type": "number"
+                          }
+                        },
+                        "read_io_hit_ratio_basis": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "source_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "target_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         }
                       }
@@ -29314,11 +29652,65 @@
                     "items": {
                       "kind": "object",
                       "properties": {
+                        "collection_hit_ratio_billed_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "collection_hit_ratio_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "database": {
                           "required": true,
                           "schema": {
                             "kind": "scalar",
                             "type": "string"
+                          }
+                        },
+                        "min_billed_miss_pct": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "maximum": 100,
+                                "minimum": 0,
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "monthly_cost_usd": {
@@ -29327,6 +29719,56 @@
                             "kind": "scalar",
                             "minimum": 0,
                             "type": "number"
+                          }
+                        },
+                        "read_io_hit_ratio_basis": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "source_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "target_memory_gb": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "exclusiveMinimum": 0,
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
                           }
                         }
                       }
@@ -29541,8 +29983,8 @@
         }
       }
     },
-    "schema_hash": "3d0959d33ffb94e80f62de3b9168a0b793c104eca6bafa51cda9f41432d1f85a",
-    "version": "1.66"
+    "schema_hash": "c26048ec6dd6ff3d146872541e944a75cd278fd7de1261a138167b9b18916d46",
+    "version": "1.67"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

@@ -25,6 +25,10 @@ Version History:
   ``QueryPattern.query_tags_dropped`` (how many tags the count and length caps dropped),
   so a caller can join a statement to its own code. Backward compatible: both default to
   empty (no tags).
+- 3.6 (2026-10-24, #1197): Added optional ``Metrics.source_host``: the instance-wide
+  buffer-cache hit ratio (and the counts it comes from) and the host CPU count and
+  memory the collection script reported. Backward compatible: defaults to None (not
+  reported), and a cost estimate then has no collection-wide hit ratio to fall back on.
 """
 
 import re
@@ -720,12 +724,46 @@ class RDSCloudWatchMetrics(BaseModel):
     )
 
 
+class SourceHost(BaseModel):
+    """Instance-wide figures the source reported about its buffer cache and host (#1197).
+
+    The buffer-cache figures cover every query the instance ran (the MySQL InnoDB
+    buffer pool, PostgreSQL shared buffers, the SQL Server buffer manager, the Oracle
+    buffer cache), not one query: a cost estimate uses the hit ratio only for a query
+    that reports none of its own.
+    """
+
+    buffer_cache_hit_ratio_pct: float | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Share of logical page reads served from the buffer cache (percent)",
+    )
+    buffer_cache_read_requests: int | None = Field(
+        None, ge=0, description="Logical page reads the hit ratio is computed over"
+    )
+    buffer_cache_reads_from_disk: int | None = Field(
+        None, ge=0, description="Page reads the buffer cache did not serve"
+    )
+    cpu_count: int | None = Field(None, ge=1, description="CPUs the source host reports")
+    physical_memory_gb: float | None = Field(
+        None, ge=0, description="Physical memory the source host reports, in GiB"
+    )
+    committed_memory_gb: float | None = Field(
+        None, ge=0, description="Memory the database process has committed, in GiB"
+    )
+
+
 class Metrics(BaseModel):
     performance_metrics: PerformanceMetrics = Field(
         ..., description="Performance metrics from database"
     )
     rds_cloudwatch_metrics: RDSCloudWatchMetrics | None = Field(
         None, description="RDS CloudWatch metrics (only present if collect_rds_metrics is true)"
+    )
+    source_host: SourceHost | None = Field(
+        None,
+        description="Instance-wide buffer-cache and host figures the collection reported (#1197)",
     )
 
 
@@ -736,7 +774,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="3.5",
+        default="3.6",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

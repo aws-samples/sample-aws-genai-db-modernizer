@@ -1080,6 +1080,9 @@ def render_engineering_report_md(
                 line += f" {reason}."
             line += " Not in this projection (see Migration trade-offs below for why)."
             out.append(f"- {escaping.md_text(line)}")
+        # #1197: the read I/O basis a figure rests on (report facts, ADR-032).
+        for note in facts.get("cost_basis_notes") or []:
+            out.append(f"- Cost basis: {escaping.md_text(note)}")
         out.append("")
         out += _cost_by_engine_md(report)
         # #1195: the TCO's assumption lines, as the facts state them for every deliverable.

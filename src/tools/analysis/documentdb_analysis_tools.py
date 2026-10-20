@@ -42,6 +42,15 @@ from src.contracts.documentdb_decision_trace import (
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import HOURS_PER_MONTH, SECONDS_PER_MONTH, price_basis
+from src.shared.source_cache import (
+    NO_READS_BASIS,
+    CollectionCache,
+    HitRatioBasis,
+    bound_fields,
+    combined_basis,
+    read_hit_ratio,
+    read_io_basis_text,
+)
 from src.tools.analysis.documentdb_pattern_catalog import (
     DOCUMENTDB_ANTI_PATTERNS,
     DOCUMENTDB_PATTERNS,
@@ -747,27 +756,46 @@ def estimate_documentdb_costs(
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
 
     total_size_gb = sum(t.get("size_mb") or 0 for t in tables) / 1024
-    total_read_cps = 0.0
-    total_write_cps = 0.0
-    for q in queries:
-        cps = q.get("calls_per_second") or 0
-        qt = q.get("query_type", "").upper()
-        if qt == "SELECT":
-            total_read_cps += cps
-        elif qt in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
-            total_write_cps += cps
-
-    # Every price is the price table's (src/catalog/prices.toml, #1196), through the engine
-    # file's configuration (Standard storage).
+    # A read is billed an I/O only when it misses the buffer cache (the engine file's
+    # ``reads_billed_on_cache_miss_only``): each read is estimated with its own hit
+    # ratio, else the collection's, scaled down by this instance's memory over the
+    # source's, else billed; at least 1% of every read is billed (#1197,
+    # ``src.shared.source_cache``).
     engine_id = "documentdb"
     prices = catalog.pricing(engine_id)
-    instance_type = "db.r6g.large"
+    instance_type = prices.estimate_instance_class
+    if instance_type is None:
+        raise ValueError("src/catalog/engines/documentdb.toml sets no estimate_instance_class")
+    target_memory_gb = prices.estimate_instance_memory_gb
+    collection = CollectionCache.from_collector(collector_output)
+    miss_only = prices.reads_billed_on_cache_miss_only
+    total_read_cps = 0.0
+    total_write_cps = 0.0
+    bases: list[HitRatioBasis] = []
+    for q in queries:
+        cps = q.get("calls_per_second") or 0
+        qt = (q.get("query_type") or "").upper()
+        if qt == "SELECT":
+            hit, basis = (
+                read_hit_ratio(q, collection, target_memory_gb) if miss_only else (0.0, "none")
+            )
+            bases.append(basis)
+            total_read_cps += cps * (1.0 - hit / 100.0)
+        elif qt in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
+            total_write_cps += cps
+    hit_basis = combined_basis(bases) if bases else NO_READS_BASIS
+    bound = bound_fields(collection, target_memory_gb)
+
+    # Every price is the price table's (src/catalog/prices.toml, #1196, #1208), through the
+    # engine file's configuration (Standard storage), for the engine file's estimate instance.
+    if instance_type not in prices.instance_hourly:
+        raise ValueError(f"the price table has no {instance_type} price for {engine_id}")
     instance_hourly = prices.instance_hourly[instance_type]
     instance_monthly = instance_hourly * HOURS_PER_MONTH
 
     read_ios_per_month = total_read_cps * SECONDS_PER_MONTH
     write_ios_per_month = total_write_cps * SECONDS_PER_MONTH
-    # This estimate charges one I/O a call, read or write, as it always has.
+    # This estimate charges one I/O a write and a read that misses the cache.
     io_price = catalog.required_price(
         engine_id, "read_unit_price_per_million", prices.read_unit_price_per_million
     )
@@ -791,11 +819,16 @@ def estimate_documentdb_costs(
             "list_prices": prices.list_prices,
             # #1196: the price table this estimate was priced from, by date.
             "price_list": price_basis(),
+            # #1197: where the hit ratio the reads were billed with came from, and the
+            # bound applied to the collection's.
+            "read_io_hit_ratio_basis": hit_basis,
+            **bound,
         },
         pricing_assumptions=[
             f"Single {instance_type} instance (no replicas) at ${instance_hourly}/hr",
             f"Region: {target_region}",
             f"{prices.configuration} storage I/O: ${io_price} per million read/write requests",
+            read_io_basis_text(hit_basis, bound, has_reads=bool(bases)),
             f"Storage: ${storage_price} per GB-month",
             "No backups, snapshots, or data transfer included",
         ],

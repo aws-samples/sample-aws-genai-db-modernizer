@@ -55,6 +55,7 @@ from src.shared.risk_severity import (
     severity_rank,
 )
 from src.shared.signal_labels import SIGNAL_NOUNS
+from src.shared.source_cache import cost_basis_sentence
 from src.shared.target_databases import engine_scope_display_order
 
 # ---------------------------------------------------------------------------
@@ -3006,6 +3007,27 @@ def executive_brief_facts(
     }
 
 
+def cost_basis_notes(report: dict[str, Any], engines: list[dict[str, Any]]) -> list[str]:
+    """How each priced engine's estimate billed its reads, where that rests on an
+    assumption (#1197, ADR-032): one sentence per kept engine in ``engines`` and per
+    retired engine whose TCO row states a ``read_io_hit_ratio_basis`` (DocumentDB,
+    which bills a read only on a buffer-cache miss). Every deliverable prints these
+    as they are, next to the cost."""
+    tco = report.get("tco_analysis") or {}
+    kept = {e["engine"] for e in engines}
+    rows = [
+        r
+        for r in tco.get("cost_breakdown") or []
+        if isinstance(r, dict) and r.get("database") in kept
+    ] + [r for r in tco.get("retired_engine_savings") or [] if isinstance(r, dict)]
+    notes: list[str] = []
+    for row in rows:
+        note = cost_basis_sentence(display_engine(str(row.get("database") or "")), row)
+        if note is not None and note not in notes:
+            notes.append(note)
+    return notes
+
+
 def unreviewed_move_count(report: dict[str, Any]) -> int:
     """How many reality-check moves no model reviewed (#746).
 
@@ -3127,6 +3149,8 @@ def compute_report_facts(
         **query_total_facts(report, moves["in_scope_query_count"]),
         "workload_total_percent": _unrounded(sum(e["workload_percent"] or 0.0 for e in engines)),
         "engine_cost_total_usd": round(sum(costs), 2),
+        # #1197: the read I/O basis a cost rests on, stated wherever the cost is shown.
+        "cost_basis_notes": cost_basis_notes(report, engines),
         "table_basis": table_basis(report, engines, waves),
         "waves": wave_rows,
         "no_migration": no_migration,

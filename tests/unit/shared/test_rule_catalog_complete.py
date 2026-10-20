@@ -311,6 +311,12 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "the post-schema router's cascade bound (passes 0 to 2), a loop bound, not a score "
         "or a placement rule; moved here from src/orchestrator/local_orchestrator.py (#1492)",
     ),
+    "src/shared/source_cache.py": (
+        frozenset({"MIN_BILLED_MISS_SHARE"}),
+        "a pricing bound the maintainer set as one constant here (#1197, decisions on "
+        "#1222, 2026-10-22): the least share of every read billed as a miss on an engine "
+        "that bills reads on a buffer-cache miss only, 1%",
+    ),
     "src/agents/referee/transaction_shape.py": (
         frozenset({"TRANSACTION_MAX_ITEMS"}),
         _DETECTION + ": DynamoDB's 100-item transaction quota bounds the shape (#493)",

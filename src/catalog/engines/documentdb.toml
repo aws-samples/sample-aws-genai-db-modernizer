@@ -24,6 +24,10 @@ list_prices = "documentdb.standard"
 read_unit_bytes = 8192
 write_unit_bytes = 4096
 reads_billed_on_cache_miss_only = true
+# The instance the cost estimate prices (one db.r6g.large: 2 vCPUs, 16 GiB). Its memory
+# scales the source's buffer-cache hit ratio before that ratio bills a read (#1197).
+estimate_instance_class = "db.r6g.large"
+estimate_instance_memory_gb = 16
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
 # (#1002); the first profile is the engine's default.

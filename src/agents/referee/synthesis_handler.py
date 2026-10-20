@@ -94,6 +94,7 @@ from src.shared.report_facts import (
     table_owner_fields,
     wave_retained_engine,
 )
+from src.shared.source_cache import cost_basis_fields
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from src.tools.sql.query_facts import source_engine_of
@@ -162,16 +163,32 @@ def _eliminated_engine_costs(
     from the returned dict -- callers must handle that, not assume every
     eliminated engine has one.
     """
-    costs: dict[str, float] = {}
+    return {
+        e: c
+        for e, (c, _basis) in _eliminated_engine_estimates(
+            store, database_name, job_id, eliminated
+        ).items()
+    }
+
+
+def _eliminated_engine_estimates(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    eliminated: dict[str, str | None],
+) -> dict[str, tuple[float, dict]]:
+    """Each eliminated engine's analysed monthly cost and its read I/O basis (#1197)."""
+    out: dict[str, tuple[float, dict]] = {}
     for engine in eliminated:
         key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
         if not store.exists(key):
             continue
         analysis = store.read_json(key) or {}
-        monthly = (analysis.get("cost_estimate") or {}).get("monthly_cost_usd")
+        cost = analysis.get("cost_estimate") or {}
+        monthly = cost.get("monthly_cost_usd")
         if isinstance(monthly, (int, float)):
-            costs[engine] = float(monthly)
-    return costs
+            out[engine] = (float(monthly), cost_basis_fields(cost))
+    return out
 
 
 def run_synthesis_deterministic(
@@ -256,12 +273,14 @@ def run_synthesis_deterministic(
     # Every other eliminated engine was a candidate the plan considered and dropped:
     # the customer never paid for it, so it is listed with no dollar figure.
     running = engines_in_use(data.collector)
-    retired_costs = _eliminated_engine_costs(
+    retired = _eliminated_engine_estimates(
         store,
         database_name,
         job_id,
         {e: a for e, a in eliminated.items() if e in running and e not in never_justified},
     )
+    retired_costs = {e: cost for e, (cost, _basis) in retired.items()}
+    retired_bases = {e: basis for e, (_cost, basis) in retired.items() if basis}
     considered = [
         {"engine": e, "absorbed_by": a} for e, a in sorted(eliminated.items()) if e not in running
     ]
@@ -349,6 +368,7 @@ def run_synthesis_deterministic(
         data,
         retired_costs=retired_costs,
         wave_one_engine=wave_retained_engine(migration_waves),
+        retired_bases=retired_bases,
     )
     # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
     # queries), never the whole-collection analysis estimate, so every cost agrees.
