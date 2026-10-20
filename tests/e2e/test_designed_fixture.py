@@ -134,3 +134,21 @@ def test_new_target_tables_key_on_the_source_tables_primary_key(
     [table] = [t for t in design["table_definitions"] if t["table_name"] == "WcReservedStock"]
     assert table["partition_key"]["attribute_name"] == "order_id"
     assert table["sort_key"]["attribute_name"] == "product_id"
+
+
+def test_the_migration_map_states_what_the_partial_map_misses(
+    designed_run: PipelineResult, designed_partial_run: PipelineResult
+) -> None:
+    """#1173's two Migration map sentences: the partial job prints both (3 moving
+    tables with no target table, one mapped table DynamoDB does not serve); the full
+    job, whose map is exactly what DynamoDB serves, prints neither."""
+    basis = _report(designed_partial_run)["facts"]["table_basis"]
+    assert basis["migrating_tables_not_mapped"] == len(PARTIAL_LEAVE_OUT)
+    assert basis["mapped_tables_not_served"] == {"dynamodb": list(PARTIAL_EXTRA)}
+    md = designed_partial_run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    assert f"no target table yet for {len(PARTIAL_LEAVE_OUT)} of the" in md
+    assert "that no query routed to DynamoDB reads" in md
+    full = _report(designed_run)["facts"]["table_basis"]
+    assert full["migrating_tables_not_mapped"] == 0 and not full["mapped_tables_not_served"]
+    md = designed_run.deliverable("engineering-report.md").read_text(encoding="utf-8")
+    assert "no target table yet" not in md and "that no query routed to DynamoDB reads" not in md
