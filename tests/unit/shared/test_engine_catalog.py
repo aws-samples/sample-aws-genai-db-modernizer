@@ -155,9 +155,10 @@ class TestEveryKnownEngineHasACatalogFile:
     def test_analysis_agents_are_exactly_the_active_engines(self) -> None:
         assert triage.ANALYSIS_AGENTS == ACTIVE_IDS
         assert set(local_execution._ENGINES) == ACTIVE_IDS
-        # The ATX orchestrator keys its table by a short name (``aurora_pg``); the engine
-        # id it dispatches is ``target_database``.
-        assert {e.target_database for e in atx_core._ANALYSIS_ENGINES.values()} == ACTIVE_IDS
+        # The ATX orchestrator keys its table by the catalog id, which is also the
+        # ``target_database`` it dispatches (#1179).
+        assert set(atx_core._ANALYSIS_ENGINES) == ACTIVE_IDS
+        assert all(k == e.target_database for k, e in atx_core._ANALYSIS_ENGINES.items())
 
     def test_the_container_entrypoint_accepts_every_catalog_engine(self) -> None:
         """``entrypoint.ANALYSIS_AGENTS`` (read by AST: importing the entrypoint builds an

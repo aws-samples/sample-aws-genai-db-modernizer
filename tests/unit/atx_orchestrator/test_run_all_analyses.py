@@ -9,8 +9,10 @@ bundled WordPress sample (deterministic, ~50ms, no LLM, no AWS) and assert:
   1. every selected engine's artifact lands under the same key as before,
   2. the per-engine progress callbacks fire once each with the
      ``analysis_<target_database>`` label (what the WebApp sub-steps key on),
-  3. an explicit engine list overrides triage and unknown tokens are skipped,
-  4. a missing triage output raises when engines are not supplied.
+  3. an explicit engine list overrides triage; an unknown id in it raises, while
+     an unknown triage token is skipped,
+  4. a missing triage output raises when engines are not supplied,
+  5. engines are keyed by catalog id (#1179).
 
 These stay SDK-free (import only ``core`` + the local store), so they run both
 locally and in CI where ``agent_builder_sdk`` is absent.
@@ -127,13 +129,14 @@ def test_analysis_survives_json_only_store_rejecting_er_diagram(prepared_store) 
     assert not store.exists(f"{db}/{job}/analysis-dynamodb/er-diagram.mmd")
 
 
-def test_explicit_engines_override_triage_and_skip_unknown(prepared_store) -> None:
+@pytest.mark.passes_on_main  # existing behaviour the raise must keep
+def test_explicit_engines_override_triage(prepared_store) -> None:
     store, job, db = prepared_store
 
-    summary = run_all_analyses(job, db, engines=["dynamodb", "bogus-engine"], store=store)
+    summary = run_all_analyses(job, db, engines=["dynamodb"], store=store)
 
     assert summary["engines_analyzed"] == ["dynamodb"]
-    assert "bogus-engine" not in summary["engines_analyzed"]
+    assert summary["engines_skipped"] == {}
     assert store.exists(f"{db}/{job}/analysis-dynamodb/analysis.json")
 
 
@@ -147,17 +150,47 @@ def test_missing_triage_raises_when_engines_not_supplied(tmp_path) -> None:
         run_all_analyses("j", "wordpress", store=store)
 
 
-def test_resolves_aurora_postgresql_token_to_engine_key(prepared_store) -> None:
-    """Regression: triage emits the ``target_database`` token ("aurora_postgresql"),
-    but ``_ANALYSIS_ENGINES`` is keyed "aurora_pg". The token must resolve to the
-    engine key and run, not be dropped as unknown (which silently skipped Aurora
-    PostgreSQL analysis for PostgreSQL sources)."""
+def test_engines_are_keyed_by_catalog_id(prepared_store) -> None:
+    """The core table is keyed by the engine catalog id (#1179): the triage token
+    "aurora_postgresql" is the key itself, and the summary reports it unchanged."""
     store, job, db = prepared_store
 
     summary = run_all_analyses(job, db, engines=["aurora_postgresql"], store=store)
 
-    assert summary["engines_analyzed"] == ["aurora_pg"]
+    assert summary["engines_analyzed"] == ["aurora_postgresql"]
+    assert list(summary["per_engine"]) == ["aurora_postgresql"]
     assert store.exists(f"{db}/{job}/analysis-aurora_postgresql/analysis.json")
+
+
+@pytest.mark.parametrize("engines", [["aurora_pg"], ["dynamodb", "aurora_pg"], ["bogus-engine"]])
+def test_an_unknown_engine_id_from_the_caller_raises(prepared_store, engines) -> None:
+    """A caller's engine list names catalog ids: the old short key ``aurora_pg`` or any
+    other unknown id raises, naming it, rather than returning a summary that silently
+    skipped it (#1179). Nothing is analysed."""
+    store, job, db = prepared_store
+
+    with pytest.raises(
+        ValueError, match=r"Unknown analysis engine id\(s\) \['(aurora_pg|bogus-engine)'\]"
+    ):
+        run_all_analyses(job, db, engines=engines, store=store)
+
+    assert not store.exists(f"{db}/{job}/analysis-dynamodb/analysis.json")
+
+
+@pytest.mark.passes_on_main  # existing behaviour the raise must keep
+def test_unknown_triage_tokens_are_skipped(prepared_store) -> None:
+    """Triage-derived tokens that are not analysis engines are dropped, not fatal."""
+    store, job, db = prepared_store
+    key = f"{db}/{job}/referee-triage/triage.json"
+    triage = store.read_json(key)
+    triage["selected_agents"].append({"agent_type": "keyspaces", "reasons": ["deferred"]})
+    store.write_json(key, triage)
+
+    summary = run_all_analyses(job, db, store=store)
+
+    assert "keyspaces" in summary["engines_requested"]
+    assert "keyspaces" not in summary["engines_analyzed"]
+    assert summary["engines_analyzed"]
 
 
 def test_reports_triage_skips_with_reasons(prepared_store) -> None:
@@ -176,17 +209,17 @@ def test_reports_triage_skips_with_reasons(prepared_store) -> None:
     )
 
     # Aurora PostgreSQL is the non-matching variant for a MySQL source.
-    assert "aurora_pg" in summary["engines_skipped"]
+    assert "aurora_postgresql" in summary["engines_skipped"]
     assert (
-        summary["engines_skipped"]["aurora_pg"]
+        summary["engines_skipped"]["aurora_postgresql"]
         == "Source engine does not match this Aurora variant"
     )
     # It is not among the analyzed engines.
-    assert "aurora_pg" not in summary["engines_analyzed"]
+    assert "aurora_postgresql" not in summary["engines_analyzed"]
 
     # The callback fired with the analysis_<target_database> label and the reason.
     skipped_engines = {e for e, _, _ in skips}
-    assert "aurora_pg" in skipped_engines
+    assert "aurora_postgresql" in skipped_engines
     for engine, phase, reason in skips:
         assert phase == f"analysis_{_ANALYSIS_ENGINES[engine].target_database}"
         assert reason

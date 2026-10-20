@@ -588,7 +588,7 @@ _ANALYSIS_ENGINES: dict[str, _AnalysisEngine] = {
         mermaid_always=False,
         llm_advisor_from_trace=False,
     ),
-    "aurora_pg": _AnalysisEngine(
+    "aurora_postgresql": _AnalysisEngine(
         target_database="aurora_postgresql",
         load_analyze=_load_aurora_pg_analyze,
         pass_llm_mode=True,
@@ -605,25 +605,17 @@ _ANALYSIS_ENGINES: dict[str, _AnalysisEngine] = {
 }
 
 
-# Triage emits engine tokens in ``target_database`` form (e.g. "aurora_postgresql"),
-# but ``_ANALYSIS_ENGINES`` is keyed by short engine name ("aurora_pg"). This reverse
-# map resolves either form to the canonical key so a PostgreSQL source's selected
-# "aurora_postgresql" agent is not silently dropped as unknown. Built from
-# ``_ANALYSIS_ENGINES`` so it cannot drift from the table.
-_ENGINE_KEY_BY_TOKEN: dict[str, str] = {
-    **{key: key for key in _ANALYSIS_ENGINES},
-    **{spec.target_database: key for key, spec in _ANALYSIS_ENGINES.items()},
-}
+# Keys are engine catalog ids (``src/catalog/engines/<id>.toml``), each equal to its
+# ``target_database``; ``test_engine_catalog.py`` guards it (#1179).
 
 
 def _resolve_engine_key(token: str) -> str | None:
-    """Resolve a triage engine token to a ``_ANALYSIS_ENGINES`` key, or None if unknown.
+    """The token when it is an analysis engine id, else None.
 
-    Accepts either the short key ("aurora_pg") or the ``target_database`` form
-    ("aurora_postgresql"). Non-analysis tokens (e.g. deferred "keyspaces",
-    "neptune") resolve to None so callers can ignore them.
+    Non-analysis tokens (e.g. deferred "keyspaces", "neptune") resolve to None so
+    callers can ignore them.
     """
-    return _ENGINE_KEY_BY_TOKEN.get(token)
+    return token if token in _ANALYSIS_ENGINES else None
 
 
 def _confidence_band_counts(table_recommendations) -> dict[str, int]:
@@ -753,8 +745,8 @@ def _selected_engines_from_triage(job_id: str, database_name: str, store) -> lis
     """Read triage's selected engines. Raises FileNotFoundError if triage is missing.
 
     Triage already encodes source-engine constraints (a MySQL source yields
-    aurora_mysql, not aurora_pg), so the consolidated analysis agent trusts this
-    list rather than re-deriving it.
+    aurora_mysql, not aurora_postgresql), so the consolidated analysis agent trusts
+    this list rather than re-deriving it.
     """
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
     if not store.exists(triage_key):
@@ -773,8 +765,7 @@ def _skipped_engines_from_triage(job_id: str, database_name: str, store) -> list
 
     Triage records why each candidate engine was not analyzed (e.g. a PostgreSQL
     source skips ``aurora_mysql`` with "Source engine does not match this Aurora
-    variant"). Tokens are resolved to ``_ANALYSIS_ENGINES`` keys; non-analysis
-    tokens are ignored. Returns an empty list if triage is missing so callers can
+    variant"). Tokens that are not an analysis engine id are ignored. Returns an empty list if triage is missing so callers can
     treat skip reporting as best-effort.
     """
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
@@ -810,11 +801,11 @@ def run_all_analyses(
     same ``analysis-<engine>/analysis.json`` artifacts the Assign phase reads.
     Because the durable contract is those artifacts, nothing downstream changes.
 
-    ``engines`` defaults to triage's selected engines. Triage emits engine tokens
-    in ``target_database`` form (e.g. "aurora_postgresql"), which are resolved to
-    the canonical ``_ANALYSIS_ENGINES`` key ("aurora_pg") before dispatch;
-    unresolvable tokens are dropped with a warning. Resolved keys are de-duplicated
-    while preserving order.
+    ``engines`` defaults to triage's selected engines. Engines are named by their
+    catalog id (e.g. "aurora_postgresql"), the same id triage emits. A
+    caller-supplied id that is not an analysis engine raises ``ValueError``; a
+    triage token that is not one is dropped with a warning. Engines are
+    de-duplicated while preserving order.
 
     The optional callbacks report per-engine progress (the WebApp job-plan
     sub-steps); each receives the engine key and the plan step label
@@ -832,8 +823,7 @@ def run_all_analyses(
     if engines is None:
         engines = _selected_engines_from_triage(job_id, database_name, store)
 
-    # Resolve triage tokens (target_database form) to canonical engine keys,
-    # de-duplicating while preserving order.
+    # Keep the analysis engine ids, de-duplicating while preserving order.
     known: list[str] = []
     unknown: list[str] = []
     for token in engines:
@@ -842,6 +832,13 @@ def run_all_analyses(
             unknown.append(token)
         elif key not in known:
             known.append(key)
+    if unknown and not from_triage:
+        # A caller's list names engines by catalog id; an unknown one is a mistake,
+        # never a silent skip.
+        raise ValueError(
+            f"Unknown analysis engine id(s) {unknown}; expected catalog ids "
+            f"{sorted(_ANALYSIS_ENGINES)}"
+        )
     if unknown:
         logger.warning("run_all_analyses: skipping unknown engines %s", unknown)
 

@@ -52,7 +52,7 @@ existing per-engine `run_analysis_core`.
 
 - The agent reads the triage output to decide which engines to run (triage
   already encodes the source-engine constraints, e.g. a MySQL source selects
-  `aurora_mysql` and not `aurora_pg`), with an optional explicit engine list for
+  `aurora_mysql` and not `aurora_postgresql`), with an optional explicit engine list for
   override.
 - Each engine still writes the same `analysis-<engine>/analysis.json` (plus
   decision trace, plus ER diagram where applicable), so Assign, Reality Check,
