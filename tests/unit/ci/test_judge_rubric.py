@@ -101,14 +101,14 @@ def _migration_report(**extra) -> dict:
                         "recommendation": "keep sql_mode",
                     }
                 ],
-                "hot_partitions_at_risk": [],
+                "hot_partitions_at_risk": 0,
             },
             "elasticache": {
                 "unsupported_patterns": [
                     {"source_query_ids": ["q4", "q5"], "reason": "joins", "workaround": "owner db"}
                 ]
             },
-            "dynamodb": {"hot_partitions_at_risk": [{"table": "orders"}]},
+            "dynamodb": {"hot_partitions_at_risk": 1},
         },
         "trade_offs": [{"engine": "dynamodb"}, {"engine": "dynamodb"}, {"engine": "aurora_mysql"}],
         "assignment_summary": {"tie_unresolved_count": 1},
@@ -436,3 +436,19 @@ def test_wave_figures_come_from_the_facts_layer() -> None:
         }
     ]
     assert judge_facts.build_facts(_migration_report())["wave_figures"] is None
+
+
+def test_migration_risk_facts_read_a_count_or_a_list() -> None:
+    """Synthesis writes ``hot_partitions_at_risk`` as a count; a list still counts its items."""
+    report = _migration_report()
+    report["schema_designs"]["dynamodb"]["hot_partitions_at_risk"] = 2
+    report["schema_designs"]["aurora_mysql"]["hot_partitions_at_risk"] = 0
+    risk = judge_facts.build_facts(report)["migration_risk_facts"]
+    assert risk["hot_partitions_at_risk"] == {"dynamodb": 2}
+    report["schema_designs"]["dynamodb"]["hot_partitions_at_risk"] = [
+        {"table": "a"},
+        {"table": "b"},
+    ]
+    report["schema_designs"]["aurora_mysql"]["hot_partitions_at_risk"] = -1
+    risk = judge_facts.build_facts(report)["migration_risk_facts"]
+    assert risk["hot_partitions_at_risk"] == {"dynamodb": 2}

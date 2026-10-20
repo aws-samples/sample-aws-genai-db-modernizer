@@ -424,6 +424,16 @@ def _shared_tables(
     return {"count": len(shared), "tables": shared}
 
 
+def _item_count(value: Any) -> int:
+    """A design field as a count: synthesis writes counts (``hot_partitions_at_risk``) and lists.
+
+    Anything else (None, a float, a string) counts as zero; the writer never emits them.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(value, 0)
+    return len(value) if isinstance(value, (list, tuple, dict)) else 0
+
+
 def _migration_risk_facts(
     report: dict[str, Any],
     db: str | None,
@@ -437,7 +447,7 @@ def _migration_risk_facts(
         if not designs:
             return None
         counts = {
-            engine: len(design.get(field) or [])
+            engine: _item_count(design.get(field))
             for engine, design in sorted(designs.items())
             if isinstance(design, dict)
         }
