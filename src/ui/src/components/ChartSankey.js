@@ -7,6 +7,29 @@ import { DEFAULT_ENGINE_HEX } from '../utils/engineColors';
 
 const MARGIN_Y = 25;
 const MARGIN_X = 5;
+const NODE_WIDTH = 26;
+const LABEL_GAP = 6;
+const LABEL_FONT_SIZE = 12;
+
+// #1245: the cache layer is the diagram's last column, at the right edge, and its
+// label used to sit left of the node, on top of the dashed overlay flows converging
+// into it (and, with a small node, across the node itself). It now sits right of the
+// node, so the layout keeps that much room free on the right: a generous width
+// estimate for the longest cache label (about 0.6 em per character), since an SVG
+// text's real width is only known after it is drawn.
+export const estimateLabelWidth = (text, fontSize = LABEL_FONT_SIZE) => Math.ceil(String(text).length * fontSize * 0.6);
+
+const cacheLabelRoom = (data) => {
+  const cacheIds = (data?.nodes || []).map((n) => n.id).filter(isCacheEngine);
+  if (cacheIds.length === 0) return 0;
+  const widest = Math.max(...cacheIds.map((id) => {
+    const total = (data.links || [])
+      .filter((l) => (typeof l.target === 'object' ? l.target.id : l.target) === id)
+      .reduce((sum, l) => sum + (l.value || 0), 0);
+    return estimateLabelWidth(`${displayEngine(id)} (${total})`);
+  }));
+  return LABEL_GAP + widest;
+};
 
 // Node colours: the source node's grey, then every engine's live UI colour from the
 // engine catalog (colors.ui, src/catalog/engines, #492). Before #476 the Aurora node
@@ -32,11 +55,11 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
   const { nodes, links } = useMemo(() => {
     // Set the sankey diagram properties
     const sankeyGenerator = sankey()
-      .nodeWidth(26)
+      .nodeWidth(NODE_WIDTH)
       .nodePadding(29)
       .extent([
         [MARGIN_X, MARGIN_Y],
-        [width - MARGIN_X, height - MARGIN_Y],
+        [width - MARGIN_X - cacheLabelRoom(data), height - MARGIN_Y],
       ])
       .nodeId((node) => node.id) // Accessor function: how to retrieve the id that defines each node
       .nodeAlign(sankeyCenter); // Algorithm used to decide node position
@@ -93,8 +116,11 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
       const isCache = isCacheEngine(node.id);
       const isClickable = onNodeClick && !isSource && !isCache;
       const nodeColor = NODE_COLORS[node.id] || DEFAULT_ENGINE_HEX;
-      const labelX = isSource ? node.x1 + 6 : node.x0 - 6;
-      const labelAnchor = isSource ? 'start' : 'end';
+      // The source and the cache layer (the first and last columns) are labelled on
+      // their outer side, an owner engine on its left (#1245).
+      const labelOutside = isSource || isCache;
+      const labelX = labelOutside ? node.x1 + LABEL_GAP : node.x0 - LABEL_GAP;
+      const labelAnchor = labelOutside ? 'start' : 'end';
 
       return (
         <g
@@ -105,7 +131,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
         >
           <rect
             height={node.y1 - node.y0}
-            width={26}
+            width={NODE_WIDTH}
             x={node.x0}
             y={node.y0}
             stroke={nodeColor}
@@ -119,7 +145,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
             y={(node.y1 + node.y0) / 2}
             dy="0.35em"
             textAnchor={labelAnchor}
-            fontSize={12}
+            fontSize={LABEL_FONT_SIZE}
             fill={textFill}
           >
             {label}
@@ -128,7 +154,7 @@ const ChartSankey = ({ width = 800, height = 400, data, onNodeClick }) => {
             <text
               x={labelX}
               y={(node.y1 + node.y0) / 2}
-              dy="1.6em"
+              dy="2em"
               textAnchor={labelAnchor}
               fontSize={10}
               fill={textFill}

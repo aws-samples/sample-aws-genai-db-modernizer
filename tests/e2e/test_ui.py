@@ -962,3 +962,61 @@ def test_each_engine_has_one_colour_across_the_ui(
         waves = page.locator("[data-wave] [data-engine] [data-engine-badge]")
         assert waves.count() > 0, r.db
     assert seen["badges"] > 0 and seen["nodes"] > 0, seen
+
+
+# #1245: the cache layer's label ("ElastiCache (N)") and its "cache layer" sub-label
+# used to be drawn over the small dashed cache node and over each other. Measured in
+# the browser: no label box crosses its node, the two labels do not overlap, and both
+# fit inside the diagram.
+_SANKEY_CACHE_LABEL_BOXES = """() => {
+  const box = (el) => { const r = el.getBoundingClientRect();
+    return {left: r.left, right: r.right, top: r.top, bottom: r.bottom}; };
+  return [...document.querySelectorAll('svg')].flatMap((svg) =>
+    [...svg.querySelectorAll('g')].filter((g) =>
+      [...g.querySelectorAll('text')].some((t) => t.textContent === 'cache layer'))
+    .map((g) => {
+      const [name, sub] = g.querySelectorAll('text');
+      return {label: name.textContent, svg: box(svg), node: box(g.querySelector('rect')),
+              name: box(name), sub: box(sub)};
+    }));
+}"""
+
+
+def _overlap(a: dict[str, float], b: dict[str, float]) -> bool:
+    return (
+        a["left"] < b["right"]
+        and b["left"] < a["right"]
+        and a["top"] < b["bottom"]
+        and b["top"] < a["bottom"]
+    )
+
+
+def test_sankey_cache_label_clears_its_node_and_sub_label(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    page.set_viewport_size({"width": 1440, "height": 900})
+    checked = []
+    expected = 0
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        if report.get("cache_overlay"):
+            expected += 2  # the Job summary and the results page both draw it
+        for url in (
+            f"{ui}/analysis/monitor/summary/{r.job_id}",
+            f"{ui}/analysis/results/{r.job_id}",
+        ):
+            page.goto(url)
+            page.wait_for_load_state("networkidle")
+            for g in page.evaluate(_SANKEY_CACHE_LABEL_BOXES):
+                where = (r.db, url, g["label"])
+                assert not _overlap(g["name"], g["node"]), where
+                assert not _overlap(g["sub"], g["node"]), where
+                assert not _overlap(g["name"], g["sub"]), where
+                for label in (g["name"], g["sub"]):
+                    assert g["svg"]["left"] <= label["left"], where
+                    assert label["right"] <= g["svg"]["right"], where
+                checked.append(where)
+    # Every run whose report keeps a cache layer was measured on both pages (the
+    # wordpress sample does, so the deterministic job is never vacuous).
+    assert expected > 0 or all(not r.db.startswith("wordpress") for r in all_runs)
+    assert len(checked) == expected, checked

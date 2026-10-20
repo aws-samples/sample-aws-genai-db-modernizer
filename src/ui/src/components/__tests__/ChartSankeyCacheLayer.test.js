@@ -11,7 +11,7 @@
  */
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import ChartSankey from '../ChartSankey';
+import ChartSankey, { estimateLabelWidth } from '../ChartSankey';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -110,4 +110,68 @@ test('a sankey with no cache overlay layer renders exactly as before (no dashed 
   };
   render(data);
   expect(container.querySelectorAll('[stroke-dasharray]')).toHaveLength(0);
+});
+
+// #1245: the cache label used to sit left of the cache node, over the dashed overlay
+// flows converging into it (and across a small node). It now sits right of the node,
+// and the layout keeps room for it inside the SVG.
+const groupParts = (label) => {
+  const g = nodeGroupForLabel(label);
+  const rect = g.querySelector('rect');
+  const [name, sub] = Array.from(g.querySelectorAll('text'));
+  return {
+    rectRight: Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')),
+    rectLeft: Number(rect.getAttribute('x')),
+    name,
+    sub,
+  };
+};
+
+test('the cache label and its sub-label sit right of the cache node, clear of it', () => {
+  render(dataWithCacheLayer);
+  const { rectRight, name, sub } = groupParts('ElastiCache (13)');
+
+  expect(name.getAttribute('text-anchor')).toBe('start');
+  expect(Number(name.getAttribute('x'))).toBeGreaterThan(rectRight);
+  expect(sub.textContent).toBe('cache layer');
+  expect(sub.getAttribute('text-anchor')).toBe('start');
+  expect(Number(sub.getAttribute('x'))).toBeGreaterThan(rectRight);
+});
+
+test('the sub-label sits a full line below the engine name, not over it', () => {
+  render(dataWithCacheLayer);
+  const { name, sub } = groupParts('ElastiCache (13)');
+  // Same anchor point; the name is centred (0.35em) and the 10px sub-label starts
+  // 2em (20px) lower, so the name's 12px glyphs and the sub-label never share a row.
+  expect(sub.getAttribute('y')).toBe(name.getAttribute('y'));
+  expect(sub.getAttribute('dy')).toBe('2em');
+});
+
+test('the layout keeps room on the right for the whole cache label', () => {
+  render(dataWithCacheLayer);
+  const { name } = groupParts('ElastiCache (13)');
+  const svgWidth = Number(container.querySelector('svg').getAttribute('width'));
+  expect(Number(name.getAttribute('x')) + estimateLabelWidth('ElastiCache (13)')).toBeLessThanOrEqual(svgWidth);
+});
+
+test('owner labels stay left of their node, as before', () => {
+  render(dataWithCacheLayer);
+  const { rectLeft, name } = groupParts('DynamoDB (11)');
+  expect(name.getAttribute('text-anchor')).toBe('end');
+  expect(Number(name.getAttribute('x'))).toBeLessThan(rectLeft);
+});
+
+test('with no cache layer the last column still reaches the right edge', () => {
+  const data = {
+    nodes: [{ id: 'queries' }, { id: 'dynamodb' }],
+    links: [{ source: 'queries', target: 'dynamodb', value: 5 }],
+  };
+  render(data);
+  const { rectRight } = groupParts('DynamoDB (5)');
+  expect(rectRight).toBe(900 - 5);
+});
+
+test('the label estimate is never narrower than the label at 0.6em per character', () => {
+  expect(estimateLabelWidth('ElastiCache (13)')).toBe(Math.ceil(16 * 12 * 0.6));
+  expect(estimateLabelWidth('')).toBe(0);
 });
