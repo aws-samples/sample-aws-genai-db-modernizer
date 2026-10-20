@@ -10,6 +10,8 @@ longer written.
 
 from __future__ import annotations
 
+import pytest
+
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import build_tco_analysis
 
@@ -47,6 +49,34 @@ class TestCurrentCostKnown:
         tco = build_tco_analysis(_data(rds_meta={"instance_class": "db.t3.medium"}))
         assert tco["current_cost_known"] is True
         assert tco["current_monthly_cost"] == 65
+
+
+_RDS_ESTIMATE_NOTE = "Current RDS cost estimated from instance class (actual billing may differ)"
+
+
+class TestBaselineAssumption:
+    """#1247: the footnote claimed an estimate the report never showed."""
+
+    def test_no_baseline_drops_the_estimate_note(self) -> None:
+        tco = build_tco_analysis(_data(rds_meta=None))
+        assert tco["current_cost_known"] is False
+        assert not any("Current RDS cost" in a for a in tco["assumptions"])
+
+    def test_empty_metadata_drops_the_estimate_note(self) -> None:
+        tco = build_tco_analysis(_data(rds_meta={}))
+        assert not any("Current RDS cost" in a for a in tco["assumptions"])
+
+    @pytest.mark.passes_on_main
+    def test_known_baseline_keeps_the_estimate_note(self) -> None:
+        tco = build_tco_analysis(_data(rds_meta={"instance_class": "db.t3.medium"}))
+        assert _RDS_ESTIMATE_NOTE in tco["assumptions"]
+
+    @pytest.mark.passes_on_main
+    def test_the_other_assumptions_stay_either_way(self) -> None:
+        for meta in (None, {"instance_class": "db.t3.medium"}):
+            assumptions = build_tco_analysis(_data(rds_meta=meta))["assumptions"]
+            assert "On-demand capacity mode for all target databases" in assumptions
+            assert "Does not include data transfer, backups, or global tables" in assumptions
 
 
 class TestRetiredEngineSavings:

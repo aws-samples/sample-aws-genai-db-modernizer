@@ -966,7 +966,13 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
         "assumptions": [
             "On-demand capacity mode for all target databases",
             "Region: us-east-1",
-            "Current RDS cost estimated from instance class (actual billing may differ)",
+            # #1247: only a known baseline was estimated; with none, the note is
+            # left out like the current-cost and savings lines (#949).
+            *(
+                ["Current RDS cost estimated from instance class (actual billing may differ)"]
+                if current_cost_known
+                else []
+            ),
             "Does not include data transfer, backups, or global tables",
         ],
     }
