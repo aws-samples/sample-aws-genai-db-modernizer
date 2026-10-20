@@ -77,7 +77,8 @@ def _raw_file(tmp_path: Path, key: str) -> dict:
 
 def test_the_trace_declares_a_checked_contract_version() -> None:
     field = DynamoDBDecisionTrace.model_fields["contract_version"]
-    assert field.default == CURRENT == "1.1"
+    assert field.default == CURRENT
+    assert tuple(map(int, CURRENT.split("."))) >= (1, 1)  # #973 moved it past 1.0
     assert any(getattr(m, "pattern", None) == r"^\d+\.\d+$" for m in field.metadata)
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.agents.analysis.documentdb_analysis_agent import analyze_for_documentdb
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from tests.fixtures.documentdb_pattern_fixtures import (
     get_aggregation_pipeline_fixture,
     get_content_management_fixture,
@@ -163,7 +164,7 @@ class TestGracefulDegradation:
         fixture = get_content_management_fixture()
         fixture.pop("metrics", None)
         _, _, result, _ = _run(fixture)
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
 
 
 class TestCostEstimation:

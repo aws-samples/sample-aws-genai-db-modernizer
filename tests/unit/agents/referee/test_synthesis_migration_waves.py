@@ -10,6 +10,8 @@ from __future__ import annotations
 import pytest
 
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
+from src.contracts.synthesis_output import SynthesisOutputContract
+from src.shared.contract_versioning import current_version
 from src.storage.local_store import LocalArtifactStore
 
 DB = "shop"
@@ -186,7 +188,7 @@ class TestMigrationWaves:
         # #1169: the Migration map split and kept-in-sync counts (1.42)
         # #1148: routing.flagged, FlaggedUnservableQuery.source_tables (1.43)
         # #1149: relational.gaps risks (1.44)
-        assert report["contract_version"] == "1.44"
+        assert report["contract_version"] == current_version(SynthesisOutputContract)
         assert len(report["migration_waves"]) == 3
         assert report["migration_waves"][2]["engines"] == ["dynamodb"]
 

@@ -19,6 +19,7 @@ from src.contracts.referee_output import (
     RiskLevel,
     RiskType,
 )
+from src.shared.contract_versioning import current_version
 
 
 class TestRefereeOutputContractInstantiation:
@@ -162,7 +163,7 @@ class TestRefereeOutputContractInstantiation:
         contract = RefereeOutputContract(**data)
 
         # Assert
-        assert contract.contract_version == "2.0"
+        assert contract.contract_version == current_version(RefereeOutputContract)
 
 
 class TestRefereeOutputContractSerialization:

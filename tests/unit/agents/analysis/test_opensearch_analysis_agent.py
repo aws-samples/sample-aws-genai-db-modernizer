@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from src.agents.analysis.opensearch_analysis_agent import analyze_for_opensearch
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from src.tools.analysis.opensearch_analysis_tools import (
     analyze_opensearch_patterns,
     analyze_opensearch_use_cases,
@@ -532,7 +534,7 @@ class TestAnalyzeForOpenSearch:
         analysis_input = _make_analysis_input(fixture)
         result, _, _ = analyze_for_opensearch(analysis_input)
 
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
         assert result.agent_metadata.agent_name == "opensearch-analysis-agent"
         assert result.agent_metadata.target_database == "opensearch"
         assert isinstance(result.table_recommendations, list)
@@ -573,7 +575,7 @@ class TestAnalyzeForOpenSearch:
         )
         result, decision_trace, mermaid = analyze_for_opensearch(analysis_input)
 
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
         assert result.table_recommendations == []
         assert mermaid == ""
         assert isinstance(decision_trace, dict)

@@ -18,7 +18,9 @@ import pytest
 from src.agents.referee.assignment_overrides import apply_assignment_overrides
 from src.agents.referee.reality_check_handler import write_reality_check_result
 from src.contracts.assignment_models import Assignment
+from src.contracts.post_schema_router_output import RouterOutput
 from src.orchestrator.local_orchestrator import LocalOrchestrator
+from src.shared.contract_versioning import current_version
 from src.storage.local_store import LocalArtifactStore
 from tests.unit.agents.referee import test_moves_are_per_version as per_version
 from tests.unit.agents.referee.ledger_fakes import recorded_ledger
@@ -150,7 +152,7 @@ class TestThePostSchemaRouterVersionsCarryTheCurrentVersion:
         assert v2["source"] == "post_schema_routing"
         assert v2["contract_version"] == CURRENT
         router = store.read_json(f"{prefix}/post-schema-router/router_output.json")
-        assert router["contract_version"] == "1.4"
+        assert router["contract_version"] == current_version(RouterOutput)
 
     @pytest.mark.parametrize("stored", STORED_VERSIONS, ids=["pre-1.15", "1.14"])
     @pytest.mark.usefixtures("schema_contract_off")

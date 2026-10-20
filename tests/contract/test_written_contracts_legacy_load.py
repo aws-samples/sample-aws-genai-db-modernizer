@@ -31,6 +31,7 @@ from src.contracts.schema_revision_models import (
     SchemaRevisionRequest,
     SchemaVersionMeta,
 )
+from src.shared.contract_versioning import current_version
 
 _TS = "2026-10-01T12:00:00Z"
 _LATENCY = {"p50": 1.0, "p90": 2.0, "p95": 3.0, "p99": 4.0, "p999": 5.0, "min": 0.5, "max": 6.0}
@@ -63,163 +64,137 @@ _REVISION_REQUEST = {
     "new_patterns": [],
 }
 
-# model -> (the version a loaded file says today, a pre-#972 file it wrote)
-LEGACY_FILES: dict[type[BaseModel], tuple[str, dict[str, Any]]] = {
-    Assignment: (
-        "1.18",
-        {
-            "job_id": "job-1",
-            "version": 1,
-            "status": "auto_generated",
-            "timestamp": _TS,
-            "query_assignments": [
-                {
-                    "query_id": "q1",
-                    "assigned_engine": "dynamodb",
-                    "confidence": 80,
-                    "source_tables": ["app.users"],
-                    "assignment_reason": "key-value",
-                }
-            ],
-            "table_assignments": [],
-            "co_dependency_groups": [],
-            "validation_warnings": [],
+# model -> a file it wrote before #972 (no contract_version). The tests compare with
+# the model's current version, so a resolved bump needs no edit here (#1226).
+LEGACY_FILES: dict[type[BaseModel], dict[str, Any]] = {
+    Assignment: {
+        "job_id": "job-1",
+        "version": 1,
+        "status": "auto_generated",
+        "timestamp": _TS,
+        "query_assignments": [
+            {
+                "query_id": "q1",
+                "assigned_engine": "dynamodb",
+                "confidence": 80,
+                "source_tables": ["app.users"],
+                "assignment_reason": "key-value",
+            }
+        ],
+        "table_assignments": [],
+        "co_dependency_groups": [],
+        "validation_warnings": [],
+    },
+    ValidationResult: {"valid": True, "warnings": ["w"], "errors": []},
+    AgentQuestions: {
+        "agent_type": "schema-dynamodb",
+        "questions": [
+            {
+                "question_id": "q-1",
+                "category": "partition_key_strategy",
+                "question": "Which key?",
+            }
+        ],
+        "timestamp": _TS,
+    },
+    AgentAnswers: {"agent_type": "schema-dynamodb", "answers": {"q-1": "A"}, "timestamp": _TS},
+    PhaseProgression: {
+        "job_id": "job-1",
+        "current_phase": "analysis",
+        "phases": {"analysis": {"phase": "analysis", "status": "completed"}},
+    },
+    SchemaRevisionRequest: _REVISION_REQUEST,
+    SchemaVersionMeta: {
+        "version": 2,
+        "base_version": 1,
+        "initiated_by": "customer",
+        "timestamp": _TS,
+        "modifications": _REVISION_REQUEST,
+        "redesigned_groups": ["dynamodb"],
+        "verification": {"passed": True, "hard_errors": [], "warnings": []},
+        "changelog": [
+            {
+                "change_type": "removed",
+                "entity_type": "access_pattern",
+                "entity_id": "DDB-AP-1",
+                "description": "dropped",
+            }
+        ],
+    },
+    SchemaConfirmation: {"confirmed_version": 2, "confirmed_at": _TS, "engine": "dynamodb"},
+    RouterOutput: {
+        "job_id": "job-1",
+        "routings": [
+            {
+                "query_id": "q1",
+                "from_engine": "dynamodb",
+                "to_engine": "aurora_postgresql",
+                "reason": "unsupported pattern",
+            }
+        ],
+        "terminal_queries": [],
+        "cascade_depth": 1,
+    },
+    SchemaDesignGroupsManifest: {
+        "job_id": "job-1",
+        "database_name": "app",
+        "target_engine": "dynamodb",
+        "total_queries": 1,
+        "total_groups": 1,
+        "groups": [
+            {
+                "group_index": 0,
+                "group_name": "users",
+                "primary_tables": ["users"],
+                "query_count": 1,
+                "table_count": 1,
+                "input_file": "group_0.json",
+            }
+        ],
+    },
+    PatternResult: _PATTERN_RESULT,
+    InfrastructureManifest: _MANIFEST,
+    SeedManifest: {"resources": {"users": 10}, "total_items": 10, "duration_seconds": 1.5},
+    LoadTestOutput: {
+        "run_id": "run-1",
+        "version": 1,
+        "target_engine": "dynamodb",
+        "test_duration_minutes": 15.0,
+        "total_patterns_tested": 1,
+        "patterns_passed": 1,
+        "patterns_failed": 0,
+        "total_cost_usd": 0.1,
+        "infrastructure_deployed": _MANIFEST,
+        "seed_summary": {
+            "total_records": 10,
+            "entities": {"users": 10},
+            "relationships": {},
+            "seed_duration_seconds": 1.5,
+            "key_registry_path": "keys.json",
         },
-    ),
-    ValidationResult: ("1.0", {"valid": True, "warnings": ["w"], "errors": []}),
-    AgentQuestions: (
-        "1.1",
-        {
-            "agent_type": "schema-dynamodb",
-            "questions": [
-                {
-                    "question_id": "q-1",
-                    "category": "partition_key_strategy",
-                    "question": "Which key?",
-                }
-            ],
-            "timestamp": _TS,
-        },
-    ),
-    AgentAnswers: (
-        "1.1",
-        {"agent_type": "schema-dynamodb", "answers": {"q-1": "A"}, "timestamp": _TS},
-    ),
-    PhaseProgression: (
-        "1.1",
-        {
-            "job_id": "job-1",
-            "current_phase": "analysis",
-            "phases": {"analysis": {"phase": "analysis", "status": "completed"}},
-        },
-    ),
-    SchemaRevisionRequest: ("1.1", _REVISION_REQUEST),
-    SchemaVersionMeta: (
-        "1.1",
-        {
-            "version": 2,
-            "base_version": 1,
-            "initiated_by": "customer",
-            "timestamp": _TS,
-            "modifications": _REVISION_REQUEST,
-            "redesigned_groups": ["dynamodb"],
-            "verification": {"passed": True, "hard_errors": [], "warnings": []},
-            "changelog": [
-                {
-                    "change_type": "removed",
-                    "entity_type": "access_pattern",
-                    "entity_id": "DDB-AP-1",
-                    "description": "dropped",
-                }
-            ],
-        },
-    ),
-    SchemaConfirmation: (
-        "1.1",
-        {"confirmed_version": 2, "confirmed_at": _TS, "engine": "dynamodb"},
-    ),
-    RouterOutput: (
-        "1.4",
-        {
-            "job_id": "job-1",
-            "routings": [
-                {
-                    "query_id": "q1",
-                    "from_engine": "dynamodb",
-                    "to_engine": "aurora_postgresql",
-                    "reason": "unsupported pattern",
-                }
-            ],
-            "terminal_queries": [],
-            "cascade_depth": 1,
-        },
-    ),
-    SchemaDesignGroupsManifest: (
-        "1.1",
-        {
-            "job_id": "job-1",
-            "database_name": "app",
-            "target_engine": "dynamodb",
-            "total_queries": 1,
-            "total_groups": 1,
-            "groups": [
-                {
-                    "group_index": 0,
-                    "group_name": "users",
-                    "primary_tables": ["users"],
-                    "query_count": 1,
-                    "table_count": 1,
-                    "input_file": "group_0.json",
-                }
-            ],
-        },
-    ),
-    PatternResult: ("1.0", _PATTERN_RESULT),
-    InfrastructureManifest: ("1.0", _MANIFEST),
-    SeedManifest: ("1.0", {"resources": {"users": 10}, "total_items": 10, "duration_seconds": 1.5}),
-    LoadTestOutput: (
-        "1.0",
-        {
-            "run_id": "run-1",
-            "version": 1,
-            "target_engine": "dynamodb",
-            "test_duration_minutes": 15.0,
-            "total_patterns_tested": 1,
-            "patterns_passed": 1,
-            "patterns_failed": 0,
-            "total_cost_usd": 0.1,
-            "infrastructure_deployed": _MANIFEST,
-            "seed_summary": {
-                "total_records": 10,
-                "entities": {"users": 10},
-                "relationships": {},
-                "seed_duration_seconds": 1.5,
-                "key_registry_path": "keys.json",
-            },
-            "pattern_results": [_PATTERN_RESULT],
-            "assumptions": [],
-        },
-    ),
+        "pattern_results": [_PATTERN_RESULT],
+        "assumptions": [],
+    },
 }
 
 _IDS = [m.__name__ for m in LEGACY_FILES]
 
 
-@pytest.mark.parametrize(("model", "case"), LEGACY_FILES.items(), ids=_IDS)
+@pytest.mark.parametrize(("model", "legacy"), LEGACY_FILES.items(), ids=_IDS)
 def test_a_file_written_before_the_version_still_loads(
-    model: type[BaseModel], case: tuple[str, dict[str, Any]]
+    model: type[BaseModel], legacy: dict[str, Any]
 ) -> None:
-    version, legacy = case
+    version = current_version(model)
     assert "contract_version" not in legacy
     loaded = model.model_validate(json.loads(json.dumps(legacy)))
     assert loaded.contract_version == version  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize(("model", "case"), LEGACY_FILES.items(), ids=_IDS)
+@pytest.mark.parametrize(("model", "legacy"), LEGACY_FILES.items(), ids=_IDS)
 def test_written_back_it_carries_the_current_version(
-    model: type[BaseModel], case: tuple[str, dict[str, Any]]
+    model: type[BaseModel], legacy: dict[str, Any]
 ) -> None:
-    version, legacy = case
+    version = current_version(model)
     dumped = model.model_validate(legacy).model_dump(mode="json")
     assert dumped["contract_version"] == version
     assert model.model_validate(dumped).model_dump(mode="json") == dumped
@@ -227,6 +202,6 @@ def test_written_back_it_carries_the_current_version(
 
 @pytest.mark.parametrize("model", list(LEGACY_FILES), ids=_IDS)
 def test_a_version_that_is_not_major_minor_is_refused(model: type[BaseModel]) -> None:
-    _, legacy = LEGACY_FILES[model]
+    legacy = LEGACY_FILES[model]
     with pytest.raises(ValueError, match="contract_version"):
         model.model_validate({**legacy, "contract_version": "1.15.0"})

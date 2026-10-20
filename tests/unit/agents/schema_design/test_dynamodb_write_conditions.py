@@ -170,4 +170,5 @@ class TestContract:
             AccessPattern.model_validate(_put("PK=email", condition_expression=["x"]))
 
     def test_the_contract_version_moved(self):
-        assert DynamoDBModelOutputContract.model_fields["contract_version"].default == "1.1"
+        version = DynamoDBModelOutputContract.model_fields["contract_version"].default
+        assert tuple(map(int, version.split("."))) >= (1, 1)

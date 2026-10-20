@@ -222,7 +222,16 @@ else
   fail "lint: ci/lint.sh failed (last lines above)"
 fi
 
-# h. Tests.
+# h. Tests, and the version-pin check (a test that compares with a literal
+# contract version fails once the resolver moves it; about a minute).
+if [ "$quick" -eq 1 ]; then
+  note "skip version-pins: --quick"
+elif uv run python scripts/check_version_pins.py >"$tmp" 2>&1; then
+  note "ok   version-pins: $(tail -n 1 "$tmp")"
+else
+  sed -n '/^error/,$p' "$tmp" | head -n 20
+  fail "version-pins: a test pins a contract version (list above)"
+fi
 if [ "$quick" -eq 1 ]; then
   note "skip tests: --quick"
 elif ./ci/test.sh -q >"$tmp" 2>&1; then

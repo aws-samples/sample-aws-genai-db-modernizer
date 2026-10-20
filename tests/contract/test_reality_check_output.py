@@ -14,6 +14,7 @@ from src.contracts.reality_check_output import (
     SweepDecision,
     UniqueValueAssessment,
 )
+from src.shared.contract_versioning import current_version
 
 
 class TestUniqueValueAssessment:
@@ -261,7 +262,7 @@ class TestRealityCheckOutputContract:
     def test_contract_version_defaults(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)
         # #790: 2.0 removed lightweight_recommendations; #1006: 2.1 declares the pattern.
-        assert output.contract_version == "2.1"
+        assert output.contract_version == current_version(RealityCheckOutputContract)
 
     def test_lightweight_recommendations_is_not_a_field(self, valid_reality_check_data):
         output = RealityCheckOutputContract.model_validate(valid_reality_check_data)

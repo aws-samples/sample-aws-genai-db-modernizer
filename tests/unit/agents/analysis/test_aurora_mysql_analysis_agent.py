@@ -9,7 +9,9 @@ from src.agents.analysis.aurora_mysql_analysis_agent import (
     prepare_aurora_mysql_llm_input,
 )
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.analysis_output import TargetDatabase as OutputTargetDB
+from src.shared.contract_versioning import current_version
 
 # ==========================================================================
 # Fixtures
@@ -205,7 +207,7 @@ class TestAuroraMysqlBasic:
 
     def test_returns_valid_contract(self, ecommerce_fixture):
         result, trace, mermaid = analyze_for_aurora_mysql(ecommerce_fixture)
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
         assert result.agent_metadata.agent_name == "aurora-mysql-analysis-agent"
         assert result.agent_metadata.agent_version == "1.0.0"
         assert result.agent_metadata.target_database == OutputTargetDB.AURORA_MYSQL

@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from tests.fixtures.dynamodb_pattern_fixtures import (
     get_denormalizable_join_fixture,
     get_frequent_scan_fixture,
@@ -157,7 +158,7 @@ class TestGracefulDegradation:
         fixture = get_key_value_fixture()
         fixture.pop("metrics", None)
         _, _, result, _ = _run(fixture)
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
 
 
 class TestCostEstimation:

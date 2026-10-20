@@ -33,4 +33,5 @@ def test_a_malformed_id_is_refused() -> None:
 
 
 def test_the_minor_moved() -> None:
-    assert CollectorInput.model_fields["contract_version"].default == "3.1"
+    major, minor = map(int, CollectorInput.model_fields["contract_version"].default.split("."))
+    assert (major, minor) >= (3, 1)  # #963 moved it past 3.0

@@ -519,7 +519,7 @@ Leave the version, the Version History and both snapshots at main's while the pu
 uv run python scripts/resolve_contract_versions.py
 ```
 
-The merge queue refuses a pull request that still has a pending file, and `validate-contracts` fails a contract change since main with neither a version move nor a pending bump, even if you regenerated the snapshot. A contract the resolver cannot edit is refused by `bump_contract.py`, which says how to bump it by hand. If your branch is stacked on another that has since merged, delete that branch's pending file after rebasing; the resolver refuses it.
+In tests, compare a written contract's version with `current_version(Model)` (`src/shared/contract_versioning.py`), never a literal such as `"1.44"`: the resolver moves the number after review, and `validate-contracts` runs `scripts/check_version_pins.py`, which fails a test that pins one (#1226). The merge queue refuses a pull request that still has a pending file, and `validate-contracts` fails a contract change since main with neither a version move nor a pending bump, even if you regenerated the snapshot. A contract the resolver cannot edit is refused by `bump_contract.py`, which says how to bump it by hand. If your branch is stacked on another that has since merged, delete that branch's pending file after rebasing; the resolver refuses it.
 
 A contract written to disk declares its own version,
 `contract_version: str = Field(default="X.Y", pattern=r"^\d+\.\d+$", ...)`,

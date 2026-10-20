@@ -21,6 +21,7 @@ from src.agents.schema_design.group_input import build_group_input
 from src.agents.schema_design.handler import prepare_schema_design_input
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from src.storage.local_store import LocalArtifactStore
 from src.tools.schema.base_schema_agent import AgentInputPaths
 from src.tools.schema.dynamodb_schema_agent import load_agent_input
@@ -67,7 +68,7 @@ def _analysis(collector: dict) -> tuple[dict, dict]:
 
 def test_the_analysis_carries_each_key_scoped_write_and_the_key_it_needs() -> None:
     analysis, _ = _analysis(_collector())
-    assert analysis["contract_version"] == "2.2"
+    assert analysis["contract_version"] == current_version(AnalysisOutputContract)
     assert analysis["key_scoped_writes"] == [
         {
             "query_id": "w-items-by-order",

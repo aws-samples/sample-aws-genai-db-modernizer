@@ -17,6 +17,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.contracts.collector_output import CollectorOutputContract
+from src.shared.contract_versioning import current_version
 
 
 class TestMissingRequiredFields:
@@ -39,7 +40,7 @@ class TestMissingRequiredFields:
         contract = CollectorOutputContract(**data)
 
         # Assert - Should use default value
-        assert contract.contract_version == "3.4"
+        assert contract.contract_version == current_version(CollectorOutputContract)
 
     def test_missing_job_id_raises_validation_error(self, minimal_collector_output_data):
         """

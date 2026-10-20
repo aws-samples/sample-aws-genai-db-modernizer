@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.contracts.collector_output import CollectorOutputContract
+from src.shared.contract_versioning import current_version
 
 
 def _data(**metadata: Any) -> dict[str, Any]:
@@ -42,7 +43,7 @@ def _data(**metadata: Any) -> dict[str, Any]:
 
 def test_a_collection_written_before_3_2_loads_with_none_in_use() -> None:
     contract = CollectorOutputContract(**_data())
-    assert contract.contract_version == "3.4"
+    assert contract.contract_version == current_version(CollectorOutputContract)
     assert contract.metadata.engines_in_use == []
 
 

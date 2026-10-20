@@ -337,6 +337,13 @@ jobs:
             against=(--against "$base")
           fi
           uv run python scripts/resolve_contract_versions.py --check $REQUIRE_RESOLVED "${against[@]}"
+      - name: Check no test pins a contract version
+        # Bumps every contract one MINOR in a scratch worktree, as the resolver does
+        # after the last rebase, and runs the tests that mention a contract version,
+        # so a test that compares with a literal version fails here, before review,
+        # not on the resolved branch (#1226).
+        # About 4 minutes on a hosted runner, under the e2e and test-shard wall time.
+        run: uv run python scripts/check_version_pins.py -n auto
 
   ui-build:
     runs-on: ubuntu-latest

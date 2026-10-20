@@ -279,4 +279,6 @@ class TestFieldShadowingResolution:
         # Verify the default contract version in the model is at least 3.0
         # (3.1 as of #156: a MINOR bump for an optional field and enum value).
         default_version = CollectorOutputContract.model_fields["contract_version"].default
-        assert default_version == "3.4", "Default contract version should be 3.4"
+        assert (
+            int(default_version.split(".")[0]) >= 3
+        ), "Default contract version should be 3.x or later"

@@ -22,6 +22,7 @@ from src.agents.analysis.documentdb_analysis_agent import (
 )
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from src.tools.analysis.documentdb_analysis_tools import (
     DenormalizationStrategy,
     LlmDocumentDBOutput,
@@ -73,7 +74,7 @@ class TestRunDeterministicUsesFallbackEmbedding:
         inp = _make_input()
         result, trace, mermaid = analyze_for_documentdb_deterministic(inp)
         assert isinstance(result, AnalysisOutputContract)
-        assert result.contract_version == "2.2"
+        assert result.contract_version == current_version(AnalysisOutputContract)
 
     def test_returns_decision_trace_dict(self):
         """Result[1] is a dict with the expected trace keys."""
@@ -302,7 +303,7 @@ class TestBackwardCompatibility:
             inp = _make_input()
             contract, _, _ = analyze_for_documentdb(inp)
         assert isinstance(contract, AnalysisOutputContract)
-        assert contract.contract_version == "2.2"
+        assert contract.contract_version == current_version(AnalysisOutputContract)
 
     def test_second_element_is_decision_trace(self):
         with patch.dict("os.environ", {"ENABLE_LLM_ADVISOR": "false"}):

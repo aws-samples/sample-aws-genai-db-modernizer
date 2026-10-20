@@ -13,6 +13,7 @@ from src.contracts.documentdb_model_output import (
     MigrationNote,
     UnsupportedPattern,
 )
+from src.shared.contract_versioning import current_version
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -81,7 +82,7 @@ class TestDocumentDBModelOutputContract:
     def test_minimal_valid(self) -> None:
         contract = DocumentDBModelOutputContract.model_validate(_minimal_contract())
         assert contract.target_engine == "documentdb"
-        assert contract.contract_version == "1.0"
+        assert contract.contract_version == current_version(DocumentDBModelOutputContract)
         assert len(contract.collections) == 1
         assert len(contract.access_patterns) == 1
 

@@ -10,6 +10,7 @@ This module tests the CollectorOutputContract Pydantic model to ensure:
 import pytest
 
 from src.contracts.collector_output import CollectorOutputContract
+from src.shared.contract_versioning import current_version
 
 
 class TestCollectorOutputContractInstantiation:
@@ -259,7 +260,7 @@ class TestCollectorOutputContractInstantiation:
         contract = CollectorOutputContract(**data)
 
         # Assert
-        assert contract.contract_version == "3.4"
+        assert contract.contract_version == current_version(CollectorOutputContract)
 
 
 class TestCollectorOutputContractSerialization:

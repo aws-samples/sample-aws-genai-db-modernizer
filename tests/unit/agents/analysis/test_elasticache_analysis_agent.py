@@ -11,6 +11,8 @@ import pytest
 
 from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
 from src.contracts.analysis_input import AnalysisInput, TargetDatabase
+from src.contracts.analysis_output import AnalysisOutputContract
+from src.shared.contract_versioning import current_version
 from tests.fixtures.gaming_collector_output import get_gaming_collector_output
 from tests.fixtures.generate_synthetic_collector_output import generate_collector_output
 from tests.fixtures.redis_pattern_fixtures import (
@@ -73,7 +75,7 @@ def test_redis_analysis_basic():
     result = analyze_for_elasticache(analysis_input)[0]
 
     # Assertions
-    assert result.contract_version == "2.2"
+    assert result.contract_version == current_version(AnalysisOutputContract)
     assert result.agent_metadata.agent_name == "elasticache-analysis-agent"
     assert result.agent_metadata.target_database.value == "elasticache"
     assert len(result.table_recommendations) > 0
