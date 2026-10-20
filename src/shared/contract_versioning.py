@@ -239,6 +239,145 @@ def is_model_io(path: str) -> bool:
     return any(pattern.search(path) for pattern in _MODEL_IO)
 
 
+# Internal artifacts (ADR-008 Decision 1, amendment of 2026-10-20, #1192): every other
+# JSON file a run writes that is neither a registered contract (below) nor model I/O
+# (above), with why it is not a contract. Callers may not rely on their shape. A
+# file other phases read back across runs is typed in its own issue and then moves
+# to the registry. (path pattern, reason), compiled by ``_internal`` below.
+# ``tests/contract/test_declared_artifacts.py`` fails on a written JSON file in none
+# of the three lists, and on an entry of any of them that no write or run produces.
+INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    # Collect
+    (
+        r"collector/sql_shadow\.json",
+        "parser comparison (sqlglot facade vs regex table references, #557): a "
+        "diagnostic rewritten every collect, read by no phase",
+    ),
+    # Analysis
+    (
+        r"analysis-(?!dynamodb/)[^/]+/decision-trace\.json",
+        "an untyped analysis decision trace (DynamoDB's is a contract): each engine's "
+        "is typed by #1188, #1189, #1190 and #1191",
+    ),
+    (
+        r"analysis-[^/]+/er-diagram\.json",
+        "the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis",
+    ),
+    (
+        r"analysis-[^/]+/partial\.json",
+        "external-mode analysis held for the model's advisor pass, replaced at finalize",
+    ),
+    # Assignment and reality check
+    (
+        r"assignment/v\d+/access_patterns\.json",
+        "each query's access-pattern class and scores as routing scored them (#728, "
+        "#936): an audit record written with its assignment version",
+    ),
+    (
+        r"decisions/assignment_(?:review|approval)\.json",
+        "recorded approvals (the assignment review and approval): typed by #1257",
+    ),
+    (
+        r"reality-check/awaiting_llm\.json",
+        "external-mode marker that a reality-check preview waits for the model, read by "
+        "the assignment lineage and the local API's job status: typed by #1267",
+    ),
+    (
+        r"assignment/review/pending_hitl\.json",
+        "AWS Transform transport state: the pending review task to resume",
+    ),
+    # Schema design and post-schema routing
+    (
+        r"schema-[^/]+/(?:v\d+/)?design_trace\.json",
+        "the schema design trace (model calls, merge notes, PE review): typed by #1258",
+    ),
+    (
+        r"schema-[^/]+/v\d+/design_trace_group_\d+\.json",
+        "one DynamoDB group's design trace, merged into design_trace.json: typed by #1258",
+    ),
+    (
+        r"schema-[^/]+/v\d+/merge_record\.json",
+        "the last --merge of the DynamoDB group drafts (draft hashes, errors)",
+    ),
+    (
+        r"schema-[^/]+/v\d+/changelog\.json",
+        "a schema revision's changelog, shown with the revision",
+    ),
+    (
+        r"schema-[^/]+/v\d+/revision_context\.json",
+        "a schema revision's context for the designer, rewritten per revision",
+    ),
+    (
+        r"post-schema-router/external_run\.json",
+        "external-mode post-schema routing pass record (depth, engines to design again)",
+    ),
+    # Load test
+    (r"load-test-[^/]+/v\d+/config\.json", "the load test's configuration as run"),
+    (r"load-test-[^/]+/v\d+/result\.json", "the load test runner's raw result"),
+    (r"load-test-[^/]+/v\d+/k6_diagnostics\.json", "the load test runner's diagnostics"),
+    # Job bookkeeping
+    (
+        r"^[^/]+/[^/]+/_meta\.json",
+        "the local API runner's own job record (start time, request input), read only by "
+        "the local API and its stored-input redaction, never by a phase",
+    ),
+    (
+        r"^[^/]+/[^/]+/_status\.json",
+        "the local API runner's job status marker (cancelled, failed)",
+    ),
+    (
+        r"^[^/]+/[^/]+/(?:collector|referee-triage|referee-synthesis|assignment-resolver"
+        r"|reality-check|schema-design|schema-split|schema-merge|load-test|{engines})"
+        r"/error\.json",
+        "a container agent's failure record, under its agent type",
+    ),
+    (
+        r"_logs/prose_style_rejections-v\d+\.json",
+        "a log of the synthesis prose a style check rejected, per assignment version",
+    ),
+    (r"uploads/input_key\.json", "AWS Transform transport state: the resolved input location"),
+    (
+        r"_pending/[^/]+/upload\.json",
+        "AWS Transform transport state: a pending upload task, before the job folder exists",
+    ),
+    (
+        r"\.meta/_stored-input-redaction-v\d+\.json",
+        "the stored-input redaction marker (not a job's progression)",
+    ),
+)
+
+
+@cache
+def _internal() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """Each internal entry's pattern, compiled. A pattern starting with ``^`` is pinned
+    to a path relative to the artifact root (``<db>/<job>/...``); the others match the
+    end of a path at a ``/`` boundary, like the registry's. ``{engines}`` stands for
+    every catalog engine id."""
+    from src.shared.catalog import engine_ids
+
+    engines = "|".join(re.escape(e) for e in sorted(engine_ids()))
+    compiled = []
+    for pattern, _ in INTERNAL_ARTIFACTS:
+        regex = pattern.replace("{engines}", engines)
+        compiled.append(
+            (pattern, re.compile(rf"{regex}$" if regex.startswith("^") else rf"(?:^|/){regex}$"))
+        )
+    return tuple(compiled)
+
+
+def internal_artifact_entry(path: str) -> str | None:
+    """The ``INTERNAL_ARTIFACTS`` pattern ``path`` matches, or ``None``."""
+    for pattern, regex in _internal():
+        if regex.search(path):
+            return pattern
+    return None
+
+
+def is_internal_artifact(path: str) -> bool:
+    """``True`` for a declared internal artifact (see ``INTERNAL_ARTIFACTS``)."""
+    return internal_artifact_entry(path) is not None
+
+
 _COLLECTOR = "src.contracts.collector_output:CollectorOutputContract"
 _SYNTHESIS = "src.contracts.synthesis_output:SynthesisOutputContract"
 

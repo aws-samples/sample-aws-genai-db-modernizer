@@ -10,6 +10,7 @@ This directory contains the formal contract specifications for all agents in the
 | -------------------------------------------------- | ------------------------------------------------------------ | ----------------------------- |
 | [agent-contracts-spec.md](agent-contracts-spec.md) | Main specification with overview, versioning, and guidelines | All developers                |
 | [QUICK_START.md](QUICK_START.md)                   | Quick reference for common tasks                             | Developers                    |
+| [artifacts.md](artifacts.md) | Every JSON file a job writes: registered contracts, model I/O and internal artifacts | Developers, library callers |
 | [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)       | Pydantic model implementations (source code)                 | Developers, Tools             |
 | [schemas/](schemas/README.md)                      | JSON Schema definitions (reference only)                     | External tools, documentation |
 

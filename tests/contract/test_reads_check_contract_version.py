@@ -541,6 +541,11 @@ PATH_HINTS: dict[tuple[str, str], str] = {
         "src/agents/analysis/decision_trace.py",
         "key",
     ): "db/job/analysis-dynamodb/decision-trace.json",
+    # The group merger writes the merged design trace under its caller's version
+    # folder (#1192's declared-artifact scan).
+    ("src/agents/schema_design/group_merger.py", "base_key"): "db/job/schema-dynamodb/v1",
+    # The container entrypoint's agent type, a module global set from the environment.
+    ("src/agents/entrypoint.py", "AGENT_TYPE"): "collector",
 }
 
 
