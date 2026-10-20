@@ -16,7 +16,9 @@ An `AccessDeniedException` or a similar error from `--llm-mode bedrock` usually 
 
 - **PostgreSQL:** `collect-postgresql.sql` needs the `pg_stat_statements` extension enabled on the database (`CREATE EXTENSION IF NOT EXISTS pg_stat_statements;`, needs superuser or `rds_superuser` on RDS) and `SELECT` on `information_schema`.
 - **MySQL/MariaDB:** `collect-mysql.sql` needs `performance_schema` enabled (on by default since MySQL 5.6) and `SELECT` on `information_schema` and `performance_schema`.
-- Both scripts are read-only. If a plain `SELECT` works but the collection script fails, the cause is usually a missing grant on one of those schemas, not the credentials.
+- **SQL Server:** `collect-sqlserver.sql` needs SQL Server 2016 or later, `SELECT` on the `sys` catalog views and DMVs, and `VIEW SERVER STATE` for the query section (without it the queries section is empty but everything else is collected).
+- **Oracle:** `collect-oracle.sql` needs Oracle 12.2 or later and `SELECT` on the `V$` views, the `ALL_*` catalog views and `DBA_SEGMENTS` (grant `SELECT_CATALOG_ROLE` for full visibility).
+- Every script is read-only. If a plain `SELECT` works but the collection script fails, the cause is usually a missing grant on one of those views, not the credentials.
 
 ## Something else
 

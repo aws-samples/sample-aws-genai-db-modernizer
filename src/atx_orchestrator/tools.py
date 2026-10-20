@@ -342,6 +342,15 @@ def declare_pipeline_plan(job_id: str, database_name: str) -> str:
     )
 
 
+# The upload panel's text: names the collection script of every supported source
+# engine (scripts/collect-*.sql, #741).
+COLLECTION_UPLOAD_DESCRIPTION = (
+    "Upload the offline collection JSON produced by the collection script for your "
+    "source engine (collect-postgresql.sql, collect-mysql.sql, collect-sqlserver.sql "
+    "or collect-oracle.sql output). The assessment runs on this file."
+)
+
+
 def declare_plan_and_request_upload(job_id: str) -> str | None:
     """Declare the pipeline plan and raise the BLOCKING collection-upload HITL.
 
@@ -382,11 +391,7 @@ def declare_plan_and_request_upload(job_id: str) -> str | None:
 
     hitl_task_id = _hitl.raise_file_upload(
         title="Upload your database collection",
-        description=(
-            "Upload the offline collection JSON produced by the collection script "
-            "(e.g. collect-postgresql.sql / collect-mysql.sql output). The assessment "
-            "runs on this file."
-        ),
+        description=COLLECTION_UPLOAD_DESCRIPTION,
         label="Database collection JSON",
         step_id=step_id,
         tag="collection-upload",

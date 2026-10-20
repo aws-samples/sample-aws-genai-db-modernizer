@@ -185,11 +185,19 @@ Workflow:
          database to produce a collection JSON. The scripts ship with this project:
            * PostgreSQL:
              psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql > my-collection.json
-           * MySQL:
+           * MySQL or MariaDB:
              mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
-         Note the scripts are read-only, do not modify the database, and need SELECT
-         access to information_schema plus pg_stat_statements (PostgreSQL) or
-         performance_schema (MySQL). If they are unsure which engine, ask.
+           * SQL Server (2016 or later), with the password in the SQLCMDPASSWORD
+             environment variable rather than on the command line:
+             sqlcmd -S <host>,<port> -U <user> -d <database> -C -y 0 -i scripts/collect-sqlserver.sql > my-collection.json
+           * Oracle (12.2 or later):
+             sqlplus -S <user>/<password>@<host>:<port>/<service> @scripts/collect-oracle.sql > my-collection.json
+         Note the scripts are read-only and do not modify the database. They need
+         SELECT access to information_schema plus pg_stat_statements (PostgreSQL) or
+         performance_schema (MySQL); SELECT on the sys catalog views plus VIEW SERVER
+         STATE (SQL Server); or SELECT_CATALOG_ROLE (Oracle). Db2 has no collection
+         script yet: say so rather than suggest a command. If they are unsure which
+         engine, ask.
       2. Upload the resulting JSON file to this job's file uploads.
       3. Tell you the database name.
     Invite them to reply with something like "I have uploaded my results, the
@@ -347,8 +355,9 @@ Key points:
     by run_assessment_core_via_a2a. You never construct, pass, or ask for a
     storage path, and you do not copy or re-upload the file yourself. If the
     customer has not produced a collection yet, tell them to run the collection
-    script for their engine (e.g. collect-postgresql.sql / collect-mysql.sql) and
-    upload the resulting JSON in the panel. Do not quote an S3 key.
+    script for their engine (collect-postgresql.sql, collect-mysql.sql,
+    collect-sqlserver.sql or collect-oracle.sql) and upload the resulting JSON in
+    the panel. Do not quote an S3 key.
   - table_mappings and query_groups are derived from schema-design output. The
     workflow runs schema-design (step 4) before synthesis, so they populate
     normally; they are empty only for an engine whose design produced no tables.

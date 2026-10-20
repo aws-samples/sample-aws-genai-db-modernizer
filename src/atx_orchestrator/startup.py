@@ -49,9 +49,12 @@ To get started, there are three quick steps:
 
 1. Run the read-only collection script for your source engine against your \
 database to produce a collection file. The scripts ship with this project and \
-only need SELECT access — they do not modify your database:
+only read your database's catalog and statistics views (SQL Server also needs \
+VIEW SERVER STATE) — they do not modify your database:
    - PostgreSQL: `psql ... -f scripts/collect-postgresql.sql > my-collection.json`
-   - MySQL: `mysql ... < scripts/collect-mysql.sql > my-collection.json`
+   - MySQL or MariaDB: `mysql ... < scripts/collect-mysql.sql > my-collection.json`
+   - SQL Server: `sqlcmd ... -i scripts/collect-sqlserver.sql > my-collection.json`
+   - Oracle: `sqlplus ... @scripts/collect-oracle.sql > my-collection.json`
 2. Upload the resulting JSON file using the **upload panel above** (the first \
 step of this job). That panel is where the assessment reads your collection.
 3. Tell me the name of the database you collected.

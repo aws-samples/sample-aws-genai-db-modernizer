@@ -40,11 +40,18 @@ Run the read-only collection script for your database engine instead of the samp
 # PostgreSQL (needs the pg_stat_statements extension)
 psql -U <user> -h <host> -d <database> -t -A -f scripts/collect-postgresql.sql > my-collection.json
 
-# MySQL (needs performance_schema)
+# MySQL or MariaDB (needs performance_schema)
 mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-collection.json
+
+# SQL Server 2016 or later (needs VIEW SERVER STATE for the query section);
+# sqlcmd reads the password from SQLCMDPASSWORD, so it stays off the command line
+sqlcmd -S <host>,<port> -U <user> -d <database> -C -y 0 -i scripts/collect-sqlserver.sql > my-collection.json
+
+# Oracle 12.2 or later (needs SELECT_CATALOG_ROLE)
+sqlplus -S <user>/<password>@<host>:<port>/<service> @scripts/collect-oracle.sql > my-collection.json
 ```
 
-The scripts only run `SELECT` on `information_schema`, `pg_stat_statements` or `performance_schema`. They never change your database. Then run `/modernize` (or `/collect`) and point it at the generated file instead of the sample.
+Db2 has no collection script yet. The scripts only run `SELECT` on catalog and statistics views (`information_schema`, `pg_stat_statements`, `performance_schema`, the SQL Server `sys` views, the Oracle `V$` and `ALL_*` views). They never change your database. Then run `/modernize` (or `/collect`) and point it at the generated file instead of the sample.
 
 Every ingestion path (`/modernize`, `scripts/run_assessment.py --file`, `scripts/run_collect.py --file`, the local UI upload, and the AWS Transform upload) rejects a collection above 100 MB or above 50,000 tables or 20,000 queries, with a clear error naming the limit that was hit. These defaults comfortably cover the bundled samples and the larger query collections proposed in [#384](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/384); raise them with the `MODERNIZER_MAX_UPLOAD_BYTES`, `MODERNIZER_MAX_UPLOAD_TABLES`, and `MODERNIZER_MAX_UPLOAD_QUERIES` environment variables.
 
