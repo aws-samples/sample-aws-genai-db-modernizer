@@ -18,6 +18,7 @@ Stages (DDL mode):
 """
 
 import logging
+import math
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -45,6 +46,7 @@ from src.contracts.collector_output import (
     RDSInstanceMetadata,
     Schema,
     SourceDatabase,
+    SourceHost,
     Table,
     Trigger,
     TriggerEventType,
@@ -52,6 +54,7 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.source_cache import percent_or_none
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.aws.rds_tools import (
     get_cloudwatch_metrics,
@@ -384,7 +387,9 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     _enrich_patterns_from_pi_and_cw(queries, pi_counters, cw_raw, em_data)
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
-    metrics = _build_metrics(queries, cw_metrics)
+    metrics = _build_metrics(
+        queries, cw_metrics, source_host=_build_source_host({"global_stats": pi_counters})
+    )
 
     return _build_output(
         inp,
@@ -426,7 +431,9 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     _enrich_patterns_from_pi_and_cw(queries, pi_counters, cw_raw, em_data)
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
-    metrics = _build_metrics(queries, cw_metrics)
+    metrics = _build_metrics(
+        queries, cw_metrics, source_host=_build_source_host({"global_stats": pi_counters})
+    )
 
     return _build_output(
         inp,
@@ -1075,7 +1082,6 @@ def _enrich_patterns_from_pi_and_cw(
         return
 
     # PI counter metrics → cross-DB fields
-    cache_hit = pi_counters.get("cache_hit_ratio_pct")
     blks_hit = pi_counters.get("buffer_pool_hits")
     blks_read = pi_counters.get("buffer_pool_reads_from_disk")
     logical_reads = pi_counters.get("buffer_pool_read_requests")
@@ -1094,9 +1100,11 @@ def _enrich_patterns_from_pi_and_cw(
     w_iops = write_iops.get("avg", 0) if isinstance(write_iops, dict) else 0
     rw_ratio = round(r_iops / (r_iops + w_iops) * 100, 1) if (r_iops + w_iops) > 0 else None
 
+    # The instance-wide buffer-cache hit ratio is not copied onto the queries (#1197):
+    # a query's ``cache_hit_ratio_pct`` is only ever its own figure, and the instance's
+    # ratio travels once, unrounded, in ``metrics.source_host`` (``_build_source_host``),
+    # so a cost estimate can say which of the two it used.
     for p in queries.query_patterns:
-        if p.cache_hit_ratio_pct is None and cache_hit is not None:
-            p.cache_hit_ratio_pct = round(cache_hit, 2)
         if p.shared_blks_hit is None and blks_hit is not None:
             p.shared_blks_hit = int(blks_hit)
         if p.shared_blks_read is None and blks_read is not None:
@@ -1131,7 +1139,64 @@ def _enrich_patterns_from_pi_and_cw(
                     p.avg_cpu_time_ms = round(avg_cpu_per_query, 4)
 
 
-def _build_metrics(queries: Queries, cw: RDSCloudWatchMetrics | None) -> Metrics:
+def _whole(value: object) -> int | None:
+    try:
+        number = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number >= 0 else None
+
+
+def _gigabytes(value: object) -> float | None:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _build_source_host(parsed: dict) -> SourceHost | None:
+    """The instance-wide buffer-cache and host figures of a parsed collection (#1197).
+
+    ``parsed`` is :func:`src.tools.database.offline_parser.parse_offline_collection`'s
+    output, or a live collector's ``{"global_stats": pi_counters}`` (the database's own
+    global stats, or the Performance Insights counters, with the same keys). The hit
+    ratio is computed from the counts, not taken from a percent rounded to 2 places
+    (wordpress' 99.99993% would read 100%, a read never missing). No reads, or more
+    reads from disk than reads, is no ratio rather than 0%. Only when the counts are
+    not reported at all is the given ``cache_hit_ratio_pct`` used (Performance
+    Insights reports the rate itself). A host figure that is not a number in range is
+    left out. None when nothing usable was reported.
+    """
+    stats = parsed.get("global_stats") or {}
+    os_stats = parsed.get("os_stats") or {}
+    requests = _whole(stats.get("buffer_pool_read_requests"))
+    from_disk = _whole(stats.get("buffer_pool_reads_from_disk"))
+    ratio = None
+    if requests and from_disk is not None and from_disk <= requests:
+        ratio = round((requests - from_disk) / requests * 100, 6)
+    else:
+        if stats.get("buffer_pool_read_requests") is None:
+            ratio = percent_or_none(stats.get("cache_hit_ratio_pct"))
+        requests = from_disk = None
+    host = SourceHost(
+        buffer_cache_hit_ratio_pct=ratio,
+        buffer_cache_read_requests=requests,
+        buffer_cache_reads_from_disk=from_disk,
+        cpu_count=_whole(os_stats.get("cpu_count")) or None,
+        physical_memory_gb=_gigabytes(os_stats.get("physical_memory_gb")),
+        committed_memory_gb=_gigabytes(os_stats.get("committed_memory_gb")),
+    )
+    if all(v is None for v in host.model_dump().values()):
+        return None
+    return host
+
+
+def _build_metrics(
+    queries: Queries,
+    cw: RDSCloudWatchMetrics | None,
+    source_host: SourceHost | None = None,
+) -> Metrics:
     patterns = queries.query_patterns
     times = [p.execution_time_ms_avg for p in patterns if p.execution_time_ms_avg is not None]
     p95s = [p.execution_time_ms_p95 for p in patterns if p.execution_time_ms_p95 is not None]
@@ -1160,7 +1225,7 @@ def _build_metrics(queries: Queries, cw: RDSCloudWatchMetrics | None) -> Metrics
                 cw.network_transmit_throughput_mbps.avg or 0
             )
 
-    return Metrics(performance_metrics=perf, rds_cloudwatch_metrics=cw)
+    return Metrics(performance_metrics=perf, rds_cloudwatch_metrics=cw, source_host=source_host)
 
 
 # ---------------------------------------------------------------------------

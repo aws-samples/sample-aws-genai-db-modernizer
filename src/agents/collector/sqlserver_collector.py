@@ -21,6 +21,7 @@ from src.agents.collector.mysql_collector import (
     _build_cloudwatch,
     _build_cred_mgr,
     _build_rds_metadata,
+    _build_source_host,
     _build_tables_from_ddl,
     _collect_aws_raw,
     _collect_offline,
@@ -205,6 +206,8 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
+    # #1197: the instance-wide buffer-cache hit ratio, kept once, not copied per query.
+    metrics.source_host = _build_source_host({"global_stats": pi_counters})
 
     elapsed = time.monotonic() - start
     version_str = _parse_sqlserver_version(meta_raw["version"])
@@ -262,6 +265,8 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
+    # #1197: the instance-wide buffer-cache hit ratio, kept once, not copied per query.
+    metrics.source_host = _build_source_host({"global_stats": pi_counters})
 
     elapsed = time.monotonic() - start
     return CollectorOutputContract(

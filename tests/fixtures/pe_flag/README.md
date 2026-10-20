@@ -18,11 +18,11 @@ On the deterministic wordpress run (`--llm-mode none` up to the approved assignm
 
 | Step | Expected |
 |---|---|
-| First assignment | Tied between DynamoDB and DocumentDB (78 each) |
-| Reality check (v2) | DocumentDB removed; the query stays on DynamoDB |
+| First assignment | DocumentDB (79 against DynamoDB's 78; a tie at 78 before #1197 billed DocumentDB reads at the source's buffer-cache hit ratio, bounded to 1% billed on wordpress) |
+| Reality check (v2) | DocumentDB removed; the query is consolidated onto DynamoDB |
 | DynamoDB schema design on v2 | 39 queries, 4 groups; every group's review returns the recording, so `schema-dynamodb/v2/design_trace.json` carries the flag four times (once per group) |
 | Post-schema router | Moves the query once, to Aurora MySQL, score 57 against 78 on DynamoDB, as one `post_schema_flag` Move (rule `flag.capability_gap`, actor `model_flag`); no terminal query |
-| Removed engine | DocumentDB scores 78 but stays out: a flag never brings back a removed engine |
+| Removed engine | DocumentDB scores 79 but stays out: a flag never brings back a removed engine |
 | v3 | Status `rerouted_after_approval`; only this query changed engine |
 | Redesign on v3 | Both engines the move touched (DynamoDB and Aurora MySQL) are designed again; DynamoDB's design no longer lists the query; no further reroute (no v4) |
 | Deliverables | `report.json` `post_schema_reroutes` lists it (approved version 2); the engineering report and the executive report PDF have "Moved after approval (1 query)" with the override path |

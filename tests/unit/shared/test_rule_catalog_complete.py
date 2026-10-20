@@ -306,6 +306,12 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"MAX_QUERIES_PER_CALL"}),
         _BUDGET + ": the model batch size of a consolidation validation call",
     ),
+    "src/shared/source_cache.py": (
+        frozenset({"MIN_BILLED_MISS_SHARE"}),
+        "a pricing bound the maintainer set as one constant here (#1197, decisions on "
+        "#1222, 2026-10-22): the least share of every read billed as a miss on an engine "
+        "that bills reads on a buffer-cache miss only, 1%",
+    ),
     "src/agents/referee/transaction_shape.py": (
         frozenset({"TRANSACTION_MAX_ITEMS"}),
         _DETECTION + ": DynamoDB's 100-item transaction quota bounds the shape (#493)",

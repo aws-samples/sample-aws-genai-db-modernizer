@@ -26,7 +26,7 @@ from tests.e2e.pipeline import PipelineResult
 pytestmark = pytest.mark.deterministic
 
 # Each sample's projected monthly cost in whole dollars ($505.02, $535.32, $435.08).
-WHOLE_DOLLARS = {"wordpress": 505, "discourse": 535, "trailgear": 435}
+WHOLE_DOLLARS = {"wordpress": 505, "discourse": 534, "trailgear": 435}
 
 
 def _report(run: PipelineResult) -> dict:

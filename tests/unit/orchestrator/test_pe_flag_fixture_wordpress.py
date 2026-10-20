@@ -20,9 +20,10 @@ loop (``SchemaDesignRunner``), with the two model calls replayed:
   once.
 
 No test calls a model. The expected outcome, and the commands for a live run,
-are in ``tests/fixtures/pe_flag/README.md``. The query first tied between
-DynamoDB and DocumentDB (78 each); the reality check removed DocumentDB and
-kept the query on DynamoDB. The flag gates DynamoDB, and the shared scorer
+are in ``tests/fixtures/pe_flag/README.md``. The query is first assigned to
+DocumentDB (79 against DynamoDB's 78; a tie at 78 before #1197, which bills its
+DocumentDB reads at the source's buffer-cache hit ratio, bounded); the reality check removed
+DocumentDB and consolidated the query onto DynamoDB. The flag gates DynamoDB, and the shared scorer
 sends it to Aurora MySQL, the best engine the plan keeps: DocumentDB scores
 higher but was removed, and a flag never brings back a removed engine
 (maintainer decision, 2026-10-14). v3 records the move, both engines the move
@@ -233,6 +234,8 @@ class TestTheRouterMovesItByScore:
         assert {q for q, e in engine_of.items() if before[q] != e} == {flagged["id"]}
         assert flagged["v3"]["status"] == "rerouted_after_approval"
 
+    # #1197 re-anchored where DynamoDB's score is read; the behaviour is main's.
+    @pytest.mark.passes_on_main
     def test_the_move_is_a_post_schema_flag_move_with_the_scorers_scores(self, flagged) -> None:
         [routing] = flagged["router"]["routings"]
         assert (routing["query_id"], routing["from_engine"], routing["to_engine"]) == (
@@ -244,9 +247,16 @@ class TestTheRouterMovesItByScore:
         ladder = {c["engine"]: c for c in routing["evidence"]["candidates"]}
         assert ladder["dynamodb"]["gate"] == "model_flag"
         # The scores are the run's own: DynamoDB's is the approved assignment's
-        # (ignoring the flag), Aurora MySQL's is the router's ladder entry.
-        [qa] = [q for q in flagged["v2"]["query_assignments"] if q["query_id"] == flagged["id"]]
-        assert routing["score_before"] == qa["confidence"]
+        # (ignoring the flag), the score the reality check's Move onto DynamoDB
+        # recorded (#1197: the query reached DynamoDB by consolidation from DocumentDB,
+        # so its ``confidence`` still shows DocumentDB's 79); Aurora MySQL's is the
+        # router's ladder entry.
+        [onto] = [
+            m
+            for m in flagged["v2"]["moves"]
+            if m["query_id"] == flagged["id"] and m["to_engine"] == "dynamodb"
+        ]
+        assert routing["score_before"] == onto["score_after"]
         assert routing["score_after"] == ladder["aurora_mysql"]["score"]
         assert routing["score_after"] < routing["score_before"]
         [move] = [m for m in flagged["v3"]["moves"] if m["query_id"] == flagged["id"]]

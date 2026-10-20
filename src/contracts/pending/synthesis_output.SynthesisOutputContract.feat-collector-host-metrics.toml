@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional ``CostBreakdown`` fields stating the read I/O basis of an estimate that bills cache misses only (DocumentDB): ``read_io_hit_ratio_basis`` (query, collection, none, a + join, or no_reads when the estimate prices no reads), ``collection_hit_ratio_pct`` (the source's instance-wide buffer-cache hit ratio as collected), ``collection_hit_ratio_billed_pct`` (that ratio scaled down by target over source memory and capped), ``source_memory_gb`` and ``target_memory_gb`` (the memories it was scaled by, GiB) and ``min_billed_miss_pct`` (the least share of every read billed as a miss); and ``ReportFacts.cost_basis_notes`` (that basis as one sentence per engine, printed next to the cost). Backward compatible: a report without them states no basis, and a row with only the first two states the ratio only."
+issue = 1197

@@ -692,6 +692,43 @@ class CostBreakdown(BaseModel):
 
     database: str = Field(..., description="Engine name")
     monthly_cost_usd: float = Field(..., ge=0)
+    read_io_hit_ratio_basis: str | None = Field(
+        None,
+        description=(
+            "For an estimate that bills a read only on a buffer-cache miss (DocumentDB): "
+            "where the hit ratio came from, 'query', 'collection', 'none', a '+' join, or 'no_reads' when the "
+            "estimate prices no reads (#1197)"
+        ),
+    )
+    collection_hit_ratio_pct: float | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="The collection's instance-wide buffer-cache hit ratio, as collected (#1197)",
+    )
+    collection_hit_ratio_billed_pct: float | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description=(
+            "The bounded ratio a read that fell back to the collection's was billed with: "
+            "scaled by target over source memory, at least min_billed_miss_pct missed (#1197)"
+        ),
+    )
+    source_memory_gb: float | None = Field(
+        None,
+        gt=0,
+        description="The source host's physical memory, in GiB, the ratio was scaled from",
+    )
+    target_memory_gb: float | None = Field(
+        None, gt=0, description="The memory of the target instance the estimate priced, in GiB"
+    )
+    min_billed_miss_pct: float | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="The least share of every read billed as a miss, in percent (#1197)",
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -2143,6 +2180,13 @@ class ReportFacts(BaseModel):
     )
     workload_total_percent: float = Field(0.0, ge=0)
     engine_cost_total_usd: float = Field(0.0, ge=0)
+    cost_basis_notes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "How each priced engine's estimate billed its reads where that rests on an "
+            "assumption (DocumentDB's buffer-cache basis, #1197); printed next to the cost"
+        ),
+    )
     table_basis: TableBasis
     waves: list[WaveFacts] = Field(default_factory=list)
     no_migration: NoMigrationFacts = Field(default_factory=NoMigrationFacts)
