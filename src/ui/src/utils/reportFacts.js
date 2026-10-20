@@ -58,6 +58,15 @@ export function mappedTableCountOf(synthesis, shownMappings) {
   return basis && typeof basis.mapped_tables === 'number' ? basis.mapped_tables : (shownMappings || []).length;
 }
 
+// #1248: "Aurora MySQL · 20 tables in its design": the tables in one engine's
+// schema design (facts.engines[].target_objects), a different set from the
+// wave plan's "N source tables and views" and "the other N stay unchanged".
+export function designTableCountOf(synthesis, engine, shownTables) {
+  const rows = (factsOf(synthesis) && factsOf(synthesis).engines) || [];
+  const row = Array.isArray(rows) ? rows.find(r => r && r.engine === engine) : null;
+  return row && typeof row.target_objects === 'number' ? row.target_objects : (shownTables || []).length;
+}
+
 // #595: the reality-check trade-offs that still apply, shaped like a schema
 // design's trade-off ({description, impact, query_ids}) so the trade-offs tab
 // lists them next to the engines' own. A report synthesized before

@@ -7,6 +7,7 @@ import {
   accessPatternTotals,
   closeCallsOf,
   currentTradeOffs,
+  designTableCountOf,
   mappedTableCountOf,
   openRiskCountAt,
   openRiskCountOf,
@@ -229,5 +230,33 @@ describe('queryPatternCountsOf (#1146)', () => {
   test('is null for a report written before it', () => {
     expect(queryPatternCountsOf({ facts: {} })).toBeNull();
     expect(queryPatternCountsOf({})).toBeNull();
+  });
+});
+
+describe('designTableCountOf (#1248)', () => {
+  const withFacts = {
+    facts: {
+      engines: [
+        { engine: 'aurora_mysql', target_objects: 20 },
+        { engine: 'dynamodb', target_objects: 15 },
+      ],
+    },
+  };
+
+  it('reads the engine design table count from the facts block', () => {
+    expect(designTableCountOf(withFacts, 'aurora_mysql', [{}, {}])).toBe(20);
+    expect(designTableCountOf(withFacts, 'dynamodb', [])).toBe(15);
+  });
+
+  it('falls back to the shown tables for a report with no facts row', () => {
+    expect(designTableCountOf({}, 'aurora_mysql', [{}, {}, {}])).toBe(3);
+    expect(designTableCountOf(withFacts, 'aurora_postgresql', [{}])).toBe(1);
+    expect(designTableCountOf({ facts: { engines: [{ engine: 'aurora_mysql', target_objects: null }] } }, 'aurora_mysql', [{}])).toBe(1);
+  });
+
+  it('labels the count as the tables in that design, not the source tables', () => {
+    const label = enMessages['analysis-results.aurora-design.tab-label_other'];
+    expect(label).toBe('{{name}} · {{count}} tables in its design');
+    expect(enMessages['analysis-results.aurora-design.tab-label']).toBe('{{name}} · {{count}} table in its design');
   });
 });

@@ -65,7 +65,7 @@ import { costBaselineStats } from "../utils/tcoAnalysis";
 import { ENGINE_LABELS } from "../utils/engineNames";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, designTableCountOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2722,7 +2722,7 @@ const AnalysisResultsPage = memo(() => {
                       id: design.engine,
                       label: t('analysis-results.aurora-design.tab-label', {
                         name: design.displayName,
-                        count: design.tables.length,
+                        count: designTableCountOf(synthesis, design.engine, design.tables),
                       }),
                       content: (
                         <SpaceBetween size="l">

@@ -44,7 +44,7 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
 7. **Query routing**, collapsed: every query and its engine, with search and filters; open a query to see its history and why it ended on its engine.
 8. **Access pattern explorer**: the target data model, by access pattern or by source table, filtered by engine, operation or table (on a run with access patterns).
 9. **Sources of truth and replicas**, collapsed: each written table's source of truth, its replicas, the CDC direction and the reads a replica serves.
-10. **Risk assessment** (the open risks by severity, and the risks the assignment already resolved in a collapsed list), **Trade-offs and design decisions**, and **Table design**: the Aurora design (its tables, DDL, optimizations and the queries routed to it), each part in a collapsed section; it appears once schema design has run. The other engines' designs are in the access pattern explorer.
+10. **Risk assessment** (the open risks by severity, and the risks the assignment already resolved in a collapsed list), **Trade-offs and design decisions**, and **Table design**: the Aurora design (its tables, DDL, optimizations and the queries routed to it), each part in a collapsed section; each tab names the tables in that engine's design, which is not the roadmap's count of source tables and views (wave 1 counts every source table, including those no query reads); it appears once schema design has run. The other engines' designs are in the access pattern explorer.
 
 ## How to read an assignment
 
