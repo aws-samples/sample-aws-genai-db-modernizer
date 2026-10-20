@@ -1,7 +1,7 @@
 # Database Modernizer Assessment
 
 [![CI](https://github.com/aws-samples/sample-aws-genai-db-modernizer/actions/workflows/ci.yml/badge.svg)](https://github.com/aws-samples/sample-aws-genai-db-modernizer/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-66%25-yellowgreen.svg)](https://github.com/aws-samples/sample-aws-genai-db-modernizer/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)](https://github.com/aws-samples/sample-aws-genai-db-modernizer/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT--0-green.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-help%20site-blue.svg)](https://aws-samples.github.io/sample-aws-genai-db-modernizer/)
@@ -10,16 +10,16 @@
 
 **The help site is at [aws-samples.github.io/sample-aws-genai-db-modernizer](https://aws-samples.github.io/sample-aws-genai-db-modernizer/).** It has the same quick start plus other ways to run the tool, how to read the results, a sample report, an FAQ and how to contribute. The overview and quick start below are the source for those pages on the site.
 
-![A /modernize run on the WordPress sample in Claude Code, time-lapsed: the reality check's engine consolidation and the per-query assignment view before approval, then the local UI's query flow and report](docs/assets/modernizer-demo.gif)
+![A time-lapsed /modernize run on the WordPress sample in Claude Code with its approval gate, then the job's results page in the local UI and the executive report PDF](docs/assets/modernizer-demo.gif)
 
-*A full `/modernize` run on the WordPress sample (47 minutes, time-lapsed), then the local UI: the executive summary, the query flow, the cost per engine and the access pattern explorer.*
+*A full `/modernize` run on the WordPress sample (about 8 minutes, time-lapsed) with its one approval gate, then the job's results page in the local UI: the headline and the three deliverable downloads, the query flow, the cost per engine, the migration roadmap and the close calls; then the executive report PDF.*
 
 <!-- --8<-- [start:overview] -->
 Moving off a monolithic relational database raises hard questions. Which queries belong in DynamoDB? Which need a document store? What stays relational? A wrong answer can force a redesign in the middle of the project.
 
 **Database Modernizer Assessment answers these questions using your real workload.** Give it the collected schema and queries of a PostgreSQL, MySQL, SQL Server or Oracle database. It analyzes every query pattern, scores each one against 6 AWS purpose-built engines, checks the resulting architecture, and produces schema designs and TCO projections you can implement.
 
-**Supported sources:** PostgreSQL, MySQL, MariaDB. SQL Server and Oracle collect too (`scripts/collect-sqlserver.sql`, `scripts/collect-oracle.sql`); neither has an Aurora dialect of its own, so both Aurora engines compete on the collected workload and the assessment picks exactly one. Today that is Aurora PostgreSQL unless Aurora MySQL scores clearly higher. The move is cross-engine (dialect and schema conversion), not a lift-and-shift.
+**Supported sources:** PostgreSQL, MySQL, MariaDB. SQL Server and Oracle collect too (`scripts/collect-sqlserver.sql`, `scripts/collect-oracle.sql`); neither has an Aurora dialect of its own, so both Aurora engines compete on the collected workload and the assessment picks exactly one. Today that is Aurora PostgreSQL unless Aurora MySQL scores clearly higher. The move is cross-engine (dialect and schema conversion), not a lift-and-shift: wave 1 converts the source to the chosen Aurora engine, and the plan says that wave is not yet optimized for heterogeneous migrations.
 **Target engines:** DynamoDB, DocumentDB, Aurora PostgreSQL, Aurora MySQL as query owners, plus ElastiCache as a cache layer and OpenSearch as a search read model
 
 > **Note:** This project originally shipped with a hosted deployment option. Following customer feedback, it became a local tool built around Claude Code, to keep the open-source release simple to adopt.
@@ -48,12 +48,12 @@ Collect --> Triage --> Analyze --> Assign --> Reality Check --> Schema Design --
 | Phase             | What it does                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |
 | **Collect**       | Connects to the source database (or parses offline output), extracts schema + query patterns               |
-| **Triage**        | Detects workload signals (key-value lookups, text search, time-series, etc.) and selects candidate engines |
-| **Analyze**       | Runs parallel analysis agents per engine, deterministic scoring + optional LLM advisor                     |
-| **Assign**        | Resolves query-to-engine assignments using workload-fit scores and co-dependency analysis                  |
+| **Triage**        | Detects workload signals (key-value lookups, text search, time-series, etc.); every engine that can own a query is scored, and the signals are evidence for it |
+| **Analyze**       | Runs parallel analysis agents per engine and scores every query deterministically                        |
+| **Assign**        | Routes each query to its best-scoring engine; co-dependent queries move together, and all of a table's writes land on one engine (its source of truth) |
 | **Reality Check** | Consolidates under-committed engines, validates with LLM, redirects unserviceable queries                  |
 | **Schema Design** | Designs target schemas per engine (DynamoDB tables, DocumentDB collections, OpenSearch indices, etc.)      |
-| **Synthesis**     | Produces the final migration assessment report with TCO, risk analysis, and recommendations                |
+| **Synthesis**     | Produces the final assessment (`report.json`) and renders the deliverables: TCO, migration waves, risks and recommendations |
 
 The pipeline through Reality Check is **deterministic**. Pattern detection, scoring, assignment and consolidation run without a model. A model writes the schema designs and the executive summary, but the analysis and the engine recommendations come out the same on every run and can be audited.
 
@@ -88,11 +88,11 @@ Open the repository in Claude Code and run, with the collector file as the argum
 /modernize docs/examples/wordpress/wordpress-collection.json
 ```
 
-By default `/modernize` opens the local UI next to the chat. The chat reports each phase, and the UI shows the assignment, the schema designs and the full report. When the chat says the UI is ready, open <http://localhost:3000>.
+By default `/modernize` opens the local UI next to the chat. The chat reports each phase and gives you a link to the job's own pages in the UI: its summary page (`http://localhost:3000/analysis/monitor/summary/<job_id>`, with the Sankey and the query-to-engine breakdown) at the approval gate, and its results page (`http://localhost:3000/analysis/results/<job_id>`) at the end.
 
-The run stops once, after Reality Check, for your approval. The chat shows the final engine assignment and asks you to approve it. When a table's queries tie between engines, it asks you once per table which engine to use (with `--auto` it decides for you and marks each decision for review), and overriding a query onto an engine that can't run it is rejected with a reason. Outside chat-only mode it first points you to the Sankey and assignment view in the UI. After you approve, the run goes on by itself through Schema Design and Synthesis to the finished deliverables. For a terminal-only run (no browser, or a headless environment), use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat`.
+The run stops once, after Reality Check, for your approval. The chat shows the final engine assignment and asks you to approve it. When a table's queries tie between engines, it asks you once per table which engine to use (with `--auto` it decides for you and marks each decision for review), and overriding a query onto an engine that can't run it is rejected with a reason. Outside chat-only mode it first links the job's summary page in the UI. After you approve, the run goes on by itself through Schema Design and Synthesis to the finished deliverables. For a terminal-only run (no browser, or a headless environment), use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat`.
 
-The finished deliverables land in one folder, <!-- deliverables-list -->`artifacts/<db>/<job>/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists who each file is for and the assignment version<!-- /deliverables-list -->. The UI's results page shows the same assessment, with the wave plan, and opens with a download button for each of the first three files.
+The finished deliverables land in one folder, <!-- deliverables-list -->`artifacts/<db>/<job>/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists who each file is for and the assignment version<!-- /deliverables-list -->. The UI's results page shows the same assessment, with the migration roadmap, and opens with a download button for each of the first three files.
 
 The individual commands (`/collect`, `/triage`, `/analyze`, `/assign`, `/reality-check`, `/design-schema`, `/synthesize`) run one phase at a time. See [Use Claude Code](https://aws-samples.github.io/sample-aws-genai-db-modernizer/use-claude-code/) on the help site.
 
@@ -134,7 +134,8 @@ make lint         # or: uv run pre-commit run --all-files
 # Unit, contract, property and graph tests (no network, no integration/e2e)
 make test         # or: ./ci/test.sh --cov=src --cov-report=term
 
-# Deterministic end-to-end: full pipeline, rendered HTML/PDF, UI smoke test
+# Deterministic end-to-end: full pipeline on both samples, the rendered
+# deliverables (executive PDF, engineering report), UI smoke test, help site
 # (needs the `e2e` extra, Node 22 and Playwright browsers; ci/e2e.sh
 # installs and builds them for you)
 make e2e          # or: ./ci/e2e.sh
@@ -190,9 +191,9 @@ src/
   ui/               # React frontend
   atx_orchestrator/ # AWS Transform integration (separate from the local API/UI)
 scripts/            # CLI entry points and collection scripts
-infrastructure/     # agent-load-test Docker image; example-ci-runner-iam.yaml and automation.yaml (opt-in live-collection bastion, #342) remain; the hosted deployment templates were removed, #175
+infrastructure/     # agent-load-test Docker image; bedrock-guardrail.yaml (optional Bedrock guardrail), example-ci-runner-iam.yaml and automation.yaml (opt-in live-collection bastion, #342); the hosted deployment templates were removed, #175
 docs/               # Help site sources, architecture docs, contracts, guides
-tests/              # Unit, contract, and integration tests
+tests/              # Unit, contract, property, graph, deterministic e2e and integration tests
 ```
 
 ---

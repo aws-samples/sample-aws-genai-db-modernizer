@@ -35,7 +35,7 @@ Commands live in [`.claude/commands/`](https://github.com/aws-samples/sample-aws
 | --- | --- | --- |
 | Lint | `make lint` / `./ci/lint.sh` | ruff, black, isort, mypy, markdownlint, the command validator |
 | Unit/contract | `make test` / `./ci/test.sh -q` | unit, contract, property, graph; no network |
-| Deterministic e2e | `make e2e` / `./ci/e2e.sh` | full pipeline on both samples, rendered HTML/PDF, UI smoke test |
+| Deterministic e2e | `make e2e` / `./ci/e2e.sh` | full pipeline on both samples, the rendered deliverables (executive PDF, engineering report), UI smoke test, the built help site |
 | Headless LLM e2e | `make e2e-llm` | a real `/modernize --auto` run against a model, same deliverable checks plus a rubric judge |
 
 See [`ci/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/ci/README.md) for what each script runs and why, and the testing guide for strategy per agent type.

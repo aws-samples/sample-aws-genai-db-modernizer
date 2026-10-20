@@ -14,7 +14,7 @@ graph LR
     F --> G[Synthesis]
 ```
 
-`/modernize` runs in one of three modes: `chat`, `ui` or `both` (the default). In `ui` and `both` it starts the local API and UI before the pipeline. The chat always shows the key numbers for each phase, so you can follow the run and decide from the chat alone. In `both` mode it also points to the matching UI view: the Sankey and assignment page at the Reality Check approval, the schema designs after phase 6, and the full report at the end. If the UI can't start (a busy port, a failed build, or no Node), the run switches to chat and continues.
+`/modernize` runs in one of three modes: `chat`, `ui` or `both` (the default). In `ui` and `both` it starts the local API and UI before the pipeline. The chat always shows the approval gate's numbers, so you can decide from the chat alone; in `chat` and `both` it also summarizes each phase. In `ui` and `both` it links the job's own pages, as printed by `scripts/start_local_ui.py --page`: the summary page with the Sankey and the query-to-engine breakdown at the Reality Check approval (`http://localhost:3000/analysis/monitor/summary/<job_id>`), and the results page, with the schema designs and the full report, at the end (`http://localhost:3000/analysis/results/<job_id>`). If the UI can't start (a busy port, a failed build, or no Node), the run switches to chat and continues.
 
 Use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat` for a terminal-only run: no browser, no Node required, works in headless environments. `wordpress-collection.json` is bundled as `docs/examples/wordpress/wordpress.zip`; the script extracts it next to the zip the first time you name it, so there is nothing to unzip by hand.
 
@@ -23,9 +23,9 @@ Use `/modernize docs/examples/wordpress/wordpress-collection.json --mode chat` f
 | Command | What it does |
 | --- | --- |
 | `/collect` | Parses collector output and initializes a job |
-| `/triage` | Detects workload signals and selects candidate engines |
+| `/triage` | Detects workload signals and selects every engine that can own a query for analysis (the signals are evidence, not a filter) |
 | `/analyze` | Runs analysis agents for every triage-selected engine |
-| `/assign` | Resolves query-to-engine assignments |
+| `/assign` | Routes each query to its best-scoring engine, with all of a table's writes on one engine |
 | `/reality-check` | Consolidates under-committed engines and validates with a model |
 | `/design-schema` | Designs target schemas per engine (needs a model) |
 | `/synthesize` | Produces the final report and renders the deliverables into `artifacts/<db>/<job>/deliverables/` (see [Understand the results](understand-the-results.md#the-deliverables)) |

@@ -47,7 +47,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     | Schema design | The six schema designers and PE reviewers | Claude Opus 5.5 | `SCHEMA_AGENT_MODEL_ID`, then `BEDROCK_MODEL_ID` (output cap: `SCHEMA_AGENT_MAX_TOKENS`, at least 16000 on models that think by default) |
     | Summary | Reality Check and Synthesis executive summaries | Claude Sonnet 5.5 | `SUMMARY_MODEL_ID` |
     | Validator | Reality Check consolidation validation | Claude Sonnet 5.5 | `VALIDATOR_MODEL_ID`, then `SUMMARY_MODEL_ID` |
-    | Analysis advisor | Analysis-phase LLM advisor | Claude Sonnet 5.5 | `ANALYSIS_MODEL_ID` |
+    | Analysis advisor | Optional explanation text for one engine's analysis, only when you run `scripts/run_analysis.py --llm-mode bedrock` on its own; `run_assessment.py` and `/modernize` run analysis with no model, and the advisor never changes routing | Claude Sonnet 5.5 | `ANALYSIS_MODEL_ID` |
     | Light check | Free-text answer validation (agent interaction API) | Claude Haiku 5.5 | `LIGHT_CHECK_MODEL_ID` |
     | AWS Transform agent | AWS Transform orchestrator and subagents | Claude Sonnet 5.5 | `MODEL_ID` |
 
@@ -67,13 +67,13 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     | `BEDROCK_GUARDRAIL_ID` | The guardrail's ID or ARN |
     | `BEDROCK_GUARDRAIL_VERSION` | A published, numbered version (`DRAFT` is not accepted) |
     | `BEDROCK_GUARDRAIL_TRACE` | Optional: `enabled` (the default), `disabled` or `enabled_full` |
-| `BEDROCK_GUARDRAIL_STREAM_MODE` | Optional: `sync` (the default) or `async`; `async` turns off masking for the Strands phases (see Streaming mode) |
+    | `BEDROCK_GUARDRAIL_STREAM_MODE` | Optional: `sync` (the default) or `async`; `async` turns off masking for the Strands phases (see Streaming mode) |
 
     Set both or neither. One without the other stops every entry point that can reach Bedrock before any model call, with a clear error and a non-zero exit: `run_assessment.py` and each per-phase script (`run_analysis.py`, `run_reality_check.py`, `run_schema_design.py`, `run_synthesis.py`) with `--llm-mode bedrock`, the local API at start-up, and the AWS Transform agents at start-up. No phase turns it into a retry or a fallback. When a guardrail is active, `run_assessment.py` prints it in the run header.
 
     It applies to the schema designers and PE reviewers, the Reality Check validator and summary, the Synthesis executive summary, the analysis advisor and the free-text answer check. When the guardrail blocks a call, that phase stops with an error that names it (for example "blocked the model call in the schema_design phase"), and the call is not retried, because the same input would be blocked again. Where a phase has a deterministic fallback (the executive summary, the validator, the analysis advisor, the answer check) the run goes on without the model's contribution and logs the block. A guardrail that only masks content, such as PII set to anonymize, is not an error (masking does not apply to the Strands phases with `BEDROCK_GUARDRAIL_STREAM_MODE=async`). With `BEDROCK_GUARDRAIL_TRACE=disabled`, Bedrock cannot tell a mask from a block, so every intervention counts as a block.
 
-    The role that makes the calls needs `bedrock:ApplyGuardrail` on the guardrail, The default `us.` model IDs worked in a live test with a guardrail that has no cross-region guardrail profile (in `us-east-1`), so `CrossRegionGuardrailProfileArn` is optional. Set it (for example `.../guardrail-profile/us.guardrail.v1:0`) only if Bedrock asks for one in your region or setup.
+    The role that makes the calls needs `bedrock:ApplyGuardrail` on the guardrail. The default `us.` model IDs worked in a live test with a guardrail that has no cross-region guardrail profile (in `us-east-1`), so `CrossRegionGuardrailProfileArn` is optional. Set it (for example `.../guardrail-profile/us.guardrail.v1:0`) only if Bedrock asks for one in your region or setup.
 
     The prompt-attack filter looks at the customer-derived text only (table, column and query text inside the `untrusted_customer_data` blocks, sent as guard content), not at this project's own prompt text, which the filter flags as an injection attempt. The AWS Transform conversation agent is created by the AWS Transform SDK from a model ID alone, so this setting does not reach it; the pipeline phases it runs go through the calls above.
 
