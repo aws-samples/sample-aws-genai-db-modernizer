@@ -38,10 +38,12 @@ def retained_engine_for(
     query_assignments: Iterable[Mapping | QueryAssignment] | None = None,
     aurora_engine_choice: str | Mapping | AuroraEngineChoice | None = None,
 ) -> str | None:
-    """The retained source-compatible Aurora engine for ``collector_output`` (#317).
+    """The retained Aurora engine for ``collector_output`` (#317).
 
-    The Aurora engine matching the source database's dialect (``aurora_mysql``
-    for a MySQL source, ``aurora_postgresql`` for Postgres) — never a member of
+    For a homogeneous source, the Aurora engine matching its dialect
+    (``aurora_mysql`` for a MySQL source, ``aurora_postgresql`` for Postgres),
+    the only source-compatible one; for a heterogeneous source, the Aurora engine
+    ADR-031 Decision 6 chose, which is not source-compatible (#710) — never a member of
     ``NON_OWNER_ENGINES``. ``None`` when the source engine is missing or
     unrecognized and neither ``aurora_engine_choice`` nor ``query_assignments``
     is given. Every caller that recomputes ``table_assignments`` from a
@@ -79,7 +81,7 @@ def retained_engine_for(
     This is the single place "which Aurora engine is retained" is decided
     for a heterogeneous source with no Aurora dialect of its own --
     ``migration_waves.build_migration_waves`` and ``synthesis_report.
-    _source_compatible_aurora_engine`` both call this instead of
+    _relational_aurora_engine`` both call this instead of
     re-deriving their own answer, so wave 1, the architecture section and
     the cache-layer "Why" cell cannot name different engines for the same
     assignment.

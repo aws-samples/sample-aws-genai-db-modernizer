@@ -253,7 +253,7 @@ def build_migration_waves(
         # "which Aurora engine is retained" (``aurora_engine_choice`` first, then
         # ``query_assignments``' own ``assigned_engine``, then the shared
         # ADR-031 Decision 2/12 tie-break for a genuine, unresolved tie) --
-        # ``synthesis_report._source_compatible_aurora_engine`` calls it too, so
+        # ``synthesis_report._relational_aurora_engine`` calls it too, so
         # wave 1 and the architecture/cache-layer narrative cannot name different
         # engines for the same assignment. A fake ``collector_output`` carries
         # just enough for ``retained_engine_for`` to see this is a heterogeneous

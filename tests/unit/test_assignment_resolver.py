@@ -506,6 +506,44 @@ class TestUtilityStatementsExcludedFromRouting:
         assert "utility/metadata statement" in q1.assignment_reason
         assert q1.cache_engine is None
 
+    def test_a_heterogeneous_sources_pin_never_says_source_compatible(self):
+        """#710 review: ADR-031 Decision 6 (Amendment 1) -- for a heterogeneous source
+        neither Aurora engine is source-compatible, so the pin reason names the chosen
+        relational engine instead."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_postgresql"])
+        collector = self._collector_with_metadata({"q1": "SET NOCOUNT ON"}, "sqlserver")
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_postgresql": _make_analysis("aurora_postgresql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assigned_engine == "aurora_postgresql"
+        assert q1.assignment_reason.startswith(
+            "utility/metadata statement, kept on the chosen relational engine "
+            "(Aurora PostgreSQL)"
+        )
+        assert "source-compatible" not in q1.assignment_reason
+
+    @pytest.mark.passes_on_main  # the homogeneous wording #710 must keep
+    def test_a_homogeneous_sources_pin_keeps_source_compatible(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = self._collector_with_metadata({"q1": "SHOW TABLES"}, "mysql")
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        q1 = next(qa for qa in result.query_assignments if qa.query_id == "q1")
+        assert q1.assignment_reason.startswith(
+            "utility/metadata statement, kept on the source-compatible relational engine "
+            "(Aurora MySQL)"
+        )
+
     def test_no_aurora_engine_falls_back_rather_than_unset(self):
         """With no Aurora candidate, the pin never leaves the query unset.
 

@@ -927,8 +927,13 @@ class AssignmentResolver:
                     evidence=_evidence(query_by_id[qid], replaced_engine=ledger.engine_of(qid)),
                 )
                 assigned_confidence[qid] = 100
+                # Only the source's own Aurora dialect is source-compatible; for a
+                # heterogeneous source it is the chosen engine (ADR-031 Decision 6
+                # Amendment 1, #710).
+                compatible = SOURCE_ENGINE_TO_AURORA.get(source_engine) == utility_engine
                 assigned_reason[qid] = (
-                    "utility/metadata statement, kept on the source-compatible "
+                    "utility/metadata statement, kept on the "
+                    f"{'source-compatible' if compatible else 'chosen'} "
                     f"relational engine ({display_engine(utility_engine)})"
                 )
                 assigned_signal.pop(qid, None)

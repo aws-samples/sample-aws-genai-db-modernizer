@@ -13,8 +13,8 @@ requirement and lets the move through silently. #338
 not decide routing, so what remains here is a narrow invariant guard, not the
 fix: in case a gap like #335's slips through again, raise the severity of
 whatever risk already names the query to HIGH and advise keeping it on the
-source-compatible Aurora engine (which always runs the source SQL as-is)
-rather than stating it already is there -- the assignment still names the
+relational Aurora engine (which runs the source SQL as-is only when it is
+the source's own dialect, #710) rather than stating it already is there -- the assignment still names the
 engine it was moved to, not Aurora -- instead of describing the gap as a
 routine, maybe-just-not-designed-yet coverage gap, and without ever adding a
 second, parallel risk for the same id.
@@ -27,6 +27,8 @@ from #336's evidence -- is DynamoDB's own ``unsupported_patterns`` entry.
 """
 
 from __future__ import annotations
+
+import pytest
 
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import build_risk_assessment
@@ -141,7 +143,12 @@ def _data() -> SynthesisData:
     data = SynthesisData(
         job_id="j",
         database_name="wordpress",
-        collector={"queries": {"query_patterns": queries}},
+        # The wordpress evidence is a MySQL source, whose own Aurora dialect runs
+        # its SQL as-is (#710: only then does the mitigation say so).
+        collector={
+            "metadata": {"source_database": {"engine": "mysql"}},
+            "queries": {"query_patterns": queries},
+        },
         engines={
             "opensearch": EngineArtifacts(
                 "opensearch", analysis=opensearch_analysis, schema_design={}
@@ -371,12 +378,14 @@ class TestFallbackWhenNoExistingRiskNamesTheId:
     "test through build_risk_assessment" convention, precisely because the
     integration path cannot exercise it."""
 
+    @pytest.mark.passes_on_main  # the homogeneous claim #710 must keep
     def test_new_risk_uses_sql_excerpt_and_display_name(self) -> None:
         from src.agents.referee.synthesis_report import _raise_moved_onto_unsupported_risks
 
         data = SynthesisData(
             job_id="j",
             database_name="wordpress",
+            collector={"metadata": {"source_database": {"engine": "mysql"}}},
             assignment={
                 "query_assignments": [
                     {"query_id": "qid", "assigned_engine": "dynamodb", "in_scope": True}
@@ -402,3 +411,42 @@ class TestFallbackWhenNoExistingRiskNamesTheId:
         assert risk["query_ids"] == ["qid"]
         assert "`" not in risk["description"]
         assert "runs the source SQL as-is" in risk["mitigation"]
+
+
+def _with_source(
+    data: SynthesisData, engine: str, aurora_choice: str | None = None
+) -> SynthesisData:
+    data.collector = {**data.collector, "metadata": {"source_database": {"engine": engine}}}
+    if aurora_choice:
+        data.assignment = {**data.assignment, "aurora_engine_choice": {"engine": aurora_choice}}
+    return data
+
+
+def _unserved_risk(data: SynthesisData) -> dict:
+    result = build_risk_assessment(data)
+    risk: dict = next(r for r in result["risks"] if _UNSERVED_QUERY_ID in r["query_ids"])
+    return risk
+
+
+class TestOnlyTheSourcesOwnAuroraEngineRunsItsSqlAsIs:
+    """#710: ADR-031 Decision 6 (Amendment of 2026-10-14) -- the Aurora engine chosen
+    for a heterogeneous source is not source-compatible, so the risk note never says
+    it runs the source SQL as-is; only the source's own Aurora dialect does."""
+
+    @pytest.mark.passes_on_main  # the homogeneous claim #710 must keep
+    def test_a_homogeneous_source_keeps_the_as_is_claim(self) -> None:
+        risk = _unserved_risk(_with_source(_data(), "mysql"))
+        assert "Aurora MySQL runs the source SQL as-is." in risk["mitigation"]
+
+    def test_a_heterogeneous_sources_chosen_aurora_engine_is_the_relational_fallback(
+        self,
+    ) -> None:
+        risk = _unserved_risk(_with_source(_data(), "sqlserver", "aurora_postgresql"))
+        assert "as-is" not in risk["mitigation"]
+        assert "Aurora PostgreSQL is the relational fallback" in risk["mitigation"]
+        assert "keep it on Aurora PostgreSQL" in risk["description"]
+
+    def test_an_unknown_source_makes_no_as_is_claim(self) -> None:
+        risk = _unserved_risk(_with_source(_data(), ""))
+        assert "as-is" not in risk["mitigation"]
+        assert "relational fallback" in risk["mitigation"]

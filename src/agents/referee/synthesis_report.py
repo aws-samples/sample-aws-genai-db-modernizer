@@ -1289,8 +1289,8 @@ def build_risk_assessment(
                     )
                     continue
 
-                # Queries moved to another engine. Aurora runs the source SQL as-is, so a
-                # non-relational engine's limitation does not follow them there.
+                # Queries moved to another engine. Aurora serves the SQL relationally, so
+                # a non-relational engine's limitation does not follow them there.
                 if target in AURORA_ENGINES and engine not in AURORA_ENGINES:
                     resolved.append(
                         _resolved_risk(
@@ -1767,10 +1767,15 @@ def _moved_query_ids(data: SynthesisData) -> dict[str, set[str]]:
     return moved
 
 
-def _source_compatible_aurora_engine(data: SynthesisData) -> str:
-    """The Aurora engine matching the source database's dialect (#335's guard
-    mitigation: Aurora always runs the source SQL as-is, regardless of what any
-    other engine's assignment or schema design says).
+def _relational_aurora_engine(data: SynthesisData) -> str:
+    """The Aurora engine this architecture keeps as its relational core (#335's
+    guard mitigation names it; the cache-layer "Why" cell fronts it).
+
+    Source-compatible only for a homogeneous source (the source's own Aurora
+    dialect, ``SOURCE_ENGINE_TO_AURORA``). For a heterogeneous source (SQL Server,
+    Oracle, Db2) it is the Aurora engine ADR-031 Decision 6 chose, which is not
+    source-compatible (Amendment of 2026-10-14, #656, #710): callers must never say
+    it runs the source SQL as-is (``_runs_source_sql_as_is``).
 
     Delegates to ``table_assignments.retained_engine_for`` (#583/#586 review):
     the source's own dialect when it has one; else the resolver's recorded
@@ -1801,6 +1806,13 @@ def _source_compatible_aurora_engine(data: SynthesisData) -> str:
             return engine
     source_engine = source_database_engine(data.collector)
     return SOURCE_ENGINE_TO_AURORA.get(source_engine, "aurora_mysql")
+
+
+def _runs_source_sql_as_is(data: SynthesisData, engine: str) -> bool:
+    """Whether ``engine`` is the source's own Aurora dialect, so it runs the source
+    SQL unchanged (ADR-031 Decision 6). A heterogeneous or unknown source has no
+    such engine (#710)."""
+    return SOURCE_ENGINE_TO_AURORA.get(source_database_engine(data.collector)) == engine
 
 
 def _raise_moved_onto_unsupported_risks(
@@ -1835,16 +1847,19 @@ def _raise_moved_onto_unsupported_risks(
     existing risk names the id does this add a new dedicated one, so the gap
     is never silently dropped.
 
-    Not CRITICAL: Aurora always runs the source SQL as-is (#221), so this is
-    never "no engine serves it" -- it is "stuck on the wrong engine rather than
-    Aurora until that engine's schema design (or an application change) catches
-    up", the same severity register as every other reattribution risk above.
+    Not CRITICAL: Aurora serves any SQL query relationally (#221): as-is on the
+    source's own Aurora dialect, after conversion for a heterogeneous source
+    (#710). So this is never "no engine serves it"; it is "stuck on the wrong
+    engine rather than Aurora until that engine's schema design (or an
+    application change) catches up", the same severity register as every other
+    reattribution risk above.
     The note is phrased as advice ("keep it on Aurora until ..."), not as a
     statement of where the query is ("stays on Aurora"): the assignment still
     names the engine it was moved to, not Aurora.
     """
     moved = _moved_query_ids(data)
-    aurora_name = display_name(_source_compatible_aurora_engine(data))
+    aurora_engine = _relational_aurora_engine(data)
+    aurora_name = display_name(aurora_engine)
 
     ids_by_engine = {
         engine: ids
@@ -1856,7 +1871,11 @@ def _raise_moved_onto_unsupported_risks(
     if not ids_by_engine:
         return risk_id
 
-    mitigation_addendum = f"{aurora_name} runs the source SQL as-is."
+    mitigation_addendum = (
+        f"{aurora_name} runs the source SQL as-is."
+        if _runs_source_sql_as_is(data, aurora_engine)
+        else f"{aurora_name} is the relational fallback."
+    )
     for engine, ids in ids_by_engine.items():
         # Grouped by the risk object itself (by risk_id, not by query id): several
         # of this engine's moved-and-unsupported ids can share one pre-existing
@@ -2631,7 +2650,7 @@ def build_architecture_recommendation(
     # below is never empty) must not sweep in the retained engine too -- the one
     # whose dialect the source database already speaks, so it carries no data
     # migration of its own. Decided from the homogeneous mapping only
-    # (SOURCE_ENGINE_TO_AURORA), never ``_source_compatible_aurora_engine``'s
+    # (SOURCE_ENGINE_TO_AURORA), never ``_relational_aurora_engine``'s
     # broader guess: that helper also returns whichever Aurora engine the
     # heterogeneous resolver (SQL Server/Oracle/DB2, #381) picked as a real
     # migration target when neither Aurora dialect matches the source, and
@@ -2755,11 +2774,11 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
     if is_cache_layer(r):
         # #381: a source with no Aurora dialect of its own has no entry in
         # SOURCE_ENGINE_TO_AURORA, but the assignment resolver may still have picked
-        # one of the two competing Aurora engines -- _source_compatible_aurora_engine
+        # one of the two competing Aurora engines -- _relational_aurora_engine
         # already prefers whichever Aurora engine is actually part of this
         # architecture before falling back to that mapping, so it names the #381
         # choice here too instead of silently falling back to no engine at all.
-        retained_engine = _source_compatible_aurora_engine(data)
+        retained_engine = _relational_aurora_engine(data)
         owners = cache_front_description(retained_engine, r.get("cache_overlay_owners"))
         n = r.get("cache_overlay_queries", 0)
         lead = r.get("routed_lead")

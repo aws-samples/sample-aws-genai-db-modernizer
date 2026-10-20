@@ -1,7 +1,7 @@
 """Cross-deliverable agreement on the heterogeneous-source Aurora tie (#583/#586).
 
 ``migration_waves.build_migration_waves`` (wave 1) and ``synthesis_report.
-_source_compatible_aurora_engine`` (the architecture section's cache-layer
+_relational_aurora_engine`` (the architecture section's cache-layer
 "Why" cell, via ``cache_front_description``, and the "stuck on the wrong
 engine" risk note) both name the retained Aurora engine for a heterogeneous
 source (SQL Server, Oracle, DB2) with no Aurora dialect of its own. When the
@@ -19,7 +19,7 @@ from __future__ import annotations
 from src.agents.referee.migration_waves import build_migration_waves
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import (
-    _source_compatible_aurora_engine,
+    _relational_aurora_engine,
     build_architecture_recommendation,
 )
 
@@ -96,7 +96,7 @@ def test_wave1_architecture_and_cache_note_agree_on_the_tied_engine():
 
     # The exact helper behind the risk note's Aurora safety-net name agrees
     # with wave 1.
-    assert _source_compatible_aurora_engine(data) == wave1_engine
+    assert _relational_aurora_engine(data) == wave1_engine
 
     # The architecture section's cache-layer "Why" cell -- built from the
     # same helper via ``cache_front_description`` -- names the same engine.
