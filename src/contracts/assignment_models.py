@@ -148,6 +148,8 @@ Version History:
 - 1.19 (2026-10-20, #377): No field of its own. ``Move`` gained the rule
   ``gate.key_scoped_count`` and the optional evidence ``capability_waivers`` (move
   ledger).
+- 1.20 (2026-10-20, #1151): Version bump only: ``accepted_feasibility_findings[].kind``
+  gains ``stranded_count`` (feasibility findings, #1151).
 """
 
 from datetime import datetime
@@ -554,7 +556,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.19", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.20", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

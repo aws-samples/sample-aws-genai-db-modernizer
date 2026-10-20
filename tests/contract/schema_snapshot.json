@@ -1237,6 +1237,7 @@
                     "co_dependency_on_non_join_engine",
                     "co_dependency_split",
                     "read_write_split",
+                    "stranded_count",
                     "write_split"
                   ]
                 }
@@ -2598,8 +2599,8 @@
         }
       }
     },
-    "schema_hash": "76d66431cc37d86ed8c4fde42e1cc8dce2b72bd8550e11e86a27ce2387b497ef",
-    "version": "1.19"
+    "schema_hash": "562baae4801161bc2dc5a5d16ff47bf234281a33fe7cb99725298fcce914b38c",
+    "version": "1.20"
   },
   "assignment_models.ValidationResult": {
     "fields": {

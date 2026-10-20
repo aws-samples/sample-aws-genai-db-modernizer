@@ -1010,6 +1010,8 @@ def finalize_assignment_review(
     applied = 0
     warnings: list[str] = []
     propagated: list[str] = []
+    # #1151: key-scoped counts re-placed because the edit moved their table's writes.
+    replaced_counts: list[str] = []
     effective_version = version
     effective_assignment: Assignment = current
     picks: dict[str, str] = {}
@@ -1071,6 +1073,7 @@ def finalize_assignment_review(
         # the customer re-routed (ADR-029 Amendment 3), so the orchestrator can
         # tell the customer the group moved together.
         propagated = result.propagated_query_ids
+        replaced_counts = result.replaced_count_query_ids
     # Approve-as-is (no edits) is stamped CUSTOMER_APPROVED on the artifact only
     # after the feasibility gate below passes, so a routing the reviewer blocks is
     # never recorded as approved.
@@ -1105,6 +1108,7 @@ def finalize_assignment_review(
                 "changed": changed,
                 "applied_overrides": applied,
                 "co_dependency_propagated": propagated,
+                "key_scoped_counts_replaced": replaced_counts,
                 "assignment_version": effective_version,
                 "validation_warnings": warnings,
                 "feasibility_findings": findings_json,
@@ -1155,6 +1159,7 @@ def finalize_assignment_review(
         "changed": changed,
         "applied_overrides": applied,
         "co_dependency_propagated": propagated,
+        "key_scoped_counts_replaced": replaced_counts,
         "assignment_version": effective_version,
         "validation_warnings": warnings,
         "feasibility_findings": findings_json,
@@ -1169,6 +1174,15 @@ def finalize_assignment_review(
             f"({', '.join(propagated)}) moved to the same engine as your edit to keep the shared "
             f"JOIN group together."
         )
+    if replaced_counts:
+        # #1151: a row count follows its table's writes when the edit moved them.
+        note = (
+            f"Note: {len(replaced_counts)} key-scoped count "
+            f"quer{'y' if len(replaced_counts) == 1 else 'ies'} ({', '.join(replaced_counts)}) "
+            "moved because your edit moved the writes of the table they count; their "
+            "engine serves such a count only while that table's writes are there."
+        )
+        approved["message"] = f"{approved['message']} {note}" if "message" in approved else note
     if no_changes_submission:
         # Be transparent: the customer submitted without changes, so tell them the
         # routing was kept as-is. If they actually intended a change, this makes a

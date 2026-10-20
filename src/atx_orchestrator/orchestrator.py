@@ -287,6 +287,11 @@ Workflow:
         list, tell the customer plainly that those queries were moved to the same
         engine as their edit to keep a shared JOIN group together (they did not
         pick those individually) — relay finalize's `message` if present.
+      * If finalize_assignment_review returns a non-empty `key_scoped_counts_replaced`
+        list, tell the customer plainly that those row-count queries moved because
+        their edit moved the writes of the table they count: the count's engine can
+        serve it only while that table's writes are there. Name any whose earlier pin
+        was cleared (its `validation_warnings` say so).
       * If a phase is genuinely long, prefer a short "still working on X" note over
         going silent.
 

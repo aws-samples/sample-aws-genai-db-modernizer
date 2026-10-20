@@ -159,6 +159,7 @@ def route_unsupported_queries(
     tied_engines: Mapping[str, list[str]] | None = None,
     write_groups: Mapping[str, list[str]] | None = None,
     unit_weights: Mapping[str, float] | None = None,
+    pinned_counts: Mapping[str, list[str]] | None = None,
 ) -> RouterOutput:
     """Route unsupported queries to the best remaining engine by score.
 
@@ -204,6 +205,11 @@ def route_unsupported_queries(
             it (``RouterOutput.held_queries``), since the pinned write never moves
         unit_weights: ``write_groups.assignment_unit_weights``: the call-rate
             weights a unit holding a write group is judged on (#992)
+        pinned_counts: ``waived_counts.pinned_counts_by_table``: per table, the
+            customer-pinned key-scoped counts its writes' placement lets their
+            engine serve (#1151). Each holds the table's writes like a pinned write
+            does: moving them would end the count's waiver, and a rule never moves a
+            customer's pin (ADR-028)
 
     Returns:
         RouterOutput with routing decisions and terminal queries
@@ -225,6 +231,10 @@ def route_unsupported_queries(
     for members in (write_groups or {}).values():
         for member in members:
             write_mates[member].update(members)
+    # A pinned waived count is a mate of its table's writes (#1151): it holds them.
+    for table, counts in (pinned_counts or {}).items():
+        for member in (write_groups or {}).get(table, []):
+            write_mates[member].update(counts)
     candidates = [e for e in active_engines if e not in CACHE_OVERLAY_ENGINES]
 
     group_of: dict[str, list[str]] = {}

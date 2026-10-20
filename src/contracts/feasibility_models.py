@@ -17,6 +17,9 @@ Version History:
 - 1.2 (2026-10-18, #992): Added ``FindingKind.WRITE_SPLIT``: a table whose writes
   sit on more than one engine, which breaks its one source of truth (ADR-031
   Amendment 9). Blocking.
+- 1.3 (2026-10-20, #1151): Added ``FindingKind.STRANDED_COUNT``: a key-scoped count left
+  on an engine its waiver no longer covers, because a reroute held a customer's pin
+  (ADR-031 Decision 2 Amendment 12). Blocking.
 """
 
 from __future__ import annotations
@@ -39,6 +42,10 @@ class FindingKind(str, Enum):
     # but the joins cannot run natively — they need a denormalized design or
     # application-side joining. Advisory (the schema designer denormalizes).
     CO_DEPENDENCY_ON_NON_JOIN_ENGINE = "co_dependency_on_non_join_engine"
+    # A key-scoped COUNT on an engine that serves it only while its table's writes are
+    # there (ADR-031 Decision 2 Amendment 12), whose table's writes are elsewhere: a
+    # count the customer pinned, which a reroute held rather than move (#1151). Blocking.
+    STRANDED_COUNT = "stranded_count"
 
 
 class FindingSeverity(str, Enum):

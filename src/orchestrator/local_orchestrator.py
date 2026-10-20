@@ -543,6 +543,7 @@ class LocalOrchestrator(Orchestrator):
             routing_flags_from_trace,
         )
         from src.agents.referee.tie_break import settled_counts
+        from src.agents.referee.waived_counts import pinned_counts_by_table
         from src.contracts.post_schema_router_output import HeldQuery, QueryRouting, TerminalQuery
 
         selected_engines = run["selected_engines"]
@@ -611,6 +612,12 @@ class LocalOrchestrator(Orchestrator):
             write_groups=assignment.get("write_groups") or {},
             # A write unit is judged on its call-rate-weighted mean (#992).
             unit_weights=assignment_unit_weights(assignment, scoring.get("query_map") or {}),
+            # A pinned key-scoped count holds its table's writes too (#1151).
+            pinned_counts=pinned_counts_by_table(
+                assignment.get("query_assignments", []),
+                scoring.get("query_map") or {},
+                scoring["scoring_context"],
+            ),
             # A tied query is re-routed among its tied engines first and
             # keeps the rest of its tie (ADR-031 Decision 12, #811).
             tied_engines={
@@ -718,6 +725,9 @@ class LocalOrchestrator(Orchestrator):
         Each moved query is a ``post_schema_flag`` Move (#616, #489 Track L
         PR4; ``move_ledger.apply_to_assignment``, rule ``flag.capability_gap``,
         actor ``model_flag``) with the router's scores, runner-up and evidence;
+        a key-scoped count whose waiver those moves end (its table's writes left the
+        engine it is on, #1151) is re-placed after them, a ``post_schema_flag`` rule
+        Move with its own ``post_schema_reroutes`` entry;
         the version holds exactly those Moves and is refused when its engines
         and ties do not replay from ``version`` plus them.
         """
@@ -767,6 +777,34 @@ class LocalOrchestrator(Orchestrator):
                 actor=MoveActor.MODEL_FLAG,
             )
             qa["assignment_reason"] = f"post-schema routing: {routing.reason}"
+        prefix = f"{database_name}/{job_id}"
+        collector_key = f"{prefix}/collector/output.json"
+        collector = self.store.read_json(collector_key) if self.store.exists(collector_key) else {}
+        before = {
+            qa["assigned_engine"]
+            for qa in assignment.get("query_assignments", [])
+            if qa.get("in_scope", True)
+        }
+        after = {qa["assigned_engine"] for qa in query_assignments if qa.get("in_scope", True)}
+        analysis_outputs = {
+            e: self.store.read_json(f"{prefix}/analysis-{e}/analysis.json")
+            for e in before | after
+            if self.store.exists(f"{prefix}/analysis-{e}/analysis.json")
+        }
+        # #1151 (ADR-031 Decision 2 Amendment 12): a flagged write the router moved can
+        # take its table's source of truth off the engine a key-scoped count's waiver
+        # needs; each such count is re-placed by the shared scorer, a rule Move, and
+        # recorded with the reroutes.
+        count_warnings: list[str] = []
+        count_reroutes = self._replace_lapsed_counts(
+            prefix,
+            assignment,
+            query_assignments,
+            ledger,
+            collector,
+            analysis_outputs,
+            count_warnings,
+        )
         reroutes = prior + [
             {
                 "query_id": r.query_id,
@@ -780,6 +818,7 @@ class LocalOrchestrator(Orchestrator):
             }
             for r in moved.values()
         ]
+        reroutes += [{**r, "approved_version": approved_version} for r in count_reroutes]
         revised = {
             **assignment,
             "version": new_version,
@@ -793,22 +832,9 @@ class LocalOrchestrator(Orchestrator):
             # #616: moves are per-version -- exactly the Moves above.
             "moves": [m.model_dump(mode="json") for m in ledger.moves],
         }
-        prefix = f"{database_name}/{job_id}"
         # The derived views (table mappings, warnings) follow the moved queries,
         # the same refresh the reality check's revision gets (ADR-029).
-        before = {
-            qa["assigned_engine"]
-            for qa in assignment.get("query_assignments", [])
-            if qa.get("in_scope", True)
-        }
         after = {qa["assigned_engine"] for qa in query_assignments if qa.get("in_scope", True)}
-        collector_key = f"{prefix}/collector/output.json"
-        collector = self.store.read_json(collector_key) if self.store.exists(collector_key) else {}
-        analysis_outputs = {
-            e: self.store.read_json(f"{prefix}/analysis-{e}/analysis.json")
-            for e in before | after
-            if self.store.exists(f"{prefix}/analysis-{e}/analysis.json")
-        }
         refreshed = refresh_consolidated_assignment(
             revised, collector, analysis_outputs, dead_engines=before - after
         )
@@ -820,7 +846,71 @@ class LocalOrchestrator(Orchestrator):
             state_of(refreshed.get("query_assignments", [])),
             "post-schema reroute",
         )
+        if count_warnings:
+            refreshed["validation_warnings"] = [
+                *(refreshed.get("validation_warnings") or []),
+                *count_warnings,
+            ]
         return refreshed
+
+    def _replace_lapsed_counts(
+        self,
+        prefix: str,
+        assignment: dict,
+        query_assignments: list[dict],
+        ledger,
+        collector: dict,
+        analysis_outputs: dict[str, dict],
+        warnings: list[str],
+    ) -> list[dict]:
+        """Re-place the key-scoped counts the router's moves left without their waiver
+        (#1151, ``waived_counts.replace_lapsed_counts``) on ``query_assignments``, as
+        ``post_schema_flag`` rule Moves on ``ledger``; their ``post_schema_reroutes``
+        entries (reason category ``source_of_truth``), without ``approved_version``.
+        A pinned count is held, never moved, and a count it could not re-place is said
+        in ``warnings`` (the version's ``validation_warnings``)."""
+        from src.agents.referee.assignment_overrides import SOURCE_OF_TRUTH_REROUTE_CATEGORY
+        from src.agents.referee.aurora_choice import source_database_engine
+        from src.agents.referee.query_scoring import ScoringContext
+        from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+        from src.agents.referee.waived_counts import replace_lapsed_counts
+        from src.agents.referee.write_groups import assignment_sources_of_truth
+        from src.contracts.move_ledger import MovePass
+
+        write_groups = assignment.get("write_groups") or {}
+        if not write_groups:
+            return []
+        triage_key = f"{prefix}/referee-triage/triage.json"
+        triage = self.store.read_json(triage_key) if self.store.exists(triage_key) else {}
+        ctx = ScoringContext.from_pipeline(analysis_outputs, triage or None, collector or None)
+        replaced = replace_lapsed_counts(
+            query_assignments,
+            ledger,
+            query_by_id={
+                q["query_id"]: q for q in collector.get("queries", {}).get("query_patterns", [])
+            },
+            ctx=ctx,
+            write_groups=write_groups,
+            before=assignment_sources_of_truth(assignment),
+            pass_=MovePass.POST_SCHEMA_FLAG,
+            source_compatible=SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector)),
+            # A rule never moves a customer's pin (ADR-028); the router held the writes
+            # of a pinned count's table, so this only guards it.
+            pinned="hold",
+        )
+        warnings.extend(replaced.warnings)
+        return [
+            {
+                "query_id": m.query_id,
+                "from_engine": m.from_engine,
+                "to_engine": m.to_engine,
+                "reason": m.reason,
+                "reason_category": SOURCE_OF_TRUTH_REROUTE_CATEGORY,
+                "score_before": None,
+                "score_after": m.score_after,
+            }
+            for m in replaced.moved
+        ]
 
     def _copy_schema_artifacts(
         self, job_id: str, database_name: str, engine: str, src: int, dst: int

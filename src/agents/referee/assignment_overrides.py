@@ -125,6 +125,9 @@ class AssignmentOverrideResult:
     # Query IDs moved automatically to stay co-located with a co-dependent query
     # the customer re-routed (ADR-029 Amendment 3). Empty when nothing propagated.
     propagated_query_ids: list[str] = field(default_factory=list)
+    # Key-scoped counts re-placed because the edit moved their table's writes off the
+    # engine their waiver needs (#1151, ADR-031 Decision 2 Amendment 12).
+    replaced_count_query_ids: list[str] = field(default_factory=list)
 
 
 class AssignmentOverrideError(Exception):
@@ -620,13 +623,16 @@ def apply_assignment_overrides(
     # capability map, when triage needs re-detecting it) per override rather
     # than once is wasted, measurable work.
     ctx = None
+    # The sources of truth the edit starts from: a table whose writes the edit moves
+    # re-places its waived counts (#1151).
+    before_sources = assignment_sources_of_truth(current.model_dump(mode="json"))
     if isinstance(analysis_outputs, Mapping):
         from src.agents.referee.query_scoring import ScoringContext
 
         # The capability waivers (#377) read the edited version's sources of truth.
         ctx = ScoringContext.from_pipeline(
             analysis_outputs, triage, collector_output
-        ).with_sources_of_truth(assignment_sources_of_truth(current.model_dump(mode="json")))
+        ).with_sources_of_truth(before_sources)
 
     qa_map: dict[str, QueryAssignment] = {qa.query_id: qa for qa in current.query_assignments}
 
@@ -794,6 +800,15 @@ def apply_assignment_overrides(
         decided_ids={o.query_id for o in owner_overrides if o.auto_pick is not None},
     )
     excluded.extend(group_excluded)
+    # #1151: a count the customer picks onto an engine whose waiver this same edit
+    # ends (it moves the table's writes away) is rejected, like any other gated pick.
+    edit_write_groups = collector_write_groups(collector_output)
+    if ctx is not None:
+        excluded.extend(
+            _lapsed_count_picks(
+                owner_overrides, qa_map, query_by_id, ctx, edit_write_groups, before_sources
+            )
+        )
 
     # #548 round 2, #801, #812: reject the whole batch -- nothing written --
     # when any override, direct or propagated, lands on an engine that cannot
@@ -819,6 +834,35 @@ def apply_assignment_overrides(
                     f"WARNING [LOW]: Query {qa.query_id} accesses both in-scope and "
                     f"excluded tables ({sorted(tables & excluded_tables)}). Keeping query in scope."
                 )
+
+    # #1151 (ADR-031 Decision 2 Amendment 12): the edit's picks and their write
+    # propagation may have moved a table's writes; each key-scoped count that relied
+    # on the old source of truth is re-placed by the shared scorer. The customer's own
+    # newer edit moved them, so the Move is the customer's (the rule's for an edit only
+    # --auto made), and a count they pinned earlier is moved too, its pin cleared and
+    # said: their latest edit supersedes it, as with write propagation (ADR-029).
+    from src.agents.referee.waived_counts import CountReplacement
+
+    replaced = CountReplacement([], [], [])
+    if ctx is not None:
+        from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
+        from src.agents.referee.waived_counts import replace_lapsed_counts
+
+        by_rule_only = bool(owner_overrides) and all(
+            o.auto_pick is not None for o in owner_overrides
+        )
+        replaced = replace_lapsed_counts(
+            list(qa_map.values()),
+            ledger,
+            query_by_id=query_by_id,
+            ctx=ctx,
+            write_groups=edit_write_groups,
+            before=before_sources,
+            pass_=MovePass.CUSTOMER_GROUP_PROPAGATION,
+            source_compatible=SOURCE_ENGINE_TO_AURORA.get(source_engine),
+            pinned="move",
+            actor=MoveActor.RULE if by_rule_only else MoveActor.CUSTOMER,
+        )
 
     decided_only = (
         bool(overrides)
@@ -892,7 +936,7 @@ def apply_assignment_overrides(
     if not validation.valid:
         raise AssignmentValidationFailed(validation.errors, validation.warnings)
 
-    new_assignment.validation_warnings = scope_warnings + validation.warnings
+    new_assignment.validation_warnings = scope_warnings + validation.warnings + replaced.warnings
 
     in_scope_counts: dict[str, int] = {}
     for qa in new_assignment.query_assignments:
@@ -922,7 +966,51 @@ def apply_assignment_overrides(
         skipped_engines=skipped_engines,
         written_path=new_path,
         propagated_query_ids=propagated_query_ids,
+        replaced_count_query_ids=[m.query_id for m in replaced.moved],
     )
+
+
+def _lapsed_count_picks(
+    overrides: Iterable[QueryOverrideInput],
+    qa_map: Mapping[str, QueryAssignment],
+    query_by_id: Mapping[str, Mapping],
+    ctx: ScoringContext,
+    write_groups: Mapping[str, list[str]],
+    before_sources: Mapping[str, str],
+) -> list[ExcludedOverride]:
+    """The picks of key-scoped counts onto an engine whose waiver this edit ends (#1151):
+    the edit's own picks and propagation move the count's table's writes off that
+    engine, so its capability gate rules the pick out after the edit."""
+    from src.agents.referee.query_scoring import GATE_KIND_CAPABILITY
+    from src.agents.referee.waived_counts import changed_sources, lapsed, version_sources
+
+    after = version_sources(qa_map.values(), write_groups)
+    changed = changed_sources(before_sources, after)
+    out: list[ExcludedOverride] = []
+    for override in overrides:
+        engine = override.assigned_engine
+        query = query_by_id.get(override.query_id)
+        if engine is None or query is None:
+            continue
+        table = lapsed(query, engine, ctx, after)
+        if table is None or table not in changed:
+            continue
+        out.append(
+            ExcludedOverride(
+                query_id=override.query_id,
+                engine=engine,
+                message=(
+                    f"Query {override.query_id} counts rows of {table} by its key, which "
+                    f"{display_engine(engine)} serves only while {table}'s writes are there; "
+                    f"this edit moves them to "
+                    f"{display_engine(after[table]) if table in after else 'two engines'}. "
+                    f"Keep {table}'s writes on {display_engine(engine)}, or leave the count "
+                    "to be re-placed with them."
+                ),
+                gate_kind=GATE_KIND_CAPABILITY,
+            )
+        )
+    return out
 
 
 def _apply_auto_pick(
@@ -1457,6 +1545,11 @@ def reroute_split_writes(
     source_compatible = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
     settled = settled_counts(current.query_assignments)
     split_members = {q for t in split for q in write_groups[t]}
+    # #1151: a customer-pinned key-scoped count on its table's writer holds those
+    # writes there, as a pinned write does (ADR-028: a rule never moves a pin).
+    from src.agents.referee.waived_counts import pinned_counts_by_table
+
+    pinned_counts = pinned_counts_by_table(qa_map.values(), query_by_id, ctx)
 
     moved: list[str] = []
     affected: set[str] = set()
@@ -1474,6 +1567,12 @@ def reroute_split_writes(
             return score_query_for_engine(query, engine, ctx).score
 
         pinned = {qa_map[q].assigned_engine for q in members if qa_map[q].customer_override}
+        pinned |= {
+            qa_map[c].assigned_engine
+            for table, counts in pinned_counts.items()
+            if set(write_groups.get(table, ())) & set(members)
+            for c in counts
+        }
         candidates = sorted(pinned) if len(pinned) == 1 else kept
         conflicting_pins = len(pinned) > 1
         unit_weights = {q: weights[q] for q in members if q in weights}
@@ -1550,6 +1649,40 @@ def reroute_split_writes(
     if not moved:
         return None
 
+    # #1151: the counts whose waiver relied on a split table's old placement are
+    # re-placed against the one source of truth each table now has; a pinned one is
+    # held, pin kept, and said (the feasibility review blocks on it at the gate).
+    from src.agents.referee.waived_counts import replace_lapsed_counts
+
+    replaced = replace_lapsed_counts(
+        list(qa_map.values()),
+        ledger,
+        query_by_id=query_by_id,
+        ctx=ctx,
+        write_groups=write_groups,
+        # The saved version's, read before the moves above edited its records.
+        before=assignment_sources_of_truth(raw),
+        pass_=MovePass.CO_DEPENDENCY,
+        source_compatible=source_compatible,
+        pinned="hold",
+    )
+    pin_conflicts.extend(replaced.warnings)
+    for count in replaced.moved:
+        affected.update({count.from_engine, count.to_engine})
+        reroutes.append(
+            {
+                "query_id": count.query_id,
+                "from_engine": count.from_engine,
+                "to_engine": count.to_engine,
+                "reason": count.reason,
+                "reason_category": SOURCE_OF_TRUTH_REROUTE_CATEGORY,
+                "score_before": None,
+                "score_after": count.score_after,
+                "approved_version": version,
+            }
+        )
+        moved.append(count.query_id)
+
     new_assignment = current.model_copy(
         update={
             "contract_version": Assignment.model_fields["contract_version"].default,
@@ -1599,7 +1732,8 @@ def reroute_split_writes(
                 {
                     m.query_id
                     for m in existing.moves
-                    if m.reason_code == ReasonCode.WRITE_GROUP_REROUTE
+                    # The writes it re-routed and the counts that followed them (#1151).
+                    if m.pass_ == MovePass.CO_DEPENDENCY
                 }
             ),
             split_tables=split,

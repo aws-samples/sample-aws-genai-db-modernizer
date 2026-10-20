@@ -294,6 +294,49 @@ def _detect_co_dependency_splits(assignment: Assignment) -> list[FeasibilityFind
     return findings
 
 
+def _detect_stranded_counts(
+    assignment: Assignment, collector_output: dict
+) -> list[FeasibilityFinding]:
+    """A key-scoped count left on an engine its waiver no longer covers (#1151).
+
+    A reroute never moves a customer's pin (ADR-028): when it moved a pinned count's
+    table's writes anyway (the customer's pins disagree, or the pinned engine cannot
+    take the writes), the count is left pinned and gated there, and only the customer
+    can settle it: re-pick the count, or keep the table's writes on its engine."""
+    from src.agents.referee.query_scoring import ScoringContext
+    from src.agents.referee.waived_counts import stranded_counts
+
+    queries = (collector_output.get("queries") or {}).get("query_patterns") or []
+    if not queries or not assignment.write_groups:
+        return []
+    ctx = ScoringContext.from_pipeline({}, None, collector_output)
+    findings = []
+    for qid, table, engine, source in stranded_counts(
+        assignment.query_assignments,
+        {q.get("query_id"): q for q in queries},
+        ctx,
+        assignment.write_groups,
+    ):
+        where = f"on {display_engine(source)}" if source else "split across engines"
+        findings.append(
+            FeasibilityFinding(
+                kind=FindingKind.STRANDED_COUNT,
+                severity=FindingSeverity.BLOCKING,
+                table=table,
+                engines=sorted({engine, *([source] if source else [])}),
+                query_ids=[qid],
+                message=(
+                    f"Query {qid} counts rows of {table} by its key on "
+                    f"{display_engine(engine)}, which can serve that count only while "
+                    f"{table}'s writes are there, and they are {where}. Pick another "
+                    f"engine for the count, or move {table}'s writes back to "
+                    f"{display_engine(engine)}."
+                ),
+            )
+        )
+    return findings
+
+
 def review_assignment_feasibility(
     assignment: Assignment, collector_output: dict
 ) -> list[FeasibilityFinding]:
@@ -304,5 +347,6 @@ def review_assignment_feasibility(
     """
     findings = _detect_read_write_splits(assignment, collector_output)
     findings += _detect_co_dependency_splits(assignment)
+    findings += _detect_stranded_counts(assignment, collector_output)
     findings.sort(key=lambda f: 0 if f.severity is FindingSeverity.BLOCKING else 1)
     return findings
