@@ -38,6 +38,7 @@ from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, Tabl
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
 from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
+from src.agents.schema_design.scope import covered_query_ids
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -1100,7 +1101,7 @@ def build_risk_assessment(
     }
     source_engine = source_database_engine(data.collector)
     covered_by = {
-        engine: _covered_query_ids(artifacts.schema_design or {})
+        engine: covered_query_ids(engine, artifacts.schema_design or {})
         for engine, artifacts in data.engines.items()
     }
     unsupported_by = {
@@ -1706,15 +1707,6 @@ def _access_pattern_query_ids(ap: dict) -> list[str]:
     ``source_query_ids`` (the same split as their unsupported patterns, #210).
     """
     return list(ap.get("query_ids") or ap.get("source_query_ids") or [])
-
-
-def _covered_query_ids(schema: dict) -> set[str]:
-    """Query ids served by the schema design's in-scope access patterns."""
-    covered: set[str] = set()
-    for ap in field_list(schema, "access_patterns"):
-        if ap.get("in_scope", True):
-            covered.update(_access_pattern_query_ids(ap))
-    return covered
 
 
 def _unsupported_query_ids(schema: dict) -> set[str]:

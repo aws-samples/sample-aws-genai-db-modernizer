@@ -9,7 +9,10 @@ Tests cover:
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.agents.schema_design.revision_handler import (
+    VerificationError,
     _apply_drops_to_schema,
     build_revision_context,
     determine_redesign_scope,
@@ -623,3 +626,96 @@ class TestExecuteRevision:
 
         assert len(new_schema["access_patterns"]) == 1
         assert new_schema["access_patterns"][0]["pattern_id"] == "AP-2"
+
+
+# ---------------------------------------------------------------------------
+# execute_revision: coverage is checked against the assignment (#1213)
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteRevisionCoverage:
+    """The queries a revised design must cover come from the assignment, not the design."""
+
+    @staticmethod
+    def _store(schema: dict, assigned: list[str], engine: str) -> MagicMock:
+        assignment = {
+            "query_assignments": [
+                {"query_id": q, "assigned_engine": engine, "in_scope": True} for q in assigned
+            ]
+        }
+        assignment_path = "mydb/job-1/assignment/v1/assignment.json"
+        store = MagicMock()
+        store.list_prefix.return_value = [assignment_path]
+        store.exists.side_effect = lambda path: path == assignment_path
+
+        def _read(path: str) -> dict:
+            if path == assignment_path:
+                return assignment
+            if "schema_output.json" in path:
+                return schema
+            raise FileNotFoundError(path)
+
+        store.read_json.side_effect = _read
+        return store
+
+    @staticmethod
+    def _request(*mods: PatternModification) -> SchemaRevisionRequest:
+        return SchemaRevisionRequest(
+            base_version=1,
+            pattern_modifications=list(mods),
+            table_modifications=[],
+            new_patterns=[],
+        )
+
+    def test_documentdb_design_naming_every_assigned_query_passes(self):
+        schema = {
+            "access_patterns": [
+                {"pattern_id": "DOC-AP-1", "source_query_ids": ["q1", "q2"]},
+            ]
+        }
+        store = self._store(schema, ["q1", "q2"], "documentdb")
+        new_schema, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        assert meta.version == 2
+        assert new_schema["access_patterns"] == schema["access_patterns"]
+
+    def test_documentdb_design_dropping_an_assigned_query_fails(self):
+        schema = {"access_patterns": [{"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"]}]}
+        store = self._store(schema, ["q1", "q2"], "documentdb")
+        with pytest.raises(VerificationError) as exc:
+            execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        issues = exc.value.result.hard_errors
+        assert [i.category for i in issues] == ["coverage"]
+        assert "q2" in issues[0].message
+
+    def test_elasticache_source_query_ids_are_read(self):
+        schema = {"access_patterns": [{"pattern_id": "EC-AP-1", "source_query_ids": ["q1"]}]}
+        store = self._store(schema, ["q1"], "elasticache")
+        _, meta = execute_revision("job-1", "mydb", "elasticache", self._request(), store)
+        assert meta.version == 2
+
+    def test_a_pattern_the_customer_drops_is_not_required(self):
+        schema = {
+            "access_patterns": [
+                {"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"]},
+                {"pattern_id": "DOC-AP-2", "source_query_ids": ["q2"]},
+            ]
+        }
+        store = self._store(schema, ["q1", "q2"], "documentdb")
+        new_schema, _ = execute_revision(
+            "job-1", "mydb", "documentdb", self._request(_drop_mod("DOC-AP-2")), store
+        )
+        assert [ap["pattern_id"] for ap in new_schema["access_patterns"]] == ["DOC-AP-1"]
+
+    def test_a_query_another_engine_owns_is_not_required(self):
+        schema = {"access_patterns": [{"pattern_id": "DOC-AP-1", "source_query_ids": ["q1"]}]}
+        store = self._store(schema, ["q1"], "documentdb")
+        # q2 is assigned to dynamodb, so documentdb need not cover it.
+        _, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        assert meta.version == 2
+
+    def test_an_unreadable_assignment_skips_the_coverage_check(self):
+        schema = {"access_patterns": []}
+        store = self._store(schema, [], "documentdb")
+        store.list_prefix.return_value = []
+        _, meta = execute_revision("job-1", "mydb", "documentdb", self._request(), store)
+        assert meta.version == 2

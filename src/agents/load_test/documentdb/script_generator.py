@@ -247,12 +247,12 @@ class DocumentDBScriptGenerator(BaseScriptGenerator):
     def _extract_query_id(self, access_pattern: dict[str, Any]) -> str:
         """Extract a stable query_id from an access pattern.
 
-        DocumentDB schema_design's AccessPattern uses ``pattern_id``; older
-        contracts use ``query_ids[0]``. Try both for forward/back compat.
+        DocumentDB schema_design's AccessPattern uses ``pattern_id``; its query
+        field is ``source_query_ids`` (older artifacts used ``query_ids``).
         """
         if "pattern_id" in access_pattern:
             return str(access_pattern["pattern_id"])
-        query_ids = access_pattern.get("query_ids")
+        query_ids = access_pattern.get("source_query_ids") or access_pattern.get("query_ids")
         if query_ids:
             return str(query_ids[0])
         return "unknown"

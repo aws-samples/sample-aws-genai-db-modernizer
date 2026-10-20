@@ -455,3 +455,18 @@ def test_contract_valid_pattern_generates_a_real_scenario(
     assert "scenario_qDOC_AP_1_0" in main
     assert "run_qDOC_AP_1_0" in main
     assert "rate: 13" in main  # k6 arrival rates round design_rps up to an integer
+
+
+class TestExtractQueryId:
+    """#1213: DocumentDB names its queries in ``source_query_ids``."""
+
+    def test_reads_source_query_ids_when_there_is_no_pattern_id(
+        self, generator: DocumentDBScriptGenerator
+    ) -> None:
+        assert generator._extract_query_id({"source_query_ids": ["q7", "q8"]}) == "q7"
+
+    def test_still_reads_legacy_query_ids(self, generator: DocumentDBScriptGenerator) -> None:
+        assert generator._extract_query_id({"query_ids": ["q1"]}) == "q1"
+
+    def test_unknown_without_either(self, generator: DocumentDBScriptGenerator) -> None:
+        assert generator._extract_query_id({}) == "unknown"

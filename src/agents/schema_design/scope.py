@@ -179,6 +179,37 @@ def _references(specs: tuple[_Spec, ...], schema_output: dict) -> Iterator[tuple
                             yield "query", value, sub_location
 
 
+# Aurora access patterns name their queries (``source_query_ids``) but carry their
+# tables as DDL, so the scope check does not read them; coverage does.
+_AURORA_COVERAGE: tuple[_Spec, ...] = (
+    ("access_patterns", "pattern_id", (), ("source_query_ids",), ()),
+)
+
+
+def covered_query_ids(engine: str, schema_output: dict) -> set[str]:
+    """Return the query IDs a design of ``engine`` serves, from its design fields.
+
+    Reads the engine contract's own field (``query_ids`` for DynamoDB and
+    OpenSearch, ``source_query_ids`` for DocumentDB, ElastiCache and Aurora) from
+    the same specs the scope check uses, so no coverage check keeps its own
+    per-engine copy. ``unsupported_patterns`` do not count: they record that a
+    query is not served. An access pattern marked ``in_scope: false`` does not
+    serve its queries either.
+    """
+    patterns = schema_output.get("access_patterns")
+    if isinstance(patterns, list):
+        schema_output = {
+            **schema_output,
+            "access_patterns": [
+                ap for ap in patterns if not (isinstance(ap, dict) and ap.get("in_scope") is False)
+            ],
+        }
+    specs = _ENGINE_FIELDS.get(engine, ())
+    if specs is _AURORA:
+        specs = specs + _AURORA_COVERAGE
+    return {value for kind, value, _ in _references(specs, schema_output) if kind == "query"}
+
+
 def _query_owners(assignment: dict) -> dict[str, str]:
     """Return ``query_id -> assigned_engine`` for the whole assignment."""
     owners: dict[str, str] = {}

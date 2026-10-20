@@ -113,31 +113,83 @@ class TestCheckCoverage:
         issues = check_coverage(schema, in_scope_query_ids=[], engine="dynamodb")
         assert issues == []
 
-    def test_coverage_via_index_designs_query_ids(self):
-        """Queries covered by index_designs[].query_ids count as covered."""
-        schema = _opensearch_schema(
-            index_designs=[_index_design("products-idx", query_ids=["Q1", "Q2"])]
-        )
+    def test_opensearch_access_patterns_query_ids(self):
+        """OpenSearch names its queries in access_patterns[].query_ids."""
+        schema = _opensearch_schema(access_patterns=[_ap("OS-AP-1", ["Q1", "Q2"])])
         issues = check_coverage(schema, in_scope_query_ids=["Q1", "Q2"], engine="opensearch")
         assert issues == []
 
-    def test_coverage_via_collection_designs_query_ids(self):
-        """Queries covered by collection_designs[].query_ids count as covered."""
+    def test_documentdb_access_patterns_source_query_ids(self):
+        """DocumentDB names its queries in access_patterns[].source_query_ids (#1213)."""
         schema = _documentdb_schema(
-            collection_designs=[_collection_design("users", query_ids=["Q1"])]
+            access_patterns=[{"pattern_id": "DOC-AP-1", "source_query_ids": ["Q1", "Q2"]}]
         )
-        issues = check_coverage(schema, in_scope_query_ids=["Q1"], engine="documentdb")
+        issues = check_coverage(schema, in_scope_query_ids=["Q1", "Q2"], engine="documentdb")
         assert issues == []
 
-    def test_coverage_combined_sources(self):
-        """Coverage drawn from access_patterns, index_designs, and collection_designs together."""
+    def test_documentdb_index_source_query_ids(self):
+        """A DocumentDB query named only by collections[].indexes[] is covered."""
         schema = {
-            "access_patterns": [_ap("AP-1", ["Q1"])],
-            "index_designs": [_index_design("idx", query_ids=["Q2"])],
-            "collection_designs": [_collection_design("col", query_ids=["Q3"])],
+            "collections": [
+                {
+                    "collection_name": "users",
+                    "indexes": [{"index_name": "i", "source_query_ids": ["Q3"]}],
+                }
+            ]
         }
-        issues = check_coverage(schema, in_scope_query_ids=["Q1", "Q2", "Q3"], engine="dynamodb")
+        issues = check_coverage(schema, in_scope_query_ids=["Q3"], engine="documentdb")
         assert issues == []
+
+    def test_elasticache_access_patterns_source_query_ids(self):
+        """ElastiCache names its queries in access_patterns[].source_query_ids (#1213)."""
+        schema = {"access_patterns": [{"pattern_id": "EC-AP-1", "source_query_ids": ["Q1"]}]}
+        issues = check_coverage(schema, in_scope_query_ids=["Q1"], engine="elasticache")
+        assert issues == []
+
+    @pytest.mark.parametrize("engine", ["documentdb", "elasticache"])
+    def test_source_query_ids_only_uncovered_still_flagged(self, engine):
+        """A query no pattern names is still an error; covered ones are not."""
+        schema = {"access_patterns": [{"pattern_id": "AP-1", "source_query_ids": ["Q1"]}]}
+        issues = check_coverage(schema, in_scope_query_ids=["Q1", "Q2"], engine=engine)
+        assert [i.message.split("'")[1] for i in issues] == ["Q2"]
+
+    @pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
+    def test_aurora_access_patterns_source_query_ids(self, engine):
+        """Aurora access patterns name their queries in source_query_ids."""
+        schema = {"access_patterns": [{"pattern_id": "Q1", "source_query_ids": ["Q1"]}]}
+        issues = check_coverage(schema, in_scope_query_ids=["Q1", "Q2"], engine=engine)
+        assert [i.message.split("'")[1] for i in issues] == ["Q2"]
+
+    @pytest.mark.parametrize("engine", ["documentdb", "elasticache"])
+    def test_an_out_of_scope_pattern_does_not_cover(self, engine):
+        schema = {
+            "access_patterns": [
+                {"pattern_id": "AP-1", "source_query_ids": ["Q1"], "in_scope": False}
+            ]
+        }
+        assert len(check_coverage(schema, in_scope_query_ids=["Q1"], engine=engine)) == 1
+
+    @pytest.mark.parametrize("engine", ["documentdb", "elasticache"])
+    def test_unsupported_patterns_do_not_cover(self, engine):
+        """unsupported_patterns record a query that is not served, so they do not cover it."""
+        schema = {"unsupported_patterns": [{"source_query_ids": ["Q1"], "reason": "r"}]}
+        issues = check_coverage(schema, in_scope_query_ids=["Q1"], engine=engine)
+        assert len(issues) == 1
+
+    @pytest.mark.parametrize(
+        ("engine", "wrong_field"),
+        [
+            ("dynamodb", "source_query_ids"),
+            ("opensearch", "source_query_ids"),
+            ("documentdb", "query_ids"),
+            ("elasticache", "query_ids"),
+        ],
+    )
+    def test_other_engines_field_does_not_cover(self, engine, wrong_field):
+        """Each engine reads only its own contract's field."""
+        schema = {"access_patterns": [{"pattern_id": "AP-1", wrong_field: ["Q1"]}]}
+        issues = check_coverage(schema, in_scope_query_ids=["Q1"], engine=engine)
+        assert len(issues) == 1
 
     def test_partial_coverage_reports_only_uncovered(self):
         """Only uncovered queries are reported, not covered ones."""

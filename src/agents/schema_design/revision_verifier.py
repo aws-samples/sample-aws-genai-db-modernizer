@@ -11,29 +11,12 @@ the same inputs.
 
 from __future__ import annotations
 
+from src.agents.schema_design.scope import covered_query_ids
 from src.contracts.schema_revision_models import VerificationIssue, VerificationResult
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _collect_covered_query_ids(schema_output: dict) -> set[str]:
-    """Return the union of all query IDs referenced across access_patterns,
-    index_designs, and collection_designs in *schema_output*.
-    """
-    covered: set[str] = set()
-
-    for ap in schema_output.get("access_patterns", []):
-        covered.update(ap.get("query_ids", []))
-
-    for idx in schema_output.get("index_designs", []):
-        covered.update(idx.get("query_ids", []))
-
-    for col in schema_output.get("collection_designs", []):
-        covered.update(col.get("query_ids", []))
-
-    return covered
 
 
 def _collect_pattern_ids(output: dict) -> set[str]:
@@ -69,17 +52,17 @@ def check_coverage(
 ) -> list[VerificationIssue]:
     """Verify that every in-scope query ID is covered by at least one pattern.
 
-    Coverage is satisfied when a query_id appears in any of:
-    - access_patterns[].query_ids
-    - index_designs[].query_ids
-    - collection_designs[].query_ids
+    Coverage is satisfied when a query_id appears in the engine contract's own
+    query-id field (see ``scope.covered_query_ids``): ``query_ids`` for
+    DynamoDB and OpenSearch, ``source_query_ids`` for DocumentDB and
+    ElastiCache.
 
     Returns one VerificationIssue per uncovered query_id.
     """
     if not in_scope_query_ids:
         return []
 
-    covered = _collect_covered_query_ids(schema_output)
+    covered = covered_query_ids(engine, schema_output)
     issues: list[VerificationIssue] = []
 
     for qid in in_scope_query_ids:

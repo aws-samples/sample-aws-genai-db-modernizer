@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 
 from src.agents.schema_design.output_contract import ContractIssue, write_schema_output
+from src.agents.schema_design.scope import covered_query_ids
 from src.contracts.schema_revision_models import (
     ChangelogEntry,
     PatternAction,
@@ -443,6 +444,43 @@ def _apply_drops_to_schema(schema_output: dict, dropped_pattern_ids: set[str]) -
     return result
 
 
+def _required_query_ids(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    engine: str,
+    current_schema: dict,
+    removed_pattern_ids: set[str],
+) -> set[str]:
+    """Queries the assignment puts on ``engine`` that the revision did not remove on purpose.
+
+    Returns an empty set (no coverage check) when the assignment cannot be read,
+    so a missing artifact never rejects a revision.
+    """
+    from src.storage.assignment_versioning import (
+        engine_scope,
+        read_assignment,
+        resolve_downstream_assignment_version,
+    )
+
+    try:
+        version = resolve_downstream_assignment_version(store, database_name, job_id)
+        assignment = read_assignment(store, database_name, job_id, version)
+    except Exception:
+        logger.debug("Assignment not readable for %s -- skipping coverage check", job_id)
+        return set()
+    if not assignment:
+        return set()
+    removed = {
+        "access_patterns": [
+            ap
+            for ap in current_schema.get("access_patterns", [])
+            if ap.get("pattern_id") in removed_pattern_ids
+        ]
+    }
+    return set(engine_scope(assignment, engine).query_ids) - covered_query_ids(engine, removed)
+
+
 def execute_revision(
     job_id: str,
     database_name: str,
@@ -504,14 +542,12 @@ def execute_revision(
             store=store,
         )
 
-    # 5. Determine in-scope query_ids (from remaining patterns)
-    in_scope_query_ids: set[str] = set()
-    for ap in new_schema.get("access_patterns", []):
-        in_scope_query_ids.update(ap.get("query_ids", []))
-    for idx in new_schema.get("index_designs", []):
-        in_scope_query_ids.update(idx.get("query_ids", []))
-    for col in new_schema.get("collection_designs", []):
-        in_scope_query_ids.update(col.get("query_ids", []))
+    # 5. Determine the queries the revised design must cover: the ones the
+    # assignment gives this engine, less those of patterns the customer dropped or
+    # reassigned on purpose. Taken from the design itself, coverage could never fail.
+    in_scope_query_ids = _required_query_ids(
+        store, database_name, job_id, engine, current_schema, all_dropped_patterns
+    )
 
     # 6. Run verification (including cross-engine conflict checks for reassignments)
     reassignments = [
