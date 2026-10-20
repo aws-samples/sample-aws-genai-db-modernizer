@@ -102,9 +102,14 @@ jest.mock('@cloudscape-design/components/select', () => ({
 }));
 jest.mock('@cloudscape-design/components/table', () => ({
   __esModule: true,
-  default: ({ items, columnDefinitions, empty, loading, ariaLabels }) => (
-    <table data-loading={String(Boolean(loading))} aria-label={ariaLabels && ariaLabels.tableLabel}>
-      <thead><tr>{columnDefinitions.map(c => <th key={c.id}>{c.header}</th>)}</tr></thead>
+  default: ({ items, columnDefinitions, empty, loading, ariaLabels, wrapLines, stickyColumns }) => (
+    <table
+      data-loading={String(Boolean(loading))}
+      aria-label={ariaLabels && ariaLabels.tableLabel}
+      data-wrap-lines={String(Boolean(wrapLines))}
+      data-sticky-first={String((stickyColumns && stickyColumns.first) || 0)}
+    >
+      <thead><tr>{columnDefinitions.map(c => <th key={c.id} data-col={c.id} data-width={c.width || ''}>{c.header}</th>)}</tr></thead>
       <tbody>
         {items.length === 0 ? <tr><td>{empty}</td></tr> : items.map(item => (
           <tr key={item.queryId} data-query-id={item.queryId}>
@@ -278,4 +283,34 @@ test('each row shows its query type', () => {
   const type = id => container.querySelector(`tr[data-query-id="${id}"] [data-col="type"]`).textContent;
   expect(type(row(1).queryId)).toBe('SELECT');
   expect(type(row(2).queryId)).toBe('—');
+});
+
+// #1244: the table was about 2083 px wide in a 1238 px card at 1440 px, with Engine and
+// Routing last, so the answer to "where does this query go" sat off-screen. The layout
+// itself is measured in a browser by tests/e2e/test_ui.py; here, the column order and the
+// table options that keep it inside its card.
+const headerIds = () => Array.from(container.querySelectorAll('thead th')).map(th => th.dataset.col);
+
+test('Engine and Routing come right after the query id', () => {
+  render();
+  expect(headerIds()).toEqual(['query', 'engine', 'routing', 'type', 'tables', 'statement']);
+  const cells = Array.from(container.querySelector(`tr[data-query-id="${moved.queryId}"]`).children)
+    .map(td => td.dataset.col);
+  expect(cells.slice(0, 3)).toEqual(['query', 'engine', 'routing']);
+});
+
+test('long text wraps instead of widening the table, and the query id stays pinned', () => {
+  render();
+  const table = container.querySelector('table');
+  expect(table.dataset.wrapLines).toBe('true');
+  expect(table.dataset.stickyFirst).toBe('1');
+});
+
+test('the long text column takes the width that is left, the short columns a fixed one', () => {
+  render();
+  const widths = Object.fromEntries(
+    Array.from(container.querySelectorAll('thead th')).map(th => [th.dataset.col, th.dataset.width]),
+  );
+  expect(widths.statement).toBe('');
+  ['query', 'engine', 'routing', 'type', 'tables'].forEach(id => expect(Number(widths[id])).toBeGreaterThan(0));
 });

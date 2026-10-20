@@ -84,6 +84,10 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
   const engineOptions = [anyEngine, ...options.engines.map(e => ({ value: e.engine, label: e.engineName }))];
   const counter = isFiltered ? `(${filtered.length} of ${(rows || []).length})` : `(${(rows || []).length})`;
 
+  // #1244: Engine and Routing, the columns a reader opens this table for, come right
+  // after the query id, and long text wraps (the Table's wrapLines) instead of widening
+  // the table past its card: at 1440 px the whole table fits with no horizontal scroll.
+  // The id column stays pinned for narrower windows.
   const columnDefinitions = [
     {
       id: 'query',
@@ -96,35 +100,40 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
           <span style={{ fontFamily: 'monospace' }} title={item.queryId}>{shortId(item.queryId)}</span>
         </Link>
       ),
-      width: 170,
-    },
-    {
-      id: 'statement',
-      header: t('analysis-results.query-routing.col-statement'),
-      cell: item => <Box fontSize="body-s"><span style={{ fontFamily: 'monospace' }}>{item.excerpt || '—'}</span></Box>,
-    },
-    {
-      id: 'type',
-      header: t('analysis-results.query-routing.col-type'),
-      cell: item => item.queryType || '—',
-      width: 110,
-    },
-    {
-      id: 'tables',
-      header: t('analysis-results.query-routing.col-tables'),
-      cell: item => (item.tables.length > 0 ? item.tables.join(', ') : '—'),
+      width: 150,
     },
     {
       id: 'engine',
       header: t('analysis-results.query-routing.col-engine'),
       cell: item => item.engineName || '—',
-      width: 160,
+      width: 150,
     },
     {
       id: 'routing',
       header: t('analysis-results.query-routing.col-routing'),
       cell: item => <RoutingBadges kinds={item.kinds} hasLedger={hasLedger} t={t} />,
-      width: 220,
+      width: 190,
+    },
+    {
+      id: 'type',
+      header: t('analysis-results.query-routing.col-type'),
+      cell: item => item.queryType || '—',
+      width: 100,
+    },
+    {
+      id: 'tables',
+      header: t('analysis-results.query-routing.col-tables'),
+      cell: item => (item.tables.length > 0 ? item.tables.join(', ') : '—'),
+      width: 230,
+    },
+    {
+      id: 'statement',
+      header: t('analysis-results.query-routing.col-statement'),
+      cell: item => (
+        <Box fontSize="body-s">
+          <span style={{ fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{item.excerpt || '—'}</span>
+        </Box>
+      ),
     },
   ];
 
@@ -183,6 +192,8 @@ const QueryRoutingTable = memo(({ rows, loading, error, hasLedger, truncated, on
               loading={loading}
               loadingText={t('analysis-results.query-routing.loading')}
               columnDefinitions={columnDefinitions}
+              wrapLines
+              stickyColumns={{ first: 1 }}
               items={pageRows}
               empty={<Box textAlign="center" padding="l">{t('analysis-results.query-routing.empty')}</Box>}
             />

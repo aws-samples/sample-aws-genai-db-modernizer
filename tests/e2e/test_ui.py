@@ -882,3 +882,32 @@ def test_results_page_states_the_pending_engine_choices(
         else:
             assert note.count() == 0, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def test_query_routing_table_fits_its_card_at_1440(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1244: at a 1440 px viewport the Query routing table was about 2083 px wide in a
+    card about 1238 px wide, with Engine and Routing off-screen until the reader scrolled
+    right. The table now fits its card, and Engine and Routing are on the first screen."""
+    page.set_viewport_size({"width": 1440, "height": 900})
+    for r in all_runs:
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        _expand_query_routing(page)
+        section = page.locator("#query-routing-section")
+        section.get_by_role("table", name="Query routing").wait_for()
+        section.locator("table tbody tr").first.wait_for()
+        m = page.evaluate("""() => {
+              const table = document.querySelector('#query-routing-section table');
+              const scroller = table.parentElement;
+              const box = scroller.getBoundingClientRect();
+              const head = (name) => [...table.querySelectorAll('thead th')]
+                .find((th) => th.innerText.trim() === name).getBoundingClientRect();
+              return {tableWidth: table.scrollWidth, visibleWidth: scroller.clientWidth,
+                      visibleRight: box.right, engineRight: head('Engine').right,
+                      routingRight: head('Routing').right};
+            }""")
+        assert m["tableWidth"] <= m["visibleWidth"] + 1, (r.db, m)
+        assert m["engineRight"] <= m["visibleRight"] + 1, (r.db, m)
+        assert m["routingRight"] <= m["visibleRight"] + 1, (r.db, m)
