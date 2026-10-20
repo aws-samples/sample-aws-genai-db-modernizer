@@ -401,11 +401,68 @@ def _number_mismatch(aurora_type: str) -> DefaultTranslation:
     return _dropped("number", f"is a number, which {_of_type(aurora_type)} does not take")
 
 
-def _render_pg(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTranslation:
+# What a quoted literal must look like for the column type to read it (#612). Only
+# types whose input syntax is narrow are checked; every other type keeps its literal.
+_INTEGER_TEXT = r"\s*[+-]?\d+\s*"
+_DECIMAL_TEXT = r"\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\s*"
+_PG_SPECIAL_NUMBER = r"\s*[+-]?(?:nan|inf|infinity)\s*"
+# PostgreSQL's boolean input: a unique prefix of true/false/yes/no, on/off, or 1/0.
+_PG_BOOLEAN_TEXT = r"\s*(?:t|tr|tru|true|f|fa|fal|fals|false|y|ye|yes|n|no|on|of|off|1|0)\s*"
+# A MySQL zero date (or zero datetime), which neither Aurora engine accepts as a value.
+_ZERO_DATE = r"0000-00-00(?:[ T]00:00:00(?:\.0+)?)?"
+_ZERO_DATE_TYPES = {"DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ"}
+_FLOATS = {"REAL", "DOUBLE", "FLOAT", "FLOAT4", "FLOAT8"}
+
+
+def _literal_misfit(
+    text: str, base: str, aurora_type: str, target: str, nullable: bool
+) -> DefaultTranslation | None:
+    """Why a quoted literal cannot be ``base``'s DEFAULT, or None if it can (#612).
+
+    A MySQL zero date on a date column becomes ``DEFAULT NULL`` (dropped on a NOT
+    NULL column); a literal an integer, decimal or boolean column cannot parse is
+    dropped. Either way CREATE TABLE no longer fails on the target.
+    """
+    pg = target == PG_TARGET
+    if base in _ZERO_DATE_TYPES and _full(_ZERO_DATE, text.strip()):
+        why = f"is a MySQL zero date, which {_ENGINE[target]} does not accept"
+        # Existing rows can hold the zero date too: the data migration must map them.
+        rows = (
+            f" Rows holding a zero date need a real date{'' if not nullable else ' or NULL'} "
+            "when the data is migrated."
+        )
+        if not nullable:
+            dropped = _dropped("string", f"{why}, and the column is NOT NULL")
+            return DefaultTranslation(kind=dropped.kind, reason=dropped.reason + rows)
+        return DefaultTranslation(
+            " DEFAULT NULL",
+            "null",
+            reason=f"{why}, so the target DDL uses DEFAULT NULL instead.{rows}",
+        )
+    integers = _PG_INTEGERS if pg else _MYSQL_INTEGERS | {"BOOLEAN", "BOOL"}
+    if base in integers:
+        valid = bool(_full(_INTEGER_TEXT, text))
+    elif base in {"NUMERIC", "DECIMAL"} | _FLOATS:
+        valid = bool(_full(_DECIMAL_TEXT, text)) or bool(pg and _full(_PG_SPECIAL_NUMBER, text))
+    elif pg and base == "BOOLEAN":
+        valid = bool(_full(_PG_BOOLEAN_TEXT, text))
+    else:
+        return None
+    if valid:
+        return None
+    return _dropped("string", f"is a literal that {_of_type(aurora_type)} cannot read")
+
+
+def _render_pg(
+    p: _Parsed, aurora_type: str, identity_ok: bool, nullable: bool = True
+) -> DefaultTranslation:
     base = _base(aurora_type)
     array = "[" in aurora_type
     scalar = "" if array else base
     if p.kind == "string":
+        misfit = _literal_misfit(p.text, scalar, aurora_type, PG_TARGET, nullable)
+        if misfit is not None:
+            return misfit
         clause = _pg_quote(p.text)
         if p.cast:
             try:
@@ -430,7 +487,14 @@ def _render_pg(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTransl
             return _dropped("boolean", f"is a boolean, which {_of_type(aurora_type)} does not take")
         return DefaultTranslation(f" DEFAULT {p.text}", "boolean")
     if p.kind in ("timestamp", "date", "time"):
-        if scalar not in _PG_TEMPORAL | _PG_STRINGS:
+        # The types PostgreSQL assigns each to (#612): a date reaches no time-of-day
+        # type, and a time of day reaches no date or timestamp type.
+        takes = {
+            "timestamp": _PG_TEMPORAL,
+            "date": {"DATE", "TIMESTAMP", "TIMESTAMPTZ"},
+            "time": {"TIME", "TIMETZ"},
+        }[p.kind]
+        if scalar not in takes | _PG_STRINGS:
             return _dropped(
                 p.kind, f"is the current {p.kind}, which {_of_type(aurora_type)} does not take"
             )
@@ -455,13 +519,18 @@ def _render_pg(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTransl
     return _sequence(PG_TARGET, scalar, identity_ok)
 
 
-def _render_mysql(p: _Parsed, aurora_type: str, identity_ok: bool) -> DefaultTranslation:
+def _render_mysql(
+    p: _Parsed, aurora_type: str, identity_ok: bool, nullable: bool = True
+) -> DefaultTranslation:
     base = _base(aurora_type)
     if p.kind in ("string", "number", "boolean", "bits") and base in _MYSQL_NO_LITERAL:
         return _dropped(
             p.kind, f"is a literal, and Aurora MySQL {base} columns take no literal DEFAULT"
         )
     if p.kind == "string":
+        misfit = _literal_misfit(p.text, base, aurora_type, MYSQL_TARGET, nullable)
+        if misfit is not None:
+            return misfit
         return DefaultTranslation(f" DEFAULT {_mysql_quote(p.text)}", "string")
     if p.kind in ("number", "boolean"):
         if base not in _MYSQL_NUMERIC | _MYSQL_STRINGS:
@@ -548,4 +617,4 @@ def translate_default(
     if parsed.kind == "string" and "\x00" in parsed.text:
         return _dropped("string", "contains a NUL character")
     render = _render_mysql if target == MYSQL_TARGET else _render_pg
-    return render(parsed, aurora_type, identity_ok)
+    return render(parsed, aurora_type, identity_ok, nullable)

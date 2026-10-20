@@ -533,11 +533,9 @@ def test_deeply_nested_parentheses_finish_fast_and_are_dropped(source, shape):
     # Cost grows linearly with the depth, up to 50k levels (relative timing, #1230).
     assert_linear(make, translate, sizes=(6_250, 50_000))
     result = translate(make(50_000))
-    if source == "mysql" and shape == "unopened":
-        # a MySQL default is literal text: "0)))..." is one quoted literal
-        assert _single_pg_literal(result.clause)
-    else:
-        assert result.clause == "" and result.reason
+    # A MySQL default is literal text, so "0)))..." is one literal; an INTEGER
+    # column cannot read it, so it is dropped like every other shape (#612).
+    assert result.clause == "" and result.reason
 
 
 def test_parentheses_within_the_depth_limit_still_strip():
@@ -556,3 +554,135 @@ def test_non_ascii_digits_are_not_numeric_defaults():
             "((١٢))", source_engine="sqlserver", target=target, aurora_type="INTEGER"
         )
         assert "١٢" not in (result.clause or "")
+
+
+# --- Defaults CREATE TABLE would reject for the column's type (#612) ------------
+
+
+@pytest.mark.parametrize(
+    "value,aurora_type",
+    [
+        ("CURRENT_DATE", "TIME"),
+        ("CURRENT_DATE", "TIME WITH TIME ZONE"),
+        ("CURRENT_TIME", "DATE"),
+        ("CURRENT_TIME", "TIMESTAMP"),
+        ("CURRENT_TIME", "TIMESTAMP WITH TIME ZONE"),
+    ],
+)
+def test_pg_current_date_or_time_on_a_type_with_no_cast_is_dropped(value, aurora_type):
+    result = _pg(value, aurora_type=aurora_type)
+    assert result.clause == "" and result.reason
+    assert aurora_type in result.reason
+
+
+@pytest.mark.passes_on_main  # guards what #612 must keep
+@pytest.mark.parametrize(
+    "value,aurora_type,clause",
+    [
+        ("CURRENT_DATE", "DATE", " DEFAULT CURRENT_DATE"),
+        ("CURRENT_DATE", "TIMESTAMP", " DEFAULT CURRENT_DATE"),
+        ("CURRENT_DATE", "TIMESTAMPTZ", " DEFAULT CURRENT_DATE"),
+        ("CURRENT_TIME", "TIME", " DEFAULT CURRENT_TIME"),
+        ("CURRENT_TIME", "TIMETZ", " DEFAULT CURRENT_TIME"),
+        ("now()", "DATE", " DEFAULT CURRENT_TIMESTAMP"),
+        ("now()", "TIME", " DEFAULT CURRENT_TIMESTAMP"),
+        ("CURRENT_TIME", "TEXT", " DEFAULT CURRENT_TIME"),
+    ],
+)
+def test_pg_current_date_time_and_timestamp_keep_every_assignable_type(value, aurora_type, clause):
+    result = _pg(value, aurora_type=aurora_type)
+    assert result.clause == clause and result.reason == ""
+
+
+@pytest.mark.parametrize(
+    "value,source,aurora_type",
+    [
+        ("'abc'", "postgresql", "INTEGER"),
+        ("'abc'::text", "postgresql", "BIGINT"),
+        ("'1.5'", "postgresql", "INTEGER"),
+        ("'abc'", "postgresql", "NUMERIC(10,2)"),
+        ("'maybe'", "postgresql", "BOOLEAN"),
+        ("('abc')", "sqlserver", "INTEGER"),
+        ("abc", "mysql", "INTEGER"),
+    ],
+)
+def test_pg_literal_the_column_type_cannot_read_is_dropped(value, source, aurora_type):
+    result = _pg(value, source=source, aurora_type=aurora_type)
+    assert result.clause == "" and result.reason
+    assert aurora_type in result.reason
+
+
+@pytest.mark.parametrize(
+    "value,source,aurora_type",
+    [
+        ("abc", "mysql", "INT"),
+        ("1.5", "mysql", "BIGINT"),
+        ("'abc'", "postgresql", "DECIMAL(5,2)"),
+        ("x", "mysql", "BOOLEAN"),
+    ],
+)
+def test_mysql_literal_the_column_type_cannot_read_is_dropped(value, source, aurora_type):
+    result = _my(value, source=source, aurora_type=aurora_type)
+    assert result.clause == "" and result.reason
+
+
+@pytest.mark.passes_on_main  # guards what #612 must keep
+@pytest.mark.parametrize(
+    "value,source,aurora_type,target",
+    [
+        ("'-1'::integer", "postgresql", "INTEGER", PG),
+        ("' 42 '", "postgresql", "BIGINT", PG),
+        ("'+7'", "postgresql", "SMALLINT", PG),
+        ("'1.5e3'", "postgresql", "DOUBLE PRECISION", PG),
+        ("'NaN'", "postgresql", "NUMERIC", PG),
+        ("'Infinity'", "postgresql", "FLOAT8", PG),
+        ("'yes'", "postgresql", "BOOLEAN", PG),
+        ("'t'", "postgresql", "BOOLEAN", PG),
+        ("'0'", "postgresql", "BOOLEAN", PG),
+        ("'$1.00'", "postgresql", "MONEY", PG),
+        ("'abc'", "postgresql", "VARCHAR(10)", PG),
+        ("'2024-01-01'", "postgresql", "DATE", PG),
+        ("'now'", "postgresql", "TIMESTAMP", PG),
+        ("0", "mysql", "BIGINT", MY),
+        ("-3", "mysql", "INT", MY),
+        ("2.50", "mysql", "DECIMAL(5,2)", MY),
+        ("abc", "mysql", "VARCHAR(20)", MY),
+        ("00:00:00", "mysql", "TIME", MY),
+    ],
+)
+def test_literals_the_column_type_reads_are_kept(value, source, aurora_type, target):
+    result = translate_default(value, source_engine=source, target=target, aurora_type=aurora_type)
+    assert result.clause.startswith(" DEFAULT '") or result.clause.startswith(" DEFAULT E'")
+    assert result.reason == ""
+
+
+@pytest.mark.parametrize(
+    "value,source,aurora_type,target",
+    [
+        ("0000-00-00 00:00:00", "mysql", "DATETIME", MY),
+        ("0000-00-00 00:00:00", "mysql", "TIMESTAMP", MY),
+        ("0000-00-00", "mysql", "DATE", MY),
+        ("0000-00-00 00:00:00.000000", "mysql", "DATETIME(6)", MY),
+        ("'0000-00-00 00:00:00'", "mariadb", "DATETIME(6)", MY),  # MariaDB quotes it
+        ("0000-00-00 00:00:00", "mysql", "TIMESTAMP", PG),
+        ("0000-00-00", "mysql", "DATE", PG),
+    ],
+)
+def test_a_mysql_zero_date_becomes_null_with_a_note(value, source, aurora_type, target):
+    result = translate_default(value, source_engine=source, target=target, aurora_type=aurora_type)
+    assert result.clause == " DEFAULT NULL"
+    assert "zero date" in result.reason
+    assert "when the data is migrated" in result.reason
+
+
+def test_a_zero_date_on_a_not_null_column_is_dropped():
+    result = _my("0000-00-00 00:00:00", aurora_type="DATETIME", nullable=False)
+    assert result.clause == ""
+    assert "zero date" in result.reason and "NOT NULL" in result.reason
+    assert "when the data is migrated" in result.reason
+
+
+@pytest.mark.passes_on_main  # guards what #612 must keep
+def test_a_zero_date_on_a_text_column_stays_a_literal():
+    result = _my("0000-00-00 00:00:00", aurora_type="VARCHAR(20)")
+    assert result.clause == " DEFAULT '0000-00-00 00:00:00'" and result.reason == ""
