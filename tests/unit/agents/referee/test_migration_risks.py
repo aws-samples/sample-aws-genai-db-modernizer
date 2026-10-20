@@ -68,6 +68,7 @@ def _build(**kw: Any) -> list[dict[str, Any]]:
     kw.setdefault("migration_waves", [WAVE_1, WAVE_2])
     kw.setdefault("query_assignments", [])
     kw.setdefault("source_queries", [])
+    kw.setdefault("source_engine", "mysql")
     return build_migration_risks(**kw)
 
 

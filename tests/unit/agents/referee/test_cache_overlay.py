@@ -394,6 +394,81 @@ class TestOwnership:
         assert not is_write_query(query)
 
 
+class TestWriteCheckReadsTheSourceDialect:
+    """#1144: ``is_write_query`` reads an ``OTHER`` statement in the source engine's
+
+    dialect, as the locking-read half of the gate does (#1114): MySQL ``#`` comments
+    and PostgreSQL ``$$`` strings hold no statement.
+    """
+
+    @pytest.mark.parametrize(
+        ("engine", "text"),
+        [
+            ("mysql", "WITH w AS (SELECT 1) # UPDATE x SET a = 1\nSELECT * FROM w"),
+            ("mariadb", "WITH w AS (SELECT 1) # delete from t\nSELECT * FROM w"),
+            ("postgresql", "WITH w AS (SELECT $$ INSERT INTO t VALUES (1) $$) SELECT * FROM w"),
+            ("postgresql", "WITH w AS (SELECT $tag$ DELETE FROM t $tag$) SELECT * FROM w"),
+            ("postgresql", "SELECT '$$ INSERT INTO t VALUES (1) $$' AS note, $$ x $$ AS y"),
+            ("postgresql", "SELECT $$ UPDATE t SET a = 1 $$ AS body"),
+            # an opener word inside a quoted literal or a comment opens no code body
+            ("postgresql", "SELECT 'as $$' AS c FROM t WHERE x = $$ update t set a=1 $$"),
+            ("postgresql", "SELECT 'do $$', $$ delete from t $$ FROM t"),
+            ("postgresql", "SELECT $1 AS c, $$ insert into t values (1) $$"),
+            ("postgresql", "SELECT 1 /* do */ $$ delete from t $$"),
+            ("postgresql", "DO $$ BEGIN -- delete from t\n PERFORM 1; /* truncate t */ END $$"),
+        ],
+    )
+    def test_a_keyword_in_a_dialect_comment_or_string_is_no_write(self, engine, text):
+        query = _q("w", text, "OTHER")
+        assert not is_write_query(query, engine)
+        assert can_own("opensearch", query, engine)
+        # The dialect is what decides: read without it, the text still looks like a write.
+        assert is_write_query(query)
+
+    @pytest.mark.parametrize(
+        ("engine", "text"),
+        [
+            ("mysql", "WITH w AS (SELECT 1) # it's a note\nDELETE FROM t WHERE id = 1"),
+            ("postgresql", "WITH w AS (SELECT $$it's$$) INSERT INTO t SELECT * FROM w"),
+            ("postgresql", "WITH w AS (SELECT 1 # 2) UPDATE t SET a = 1"),
+            ("mysql", "-- note\nCALL proc(?)"),
+            ("postgresql", "WITH w AS (INSERT INTO t(id) VALUES (1) RETURNING id) SELECT * FROM w"),
+            ("postgresql", "DO $$ BEGIN INSERT INTO t VALUES (1); END $$"),
+            ("postgresql", "DO LANGUAGE plpgsql $x$ BEGIN DELETE FROM t; END $x$"),
+            (
+                "postgresql",
+                "CREATE FUNCTION f() RETURNS void AS $$ UPDATE t SET a = 1 $$ LANGUAGE sql",
+            ),
+            # dynamic SQL and nested dollar quotes inside a body are code too
+            ("postgresql", "DO $$ BEGIN EXECUTE 'DELETE FROM t'; END $$"),
+            ("postgresql", "DO $$ BEGIN EXECUTE format('INSERT INTO %I VALUES (1)', 't'); END $$"),
+            ("postgresql", "CREATE FUNCTION f() AS $$ BEGIN EXECUTE 'truncate t'; END $$"),
+            ("postgresql", "DO $a$ BEGIN EXECUTE $b$ INSERT INTO t VALUES (1) $b$; END $a$"),
+            ("postgresql", "DO $Fn$ BEGIN DELETE FROM t WHERE id = $1; END $Fn$"),
+            ("postgresql", "SELECT $1, 'as $$' AS c FROM t; DO $$ BEGIN DELETE FROM t; END $$"),
+        ],
+    )
+    def test_a_real_write_beside_a_dialect_form_is_still_a_write(self, engine, text):
+        query = _q("w", text, "OTHER")
+        assert is_write_query(query, engine)
+        assert not can_own("opensearch", query, engine)
+
+    def test_write_heavy_tables_reads_each_query_in_the_source_dialect(self):
+        fake = _q("f", "WITH w AS (SELECT 1) # UPDATE x SET a = 1\nSELECT * FROM w", "OTHER")
+        fake["tables_accessed"] = ["x"]
+        fake["calls_per_second"] = 10
+        assert write_heavy_tables([fake]) == {"x"}
+        assert write_heavy_tables([fake], "mysql") == set()
+
+    def test_the_cost_model_prices_a_commented_keyword_as_a_read(self):
+        from src.agents.referee.query_cost import QueryCostModel
+
+        query = _q("f", "WITH w AS (SELECT 1) # UPDATE x SET a = 1\nSELECT * FROM w", "OTHER")
+        query["calls_per_second"] = 10
+        mysql = QueryCostModel(source_engine="mysql").variable_monthly(query, "dynamodb")
+        assert mysql < QueryCostModel(source_engine="").variable_monthly(query, "dynamodb")
+
+
 # The same cases run against the UI's engine picker (src/ui/src/utils/sqlLocking.js).
 LOCKING_CASES = json.loads((Path(__file__).parent / "locking_clause_cases.json").read_text())[
     "cases"

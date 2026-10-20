@@ -97,7 +97,7 @@ def has_session_keyword(text: str) -> bool:
     return query_facts(text or "").session_key
 
 
-def is_write_query(query: Mapping) -> bool:
+def is_write_query(query: Mapping, source_engine: str | None = None) -> bool:
     """True for INSERT/UPDATE/DELETE (and other data-changing) statements.
 
     The collector's own ``query_type`` catches the common case. A
@@ -105,14 +105,18 @@ def is_write_query(query: Mapping) -> bool:
     opens with a comment all come through as ``OTHER`` instead (review of
     #303), so for that type a DML keyword or a leading ``CALL``/``TRUNCATE``/
     ``COPY`` in the SQL itself -- after stripping any leading comment --
-    counts as a write too.
+    counts as a write too. ``source_engine`` is the dialect the text is read in: a
+    keyword inside a MySQL ``#`` comment or a PostgreSQL ``$$`` string is no write
+    (#1144), but a ``DO $$ ... $$`` block or a function body is code, and so is any
+    dynamic SQL string inside one, and counts. With no engine, the text is read in
+    the common grammar only.
     """
     qtype = str(query.get("query_type") or "").upper()
     if qtype in WRITE_QUERY_TYPES:
         return True
     if qtype != "OTHER":
         return False
-    return query_facts(str(query.get("query_text") or "")).write_statement_text
+    return query_facts(str(query.get("query_text") or ""), source_engine).write_statement_text
 
 
 def is_locking_read(query: Mapping, source_engine: str | None = None) -> bool:
@@ -145,7 +149,7 @@ def can_own(engine: str, query: Mapping | None = None, source_engine: str | None
         return False
     if query is None or engine not in NON_SYSTEM_OF_RECORD_ENGINES:
         return True
-    return not (is_write_query(query) or is_locking_read(query, source_engine))
+    return not (is_write_query(query, source_engine) or is_locking_read(query, source_engine))
 
 
 def owner_candidates(
@@ -155,13 +159,13 @@ def owner_candidates(
     return [e for e in engines if can_own(e, query, source_engine)]
 
 
-def write_heavy_tables(queries: Iterable[Mapping]) -> set[str]:
+def write_heavy_tables(queries: Iterable[Mapping], source_engine: str | None = None) -> set[str]:
     """Tables whose writes are at least WRITE_HEAVY_TABLE_MIN_WRITE_SHARE of their calls."""
     reads: dict[str, float] = defaultdict(float)
     writes: dict[str, float] = defaultdict(float)
     for q in queries:
         cps = float(q.get("calls_per_second") or 0)
-        side = writes if is_write_query(q) else reads
+        side = writes if is_write_query(q, source_engine) else reads
         for t in q.get("tables_accessed") or []:
             side[t] += cps
     heavy = set()
@@ -290,7 +294,7 @@ def apply_cache_overlay(
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
     cache = available_cache_engine(engines)
-    heavy = write_heavy_tables(query_list)
+    heavy = write_heavy_tables(query_list, source_engine)
     for qa in query_assignments:
         q = by_id.get(qa.get("query_id"))
         if qa.get("cache_customer_override"):
@@ -714,7 +718,7 @@ def normalize_cache_owners(
         return []
     query_list = list(queries)
     by_id = {q.get("query_id"): q for q in query_list}
-    heavy = write_heavy_tables(query_list)
+    heavy = write_heavy_tables(query_list, source_engine)
     counts = settled_counts(qas)
     ctx = None
     if isinstance(engines, Mapping):

@@ -60,7 +60,13 @@ from functools import cached_property, lru_cache
 from typing import TYPE_CHECKING
 
 from src.shared.sql_comments import strip_leading_comments
-from src.shared.sql_spans import comments_literals_and_identifiers_for, sub_spans
+from src.shared.sql_spans import (
+    POSTGRES_LITERALS_AND_COMMENTS,
+    comments_literals_and_identifiers_for,
+    literals_and_comments_for,
+    spans,
+    sub_spans,
+)
 from src.shared.unsupported_pattern import is_dedup_only_group_by, strip_comments_and_literals
 from src.tools.sql.facade import AccessFacts, ColumnUse, SqlFacts, TableRef, query_readings
 from src.tools.sql.regex_facts import (
@@ -635,16 +641,60 @@ def _strip_leading_comments(text: str, nested: bool = False) -> str:
     )
 
 
+# A PostgreSQL ``DO $$ ... $$`` block, or the ``AS $$ ... $$`` body of a ``CREATE FUNCTION`` /
+# ``CREATE PROCEDURE``, is code that runs, not a string literal (#1144).
+_CODE_OPENER_RE = re.compile(r"\b(?:do|as)\s+(?:language\s+\w+\s+)?$", re.IGNORECASE)
+_TAIL = 80
+# Inside a body ``CALL``, ``TRUNCATE`` and ``COPY`` are statements wherever they stand, not
+# only at the start of the text, so a body reads them as the DML they are.
+_BODY_VERB_RE = re.compile(r"\b(?:call|truncate|copy)\s+(?:table\s+)?(?=[\w\"])", re.IGNORECASE)
+
+
+def _postgres_code_reading(text: str, in_body: bool = False) -> str:
+    """``text`` with its comments and string literals blanked, except the code a
+    PostgreSQL statement runs.
+
+    The scan is the dialect's span grammar, so a ``do`` or ``as`` inside a quoted
+    string never opens a body. A ``$tag$`` string that follows ``DO`` (with an optional
+    ``LANGUAGE x``) or ``AS`` is code, read again the same way. Inside a body every
+    string is read as code too: dynamic SQL (``EXECUTE 'DELETE FROM t'``,
+    ``EXECUTE $b$ INSERT ... $b$``) is a write the gate must see. That errs toward
+    "write" (a ``RAISE NOTICE 'delete from t'`` counts), the safe direction.
+    """
+    out: list[str] = []
+    tail = ""
+    last = 0
+    if in_body:
+        text = _BODY_VERB_RE.sub(" delete from ", text)
+    for start, end, opener in spans(text, POSTGRES_LITERALS_AND_COMMENTS):
+        kept = text[last:start]
+        out.append(kept)
+        tail = (tail + kept)[-_TAIL:]
+        span = text[start:end]
+        piece = " "
+        if opener.startswith("$") and len(span) >= 2 * len(opener):
+            if in_body or _CODE_OPENER_RE.search(tail):
+                piece = f" {_postgres_code_reading(span[len(opener) : -len(opener)], True)} "
+        elif opener == "'" and in_body and len(span) >= 2:
+            piece = f" {_postgres_code_reading(span[1:-1].replace(chr(39) * 2, chr(39)), True)} "
+        out.append(piece)
+        tail = (tail + piece)[-_TAIL:]
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
 def _leading_comment_readings(text: str) -> tuple[str, ...]:
     """``text`` without its leading comments, read both ways (#825).
 
     PostgreSQL and SQL Server nest block comments, MySQL and Oracle end one at
     its first ``*/``. The write check (:func:`is_write_query`, behind
     :func:`can_own`, the cache overlay's write-heavy tables and schema design's
-    write scope) sees only the query, and its callers span the resolver, the
-    reality check, the validators and the override path, none of which share a
-    source engine, so the dialect is not known here. A write under either
-    reading is a write, which errs toward "write" rather than missing one.
+    write scope) strips the leading comments before the source engine is applied
+    (the nesting differs by dialect and a comment can open the statement), so this
+    reads both ways. A write under either reading is a write, which errs toward
+    "write" rather than missing one. The function reads both ways whatever the source
+    engine is; the engine only decides how the rest is stripped afterwards.
 
     The nested reading counts only when it strips at least as much as the
     first-close reading. A terminated nested comment always ends at or after the
@@ -1125,9 +1175,21 @@ class QueryFacts:
         keyword anywhere (``INSERT INTO``, ``UPDATE x SET``, ``DELETE FROM``,
         ``MERGE INTO``) or a leading ``CALL``/``TRUNCATE``/``COPY``.
         """
+        readings = _leading_comment_readings(self._text)
+        if self._source_engine:
+            # The dialect's own comments and strings (MySQL ``#``, PostgreSQL ``$$``)
+            # hold no statement: a keyword inside one neither makes a write nor, by
+            # opening a string the dialect does not have, hides one (#1144).
+            if literals_and_comments_for(self._source_engine) is POSTGRES_LITERALS_AND_COMMENTS:
+                readings = tuple(_postgres_code_reading(reading) for reading in readings)
+            else:
+                readings = tuple(
+                    strip_comments_and_literals(reading, self._source_engine)
+                    for reading in readings
+                )
         return any(
             _DML_KEYWORD_RE.search(reading) or _LEADING_WRITE_VERB_RE.match(reading)
-            for reading in _leading_comment_readings(self._text)
+            for reading in readings
         )
 
     @cached_property

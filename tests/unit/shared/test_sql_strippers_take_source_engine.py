@@ -37,6 +37,10 @@ ENGINES = {
     "is_primary_key_first_row_read": (4, _ENGINE),
     # The ownership gate reads a locking clause, so it needs the dialect too.
     "is_locking_read": (2, _ENGINE),
+    "is_write_query": (2, _ENGINE),  # the write check reads # comments and $$ strings (#1144)
+    "write_heavy_tables": (2, _ENGINE),
+    "QueryCostModel": (None, _ENGINE),
+    "build_migration_risks": (None, _ENGINE),
     "can_own": (3, _ENGINE),
     "owner_candidates": (3, _ENGINE),
     "may_absorb": (6, _ENGINE),
@@ -112,6 +116,8 @@ def test_the_guard_flags_a_call_without_the_engine():
     ]
     assert calls_without_engine("m.skips_locked_rows(t)") == [(1, "skips_locked_rows")]
     assert calls_without_engine("can_own(engine, query)") == [(1, "can_own")]
+    assert calls_without_engine("is_write_query(query)") == [(1, "is_write_query")]
+    assert calls_without_engine("write_heavy_tables(queries)") == [(1, "write_heavy_tables")]
     assert calls_without_engine("primary_key_ordered_limit(t, pk)") == [
         (1, "primary_key_ordered_limit")
     ]

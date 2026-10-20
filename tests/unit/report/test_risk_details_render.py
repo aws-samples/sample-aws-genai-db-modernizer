@@ -45,6 +45,7 @@ def _report() -> tuple[dict, list[dict]]:
         cache_only_engines={"elasticache"},
         trade_offs=[{"description": f"{LONG} [{i}]", "engine": "dynamodb"} for i in range(8)],
         start_id=50,
+        source_engine="mysql",
     )
     report = copy.deepcopy(json.loads(FIXTURE.read_text()))
     report["risk_assessment"]["risks"] = [*report["risk_assessment"]["risks"], *risks]

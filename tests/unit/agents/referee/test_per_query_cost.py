@@ -300,7 +300,7 @@ class TestTheQuerysOwnTrafficDrivesItsVariableCost:
         assert ctx.cost_score(cold, "dynamodb") > ctx.cost_score(cold, "aurora_postgresql")
 
     def test_the_cost_score_falls_as_the_monthly_cost_rises(self):
-        model = QueryCostModel()
+        model = QueryCostModel(source_engine="")
         scores = [model.score_for_monthly(c, "dynamodb") for c in (0, 1, 10, 100, 300, 1000)]
         assert scores == sorted(scores, reverse=True)
         assert scores[0] == 100

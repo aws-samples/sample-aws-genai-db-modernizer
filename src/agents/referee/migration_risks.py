@@ -187,6 +187,7 @@ def _context(
     query_assignments: list[dict[str, Any]],
     source_queries: list[dict[str, Any]],
     normalise: Callable[[Iterable[str]], set[str]],
+    source_engine: str,
 ) -> _Context:
     engine_of = {
         str(qa["query_id"]): canonical_engine_id(str(qa["assigned_engine"]))
@@ -210,7 +211,7 @@ def _context(
         )
         for q in engine_of
     }
-    writes = {q for q in engine_of if is_write_query(collected.get(q) or {})}
+    writes = {q for q in engine_of if is_write_query(collected.get(q) or {}, source_engine)}
     # A wave with no number is left out: no risk can name its gate.
     waves = [w for w in migration_waves or [] if isinstance(w, dict) and _wave_number(w)]
     wave_of_engine: dict[str, int] = {}
@@ -812,6 +813,7 @@ def build_migration_risks(
     normalise: Callable[[Iterable[str]], set[str]] | None = None,
     table_sources: list[dict[str, Any]] | None = None,
     start_id: int = 0,
+    source_engine: str,
 ) -> list[dict[str, Any]]:
     """The migration risks the facts imply, numbered from ``RISK-{start_id + 1}``.
 
@@ -821,14 +823,17 @@ def build_migration_risks(
     ``assigned_engine``); ``trigger_tables`` maps a collected trigger's name
     to its table; ``normalise`` maps table names to the collector's ids;
     ``table_sources`` is report.json's ``table_sources`` (None for an
-    assignment written before write groups).
+    assignment written before write groups); ``source_engine`` is the dialect the
+    queries' text is read in.
     """
     norm = normalise or (lambda names: {str(n) for n in names if n})
     # One engine id per engine, whichever variant an artifact wrote (#950).
     designs: dict[str, Mapping[str, Any]] = {}
     for engine, design in (schema_designs or {}).items():
         designs.setdefault(canonical_engine_id(engine), design)
-    ctx = _context(migration_waves or [], query_assignments or [], source_queries or [], norm)
+    ctx = _context(
+        migration_waves or [], query_assignments or [], source_queries or [], norm, source_engine
+    )
     risks = [
         *_sync_risks(ctx, table_sources, norm),
         *_unservable_risks(ctx, query_traces),

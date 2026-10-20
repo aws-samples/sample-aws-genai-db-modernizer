@@ -252,7 +252,7 @@ def _ownership_failure(
         return None
     kind = (
         "a locking read"
-        if is_locking_read(query, source_engine) and not is_write_query(query)
+        if is_locking_read(query, source_engine) and not is_write_query(query, source_engine)
         else "a write"
     )
     return GATE_KIND_WRITE, f"is {kind}, and {display_engine(engine)} is not a system of record"
@@ -603,8 +603,8 @@ def apply_assignment_overrides(
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     query_by_id = {q.get("query_id"): q for q in queries}
     cache = available_cache_engine(analysis_outputs) or "elasticache"
-    heavy = write_heavy_tables(queries)
     source_engine = source_database_engine(collector_output)
+    heavy = write_heavy_tables(queries, source_engine)
     # The settled-workload count ``fallback_owner`` passes on to an unresolved
     # tie's placeholder (ADR-031 Decision 12): a query already carrying its
     # own ``tied_engines`` must not feed another tie's count (#549 review,

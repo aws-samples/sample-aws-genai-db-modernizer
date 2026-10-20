@@ -46,6 +46,7 @@ from src.tools.schema.design_metrics import (
     design_metrics_from_collector,
     in_scope_pattern_count,
 )
+from src.tools.sql.query_facts import source_engine_of
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,9 @@ def filter_collector_for_assignment(
     filtered["database_schema"]["tables"] = filtered_tables
 
     if target_engine in CACHE_OVERLAY_ENGINES:
-        writes = _invalidation_writes(original_queries, assignment, in_scope_tables)
+        writes = _invalidation_writes(
+            original_queries, assignment, in_scope_tables, source_engine_of(collector_output)
+        )
         if writes:
             filtered["cache_invalidation_context"] = {
                 "note": INVALIDATION_CONTEXT_NOTE,
@@ -204,7 +207,7 @@ INVALIDATION_CONTEXT_NOTE = (
 
 
 def _invalidation_writes(
-    queries: list[dict], assignment: dict, cached_tables: set[str]
+    queries: list[dict], assignment: dict, cached_tables: set[str], source_engine: str
 ) -> list[dict]:
     """The owners' in-scope writes on the tables the cache fronts (#296).
 
@@ -220,7 +223,7 @@ def _invalidation_writes(
     }
     out = []
     for q in queries:
-        if q.get("query_id") not in in_scope or not is_write_query(q):
+        if q.get("query_id") not in in_scope or not is_write_query(q, source_engine):
             continue
         if not cached_tables & set(q.get("tables_accessed") or []):
             continue

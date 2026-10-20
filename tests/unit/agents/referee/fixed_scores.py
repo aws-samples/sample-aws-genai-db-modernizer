@@ -79,7 +79,8 @@ def fixed_model(scores: Mapping[str, Mapping[str, float]]) -> FixedPatternModel:
 def fixed_cost_model(scores: Mapping[str, Mapping[str, float]]) -> FixedCostModel:
     """``scores[query_id][engine]`` as each query's cost score."""
     return FixedCostModel(
-        scores={(qid, engine): int(s) for qid, per in scores.items() for engine, s in per.items()}
+        scores={(qid, engine): int(s) for qid, per in scores.items() for engine, s in per.items()},
+        source_engine="",
     )
 
 

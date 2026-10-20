@@ -421,7 +421,11 @@ class ScoringContext:
     # workload and row widths. :meth:`from_pipeline` builds it from the collector; the
     # bare default has no workload, so each scored query carries an engine's whole
     # standing cost.
-    cost_model: QueryCostModel = field(default_factory=QueryCostModel)
+    cost_model: QueryCostModel = field(
+        default_factory=lambda: QueryCostModel(
+            source_engine=""
+        )  # engine unknown: no collector here
+    )
 
     def servable_queries(self, engine: str) -> frozenset[str]:
         """The workload's query ids ``engine`` could serve: past its hard exclusion
@@ -437,7 +441,8 @@ class ScoringContext:
 
         def serves(query: Mapping) -> bool:
             if engine in NON_SYSTEM_OF_RECORD_ENGINES and (
-                is_write_query(query) or is_locking_read(query, self.source_engine)
+                is_write_query(query, self.source_engine)
+                or is_locking_read(query, self.source_engine)
             ):
                 return False
             return _structural_gate(query, engine, self) is None

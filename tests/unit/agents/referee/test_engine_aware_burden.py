@@ -56,7 +56,7 @@ def _evaluate(engine, alt, cps, *, cost_model, engine_score=90, alt_score=70):
     return removable, info, rank_key
 
 
-MODEL = QueryCostModel()  # no table sizes: one unit a call
+MODEL = QueryCostModel(source_engine="")  # no table sizes: one unit a call
 
 
 class TestTheBurdenCarriesTheNetVariableCost:

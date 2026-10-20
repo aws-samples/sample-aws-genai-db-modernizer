@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 
 from src.agents.referee.cache_overlay import is_write_query
 from src.shared import catalog
+from src.tools.sql.query_facts import source_engine_of
 
 # The month the per-request prices are multiplied over: the 30 days the cost estimates use.
 SECONDS_PER_MONTH = 30 * 24 * 3600
@@ -95,13 +96,19 @@ class QueryCostModel:
 
     workload: tuple[Mapping, ...] = ()
     widths: Mapping[str, float] = field(default_factory=dict)
+    # The dialect the queries' text is read in (the write check, #1144).
+    source_engine: str = field(kw_only=True)
     # engine -> the workload's query ids it could serve, filled the first time it is asked.
     _servable: dict[str, frozenset[str]] = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def from_collector(cls, collector_output: Mapping | None) -> QueryCostModel:
         queries = ((collector_output or {}).get("queries") or {}).get("query_patterns") or []
-        return cls(workload=tuple(queries), widths=row_widths(collector_output))
+        return cls(
+            workload=tuple(queries),
+            widths=row_widths(collector_output),
+            source_engine=source_engine_of(collector_output),
+        )
 
     def workload_ids(self) -> tuple[str, ...]:
         return tuple(str(q.get("query_id") or "") for q in self.workload)
@@ -117,7 +124,7 @@ class QueryCostModel:
     def variable_monthly(self, query: Mapping, engine: str) -> float:
         """``query``'s monthly cost on ``engine`` from its own call rate and size."""
         prices = catalog.pricing(engine)
-        write = is_write_query(query)
+        write = is_write_query(query, self.source_engine)
         if write:
             price, unit_bytes = prices.write_unit_price_per_million, prices.write_unit_bytes
         else:

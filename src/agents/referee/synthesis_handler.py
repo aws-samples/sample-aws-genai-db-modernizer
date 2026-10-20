@@ -79,6 +79,7 @@ from src.shared.engines_in_use import engines_in_use
 from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
+from src.tools.sql.query_facts import source_engine_of
 
 # ---------------------------------------------------------------------------
 # Seam 1: Deterministic — all builders, no LLM
@@ -303,6 +304,7 @@ def run_synthesis_deterministic(
             normalise=table_normaliser(data),
             table_sources=sources,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
+            source_engine=source_engine_of(data.collector),
         ),
     )
     deterministic_summary = build_summary(
