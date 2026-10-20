@@ -101,6 +101,12 @@ def render_js(entries: tuple[EngineEntry, ...]) -> str:
         + "];\n",
         '// Active engines whose role is a cache layer (role = "cache").\n'
         f"export const CACHE_ENGINE_IDS = [{', '.join(_js_string(i) for i in cache_ids)}];\n",
+        _object(
+            "ENGINE_STATUS",
+            "Catalog status per engine id (status): active is a routing target, future a"
+            " named placeholder (ADR-031 Decision 9), legacy an id only older reports carry.",
+            [(e.id, e.status) for e in entries],
+        ),
     ]
     return "\n".join(parts)
 

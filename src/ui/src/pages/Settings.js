@@ -17,6 +17,8 @@ import SideNavigation from "@cloudscape-design/components/side-navigation";
 import { useTranslation } from "react-i18next";
 import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
+import TargetEngineCheckboxes from "../components/TargetEngineCheckboxes";
+import { targetEngineSelection } from "../utils/targetEngines";
 function SettingsPage() {
   const { t } = useTranslation();
   // AWS Configuration State
@@ -36,15 +38,7 @@ function SettingsPage() {
   // Default Analysis Options State
   const [queryLogPeriod, setQueryLogPeriod] = useState(7);
   const [sampleSize, setSampleSize] = useState(1000);
-  const [targetDatabases, setTargetDatabases] = useState({
-    dynamodb: true,
-    documentdb: true,
-    elasticache: true,
-    opensearch: true,
-    neptune: false,
-    keyspaces: false,
-    aurora: true,
-  });
+  const [targetDatabases, setTargetDatabases] = useState(() => targetEngineSelection(true));
   const [piiAnonymization, setPiiAnonymization] = useState(true);
   const [sampleDataCollection, setSampleDataCollection] = useState(true);
 
@@ -250,15 +244,7 @@ function SettingsPage() {
     setIamRole("");
     setQueryLogPeriod(7);
     setSampleSize(1000);
-    setTargetDatabases({
-      dynamodb: true,
-      documentdb: true,
-      elasticache: true,
-      opensearch: true,
-      neptune: false,
-      keyspaces: false,
-      aurora: true,
-    });
+    setTargetDatabases(targetEngineSelection(true));
     setPiiAnonymization(true);
     setSampleDataCollection(true);
     setColorTheme("system");
@@ -527,92 +513,11 @@ function SettingsPage() {
                   label={t("settings.analysis-options.target-databases.label")}
                   stretch
                 >
-                  <SpaceBetween size="m">
-                    <Checkbox
-                      checked={targetDatabases.dynamodb}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          dynamodb: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.dynamodb-description")}
-                    >
-                      {t("common.databases.dynamodb")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.documentdb}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          documentdb: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.documentdb-description")}
-                    >
-                      {t("common.databases.documentdb")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.elasticache}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          elasticache: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.elasticache-description")}
-                    >
-                      {t("common.databases.elasticache")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.opensearch}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          opensearch: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.opensearch-description")}
-                    >
-                      {t("common.databases.opensearch")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.neptune}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          neptune: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.neptune-description")}
-                    >
-                      {t("common.databases.neptune")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.keyspaces}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          keyspaces: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.keyspaces-description")}
-                    >
-                      {t("common.databases.keyspaces")}
-                    </Checkbox>
-                    <Checkbox
-                      checked={targetDatabases.aurora}
-                      onChange={({ detail }) =>
-                        setTargetDatabases((prev) => ({
-                          ...prev,
-                          aurora: detail.checked,
-                        }))
-                      }
-                      description={t("settings.analysis-options.target-databases.aurora-description")}
-                    >
-                      {t("common.databases.aurora")}
-                    </Checkbox>
-                  </SpaceBetween>
+                  <TargetEngineCheckboxes
+                    selection={targetDatabases}
+                    onChange={(key, checked) => setTargetDatabases((prev) => ({ ...prev, [key]: checked }))}
+                    descriptionPrefix="settings.analysis-options.target-databases"
+                  />
                 </FormField>
 
                 <FormField

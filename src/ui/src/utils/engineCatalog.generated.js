@@ -45,3 +45,16 @@ export const ENGINE_PICKER_ORDER = ['dynamodb', 'documentdb', 'opensearch', 'ela
 
 // Active engines whose role is a cache layer (role = "cache").
 export const CACHE_ENGINE_IDS = ['elasticache'];
+
+// Catalog status per engine id (status): active is a routing target, future a named placeholder (ADR-031 Decision 9), legacy an id only older reports carry.
+export const ENGINE_STATUS = {
+  dynamodb: 'active',
+  documentdb: 'active',
+  opensearch: 'active',
+  elasticache: 'active',
+  aurora_postgresql: 'active',
+  aurora_mysql: 'active',
+  neptune: 'future',
+  keyspaces: 'future',
+  aurora: 'legacy',
+};

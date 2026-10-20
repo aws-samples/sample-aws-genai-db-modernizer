@@ -14,7 +14,6 @@ import Input from "@cloudscape-design/components/input";
 import RadioGroup from "@cloudscape-design/components/radio-group";
 import Toggle from "@cloudscape-design/components/toggle";
 import Slider from "@cloudscape-design/components/slider";
-import Checkbox from "@cloudscape-design/components/checkbox";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Textarea from "@cloudscape-design/components/textarea";
 import SideNavigation from "@cloudscape-design/components/side-navigation";
@@ -37,6 +36,8 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 import { buildConnection } from "../utils/connectionPayload";
+import { selectedTargetEngines, targetEngineSelection } from "../utils/targetEngines";
+import TargetEngineCheckboxes from "../components/TargetEngineCheckboxes";
 function SourceDatabaseSection({ formData, setFormData, errors }) {
   const { t } = useTranslation();
   const rdsOptions = [
@@ -445,33 +446,12 @@ function TargetDatabasesSection({ formData, setFormData, errors }) {
       },
     });
   };
+  // #724: only the catalog's active engines; a placeholder is never turned on.
   const handleSelectAll = () => {
-    setFormData({
-      ...formData,
-      targetDatabases: {
-        dynamodb: true,
-        documentdb: true,
-        elasticache: true,
-        opensearch: true,
-        neptune: true,
-        keyspaces: true,
-        aurora: true,
-      },
-    });
+    setFormData({ ...formData, targetDatabases: targetEngineSelection(true) });
   };
   const handleDeselectAll = () => {
-    setFormData({
-      ...formData,
-      targetDatabases: {
-        dynamodb: false,
-        documentdb: false,
-        elasticache: false,
-        opensearch: false,
-        neptune: false,
-        keyspaces: false,
-        aurora: false,
-      },
-    });
+    setFormData({ ...formData, targetDatabases: targetEngineSelection(false) });
   };
   return (
     <SpaceBetween size="l">
@@ -481,69 +461,11 @@ function TargetDatabasesSection({ formData, setFormData, errors }) {
         stretch
         errorText={errors.targetDatabases}
       >
-        <ColumnLayout columns={2}>
-          <SpaceBetween size="m">
-            <Checkbox
-              checked={formData.targetDatabases.dynamodb}
-              onChange={({ detail }) =>
-                handleCheckboxChange("dynamodb", detail.checked)
-              }
-              description={t("create-analysis.target-databases.dynamodb-description")}
-            >
-              {t("common.databases.dynamodb")}
-            </Checkbox>
-            <Checkbox
-              checked={formData.targetDatabases.documentdb}
-              onChange={({ detail }) =>
-                handleCheckboxChange("documentdb", detail.checked)
-              }
-              description={t("create-analysis.target-databases.documentdb-description")}
-            >
-              {t("common.databases.documentdb")}
-            </Checkbox>
-            <Checkbox
-              checked={formData.targetDatabases.elasticache}
-              onChange={({ detail }) =>
-                handleCheckboxChange("elasticache", detail.checked)
-              }
-              description={t("create-analysis.target-databases.elasticache-description")}
-            >
-              {t("common.databases.elasticache")}
-            </Checkbox>
-            <Checkbox
-              checked={formData.targetDatabases.opensearch}
-              onChange={({ detail }) =>
-                handleCheckboxChange("opensearch", detail.checked)
-              }
-              description={t("create-analysis.target-databases.opensearch-description")}
-            >
-              {t("common.databases.opensearch")}
-            </Checkbox>
-          </SpaceBetween>
-          <SpaceBetween size="m">
-            <Checkbox
-              checked={false}
-              disabled
-              description={t("create-analysis.target-databases.neptune-description")}
-            >
-              {t("common.databases.neptune")}
-            </Checkbox>
-            <Checkbox
-              checked={false}
-              disabled
-              description={t("create-analysis.target-databases.keyspaces-description")}
-            >
-              {t("common.databases.keyspaces")}
-            </Checkbox>
-            <Checkbox
-              checked={false}
-              disabled
-              description={t("create-analysis.target-databases.aurora-description")}
-            >
-              {t("common.databases.aurora")}
-            </Checkbox>
-          </SpaceBetween>
-        </ColumnLayout>
+        <TargetEngineCheckboxes
+          selection={formData.targetDatabases}
+          onChange={handleCheckboxChange}
+          descriptionPrefix="create-analysis.target-databases"
+        />
       </FormField>
 
       <SpaceBetween direction="horizontal" size="xs">
@@ -756,15 +678,7 @@ function DatabaseAnalysisForm() {
       value: "performance-insights",
     },
     // Target databases
-    targetDatabases: {
-      dynamodb: true,
-      documentdb: true,
-      elasticache: true,
-      opensearch: true,
-      neptune: false,
-      keyspaces: false,
-      aurora: true,
-    },
+    targetDatabases: targetEngineSelection(true),
     // Advanced options
     includeTablePatterns: "",
     excludeTablePatterns: "",
@@ -782,10 +696,9 @@ function DatabaseAnalysisForm() {
   const [offlineFiles, setOfflineFiles] = useState([]);
   const [offlineDatabaseName, setOfflineDatabaseName] = useState("");
   const [offlineSourceType, setOfflineSourceType] = useState({ label: "MySQL", value: "mysql" });
-  const [offlineTargetDatabases, setOfflineTargetDatabases] = useState({
-    dynamodb: true, documentdb: true, elasticache: false,
-    opensearch: true, neptune: false, keyspaces: false, aurora: false,
-  });
+  const [offlineTargetDatabases, setOfflineTargetDatabases] = useState(
+    () => ({ ...targetEngineSelection(true), elasticache: false }),
+  );
   const [uploadState, setUploadState] = useState("idle"); // idle, preparing, uploading, confirming, ready, submitting
   const [uploadProgress, setUploadProgress] = useState(0);
   const [preparedJob, setPreparedJob] = useState(null); // { job_id, upload_url, upload_key }
@@ -848,9 +761,7 @@ function DatabaseAnalysisForm() {
       }
     } else if (stepIndex === 2) {
       // Step 3: Target databases validation
-      const hasSelectedDatabase = Object.values(formData.targetDatabases).some(
-        (val) => val === true
-      );
+      const hasSelectedDatabase = selectedTargetEngines(formData.targetDatabases).length > 0;
       if (!hasSelectedDatabase) {
         newErrors.targetDatabases = "Please select at least one target database";
       }
@@ -909,9 +820,7 @@ function DatabaseAnalysisForm() {
     }
 
     // Validate at least one target database is selected
-    const hasSelectedDatabase = Object.values(formData.targetDatabases).some(
-      (val) => val === true,
-    );
+    const hasSelectedDatabase = selectedTargetEngines(formData.targetDatabases).length > 0;
     if (!hasSelectedDatabase) {
       newErrors.targetDatabases = "Please select at least one target database";
     }
@@ -1062,7 +971,7 @@ function DatabaseAnalysisForm() {
 
     try {
       const apiManager = new ApiManager();
-      const targetDatabasesArray = Object.keys(offlineTargetDatabases).filter(k => offlineTargetDatabases[k]);
+      const targetDatabasesArray = selectedTargetEngines(offlineTargetDatabases);
 
       const results = await apiManager.execute([{
         id: 'create-assessment',
@@ -1131,8 +1040,7 @@ function DatabaseAnalysisForm() {
       const apiManager = new ApiManager();
 
       // Build target databases array
-      const targetDatabasesArray = Object.keys(formData.targetDatabases)
-        .filter(key => formData.targetDatabases[key]);
+      const targetDatabasesArray = selectedTargetEngines(formData.targetDatabases);
 
       // Credentials go by reference only (a Secrets Manager ARN or name),
       // never a password (#723, ADR-004 Decision 5).
@@ -1503,29 +1411,10 @@ function DatabaseAnalysisForm() {
 
                 <Container header={<Header variant="h2">{t("create-analysis.offline.target-databases.title")}</Header>}>
                   <FormField description={t("create-analysis.offline.target-databases.description")}>
-                    <ColumnLayout columns={2}>
-                      <SpaceBetween size="s">
-                        {Object.entries({
-                          dynamodb: "DynamoDB",
-                          documentdb: "DocumentDB",
-                          elasticache: "ElastiCache",
-                          opensearch: "OpenSearch",
-                        }).map(([key, label]) => (
-                          <Checkbox
-                            key={key}
-                            checked={offlineTargetDatabases[key]}
-                            onChange={({ detail }) => setOfflineTargetDatabases(prev => ({ ...prev, [key]: detail.checked }))}
-                          >
-                            {label}
-                          </Checkbox>
-                        ))}
-                      </SpaceBetween>
-                      <SpaceBetween size="s">
-                        <Checkbox checked={false} disabled>{t("create-analysis.offline.target-databases.neptune-coming-soon")}</Checkbox>
-                        <Checkbox checked={false} disabled>{t("create-analysis.offline.target-databases.keyspaces-coming-soon")}</Checkbox>
-                        <Checkbox checked={false} disabled>{t("create-analysis.offline.target-databases.aurora-coming-soon")}</Checkbox>
-                      </SpaceBetween>
-                    </ColumnLayout>
+                    <TargetEngineCheckboxes
+                      selection={offlineTargetDatabases}
+                      onChange={(key, checked) => setOfflineTargetDatabases(prev => ({ ...prev, [key]: checked }))}
+                    />
                   </FormField>
                 </Container>
 
