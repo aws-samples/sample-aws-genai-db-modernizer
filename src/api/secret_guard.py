@@ -52,7 +52,7 @@ secret-named key.
 ``n/a``, ``-``), a masked value (``••••••``, ``REDACTED``) or a documentation word such as
 ``password``, ``pass``, ``changeme``, ``replace_me``, ``auth_string`` or
 ``YOUR_TOKEN_HERE``, in any case). :func:`_has_credential_shape` is shared, so they also
-apply in the broad reading (``PUT /settings``, the assessment routes):
+apply in the broad reading (the assessment routes):
 
 - a quoted literal as the password of a ``SET PASSWORD [FOR <user>] = '<pw>'`` (or
   ``= PASSWORD('<pw>')``) statement, read only from the statement's first word (the start

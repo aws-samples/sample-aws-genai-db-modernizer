@@ -46,9 +46,9 @@ test('a stale saved key (placeholder or legacy id) never reaches the request', (
   expect(selectedTargetEngines(undefined)).toEqual([]);
 });
 
+// The Settings page and its settings.* keys were removed in #437.
 test.each([
   'create-analysis.target-databases',
-  'settings.analysis-options.target-databases',
 ])('every offered engine has a %s description', (prefix) => {
   [...SELECTABLE_TARGET_ENGINES, ...COMING_SOON_TARGET_ENGINES].forEach((id) => {
     const text = en[`${prefix}.${id}-description`];
@@ -60,7 +60,6 @@ test.each([
 
 const PAGE_SOURCES = {
   'CreateAnalysis.js': fs.readFileSync(path.resolve(__dirname, '../../pages/CreateAnalysis.js'), 'utf8'),
-  'Settings.js': fs.readFileSync(path.resolve(__dirname, '../../pages/Settings.js'), 'utf8'),
 };
 
 test.each(Object.keys(PAGE_SOURCES))('%s keeps no hand-written target-engine list', (page) => {

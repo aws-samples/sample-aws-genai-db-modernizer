@@ -574,7 +574,6 @@ schema.
 - `GET /api/v1/assessments/{job_id}/results/table-mappings` - Paginated table mappings from synthesis
 - `GET /api/v1/assessments/{job_id}/schema-designs` - Generated schema designs
 - `GET /api/v1/dashboard/stats` - Dashboard statistics
-- `GET /api/v1/settings` - Application settings
 
 ### 5.3 Authentication and Authorization
 

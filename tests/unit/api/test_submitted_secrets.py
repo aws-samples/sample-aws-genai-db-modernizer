@@ -29,7 +29,7 @@ import src.api.main as api_main
 from src.api import secret_guard, stored_input_redaction
 from src.api.main import app
 from src.api.models.requests import CollectionOptions, ConnectionDetails
-from src.api.routes import agent_interaction, assessments, settings
+from src.api.routes import agent_interaction, assessments
 from src.api.secret_guard import (
     MAX_GUARDED_BODY_BYTES,
     MAX_SCANNED_CHARS,
@@ -597,14 +597,7 @@ class TestEachSecretFieldIsRefused:
         resp = client.post("/api/v1/assessments/prepare", json={"database_name": "test_db"})
         assert resp.status_code == 201, resp.text
 
-    def test_the_settings_endpoint_refuses_a_secret_and_keeps_none(self) -> None:
-        before = json.dumps(settings._settings)
-        resp = client.put(
-            "/api/v1/settings", json={"aws_configuration": {"aws_secret_access_key": SECRET}}
-        )
-        assert resp.status_code == 400, resp.text
-        assert json.dumps(settings._settings) == before
-
+    @pytest.mark.passes_on_main  # the guard's existing false-positive check, moved
     @pytest.mark.parametrize(
         "key",
         [
@@ -616,14 +609,9 @@ class TestEachSecretFieldIsRefused:
             "api_key_header",
         ],
     )
-    def test_settings_keys_that_merely_mention_a_secret_are_accepted(self, key) -> None:
-        before = dict(settings._settings)
-        try:
-            resp = client.put("/api/v1/settings", json={"llm": {key: 4096}})
-            assert resp.status_code == 200, resp.text
-        finally:
-            settings._settings.clear()
-            settings._settings.update(before)
+    def test_keys_that_merely_mention_a_secret_are_not_secrets(self, key) -> None:
+        # Exercised through the retired settings endpoint until #437 removed it.
+        assert find_submitted_secrets({"llm": {key: 4096}}) == []
 
     def test_a_value_error_from_start_execution_is_a_400(self, monkeypatch) -> None:
         sfn = MagicMock()

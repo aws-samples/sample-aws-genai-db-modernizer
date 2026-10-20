@@ -27,11 +27,6 @@ export const SideNavigationConfigurations = {
       text: "New analysis",
       type: "link",
     },
-    {
-      href: "/settings",
-      text: "Settings",
-      type: "link",
-    },
   ],
 };
 

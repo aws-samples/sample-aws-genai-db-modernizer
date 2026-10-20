@@ -718,7 +718,6 @@ def test_ui_shows_only_the_product_name(
         "/analysis/create",
         f"/analysis/monitor/summary/{r.job_id}",
         f"/analysis/results/{r.job_id}",
-        "/settings",
     ):
         page.goto(f"{ui}{path}")
         page.wait_for_load_state("networkidle")

@@ -293,54 +293,6 @@ Database Modernizer Assessment needs a user-friendly interface that allows users
 
 ---
 
-### 5. Settings View
-
-**Purpose:** Configure system-wide settings
-
-**Components:**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Settings                                        [Save]      │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  🔧 General Settings                                        │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │ Default Target Databases:                               ││
-│  │   ☑️ DynamoDB    ☑️ DocumentDB    ☑️ ElastiCache        ││
-│  │   ☑️ OpenSearch  ☑️ Neptune       ☑️ Keyspaces          ││
-│  │   ☑️ Aurora                                              ││
-│  │                                                          ││
-│  │ Default Analysis Options:                               ││
-│  │   ☑️ Include sample data                                ││
-│  │   ☑️ Anonymize PII                                      ││
-│  │   Query log days: [7]                                   ││
-│  └─────────────────────────────────────────────────────────┘│
-│                                                             │
-│  ☁️ AWS Configuration                                       │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │ Default Region: [us-east-1 ▼]                           ││
-│  │ S3 Bucket: [s3://my-bucket/modernizer-results/]        ││
-│  │ IAM Role: [arn:aws:iam::123456789:role/ModernizerRole] ││
-│  │                                                          ││
-│  │ Bedrock (Optional):                                     ││
-│  │   ☑️ Enable AI-powered analysis                         ││
-│  │   Model: [Claude 3 Sonnet ▼]                            ││
-│  └─────────────────────────────────────────────────────────┘│
-│                                                             │
-│  🔔 Notifications                                           │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │ Email notifications: [user@example.com]                 ││
-│  │   ☑️ Job completed                                      ││
-│  │   ☑️ Job failed                                         ││
-│  │   ☐ Job started                                         ││
-│  └─────────────────────────────────────────────────────────┘│
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
 ## Technical Implementation
 
 ### Cloudscape Components to Use
@@ -388,7 +340,6 @@ ws.onmessage = (event) => {
 interface AppState {
   jobs: Job[];
   currentJob: Job | null;
-  settings: Settings;
   agentStatuses: AgentStatus[];
 }
 ```
@@ -477,7 +428,7 @@ Every kept route has a routing-table test in `src/ui/src/__tests__/AppRoutes.tes
 | `/analysis/results/:jobId` | `AnalysisResults.js` | Keep | Final deliverable page (named `/analysis/results-v2/:jobId` and `AnalysisResults-02.js` until #957); linked from `JobMonitoringSummary` and the Dashboard's "View results" action. Shows the migration wave plan from report.json's waves and a download panel for the job's `deliverables/` folder. |
 | `/analysis/results-v2/:jobId` | — (redirect to `/analysis/results/:jobId`) | Keep | Thin redirect so old bookmarks still resolve (#957). |
 | `/analysis/report/:jobId` | — (redirect to `/analysis/results/:jobId`) | Keep | Thin redirect so old bookmarks still resolve (#356). The earlier `/analysis/results/:jobId` page it replaced was retired in #185; that URL now serves the current page. |
-| `/settings` | `Settings.js` | Keep (flagged) | Route and backend (`src/api/routes/settings.py`, with its own test) exist, but the page never calls that API — Save/Test just `console.log` — and its "AWS Configuration" fields (S3 bucket, DynamoDB table, IAM role) are vestiges of the retired hosted deployment. Tracked in #437. The side-nav link pointed at `/settings/s`, which matched no route (#438); it now opens `/settings`. |
+| `/settings` | `Settings.js` | **Removed** (#437) | Save and Test only logged to the console, and its fields (S3 bucket, DynamoDB table, IAM role, default analysis options) belonged to the retired hosted deployment; nothing in the local pipeline read them. The page, its side-nav link and `src/api/routes/settings.py` are gone. |
 | `/analysis/local` | `LocalAnalysis.js` | **Removed** | Fetched static files (`/data/collector-output.json`, `/data/analysis-*.json`) that no script or build step has ever produced; always rendered empty. Dead since the local API backend replaced this prototype. |
 | `/debug` | `Debug.js` | **Removed** | Dev-only raw API console, not part of the `/modernize` flow or any deliverable. |
 | `*` | — (redirect to `/`) | Keep | Fallback for unknown paths. |

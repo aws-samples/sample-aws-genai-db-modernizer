@@ -152,7 +152,6 @@ from src.api.routes import (  # noqa: E402
     query_journeys,
     results,
     schema_revisions,
-    settings,
 )
 from src.api.services.local_execution import LocalExecutionService  # noqa: E402
 from src.api.services.local_s3 import LocalS3Service  # noqa: E402
@@ -217,7 +216,6 @@ schema_revisions.orchestrator = _orchestrator
 app.include_router(assessments.router)
 app.include_router(results.router)
 app.include_router(dashboard.router)
-app.include_router(settings.router)
 app.include_router(assignments.router)
 app.include_router(phases.router)
 app.include_router(agent_interaction.router)

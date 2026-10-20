@@ -268,48 +268,6 @@ export const mockApiResponses = {
     offset: 0
   },
 
-  // GET /api/v1/settings
-  'GET:/settings': {
-    aws_configuration: {
-      region: 'us-east-1',
-      s3_bucket: 'database-modernizer-results-us-east-1',
-      dynamodb_table: 'database-modernizer-jobs',
-      iam_role: ''
-    },
-    default_analysis_options: {
-      query_log_period_days: 7,
-      sample_size: 1000,
-      target_databases: ['dynamodb', 'documentdb', 'elasticache', 'opensearch', 'aurora'],
-      anonymize_pii: true,
-      include_sample_data: true
-    },
-    ui_preferences: {
-      color_theme: 'system',
-      auto_refresh_interval_seconds: 30,
-      browser_notifications: true,
-      email_notifications: false,
-      notification_events: {
-        completed: true,
-        failed: true,
-        warnings: false,
-        long_running: false
-      },
-      compact_mode: false
-    }
-  },
-
-  // PUT /api/v1/settings
-  'PUT:/settings': {
-    message: 'Settings updated successfully'
-  },
-
-  // POST /api/v1/settings/test-connection
-  'POST:/settings/test-connection': {
-    s3_bucket: { status: 'ok', message: 'Bucket accessible' },
-    dynamodb_table: { status: 'ok', message: 'Table accessible' },
-    iam_role: { status: 'skipped', message: 'No IAM role configured' }
-  },
-
   // GET /api/v1/dashboard/stats
   'GET:/dashboard/stats': {
     total_assessments: 24,

@@ -5,7 +5,6 @@ import Dashboard from "./pages/Dashboard";
 import CreateAnalysis from "./pages/CreateAnalysis";
 import JobMonitoringSummary from "./pages/JobMonitoringSummary";
 import PatternAnalysis from "./pages/PatternAnalysis";
-import Settings from "./pages/Settings";
 import AssignmentGate from "./pages/AssignmentGate";
 import AnalysisResults from "./pages/AnalysisResults";
 
@@ -31,7 +30,6 @@ export default function AppRoutes() {
       <Route path="/analysis/create" element={<CreateAnalysis />} />
       <Route path="/analysis/monitor/summary/:jobId" element={<JobMonitoringSummary />} />
       <Route path="/analysis/patterns/:jobId" element={<PatternAnalysis />} />
-      <Route path="/settings" element={<Settings />} />
       <Route path="/analysis/assignments/:jobId" element={<AssignmentGate />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -25,7 +25,6 @@ jest.mock('../pages/Dashboard', () => mockPage('Dashboard'));
 jest.mock('../pages/CreateAnalysis', () => mockPage('CreateAnalysis'));
 jest.mock('../pages/JobMonitoringSummary', () => mockPage('JobMonitoringSummary'));
 jest.mock('../pages/PatternAnalysis', () => mockPage('PatternAnalysis'));
-jest.mock('../pages/Settings', () => mockPage('Settings'));
 jest.mock('../pages/AssignmentGate', () => mockPage('AssignmentGate'));
 jest.mock('../pages/AnalysisResults', () => mockPage('AnalysisResults'));
 
@@ -139,8 +138,15 @@ test('the removed engine-analysis page and its route are gone', () => {
   expect(renderAt('/analysis/engine-analysis/job-42')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
 });
 
-test('/settings renders the settings page', () => {
-  expect(renderAt('/settings')).toEqual({ page: 'Settings', jobId: '', pathname: '/settings' });
+// #437: the Settings page never saved or tested anything, and its fields belonged to
+// the retired hosted deployment; the page, its route and its API are gone.
+test('the removed Settings page and its /settings route are gone (#437)', () => {
+  expect(() => jest.requireActual('../pages/Settings')).toThrow();
+  expect(renderAt('/settings')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });
+});
+
+test('the side nav no longer links to Settings (#437)', () => {
+  expect(SideNavigationConfigurations.items.map(item => item.href)).not.toContain('/settings');
 });
 
 test('the retired ReportResults page module is gone (#356)', () => {
@@ -161,20 +167,16 @@ test('the unused, unrouted LandingPage module is gone (#357)', () => {
   expect(() => jest.requireActual('../pages/LandingPage')).toThrow();
 });
 
-// #438: the side-nav Settings link pointed at /settings/s, which matched no
-// route, so the catch-all sent the user back to the dashboard. Every side-nav
-// link must land on its own page ("/" is the one deliberate redirect).
+// #438: the side-nav Settings link (since removed with the page, #437) pointed at
+// /settings/s, which matched no route, so the catch-all sent the user back to the
+// dashboard. Every side-nav link must land on its own page ("/" is the one
+// deliberate redirect).
 test.each(SideNavigationConfigurations.items.filter(item => item.type === 'link' && item.href !== '/'))(
   'the side-nav "$text" link ($href) opens its own route',
   ({ href }) => {
     expect(renderAt(href).pathname).toBe(href);
   },
 );
-
-test('the side-nav Settings link opens the Settings page (#438)', () => {
-  const settings = SideNavigationConfigurations.items.find(item => item.text === 'Settings');
-  expect(renderAt(settings.href)).toEqual({ page: 'Settings', jobId: '', pathname: '/settings' });
-});
 
 test('unknown paths fall through * to / and then the dashboard', () => {
   expect(renderAt('/no/such/route')).toEqual({ page: 'Dashboard', jobId: '', pathname: '/dashboard' });

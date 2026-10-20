@@ -240,10 +240,6 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"RefereeInput.model_config"}),
         "a JSON-schema example in the contract, not a rule",
     ),
-    "src/api/routes/settings.py": (
-        frozenset({"_settings"}),
-        "default UI settings (an AWS resource name field), not a rule",
-    ),
     "src/shared/sql_comments.py": (frozenset({"_NESTING_DIALECTS"}), _PLUMBING),
     "src/tools/schema/aurora_common/constraint_translator.py": (
         frozenset({"PG_TARGET", "MYSQL_TARGET", "_ENGINE"}),
