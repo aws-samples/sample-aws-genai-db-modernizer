@@ -4,8 +4,8 @@ id = "sqlserver-merge-to-postgresql"
 feature = "MERGE statements on Aurora PostgreSQL"
 source_engines = ["sqlserver"]
 targets = ["aurora_postgresql"]
-impact = "behaves_differently"
-reason = "PostgreSQL 15 and later run MERGE, with differences from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING (PostgreSQL 17), so check each statement."
+impact = "needs_rewrite"
+reason = "PostgreSQL 15 and later run MERGE with a different syntax from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING (PostgreSQL 17), so each statement is rewritten."
 docs = "PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook (AWS DMS documentation)"
 
 # Looks for: The MERGE statement.

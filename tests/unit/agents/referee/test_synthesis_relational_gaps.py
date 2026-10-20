@@ -10,6 +10,7 @@ from src.agents.referee.synthesis_handler import (
 )
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.facts import report_facts
+from src.shared.migration_risk_rules import GAP_RISK_SEVERITY
 from src.shared.report_facts import compute_report_facts
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import DB, JOB
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import store as seeded_store
@@ -43,6 +44,11 @@ def test_synthesis_writes_the_gaps_of_the_retained_aurora_engine(tmp_path) -> No
     ]
     assert gaps["gaps"][0]["tables"] == ["users"]
     SynthesisOutputContract.model_validate(report)
+    # #1149: a same-engine move's version gaps are Wave 1 risks too.
+    raised = [r for r in report["risk_assessment"]["risks"] if r.get("rule") == "relational.gaps"]
+    assert [(r["wave"], r["severity"]) for r in raised] == [
+        (1, GAP_RISK_SEVERITY[g["impact"]]) for g in gaps["gaps"]
+    ]
 
 
 def _without_risks(report: dict[str, Any]) -> dict[str, Any]:

@@ -141,6 +141,9 @@ L_NONE = "None"
 L_MOVED = "move to a new engine"
 L_OVERALL = "Overall risk"
 L_OPEN = "Open risks"
+# A risk whose items the engineering report lists in full (``Risk.details``) and this
+# report leaves out (#1149 review: the sentence holds only here).
+RISK_DETAILS_POINTER = "The engineering report lists each one in full."
 L_RESOLVED = "Resolved by the assignment"
 L_NO_DECISIONS = "No pending engine choices."
 L_DECISIONS_REALITY = "Reality-check decisions"
@@ -1016,6 +1019,8 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             m = without_table_names(mitigation, names)
             if m:
                 content.append(_labelled("Mitigation", m, st["small"]))
+        if r.get("details") and "engineering report" not in body:
+            content.append(_para(RISK_DETAILS_POINTER, st["small"]))
         flow += [_gap(10), _Panel(content, _severity_color(level_r))]
     resolved = _resolved_high_lines(report, names)
     if resolved:

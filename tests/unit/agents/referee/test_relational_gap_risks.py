@@ -79,23 +79,25 @@ def test_one_wave_1_risk_per_impact_with_its_severity() -> None:
     assert [(r["severity"], r["wave"], len(r["details"])) for r in risks] == [
         ("HIGH", 1, 1),
         ("MEDIUM", 1, 2),
-        ("LOW", 1, 1),
+        ("MEDIUM", 1, 1),
     ]
+    # A gap that behaves differently changes results without an error: MEDIUM, like a
+    # rewrite (maintainer decision on #1204).
     assert GAP_RISK_SEVERITY == {
         "blocks_move": "HIGH",
         "needs_rewrite": "MEDIUM",
-        "behaves_differently": "LOW",
+        "behaves_differently": "MEDIUM",
     }
     assert all(r["rule"] == "relational.gaps" for r in risks)
     blocks, rewrite, differs = risks
     assert blocks["description"] == (
         "[aurora_postgresql] Wave 1: 1 relational gap blocks the move to Aurora PostgreSQL: "
-        "Linked servers. Each gap's reason and where it was found are in the engineering report."
+        "Linked servers."
     )
     assert blocks["mitigation"].startswith("Before the Wave 1 gate, replace this feature ")
     assert rewrite["description"].startswith(
         "[aurora_postgresql] Wave 1: 2 relational gaps need a rewrite before cutover to Aurora "
-        "PostgreSQL: TOP row limits; T-SQL date and time functions. "
+        "PostgreSQL: TOP row limits; T-SQL date and time functions."
     )
     assert "test them on Aurora PostgreSQL" in rewrite["mitigation"]
     assert "compare their results with the source" in differs["mitigation"]
@@ -153,6 +155,7 @@ def test_synthesis_raises_them_last_and_the_wording_is_plain() -> None:
         migration_waves=WAVES,
         query_assignments=[],
         source_queries=[],
+        source_engine="sqlserver",
         flagged_unservable=[
             {"query_id": "f1", "engine": PG, "cause": "no_kept_engine", "reason_category": "other"}
         ],
@@ -207,7 +210,7 @@ def test_an_old_report_gets_the_gap_risks_its_facts_list() -> None:
         ("RISK-001", None, "LOW"),
         ("RISK-002", "relational.gaps", "HIGH"),
         ("RISK-003", "relational.gaps", "MEDIUM"),
-        ("RISK-004", "relational.gaps", "LOW"),
+        ("RISK-004", "relational.gaps", "MEDIUM"),
     ]
     assert new["risk_assessment"]["overall_risk_level"] == "HIGH"
     assert new["risk_assessment"]["mitigation_strategies"] == [
@@ -215,7 +218,7 @@ def test_an_old_report_gets_the_gap_risks_its_facts_list() -> None:
         "After wave 1 (Aurora PostgreSQL): compare the latency.",
     ]
     assert new["facts"]["open_risk_count"] == 4
-    assert new["facts"]["open_risks_by_severity"] == {"HIGH": 1, "MEDIUM": 1, "LOW": 2}
+    assert new["facts"]["open_risks_by_severity"] == {"HIGH": 1, "MEDIUM": 2, "LOW": 1}
     assert new["facts"]["waves"][0]["critical_high_risks"] == 1
     assert new["facts"] == compute_report_facts(new, relational_gaps=ALL)
     assert backfill_report_risks(new) is new
@@ -225,3 +228,35 @@ def test_a_report_with_no_gap_check_is_unchanged() -> None:
     old = _old_report()
     old["facts"]["relational_gaps"] = None
     assert backfill_report_risks(old) is old
+
+
+def test_a_same_engine_version_gap_is_a_wave_1_risk_too() -> None:
+    """MySQL 5.7 to Aurora MySQL 8.0: a homogeneous wave 1 moves the source onto Aurora,
+    so its version gaps are Wave 1 risks (wave 1's note lists gaps only for a
+    cross-engine wave 1, #1145; the register covers both)."""
+    wave1 = {
+        "wave": 1,
+        "engines": ["aurora_mysql"],
+        "homogeneity": "homogeneous",
+        "moves_from": ["mysql"],
+        "tables": ["db.a"],
+    }
+    check = {
+        "source_engine": "mysql",
+        "source_line": "5.7",
+        "target_engine": "aurora_mysql",
+        "target_lines": ["8.0", "8.4"],
+        "version_checked": True,
+        "gaps": [
+            _gap("MySQL 5.7 major version", "blocks_move", tables=(), queries=()),
+            _gap("MyISAM tables", "needs_rewrite", queries=()),
+        ],
+    }
+    blocks, rewrite = relational_gap_risks(check, [wave1])
+    assert (blocks["severity"], blocks["wave"], blocks["description"]) == (
+        "HIGH",
+        1,
+        "[aurora_mysql] Wave 1: 1 relational gap blocks the move to Aurora MySQL: MySQL 5.7 "
+        "major version.",
+    )
+    assert (rewrite["severity"], rewrite["affected_tables"]) == ("MEDIUM", ["db.a"])

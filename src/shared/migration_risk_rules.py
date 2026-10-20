@@ -28,9 +28,11 @@ rule                       severity  raised when
 ``relational.gaps``        HIGH      the relational gap check (``facts.relational_gaps``, #1079)
                                      finds gaps that block the move to wave 1's engine
                            MEDIUM    gaps that need a rewrite before cutover
-                           LOW       gaps that behave differently on the target; one risk per
-                                     impact, in Wave 1; an informational gap raises none, and
-                                     a gap check for another engine than wave 1's raises none
+                           MEDIUM    gaps that behave differently on the target (they change
+                                     results without an error); one risk per impact, in Wave 1,
+                                     for a cross-engine or a same-engine wave 1; an
+                                     informational gap raises none, and a gap check for
+                                     another engine than wave 1's raises none
 =========================  ========  ==========================================================
 """
 
@@ -91,7 +93,8 @@ HELD_ONLY_SEVERITY = "MEDIUM"
 GAP_RISK_SEVERITY: dict[str, str] = {
     "blocks_move": "HIGH",
     "needs_rewrite": "MEDIUM",
-    "behaves_differently": "LOW",
+    # It runs and silently changes results, so it is tested like a rewrite (#1149 review).
+    "behaves_differently": "MEDIUM",
 }
 
 
@@ -399,8 +402,7 @@ def relational_gap_risks(
             make_risk(
                 "relational.gaps",
                 target,
-                f"Wave 1: {_gap_head(impact, k, name)}: {listed_items(features)}. Each gap's "
-                "reason and where it was found are in the engineering report.",
+                f"Wave 1: {_gap_head(impact, k, name)}: {listed_items(features)}.",
                 _gap_steps(impact, k, name),
                 tables & moved if moved else tables,
                 {str(q) for g in gaps for q in g.get("queries") or [] if q},

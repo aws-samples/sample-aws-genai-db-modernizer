@@ -948,6 +948,7 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`sqlserver-date-functions`](#sqlserver-date-functions) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `GETDATE`, `GETUTCDATE`, `SYSDATETIME`, `SYSUTCDATETIME`, `SYSDATETIMEOFFSET`, `DATEADD`, `DATEDIFF`, `DATEDIFF_BIG`, `DATEPART`, `DATENAME`, `EOMONTH`, `DATEFROMPARTS` |
 | [`sqlserver-identity-functions`](#sqlserver-identity-functions) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `SCOPE_IDENTITY`, `IDENT_CURRENT`; words `@@IDENTITY`, `@@ROWCOUNT` |
 | [`sqlserver-merge-to-mysql`](#sqlserver-merge-to-mysql) | sqlserver | Aurora MySQL | Needs a rewrite | words `MERGE`; not before `JOIN`, `UNION` |
+| [`sqlserver-merge-to-postgresql`](#sqlserver-merge-to-postgresql) | sqlserver | Aurora PostgreSQL | Needs a rewrite | words `MERGE`; not before `JOIN`, `UNION` |
 | [`sqlserver-top-clause`](#sqlserver-top-clause) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | words `TOP` |
 | [`sqlserver-tsql-routines`](#sqlserver-tsql-routines) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | every procedure, function and trigger |
 | [`sqlserver-types-no-equivalent`](#sqlserver-types-no-equivalent) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | column types `sql_variant`, `hierarchyid`, `rowversion`, `timestamp`, `geography` |
@@ -959,7 +960,6 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`oracle-empty-string-is-null`](#oracle-empty-string-is-null) | oracle | Aurora MySQL, Aurora PostgreSQL | Behaves differently | every source of these engines |
 | [`postgresql-older-major-version`](#postgresql-older-major-version) | postgresql | Aurora PostgreSQL | Behaves differently | version: older than target |
 | [`sqlserver-case-insensitive-comparison`](#sqlserver-case-insensitive-comparison) | sqlserver | Aurora PostgreSQL | Behaves differently | every source of these engines |
-| [`sqlserver-merge-to-postgresql`](#sqlserver-merge-to-postgresql) | sqlserver | Aurora PostgreSQL | Behaves differently | words `MERGE`; not before `JOIN`, `UNION` |
 | [`sqlserver-table-and-query-hints`](#sqlserver-table-and-query-hints) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | calls `OPTION`; words `NOLOCK`, `READPAST`, `UPDLOCK`, `HOLDLOCK`, `ROWLOCK`, `PAGLOCK`, `TABLOCK`, `TABLOCKX`, `READUNCOMMITTED`, `NOEXPAND` |
 | [`sqlserver-types-behave-differently`](#sqlserver-types-behave-differently) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `datetimeoffset`, `money`, `smallmoney`, `bit` |
 | [`mysql-sql-calc-found-rows`](#mysql-sql-calc-found-rows) | mysql, mariadb | Aurora MySQL | Informational | calls `FOUND_ROWS`; words `SQL_CALC_FOUND_ROWS` |
@@ -1120,6 +1120,12 @@ MERGE statements on Aurora MySQL: needs a rewrite. Aurora MySQL has no MERGE sta
 
 Documentation: MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement; AWS Schema Conversion Tool User Guide.
 
+### sqlserver-merge-to-postgresql
+
+MERGE statements on Aurora PostgreSQL: needs a rewrite. PostgreSQL 15 and later run MERGE with a different syntax from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING \(PostgreSQL 17\), so each statement is rewritten.
+
+Documentation: PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\).
+
 ### sqlserver-top-clause
 
 TOP row limits: needs a rewrite. TOP \(n\) becomes LIMIT n, and a DELETE or UPDATE with TOP becomes a keyed subquery.
@@ -1185,12 +1191,6 @@ Documentation: Amazon Aurora PostgreSQL release calendar; PostgreSQL release not
 Case-insensitive text comparison: behaves differently. SQL Server compares text case-insensitively under its default collation, and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change.
 
 Documentation: SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Collations.
-
-### sqlserver-merge-to-postgresql
-
-MERGE statements on Aurora PostgreSQL: behaves differently. PostgreSQL 15 and later run MERGE, with differences from T-SQL: INTO is required, and the OUTPUT clause becomes RETURNING \(PostgreSQL 17\), so check each statement.
-
-Documentation: PostgreSQL documentation, MERGE; SQL Server to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\).
 
 ### sqlserver-table-and-query-hints
 

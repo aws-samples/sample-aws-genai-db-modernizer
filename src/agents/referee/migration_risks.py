@@ -55,8 +55,9 @@ rule                       severity  raised when
 ``relational.gaps``        HIGH      the relational gap check finds gaps that block the move to
                                      wave 1's engine (``facts.relational_gaps``, #1149)
                            MEDIUM    gaps that need a rewrite before cutover
-                           LOW       gaps that behave differently; one risk per impact, in
-                                     Wave 1, only for a gap check against wave 1's engine
+                           MEDIUM    gaps that behave differently (results change silently);
+                                     one risk per impact, in Wave 1, only for a gap check
+                                     against wave 1's engine
 =========================  ========  ==========================================================
 
 Design trade-offs are model-written prose with no validated category

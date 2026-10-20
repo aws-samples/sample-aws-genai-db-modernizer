@@ -268,3 +268,28 @@ def test_an_older_report_renders_the_relational_gap_risks_it_never_stored(tmp_pa
     assert risk["risk_id"] == "RISK-029" and risk["severity"] == "MEDIUM" and risk["wave"] == 1
     md = out["engineering-report"].content.decode("utf-8")
     assert "**RISK-029**" in md and "TOP becomes LIMIT on the target." in md
+
+
+def test_a_real_old_trailgear_report_states_its_gap_risks_everywhere(tmp_path: Path) -> None:
+    """Review of #1204: trailgear as main's code wrote it before ``relational.gaps``
+    (1.41, 9 open risks) renders with its two Wave 1 gap risks, and the summary,
+    the risk posture and the data file all state the backfilled 11 (overall HIGH)."""
+    s = LocalArtifactStore(base_dir=str(tmp_path))
+    old = json.loads((FIXTURE.parent / "trailgear_1_41_report.json").read_text())
+    assert "9 open migration risks (overall: HIGH)" in old["summary"]
+    key = "trailgear/probe-trai/synthesis/v2/report.json"
+    s.write_json(key, old)
+    out = {d.name: d for d in dl.render_deliverables(s, "probe-trai", "trailgear", key).items}
+    data = json.loads(out["assessment-data"].content)
+    gaps = [r for r in data["risk_assessment"]["risks"] if r.get("rule") == "relational.gaps"]
+    assert [(r["risk_id"], r["severity"], r["wave"], len(r["details"])) for r in gaps] == [
+        ("RISK-010", "MEDIUM", 1, 5),
+        ("RISK-011", "MEDIUM", 1, 4),
+    ]
+    assert data["facts"]["open_risk_count"] == 11
+    md = out["engineering-report"].content.decode("utf-8")
+    assert "11 open migration risks \\(overall: HIGH\\)" in md
+    assert "9 open migration risks" not in md
+    assert "**RISK-010**" in md and "**RISK-011**" in md
+    # The pointer to the details is the executive report's alone.
+    assert "lists each one in full" not in md

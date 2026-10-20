@@ -34,7 +34,7 @@ EXPECTED = {
             "sqlserver-top-clause": "needs_rewrite",
             "sqlserver-tsql-routines": "needs_rewrite",
             "sqlserver-case-insensitive-comparison": "behaves_differently",
-            "sqlserver-merge-to-postgresql": "behaves_differently",
+            "sqlserver-merge-to-postgresql": "needs_rewrite",
             "sqlserver-table-and-query-hints": "behaves_differently",
             "sqlserver-types-behave-differently": "behaves_differently",
             "sqlserver-babelfish-option": "informational",

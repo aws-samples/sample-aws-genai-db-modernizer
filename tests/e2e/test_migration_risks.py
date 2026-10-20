@@ -20,6 +20,7 @@ import pytest
 
 from src.agents.referee.migration_risks import RULES
 from src.report.escaping import md_text
+from src.report.executive_report import RISK_DETAILS_POINTER
 from src.shared.report_facts import risk_engine_and_body
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
@@ -34,8 +35,8 @@ pytestmark = pytest.mark.deterministic
 EXPECTED_RULES: dict[str, list[str]] = {
     "wordpress": ["sync.wave", "routing.close_calls"],
     "discourse": ["sync.wave", "routing.tie_open", "routing.close_calls"],
-    # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 5 gaps that need a
-    # rewrite and 4 that behave differently (wordpress and discourse have one
+    # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 6 gaps that need a
+    # rewrite and 3 that behave differently, one MEDIUM risk each (wordpress and discourse have one
     # informational gap each, which raises none).
     "trailgear": ["sync.wave", "routing.close_calls", "relational.gaps", "relational.gaps"],
 }
@@ -309,7 +310,7 @@ def test_the_gap_risks_agree_with_the_relational_gap_facts(run: PipelineResult) 
     if gaps.get("target_engine") != wave1["engines"][0]:
         assert raised == [], run.db
         return
-    severity = {"blocks_move": "HIGH", "needs_rewrite": "MEDIUM", "behaves_differently": "LOW"}
+    severity = {"blocks_move": "HIGH", "needs_rewrite": "MEDIUM", "behaves_differently": "MEDIUM"}
     want = [
         (severity[impact], n)
         for impact, n in gaps["gaps_by_impact"].items()
@@ -322,8 +323,10 @@ def test_the_gap_risks_agree_with_the_relational_gap_facts(run: PipelineResult) 
         assert r["wave"] == 1 and "Wave 1 gate" in r["mitigation"]
         for detail in r["details"]:
             assert md_text(detail) in md, detail[:60]
-        # The executive report states the risk, never a gap's reason or documentation.
+        # The executive report states the risk and points to the details, never a gap's
+        # reason or documentation; the engineering report prints the details instead.
         assert norm(r["risk_id"]) in pdf
+        assert norm(RISK_DETAILS_POINTER) in pdf and RISK_DETAILS_POINTER not in md
         for g in gaps["gaps"]:
             if g["impact"] in severity:
                 assert norm(g["reason"]) not in pdf, g["rule_id"]
