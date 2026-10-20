@@ -437,7 +437,11 @@ def _default_notes(ddl: DdlResult) -> list[dict]:
     ]
 
 
-_FILTER_UNKNOWN = "filter predicate unknown"
+# #1250: says what is missing and that the design does not depend on it.
+_FILTER_UNKNOWN = (
+    "filter predicate unknown (not readable from the collected query text); "
+    "only the serving index is unconfirmed, the tables and DDL do not depend on it"
+)
 _NO_LEADING_INDEX = "no index leads with the filtered column(s)"
 _AMBIGUOUS_INDEX = "ambiguous index choice"
 
@@ -603,7 +607,7 @@ def merge_design_delta(
     # proposed design instead, which is a different (and also useful) question,
     # but it needs an _Index -> AgentTable adaptation that belongs in its own
     # change rather than riding along here.
-    derived = derive_access_patterns(base.queries, base.tables, base.engine)
+    derived = derive_access_patterns(base.queries, base.tables, base.engine, base.source_engine)
     warnings.extend(_access_pattern_residual_warnings(derived.residuals))
     output = {
         "contract_version": _OUTPUT_CONTRACTS[base.engine].model_fields["contract_version"].default,

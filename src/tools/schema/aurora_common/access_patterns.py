@@ -38,6 +38,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.contracts.schema_design_input import AgentQueryPattern, AgentTable
+from src.tools.sql.query_facts import query_facts
 
 # A query is reported as unserved rather than guessed at when no index leads
 # with any of its filter columns. That is a finding, not a gap: it means the
@@ -261,10 +262,77 @@ def _design_rps(query: AgentQueryPattern) -> float:
     return 0.0
 
 
+# Commands that read no table rows (#1250). A procedure call (``CALL``, ``EXEC``)
+# is a command too, but it reads rows, so it is not listed: its predicate stays
+# unknown.
+_NO_ROW_COMMANDS = frozenset(
+    {
+        "show",
+        "set",
+        "use",
+        "describe",
+        "desc",
+        "begin",
+        "start",
+        "commit",
+        "rollback",
+        "savepoint",
+        "release",
+    }
+)
+
+
+def _first_word(text: str) -> str:
+    words = text.lstrip(" \t\r\n(").split(None, 1)
+    return words[0].lower() if words else ""
+
+
+def _read_predicate(
+    query: AgentQueryPattern, source_engine: str | None
+) -> tuple[AgentQueryPattern, bool]:
+    """``query`` with the predicate columns its own text shows, when the collector
+    recorded none (#1250).
+
+    A SQL-script collection (the bundled samples) carries no ``filter_columns``, but the
+    statement is right there: the SQL facade reads it in the source dialect, and each
+    scope's equality and range columns (``WHERE`` and ``JOIN`` terms held to a value or
+    bounded) are the columns an index can lead with. A statement with no ``WHERE`` and
+    no such term is a confirmed no-predicate read (``[]``). A ``WHERE`` made only of
+    other terms (an ``OR`` group, ``IS NULL``, a function test) keeps ``None``, as does
+    text the facade cannot parse or read only up to a cut (a truncated digest): the
+    predicate stays unknown rather than guessed. Without a source engine nothing is
+    read (the dialect would be a guess).
+
+    The flag is False for a statement that reads no table rows at all: an
+    ``INSERT ... VALUES`` or a command that reads no rows (``SHOW``, ``SET``,
+    transaction control, ...). It has no predicate (``[]``), and no index or scan
+    serves it. A procedure call (``CALL``, ``EXEC``) reads rows, so it stays unknown.
+    """
+    if query.filter_columns is not None or not source_engine or not query.query_text:
+        return query, True
+    access = query_facts(query.query_text, source_engine).access_facts()
+    no_rows = (access.kind == "insert" and access.inserts_values) or (
+        access.kind == "other" and _first_word(query.query_text) in _NO_ROW_COMMANDS
+    )
+    if no_rows and (access.parsed_by == "sqlglot" or access.fallback_reason == "command"):
+        return query.model_copy(update={"filter_columns": []}), False
+    if access.parsed_by != "sqlglot" or not access.scopes or access.truncated_read:
+        return query, True
+    columns: list[str] = []
+    for scope in access.scopes:
+        for column in (*scope.equalities, *scope.ranges):
+            if column.name not in columns:
+                columns.append(column.name)
+    if not columns and any(s.has_where or s.other_filters for s in access.scopes):
+        return query, True
+    return query.model_copy(update={"filter_columns": columns}), True
+
+
 def derive_access_patterns(
     queries: list[AgentQueryPattern],
     tables: list[AgentTable],
     engine: str = "aurora_mysql",
+    source_engine: str | None = None,
 ) -> DerivedPatterns:
     """Project observed queries onto Aurora access patterns.
 
@@ -280,11 +348,14 @@ def derive_access_patterns(
     down to this engine's own in-scope queries before this ever runs. Every
     pattern derived here is therefore ``in_scope: true`` unconditionally --
     it is never computed from whether a table happens to match the design.
+
+    ``source_engine`` (the collector's source dialect) lets a query with no recorded
+    ``filter_columns`` take its predicate from its own text (:func:`_read_predicate`).
     """
     tables_by_name = {_norm(t.table_name): t for t in tables}
     result = DerivedPatterns()
 
-    for query in queries:
+    for query, reads_rows in (_read_predicate(q, source_engine) for q in queries):
         # A query whose table this method cannot identify (typically the
         # collector's own "unknown" placeholder) is a load-testability gap,
         # not an assignment-scope one: there is nothing to resolve an index
@@ -328,6 +399,10 @@ def derive_access_patterns(
         index_used, needs_judgment, reason = _resolve_index(
             candidates, has_predicate=has_predicate, predicate_known=predicate_known
         )
+        if not reads_rows:
+            reason = (
+                "No filter predicate: the statement reads no table rows, so no index serves it."
+            )
 
         rps = _design_rps(query)
         # load_testable is a separate fact from in_scope (#157 review, I4): a

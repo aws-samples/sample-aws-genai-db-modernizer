@@ -430,3 +430,131 @@ def test_empty_query_log_yields_no_patterns():
 
     assert result.patterns == []
     assert result.residuals == []
+
+
+# ---------------------------------------------------------------------------
+# A predicate the collector did not record, read from the query text (#1250)
+# ---------------------------------------------------------------------------
+
+
+def _text_query(text: str, filter_columns: list[str] | None = None) -> AgentQueryPattern:
+    return _query("q", filter_columns).model_copy(update={"query_text": text})
+
+
+def test_unrecorded_predicate_is_read_from_the_query_text():
+    query = _text_query("SELECT * FROM shop.orders WHERE customer_id = $1 AND created_at > $2")
+    result = derive_access_patterns([query], [_orders()], "aurora_postgresql", "postgresql")
+    pattern = result.patterns[0]
+
+    assert pattern["filter_columns"] == ["customer_id", "created_at"]
+    assert pattern["index_used"] == "idx_cust_created"
+    assert pattern["needs_judgment"] is False
+    assert result.residuals == []
+
+
+def test_mysql_text_is_read_in_its_own_dialect():
+    query = _text_query("SELECT `id` FROM `shop`.`orders` WHERE `status` = ?")
+    pattern = derive_access_patterns([query], [_orders()], "aurora_mysql", "mysql").patterns[0]
+
+    assert pattern["filter_columns"] == ["status"]
+    assert pattern["index_used"] == "idx_status"
+
+
+def test_text_with_no_where_is_a_confirmed_full_scan():
+    query = _text_query("SELECT count(*) FROM shop.orders")
+    result = derive_access_patterns([query], [_orders()], "aurora_postgresql", "postgresql")
+
+    assert result.patterns[0]["filter_columns"] == []
+    assert result.patterns[0]["needs_judgment"] is False
+    assert result.residuals == []
+
+
+def test_where_with_no_pinned_or_ranged_column_stays_unknown():
+    query = _text_query("SELECT * FROM shop.orders WHERE id = $1 OR status = $2")
+    result = derive_access_patterns([query], [_orders()], "aurora_postgresql", "postgresql")
+
+    assert result.patterns[0]["filter_columns"] == []
+    assert "unknown" in result.patterns[0]["judgment_reason"].lower()
+    assert len(result.residuals) == 1
+
+
+def test_text_the_facade_cannot_parse_stays_unknown():
+    query = _text_query("SELEC garbage WHERE (((")
+    result = derive_access_patterns([query], [_orders()], "aurora_postgresql", "postgresql")
+
+    assert "unknown" in result.patterns[0]["judgment_reason"].lower()
+    assert len(result.residuals) == 1
+
+
+@pytest.mark.passes_on_main
+def test_without_a_source_engine_the_text_is_not_read():
+    # No dialect, no reading: the dialect would be a guess (AGENTS.md checklist 10).
+    query = _text_query("SELECT * FROM shop.orders WHERE status = $1")
+    result = derive_access_patterns([query], [_orders()])
+
+    assert "unknown" in result.patterns[0]["judgment_reason"].lower()
+
+
+def test_recorded_filter_columns_win_over_the_text():
+    query = _text_query("SELECT * FROM shop.orders WHERE status = $1", filter_columns=["id"])
+    pattern = derive_access_patterns(
+        [query], [_orders()], "aurora_postgresql", "postgresql"
+    ).patterns[0]
+
+    assert pattern["filter_columns"] == ["id"]
+    assert pattern["index_used"] == "orders_pkey"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "INSERT INTO shop.orders (id, status) VALUES ($1, $2)",
+        "SHOW FULL FIELDS FROM orders",
+    ],
+)
+def test_a_statement_that_reads_no_rows_has_no_predicate_to_confirm(text: str):
+    result = derive_access_patterns(
+        [_text_query(text)], [_orders()], "aurora_postgresql", "postgresql"
+    )
+    pattern = result.patterns[0]
+
+    assert pattern["filter_columns"] == []
+    assert pattern["needs_judgment"] is False
+    assert pattern["judgment_reason"] == (
+        "No filter predicate: the statement reads no table rows, so no index serves it."
+    )
+    assert result.residuals == []
+
+
+def test_a_truncated_digest_keeps_its_predicate_unknown():
+    # A digest cut short shows less than the query does: never guess from it.
+    text = "SELECT * FROM shop.orders WHERE status = ? AND customer_id = ? AND created_at > ? AND ("
+    result = derive_access_patterns(
+        [_text_query(text)], [_orders()], "aurora_postgresql", "postgresql"
+    )
+    assert len(result.residuals) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "source_engine"),
+    [
+        ("CALL shop.get_orders(42)", "mysql"),
+        ("CALL shop.get_orders(42)", "postgresql"),
+        ("EXEC dbo.get_orders 42", "sqlserver"),
+    ],
+)
+def test_a_procedure_call_reads_rows_so_its_predicate_stays_unknown(text: str, source_engine: str):
+    # #1280 review: a procedure reads rows; it is not a no-row command.
+    result = derive_access_patterns([_text_query(text)], [_orders()], "aurora_mysql", source_engine)
+    pattern = result.patterns[0]
+
+    assert pattern["needs_judgment"] is True
+    assert "unknown" in pattern["judgment_reason"].lower()
+    assert len(result.residuals) == 1
+
+
+def test_set_and_transaction_control_read_no_rows():
+    for text in ("SET NAMES utf8mb4", "COMMIT"):
+        result = derive_access_patterns([_text_query(text)], [_orders()], "aurora_mysql", "mysql")
+        assert result.residuals == [], text
+        assert result.patterns[0]["filter_columns"] == [], text

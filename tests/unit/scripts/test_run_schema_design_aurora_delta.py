@@ -21,10 +21,15 @@ from src.storage.local_store import LocalArtifactStore
 DB, JOB = "shop", "job-1"
 
 
-def _query(qid: str, table: str, qtype: str = "SELECT", cps: float = 1.0) -> dict:
+_QUERY_TEXT = "SELECT * FROM {table} WHERE id = $1"
+
+
+def _query(
+    qid: str, table: str, qtype: str = "SELECT", cps: float = 1.0, text: str = _QUERY_TEXT
+) -> dict:
     return {
         "query_id": qid,
-        "query_text": f"SELECT * FROM {table} WHERE id = $1",  # nosec B608 -- SQL text is test fixture data, never executed
+        "query_text": text.format(table=table),
         "query_type": qtype,
         "frequency_per_hour": cps * 3600,
         "calls_per_second": cps,
@@ -32,7 +37,7 @@ def _query(qid: str, table: str, qtype: str = "SELECT", cps: float = 1.0) -> dic
     }
 
 
-def _collector(n_queries: int = 3) -> dict:
+def _collector(n_queries: int = 3, text: str = _QUERY_TEXT) -> dict:
     return {
         "contract_version": "3.0",
         "job_id": JOB,
@@ -97,7 +102,7 @@ def _collector(n_queries: int = 3) -> dict:
         },
         "queries": {
             "query_patterns": [
-                _query(f"q{i}", "users" if i % 2 else "orders", cps=float(i + 1))
+                _query(f"q{i}", "users" if i % 2 else "orders", cps=float(i + 1), text=text)
                 for i in range(n_queries)
             ]
         },
@@ -119,9 +124,9 @@ _ANALYSIS = {
 }
 
 
-def _store(tmp_path: Path, n_queries: int = 3) -> LocalArtifactStore:
+def _store(tmp_path: Path, n_queries: int = 3, text: str = _QUERY_TEXT) -> LocalArtifactStore:
     store = LocalArtifactStore(base_dir=str(tmp_path))
-    store.write_json(f"{DB}/{JOB}/collector/output.json", _collector(n_queries))
+    store.write_json(f"{DB}/{JOB}/collector/output.json", _collector(n_queries, text))
     store.write_json(f"{DB}/{JOB}/analysis-aurora_postgresql/analysis.json", _ANALYSIS)
     return store
 
@@ -253,21 +258,45 @@ def test_finalize_with_empty_delta_writes_the_draft(monkeypatch, capsys, tmp_pat
     assert len(written["table_definitions"]) == 2
 
 
+def test_finalize_reads_the_predicate_from_the_query_text(monkeypatch, capsys, tmp_path):
+    """#1250: a SQL-script collection records no ``filter_columns``, but each
+    query's own text shows its predicate (``WHERE id = $1``), so no pattern is
+    "filter predicate unknown": each carries ``id`` and the primary key serves it."""
+    store = _store(tmp_path, n_queries=4)
+    store.write_json(_RESPONSE, {"delta_version": "1.0"})
+
+    status = _run(monkeypatch, capsys, tmp_path, "--finalize")
+
+    assert status["status"] == "complete", status
+    assert not [w for w in status["warnings"] if "filter predicate unknown" in w]
+    written = store.read_json(status["output_path"])
+    assert len(written["access_patterns"]) == 4
+    for pattern in written["access_patterns"]:
+        assert pattern["filter_columns"] == ["id"], pattern
+        assert pattern["index_used"] == "users_pkey" or pattern["index_used"] == "orders_pkey"
+        assert pattern["needs_judgment"] is False
+
+
 def test_finalize_warnings_stay_compact_on_a_many_pattern_job(monkeypatch, capsys, tmp_path):
     """#157 review, I4: compact stdout is a headless rule (AGENTS.md). None of
     this fixture's queries carry ``filter_columns`` (every ``_query()`` here
-    omits it), so finalizing derives one "filter predicate unknown" residual
+    omits it), and their ``OR`` predicate pins no column the text can show
+    (#1250), so finalizing derives one "filter predicate unknown" residual
     per query -- 300 of them. The finalize status line must still carry one
     summary warning, not 300, and stay well under what 300 per-pattern lines
     would cost."""
-    store = _store(tmp_path, n_queries=300)
+    store = _store(tmp_path, n_queries=300, text="SELECT * FROM {table} WHERE id = $1 OR id = $2")
     store.write_json(_RESPONSE, {"delta_version": "1.0"})
 
     status = _run(monkeypatch, capsys, tmp_path, "--finalize")
 
     assert status["status"] == "complete", status
     access_pattern_warnings = [w for w in status["warnings"] if "access pattern" in w]
-    assert access_pattern_warnings == ["300 access patterns: filter predicate unknown"]
+    assert access_pattern_warnings == [
+        "300 access patterns: filter predicate unknown (not readable from the collected "
+        "query text); only the serving index is unconfirmed, the tables and DDL do not "
+        "depend on it"
+    ]
     assert len(json.dumps(status)) < 2000
     # The full per-pattern detail is still there -- just in the output file.
     written = store.read_json(status["output_path"])
