@@ -26,6 +26,11 @@ from src.agents.referee.migration_risks import (
     last_risk_number,
 )
 from src.agents.referee.migration_waves import build_migration_waves
+from src.agents.referee.query_pattern import (
+    ACCESS_PATTERNS_FILE,
+    fixable_findings,
+    redesign_requirements,
+)
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import apply_summary_input_budget, table_query_weights
 from src.agents.referee.summary_input_slim import slim_summary_input
@@ -210,8 +215,17 @@ def run_synthesis_deterministic(
     engine_tables = engine_table_scope(
         data.assignment, data.source_queries, table_mappings, known_tables
     )
+    # #1231: the queries routing scored after redesign, each with the engine serving it,
+    # read before the risks: the risk register raises the ones whose engine's plan relies
+    # on the redesign (``design.redesign``), and the anti-pattern risks leave out every
+    # finding a redesign removes.
+    redesign_requirements = _redesign_requirements(
+        store, database_name, job_id, assignment_version, data.assignment
+    )
     print("[synthesis] Building risk assessment...")
-    risk_assessment = build_risk_assessment(data, eliminated)
+    risk_assessment = build_risk_assessment(
+        data, eliminated, lifted=_lifted_findings(store, database_name, job_id, assignment_version)
+    )
     print("[synthesis] Building architecture recommendation...")
     architecture = build_architecture_recommendation(data, ranking, table_mappings)
     # Intentionally the analysis average (confidence_score), not routed_confidence
@@ -319,6 +333,7 @@ def run_synthesis_deterministic(
             table_sources=sources,
             flagged_unservable=flagged_unservable,
             relational_gaps=relational_gaps,
+            redesign_requirements=redesign_requirements,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -880,6 +895,51 @@ def _engine_choices(data: SynthesisData) -> dict:
         "pending_engine_choices": [c.model_dump(mode="json") for c in pending],
         "auto_decided_choices": [d.model_dump(mode="json") for d in decided],
     }
+
+
+def _lifted_findings(
+    store: ArtifactStore, database_name: str, job_id: str, assignment_version: int
+) -> set[tuple[str, str, str]]:
+    """``(query_id, engine, pattern)`` of every anti-pattern finding a redesign removes in
+    assignment ``v<assignment_version>``'s record (#1231), whichever engine serves it."""
+    if assignment_version <= 0:
+        return set()
+    key = f"{database_name}/{job_id}/assignment/v{assignment_version}/{ACCESS_PATTERNS_FILE}"
+    if not store.exists(key):
+        return set()
+    return {
+        (f["query_id"], str(f.get("engine")), str(f.get("pattern")))
+        for f in fixable_findings(store.read_json(key))
+    }
+
+
+def _redesign_requirements(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    assignment_version: int,
+    assignment: dict | None,
+) -> list[dict]:
+    """Each in-scope query of assignment ``v<assignment_version>`` that routing scored
+    after redesign, as its engine's designer is given it, with that ``engine`` (#1231,
+    ``query_pattern.redesign_requirements``); none without a version or a record."""
+    if assignment_version <= 0:
+        return []
+    key = f"{database_name}/{job_id}/assignment/v{assignment_version}/{ACCESS_PATTERNS_FILE}"
+    if not store.exists(key):
+        return []
+    record = store.read_json(key)
+    engine_of = {
+        str(qa["query_id"]): str(qa["assigned_engine"])
+        for qa in (assignment or {}).get("query_assignments") or []
+        if qa.get("in_scope", True) and qa.get("query_id") and qa.get("assigned_engine")
+    }
+    out = []
+    for engine in sorted(set(engine_of.values())):
+        for requirement in redesign_requirements(record, engine):
+            if engine_of.get(requirement["query_id"]) == engine:
+                out.append({**requirement, "engine": engine})
+    return out
 
 
 def _relational_gaps(data: SynthesisData) -> dict | None:

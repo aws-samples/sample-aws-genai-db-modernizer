@@ -2,7 +2,7 @@
   "about": "Routing regression guard (tests/e2e/test_routing_baseline.py). Update deliberately with: uv run python -m tests.e2e.routing_baseline --write --reason \"...\"",
   "tolerance_pp": 5.0,
   "query_tolerance": "max(5, 0.25 x baseline count) queries",
-  "reason": "#377: a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of truth: 1 wordpress and 3 discourse queries move to DynamoDB",
+  "reason": "#1231: each engine's pattern score is the better of as written and after redesign; an anti-pattern a redesign removes costs nothing (ADR-031 Decision 2 Amendment 13)",
   "history": [
     "Initial baseline from #296 (cache overlay): ElastiCache owns no query, Reality Check protects only mandatory queries, OpenSearch absorbs only search/aggregation queries.",
     "Rebased on main d97a401 (#296 review 2): adds per-engine owned query counts and the cached-read count, guarded by max(5, 25% of baseline) queries; routing unchanged.",
@@ -31,7 +31,8 @@
     "#728: each query is scored on its own access-pattern class plus #920's and #985's class-table items",
     "#494 slice 2: each query's cost dimension is its own per-engine cost; reality check Phase 1's burden is engine-aware",
     "#1002: every engine weights cost the same 10%; discourse's Aurora PostgreSQL owner share rises as DocumentDB and DynamoDB lose their flat cost bonus",
-    "#377: a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of truth: 1 wordpress and 3 discourse queries move to DynamoDB"
+    "#377: a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of truth: 1 wordpress and 3 discourse queries move to DynamoDB",
+    "#1231: each engine's pattern score is the better of as written and after redesign; an anti-pattern a redesign removes costs nothing (ADR-031 Decision 2 Amendment 13)"
   ],
   "samples": {
     "wordpress": {
@@ -87,16 +88,16 @@
       "assignment_version": 2,
       "queries_in_scope": 1654,
       "owner_share_percent": {
-        "aurora_postgresql": 48.2,
-        "documentdb": 10.3,
-        "dynamodb": 41.5
+        "aurora_postgresql": 48.0,
+        "documentdb": 10.0,
+        "dynamodb": 42.0
       },
       "owner_queries": {
-        "aurora_postgresql": 797,
-        "documentdb": 171,
-        "dynamodb": 686
+        "aurora_postgresql": 794,
+        "documentdb": 165,
+        "dynamodb": 695
       },
-      "source_compatible_share_percent": 48.2,
+      "source_compatible_share_percent": 48.0,
       "owner_engines": 3,
       "cache_overlay": {
         "queries": 3,
@@ -107,7 +108,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 48.2,
+          "workload_percent": 48.0,
           "cached_call_share_percent": 0.0,
           "table_count": 312
         },
@@ -124,7 +125,7 @@
             "dynamodb",
             "documentdb"
           ],
-          "workload_percent": 51.8,
+          "workload_percent": 52.0,
           "cached_call_share_percent": 0.0,
           "table_count": 225
         }
@@ -137,14 +138,14 @@
       "assignment_version": 2,
       "queries_in_scope": 95,
       "owner_share_percent": {
-        "aurora_postgresql": 49.5,
-        "dynamodb": 50.5
+        "aurora_postgresql": 47.4,
+        "dynamodb": 52.6
       },
       "owner_queries": {
-        "aurora_postgresql": 47,
-        "dynamodb": 48
+        "aurora_postgresql": 45,
+        "dynamodb": 50
       },
-      "source_compatible_share_percent": 49.5,
+      "source_compatible_share_percent": 47.4,
       "owner_engines": 2,
       "cache_overlay": {
         "queries": 16,
@@ -155,7 +156,7 @@
           "engines": [
             "aurora_postgresql"
           ],
-          "workload_percent": 49.5,
+          "workload_percent": 47.4,
           "cached_call_share_percent": 0.0,
           "table_count": 31
         },
@@ -171,7 +172,7 @@
           "engines": [
             "dynamodb"
           ],
-          "workload_percent": 50.5,
+          "workload_percent": 52.6,
           "cached_call_share_percent": 0.0,
           "table_count": 29
         }

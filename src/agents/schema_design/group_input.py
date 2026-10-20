@@ -22,7 +22,8 @@ contract shape but holds only what the group's design uses (issue #272):
 - the analysis patterns and anti-patterns that touch the group's queries or
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
   aggregates and table recommendations for the group's tables, and the group's own
-  ``key_scoped_writes`` (DynamoDB, #1061) and ``key_scoped_counts`` (DynamoDB, #377);
+  ``key_scoped_writes`` (DynamoDB, #1061), ``key_scoped_counts`` (DynamoDB, #377) and
+  ``redesign_requirements`` (every engine, #1231);
 - no null or empty optional fields;
 - ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
@@ -53,6 +54,7 @@ from src.contracts.analysis_output import (
     TableRecommendation,
     key_scoped_counts_in_scope,
     key_scoped_writes_in_scope,
+    redesign_requirements_in_scope,
 )
 from src.contracts.collector_output import Column, ForeignKey, Index, QueryPattern, Table, Trigger
 from src.contracts.schema_design_input import (
@@ -281,6 +283,7 @@ def build_group_input(
             "aggregate_recommendations",
             "key_scoped_writes",
             "key_scoped_counts",
+            "redesign_requirements",
         )
         and not _empty(v)
     }
@@ -305,6 +308,12 @@ def build_group_input(
     counts = key_scoped_counts_in_scope(analysis_output.get("key_scoped_counts"), query_ids)
     if counts:
         group_analysis["key_scoped_counts"] = counts
+    # The group's own queries routed on a redesign, with their keys (#1231).
+    redesign = redesign_requirements_in_scope(
+        analysis_output.get("redesign_requirements"), query_ids
+    )
+    if redesign:
+        group_analysis["redesign_requirements"] = redesign
 
     group_input: dict[str, Any] = {
         "job_id": job_id,

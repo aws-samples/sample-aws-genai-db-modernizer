@@ -5,6 +5,7 @@ detectors = [
 ]
 penalty = 30
 penalty_basis = "needs_redesign"
+removed_by_redesign = "rows"
 
 [engines.dynamodb]
 kind = "unscored"

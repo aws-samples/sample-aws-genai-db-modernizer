@@ -356,6 +356,12 @@ REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
     ),
     "src/agents/interaction.py": "reads and writes question/answer files; no input content",
     "src/tools/analysis/llm_advisor_base.py": "Bedrock-only advisor, in BEDROCK_SMOKE",
+    "src/agents/referee/query_pattern.py": (
+        "the designer-input builder imports the record's file name and one filter of it "
+        "(fixable_findings, #1231); the findings' text comes from redesign_findings.py, in "
+        "E2E_LLM, so gating the whole module would pull every routing-only class-score PR "
+        "into e2e-llm"
+    ),
     "src/tools/sql/query_facts.py": (
         "the ElastiCache agent imports its timestamp-column trace helper (#935); the facts "
         "reach analysis.json through the analysis tools, which are in E2E_LLM, so gating the "

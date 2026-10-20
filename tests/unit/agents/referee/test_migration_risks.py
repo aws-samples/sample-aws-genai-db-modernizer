@@ -542,6 +542,93 @@ def test_a_long_trade_off_text_is_kept_whole_in_the_details() -> None:
 
 
 # ---------------------------------------------------------------------------
+# design.redesign (#1231)
+# ---------------------------------------------------------------------------
+
+
+def _redesign(qid: str, engine: str, lifted=(), keys=("c.region",), cardinality="unknown"):
+    return {
+        "query_id": qid,
+        "engine": engine,
+        "assumed_keys": [
+            {"column": k, "via": "equality", "cardinality": cardinality} for k in keys
+        ],
+        "class_as_written": "ad_hoc_filter",
+        "class_after_redesign": "key_scoped",
+        "lifted_anti_patterns": list(lifted),
+        "evidence": [f"a key on {k} anchors the rows it reads" for k in keys] if lifted else [],
+    }
+
+
+class TestRedesignRisk:
+    """One MEDIUM risk per engine for the queries it serves that routing scored after
+    redesign: the plan holds only if the design adds the keys routing assumed."""
+
+    def _risks(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return _build(
+            migration_waves=[WAVE_1, WAVE_2, _wave_3([], ["db.c"])],
+            query_assignments=[
+                _qa("r1", DDB, ["db.c"]),
+                _qa("r2", DDB, ["db.c"]),
+                _qa("a1", AURORA, ["db.a"]),
+            ],
+            source_queries=[
+                _q("r1", "SELECT", ["db.c"]),
+                _q("r2", "SELECT", ["db.c"]),
+                _q("a1", "SELECT", ["db.a"]),
+            ],
+            redesign_requirements=findings,
+        )
+
+    def test_the_engine_serving_the_queries_gets_one_risk_naming_the_assumed_keys(self) -> None:
+        risks = self._risks(
+            [
+                _redesign("r1", DDB, lifted=["frequent-full-scan"]),
+                _redesign("r2", DDB, keys=("c.token",), cardinality=12_000),
+            ]
+        )
+        risk = _one(risks, "design.redesign")
+        assert risk["severity"] == "MEDIUM" and risk["wave"] == 3
+        assert risk["query_ids"] == ["r1", "r2"] and risk["affected_tables"] == ["db.c"]
+        assert risk["description"].startswith(
+            "[dynamodb] Routing assumes a redesign for 2 queries on DynamoDB"
+        )
+        assert "2 keys the source does not have" in risk["description"]
+        assert "removes the frequent-full-scan finding" in risk["description"]
+        assert "1 key has no cardinality statistics" in risk["description"]
+        assert "Wave 3 gate" in risk["mitigation"] and "hot partitions" in risk["mitigation"]
+        assert any("c.region" in d for d in risk["details"])
+
+    def test_a_lifted_finding_with_no_new_key_says_what_the_design_removes(self) -> None:
+        reference = {**_redesign("r1", DDB, lifted=["frequent-full-scan"], keys=())}
+        reference["class_after_redesign"] = None
+        reference["evidence"] = ["a whole read of a small reference table"]
+        risk = _one(self._risks([reference]), "design.redesign")
+        assert "keys the source does not have" not in risk["description"]
+        assert risk["description"].startswith(
+            "[dynamodb] Routing did not penalise DynamoDB for the frequent-full-scan finding "
+            "the source shows on 1 query"
+        )
+        assert "as each one's evidence says" in risk["mitigation"]
+
+    def test_a_requirement_the_engines_plan_does_not_rely_on_raises_no_gate(self) -> None:
+        index_only = {**_redesign("r1", DDB), "routing_depends": False}
+        assert "design.redesign" not in _rules(self._risks([index_only]))
+        risk = _one(self._risks([index_only, _redesign("r2", DDB)]), "design.redesign")
+        assert risk["query_ids"] == ["r2"]
+
+    def test_a_finding_against_another_engine_than_the_one_serving_the_query_raises_none(
+        self,
+    ) -> None:
+        assert "design.redesign" not in _rules(self._risks([_redesign("a1", DDB)]))
+        assert "design.redesign" not in _rules(self._risks([_redesign("r1", DOC)]))
+
+    def test_no_finding_raises_none(self) -> None:
+        assert "design.redesign" not in _rules(self._risks([]))
+        assert "design.redesign" not in _rules(_build())
+
+
+# ---------------------------------------------------------------------------
 # Numbering, strategies, wording
 # ---------------------------------------------------------------------------
 
@@ -597,6 +684,7 @@ def _all_kinds() -> list[dict[str, Any]]:
                 }
             ],
         },
+        redesign_requirements=[_redesign("r1", DDB)],
         start_id=7,
     )
 

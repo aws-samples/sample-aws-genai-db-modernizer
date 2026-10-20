@@ -5,6 +5,7 @@ detectors = [
 ]
 penalty = 20
 penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
 
 # Detection signals: no_where_clause, high_frequency, large_rows_examined
 [engines.dynamodb]

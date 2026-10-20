@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
@@ -1029,6 +1029,7 @@ def _engines_with_assigned_queries(data: SynthesisData) -> set[str]:
 def build_risk_assessment(
     data: SynthesisData,
     eliminated: dict[str, str | None] | None = None,
+    lifted: Collection[tuple[str, str, str]] = frozenset(),
 ) -> dict:
     """Compile risks from anti-patterns, migration notes, and unsupported patterns.
 
@@ -1050,6 +1051,12 @@ def build_risk_assessment(
     Only engines the assignment routed queries to contribute risks. An engine triage
     selected but the assignment then dropped is not part of the target architecture, so its
     anti-patterns describe a design that will never be built.
+
+    ``lifted``: ``(query_id, engine, anti_pattern_type)`` findings a redesign removes
+    (#1231), whichever engine serves the query. Routing did not penalise them, and the
+    serving engine's design is given the keys (``design.redesign`` raises it where the
+    plan relies on them), so an anti-pattern risk leaves those queries out: one finding
+    raises at most one risk.
 
     ``eliminated`` maps engines the reality check removed to the engine that absorbed
     them (see ``synthesis_grounding.eliminated_engines``). Surviving engines' risk text
@@ -1153,7 +1160,10 @@ def build_risk_assessment(
             if ap_type in ("frequent-full-scan", "queries-without-index"):
                 continue
 
-            ap_query_ids = set(field_list(ap, "query_ids"))
+            flagged_ids = set(field_list(ap, "query_ids"))
+            ap_query_ids = {q for q in flagged_ids if (q, engine, ap_type) not in lifted}
+            if flagged_ids and not ap_query_ids:
+                continue  # a redesign removes every flagged query's finding
             severity = "HIGH" if ap.get("severity_weight", 0) >= 0.7 else "MEDIUM"
             description = ap.get("description", ap.get("anti_pattern_type", "Unknown"))
             ap_tables = [t for t in ap.get("table_ids", []) if t and t not in _PLACEHOLDER_TABLES]

@@ -41,6 +41,9 @@ Pattern fields:
 - ``scan_threshold``: for a pattern with ``scan`` entries, when the scan matters
   (``min_calls_per_second`` and ``min_table_rows``, both reached) and the sourced ``why``
   for those values. Only then does a ``scan`` engine lose ``penalty`` (#493).
+- ``removed_by_redesign``: ``rows`` or ``write_shape``, what a redesign of the target
+  schema removes so the pattern costs a query nothing (ADR-031 Decision 2 Amendment 13,
+  #1231); absent, the pattern is intrinsic on every query.
 - ``write_pattern``: the pattern describes writes only (an UPDATE, DELETE, INSERT or
   upsert shape). No parity anchor may borrow from one, and no access class lists one
   (#936: OpenSearch is not a system of record and is never credited for a write).
@@ -169,6 +172,19 @@ PENALTY_POINTS: dict[str, int] = {
     # the same fact: the entry is guidance only.
     "guidance_only": 0,
 }
+# What a redesign of the target schema removes from a query showing a pattern, so the
+# pattern costs it nothing (ADR-031 Decision 2 Amendment 13, #1231):
+# - ``rows``: the penalty is about the rows the query reaches (a scan, a join stage, an
+#   aggregate over rows no key anchors). A redesign that anchors those rows with a key it
+#   adds (``redesign_findings``), or a whole read of a small reference table, removes it.
+# - ``write_shape``: the penalty is a write's shape (ADR-031 Decision 3). A redesign removes
+#   it only when, with the keys it adds, the shape's own rule finds the write key scoped;
+#   a write a range, join or subquery picks stays unbounded.
+RemovedByRedesign = Literal["rows", "write_shape"]
+# The penalty bases a ``removed_by_redesign`` pattern may have: the consequence is about
+# the rows or items reached, not a capability the engine lacks (``cannot_run``) or which
+# engine the access suits (``workload_fit``).
+_REDESIGN_BASES = frozenset({"needs_redesign", "reads_more_than_returns", "bounded_limit"})
 Profile = Literal["search", "timeseries"]
 ConfidenceLevel = Literal["high", "medium", "low"]
 
@@ -328,6 +344,7 @@ class PatternEntry(BaseModel):
     negligible_read_share: float | None = Field(default=None, gt=0, lt=1)
     write_pattern: bool = False
     segment_weighting: SegmentWeighting = "segment"
+    removed_by_redesign: RemovedByRedesign | None = None
     engines: dict[str, EngineSupport]
 
     @model_validator(mode="after")
@@ -342,6 +359,11 @@ class PatternEntry(BaseModel):
         )
         if self.penalty_why and self.penalty_basis is None:
             raise ValueError("a penalty_why explains a penalty_basis")
+        if self.removed_by_redesign and self.penalty_basis not in _REDESIGN_BASES:
+            raise ValueError(
+                "removed_by_redesign needs a penalty_basis about rows or items reached "
+                f"({sorted(_REDESIGN_BASES)}), not {self.penalty_basis!r}"
+            )
         if priced and self.penalty_basis is None:
             raise ValueError("a pattern that carries a penalty names its penalty_basis")
         if self.penalty_basis is not None and self.penalty != penalty_points(self.penalty_basis):
@@ -553,6 +575,17 @@ def anti_pattern_penalties() -> dict[str, int]:
         if entry.penalty and entry.scan_threshold is None:
             for key in (entry.id, *entry.penalty_aliases):
                 out[key] = entry.penalty
+    return out
+
+
+def removed_by_redesign() -> dict[str, str]:
+    """Pattern type (and alias) to what a redesign removes (``RemovedByRedesign``), for
+    every pattern that names it; a pattern absent here is intrinsic on every query."""
+    out: dict[str, str] = {}
+    for entry in patterns():
+        if entry.removed_by_redesign is not None:
+            for key in (entry.id, *entry.penalty_aliases):
+                out[key] = entry.removed_by_redesign
     return out
 
 

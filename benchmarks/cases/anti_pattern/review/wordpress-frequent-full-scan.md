@@ -7,11 +7,13 @@ Blind review sheet for the `anti_pattern` benchmark key of case `wordpress-frequ
 ## How to fill it in
 
 - `shows`: `yes` if the query shows `frequent-full-scan` as defined above, `no` if it does not. Every answered row needs it.
-- `acceptable` (optional): every engine that would be a defensible home for the query, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
-- `ideal` (optional): the one best engine; it must be in `acceptable`.
+- `redesign` (on every row whose `shows` is `yes`): `intrinsic` if the query needs rows no key can narrow (a whole-table aggregate or export, a scan by design, a free-text filter no key can carry), so no redesign of the schema removes the pattern; `fixable` if the pattern comes from the source's design (no index on the filtered column, a filter a key or index could carry, a predicate on a stable attribute), so a redesign removes it.
+- `acceptable` (optional): every engine that would be a defensible home for the query as it is written today, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
+- `after redesign` (optional): every engine that would be a defensible home for the query once the target schema is designed for it, the same ids, comma separated.
+- `ideal` (optional): the one best engine; it must be in `acceptable`, or in `after redesign` for a `fixable` row.
 - `rationale`: a few words a later reviewer can check against the facts.
 - `=N`: same answer as row N. The **Default** line answers every row left empty. `?`: unsure, discuss first. `-`: leave out of the key.
-- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "acceptable": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
+- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "redesign": "fixable", "acceptable": [...], "acceptable_after_redesign": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
 
 Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the sample's calls (tier A = the busiest queries making 90% of calls, B up to 99%, C the rest); `groups` marks co-dependency (`CDn`) and write groups (`W:table`); `facts` the collector flags (joins, aggregation, subquery, text search, average rows returned, median latency). The access-pattern class, its reason and its pattern facts are left out on purpose: they restate what the pipeline's detectors read.
 
@@ -19,10 +21,10 @@ Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the 
 
 <!-- rows -->
 
-Default: shows = ; acceptable = ; ideal = ; rationale =
+Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; rationale =
 
-| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | acceptable | ideal | rationale |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `413c99e44698` | `SELECT option_name , option_value FROM wp_options WHERE autoload = ?` | SELECT | wp_options | 1.44 | 0.65% | B |  | rows~247, 1.27ms |  |  |  |  |
-| 2 | `329367a24ba8` | `SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME` | SELECT | wp_wc_tax_rate_classes | 1.26 | 0.57% | B |  | rows~2, 0.253ms |  |  |  |  |
-| 3 | `d4bf16d6ce4e` | `SELECT SQL_CALC_FOUND_ROWS wp_posts . ID FROM wp_posts WHERE ? = ? AND wp_posts . post_parent = ? AND wp_posts . post_type = ? AND ( ( wp...` | SELECT | wp_posts | 1.24 | 0.56% | B |  | rows~0, 0.363ms |  |  |  |  |
+| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | redesign | acceptable | after redesign | ideal | rationale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `413c99e44698` | `SELECT option_name , option_value FROM wp_options WHERE autoload = ?` | SELECT | wp_options | 1.44 | 0.65% | B |  | rows~247, 1.27ms |  |  |  |  |  |  |
+| 2 | `329367a24ba8` | `SELECT * FROM wp_wc_tax_rate_classes ORDER BY NAME` | SELECT | wp_wc_tax_rate_classes | 1.26 | 0.57% | B |  | rows~2, 0.253ms |  |  |  |  |  |  |
+| 3 | `d4bf16d6ce4e` | `SELECT SQL_CALC_FOUND_ROWS wp_posts . ID FROM wp_posts WHERE ? = ? AND wp_posts . post_parent = ? AND wp_posts . post_type = ? AND ( ( wp...` | SELECT | wp_posts | 1.24 | 0.56% | B |  | rows~0, 0.363ms |  |  |  |  |  |  |

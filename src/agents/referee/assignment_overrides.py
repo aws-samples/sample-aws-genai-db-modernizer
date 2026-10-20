@@ -52,7 +52,7 @@ from src.agents.referee.move_ledger import (
     state_of,
 )
 from src.agents.referee.pending_choices import AutoPick, auto_decisions_still_holding
-from src.agents.referee.query_pattern import write_access_patterns
+from src.agents.referee.query_pattern import read_analysis_outputs, write_access_patterns
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.referee.tie_break import settled_counts
@@ -350,18 +350,7 @@ class ExcludedEngineOverride(AssignmentOverrideError):
 
 def _read_analysis_outputs(store: _Store, database_name: str, job_id: str) -> dict[str, dict]:
     """Read every ``analysis-<engine>/analysis.json`` for the job."""
-    prefix = f"{database_name}/{job_id}/"
-    engines: set[str] = set()
-    for key in store.list_prefix(prefix):
-        relative = key.replace(prefix, "")
-        if relative.startswith("analysis-"):
-            engines.add(relative.split("/")[0].replace("analysis-", ""))
-    outputs: dict[str, dict] = {}
-    for engine in engines:
-        path = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
-        if store.exists(path):
-            outputs[engine] = store.read_json(path)
-    return outputs
+    return read_analysis_outputs(store, database_name, job_id)
 
 
 def _drop_losing_aurora_analysis(analysis_outputs: dict[str, dict], raw: dict) -> dict[str, dict]:
@@ -958,7 +947,9 @@ def apply_assignment_overrides(
     )
     new_path = assignment_artifact_path(database_name, job_id, new_version)
     store.write_json(new_path, new_assignment.model_dump(mode="json"))
-    write_access_patterns(store, database_name, job_id, new_version, collector_output)
+    write_access_patterns(
+        store, database_name, job_id, new_version, collector_output, analysis_outputs
+    )
 
     return AssignmentOverrideResult(
         assignment=new_assignment,
@@ -1741,7 +1732,9 @@ def reroute_split_writes(
             pin_conflicts=[],
         )
     store.write_json(path, new_assignment.model_dump(mode="json"))
-    write_access_patterns(store, database_name, job_id, version + 1, collector_output)
+    write_access_patterns(
+        store, database_name, job_id, version + 1, collector_output, loaded.analysis_outputs
+    )
     return SourceOfTruthReroute(
         assignment=new_assignment,
         written_path=path,

@@ -96,7 +96,9 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     print(f"[assignment] Validation written to {validation_key}")
 
     # --- The access-pattern class of each query, as routing scored it (#728, #936) ---
-    record_key = write_access_patterns(store, database_name, job_id, version, collector_output)
+    record_key = write_access_patterns(
+        store, database_name, job_id, version, collector_output, analysis_outputs
+    )
     print(f"[assignment] Access-pattern record written to {record_key}")
 
     elapsed = time.time() - start_time

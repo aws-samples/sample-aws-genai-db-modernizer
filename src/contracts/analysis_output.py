@@ -2,6 +2,10 @@
 Analysis Output Contract Models
 
 Version History:
+- 2.4 (2026-10-21, #1231): Added the optional ``redesign_requirements``
+  (``RedesignRequirement``, ``AssumedKey``): the queries a design call serves that
+  routing scored after redesign, with the keys each needs, filled by the schema-design
+  step from the assignment's access-pattern record, never by an analysis.
 - 2.3 (2026-10-20, #377): Added the optional ``key_scoped_counts`` (``KeyScopedCount``,
   ``KeyScopedCountKey``): every key-scoped COUNT of the collection, the key columns it
   pins and each one's cardinality, for the DynamoDB schema designer.
@@ -319,11 +323,59 @@ def key_scoped_counts_in_scope(
     return out
 
 
+class AssumedKey(BaseModel):
+    """A key routing assumed the design adds (#1231): ``column`` (``table.column``), how it
+    serves the query's filter (``via``: ``equality``, ``null_test`` for a sparse index on
+    an ``IS NOT NULL`` test a partial index names, ``or_branch`` for one index per branch
+    of an ``OR``) and its collected cardinality, or ``"unknown"``."""
+
+    column: str
+    via: Literal["equality", "not_null_test", "or_branch"] = "equality"
+    cardinality: int | Literal["unknown"] = "unknown"
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class RedesignRequirement(BaseModel):
+    """A query routing scored after redesign (ADR-031 Decision 2 Amendment 13, #1231):
+    the target design must give it ``assumed_keys``, which the source does not have.
+    ``class_as_written`` and ``class_after_redesign`` are its access-pattern classes
+    (the latter None when only an anti-pattern finding was lifted); ``lifted_anti_patterns``
+    the anti-pattern findings against this engine the redesign removes, with their
+    ``evidence``."""
+
+    query_id: str
+    # Whether this engine's plan relies on the keys (its redesigned score won, or a
+    # lifted finding stopped costing it points); False: an index the design may add.
+    routing_depends: bool = True
+    assumed_keys: list[AssumedKey] = Field(default_factory=list)
+    class_as_written: str = ""
+    class_after_redesign: str | None = None
+    lifted_anti_patterns: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="ignore")
+
+
+def redesign_requirements_in_scope(
+    requirements: Iterable[Mapping[str, Any]] | None, query_ids: Collection[str]
+) -> list[dict[str, Any]]:
+    """The raw ``redesign_requirements`` one design call sees: the ones among
+    ``query_ids`` (the engine's or the group's queries), so a designer is never given a
+    requirement on a query another engine serves (#1231)."""
+    out = []
+    for raw in requirements or []:
+        requirement = RedesignRequirement.model_validate(raw)
+        if requirement.query_id in query_ids:
+            out.append(requirement.model_dump(mode="json"))
+    return out
+
+
 class AnalysisOutputContract(BaseModel):
     """Output contract for all Analysis agents"""
 
     contract_version: str = Field(
-        default="2.3",
+        default="2.4",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -357,6 +409,14 @@ class AnalysisOutputContract(BaseModel):
         description=(
             "DynamoDB analysis only: every key-scoped count, its key columns and their "
             "cardinality (#377); the DynamoDB schema designer reads the ones it serves"
+        ),
+    )
+    redesign_requirements: list[RedesignRequirement] | None = Field(
+        None,
+        description=(
+            "Never written by an analysis: the schema-design step fills it from the "
+            "assignment's access-pattern record with the queries the design call serves "
+            "that routing scored after redesign, and the keys each one needs (#1231)"
         ),
     )
 

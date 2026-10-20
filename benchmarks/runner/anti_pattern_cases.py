@@ -7,7 +7,9 @@ which is which:
 - **decides**: queries the pipeline flags with the pattern whose final engine
   changes when the pattern's penalty is set to any of the basis points
   (``PENALTY_SWEEP``, 0 to 40, ADR-031 Decision 8 Amendment 6) in place of its
-  catalog value. Whether the pattern applies, and how much it costs, decides
+  catalog value, on every finding of the pattern, including those a redesign
+  removes (which the scorer otherwise leaves unpenalised, #1231). Whether the
+  pattern applies, whether a redesign removes it, and how much it costs, decides
   where these queries land.
 - **decoys**: queries the pipeline does not flag with the pattern, matched to
   the deciding queries: for each one, ``DECOYS_PER_DECIDING`` unflagged
@@ -51,13 +53,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from benchmarks.runner.review_sheet import (
-    Row,
-    Section,
-    _short_ids,
-    build_rows,
-    row_cells,
-)
+from benchmarks.runner.review_sheet import Row, Section, _short_ids, build_rows, row_cells
 from benchmarks.runner.stage_anti_pattern import pipeline_flags, read_analyses
 from benchmarks.runner.stage_final_assignment import _JOB, run_pipeline_to_final_assignment
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, PLACEHOLDER_ENGINES
@@ -180,18 +176,31 @@ def penalty_set_to(pattern_id: str, points: int):
     catalog entry ``substring_match`` reads) and restores it on exit, so it is
     for one process running one sweep at a time, not thread-safe. A pattern the
     scorer has no penalty for raises: sweeping it would silently move nothing.
+
+    The swept pattern's findings are all priced, the ones a redesign removes
+    included (``query_scoring.fixable_keys`` is patched to leave them out, #1231):
+    a case holds the queries the pattern's penalty can decide, and whether it
+    should apply to each is the sheet's ``redesign`` question.
     """
     from benchmarks.runner.stage_anti_pattern import SUBSTRING_MATCH, pattern_keys
     from src.agents.referee import query_scoring, substring_match
 
     table = query_scoring.ANTI_PATTERN_PENALTIES
-    saved = {k: table[k] for k in pattern_keys(pattern_id) if k in table}
+    keys = pattern_keys(pattern_id) if pattern_id != SUBSTRING_MATCH else {SUBSTRING_MATCH}
+    saved = {k: table[k] for k in keys if k in table}
     if not saved and pattern_id != SUBSTRING_MATCH:
         raise KeyError(f"{pattern_id!r} has no entry in the scorer's anti-pattern penalties")
     real_pattern = substring_match._pattern
+    original = query_scoring.fixable_keys
+
+    def priced(findings):
+        """The fixable findings, the swept pattern's left out (so they are priced)."""
+        return frozenset(k for k in original(findings) if k[2] not in keys)
+
     try:
         for k in saved:
             table[k] = points
+        query_scoring.fixable_keys = priced  # type: ignore[assignment]
         if pattern_id == SUBSTRING_MATCH:
             # the scan penalty reads the catalog entry, not the penalty table
             entry = real_pattern().model_copy(update={"penalty": points})
@@ -199,6 +208,7 @@ def penalty_set_to(pattern_id: str, points: int):
         yield
     finally:
         table.update(saved)
+        query_scoring.fixable_keys = original  # type: ignore[assignment]
         substring_match._pattern = real_pattern  # type: ignore[assignment]
 
 
@@ -315,11 +325,22 @@ def select_cases(sample: str, work_dir: Path) -> tuple[list[CaseSpec], dict]:
 # query (access-pattern class, its reason, its pattern facts, the shape pointer):
 # those restate the detectors' inputs, so they could tell flagged rows from decoys.
 FACT_CELLS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 11)  # indexes into review_sheet.row_cells
-HEADER = (
-    "| # | id | SQL | op | tables | calls/s | share | tier | groups | facts "
-    "| shows | acceptable | ideal | rationale |"
+# The answer columns, in order (#1084; ``redesign`` and ``after redesign`` since #1231).
+ANSWER_COLUMNS: tuple[str, ...] = (
+    "shows",
+    "redesign",
+    "acceptable",
+    "after redesign",
+    "ideal",
+    "rationale",
 )
-DIVIDER = "|" + "---|" * 14
+HEADER = (
+    "| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | "
+    + " | ".join(ANSWER_COLUMNS)
+    + " |"
+)
+DIVIDER = "|" + "---|" * (len(FACT_CELLS) + len(ANSWER_COLUMNS))
+DEFAULT_LINE = "Default: " + " ; ".join(f"{c} =" for c in ANSWER_COLUMNS)
 
 
 def row_order(case_id: str, query_ids: Iterable[str]) -> list[str]:
@@ -363,11 +384,26 @@ def render_case(case_id: str, sample: str, pattern_id: str, rows: list[Row]) -> 
         "not. Every answered row needs it."
     )
     out.append(
-        "- `acceptable` (optional): every engine that would be a defensible home for the "
-        f"query, comma separated, using these ids: {engines}. Leave it empty to score the "
-        "verdict only."
+        "- `redesign` (on every row whose `shows` is `yes`): `intrinsic` if the query needs "
+        "rows no key can narrow (a whole-table aggregate or export, a scan by design, a "
+        "free-text filter no key can carry), so no redesign of the schema removes the "
+        "pattern; `fixable` if the pattern comes from the source's design (no index on the "
+        "filtered column, a filter a key or index could carry, a predicate on a stable "
+        "attribute), so a redesign removes it."
     )
-    out.append("- `ideal` (optional): the one best engine; it must be in `acceptable`.")
+    out.append(
+        "- `acceptable` (optional): every engine that would be a defensible home for the "
+        f"query as it is written today, comma separated, using these ids: {engines}. Leave "
+        "it empty to score the verdict only."
+    )
+    out.append(
+        "- `after redesign` (optional): every engine that would be a defensible home for the "
+        "query once the target schema is designed for it, the same ids, comma separated."
+    )
+    out.append(
+        "- `ideal` (optional): the one best engine; it must be in `acceptable`, or in "
+        "`after redesign` for a `fixable` row."
+    )
     out.append("- `rationale`: a few words a later reviewer can check against the facts.")
     out.append(
         "- `=N`: same answer as row N. The **Default** line answers every row left empty. "
@@ -375,9 +411,9 @@ def render_case(case_id: str, sample: str, pattern_id: str, rows: list[Row]) -> 
     )
     out.append(
         "- When the sheet is done, the key goes into the case's `expected.json` "
-        '(`{"<query_id>": {"shows": true, "acceptable": [...], "ideal": "...", '
-        '"rationale": "..."}}`) with `reviewed: true`, and the case\'s floor into the '
-        "stage's `gate.json`."
+        '(`{"<query_id>": {"shows": true, "redesign": "fixable", "acceptable": [...], '
+        '"acceptable_after_redesign": [...], "ideal": "...", "rationale": "..."}}`) with '
+        "`reviewed: true`, and the case's floor into the stage's `gate.json`."
     )
     out.append("")
     out.append(
@@ -393,14 +429,15 @@ def render_case(case_id: str, sample: str, pattern_id: str, rows: list[Row]) -> 
     out.append("")
     out.append("<!-- rows -->")
     out.append("")
-    out.append("Default: shows = ; acceptable = ; ideal = ; rationale =")
+    out.append(DEFAULT_LINE)
     out.append("")
     out.append(HEADER)
     out.append(DIVIDER)
     for r in rows:
         # collector flags only: the pattern facts are routing's reading of the query
         cells = row_cells(replace(r, facts=[]), ids)
-        out.append("| " + " | ".join([cells[i] for i in FACT_CELLS] + ["", "", "", ""]) + " |")
+        answers = [""] * len(ANSWER_COLUMNS)
+        out.append("| " + " | ".join([cells[i] for i in FACT_CELLS] + answers) + " |")
     out.append("")
     return "\n".join(out)
 

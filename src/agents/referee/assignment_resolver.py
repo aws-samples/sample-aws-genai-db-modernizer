@@ -874,6 +874,11 @@ class AssignmentResolver:
             note = anti_pattern_notes.get((qid, engine))
             if note:
                 assigned_reason[qid] = f"{assigned_reason[qid]} | {note}"
+            # A query whose engine's score is the redesigned one says which keys routing
+            # assumed there (#1231).
+            redesign_note = scoring_ctx.redesign_notes.get((qid, engine))
+            if redesign_note:
+                assigned_reason[qid] = f"{assigned_reason[qid]} | {redesign_note}"
 
         # Step 7b: Utility and metadata statements never enter engine routing
         # (#327). SHOW/SET/DESCRIBE/EXPLAIN/CREATE/ALTER/DROP and catalog

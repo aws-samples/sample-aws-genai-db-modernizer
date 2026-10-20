@@ -6,6 +6,7 @@ detectors = [
 # Penalty: OpenSearch purpose-built for this.
 penalty = 20
 penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
 
 [engines.dynamodb]
 kind = "unscored"

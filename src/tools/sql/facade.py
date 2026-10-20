@@ -1354,7 +1354,11 @@ class ScopeFacts:
     ``or_branches``: when the WHERE's only ``OR`` group is a disjunction of
     branches made only of ``col = <value>`` terms (``id = $1 OR id = $2``), the
     columns each branch pins, one tuple per branch (#915); empty otherwise. The
-    ``OR`` group itself still counts in ``other_filters``.
+    ``OR`` group itself still counts in ``other_filters``. ``null_tests`` /
+    ``not_null_tests``: the columns a top-level ``AND`` term tests with ``IS NULL`` /
+    ``IS NOT NULL`` (#1231); each term still counts in ``other_filters``. ``correlated``:
+    the ``equalities`` whose value is another scope's column (``p.col = outer.col``, a
+    correlated join edge rather than a value, #1231).
     ``count_only``: the scope's own aggregates (``aggregate``) are all plain counts,
     ``COUNT(*)``, ``COUNT(1)`` or ``COUNT(col)`` (non-null values), and no ``COUNT(DISTINCT ...)``,
     filtered count (``FILTER (WHERE ...)``), ``MIN``, ``MAX``, ``SUM`` or ``AVG`` (#377).
@@ -1390,6 +1394,9 @@ class ScopeFacts:
     time_bucket: bool = False
     text_search_kinds: frozenset[TextSearchKind] = frozenset()
     or_branches: tuple[tuple[ColumnFact, ...], ...] = ()
+    null_tests: tuple[ColumnFact, ...] = ()
+    not_null_tests: tuple[ColumnFact, ...] = ()
+    correlated: tuple[ColumnFact, ...] = ()
     returned: tuple[ColumnFact, ...] = ()
     returns_all: bool = False
     group_by_items: tuple[str, ...] = ()
@@ -1423,6 +1430,9 @@ class AccessFacts:
     fallback_reason: FallbackReason | None
     window_function: bool = False
     truncated_read: bool = False
+    # The columns an UPDATE's SET assigns (lower-case names, #1231): a redesign never
+    # keys a column its own write rewrites.
+    assigned_columns: tuple[str, ...] = ()
 
 
 def query_readings(sql: str, source_engine: str) -> tuple[SqlFacts, AccessFacts]:
@@ -1510,6 +1520,15 @@ def _access_facts(statements: list[exp.Expr]) -> AccessFacts:
         parsed_by="sqlglot",
         fallback_reason=None,
         window_function=_has_window(node for s in statements for node in s.walk()),
+        assigned_columns=tuple(
+            dict.fromkeys(
+                column.name.lower()
+                for statement in statements
+                if isinstance(statement, exp.Update)
+                for assignment in statement.expressions
+                if (column := _set_column(assignment)) is not None
+            )
+        ),
     )
 
 
@@ -1947,10 +1966,22 @@ def _disjuncts(condition: exp.Expr) -> list[exp.Expr]:
 def _or_branches(terms: list[exp.Expr], aliases: set[str]) -> tuple[tuple[ColumnFact, ...], ...]:
     """The columns each branch of the WHERE's only ``OR`` group pins, when every
     branch is made only of ``col = <value>`` terms (:class:`ScopeFacts`)."""
+    return _or_reading(terms, aliases)[0]
+
+
+def _or_correlated(terms: list[exp.Expr], aliases: set[str]) -> tuple[ColumnFact, ...]:
+    """The ``or_branches`` columns whose value is another scope's column (#1231)."""
+    return _or_reading(terms, aliases)[1]
+
+
+def _or_reading(
+    terms: list[exp.Expr], aliases: set[str]
+) -> tuple[tuple[tuple[ColumnFact, ...], ...], tuple[ColumnFact, ...]]:
     groups = [t for t in terms if len(_disjuncts(t)) > 1]
     if len(groups) != 1:
-        return ()
+        return (), ()
     branches: list[tuple[ColumnFact, ...]] = []
+    correlated: list[ColumnFact] = []
     for branch in _disjuncts(groups[0]):
         reader = _ScopeReader(aliases)
         for term in _conjuncts(branch):
@@ -1958,12 +1989,13 @@ def _or_branches(terms: list[exp.Expr], aliases: set[str]) -> tuple[tuple[Column
             while isinstance(stripped, exp.Paren):
                 stripped = stripped.this
             if not isinstance(stripped, (exp.EQ, exp.NullSafeEQ)):
-                return ()
+                return (), ()
             reader.term(stripped)
         if reader.other or reader.ranges or reader.joins or not reader.equalities:
-            return ()
+            return (), ()
         branches.append(tuple(reader.equalities))
-    return tuple(branches)
+        correlated.extend(reader.correlated)
+    return tuple(branches), tuple(correlated)
 
 
 def _own_columns(node: exp.Expr) -> list[exp.Column]:
@@ -1996,6 +2028,9 @@ class _ScopeReader:
         self.equalities: list[ColumnFact] = []
         self.ranges: list[ColumnFact] = []
         self.joins: list[tuple[ColumnFact, ColumnFact]] = []
+        self.null_tests: list[ColumnFact] = []
+        self.not_null_tests: list[ColumnFact] = []
+        self.correlated: list[ColumnFact] = []
         self.other = 0
 
     def _in_scope(self, column: exp.Column) -> bool:
@@ -2025,8 +2060,12 @@ class _ScopeReader:
                 self.joins.append((left, right))
             elif left and self._is_value(node.expression):
                 self.equalities.append(left)
+                if _own_columns(node.expression):
+                    self.correlated.append(left)
             elif right and self._is_value(node.this):
                 self.equalities.append(right)
+                if _own_columns(node.this):
+                    self.correlated.append(right)
             else:
                 self.other += 1
             return
@@ -2057,6 +2096,17 @@ class _ScopeReader:
             if column:
                 self.ranges.append(column)
                 return
+        # ``col IS NULL`` / ``col IS NOT NULL``: still another predicate term, and also
+        # recorded as a null test on the column (#1231).
+        negated = isinstance(node, exp.Not)
+        test = node.this if negated else node
+        while isinstance(test, exp.Paren):
+            test = test.this
+        if isinstance(test, exp.Is) and isinstance(test.expression, exp.Null):
+            column = self._scope_column(test.this)
+            if column:
+                negated = negated != bool(test.args.get("negate"))
+                (self.not_null_tests if negated else self.null_tests).append(column)
         self.other += 1
 
     def using(self, join: exp.Join, left_aliases: list[str], right_alias: str) -> None:
@@ -2249,6 +2299,9 @@ def _scope_facts(
         time_bucket=_has_time_bucket(root),
         text_search_kinds=frozenset(k for n in own if (k := _text_search_kind(n)) is not None),
         or_branches=_or_branches(where_terms, aliases),
+        null_tests=tuple(reader.null_tests),
+        not_null_tests=tuple(reader.not_null_tests),
+        correlated=tuple(reader.correlated) + _or_correlated(where_terms, aliases),
         returned=returned,
         returns_all=returns_all,
         group_by_items=_group_by_items(root),

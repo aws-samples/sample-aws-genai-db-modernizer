@@ -7,11 +7,13 @@ Blind review sheet for the `anti_pattern` benchmark key of case `trailgear-frequ
 ## How to fill it in
 
 - `shows`: `yes` if the query shows `frequent-full-scan` as defined above, `no` if it does not. Every answered row needs it.
-- `acceptable` (optional): every engine that would be a defensible home for the query, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
-- `ideal` (optional): the one best engine; it must be in `acceptable`.
+- `redesign` (on every row whose `shows` is `yes`): `intrinsic` if the query needs rows no key can narrow (a whole-table aggregate or export, a scan by design, a free-text filter no key can carry), so no redesign of the schema removes the pattern; `fixable` if the pattern comes from the source's design (no index on the filtered column, a filter a key or index could carry, a predicate on a stable attribute), so a redesign removes it.
+- `acceptable` (optional): every engine that would be a defensible home for the query as it is written today, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
+- `after redesign` (optional): every engine that would be a defensible home for the query once the target schema is designed for it, the same ids, comma separated.
+- `ideal` (optional): the one best engine; it must be in `acceptable`, or in `after redesign` for a `fixable` row.
 - `rationale`: a few words a later reviewer can check against the facts.
 - `=N`: same answer as row N. The **Default** line answers every row left empty. `?`: unsure, discuss first. `-`: leave out of the key.
-- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "acceptable": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
+- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "redesign": "fixable", "acceptable": [...], "acceptable_after_redesign": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
 
 Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the sample's calls (tier A = the busiest queries making 90% of calls, B up to 99%, C the rest); `groups` marks co-dependency (`CDn`) and write groups (`W:table`); `facts` the collector flags (joins, aggregation, subquery, text search, average rows returned, median latency). The access-pattern class, its reason and its pattern facts are left out on purpose: they restate what the pipeline's detectors read.
 
@@ -19,16 +21,16 @@ Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the 
 
 <!-- rows -->
 
-Default: shows = ; acceptable = ; ideal = ; rationale =
+Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; rationale =
 
-| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | acceptable | ideal | rationale |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `0x3BE9AE87BC4E81FC` | `SELECT [BrandID], [Name], [Country] FROM [Brand]` | SELECT | Brand | 1.64 | 0.90% | A |  | rows~140, 0.768ms |  |  |  |  |
-| 2 | `0xFDB1D8615B27F96D` | `SELECT [SettingValue] FROM [StoreSetting] WHERE [SettingKey] = @SettingKey` | SELECT | StoreSetting | 6.18 | 3.38% | A |  | rows~1, 0.312ms |  |  |  |  |
-| 3 | `0x57083C831FBABE20` | `SELECT [FlagKey], [Enabled], [Rollout] FROM [FeatureFlag]` | SELECT | FeatureFlag | 9.41 | 5.15% | A |  | rows~85, 0.563ms |  |  |  |  |
-| 4 | `0x61AC3BDB0619D600` | `SELECT [WarehouseID], [Code], [Name] FROM [Warehouse]` | SELECT | Warehouse | 0.0422 | 0.02% | C |  | rows~12, 0.312ms |  |  |  |  |
-| 5 | `0x0253E46183218663` | `SELECT o.[SalesOrderID], o.[OrderNumber], l.[ProductID], l.[Quantity], l.[UnitPrice] FROM [SalesOrder] o JOIN [SalesOrderLine] l ON l.[Sa...` | SELECT | SalesOrder, SalesOrderLine | 1.91 | 1.04% | A |  | joins=1, rows~4, 2.28ms |  |  |  |  |
-| 6 | `0xBF0498C3B5E8BD52` | `SELECT TOP (200) [EventID], [EventType], [EntityID], [EventTime] FROM [Audit].[EventLog] WHERE [EntityID] = @EntityID AND [EventTime] BET...` | SELECT | EventLog | 0.0404 | 0.02% | C |  | rows~200, 96.3ms |  |  |  |  |
-| 7 | `0xEA2423F36607A6FE` | `SELECT [ShipmentID], [Carrier], [ShippedDate], [DeliveredDate] FROM [Shipment] WHERE [TrackingNumber] = @TrackingNumber` | SELECT | Shipment | 5.09 | 2.78% | A |  | rows~1, 0.594ms |  |  |  |  |
-| 8 | `0x88BF8EE1D634B98E` | `SELECT p.[ProductID], p.[Sku], p.[Name], b.[Name] AS [Brand] FROM [Product] p WITH (NOLOCK) JOIN [Brand] b ON b.[BrandID] = p.[BrandID] W...` | SELECT | Product, Brand | 2.21 | 1.21% | A |  | joins=1, rows~24, 8.84ms |  |  |  |  |
-| 9 | `0x9A123DFBF60D59A1` | `SELECT po.[PurchaseOrderID], po.[Status], po.[OrderedDate] FROM [PurchaseOrder] po WHERE po.[SupplierID] = @SupplierID ORDER BY po.[Order...` | SELECT | PurchaseOrder | 0.0393 | 0.02% | C |  | rows~25, 8.12ms |  |  |  |  |
+| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | redesign | acceptable | after redesign | ideal | rationale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `0x3BE9AE87BC4E81FC` | `SELECT [BrandID], [Name], [Country] FROM [Brand]` | SELECT | Brand | 1.64 | 0.90% | A |  | rows~140, 0.768ms |  |  |  |  |  |  |
+| 2 | `0xFDB1D8615B27F96D` | `SELECT [SettingValue] FROM [StoreSetting] WHERE [SettingKey] = @SettingKey` | SELECT | StoreSetting | 6.18 | 3.38% | A |  | rows~1, 0.312ms |  |  |  |  |  |  |
+| 3 | `0x57083C831FBABE20` | `SELECT [FlagKey], [Enabled], [Rollout] FROM [FeatureFlag]` | SELECT | FeatureFlag | 9.41 | 5.15% | A |  | rows~85, 0.563ms |  |  |  |  |  |  |
+| 4 | `0x61AC3BDB0619D600` | `SELECT [WarehouseID], [Code], [Name] FROM [Warehouse]` | SELECT | Warehouse | 0.0422 | 0.02% | C |  | rows~12, 0.312ms |  |  |  |  |  |  |
+| 5 | `0x0253E46183218663` | `SELECT o.[SalesOrderID], o.[OrderNumber], l.[ProductID], l.[Quantity], l.[UnitPrice] FROM [SalesOrder] o JOIN [SalesOrderLine] l ON l.[Sa...` | SELECT | SalesOrder, SalesOrderLine | 1.91 | 1.04% | A |  | joins=1, rows~4, 2.28ms |  |  |  |  |  |  |
+| 6 | `0xBF0498C3B5E8BD52` | `SELECT TOP (200) [EventID], [EventType], [EntityID], [EventTime] FROM [Audit].[EventLog] WHERE [EntityID] = @EntityID AND [EventTime] BET...` | SELECT | EventLog | 0.0404 | 0.02% | C |  | rows~200, 96.3ms |  |  |  |  |  |  |
+| 7 | `0xEA2423F36607A6FE` | `SELECT [ShipmentID], [Carrier], [ShippedDate], [DeliveredDate] FROM [Shipment] WHERE [TrackingNumber] = @TrackingNumber` | SELECT | Shipment | 5.09 | 2.78% | A |  | rows~1, 0.594ms |  |  |  |  |  |  |
+| 8 | `0x88BF8EE1D634B98E` | `SELECT p.[ProductID], p.[Sku], p.[Name], b.[Name] AS [Brand] FROM [Product] p WITH (NOLOCK) JOIN [Brand] b ON b.[BrandID] = p.[BrandID] W...` | SELECT | Product, Brand | 2.21 | 1.21% | A |  | joins=1, rows~24, 8.84ms |  |  |  |  |  |  |
+| 9 | `0x9A123DFBF60D59A1` | `SELECT po.[PurchaseOrderID], po.[Status], po.[OrderedDate] FROM [PurchaseOrder] po WHERE po.[SupplierID] = @SupplierID ORDER BY po.[Order...` | SELECT | PurchaseOrder | 0.0393 | 0.02% | C |  | rows~25, 8.12ms |  |  |  |  |  |  |

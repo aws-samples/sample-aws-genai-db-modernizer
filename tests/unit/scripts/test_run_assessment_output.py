@@ -433,10 +433,13 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # #377 (a key-scoped COUNT passes DynamoDB's aggregation gate on its table's source of
     # truth): wp_comments' COUNT ties DocumentDB and DynamoDB at 77 and is listed under
     # DynamoDB pending a choice: documentdb -1, dynamodb +1.
+    # #1231 (an anti-pattern a redesign removes costs nothing): the whole read of the
+    # 2-row wp_wc_tax_rate_classes keeps DynamoDB's 89 without the frequent-full-scan
+    # penalty and is first-assigned there: documentdb -1, dynamodb +1.
     assert rc["before_distribution"] == {
-        "dynamodb": 37,
+        "dynamodb": 38,
         "aurora_mysql": 59,
-        "documentdb": 10,
+        "documentdb": 9,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

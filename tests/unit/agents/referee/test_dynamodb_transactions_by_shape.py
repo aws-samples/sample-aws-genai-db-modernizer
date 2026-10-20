@@ -641,3 +641,49 @@ def test_an_or_of_key_anchors_names_each_one() -> None:
         "orders.customer_id, orders.status must each become the partition key of an item "
         "collection (or a GSI's) so this write reads its items by key"
     )
+
+
+class TestDecision3HoldsThroughTheProductionScorer:
+    """ADR-031 Decision 3 through the production path (#1231 review): the context every
+    routing pass builds (``ScoringContext.from_pipeline``, which labels each finding with
+    the redesign) keeps the wide-transaction penalty on a write a range or a subquery
+    picks. Only a write by a plain filter a redesign key anchors becomes key scoped,
+    by Decision 3's own shape rule, and loses it. (``?`` placeholders: the generic
+    dialect this fixture's collector reads in parses ``$n`` as no value.)"""
+
+    def _ctx(self):
+        from src.agents.referee.query_scoring import ScoringContext
+
+        collector = _collector(
+            _write("DELETE FROM orders WHERE created_at < ?", "DELETE", "by_range"),
+            _write(
+                "DELETE FROM orders WHERE id IN (SELECT id FROM orders WHERE region = ?)",
+                "DELETE",
+                "by_subquery",
+            ),
+            _write("UPDATE orders SET status = ? WHERE sku = ?", "UPDATE", "by_filter"),
+        )
+        collector["database_schema"]["tables"][0]["columns"] += [
+            {"column_name": "region", "data_type": "text"},
+            {"column_name": "sku", "data_type": "varchar(32)"},
+        ]
+        workload = analyze_dynamodb_use_cases(collector)
+        analysis = {"dynamodb": {"workload_analysis": workload.model_dump()}}
+        return ScoringContext.from_pipeline(analysis, {"query_capabilities": {}}, collector)
+
+    @pytest.mark.passes_on_main  # Decision 3 already holds on main; this keeps it
+    def test_a_write_a_range_or_a_subquery_picks_keeps_its_penalty(self) -> None:
+        ctx = self._ctx()
+        penalty = pattern("wide-transaction").penalty
+        assert ctx.anti_pattern_map.get(("by_range", "dynamodb")) == penalty
+        assert ctx.anti_pattern_map.get(("by_subquery", "dynamodb")) == penalty
+
+    def test_a_write_a_redesign_key_anchors_is_key_scoped_and_unpenalised(self) -> None:
+        ctx = self._ctx()
+        assert ("by_filter", "dynamodb") not in ctx.anti_pattern_map
+        kinds = {f.query_id: f.kind for f in ctx.anti_pattern_findings}
+        assert kinds == {
+            "by_range": "intrinsic",
+            "by_subquery": "intrinsic",
+            "by_filter": "fixable",
+        }

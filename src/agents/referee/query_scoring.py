@@ -35,7 +35,7 @@ import.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Literal, overload
 
@@ -43,6 +43,14 @@ from src.agents.referee.capability_registry import missing_capabilities, triage_
 from src.agents.referee.engine_exclusions import check_exclusions
 from src.agents.referee.query_cost import QueryCost, QueryCostModel
 from src.agents.referee.query_pattern import QueryPatternModel
+from src.agents.referee.redesign_findings import (
+    INTRINSIC,
+    AntiPatternFinding,
+    FindingKind,
+    RedesignModel,
+    fixable_keys,
+)
+from src.agents.referee.substring_match import pattern_id as substring_match_id
 from src.agents.referee.substring_match import scan_adjustments
 from src.contracts.analysis_output import ScoreBreakdown
 from src.shared.capability_labels import capability_label
@@ -272,8 +280,37 @@ def _capability_scoped_penalty(
     return penalty, None
 
 
+def _anti_pattern_hits(
+    analysis_outputs: Mapping[str, Mapping],
+) -> Iterator[tuple[str, str, str, int]]:
+    """Every ``(query_id, engine, pattern_type, raw_penalty)`` an analysis reports, in the
+    order :func:`build_anti_pattern_map` records them: each engine's own penalised
+    anti-patterns, then the penalised patterns another engine's analysis detected, which
+    count against every other engine (e.g. an OpenSearch wildcard-search pattern on a
+    query is a signal against the engines without it)."""
+    for engine, analysis in analysis_outputs.items():
+        wa = analysis.get("workload_analysis", {})
+        for ap in wa.get("anti_patterns_detected") or []:
+            ap_type = ap.get("anti_pattern_type", "")
+            penalty = ANTI_PATTERN_PENALTIES.get(ap_type, 0)
+            if penalty == 0:
+                continue
+            for qid in ap.get("query_ids") or []:
+                yield qid, engine, ap_type, penalty
+        for pattern in wa.get("patterns_detected") or []:
+            pattern_type = pattern.get("pattern_type", "")
+            penalty = ANTI_PATTERN_PENALTIES.get(pattern_type, 0)
+            if penalty == 0:
+                continue
+            for qid in pattern.get("query_ids", []):
+                for other_engine in analysis_outputs:
+                    if other_engine != engine:
+                        yield qid, other_engine, pattern_type, penalty
+
+
 def build_anti_pattern_map(
     analysis_outputs: Mapping[str, Mapping],
+    fixable: Collection[tuple[str, str, str]] = frozenset(),
 ) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], str]]:
     """Build (query_id, engine) → penalty map from analysis anti-patterns.
 
@@ -282,6 +319,10 @@ def build_anti_pattern_map(
     queries that are fundamentally wrong for an engine (e.g., text search
     on DynamoDB) don't get assigned there just because the TABLE average
     is high.
+
+    ``fixable``: the ``(query_id, engine, pattern_type)`` findings a redesign removes
+    (:mod:`src.agents.referee.redesign_findings`, ADR-031 Decision 2 Amendment 13,
+    #1231). They cost nothing: only an intrinsic finding is penalised.
 
     A capability signal (``CAPABILITY_SIGNAL_ENGINES``) is scoped through
     ``_capability_scoped_penalty`` before being recorded, whether it was
@@ -303,13 +344,15 @@ def build_anti_pattern_map(
     penalties: dict[tuple[str, str], int] = {}
     notes: dict[tuple[str, str], str] = {}
 
-    def _record(key: tuple[str, str], pattern_type: str, raw_penalty: int) -> None:
-        _qid, target_engine = key
+    for qid, target_engine, pattern_type, raw_penalty in _anti_pattern_hits(analysis_outputs):
+        if (qid, target_engine, pattern_type) in fixable:
+            continue
+        key = (qid, target_engine)
         scoped_penalty, note = _capability_scoped_penalty(pattern_type, target_engine, raw_penalty)
         if scoped_penalty == 0:
             if note and key not in penalties:
                 notes.setdefault(key, note)
-            return
+            continue
         if scoped_penalty >= penalties.get(key, 0):
             penalties[key] = scoped_penalty
             if note:
@@ -317,32 +360,58 @@ def build_anti_pattern_map(
             else:
                 notes.pop(key, None)
 
-    for engine, analysis in analysis_outputs.items():
-        wa = analysis.get("workload_analysis", {})
-        for ap in wa.get("anti_patterns_detected") or []:
-            ap_type = ap.get("anti_pattern_type", "")
-            penalty = ANTI_PATTERN_PENALTIES.get(ap_type, 0)
-            if penalty == 0:
-                continue
-            for qid in ap.get("query_ids") or []:
-                _record((qid, engine), ap_type, penalty)
-
-        # Also check patterns_detected from OTHER engines as positive signals
-        # (e.g., if OpenSearch detects wildcard-search pattern for a query,
-        # that's a signal the query belongs there)
-        for pattern in wa.get("patterns_detected") or []:
-            pattern_type = pattern.get("pattern_type", "")
-            # If a pattern type matches an anti-pattern penalty name,
-            # penalize OTHER engines for those queries
-            penalty = ANTI_PATTERN_PENALTIES.get(pattern_type, 0)
-            if penalty == 0:
-                continue
-            for qid in pattern.get("query_ids", []):
-                for other_engine in analysis_outputs:
-                    if other_engine != engine:
-                        _record((qid, other_engine), pattern_type, penalty)
-
     return penalties, notes
+
+
+def anti_pattern_findings(
+    analysis_outputs: Mapping[str, Mapping],
+    collector: Mapping | None,
+    model: RedesignModel | None = None,
+) -> tuple[AntiPatternFinding, ...]:
+    """Every penalised anti-pattern finding, labelled fixable or intrinsic (ADR-031
+    Decision 2 Amendment 13, #1231): each ``(query, engine, pattern)`` that costs the
+    engine points (its capability-scoped penalty, :func:`build_anti_pattern_map`'s hits,
+    and the substring-match scan, :func:`merge_substring_scan`'s), classified once by
+    :class:`~src.agents.referee.redesign_findings.RedesignModel` from ``collector``'s
+    schema and the query's own facts. A query the collector does not hold, or no
+    collector at all, has no facts to narrow its rows, so its findings are intrinsic.
+    Sorted by query, engine and pattern."""
+    model = model if model is not None else RedesignModel.from_collector(collector)
+    queries = {
+        str(q.get("query_id") or ""): q
+        for q in ((collector or {}).get("queries") or {}).get("query_patterns") or []
+    }
+    raw: dict[tuple[str, str, str], int] = {}
+    for qid, engine, pattern_type, penalty in _anti_pattern_hits(analysis_outputs):
+        scoped, _note = _capability_scoped_penalty(pattern_type, engine, penalty)
+        if scoped > 0:
+            raw[(qid, engine, pattern_type)] = max(raw.get((qid, engine, pattern_type), 0), scoped)
+    if collector is not None:
+        scan_penalties, _notes = scan_adjustments(collector, analysis_outputs.keys())
+        for (qid, engine), penalty in scan_penalties.items():
+            if penalty > 0:
+                raw[(qid, engine, substring_match_id())] = penalty
+    found = []
+    for (qid, engine, pattern_type), penalty in sorted(raw.items()):
+        query = queries.get(qid)
+        label = (
+            model.classify(query, pattern_type)
+            if query is not None
+            else FindingKind(INTRINSIC, "the collection holds no facts for this query")
+        )
+        found.append(
+            AntiPatternFinding(
+                query_id=qid,
+                engine=engine,
+                pattern=pattern_type,
+                penalty=penalty,
+                kind=label.kind,
+                evidence=label.evidence,
+                columns=label.columns,
+                new_columns=label.new_columns,
+            )
+        )
+    return tuple(found)
 
 
 def merge_substring_scan(
@@ -350,6 +419,7 @@ def merge_substring_scan(
     notes: Mapping[tuple[str, str], str],
     collector: Mapping,
     engines: Iterable[str],
+    fixable: Collection[tuple[str, str, str]] = frozenset(),
 ) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], str]]:
     """``penalties``/``notes`` with the substring-match scan penalty merged in (#493).
 
@@ -360,10 +430,14 @@ def merge_substring_scan(
     "biggest penalty wins" rule as :func:`build_anti_pattern_map`: a bigger penalty
     already on the pair keeps its own note; otherwise the substring-match note replaces
     any zero-penalty exemption note (it is the more specific reason for this query).
+    A scan in ``fixable`` (``(query_id, engine, "substring-match")``, #1231) costs
+    nothing, and no other engine's note says it scores lower.
     """
     merged_penalties = dict(penalties)
     merged_notes = dict(notes)
-    scan_penalties, scan_notes = scan_adjustments(collector, engines)
+    scan_id = substring_match_id()
+    exempt = {(qid, engine) for qid, engine, pattern in fixable if pattern == scan_id}
+    scan_penalties, scan_notes = scan_adjustments(collector, engines, exempt=exempt)
     for key, note in scan_notes.items():
         existing = merged_penalties.get(key, 0)
         scan = scan_penalties.get(key, 0)
@@ -410,6 +484,13 @@ class ScoringContext:
     analysis_outputs: Mapping[str, Mapping] = field(default_factory=dict)
     anti_pattern_map: Mapping[tuple[str, str], int] = field(default_factory=dict)
     anti_pattern_notes: Mapping[tuple[str, str], str] = field(default_factory=dict)
+    # Every penalised anti-pattern finding, labelled fixable or intrinsic (#1231):
+    # ``anti_pattern_map`` holds only the intrinsic ones' penalties.
+    anti_pattern_findings: tuple[AntiPatternFinding, ...] = ()
+    # ``(query_id, engine) -> note`` for each engine whose pattern score for the query is
+    # its redesigned one (#1231): the keys it assumes, for the decision trace (the
+    # assignment reason of a query that lands there).
+    redesign_notes: Mapping[tuple[str, str], str] = field(default_factory=dict)
     query_capabilities: Mapping[str, list[str]] = field(default_factory=dict)
     # ``query_id -> engines a model flagged as unable to serve it`` (ADR-031
     # Decision 11, as amended 2026-10-14, #647): a capability gap for that one
@@ -540,11 +621,6 @@ class ScoringContext:
         allows, for a caller that genuinely has no triage artifact or
         collector output on hand.
         """
-        anti_pattern_map, anti_pattern_notes = build_anti_pattern_map(analysis_outputs)
-        if collector is not None:
-            anti_pattern_map, anti_pattern_notes = merge_substring_scan(
-                anti_pattern_map, anti_pattern_notes, collector, analysis_outputs.keys()
-            )
         if triage is not None and "query_capabilities" in triage:
             # Legacy capability ids mapped (a triage.json saved before #493).
             query_capabilities: Mapping[str, list[str]] = triage_query_capabilities(triage)
@@ -566,15 +642,47 @@ class ScoringContext:
             query_capabilities = dict(detect_query_capabilities(dict(collector), signals))
         else:
             query_capabilities = {}
-        return cls(
+        base = cls(
             analysis_outputs=analysis_outputs,
-            anti_pattern_map=anti_pattern_map,
-            anti_pattern_notes=anti_pattern_notes,
             query_capabilities=query_capabilities,
             pattern_model=QueryPatternModel.from_pipeline(collector, analysis_outputs),
             source_engine=source_engine_of(collector),
             cost_model=QueryCostModel.from_collector(collector),
         )
+        # Each penalised finding labelled once, by the same redesign the pattern dimension
+        # reads; only an intrinsic one costs points (ADR-031 Decision 2 Amendment 13, #1231).
+        findings = anti_pattern_findings(analysis_outputs, collector, base.pattern_model.redesigns)
+        fixable = fixable_keys(findings)
+        anti_pattern_map, anti_pattern_notes = build_anti_pattern_map(analysis_outputs, fixable)
+        if collector is not None:
+            anti_pattern_map, anti_pattern_notes = merge_substring_scan(
+                anti_pattern_map, anti_pattern_notes, collector, analysis_outputs.keys(), fixable
+            )
+        return replace(
+            base,
+            anti_pattern_map=anti_pattern_map,
+            anti_pattern_notes=anti_pattern_notes,
+            anti_pattern_findings=findings,
+            redesign_notes=_redesign_notes(base.pattern_model, collector, analysis_outputs),
+        )
+
+
+def _redesign_notes(
+    pattern_model: QueryPatternModel, collector: Mapping | None, engines: Iterable[str]
+) -> dict[tuple[str, str], str]:
+    """``(query_id, engine) -> note`` for every collected query and engine whose pattern
+    score is the redesigned one (#1231, ``QueryPatternModel.relies_on_redesign``)."""
+    notes = {}
+    engines = list(engines)
+    for query in ((collector or {}).get("queries") or {}).get("query_patterns") or []:
+        found = pattern_model.redesign(query)
+        if found is None:
+            continue
+        qid = str(query.get("query_id") or "")
+        for engine in engines:
+            if pattern_model.relies_on_redesign(query, engine):
+                notes[(qid, engine)] = found.note()
+    return notes
 
 
 GATE_KIND_HARD_EXCLUSION = "hard_exclusion"

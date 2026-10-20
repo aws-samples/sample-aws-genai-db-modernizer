@@ -52,6 +52,10 @@ rule                       severity  raised when
                            HIGH      at ``HOT_PARTITION_HIGH_PCT`` or more; one per engine
 ``design.trade_offs``      MEDIUM    an engine's schema design records trade-offs to review;
                                      one risk per engine
+``design.redesign``        MEDIUM    queries sit on an engine whose score for them is the
+                                     redesigned one (ADR-031 Decision 2 Amendment 13, #1231):
+                                     the target design must add the keys routing assumed;
+                                     one risk per engine
 ``relational.gaps``        HIGH      the relational gap check finds gaps that block the move to
                                      wave 1's engine (``facts.relational_gaps``, #1149)
                            MEDIUM    gaps that need a rewrite before cutover
@@ -746,6 +750,113 @@ def _trade_off_risks(
     return out
 
 
+def _redesign_risks(
+    ctx: _Context, redesign_requirements: Iterable[Mapping[str, Any]] | None
+) -> list[dict]:
+    """One ``design.redesign`` risk per engine: the queries it serves whose plan relies on
+    a redesign (#1231, ``query_pattern.redesign_requirements`` with ``routing_depends``:
+    the engine's redesigned score won, or a lifted finding stopped costing it points),
+    each with the ``engine`` serving it. The plan holds only if that engine's design gives
+    each query the keys routing assumed. A requirement the engine's plan does not rely on
+    (it scores the query as well as written) is an index the design may add, not a gate;
+    a requirement for another engine than the one serving the query raises nothing."""
+    by_engine: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for r in redesign_requirements or []:
+        if not isinstance(r, Mapping):
+            continue
+        qid, engine = str(r.get("query_id") or ""), canonical_engine_id(str(r.get("engine") or ""))
+        if not qid or not engine or ctx.engine_of.get(qid) != engine:
+            continue
+        if not r.get("routing_depends", True):
+            continue  # the engine scores the query as well as written: an index, no gate
+        by_engine.setdefault(engine, {})[qid] = r
+    out: list[dict[str, Any]] = []
+    for engine in sorted(by_engine):
+        queries = by_engine[engine]
+        k = len(queries)
+        keys = sorted(
+            {
+                str(key.get("column"))
+                for r in queries.values()
+                for key in r.get("assumed_keys") or []
+            }
+        )
+        unknown = sorted(
+            {
+                str(key.get("column"))
+                for r in queries.values()
+                for key in r.get("assumed_keys") or []
+                if not isinstance(key.get("cardinality"), int)
+            }
+        )
+        lifted = sorted(
+            {str(p) for r in queries.values() for p in r.get("lifted_anti_patterns") or []}
+        )
+        wave = ctx.wave_of_engine.get(engine)
+        name = display_engine(engine)
+        lifted_note = (
+            f" The redesign also removes the {_join(lifted)} "
+            f"{'finding' if len(lifted) == 1 else 'findings'} the source shows."
+            if lifted
+            else ""
+        )
+        cardinality_note = (
+            f" {_n(len(unknown), 'key has', 'keys have')} no cardinality statistics."
+            if unknown
+            else ""
+        )
+        details = []
+        for qid in sorted(queries):
+            r = queries[qid]
+            columns = ", ".join(str(key.get("column")) for key in r.get("assumed_keys") or [])
+            after = r.get("class_after_redesign")
+            line = f"a key on {columns}" if columns else "no new key"
+            if after:
+                line += f": read as {str(after).replace('_', ' ')} instead of " + str(
+                    r.get("class_as_written") or ""
+                ).replace("_", " ")
+            for evidence in r.get("evidence") or []:
+                line += f"; {_item(str(evidence))}"
+            details.append(line)
+        if keys:
+            body = (
+                f": it scored {_them(k)} with {_n(len(keys), 'key', 'keys')} the source does "
+                f"not have, so the plan holds only if the {name} design adds "
+                f"{'it' if len(keys) == 1 else 'them'}.{lifted_note}{cardinality_note}"
+            )
+        else:
+            finding = "finding" if len(lifted) == 1 else "findings"
+            body = ""
+        description = (
+            f"Routing assumes a redesign for {_n(k, 'query', 'queries')} on {name}{body}"
+            if keys
+            else f"Routing did not penalise {name} for the {_join(lifted)} {finding} the "
+            f"source shows on {_n(k, 'query', 'queries')}, because the design removes the "
+            "read it is about (each query's evidence says how)."
+        )
+        out.append(
+            _risk(
+                "design.redesign",
+                engine,
+                description,
+                (
+                    f"Give each of {_these(k, 'query', 'queries')} the keys routing assumed in "
+                    f"the {name} design before the {_gate(wave)}, check a key with few or "
+                    "unknown distinct values for hot partitions, and serve none of them as a "
+                    "scan."
+                    if keys
+                    else f"Design {_these(k, 'query', 'queries')} in {name} as each one's "
+                    f"evidence says before the {_gate(wave)}, and serve none of them as a scan."
+                ),
+                {t for q in queries for t in ctx.tables_of.get(q, ())},
+                queries,
+                wave,
+                details=sorted(set(details)),
+            )
+        )
+    return out
+
+
 # A leading review marker a designer puts on a line: "[PE note] ...", "PE note: ...".
 _MARKER_RE = re.compile(r"^(?:\[[^\]]{1,30}\]\s*|(?:PE|review) note:\s*)+", re.IGNORECASE)
 
@@ -776,6 +887,7 @@ def build_migration_risks(
     table_sources: list[dict[str, Any]] | None = None,
     flagged_unservable: list[dict[str, Any]] | None = None,
     relational_gaps: Mapping[str, Any] | None = None,
+    redesign_requirements: Iterable[Mapping[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -789,7 +901,8 @@ def build_migration_risks(
     ``table_sources`` is report.json's ``table_sources`` (None for an
     assignment written before write groups); ``flagged_unservable`` its
     ``flagged_unservable`` rows (#888, #1148); ``relational_gaps`` the gap check
-    ``facts.relational_gaps`` stores (#1079, #1149); ``source_engine`` is the
+    ``facts.relational_gaps`` stores (#1079, #1149); ``redesign_requirements``
+    the queries routing scored after redesign, each with its engine (#1231); ``source_engine`` is the
     dialect the queries' text is read in.
     """
     norm = normalise or (lambda names: {str(n) for n in names if n})
@@ -809,6 +922,7 @@ def build_migration_risks(
         *_app_layer_risks(ctx, designs, trigger_tables or {}),
         *_hot_partition_risks(ctx, designs, norm),
         *_trade_off_risks(ctx, trade_offs, norm),
+        *_redesign_risks(ctx, redesign_requirements),
         # Last: a report written before this rule gets it appended at render time
         # (``backfill_report_risks``), so both number and order it the same way.
         *flagged_unservable_risks(

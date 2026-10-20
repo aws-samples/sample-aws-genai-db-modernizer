@@ -8,6 +8,7 @@ triage_signal = "aggregations"
 # or another store (complex_aggregation is the underscore spelling some analysis agents used).
 penalty = 30
 penalty_basis = "needs_redesign"
+removed_by_redesign = "rows"
 penalty_aliases = ["complex_aggregation"]
 
 # Detection signals: a GROUP BY, or an aggregate that is not over one key's rows of one table (#968)

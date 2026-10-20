@@ -62,6 +62,9 @@ E2E_LLM: tuple[str, ...] = (
     # Decide which queries and numbers the designer sees (prepare_schema_design_input).
     "src/tools/schema/design_metrics.py",
     "src/tools/sql/query_pattern_groups.py",  # queries.query_pattern_groups (#1146)
+    # analysis_output.redesign_findings' evidence text (#1231), read from the
+    # access-pattern record through query_pattern.fixable_findings.
+    "src/agents/referee/redesign_findings.py",
     "src/agents/referee/table_resolution.py",
     "src/storage/assignment_versioning.py",
     "src/contracts/*_model_output.py",

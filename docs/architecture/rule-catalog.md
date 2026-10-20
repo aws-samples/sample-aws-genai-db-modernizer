@@ -69,6 +69,9 @@ The routing thresholds and floors: shared ones from `src/catalog/routing.toml`, 
 
 | Applies to | Threshold | Value | Why |
 |---|---|---|---|
+| Every engine | `small_reference_table_max_rows` | 10000 | A table with at most this many collected rows is small reference data: read whole, it is the reference-read class (ADR-031 Decision 14 Amendment 7, #920), the limit DynamoDB's metadata-config-store reads, and a whole read of it is a scan a redesign removes, by caching or keeping it as one item collection (ADR-031 Decision 2 Amendment 13, #1231). |
+| Every engine | `redesign_key_min_distinct` | 100 | A column needs at least this many collected distinct values before a redesign may assume a key on it from its statistics (ADR-031 Decision 2 Amendment 13, #1231): fewer values address a few large slices of the table, not entities, whatever their share of the rows. |
+| Every engine | `redesign_key_min_rows` | 10000 | Statistics overrule a category name or type (a status, a type) only on a table with at least this many collected rows (#1231): on a smaller table almost any distinct count clears the 1% low-cardinality share, so the count says nothing about whether the column addresses entities; the small reference-table limit, the same 10,000. |
 | Every engine | `target_engine_count` | 2 | The reality check tries to stay at or below this many target engines; a third must provide unique, irreplaceable capabilities (ADR-031 Decision 7). |
 | Every engine | `unique_delta_threshold` | 15 | Points by which an engine must beat the best alternative for a query to count as unique to it; within this margin the query is redundant (reality check differentiation). |
 | Every engine | `mandatory_engine_cost_floor` | 100 | Fixed monthly cost (USD) an engine kept by a signal override must reach before its workload share is questioned: DynamoDB ($0) and ElastiCache ($50) are cheap enough that a small share is not disproportionate (#167). |

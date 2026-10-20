@@ -24,6 +24,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from src.agents.referee.access_pattern import SchemaKeys, query_access
+from src.agents.referee.query_pattern import QueryPatternModel
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.contracts.analysis_output import ScoreBreakdown
 from src.tools.analysis.scoring import compute_confidence
@@ -279,7 +280,19 @@ def test_4b_the_one_exception_a_second_lookup_makes_its_column_a_key():
     both = _collector(first, bystander, second)
     assert _new_workload_keys(alone, _collector(first, bystander, copy)) == set()
     assert _new_workload_keys(alone, both) == {("d.topics", "title")}
-    assert _score(first, "dynamodb", both, analysis) > _score(first, "dynamodb", alone, analysis)
+    # As written, the second lookup makes ``first`` key scoped. Routing reads it after
+    # redesign since #1231 (ADR-031 Decision 2 Amendment 13): alone, the redesign assumes
+    # the key on title that the second lookup supplies, so the score is the same either
+    # way, and the record says which (an assumed key alone, none with the second lookup).
+    alone_model = QueryPatternModel.from_pipeline(alone, {})
+    both_model = QueryPatternModel.from_pipeline(both, {})
+    assert alone_model.written_pattern_score(first, "dynamodb") < both_model.written_pattern_score(
+        first, "dynamodb"
+    )
+    found = alone_model.redesign(first)
+    assert found is not None and found.labels == ("topics.title",)
+    assert both_model.redesign(first) is None
+    assert _score(first, "dynamodb", both, analysis) == _score(first, "dynamodb", alone, analysis)
     assert _score(bystander, "dynamodb", both, analysis) == _score(
         bystander, "dynamodb", alone, analysis
     )

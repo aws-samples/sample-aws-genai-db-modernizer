@@ -44,17 +44,12 @@ written without one.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.engines import CatalogError
-from src.shared.catalog.patterns import (
-    EngineSupport,
-    PatternEntry,
-    ScanThreshold,
-    pattern,
-)
+from src.shared.catalog.patterns import EngineSupport, PatternEntry, ScanThreshold, pattern
 from src.shared.engine_names import display_engine
 from src.tools.sql.query_facts import (
     RegexMatch,
@@ -117,6 +112,11 @@ class _LikeReading:
 
 def _pattern() -> PatternEntry:
     return pattern("substring-match")
+
+
+def pattern_id() -> str:
+    """The catalog id of the pattern this module prices."""
+    return _pattern().id
 
 
 def _threshold() -> ScanThreshold:
@@ -379,13 +379,16 @@ def engine_reason(engine: str, match: SubstringMatch) -> str | None:
 
 
 def scan_adjustments(
-    collector: Mapping | None, engines: Iterable[str] | None = None
+    collector: Mapping | None,
+    engines: Iterable[str] | None = None,
+    exempt: Collection[tuple[str, str]] = frozenset(),
 ) -> tuple[dict[tuple[str, str], int], dict[tuple[str, str], str]]:
     """``(query_id, engine) -> penalty`` and ``-> note`` for every leading-wildcard query.
 
-    A penalty only for a scan engine whose scan matters. A note for every engine the
-    pattern describes (``engines``, when given, limits them to the candidates): its own
-    reason, plus the reason each other candidate scores lower when one does.
+    A penalty only for a scan engine whose scan matters, unless the pair is in ``exempt``
+    (a scan a redesign removes, ADR-031 Decision 2 Amendment 13, #1231). A note for every
+    engine the pattern describes (``engines``, when given, limits them to the candidates):
+    its own reason, plus the reason each other candidate scores lower when one does.
     """
     entries = _entries()
     candidates = [e for e in (engines if engines is not None else entries) if e in entries]
@@ -393,7 +396,9 @@ def scan_adjustments(
     notes: dict[tuple[str, str], str] = {}
     for qid, match in substring_matches(collector).items():
         reasons = {e: r for e in candidates if (r := engine_reason(e, match))}
-        lower = {e: p for e in candidates if (p := scan_penalty(match, e))}
+        lower = {
+            e: p for e in candidates if (qid, e) not in exempt and (p := scan_penalty(match, e))
+        }
         for engine, reason in reasons.items():
             if engine in lower:
                 penalties[(qid, engine)] = lower[engine]

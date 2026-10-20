@@ -88,16 +88,38 @@ def _sample_run(case: Case, work_dir: Path) -> tuple[LocalArtifactStore, str]:
     return run_pipeline_to_final_assignment(case, shared)
 
 
+def pipeline_redesign(record: Mapping | None, pattern_id: str) -> dict[str, str]:
+    """``{query_id: "fixable" | "intrinsic"}``: how the pipeline labelled each query's
+    ``pattern_id`` finding (#1231), from an access-pattern record. A query with no
+    penalised finding of the pattern is absent. The label depends on the pattern's
+    penalty basis and the query's own rows, never on the engine, so one finding of the
+    pattern on the query gives it."""
+    keys = pattern_keys(pattern_id) if pattern_id != SUBSTRING_MATCH else {SUBSTRING_MATCH}
+    out: dict[str, str] = {}
+    for row in (record or {}).get("queries") or []:
+        for f in row.get("anti_pattern_findings") or []:
+            if f.get("pattern") in keys:
+                out.setdefault(str(row.get("query_id") or ""), str(f.get("kind") or ""))
+    return out
+
+
 def run_anti_pattern_case(case: Case, work_dir: Path) -> dict[str, dict]:
-    """``{query_id: {"shows": bool, "engine": str}}`` for the case's queries."""
+    """``{query_id: {"shows": bool, "engine": str, "redesign": str | None}}`` for the
+    case's queries."""
     if not case.anti_pattern:
         raise ValueError(f"{case.case_id}: no 'anti_pattern' in index.json")
     store, prefix = _sample_run(case, work_dir)
     collector = store.read_json(f"{prefix}/collector/output.json")
     flagged = pipeline_flags(read_analyses(store, prefix), case.anti_pattern, collector)
+    record = store.read_json(f"{prefix}/assignment/v1/access_patterns.json")
+    redesign = pipeline_redesign(record, case.anti_pattern)
     final = {
         qa["query_id"]: qa["assigned_engine"]
         for qa in final_assignment(store, case.sample or "").get("query_assignments", [])
     }
     ids = case.queries or sorted(final)
-    return {q: {"shows": q in flagged, "engine": final[q]} for q in ids if q in final}
+    return {
+        q: {"shows": q in flagged, "engine": final[q], "redesign": redesign.get(q)}
+        for q in ids
+        if q in final
+    }

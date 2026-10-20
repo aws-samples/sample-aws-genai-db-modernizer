@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
+from src.agents.referee.query_pattern import ACCESS_PATTERNS_FILE, redesign_requirements
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
 from src.agents.schema_design.group_trace import scope_decision_trace
@@ -34,7 +35,11 @@ from src.agents.schema_design.scope import (
     apply_scope_violations,
     assess_schema_scope,
 )
-from src.contracts.analysis_output import key_scoped_counts_in_scope, key_scoped_writes_in_scope
+from src.contracts.analysis_output import (
+    key_scoped_counts_in_scope,
+    key_scoped_writes_in_scope,
+    redesign_requirements_in_scope,
+)
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
@@ -81,6 +86,31 @@ def _read_decision_trace(
     except Exception as exc:
         print(f"[schema-design/{target_type}] Decision trace not found: {exc}")
         return None
+
+
+def _design_analysis_output(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> dict:
+    """The engine's ``analysis.json``, with ``redesign_requirements``: the queries routing
+    scored after redesign and the keys each one needs, read from the assignment version's
+    access-pattern record (ADR-031 Decision 2 Amendment 13, #1231). Every redesigned
+    query is listed here; each design path keeps only its own queries'
+    (``redesign_requirements_in_scope``, the Bedrock projection). A legacy version 0, or a
+    record written before the redesign existed, adds none."""
+    analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
+    analysis_output = store.read_json(analysis_key)
+    if assignment_version <= 0:
+        return analysis_output
+    record_key = f"{database_name}/{job_id}/assignment/v{assignment_version}/{ACCESS_PATTERNS_FILE}"
+    record = store.read_json(record_key) if store.exists(record_key) else None
+    requirements = redesign_requirements(record, target_type)
+    if not requirements:
+        return analysis_output
+    return {**analysis_output, "redesign_requirements": requirements}
 
 
 def _group_concurrency() -> int:
@@ -283,18 +313,21 @@ def prepare_schema_design_input(
             collector_output, assignment, target_type
         )
 
-    analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
-    analysis_output = store.read_json(analysis_key)
-    if analysis_output.get("key_scoped_writes") or analysis_output.get("key_scoped_counts"):
+    analysis_output = _design_analysis_output(
+        store, database_name, job_id, target_type, assignment_version
+    )
+    scoped = {
+        "key_scoped_writes": key_scoped_writes_in_scope,
+        "key_scoped_counts": key_scoped_counts_in_scope,
+        "redesign_requirements": redesign_requirements_in_scope,
+    }
+    if any(analysis_output.get(key) for key in scoped):
         # Only this call's own key-scoped writes, naming only its own queries (#1104),
-        # and the key-scoped counts this call's engine serves (#377).
+        # the key-scoped counts this call's engine serves (#377) and the redesign
+        # findings on its own queries (#1231).
         query_ids = {
             str(q.get("query_id"))
             for q in (collector_output.get("queries") or {}).get("query_patterns") or []
-        }
-        scoped = {
-            "key_scoped_writes": key_scoped_writes_in_scope,
-            "key_scoped_counts": key_scoped_counts_in_scope,
         }
         analysis_output = {
             **analysis_output,
@@ -723,8 +756,9 @@ def run_schema_design(
         return EMPTY_REPORT
 
     # --- Read analysis output via ArtifactStore ---
-    analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
-    analysis_output = store.read_json(analysis_key)
+    analysis_output = _design_analysis_output(
+        store, database_name, job_id, target_type, assignment_version
+    )
     print(f"[schema-design/{target_type}] Loaded analysis output")
 
     # --- Write to temp files for the Strands agent ---
@@ -851,8 +885,9 @@ def run_schema_split(
         return
 
     # Read analysis output
-    analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
-    analysis_output = store.read_json(analysis_key)
+    analysis_output = _design_analysis_output(
+        store, database_name, job_id, target_type, assignment_version
+    )
 
     # Derive artifact version: use assignment_version when set, else 1
     artifact_version = assignment_version if assignment_version > 0 else 1
@@ -1277,8 +1312,9 @@ def run_schema_design_with_injected(
         return
 
     # Read analysis output
-    analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
-    analysis_output = store.read_json(analysis_key)
+    analysis_output = _design_analysis_output(
+        store, database_name, job_id, target_type, assignment_version
+    )
 
     # Write to temp files and invoke agent
     collector_raw = json.dumps(collector_output, indent=2, default=str).encode()

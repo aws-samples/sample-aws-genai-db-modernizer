@@ -17,6 +17,7 @@ script's work.
   `hot_queries` (busiest in-scope queries with tables and filter/sort columns),
   `analysis` (detected patterns, anti-patterns) and `source_features`
   (triggers, procedures, views).
+- **analysis.redesign_requirements** (inside `design_view.analysis`): queries routing scored as a redesigned target would serve them (ADR-031 Decision 2 Amendment 13), each with `index_on`, the `table.column` filters the source has no index on. Where `routing_depends` is true the plan relies on that index: add it in the delta (`add_indexes`, or a partial index for a column tested `IS NOT NULL`). Where it is false the engine already scores the query as well as written: add the index only if the query is hot.
 - **migration_strategy**: `carry_over` (source is MySQL) or `translate`
   (source is another engine).
 

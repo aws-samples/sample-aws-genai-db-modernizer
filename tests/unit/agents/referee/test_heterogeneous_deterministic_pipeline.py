@@ -134,6 +134,7 @@ class TestAdventureWorksDeliverablesRender:
         names = {d.name for d in out.items}
         assert names == {"engineering-report", "assessment-data", "executive-report"}
 
+    @pytest.mark.passes_on_main  # the role guard, narrowed to the engine table (#1231)
     def test_the_chosen_aurora_engine_reads_migration_target(self, pipeline_report) -> None:
         store, _, version = pipeline_report
         report_key = f"{DB}/{JOB}/synthesis/v{version}/report.json"
@@ -147,7 +148,15 @@ class TestAdventureWorksDeliverablesRender:
         # #287 round-1 review (C1): the engine table renders each engine's role --
         # the chosen Aurora engine must read "Migration target" there, never
         # "Retained" (SQL Server has no Aurora dialect of its own).
-        rows = [line for line in md.splitlines() if line.startswith("| Aurora ")]
+        # The engine table's rows: an Aurora engine then its role (other tables, such as
+        # the close calls, also start with an engine name since routing moved queries).
+        from src.shared.report_facts import ROLES
+
+        rows = [
+            line
+            for line in md.splitlines()
+            if line.startswith("| Aurora ") and line.split("|")[2].strip() in ROLES
+        ]
         assert rows and all("| Migration target |" in r for r in rows), rows
         assert "| Retained |" not in md
 

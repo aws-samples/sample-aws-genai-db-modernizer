@@ -45,37 +45,60 @@ def score_assignment(actual: dict[str, str], expected: dict[str, dict]) -> Score
     )
 
 
+REDESIGN_KINDS = ("fixable", "intrinsic")
+
+
 def score_anti_pattern(actual: dict[str, dict], expected: dict[str, dict]) -> ScoreResult:
     """Score the anti_pattern stage (#1084): the pipeline's verdict against the key's.
 
-    ``actual`` is ``{query_id: {"shows": bool, "engine": str | None}}``: whether the
-    pipeline flagged the query with the case's anti-pattern, and its final engine.
-    ``expected`` is ``{query_id: {"shows": bool, "acceptable"?: [...], "ideal"?: str}}``.
+    ``actual`` is ``{query_id: {"shows": bool, "engine": str | None, "redesign"?: str}}``:
+    whether the pipeline flagged the query with the case's anti-pattern, its final engine
+    and how it labelled the finding (``fixable`` or ``intrinsic``, #1231; None when no
+    engine is penalised for it). ``expected`` is ``{query_id: {"shows": bool,
+    "redesign"?: "fixable" | "intrinsic", "acceptable"?: [...],
+    "acceptable_after_redesign"?: [...], "ideal"?: str}}``; a ``redesign`` answer needs
+    ``shows`` true.
 
-    A query is correct when the verdicts agree and, if the key gives an acceptable
-    set, the final engine is in it. ``metrics`` reports the two halves apart:
-    ``verdict_accuracy`` over every keyed query, ``engine_accuracy`` over the keyed
-    queries with an acceptable set. A keyed query the stage did not return is a
-    miss on both; a returned query absent from the key is ``unmatched``.
+    A query is correct when the verdicts agree, the redesign labels agree where the key
+    gives one, and, if the key gives an acceptable set, the final engine is in it: the
+    ``acceptable_after_redesign`` set for a query the key calls ``fixable`` (routing
+    assumes that redesign, #1231), else ``acceptable``. ``metrics`` reports the parts
+    apart: ``verdict_accuracy`` over every keyed query, ``redesign_accuracy`` over the
+    keyed queries with a ``redesign`` answer, ``engine_accuracy`` over the keyed queries
+    with an acceptable set. A keyed query the stage did not return is a miss on all of
+    them; a returned query absent from the key is ``unmatched``.
     """
     per_query: list[QueryVerdict] = []
     correct = ideal_defined = ideal_count = 0
-    verdict_ok = engine_scored = engine_ok = 0
+    verdict_ok = engine_scored = engine_ok = redesign_scored = redesign_ok = 0
 
     for qid, key in expected.items():
         if not isinstance(key.get("shows"), bool):
             raise ValueError(f"{qid}: an anti-pattern key needs 'shows': true or false")
+        redesign = key.get("redesign")
+        if redesign is not None and (redesign not in REDESIGN_KINDS or not key["shows"]):
+            raise ValueError(
+                f"{qid}: 'redesign' is 'fixable' or 'intrinsic', on a query whose 'shows' "
+                "is true"
+            )
         got = actual.get(qid)
         engine = got.get("engine") if got else None
         same_verdict = got is not None and got.get("shows") is key["shows"]
+        same_redesign = True
+        if redesign is not None:
+            redesign_scored += 1
+            same_redesign = got is not None and got.get("redesign") == redesign
+            redesign_ok += same_redesign
         acceptable_set = key.get("acceptable")
+        if redesign == "fixable" and key.get("acceptable_after_redesign"):
+            acceptable_set = key["acceptable_after_redesign"]
         in_set = True
         if acceptable_set:
             engine_scored += 1
             in_set = engine is not None and engine in acceptable_set
             engine_ok += in_set
         verdict_ok += same_verdict
-        is_correct = same_verdict and in_set
+        is_correct = same_verdict and same_redesign and in_set
         correct += is_correct
         ideal = key.get("ideal")
         if ideal is not None:
@@ -85,6 +108,8 @@ def score_anti_pattern(actual: dict[str, dict], expected: dict[str, dict]) -> Sc
         per_query.append(QueryVerdict(qid, engine, is_correct, is_ideal))
 
     metrics = {"verdict_accuracy": verdict_ok / len(expected) if expected else 0.0}
+    if redesign_scored:
+        metrics["redesign_accuracy"] = redesign_ok / redesign_scored
     if engine_scored:
         metrics["engine_accuracy"] = engine_ok / engine_scored
     return ScoreResult(

@@ -10,6 +10,7 @@ detectors = [
 # (ADR-031 Decision 8 Amendment 6), calibrated in #916: see penalty_why.
 penalty = 10
 penalty_basis = "bounded_limit"
+removed_by_redesign = "write_shape"
 penalty_why = "DynamoDB runs every item of a wider write within a documented bound: one PartiQL DELETE or UPDATE changes one item (its condition resolves to a single primary key), and the documented way to change several is a transaction of up to 100 items or a batch (Amazon DynamoDB Developer Guide, PartiQL delete statements; Amazon DynamoDB Transactions), so the design splits the write into bounded calls, reads the keys of a predicate-picked set first, and gives up all-or-nothing atomicity across the calls; the data model needs no redesign (needs_redesign is for an access path no server-side operation serves)."
 
 # Detection signal: transaction_shape(...).shape == "unbounded" on a write

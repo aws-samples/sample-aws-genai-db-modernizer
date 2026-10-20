@@ -86,6 +86,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 
 from src.agents.referee.table_resolution import TableNameResolver
+from src.shared.catalog.routing import threshold
 from src.tools.sql.access_signature import AccessSignature, scope_signature
 from src.tools.sql.facade import AccessFacts, ColumnFact, ScopeFacts, ScopeSource
 from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
@@ -142,7 +143,7 @@ _LOW_CARDINALITY_SHARE = 0.01
 # A table with at most this many collected rows is small: read whole, it is reference
 # data (``reference_read``), and DynamoDB's metadata-config-store pattern reads the same
 # limit (``src.tools.analysis.dynamodb_analysis_tools``, #920).
-SMALL_TABLE_MAX_ROWS = 10_000
+SMALL_TABLE_MAX_ROWS = int(threshold("small_reference_table_max_rows"))
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,20 @@ class SchemaKeys:
                 workload_lookups=tuple(sorted(by_column.items())),
             )
         return cls(tables=tables, resolver=own.resolver)
+
+    def with_key_columns(self, added: Mapping[str, Iterable[str]]) -> SchemaKeys:
+        """These keys with ``added`` (per table id, lower-case column names) made key
+        columns too: the keys a redesign would give a query (#1231,
+        ``redesign_findings``). A table outside the collected schema is ignored."""
+        if not added:
+            return self
+        tables = dict(self.tables)
+        for table_id, columns in added.items():
+            keys = tables.get(table_id)
+            if keys is not None:
+                merged = keys.key_columns | frozenset(columns)
+                tables[table_id] = replace(keys, key_columns=merged)
+        return SchemaKeys(tables=tables, resolver=self.resolver)
 
     def table_id(self, source: ScopeSource) -> str | None:
         if source.table is None or self.resolver is None:
@@ -297,6 +312,112 @@ def _is_boolean(column: Mapping) -> bool:
     return (normalized or (native[0] if native else "")) in _BOOLEAN_TYPES
 
 
+def is_key_eligible(column: Mapping, row_count: object) -> bool:
+    """Whether a column could address an entity, so a key or index on it would narrow the
+    rows a query pinning it reads: not a date, time or true/false column, and not one the
+    collector's statistics show low-cardinality (``_LOW_CARDINALITY_SHARE``; with no
+    statistics the rule holds). The one exclusion rule a workload key (``_workload_keys``)
+    and a redesign key (``src.agents.referee.redesign_findings``, #1231) both read."""
+    if _is_temporal(column) or _is_boolean(column):
+        return False
+    return not _is_low_cardinality(column, row_count)
+
+
+# Without statistics, a column read as a category of rows rather than an entity (#1231):
+# its last word names a status, a type, a level or a similar finite set ...
+_CATEGORY_WORDS = frozenset(
+    {
+        "status",
+        "state",
+        "type",
+        "kind",
+        "level",
+        "mode",
+        "role",
+        "visibility",
+        "priority",
+        "trigger",
+        "icon",
+        "color",
+        "colour",
+    }
+)
+# ... any of its words names a region-like finite set ...
+_REGION_WORDS = frozenset({"region", "country", "locale", "currency", "language", "timezone"})
+# ... or its first word makes it a flag.
+_FLAG_PREFIXES = frozenset({"is", "has"})
+# Native types that hold one of a few values.
+_ENUM_TYPE_PREFIXES = ("enum", "set(")
+# Unbounded text, binary and document types: no key a design would assume.
+_UNBOUNDED_TYPES = frozenset(
+    {
+        "text",
+        "mediumtext",
+        "longtext",
+        "tinytext",
+        "ntext",
+        "clob",
+        "nclob",
+        "blob",
+        "mediumblob",
+        "longblob",
+        "bytea",
+        "json",
+        "jsonb",
+        "xml",
+    }
+)
+# Statistics overrule a category name or type only with this many distinct values, and
+# only on a table with this many collected rows (#1231 review): on a small table any
+# count clears a share.
+_REDESIGN_MIN_DISTINCT = int(threshold("redesign_key_min_distinct"))
+_REDESIGN_MIN_ROWS = int(threshold("redesign_key_min_rows"))
+
+
+def is_redesign_key_eligible(column: Mapping, row_count: object) -> bool:
+    """Whether a redesign may give a column a key (#1231): ``is_key_eligible``, and not a
+    category of rows. The collector gives these signals, in this order:
+
+    - statistics: a collected ``cardinality`` that is low by share
+      (``_LOW_CARDINALITY_SHARE``) or below the catalog's ``redesign_key_min_distinct``
+      excludes the column; on a table of at least ``redesign_key_min_rows`` rows, one that
+      is not overrules the name rules below (on a smaller table the names still apply);
+    - an unbounded text, binary or document type (``text``, ``blob``, ``json``, ...);
+    - the type: an ``enum`` or ``set`` type, MySQL's ``tinyint(1)``, or a user-defined
+      type (a PostgreSQL enum) whose name has a category word (``hotlinked_media_status``);
+    - with no statistics, the name: its last word a status, type, level, trigger, icon or
+      the like (``_CATEGORY_WORDS``), any word region-like (``_REGION_WORDS``), or a flag
+      prefix (``is_``, ``has_``).
+
+    The collection has no ``CHECK`` or ``IN`` constraints and no per-index distinct
+    counts, so neither is read. A workload key anchor (#1104) does not use this narrower
+    rule: there the designer is given the cardinality and chooses the key; here routing
+    assumes it."""
+    if not is_key_eligible(column, row_count):
+        return False
+    native = str(column.get("data_type") or "").lower()
+    normalized = str(column.get("normalized_data_type") or "").lower()
+    if native.startswith(_ENUM_TYPE_PREFIXES) or normalized == "enum" or native == "tinyint(1)":
+        return False
+    if any(word in _CATEGORY_WORDS for word in native.split("_")[1:]):
+        return False
+    base = (normalized or (native.split("(")[0].split() or [""])[0]).strip()
+    if base in _UNBOUNDED_TYPES:
+        return False
+    cardinality = column.get("cardinality")
+    if isinstance(cardinality, int) and not isinstance(cardinality, bool):
+        if cardinality < _REDESIGN_MIN_DISTINCT:
+            return False  # too few values to address entities, whatever the share
+        if isinstance(row_count, int) and row_count >= _REDESIGN_MIN_ROWS:
+            return True  # statistics on a table large enough to trust overrule the name
+    words = str(column.get("column_name") or "").lower().split("_")
+    return (
+        words[-1] not in _CATEGORY_WORDS
+        and words[0] not in _FLAG_PREFIXES
+        and not any(word in _REGION_WORDS for word in words)
+    )
+
+
 def _workload_keys(
     own: SchemaKeys, collector_output: Mapping, tables: Mapping[str, Mapping]
 ) -> dict[str, dict[str, tuple[str, ...]]]:
@@ -343,9 +464,7 @@ def _workload_keys(
         meta = tables.get(table) or {}
         by_name = {str(c.get("column_name") or "").lower(): c for c in meta.get("columns") or []}
         info = by_name.get(column)
-        if info is None or _is_temporal(info) or _is_boolean(info):
-            continue
-        if _is_low_cardinality(info, meta.get("row_count")):
+        if info is None or not is_key_eligible(info, meta.get("row_count")):
             continue
         found.setdefault(table, {})[column] = tuple(sorted(qids))
     return found
@@ -414,9 +533,20 @@ class _ScopeTables:
 
 
 def _scope_class(
-    facts: ScopeFacts, keys: SchemaKeys, derived_classes: Mapping[int, str]
+    facts: ScopeFacts,
+    keys: SchemaKeys,
+    derived_classes: Mapping[int, str],
+    redesign: Mapping[str, frozenset[str]] | None = None,
 ) -> tuple[str, str] | None:
-    """``(class, reason)`` for one scope, or None when it reads no table."""
+    """``(class, reason)`` for one scope, or None when it reads no table.
+
+    ``redesign`` (#1231, ``redesign_findings``): read the scope as a redesigned schema
+    serves it, ``redesign`` naming, per table id, the columns tested ``IS NOT NULL`` that
+    the redesign gives a sparse index: each anchors like a pinned key, unless the scope
+    bounds a key column by a range (a keyset batch walk reads every row whatever is
+    indexed). An ``IS NULL`` test never anchors: a sparse index leaves out exactly the
+    rows it reads. An ``OR`` of plain equalities whose every branch pins a key column of
+    the scope's one table is one lookup per index. Nothing else changes."""
     if not any(not s.function for s in facts.sources):
         return None
     scope = _ScopeTables(keys, facts)
@@ -427,7 +557,20 @@ def _scope_class(
         owner = scope.owner(column)
         if owner in pinned:
             pinned[owner].add(column.name)
+    walks_a_key = any(
+        (owner := scope.owner(c)) is not None and scope.is_key(owner, c.name) for c in facts.ranges
+    )
+    if redesign is not None and not walks_a_key:
+        for column in facts.not_null_tests:
+            owner = scope.owner(column)
+            table_id = scope.ids.get(owner) if owner is not None else None
+            if owner in pinned and table_id and column.name in redesign.get(table_id, ()):
+                pinned[owner].add(column.name)
     anchored = {a for a, cols in pinned.items() if any(scope.is_key(a, c) for c in cols)}
+    if redesign is not None and len(aliases) == 1 and facts.or_branches:
+        (only,) = aliases
+        if all(any(scope.is_key(only, c.name) for c in branch) for branch in facts.or_branches):
+            anchored.add(only)
     for source in facts.sources:
         if (
             source.derived is not None
@@ -561,6 +704,55 @@ def _reached(scope: _ScopeTables, facts: ScopeFacts, anchored: set[str]) -> set[
     return reached
 
 
+def unanchored_rows(facts: AccessFacts, keys: SchemaKeys) -> str | None:
+    """None when every scope of the statement reads only rows a key value anchors; else
+    why not, naming the first scope that does not (#1231).
+
+    A scope's rows are anchored as in ``_scope_class``: a table pinned by an equality on
+    one of its key columns, every other table reached from it over key join edges, and a
+    derived table counted pinned when its own scope's rows are anchored (and it is not the
+    optional side of an outer join). A statement with no scope (``INSERT ... VALUES``)
+    reads no rows, so nothing is unanchored. An ``UPDATE`` or ``DELETE`` with no
+    ``WHERE`` writes every row; a statement the facade could not read, or a digest the
+    collector cut short, shows no anchor it can trust."""
+    if facts.parsed_by != "sqlglot":
+        return "its predicates cannot be read (the SQL facade could not parse it)"
+    if facts.truncated_read:
+        return "its predicates cannot all be read (the collector cut the digest short)"
+    keyed: dict[int, bool] = {}
+    reasons: dict[int, str] = {}
+    for index in range(len(facts.scopes) - 1, -1, -1):
+        scope_facts = facts.scopes[index]
+        aliases = [s.alias for s in scope_facts.sources if not s.function]
+        if not aliases:
+            continue
+        scope = _ScopeTables(keys, scope_facts)
+        names = ", ".join(sorted({scope.name(a) for a in aliases}))
+        if facts.kind in ("update", "delete") and index == 0 and not scope_facts.has_where:
+            keyed[index] = False
+            reasons[index] = f"it writes every row of {names} (no predicate)"
+            continue
+        pinned: dict[str, set[str]] = {a: set() for a in aliases}
+        for column in scope_facts.equalities:
+            owner = scope.owner(column)
+            if owner in pinned:
+                pinned[owner].add(column.name)
+        anchored = {a for a, cols in pinned.items() if any(scope.is_key(a, c) for c in cols)}
+        for source in scope_facts.sources:
+            if source.derived is not None and not source.optional and keyed.get(source.derived):
+                anchored.add(source.alias)
+        reached = _reached(scope, scope_facts, anchored) if len(aliases) > 1 else set(anchored)
+        keyed[index] = bool(anchored) and reached >= set(aliases)
+        if keyed[index]:
+            continue
+        if not anchored:
+            reasons[index] = f"it reads rows of {names} that no key value narrows"
+        else:
+            missing = sorted({scope.name(a) for a in set(aliases) - reached})
+            reasons[index] = f"no key path reaches {', '.join(missing)}"
+    return reasons[min(reasons)] if reasons else None
+
+
 # Appended to the reason of a class read from a digest the collector cut short (#986).
 TRUNCATED_NOTE = (
     " (read from a digest the collector cut short, up to its last complete predicate;"
@@ -572,9 +764,15 @@ _WRITE_KINDS = frozenset({"insert", "update", "delete", "merge"})
 
 
 def classify_facts(
-    facts: AccessFacts, keys: SchemaKeys, query_type: str | None = None
+    facts: AccessFacts,
+    keys: SchemaKeys,
+    query_type: str | None = None,
+    *,
+    redesign: Mapping[str, frozenset[str]] | None = None,
 ) -> AccessClassification:
     """The class of a statement from its facade facts (see the module docstring).
+    ``redesign``: as a redesigned schema serves it, with these sparse-index columns
+    (``_scope_class``, #1231).
 
     ``query_type`` (the collector's) tells a statement sqlglot reads as a generic
     command apart: a ``SHOW`` is a utility statement, a ``REPLACE INTO`` (type
@@ -601,7 +799,7 @@ def classify_facts(
             if len(scope_facts.sources) <= 1:
                 found.append((AD_HOC_FILTER, "writes every row (no predicate)"))
                 continue
-        result = _scope_class(scope_facts, keys, derived)
+        result = _scope_class(scope_facts, keys, derived, redesign)
         if result is None:
             continue
         derived[index] = result[0]
@@ -751,6 +949,11 @@ class ScopeColumns:
     # Per branch of the WHERE's only OR group of plain equalities (the facade's
     # ``or_branches``, #915): per table, the columns that branch pins.
     or_pinned: tuple[Mapping[str, frozenset[str]], ...] = ()
+    # Per table, the columns the scope tests with IS NOT NULL (#1231).
+    not_null_tested: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # Per table, the pinned columns whose value is another scope's column (a correlated
+    # join edge, #1231).
+    correlated: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -802,6 +1005,10 @@ def _scope_columns(facts: ScopeFacts, keys: SchemaKeys) -> ScopeColumns:
             {t: frozenset(c) for t, c in _pinned_by_table(scope, branch).items()}
             for branch in facts.or_branches
         ),
+        not_null_tested={
+            t: frozenset(c) for t, c in _pinned_by_table(scope, facts.not_null_tests).items()
+        },
+        correlated={t: frozenset(c) for t, c in _pinned_by_table(scope, facts.correlated).items()},
     )
 
 

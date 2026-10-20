@@ -650,3 +650,52 @@ def test_the_strategy_for_a_gap_with_no_design_is_to_run_the_design() -> None:
         in strategies
     )
     assert not any("schema design does not serve" in s for s in strategies)
+
+
+class TestALiftedFindingRaisesOneRisk:
+    """#1231: an anti-pattern finding a redesign removes on a query its engine serves is
+    raised by ``design.redesign`` alone, so the anti-pattern risk leaves it out."""
+
+    def _data(self) -> SynthesisData:
+        queries = [{"query_id": q, "tables_accessed": ["wp.t"]} for q in ("w1", "w2")]
+        analysis = {
+            "workload_analysis": {
+                "anti_patterns_detected": [
+                    _anti("wide-transaction", ["w1", "w2"], ["wp.t"], 0.5),
+                ]
+            }
+        }
+        return SynthesisData(
+            job_id="j",
+            database_name="wp",
+            collector={"queries": {"query_patterns": queries}},
+            engines={"dynamodb": EngineArtifacts("dynamodb", analysis=analysis)},
+            assignment={"query_assignments": [_qa("w1", "dynamodb"), _qa("w2", "dynamodb")]},
+        )
+
+    def _wide(self, lifted) -> list[dict]:
+        risks = build_risk_assessment(self._data(), lifted=lifted)["risks"]
+        return [r for r in risks if "wide-transaction description" in r["description"]]
+
+    def test_the_risk_keeps_only_the_findings_no_redesign_removes(self) -> None:
+        (risk,) = self._wide({("w1", "dynamodb", "wide-transaction")})
+        assert risk["query_ids"] == ["w2"]
+
+    def test_every_finding_lifted_raises_no_anti_pattern_risk(self) -> None:
+        lifted = {(q, "dynamodb", "wide-transaction") for q in ("w1", "w2")}
+        assert self._wide(lifted) == []
+
+    def test_a_finding_lifted_on_a_query_another_engine_serves_raises_no_risk(self) -> None:
+        """The finding is against DynamoDB, the query now on DocumentDB: a redesign
+        removes the read it is about on any engine given the key, so the risk the
+        finding would follow the query with is not raised (#1231 review)."""
+        data = self._data()
+        data.assignment = {"query_assignments": [_qa("w1", "documentdb"), _qa("w2", "dynamodb")]}
+        data.engines["documentdb"] = EngineArtifacts("documentdb", analysis={})
+        risks = build_risk_assessment(data, lifted={("w1", "dynamodb", "wide-transaction")})
+        wide = [r for r in risks["risks"] if "wide-transaction description" in r["description"]]
+        assert [sorted(r["query_ids"]) for r in wide] == [["w2"]]
+
+    def test_nothing_lifted_keeps_the_risk(self) -> None:
+        (risk,) = self._wide(set())
+        assert sorted(risk["query_ids"]) == ["w1", "w2"]

@@ -865,6 +865,128 @@
           ]
         }
       },
+      "redesign_requirements": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "assumed_keys": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "object",
+                        "properties": {
+                          "cardinality": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "const",
+                                  "value": "unknown"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "integer"
+                                }
+                              ]
+                            }
+                          },
+                          "column": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "via": {
+                            "required": false,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "equality",
+                                "not_null_test",
+                                "or_branch"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "class_after_redesign": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "class_as_written": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "evidence": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "lifted_anti_patterns": {
+                    "required": false,
+                    "schema": {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    }
+                  },
+                  "query_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "routing_depends": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "boolean"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "table_recommendations": {
         "required": true,
         "schema": {
@@ -1208,8 +1330,8 @@
         }
       }
     },
-    "schema_hash": "6087c74357a8899dea0f304498ca394331e436018b2629f39ad4d0addb92ef3c",
-    "version": "2.3"
+    "schema_hash": "8c1ecc0c622bfd993303ab57f1d29e610da44433d22f97d398111fad5448a611",
+    "version": "2.4"
   },
   "assignment_models.Assignment": {
     "fields": {

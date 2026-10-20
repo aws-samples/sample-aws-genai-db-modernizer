@@ -7,11 +7,13 @@ Blind review sheet for the `anti_pattern` benchmark key of case `wordpress-no-re
 ## How to fill it in
 
 - `shows`: `yes` if the query shows `no-relational-need` as defined above, `no` if it does not. Every answered row needs it.
-- `acceptable` (optional): every engine that would be a defensible home for the query, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
-- `ideal` (optional): the one best engine; it must be in `acceptable`.
+- `redesign` (on every row whose `shows` is `yes`): `intrinsic` if the query needs rows no key can narrow (a whole-table aggregate or export, a scan by design, a free-text filter no key can carry), so no redesign of the schema removes the pattern; `fixable` if the pattern comes from the source's design (no index on the filtered column, a filter a key or index could carry, a predicate on a stable attribute), so a redesign removes it.
+- `acceptable` (optional): every engine that would be a defensible home for the query as it is written today, comma separated, using these ids: `dynamodb`, `documentdb`, `opensearch`, `elasticache`, `aurora_postgresql`, `aurora_mysql`. Leave it empty to score the verdict only.
+- `after redesign` (optional): every engine that would be a defensible home for the query once the target schema is designed for it, the same ids, comma separated.
+- `ideal` (optional): the one best engine; it must be in `acceptable`, or in `after redesign` for a `fixable` row.
 - `rationale`: a few words a later reviewer can check against the facts.
 - `=N`: same answer as row N. The **Default** line answers every row left empty. `?`: unsure, discuss first. `-`: leave out of the key.
-- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "acceptable": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
+- When the sheet is done, the key goes into the case's `expected.json` (`{"<query_id>": {"shows": true, "redesign": "fixable", "acceptable": [...], "acceptable_after_redesign": [...], "ideal": "...", "rationale": "..."}}`) with `reviewed: true`, and the case's floor into the stage's `gate.json`.
 
 Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the sample's calls (tier A = the busiest queries making 90% of calls, B up to 99%, C the rest); `groups` marks co-dependency (`CDn`) and write groups (`W:table`); `facts` the collector flags (joins, aggregation, subquery, text search, average rows returned, median latency). The access-pattern class, its reason and its pattern facts are left out on purpose: they restate what the pipeline's detectors read.
 
@@ -19,16 +21,16 @@ Columns: `op` the statement type; `calls/s`, `share` and `tier` against all the 
 
 <!-- rows -->
 
-Default: shows = ; acceptable = ; ideal = ; rationale =
+Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; rationale =
 
-| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | acceptable | ideal | rationale |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `33dfdb12166d` | `UPDATE wp_postmeta SET meta_value = meta_value - ? WHERE post_id = ? AND meta_key = ?` | UPDATE | wp_postmeta | 0.179 | 0.08% | B | W:wp_postmeta | 8.7ms |  |  |  |  |
-| 2 | `ee386e4a2997` | `SELECT meta_id FROM wp_termmeta WHERE meta_key = ? AND term_id = ?` | SELECT | wp_termmeta | 0.536 | 0.24% | B |  | rows~0.333, 0.238ms |  |  |  |  |
-| 3 | `3c5c8a793663` | `UPDATE wp_termmeta SET meta_value = ? WHERE term_id = ? AND meta_key = ?` | UPDATE | wp_termmeta | 0.179 | 0.08% | B | W:wp_termmeta | 8.66ms |  |  |  |  |
-| 4 | `2c0093ed0c4d` | `UPDATE wp_postmeta SET meta_value = meta_value + ? WHERE post_id = ? AND meta_key = ?` | UPDATE | wp_postmeta | 0.178 | 0.08% | B | W:wp_postmeta | 8.77ms |  |  |  |  |
-| 5 | `97834e68ad85` | `SELECT p . ID FROM wp_posts p INNER JOIN wp_term_relationships tr ON tr . object_id = p . ID INNER JOIN wp_term_taxonomy tt ON tr . term_...` | SELECT | wp_posts, wp_term_relationships, wp_term_taxonomy, wp_terms | 0.455 | 0.20% | B | CD1 | joins=3, rows~0, 0.559ms |  |  |  |  |
-| 6 | `34b8682eed45` | `SELECT wp_posts . * FROM wp_posts WHERE ? = ? AND wp_posts . post_name = ? AND wp_posts . ID NOT IN (...) AND wp_posts . post_type IN (.....` | SELECT | wp_posts | 0.253 | 0.11% | B |  | rows~0, 0.641ms |  |  |  |  |
-| 7 | `50b465673de3` | `SELECT term_id , meta_key , meta_value FROM wp_termmeta WHERE term_id IN (...) ORDER BY meta_id ASC` | SELECT | wp_termmeta | 0.25 | 0.11% | B |  | rows~0.884, 0.237ms |  |  |  |  |
-| 8 | `966f5a331e5b` | `SELECT t . term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t . term_id = tt . term_id WHERE tt . taxonomy IN (...) AND t...` | SELECT | wp_terms, wp_term_taxonomy | 0.233 | 0.11% | B |  | joins=1, rows~0, 0.372ms |  |  |  |  |
-| 9 | `59163c184972` | `SELECT a . action_id FROM wp_actionscheduler_actions a LEFT JOIN wp_actionscheduler_groups g ON g . group_id = a . group_id WHERE ? = ? A...` | SELECT | wp_actionscheduler_actions, wp_actionscheduler_groups | 0.455 | 0.20% | B |  | joins=1, rows~0.786, 52.7ms |  |  |  |  |
+| # | id | SQL | op | tables | calls/s | share | tier | groups | facts | shows | redesign | acceptable | after redesign | ideal | rationale |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `33dfdb12166d` | `UPDATE wp_postmeta SET meta_value = meta_value - ? WHERE post_id = ? AND meta_key = ?` | UPDATE | wp_postmeta | 0.179 | 0.08% | B | W:wp_postmeta | 8.7ms |  |  |  |  |  |  |
+| 2 | `ee386e4a2997` | `SELECT meta_id FROM wp_termmeta WHERE meta_key = ? AND term_id = ?` | SELECT | wp_termmeta | 0.536 | 0.24% | B |  | rows~0.333, 0.238ms |  |  |  |  |  |  |
+| 3 | `3c5c8a793663` | `UPDATE wp_termmeta SET meta_value = ? WHERE term_id = ? AND meta_key = ?` | UPDATE | wp_termmeta | 0.179 | 0.08% | B | W:wp_termmeta | 8.66ms |  |  |  |  |  |  |
+| 4 | `2c0093ed0c4d` | `UPDATE wp_postmeta SET meta_value = meta_value + ? WHERE post_id = ? AND meta_key = ?` | UPDATE | wp_postmeta | 0.178 | 0.08% | B | W:wp_postmeta | 8.77ms |  |  |  |  |  |  |
+| 5 | `97834e68ad85` | `SELECT p . ID FROM wp_posts p INNER JOIN wp_term_relationships tr ON tr . object_id = p . ID INNER JOIN wp_term_taxonomy tt ON tr . term_...` | SELECT | wp_posts, wp_term_relationships, wp_term_taxonomy, wp_terms | 0.455 | 0.20% | B | CD1 | joins=3, rows~0, 0.559ms |  |  |  |  |  |  |
+| 6 | `34b8682eed45` | `SELECT wp_posts . * FROM wp_posts WHERE ? = ? AND wp_posts . post_name = ? AND wp_posts . ID NOT IN (...) AND wp_posts . post_type IN (.....` | SELECT | wp_posts | 0.253 | 0.11% | B |  | rows~0, 0.641ms |  |  |  |  |  |  |
+| 7 | `50b465673de3` | `SELECT term_id , meta_key , meta_value FROM wp_termmeta WHERE term_id IN (...) ORDER BY meta_id ASC` | SELECT | wp_termmeta | 0.25 | 0.11% | B |  | rows~0.884, 0.237ms |  |  |  |  |  |  |
+| 8 | `966f5a331e5b` | `SELECT t . term_id FROM wp_terms AS t INNER JOIN wp_term_taxonomy AS tt ON t . term_id = tt . term_id WHERE tt . taxonomy IN (...) AND t...` | SELECT | wp_terms, wp_term_taxonomy | 0.233 | 0.11% | B |  | joins=1, rows~0, 0.372ms |  |  |  |  |  |  |
+| 9 | `59163c184972` | `SELECT a . action_id FROM wp_actionscheduler_actions a LEFT JOIN wp_actionscheduler_groups g ON g . group_id = a . group_id WHERE ? = ? A...` | SELECT | wp_actionscheduler_actions, wp_actionscheduler_groups | 0.455 | 0.20% | B |  | joins=1, rows~0.786, 52.7ms |  |  |  |  |  |  |

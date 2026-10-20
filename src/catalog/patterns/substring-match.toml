@@ -23,6 +23,7 @@ capability = "substring_index"
 # impossible.
 penalty = 20
 penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
 
 [scan_threshold]
 min_calls_per_second = 1.0

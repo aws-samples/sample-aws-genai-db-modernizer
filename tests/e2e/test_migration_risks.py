@@ -33,15 +33,34 @@ pytestmark = pytest.mark.deterministic
 # The rules each deterministic sample raises today. A routing change that
 # moves one in or out updates this with its reason in the pull request.
 EXPECTED_RULES: dict[str, list[str]] = {
-    "wordpress": ["sync.wave", "routing.close_calls"],
-    "discourse": ["sync.wave", "routing.tie_open", "routing.close_calls"],
+    # #1231: wordpress' whole read of the 2-row wp_wc_tax_rate_classes is routed to
+    # DynamoDB without the frequent-full-scan penalty a redesign removes: one
+    # design.redesign risk for DynamoDB.
+    "wordpress": ["sync.wave", "routing.close_calls", "design.redesign"],
+    # #1231: discourse's DocumentDB and DynamoDB plans rely on a redesign for some of
+    # their queries: one design.redesign risk each (Aurora PostgreSQL scores its
+    # redesigned queries as well as written, so it raises none).
+    "discourse": [
+        "sync.wave",
+        "routing.tie_open",
+        "routing.close_calls",
+        "design.redesign",
+        "design.redesign",
+    ],
     # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 6 gaps that need a
     # rewrite and 3 that behave differently, one MEDIUM risk each (wordpress and discourse have one
-    # informational gap each, which raises none).
-    "trailgear": ["sync.wave", "routing.close_calls", "relational.gaps", "relational.gaps"],
+    # informational gap each, which raises none). #1231: its DynamoDB plan relies on a
+    # redesign for 5 queries.
+    "trailgear": [
+        "sync.wave",
+        "routing.close_calls",
+        "design.redesign",
+        "relational.gaps",
+        "relational.gaps",
+    ],
 }
 # The open risks each sample lists (analysis risks and migration risks).
-EXPECTED_OPEN = {"wordpress": 3, "discourse": 11, "trailgear": 11}
+EXPECTED_OPEN = {"wordpress": 4, "discourse": 13, "trailgear": 12}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -51,6 +70,7 @@ DESIGNED_RULES = [
     "design.trade_offs",
     "design.trade_offs",
     "design.trade_offs",
+    "design.redesign",  # #1231: the reference read routed on a redesign
 ]
 
 
@@ -242,6 +262,8 @@ def test_a_flagged_and_a_held_query_are_one_high_risk_in_every_deliverable(
 
 
 OLD_1_41 = REPO / "tests/unit/report/fixtures/wordpress_1_41_flagged_report.json"
+# Rules synthesis raises that the deliverables never backfill into an older report.
+NOT_BACKFILLED = frozenset({"design.redesign"})
 
 
 def test_a_report_from_before_the_rule_renders_the_same_risks(
@@ -265,16 +287,26 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     # A 1.41 row carries no tables of its own (``source_tables`` is 1.42): the risk takes
     # what the report lists for those queries (``table_sources``, query groups), a subset.
     backfilled = data["risk_assessment"]["risks"]
-    fresh_risks = report["risk_assessment"]["risks"]
-    assert [{**r, "affected_tables": None} for r in backfilled] == [
-        {**r, "affected_tables": None} for r in fresh_risks
+    # A rule only synthesis raises, from an artifact a 1.41 report never read, is not
+    # backfilled: #1231's design.redesign (the assignment's access-pattern record). The
+    # old register is the fresh one without it, each risk renumbered in order.
+    fresh_risks = [
+        r for r in report["risk_assessment"]["risks"] if r.get("rule") not in NOT_BACKFILLED
+    ]
+    assert [{**r, "affected_tables": None, "risk_id": None} for r in backfilled] == [
+        {**r, "affected_tables": None, "risk_id": None} for r in fresh_risks
+    ]
+    assert [r["risk_id"] for r in backfilled] == [
+        f"RISK-{i:03d}" for i in range(1, len(backfilled) + 1)
     ]
     for b, f in zip(backfilled, fresh_risks, strict=True):
         assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
     assert data["risk_assessment"]["overall_risk_level"] == "HIGH"
-    n = len(report["risk_assessment"]["risks"])
+    n = len(backfilled)
     sentence = f"{n} open migration risks (overall: HIGH)"
-    assert sentence in data["summary"] and sentence in report["summary"]
+    assert sentence in data["summary"]
+    fresh_n = len(report["risk_assessment"]["risks"])
+    assert f"{fresh_n} open migration risks (overall: HIGH)" in report["summary"]
     md = again.deliverable("engineering-report.md").read_text(encoding="utf-8")
     assert md_text(sentence) in md and "overall: MEDIUM" not in md
     for r in backfilled:
@@ -282,9 +314,10 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     assert "Overall risk: HIGH" in md
     pdf = " ".join(pdf_page_texts(str(again.deliverable("executive-report.pdf"))))
     fresh_pdf = " ".join(pdf_page_texts(str(flagged.deliverable("executive-report.pdf"))))
-    for risk in report["risk_assessment"]["risks"]:
+    for risk in backfilled:
         assert norm(risk["risk_id"]) in pdf
-    assert _pdf_risk_tiles(pdf) == _pdf_risk_tiles(fresh_pdf)
+    assert f"{n} Open risks" in _pdf_risk_tiles(pdf)
+    assert f"{fresh_n} Open risks" in _pdf_risk_tiles(fresh_pdf)
 
 
 def _pdf_risk_tiles(pdf: str) -> str:

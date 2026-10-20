@@ -26,7 +26,8 @@ REPO = Path(__file__).resolve().parents[3]
 STAGE_DIR = REPO / "benchmarks" / "cases" / "anti_pattern"
 CASES = [c.case_id for c in load_cases(STAGE_DIR)]
 SAMPLES = sorted({c.sample for c in load_cases(STAGE_DIR)})
-ANSWER_COLUMNS = 4  # shows, acceptable, ideal, rationale
+# shows, redesign, acceptable, after redesign, ideal, rationale (#1231)
+ANSWER_COLUMNS = len(apc.ANSWER_COLUMNS)
 COLUMNS = {"op": 3, "tables": 4, "tier": 7, "groups": 8, "facts": 9}
 
 
@@ -269,7 +270,7 @@ def test_committed_sheet_is_blind_and_covers_the_case(case_id):
         routing_cells = " ".join(c for i, c in enumerate(r) if i not in (2, COLUMNS["tables"]))
         assert case.anti_pattern not in routing_cells and "flag" not in routing_cells, r
     assert re.findall(r"^Default: .*$", body, re.M) == [
-        "Default: shows = ; acceptable = ; ideal = ; rationale ="
+        "Default: shows = ; redesign = ; acceptable = ; after redesign = ; ideal = ; " "rationale ="
     ]
     assert [int(r[0]) for r in rows] == list(range(1, len(rows) + 1))
     shown = [r[1].strip("`") for r in rows]

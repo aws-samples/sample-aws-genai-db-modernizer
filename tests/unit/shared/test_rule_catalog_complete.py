@@ -297,11 +297,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "choice trace prints",
     ),
     "src/agents/referee/access_pattern.py": (
-        frozenset({"_LOW_CARDINALITY_SHARE", "SMALL_TABLE_MAX_ROWS", "WORKLOAD_KEY_LOOKUPS"}),
+        frozenset({"_LOW_CARDINALITY_SHARE", "WORKLOAD_KEY_LOOKUPS"}),
         _DETECTION + ": when an index's leading column is too coarse to be a key (#728), "
-        "the most rows a small reference table holds (#920, shared with DynamoDB's "
-        "metadata-config-store detector), and how many queries make a column the key of "
-        "other access patterns on its table (#1061: each of them and at least one other)",
+        "and how many queries make a column the key of other access patterns on its table "
+        "(#1061: each of them and at least one other); the most rows a small reference "
+        "table holds is catalog data since #1231 (small_reference_table_max_rows)",
     ),
     "src/agents/referee/consolidation_validator.py": (
         frozenset({"MAX_QUERIES_PER_CALL"}),

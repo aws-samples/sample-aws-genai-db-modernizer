@@ -5,6 +5,7 @@ detectors = [
 ]
 penalty = 20
 penalty_basis = "reads_more_than_returns"
+removed_by_redesign = "rows"
 
 # Detection (#920, catalog PR B): a SELECT that pins no column to a value in any scope and
 # reads the first rows of an order (ORDER BY with a row limit, the top_n fact), at any call

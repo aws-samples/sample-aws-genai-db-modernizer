@@ -223,6 +223,15 @@ def _analysis_summary(analysis: AgentAnalysisInput | None) -> dict:
             }
             for a in analysis.anti_patterns_detected or []
         ],
+        # The queries routing scored after redesign and the index each one needs (#1231).
+        "redesign_requirements": [
+            {
+                "query_id": r.query_id,
+                "routing_depends": r.routing_depends,
+                "index_on": [k.column for k in r.assumed_keys],
+            }
+            for r in analysis.redesign_requirements or []
+        ],
     }
 
 

@@ -81,6 +81,7 @@ RULES: dict[str, RiskRule] = {
     "design.app_layer": RiskRule("MEDIUM", "OPERATIONAL_RISK", "logic moved to the application"),
     "design.hot_partition": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "hot partitions"),
     "design.trade_offs": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "design trade-offs"),
+    "design.redesign": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "redesigns routing relies on"),
 }
 
 # A flagged query held on its engine by a customer pin (#1033): the pin, not a

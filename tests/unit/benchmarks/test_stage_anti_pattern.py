@@ -20,6 +20,7 @@ from benchmarks.runner.run import run_benchmark, stage_runner
 from benchmarks.runner.scoring import score_anti_pattern
 from benchmarks.runner.stage_anti_pattern import pipeline_flags, run_anti_pattern_case
 from src.agents.referee import query_scoring
+from src.agents.referee.redesign_findings import FIXABLE, AntiPatternFinding
 
 REPO = Path(__file__).resolve().parents[3]
 STAGE_DIR = REPO / "benchmarks" / "cases" / "anti_pattern"
@@ -69,6 +70,85 @@ def test_a_verdict_only_key_reports_no_engine_accuracy():
 def test_a_key_without_a_boolean_verdict_is_refused(key):
     with pytest.raises(ValueError, match="shows"):
         score_anti_pattern({"a": {"shows": True, "engine": "x"}}, {"a": key})
+
+
+def test_a_redesign_answer_is_scored_and_picks_the_after_redesign_set():
+    """#1231: a key may say whether the finding is intrinsic or fixable by redesign; a
+    fixable query's engine is judged against the engines acceptable after the redesign,
+    which routing assumes."""
+    actual = {
+        "a": {"shows": True, "engine": "dynamodb", "redesign": "fixable"},
+        "b": {"shows": True, "engine": "aurora_mysql", "redesign": "fixable"},
+        "c": {"shows": True, "engine": "aurora_mysql", "redesign": "intrinsic"},
+    }
+    expected = {
+        "a": {
+            "shows": True,
+            "redesign": "fixable",
+            "acceptable": ["aurora_mysql"],
+            "acceptable_after_redesign": ["dynamodb", "aurora_mysql"],
+        },
+        "b": {"shows": True, "redesign": "intrinsic"},  # labels disagree
+        "c": {
+            "shows": True,
+            "redesign": "intrinsic",
+            "acceptable": ["aurora_mysql"],
+            "acceptable_after_redesign": ["dynamodb"],
+        },  # intrinsic: today's set
+    }
+    result = score_anti_pattern(actual, expected)
+    assert [(v.query_id, v.acceptable) for v in result.per_query] == [
+        ("a", True),
+        ("b", False),
+        ("c", True),
+    ]
+    assert result.metrics == {
+        "verdict_accuracy": 1.0,
+        "redesign_accuracy": 2 / 3,
+        "engine_accuracy": 1.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        {"shows": True, "redesign": "maybe"},
+        {"shows": False, "redesign": "fixable"},
+    ],
+)
+def test_a_redesign_answer_needs_a_known_label_and_a_shown_pattern(key):
+    with pytest.raises(ValueError, match="redesign"):
+        score_anti_pattern({"a": {"shows": True, "engine": "x"}}, {"a": key})
+
+
+def test_pipeline_redesign_reads_the_label_of_the_pattern_and_its_aliases():
+    from benchmarks.runner.stage_anti_pattern import pipeline_redesign
+
+    record = {
+        "queries": [
+            {
+                "query_id": "q1",
+                "anti_pattern_findings": [
+                    {"engine": "dynamodb", "pattern": "complex_aggregation", "kind": "fixable"}
+                ],
+            },
+            {
+                "query_id": "q2",
+                "anti_pattern_findings": [
+                    {"engine": "dynamodb", "pattern": "complex-aggregation", "kind": "intrinsic"}
+                ],
+            },
+            {
+                "query_id": "q3",
+                "anti_pattern_findings": [
+                    {"engine": "dynamodb", "pattern": "frequent-full-scan", "kind": "fixable"}
+                ],
+            },
+            {"query_id": "q4"},  # a version 1 record row
+        ]
+    }
+    assert pipeline_redesign(record, "complex-aggregation") == {"q1": "fixable", "q2": "intrinsic"}
+    assert pipeline_redesign(None, "complex-aggregation") == {}
 
 
 def test_pipeline_flags_reads_both_lists_and_the_aliases():
@@ -185,14 +265,26 @@ def test_a_different_penalty_moves_the_scored_engines(pipeline_answer, tmp_path)
     assert report["per_case"][0]["verdict_accuracy"] == 1.0
 
 
-def test_penalty_set_to_restores_the_catalog_value_and_the_aliases():
+def test_penalty_set_to_restores_the_catalog_value_the_aliases_and_the_labels():
+    """The sweep prices the swept pattern's fixable findings too (#1231): inside it,
+    ``query_scoring.fixable_keys`` leaves them out; on exit the scorer is restored."""
     before = dict(query_scoring.ANTI_PATTERN_PENALTIES)
+    real_fixable = query_scoring.fixable_keys
+    labelled = (
+        AntiPatternFinding("q1", "dynamodb", "complex_aggregation", 30, FIXABLE, ""),
+        AntiPatternFinding("q2", "dynamodb", "frequent-full-scan", 20, FIXABLE, ""),
+    )
     with pytest.raises(RuntimeError):
         with penalty_set_to("complex-aggregation", 0):
             assert query_scoring.ANTI_PATTERN_PENALTIES["complex-aggregation"] == 0
             assert query_scoring.ANTI_PATTERN_PENALTIES["complex_aggregation"] == 0
+            assert query_scoring.fixable_keys(labelled) == {
+                ("q2", "dynamodb", "frequent-full-scan")
+            }
             raise RuntimeError
     assert query_scoring.ANTI_PATTERN_PENALTIES == before
+    assert query_scoring.fixable_keys is real_fixable
+    assert len(query_scoring.fixable_keys(labelled)) == 2
 
 
 # --- the committed stage ------------------------------------------------------

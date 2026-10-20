@@ -583,7 +583,14 @@ def write_reality_check_result(
     revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
     # #972, #1018: written now, so today's version, never the spread one's.
     store.write_json(revised_key, stamp_artifact_version(revised_key, revised_assignment))
-    write_access_patterns(store, database_name, job_id, new_version, result["collector_output"])
+    write_access_patterns(
+        store,
+        database_name,
+        job_id,
+        new_version,
+        result["collector_output"],
+        result["analysis_outputs"],
+    )
     print(
         f"[reality-check] Revised assignment v{assignment_version} written to v{new_version} "
         f"({len(result['consolidations'])} consolidations)"

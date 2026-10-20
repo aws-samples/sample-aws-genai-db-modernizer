@@ -171,7 +171,9 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
 - `assignment/v<N>/assignment.json`: versioned; reality check and customer
   edits write a new version, never overwrite one
 - `assignment/v<N>/access_patterns.json`: each query's access-pattern
-  class, class scores and parity-anchor notes, as routing scored it (#728, #936)
+  class, class scores and parity-anchor notes, as routing scored it (#728, #936),
+  its redesigned class and the keys routing assumed when a redesign applies, and its
+  anti-pattern findings, each fixable by redesign or intrinsic (#1231)
 - `reality-check/` (`llm_input.json`, `output.json`)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus a per-version copy of the rendered files, keyed on the assignment version

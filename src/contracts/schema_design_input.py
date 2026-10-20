@@ -289,6 +289,27 @@ class AgentKeyScopedCount(BaseModel):
     schema_note: str
 
 
+class AgentAssumedKey(BaseModel):
+    """A key routing assumed (``analysis_output.AssumedKey``, #1231)."""
+
+    column: str
+    via: Literal["equality", "not_null_test", "or_branch"] = "equality"
+    cardinality: int | Literal["unknown"] = "unknown"
+
+
+class AgentRedesignRequirement(BaseModel):
+    """A query routed on a redesign (``analysis_output.RedesignRequirement``, #1231): the
+    design must give it ``assumed_keys``."""
+
+    query_id: str
+    routing_depends: bool = True
+    assumed_keys: list[AgentAssumedKey] = Field(default_factory=list)
+    class_as_written: str = ""
+    class_after_redesign: str | None = None
+    lifted_anti_patterns: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+
+
 class AgentKeyAnchor(BaseModel):
     """A key-scoped write's key column (``analysis_output.KeyAnchor``, #1061): its
     cardinality (``"unknown"`` with no statistics) and the other queries that look the table
@@ -340,6 +361,8 @@ class AgentAnalysisInput(BaseModel):
     key_scoped_writes: list[AgentKeyScopedWrite] | None = None
     # DynamoDB only: the key-scoped counts this call serves, keys' cardinality (#377).
     key_scoped_counts: list[AgentKeyScopedCount] | None = None
+    # The queries routed on a redesign, and the keys each needs, of this call (#1231).
+    redesign_requirements: list[AgentRedesignRequirement] | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -670,6 +693,23 @@ def project_schema_design_input(
             )
             for c in analysis_output.key_scoped_counts or []
             if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
+        ]
+        or None,
+        redesign_requirements=[
+            AgentRedesignRequirement(
+                query_id=r.query_id,
+                routing_depends=r.routing_depends,
+                assumed_keys=[
+                    AgentAssumedKey(column=k.column, via=k.via, cardinality=k.cardinality)
+                    for k in r.assumed_keys
+                ],
+                class_as_written=r.class_as_written,
+                class_after_redesign=r.class_after_redesign,
+                lifted_anti_patterns=r.lifted_anti_patterns,
+                evidence=r.evidence,
+            )
+            for r in analysis_output.redesign_requirements or []
+            if r.query_id in {q.query_id for q in collector_output.queries.query_patterns}
         ]
         or None,
     )
