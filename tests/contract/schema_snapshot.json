@@ -19705,6 +19705,13 @@
                                       "type": "string"
                                     }
                                   },
+                                  "shares_replica_risk": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  },
                                   "source_of_truth": {
                                     "required": true,
                                     "schema": {
@@ -23782,8 +23789,8 @@
         }
       }
     },
-    "schema_hash": "0db40131cd1d74bb3ae8bfcea17faebc4fa141a7af2ed236b4b961290ced203c",
-    "version": "1.49"
+    "schema_hash": "67725a659139c79c8d1fb19702cfccd0de0465b9438328dd0b4668060c34fa28",
+    "version": "1.50"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

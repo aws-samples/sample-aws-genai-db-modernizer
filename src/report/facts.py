@@ -25,6 +25,7 @@ from src.shared.report_facts import (
     query_trace_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
+    shares_replica_risk,
     unservable_query_facts,
 )
 
@@ -87,6 +88,24 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
                 )
                 for e in facts["engines"]
             ]
+        sources = facts.get("table_sources")
+        if isinstance(sources, dict) and any(
+            isinstance(r, dict) and "shares_replica_risk" not in r
+            for r in sources.get("replicated_tables") or []
+        ):
+            # A block written before #1232: which rows share the one risk sentence,
+            # from the same function synthesis calls (an older wording does not).
+            missing["table_sources"] = {
+                **sources,
+                "replicated_tables": [
+                    (
+                        {**r, "shares_replica_risk": shares_replica_risk(r)}
+                        if isinstance(r, dict) and "shares_replica_risk" not in r
+                        else r
+                    )
+                    for r in sources.get("replicated_tables") or []
+                ],
+            }
         unservable = facts.get("unservable")
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.

@@ -463,6 +463,9 @@ Version History:
   deliverable prints, counted over the owner engines' in-scope queries). Routing never
   reads them. Backward compatible: both None for an older report, whose deliverables
   leave the line out.
+- 1.50 (2026-10-20, #1232): facts.table_sources.replicated_tables[].shares_replica_risk:
+  whether a row's stored risk is the standard sentence the deliverables state once
+  (#1232); filled in for older reports
 """
 
 from datetime import datetime
@@ -1525,6 +1528,13 @@ class ReplicatedTableFact(BaseModel):
     )
     replica_read_count: int = Field(0, ge=0, description="How many reads a replica serves")
     risk: str = Field("", description="The eventual-consistency risk, naming those reads")
+    shares_replica_risk: bool = Field(
+        False,
+        description=(
+            "Its risk is the standard sentence, so the deliverables state it once for every "
+            "such table (#1232); False keeps the stored risk for this table"
+        ),
+    )
 
 
 class TableSourceFacts(BaseModel):
@@ -1819,7 +1829,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.49",
+        default="1.50",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

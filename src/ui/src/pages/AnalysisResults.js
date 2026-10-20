@@ -2034,9 +2034,6 @@ const AnalysisResultsPage = memo(() => {
             {/* Migration roadmap (#957): report.json's waves, the same ones the
                 PDF and the engineering report show. */}
             <MigrationWavePlan synthesis={synthesis} t={t} />
-            {/* Sources of truth and replicas (#992): each table read on a
-                replica, its CDC direction and the eventual-consistency risk. */}
-            <SourcesOfTruthCallout synthesis={synthesis} t={t} />
 
             {/* Reality-check moves no model reviewed (#746): one line when any. */}
             <UnreviewedMovesNote synthesis={resultsData?.synthesis} t={t} />
@@ -2391,6 +2388,12 @@ const AnalysisResultsPage = memo(() => {
               </Container>
             )}
 
+            {/* Sources of truth and replicas (#992): each table read on a
+                replica, its CDC direction and its replica reads, with the
+                eventual-consistency risk stated once. #1232: collapsed, after
+                the access pattern explorer. */}
+            <SourcesOfTruthCallout synthesis={synthesis} t={t} />
+
             {/* Risk Assessment (#373): synthesis.risk_assessment, including
                 any CRITICAL risk, with one tab per severity (always present,
                 even empty) and the risks the assignment already resolved.
@@ -2694,13 +2697,15 @@ const AnalysisResultsPage = memo(() => {
               </Container>
             )}
 
-            {/* Aurora design (#478): Aurora's schema design has no
+            {/* Table design (#478; "Aurora design" until #1232, every section
+                collapsed when the page opens): Aurora's schema design has no
                 access_patterns, so it never shows up in the explorer above --
                 this section is its own view of what the design already has:
                 tables, DDL, optimizations and the queries the assignment
                 routed here. */}
             {auroraDesigns.length > 0 && (
               <Container
+                id="table-design-section"
                 header={
                   <Header
                     variant="h2"
@@ -2849,7 +2854,7 @@ const AnalysisResultsPage = memo(() => {
 
                           <ExpandableSection
                             headerText={t('analysis-results.aurora-design.queries-header', { count: queryCount })}
-                            defaultExpanded={queryCount > 0}
+                            defaultExpanded={false}
                           >
                             {design.queryGroups.length === 0 ? (
                               <Box color="text-body-secondary" fontSize="body-s">{t('analysis-results.aurora-design.no-queries')}</Box>

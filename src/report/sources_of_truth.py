@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine
-from src.shared.report_facts import replica_risk_text, shared_replica_risk_text
+from src.shared.report_facts import shared_replica_risk_text
 
 from . import escaping
 from .facts import report_facts
@@ -42,19 +42,17 @@ def cdc_direction(row: dict[str, Any]) -> str:
 def _risks_md(rows: list[dict[str, Any]]) -> list[str]:
     """The risk of the replicated tables, stated once (#1170).
 
-    Every stored risk worded by ``replica_risk_text`` differs from the next only in
-    the source of truth, the replicas and the read count, which the table above
-    gives for each row. Those risks are stated once, naming the sources of truth.
-    A stored risk worded any other way (a report written with older wording) is
-    printed as stored, for its own table.
+    A row whose facts say ``shares_replica_risk`` (its stored risk is the standard
+    sentence, which differs from the next only in what the table above gives for
+    each row) is covered by one sentence naming the sources of truth. Any other
+    row's stored risk (a report written with older wording) is printed as stored,
+    for its own table. The facts decide which is which (#1232), as the UI reads.
     """
     sources: list[str] = []
     own: list[dict[str, Any]] = []
     for row in rows:
         source = str(row.get("source_of_truth", ""))
-        replicas = [str(e) for e in row.get("replica_engines") or []]
-        count = row.get("replica_read_count")
-        if isinstance(count, int) and row.get("risk") == replica_risk_text(source, replicas, count):
+        if row.get("shares_replica_risk") is True:
             if source not in sources:
                 sources.append(source)
         else:

@@ -11,13 +11,16 @@ results page does too (``SourcesOfTruthCallout``). They only format the facts
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.report.escaping import md_text
+from src.report.facts import report_facts
 from src.report.renderers import render_engineering_report_md
-from src.report.sources_of_truth import SOURCES_OF_TRUTH_INTRO
+from src.report.sources_of_truth import SOURCES_OF_TRUTH_INTRO, sources_of_truth_md
 from src.shared.report_facts import (
     TABLE_SOURCES_SHOWN,
     compute_report_facts,
@@ -138,10 +141,54 @@ def test_no_section_without_any(rows) -> None:
 def test_the_renderers_print_the_stored_facts(report) -> None:
     doctored = copy.deepcopy(report)
     doctored["facts"]["table_sources"]["written_table_count"] = 9
-    doctored["facts"]["table_sources"]["replicated_tables"][0]["risk"] = "Stored risk."
+    row = doctored["facts"]["table_sources"]["replicated_tables"][0]
+    row["risk"] = "Stored risk."
+    # #1232: the facts say whether a row shares the one risk sentence; the
+    # renderer never decides it from the prose.
     md = _section_md(render_engineering_report_md(doctored))
     assert "(9 written tables)" in md
-    assert "Stored risk." in md
+    assert "Stored risk." not in md and "Every table above has this risk." in md
+    row["shares_replica_risk"] = False
+    md = _section_md(render_engineering_report_md(doctored))
+    assert "Stored risk." in md and "Every table above has this risk." not in md
+
+
+OLD_WORDING = (
+    Path(__file__).resolve().parents[3]
+    / "src/ui/src/components/__tests__/fixtures/oldWordingTableSources.json"
+)
+
+
+def _old_wording() -> dict[str, Any]:
+    data: dict[str, Any] = json.loads(OLD_WORDING.read_text(encoding="utf-8"))
+    return data
+
+
+def test_an_older_reports_rows_get_shares_replica_risk_from_the_facts_layer() -> None:
+    """#1232: a facts block stored between a5c40e70 and ca763a01 has the read
+    counts but the older risk wording and no ``shares_replica_risk``; the facts
+    layer fills it in (False for the older wording) and serves the fixture's block."""
+    data = _old_wording()
+    stored = copy.deepcopy(data["stored"])
+    assert all("shares_replica_risk" not in r for r in stored["replicated_tables"])
+    served = report_facts({"facts": {"engines": [], "table_sources": stored}})["table_sources"]
+    assert served == data["served"]
+    assert [r["shares_replica_risk"] for r in served["replicated_tables"]] == [True, False]
+    assert stored == data["stored"]  # the stored block itself is not modified
+
+
+def test_an_older_report_reads_the_same_in_both_renderers() -> None:
+    """The engineering report prints the fixture's expected text for that block;
+    SourcesOfTruthCallout.test.js checks the results page prints the same."""
+    data = _old_wording()
+    report = _report(None)
+    report["facts"] = {"engines": [], "table_sources": copy.deepcopy(data["stored"])}
+    md = "\n".join(sources_of_truth_md(report))
+    expected = data["expected"]
+    assert md.count(md_text(expected["shared"])) == 1
+    own = expected["own_risk"]
+    assert f"- `{own['table']}`: {md_text(own['risk'])}" in md
+    assert md.count("Eventually consistent: ") == 2
 
 
 def test_table_names_and_risk_text_are_escaped() -> None:
@@ -176,3 +223,39 @@ def test_writes_moved_after_approval_are_disclosed_with_their_cause() -> None:
     )
     assert "its table's writes were moved to one engine, its source of truth" in md
     assert "schema design review found" not in md
+
+
+# #1232: the results page states the risk once too, in its own strings. They
+# must read exactly as the engineering report's shared sentence, and its intro.
+def _ui_strings() -> dict[str, str]:
+    en = Path(__file__).resolve().parents[3] / "src/ui/src/locales/en.json"
+    strings: dict[str, str] = json.loads(en.read_text(encoding="utf-8"))
+    return strings
+
+
+def test_the_results_page_states_the_shared_risk_in_the_engineering_reports_words() -> None:
+    from src.shared.engine_names import display_engine
+
+    en = _ui_strings()
+    prefix = "analysis-results.sources-of-truth."
+    one = en[prefix + "risk-one-source"].replace("{{source}}", display_engine("dynamodb"))
+    assert one == shared_replica_risk_text(["dynamodb"])
+    sources = ["dynamodb", "documentdb", "aurora_postgresql"]
+    many = (
+        en[prefix + "risk-many-sources"]
+        .replace("{{sources}}", ", ".join(display_engine(s) for s in sources[:-1]))
+        .replace("{{last}}", display_engine(sources[-1]))
+    )
+    assert many == shared_replica_risk_text(sources)
+    assert en[prefix + "intro"] == SOURCES_OF_TRUTH_INTRO
+    # The leads the engineering report puts before that sentence.
+    lead = _section_md(render_engineering_report_md(_report([_shipment()])))
+    assert f"{en[prefix + 'risk-lead']} {shared_replica_risk_text(['dynamodb'])}" in lead
+    mixed = _report([_shipment(), _row("trailgear.Order", "dynamodb", {"documentdb": ["r9"]})])
+    mixed["facts"]["table_sources"]["replicated_tables"][1]["shares_replica_risk"] = False
+    other = _section_md(render_engineering_report_md(mixed))
+    assert f"{en[prefix + 'risk-lead-other']} {shared_replica_risk_text(['dynamodb'])}" in other
+
+
+def _shipment() -> dict[str, Any]:
+    return _row("trailgear.Shipment", "dynamodb", {"aurora_postgresql": ["r1", "r2"]})

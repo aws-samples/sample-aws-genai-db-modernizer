@@ -394,8 +394,10 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
     """#992: the results page lists the replicated tables report.json's
     facts.table_sources lists (the rows the engineering report
     states), each with its CDC direction from the source of truth and its
-    eventual-consistency risk."""
+    replica read count. #1232: the section opens collapsed, and the
+    eventual-consistency risk is stated once, in the engineering report's words."""
     from src.shared.engine_names import display_engine
+    from src.shared.report_facts import shared_replica_risk_text
 
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
@@ -407,17 +409,31 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         page.wait_for_load_state("networkidle")
         section = page.locator("#sources-of-truth-section")
         section.wait_for()
-        text = section.inner_text()
         n = facts["written_table_count"]
-        assert f"Sources of truth and replicas ({n} written tables)" in text, r.db
+        assert f"Sources of truth and replicas ({n} written tables)" in section.inner_text(), r.db
+        first = rows[0]["table"]
+        assert not section.locator(f'[data-table="{first}"]').is_visible(), r.db
+        # Opened from the keyboard, as a reader without a mouse would.
+        section.locator('[aria-expanded="false"]').first.focus()
+        page.keyboard.press("Enter")
+        section.locator('[aria-expanded="true"]').first.wait_for()
+        text = section.inner_text()
         if facts["single_engine_table_count"]:
             assert ", ".join(facts["single_engine_tables"]) in text, r.db
         for row in rows:
             replicas = ", ".join(display_engine(e) for e in row["replica_engines"])
             cdc = f"CDC: {display_engine(row['source_of_truth'])} → {replicas}"
-            line = section.locator(f'[data-table="{row["table"]}"]').inner_text()
+            cell = section.locator(f'[data-table="{row["table"]}"]')
+            line = cell.inner_text()
             assert " ".join(line.split()) == f"{row['table']} {cdc}", (r.db, line)
-            assert row["risk"] in text, (r.db, row["table"])
+            reads = cell.locator("xpath=..").locator('[data-figure="replica-reads"]').inner_text()
+            noun = "read" if row["replica_read_count"] == 1 else "reads"
+            assert reads == f"{row['replica_read_count']} {noun} on a replica", (r.db, reads)
+            assert row["shares_replica_risk"], (r.db, row["table"])  # a fresh report's rows
+            assert row["risk"] not in text, (r.db, row["table"])
+        sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
+        assert text.count(shared_replica_risk_text(sources)) == 1, r.db
+        assert text.count("Eventually consistent: ") == 1, r.db
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
@@ -468,9 +484,13 @@ SECTION_ORDER = [
     "unservable-section",
     "close-calls-section",
     "query-routing-section",
+    # #1232: Sources of truth and replicas, collapsed, after the explorer.
+    "access-patterns-section",
+    "sources-of-truth-section",
 ]
-# Banners a report without fallback-engine queries or close calls leaves out.
-OPTIONAL_SECTIONS = {"unservable-section", "close-calls-section"}
+# Banners a report without fallback-engine queries or close calls leaves out,
+# and the explorer, which a job with no access patterns has none of.
+OPTIONAL_SECTIONS = {"unservable-section", "close-calls-section", "access-patterns-section"}
 
 
 def test_results_page_shows_the_headline_first(
@@ -502,6 +522,9 @@ def test_results_page_shows_the_headline_first(
         routing = page.locator("#query-routing-section")
         assert routing.locator('[aria-expanded="false"]').count() >= 1, r.db
         assert not routing.get_by_role("table", name="Query routing").is_visible(), r.db
+        sources = page.locator("#sources-of-truth-section")
+        assert sources.locator('[aria-expanded="false"]').count() == 1, r.db
+        assert sources.locator('[aria-expanded="true"]').count() == 0, r.db
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         close_calls = (report.get("facts") or {}).get("close_calls") or {}
         pairs = close_calls.get("engine_pairs") or []
@@ -758,7 +781,7 @@ def test_results_page_has_no_horizontal_overflow(
 
 
 def _expand_every_section(page: Page) -> None:
-    """Open every collapsed section of the page's content (the Aurora design's
+    """Open every collapsed section of the page's content (the Table design's
     tables and query groups, the explorer's groups, ...), so the scan sees what
     a reader can open, not only what shows on load."""
     main = page.locator("main")
@@ -809,7 +832,7 @@ def test_the_designed_job_renders_the_schema_design_panels(
 ) -> None:
     """#987: the suite always has a job with schema designs, so the checks above
     also cover the panels only a schema-designed run shows: the explorer with
-    its selection tables, the design trade-offs, the Aurora design when an
+    its selection tables, the design trade-offs, the Table design when an
     Aurora engine was designed, and the explorer's pager on the deterministic
     fixture (which has more than one page). Fails when no such job renders them."""
     designed = _designed_runs(all_runs)
@@ -820,10 +843,17 @@ def test_the_designed_job_renders_the_schema_design_panels(
         ev = _open_results(page, ui, r)
         text = page.inner_text("body")
         headings = ["Access pattern explorer", "Trade-offs and design decisions"]
-        if list(r.job_dir().glob("schema-aurora_*/v*/schema_output.json")):
-            headings.append("Aurora design")
+        aurora = bool(list(r.job_dir().glob("schema-aurora_*/v*/schema_output.json")))
+        if aurora:
+            headings.append("Table design")
         for heading in headings:
             assert heading in text, (r.job_id, heading)
+        assert "Aurora design" not in text, r.job_id
+        if aurora:
+            # #1232: every section of the Table design opens collapsed.
+            design = page.locator("#table-design-section")
+            assert design.locator('[aria-expanded="false"]').count() >= 1, r.job_id
+            assert design.locator('[aria-expanded="true"]').count() == 0, r.job_id
         assert page.get_by_role("radio").count() > 0, r.job_id
         if not r.external:
             assert page.get_by_role("button", name="Next page").count() > 0, r.job_id

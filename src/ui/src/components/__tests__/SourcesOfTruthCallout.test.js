@@ -2,8 +2,10 @@
  * #992: the results page's "Sources of truth and replicas" callout. It lists
  * each written table read on a replica from report.json's facts.table_sources
  * (the same rows the engineering report states): the CDC
- * direction from the source of truth to its replicas and the eventual-
- * consistency risk. Cloudscape components are plain DOM stand-ins (see
+ * direction from the source of truth to its replicas and the reads a replica
+ * serves, with the eventual-consistency risk stated once (#1232, as the
+ * engineering report does since #1170), in a section collapsed when the page
+ * opens. Cloudscape components are plain DOM stand-ins (see
  * UnservableQueriesCallout.test.js); the component and the English strings are real.
  */
 import { act } from 'react';
@@ -11,14 +13,23 @@ import { createRoot } from 'react-dom/client';
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import SourcesOfTruthCallout from '../SourcesOfTruthCallout';
+import oldWording from './fixtures/oldWordingTableSources.json';
 
-jest.mock('@cloudscape-design/components/alert', () => ({
+jest.mock('@cloudscape-design/components/expandable-section', () => ({
   __esModule: true,
-  default: ({ header, children, type }) => <div data-alert={type}><h3>{header}</h3>{children}</div>,
+  default: ({ headerText, children, variant, defaultExpanded }) => (
+    <section data-variant={variant} data-default-expanded={String(defaultExpanded)}>
+      <h3>{headerText}</h3>
+      {children}
+    </section>
+  ),
 }));
+// Cloudscape passes `data-*` attributes through to its root element.
 jest.mock('@cloudscape-design/components/box', () => ({
   __esModule: true,
-  default: ({ children }) => <div>{children}</div>,
+  default: ({ children, ...props }) => (
+    <div {...Object.fromEntries(Object.entries(props).filter(([k]) => k.startsWith('data-')))}>{children}</div>
+  ),
 }));
 jest.mock('@cloudscape-design/components/space-between', () => ({
   __esModule: true,
@@ -54,27 +65,45 @@ afterEach(() => {
   container.remove();
 });
 
-const RISK = 'Eventually consistent: 2 reads on Aurora PostgreSQL (r1, r2) read a copy kept in sync from DynamoDB via CDC, so a read can miss a write until it replicates.';
+// The stored per-table risk (src/shared/report_facts.replica_risk_text).
+const RISK = 'Eventually consistent: 2 reads on Aurora PostgreSQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
+// The same risk once for every table (src/shared/report_facts.shared_replica_risk_text).
+const SHARED_DYNAMODB = 'Eventually consistent: a read on a replica reads a copy kept in sync from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.';
+
+const shipment = {
+  table: 'trailgear.Shipment',
+  source_of_truth: 'dynamodb',
+  replica_engines: ['aurora_postgresql'],
+  write_query_count: 2,
+  replica_read_query_ids: ['r1', 'r2'],
+  replica_read_count: 2,
+  risk: RISK,
+  shares_replica_risk: true,
+};
+const order = {
+  table: 'trailgear.Order',
+  source_of_truth: 'dynamodb',
+  replica_engines: ['aurora_postgresql', 'documentdb'],
+  write_query_count: 1,
+  replica_read_query_ids: ['r3'],
+  replica_read_count: 1,
+  shares_replica_risk: true,
+  risk: 'Eventually consistent: 1 read on Aurora PostgreSQL, DocumentDB read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.',
+};
 
 const facts = {
   written_table_count: 2,
   replicated_table_count: 1,
   split_write_table_count: 0,
-  replicated_tables: [
-    {
-      table: 'trailgear.Shipment',
-      source_of_truth: 'dynamodb',
-      replica_engines: ['aurora_postgresql'],
-      write_query_count: 2,
-      replica_read_query_ids: ['r1', 'r2'],
-      replica_read_count: 2,
-      risk: RISK,
-    },
-  ],
+  replicated_tables: [shipment],
   more_replicated_count: 0,
   single_engine_tables: ['trailgear.Customer'],
   single_engine_table_count: 1,
 };
+
+function count(text, part) {
+  return text.split(part).length - 1;
+}
 
 function render(tableSources) {
   act(() => {
@@ -83,16 +112,71 @@ function render(tableSources) {
 }
 
 describe('SourcesOfTruthCallout', () => {
-  it('states each replicated table, its CDC direction and its risk', () => {
+  it('is a container section, collapsed when the page opens, headed by the written table count', () => {
+    render(facts);
+    const section = container.querySelector('#sources-of-truth-section > section');
+    expect(section.getAttribute('data-variant')).toBe('container');
+    expect(section.getAttribute('data-default-expanded')).toBe('false');
+    expect(section.querySelector('h3').textContent).toBe('Sources of truth and replicas (2 written tables)');
+  });
+
+  it('states each replicated table with its CDC direction and replica read count', () => {
     render(facts);
     const text = container.textContent;
-    expect(text).toContain('Sources of truth and replicas (2 written tables)');
     expect(text).toContain('1 written table runs every query on the source of truth, with no replica: trailgear.Customer.');
     expect(text).not.toContain('more than one engine');
     expect(text).toContain("Each table's writes land on one engine, its source of truth.");
     const row = container.querySelector('[data-table="trailgear.Shipment"]');
     expect(row.textContent).toBe('trailgear.Shipment CDC: DynamoDB → Aurora PostgreSQL');
-    expect(text).toContain(RISK);
+    expect(row.parentElement.querySelector('[data-figure="replica-reads"]').textContent).toBe('2 reads on a replica');
+  });
+
+  it('states the eventual-consistency risk once, not once per table', () => {
+    render({ ...facts, replicated_table_count: 2, replicated_tables: [shipment, order] });
+    const text = container.textContent;
+    expect(count(text, 'Eventually consistent: ')).toBe(1);
+    expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(
+      `Every table above has this risk. ${SHARED_DYNAMODB}`
+    );
+    expect(text).not.toContain(RISK);
+    expect(text).not.toContain(order.risk);
+    const reads = [...container.querySelectorAll('[data-figure="replica-reads"]')].map(n => n.textContent);
+    expect(reads).toEqual(['2 reads on a replica', '1 read on a replica']);
+  });
+
+  it('names every source of truth in the shared risk, in row order, like the engineering report', () => {
+    const fromDocdb = { ...order, table: 'trailgear.Review', source_of_truth: 'documentdb', replica_engines: ['opensearch'] };
+    const fromPg = { ...order, table: 'trailgear.Item', source_of_truth: 'aurora_postgresql', replica_engines: ['opensearch'] };
+    render({ ...facts, replicated_tables: [shipment, fromDocdb, order, fromPg] });
+    expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(
+      'Every table above has this risk. Eventually consistent: a read on a replica reads a copy kept in sync from its source of truth (DynamoDB, DocumentDB or Aurora PostgreSQL) via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from the source of truth.'
+    );
+  });
+
+  it('keeps the stored risk of a row the facts say does not share it, never deciding from the prose', () => {
+    const own = { ...order, table: 'trailgear.Legacy', shares_replica_risk: false, risk: 'Older wording of the risk.' };
+    render({ ...facts, replicated_tables: [shipment, own] });
+    const legacy = container.querySelector('[data-table="trailgear.Legacy"]').parentElement;
+    expect(legacy.querySelector('[data-figure="own-risk"]').textContent).toBe('Older wording of the risk.');
+    expect(legacy.querySelector('[data-figure="replica-reads"]').textContent).toBe('1 read on a replica');
+    expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(
+      `Every other table above has this risk. ${SHARED_DYNAMODB}`
+    );
+    // A row with no flag at all (a hand-built block) keeps its stored risk too.
+    const unflagged = { ...shipment };
+    delete unflagged.shares_replica_risk;
+    render({ ...facts, replicated_tables: [unflagged] });
+    expect(container.querySelector('[data-figure="shared-risk"]')).toBeNull();
+    expect(container.querySelector('[data-figure="own-risk"]').textContent).toBe(RISK);
+  });
+
+  it("states an older report's block as the engineering report does (shared fixture)", () => {
+    render(oldWording.served);
+    const { shared, own_risk: ownRisk } = oldWording.expected;
+    expect(container.querySelector('[data-figure="shared-risk"]').textContent).toBe(shared);
+    const legacy = container.querySelector(`[data-table="${ownRisk.table}"]`).parentElement;
+    expect(legacy.querySelector('[data-figure="own-risk"]').textContent).toBe(ownRisk.risk);
+    expect(count(container.textContent, 'Eventually consistent: ')).toBe(2);
   });
 
   it('says how many more tables the reports list', () => {

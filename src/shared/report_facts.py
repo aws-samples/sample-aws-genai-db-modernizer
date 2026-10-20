@@ -1999,6 +1999,20 @@ def _replica_risk(source: str, replicas: list[str], reads: list[str]) -> str:
     return replica_risk_text(source, replicas, len(reads))
 
 
+def shares_replica_risk(row: dict[str, Any]) -> bool:
+    """Whether a replicated table's stored ``risk`` is the standard sentence
+    (``replica_risk_text`` over its own source, replicas and read count), so the
+    deliverables state it once with ``shared_replica_risk_text`` (#1170, #1232).
+    A risk stored with other wording (an older report's) is not: each deliverable
+    prints it for its own table. Decided here once, never by a renderer."""
+    count = row.get("replica_read_count")
+    if not isinstance(count, int) or isinstance(count, bool):
+        return False
+    source = str(row.get("source_of_truth", ""))
+    replicas = [str(e) for e in row.get("replica_engines") or []]
+    return bool(row.get("risk") == replica_risk_text(source, replicas, count))
+
+
 def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     """Each written table's source of truth and replicas (``TableSourceFacts``), or None.
 
@@ -2039,6 +2053,7 @@ def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
                 "risk": _replica_risk(str(source), engines, reads),
             }
         )
+        replicated[-1]["shares_replica_risk"] = shares_replica_risk(replicated[-1])
     replicated.sort(key=lambda r: (-r["replica_read_count"], r["table"]))
     return {
         "written_table_count": written,

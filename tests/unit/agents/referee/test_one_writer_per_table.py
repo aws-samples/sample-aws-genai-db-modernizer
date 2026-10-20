@@ -921,6 +921,7 @@ class TestTheSourceOfTruth:
                         "applies it, behind by the replication lag; a read that must see its "
                         "own write should read from DynamoDB."
                     ),
+                    "shares_replica_risk": True,
                 }
             ],
             "more_replicated_count": 0,

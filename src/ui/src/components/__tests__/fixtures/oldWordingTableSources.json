@@ -1,0 +1,94 @@
+{
+  "_comment": "A facts.table_sources block stored by a report written between a5c40e70 and ca763a01 (replica_read_count, older risk wording, no shares_replica_risk), and the block the /results API serves after src/report/facts.py fills it in. tests/unit/report/test_sources_of_truth_section.py checks the engineering report prints the expected text; components/__tests__/SourcesOfTruthCallout.test.js checks the results page prints the same.",
+  "stored": {
+    "written_table_count": 3,
+    "replicated_table_count": 2,
+    "split_write_table_count": 0,
+    "replicated_tables": [
+      {
+        "table": "wordpress.wp_posts",
+        "source_of_truth": "dynamodb",
+        "replica_engines": [
+          "aurora_mysql"
+        ],
+        "write_query_count": 4,
+        "replica_read_query_ids": [
+          "q3",
+          "q4",
+          "q5"
+        ],
+        "replica_read_count": 3,
+        "risk": "Eventually consistent: 3 reads on Aurora MySQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB."
+      },
+      {
+        "table": "wordpress.wp_options",
+        "source_of_truth": "dynamodb",
+        "replica_engines": [
+          "aurora_mysql"
+        ],
+        "write_query_count": 1,
+        "replica_read_query_ids": [
+          "q1",
+          "q2"
+        ],
+        "replica_read_count": 2,
+        "risk": "Eventually consistent: 2 reads on Aurora MySQL (q1, q2) read a copy kept in sync from DynamoDB via CDC, so a read can miss a write until it replicates."
+      }
+    ],
+    "more_replicated_count": 0,
+    "single_engine_tables": [
+      "wordpress.wp_users"
+    ],
+    "single_engine_table_count": 1
+  },
+  "served": {
+    "written_table_count": 3,
+    "replicated_table_count": 2,
+    "split_write_table_count": 0,
+    "replicated_tables": [
+      {
+        "table": "wordpress.wp_posts",
+        "source_of_truth": "dynamodb",
+        "replica_engines": [
+          "aurora_mysql"
+        ],
+        "write_query_count": 4,
+        "replica_read_query_ids": [
+          "q3",
+          "q4",
+          "q5"
+        ],
+        "replica_read_count": 3,
+        "risk": "Eventually consistent: 3 reads on Aurora MySQL read a copy kept in sync from DynamoDB via CDC, so each sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+        "shares_replica_risk": true
+      },
+      {
+        "table": "wordpress.wp_options",
+        "source_of_truth": "dynamodb",
+        "replica_engines": [
+          "aurora_mysql"
+        ],
+        "write_query_count": 1,
+        "replica_read_query_ids": [
+          "q1",
+          "q2"
+        ],
+        "replica_read_count": 2,
+        "risk": "Eventually consistent: 2 reads on Aurora MySQL (q1, q2) read a copy kept in sync from DynamoDB via CDC, so a read can miss a write until it replicates.",
+        "shares_replica_risk": false
+      }
+    ],
+    "more_replicated_count": 0,
+    "single_engine_tables": [
+      "wordpress.wp_users"
+    ],
+    "single_engine_table_count": 1
+  },
+  "expected": {
+    "shared": "Every other table above has this risk. Eventually consistent: a read on a replica reads a copy kept in sync from DynamoDB via CDC, so it sees a write only after CDC applies it, behind by the replication lag; a read that must see its own write should read from DynamoDB.",
+    "own_risk": {
+      "table": "wordpress.wp_options",
+      "risk": "Eventually consistent: 2 reads on Aurora MySQL (q1, q2) read a copy kept in sync from DynamoDB via CDC, so a read can miss a write until it replicates."
+    }
+  }
+}
