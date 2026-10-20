@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import boto3
 
 from src.tools.database.collection_text import extract_json_object
-from src.tools.sql.bulk_load import is_bulk_load
+from src.tools.sql.query_type import statement_query_type
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
 
 if TYPE_CHECKING:
@@ -601,7 +601,6 @@ def _transform_queries(
     its ``tables_accessed`` is ``["unknown"]`` (``is_unlisted_sequence_read``, #783).
     """
     import hashlib
-    import re
 
     from src.tools.sql.stored_facts import stored_reading
 
@@ -633,16 +632,9 @@ def _transform_queries(
             fallbacks[refs.fallback_reason] += 1
         facts = reading.facts
 
-        # Extract query type
-        type_re = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
-        m = type_re.match(query_text)
-        query_type = m.group(1).upper() if m else "OTHER"
-        if query_type == "OTHER" and is_bulk_load(query_text, source_engine):
-            # COPY ... FROM / LOAD DATA load rows into their table (#777). Only an
-            # OTHER-typed statement is checked: one the type regex already read
-            # (SELECT/INSERT/...) can't be a bulk load, and a comment-led INSERT
-            # stays OTHER, as before, since bulk_load_table needs COPY or LOAD.
-            query_type = "INSERT"
+        # The first verb after the leading comments, in the source dialect; a bulk
+        # load (COPY ... FROM / LOAD DATA) is an INSERT (#777, #1178).
+        query_type = statement_query_type(query_text, source_engine)
 
         if shadow is not None:
             _shadow_table_refs(

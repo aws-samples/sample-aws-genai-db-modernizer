@@ -17,6 +17,7 @@ import re
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
+from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
 
@@ -446,7 +447,7 @@ class SQLServerRemoteCollector:
                 {
                     "query_id": query_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, "sqlserver"),
                     "execution_count": calls,
                     "frequency_per_hour": calls / 24,
                     "calls_per_second": calls / (24 * 3600),
@@ -531,14 +532,6 @@ class SQLServerRemoteCollector:
 # Module-level helpers (mirrors the duplicated pattern in mysql_tools and
 # postgres_tools — to be extracted to a shared module in a follow-up PR).
 # -----------------------------------------------------------------------
-
-
-def _extract_query_type(sql: str) -> str:
-    s = sql.strip().upper()
-    for keyword in ("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE"):
-        if s.startswith(keyword):
-            return keyword
-    return "OTHER"
 
 
 def _extract_tables(sql: str) -> list[str]:

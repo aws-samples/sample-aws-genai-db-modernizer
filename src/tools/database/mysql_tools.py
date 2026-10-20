@@ -13,7 +13,7 @@ from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.filter_columns import where_columns
 from src.tools.database.live_sql import LiveQueryReader
-from src.tools.sql.bulk_load import bulk_load_table
+from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ class MySQLRemoteCollector:
                 {
                     "query_id": query_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, "mysql"),
                     "execution_count": exec_count,
                     "frequency_per_hour": exec_count / 24,
                     "calls_per_second": exec_count / (24 * 3600),
@@ -373,17 +373,8 @@ class MySQLRemoteCollector:
 # Helpers
 # ---------------------------------------------------------------------------
 
-_QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
 _AND_COL_RE = re.compile(r"(?:AND|OR)\s+`?(\w+)`?\s*(?:=|<|>|!=|LIKE|IN|BETWEEN|IS)", re.I)
 _ORDER_COL_RE = re.compile(r"ORDER\s+BY\s+(.*?)(?:LIMIT|$)", re.I)
-
-
-def _extract_query_type(sql: str) -> str:
-    m = _QUERY_TYPE_RE.match(sql)
-    if m:
-        return m.group(1).upper()
-    # COPY ... FROM / LOAD DATA load rows into their table: a write (#777).
-    return "INSERT" if bulk_load_table(sql) else "OTHER"
 
 
 def _extract_tables(sql: str) -> list[str]:

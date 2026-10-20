@@ -14,6 +14,10 @@ from src.agents.referee.cache_overlay import is_write_query
 from src.tools.aws import rds_tools
 from src.tools.database import mysql_tools, postgres_tools
 from src.tools.database.offline_parser import parse_offline_collection
+from src.tools.sql.query_type import statement_query_type
+
+# The dialect each live module types its queries in (#1178: one rule for all).
+_ENGINE = {postgres_tools: "postgresql", mysql_tools: "mysql", rds_tools: ""}
 
 COPY = "COPY wp_posts FROM STDIN WITH CSV"
 LOAD = "LOAD DATA LOCAL INFILE ? INTO TABLE wp_posts FIELDS TERMINATED BY ?"
@@ -29,14 +33,14 @@ LOAD = "LOAD DATA LOCAL INFILE ? INTO TABLE wp_posts FIELDS TERMINATED BY ?"
     ],
 )
 def test_live_extractors_read_a_bulk_load_as_a_write_to_its_table(module, sql):
-    assert module._extract_query_type(sql) == "INSERT"
+    assert statement_query_type(sql, _ENGINE[module]) == "INSERT"
     assert module._extract_tables(sql) == ["wp_posts"]
 
 
 @pytest.mark.parametrize("module", [postgres_tools, rds_tools])
 def test_a_live_copy_export_is_a_read_of_its_table(module):
     # The same answer as the offline parser: a read (OTHER) of wp_posts.
-    assert module._extract_query_type("COPY wp_posts TO STDOUT") == "OTHER"
+    assert statement_query_type("COPY wp_posts TO STDOUT", _ENGINE[module]) == "OTHER"
     assert module._extract_tables("COPY wp_posts TO STDOUT") == ["wp_posts"]
 
 
@@ -49,7 +53,7 @@ def test_a_live_copy_export_is_a_read_of_its_table(module):
     ],
 )
 def test_live_extractors_read_a_quoted_bulk_load_target_whole(module, sql, table):
-    assert module._extract_query_type(sql) == "INSERT"
+    assert statement_query_type(sql, _ENGINE[module]) == "INSERT"
     assert module._extract_tables(sql) == [table]
 
 

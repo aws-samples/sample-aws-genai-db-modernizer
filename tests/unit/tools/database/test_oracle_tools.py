@@ -7,7 +7,6 @@ import pytest
 from src.tools.database.oracle_tools import (
     OracleRemoteCollector,
     _extract_filter_columns,
-    _extract_query_type,
     _extract_sort_columns,
     _extract_tables,
     _has_time_range_filter,
@@ -16,6 +15,7 @@ from src.tools.database.oracle_tools import (
     _normalize_index_type,
 )
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.query_type import statement_query_type
 
 
 @pytest.fixture
@@ -383,13 +383,13 @@ class TestNormalizeFkAction:
 
 class TestExtractQueryType:
     def test_select(self):
-        assert _extract_query_type("SELECT * FROM t") == "SELECT"
+        assert statement_query_type("SELECT * FROM t", "oracle") == "SELECT"
 
     def test_merge(self):
-        assert _extract_query_type("MERGE INTO t USING s ON ...") == "MERGE"
+        assert statement_query_type("MERGE INTO t USING s ON ...", "oracle") == "MERGE"
 
     def test_plsql(self):
-        assert _extract_query_type("BEGIN NULL; END;") == "OTHER"
+        assert statement_query_type("BEGIN NULL; END;", "oracle") == "OTHER"
 
 
 class TestExtractTables:

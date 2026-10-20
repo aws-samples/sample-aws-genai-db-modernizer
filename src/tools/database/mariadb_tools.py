@@ -8,6 +8,7 @@ but has different version numbering and feature availability.
 
 from src.tools.database.live_sql import LiveQueryReader
 from src.tools.database.mysql_tools import MySQLRemoteCollector, _version_gte
+from src.tools.sql.query_type import statement_query_type
 
 
 def _is_mariadb(version: str) -> bool:
@@ -55,7 +56,6 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
         from src.tools.database.mysql_tools import (
             _estimate_rows_p95,
             _extract_filter_columns,
-            _extract_query_type,
             _extract_sort_columns,
             _has_time_range_filter,
             _hash,
@@ -109,7 +109,7 @@ class MariaDBRemoteCollector(MySQLRemoteCollector):
                 {
                     "query_id": query_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, "mariadb"),
                     "execution_count": exec_count,
                     "frequency_per_hour": exec_count / 24,
                     "calls_per_second": exec_count / (24 * 3600),

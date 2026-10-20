@@ -16,6 +16,7 @@ import re
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
+from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +405,7 @@ class OracleRemoteCollector:
                 {
                     "query_id": query_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, "oracle"),
                     "execution_count": calls,
                     "frequency_per_hour": calls / 24,
                     "calls_per_second": calls / (24 * 3600),
@@ -517,11 +518,6 @@ def _normalize_fk_action(raw: object) -> str:
         "NO_ACTION": "NO ACTION",
     }
     return mapping.get(val, "NO ACTION")
-
-
-def _extract_query_type(sql: str) -> str:
-    first = sql.strip().split()[0].upper() if sql.strip() else ""
-    return first if first in ("SELECT", "INSERT", "UPDATE", "DELETE", "MERGE") else "OTHER"
 
 
 def _extract_tables(sql: str) -> list[str]:

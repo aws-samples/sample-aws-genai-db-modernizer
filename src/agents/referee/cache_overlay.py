@@ -100,9 +100,9 @@ def has_session_keyword(text: str) -> bool:
 def is_write_query(query: Mapping, source_engine: str | None = None) -> bool:
     """True for INSERT/UPDATE/DELETE (and other data-changing) statements.
 
-    The collector's own ``query_type`` catches the common case. A
-    data-modifying CTE, ``CALL``, ``TRUNCATE``, ``COPY``, or a statement that
-    opens with a comment all come through as ``OTHER`` instead (review of
+    The collector's own ``query_type`` catches the common case, a statement that
+    opens with a comment included (#1178). A data-modifying CTE, ``CALL``,
+    ``TRUNCATE`` or ``COPY ... TO`` comes through as ``OTHER`` instead (review of
     #303), so for that type a DML keyword or a leading ``CALL``/``TRUNCATE``/
     ``COPY`` in the SQL itself -- after stripping any leading comment --
     counts as a write too. ``source_engine`` is the dialect the text is read in: a

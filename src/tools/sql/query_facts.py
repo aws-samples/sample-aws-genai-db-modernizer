@@ -619,10 +619,11 @@ _WHERE_RE = re.compile(r"\bwhere\b", re.IGNORECASE)
 _KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
 
 # Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
-# many as the statement opens with, are stripped first (review of #303: a
-# statement opening with a comment is typed ``OTHER`` by the collector because
-# the SQL verb is no longer the first token). ``src.shared.sql_comments`` does
-# it in linear time (#808).
+# many as the statement opens with, are stripped first (review of #303), so a
+# leading CALL/TRUNCATE/COPY is seen behind a comment too. The collector types a
+# comment-led DML statement by its verb since #1178 (``src.tools.sql.query_type``);
+# a WITH-led one is still ``OTHER``. ``src.shared.sql_comments`` strips in linear
+# time (#808).
 # A DML keyword anywhere in the statement -- not just at the start -- so a
 # data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
 # is caught too, the same way the collector's own query_type misses it.

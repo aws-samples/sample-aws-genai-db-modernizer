@@ -16,13 +16,13 @@ from src.tools.database.sqlserver_tools import (
     _estimate_percentiles_from_min_max,
     _estimate_rows_p95,
     _extract_filter_columns,
-    _extract_query_type,
     _extract_sort_columns,
     _extract_tables,
     _has_time_range_filter,
     _hash,
 )
 from src.tools.sql.query_facts import query_facts
+from src.tools.sql.query_type import statement_query_type
 
 
 @pytest.fixture
@@ -480,8 +480,8 @@ class TestHelpers:
             ("EXEC sp_helpdb", "OTHER"),
         ],
     )
-    def test_extract_query_type(self, sql: str, expected: str) -> None:
-        assert _extract_query_type(sql) == expected
+    def test_query_type(self, sql: str, expected: str) -> None:
+        assert statement_query_type(sql, "sqlserver") == expected
 
     def test_extract_tables_handles_brackets(self) -> None:
         sql = "SELECT * FROM [dbo].[Orders] o JOIN [Customers] c ON o.cid = c.id"

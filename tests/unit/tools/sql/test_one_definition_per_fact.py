@@ -93,8 +93,9 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "a live collector's own parsing of its source's output (filter, sort and time-range "
         "columns); its has_text_search is the text_search fact (#929)"
     ),
-    "src/tools/aws/rds_tools.py": "a live collector's own parsing of its source's output",
-    "src/tools/database/offline_parser.py": "the offline collector's digest and bulk-load reading",
+    "src/tools/sql/query_type.py": (
+        "the one query_type rule: a statement's first verb after its leading comments (#1178)"
+    ),
     "src/tools/database/ddl_parser.py": "DDL, not a workload query",
     "src/tools/database/sql_cte.py": "the collectors' CTE-name reading for table references",
     "src/tools/schema/aurora_common/sql_safety.py": "the safety check on generated DDL",

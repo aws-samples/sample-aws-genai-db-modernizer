@@ -9,14 +9,13 @@ All OPTIONAL tools return {'available': False} on failure for graceful degradati
 
 import json
 import logging
-import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.database import live_sql
 from src.tools.database.live_sql import LiveQueryReader
-from src.tools.sql.bulk_load import bulk_load_table
+from src.tools.sql.query_type import statement_query_type
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +258,7 @@ def get_performance_insights_queries(
                 {
                     "query_id": sql_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, source_engine),
                     "frequency_per_hour": 0,  # Not available from PI for MySQL
                     "calls_per_second": None,
                     "tables_accessed": shape["tables_accessed"],
@@ -512,7 +511,7 @@ def get_database_insights(
                 {
                     "query_id": sql_id,
                     "query_text": query_text,
-                    "query_type": _extract_query_type(query_text),
+                    "query_type": statement_query_type(query_text, source_engine),
                     "frequency_per_hour": (calls_per_sec or 0) * 3600,
                     "calls_per_second": calls_per_sec,
                     "execution_time_ms_avg": avg_latency_ms,
@@ -547,16 +546,6 @@ def get_database_insights(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_QUERY_TYPE_RE = re.compile(r"^\s*(SELECT|INSERT|UPDATE|DELETE|MERGE|REPLACE)\b", re.I)
-
-
-def _extract_query_type(sql: str) -> str:
-    m = _QUERY_TYPE_RE.match(sql)
-    if m:
-        return m.group(1).upper()
-    # COPY ... FROM / LOAD DATA load rows into their table: a write (#777).
-    return "INSERT" if bulk_load_table(sql) else "OTHER"
 
 
 def _extract_tables(sql: str, source_engine: str = "") -> list[str]:

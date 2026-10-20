@@ -743,11 +743,19 @@ class TestMysqlReplaceInto:
         for engine in ("postgresql", "sqlserver"):
             _assert_class(UNPARSED, "REPLACE INTO settings (name, value) VALUES (?, ?)", engine)
 
-    def test_a_replace_the_keyword_does_not_lead_is_left_alone(self):
-        """A comment first, or ``REPLACE t`` with no ``INTO``, falls back (a safe default)."""
-        sql = "/* x */ REPLACE INTO settings (name) VALUES (?)"
-        assert _classify(sql, "mysql", "INSERT") == UNPARSED
+    @pytest.mark.passes_on_main
+    def test_a_replace_without_into_is_left_alone(self):
+        """``REPLACE t`` with no ``INTO`` falls back (a safe default)."""
         _assert_class(UNPARSED, "REPLACE settings (name) VALUES (?)", "mysql")
+
+    def test_a_replace_after_a_leading_comment_reads_like_its_twin(self):
+        """A leading comment no longer hides the REPLACE (#1178: it used to fall back)."""
+        plain = "REPLACE INTO settings (name) VALUES (?)"
+        assert _classify(plain, "mysql", "INSERT") != UNPARSED
+        for prefix in ("/* x */ ", "-- x\n", "# x\n"):
+            assert _classify(prefix + plain, "mysql", "INSERT") == _classify(
+                plain, "mysql", "INSERT"
+            )
 
     def test_the_replace_function_is_not_a_statement_keyword(self):
         """``REPLACE(...)`` in a select list or a string stays what it was."""

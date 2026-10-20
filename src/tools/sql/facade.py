@@ -62,6 +62,7 @@ from typing import Literal
 import sqlglot
 from sqlglot import exp
 
+from src.shared.sql_comments import strip_leading_comments
 from src.tools.sql.normalize import NormalizedQuery, normalize_digest_text, quoted_mask
 from src.tools.sql.refs import ColumnUse, TableRef
 from src.tools.sql.regex_facts import (
@@ -150,8 +151,8 @@ _TSQL_DML_TOP_RE = re.compile(
 # ``INSERT ... ON DUPLICATE KEY UPDATE`` (it deletes a row with the same key, then
 # inserts), but sqlglot reads it only as a generic command. The facade parses it as
 # the ``INSERT`` it is for access; the priority modifier, which names no table, is
-# dropped. The pattern is anchored at the start of the text, so a ``REPLACE(...)``
-# function call never matches (#986).
+# dropped. The pattern is anchored at the start of the statement (after its leading
+# comments, #1178), so a ``REPLACE(...)`` function call never matches (#986).
 _MYSQL_REPLACE_RE = re.compile(
     r"\A(\s*)REPLACE(?:\s+(?:LOW_PRIORITY|DELAYED))?(?=\s+INTO\b)", re.IGNORECASE
 )
@@ -559,7 +560,9 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
         bridged = _sub_outside_quotes(_TSQL_DML_TOP_RE, r"\1", text, source_engine)
         dml_top_dropped, text = bridged != text, bridged
     elif dialect == "mysql":
-        text = _MYSQL_REPLACE_RE.sub(r"\1INSERT", text, count=1)
+        # After the statement's leading comments (#1178): a tagged REPLACE is one too.
+        body = strip_leading_comments(text, hash_comments=True, mysql_executable=True)
+        text = text[: len(text) - len(body)] + _MYSQL_REPLACE_RE.sub(r"\1INSERT", body, count=1)
     try:
         statements = [s for s in sqlglot.parse(text, read=dialect or None) if s]
     except Exception:  # noqa: BLE001 -- any parser failure falls back, by contract
