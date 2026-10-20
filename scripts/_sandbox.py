@@ -29,6 +29,13 @@ NAME_ARGS: tuple[str, ...] = ("db", "job_id")
 _NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
+def is_plain_name(value: object) -> bool:
+    """True for a plain name (``[A-Za-z0-9_.-]+``, not only dots): a job id or
+    database name that can't step out of a path or URL segment. The one rule
+    for names, here and in ``start_local_ui.py --page`` (#1233)."""
+    return isinstance(value, str) and bool(_NAME_RE.fullmatch(value)) and set(value) != {"."}
+
+
 def _flag(attr: str) -> str:
     return "--" + attr.replace("_", "-")
 
@@ -75,7 +82,7 @@ def sandbox_violation(
         value = getattr(args, attr, None)
         if value is None:
             continue
-        if not isinstance(value, str) or not _NAME_RE.fullmatch(value) or set(value) == {"."}:
+        if not is_plain_name(value):
             return (
                 f"{_flag(attr)} {value!r} must match [A-Za-z0-9_.-]+ and not be '.' or '..'; "
                 f"refused under {SANDBOX_ENV}=1"

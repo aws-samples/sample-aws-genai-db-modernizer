@@ -226,6 +226,23 @@ def test_chat_run_that_started_ui_fails() -> None:
         run.check_transcript(FIXTURES / "synthetic-chat-started-ui.jsonl", "chat")
 
 
+def test_chat_run_that_gave_a_ui_page_names_page_in_the_failure(tmp_path: Path) -> None:
+    """#1233: a chat run never gives a UI pointer; a stray ``--page`` call fails
+    the run with a message that says so, not "started the UI"."""
+    text = (FIXTURES / "synthetic-chat-started-ui.jsonl").read_text()
+    path = tmp_path / "chat-page.jsonl"
+    path.write_text(
+        text.replace(
+            "scripts/start_local_ui.py",
+            "scripts/start_local_ui.py --page summary --job-id dry00001",
+        )
+    )
+    with pytest.raises(run.TranscriptError, match="start_local_ui.py --page"):
+        run.check_transcript(path, "chat")
+    with pytest.raises(run.TranscriptError, match="should start"):
+        run.check_transcript(FIXTURES / "synthetic-chat-started-ui.jsonl", "chat")
+
+
 def test_modernize_result_failed_line_fails() -> None:
     with pytest.raises(
         run.TranscriptError, match=r"failed phase=synthesis reason=report rendering crashed"

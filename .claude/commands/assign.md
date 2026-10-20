@@ -25,7 +25,7 @@ Maps each query pattern to the best-fit target engine based on analysis results.
    - Any queries with low workload fit that may need review
 
 4. **Decision gate**
-   Ask user: "Review assignments in the UI at <http://localhost:3000/analysis/assignments/{job_id}> or approve here."
+   Run `uv run python scripts/start_local_ui.py --page assignments --job-id {job_id}` and ask user: "Review assignments in the UI at <ui_url> or approve here.", with the `ui_url` it printed, verbatim.
    - Poll for decision: `uv run python scripts/check_decision.py --job-id {job_id} --db {database_name} --decision assignment_approval`
    - Or accept "approve" from terminal
 

@@ -26,7 +26,7 @@ uv run python scripts/start_local_ui.py
 
 It builds the UI if needed, starts (or reuses) both servers, checks their health, and prints exactly one JSON line. A missing or unparseable JSON line, or a non-zero exit, counts the same as `"status": "error"` below.
 
-- **`"status": "ready"`** — tell the user, in one sentence, that the UI is at <http://localhost:3000> and that the chat will walk them through what it shows, and continue immediately: the health checks already passed.
+- **`"status": "ready"`** — tell the user, in one sentence, that the UI is at the line's `ui` URL and that the chat will give them the job's own pages as the run reaches them, and continue immediately: the health checks already passed.
 - **`"status": "error"`** — tell the user the `reason` field if there is one, that the UI will not be available this run, and that you are continuing in chat only. Set `{experience_mode}` to `chat` for the rest of the run and carry on: never fail the run over this, with or without `--auto`, and never ask whether to continue.
 
 Pass `--mode {experience_mode}` to `scripts/run_assessment.py` in Phases 1-5: that command creates `.modernizer-state.json` and records the mode in it, so do not write the state file for this step. Do not create any other file for it (no notes, placeholders or sidecar files).
@@ -81,7 +81,6 @@ Its stdout is the whole tool result: one JSON status line per phase (`{"phase": 
 **After resume-reality-check completes:**
 
 - Unless `{experience_mode}` is `ui`, present a brief summary: selected engines and why, query distribution across engines, reality check consolidations and any reversals, architecture patterns detected. Source the distribution and consolidations from the `reality_check` status line, not from memory.
-- Unless `{experience_mode}` is `chat`, add: the Sankey/assignment page in the UI has the full query-to-engine breakdown.
 
 ### Decision Gate: Assignment Approval
 
@@ -98,7 +97,13 @@ Show a compact table, one row per engine, built from that line's fields:
 
 When `before_distribution` and `after_distribution` are identical (or `consolidations` and `eliminated_engines` are both empty), say so explicitly — reality check changed nothing — instead of an empty-looking table.
 
-Unless `{experience_mode}` is `chat`, also point the user at the Sankey/assignment page in the UI before they decide.
+Unless `{experience_mode}` is `chat`, also point the user at the job's summary page before they decide: it has the Sankey and the full query-to-engine breakdown. Run
+
+```bash
+uv run python scripts/start_local_ui.py --page summary --job-id {job_id}
+```
+
+and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/monitor/summary/<job_id>`); never give the UI root or build the URL yourself.
 
 **Pending engine choices.** The line's `pending_choices` lists, one entry per table, queries that tie between engines, so no routing rule picks one (`choice`, `table`, `queries`, `engines` with each `score`, `unrounded_score` and `trade_off`, `why_tied`, `listed_under`, `decide_for_me` and `decide_for_me_reason`). A model never picks one: the customer does, or the deterministic "decide for me" rule does.
 
@@ -207,7 +212,7 @@ It prints one JSON line:
 
 - `"status": "error"` or a non-zero exit is a phase failure for `post_schema_routing`.
 
-Unless `{experience_mode}` is `ui`, tell the user schema design is complete, with the count of queries moved after approval when 6e's `rerouted` is not 0. Unless `{experience_mode}` is `chat`, add: table definitions, access patterns and GSIs are in the UI.
+Unless `{experience_mode}` is `ui`, tell the user schema design is complete, with the count of queries moved after approval when 6e's `rerouted` is not 0. Unless `{experience_mode}` is `chat`, add: table definitions, access patterns and GSIs will be on the job's results page, linked when the run completes.
 
 ### Phase 7: Synthesis
 
@@ -221,7 +226,13 @@ Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask t
 
 Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO) and the deliverables the synthesize step rendered, all in one folder, <!-- deliverables-list -->`./artifacts/{db}/{job}/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each file, who it is for and the assignment version<!-- /deliverables-list -->. If the `/synthesize` subagent reported `cache_safety_net_notes`, relay them verbatim: they explain why the cache layer is smaller than at the assignment gate.
 
-Unless `{experience_mode}` is `chat`, add: the full interactive report is in the UI.
+Unless `{experience_mode}` is `chat`, add that the full interactive report is on the job's results page. Run
+
+```bash
+uv run python scripts/start_local_ui.py --page results --job-id {job_id}
+```
+
+and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/results/<job_id>`); never give the UI root or build the URL yourself.
 
 End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`), where `<mode>` is `{experience_mode}` — `chat` if the UI never started or fell back. Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line: `complete` as above, or `failed phase=<phase> reason=<one line>`.
 

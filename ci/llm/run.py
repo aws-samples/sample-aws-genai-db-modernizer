@@ -256,6 +256,11 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
 
     if mode == "chat":
         if started_ui:
+            if "--page" in events[start_idx][2]:  # type: ignore[index]
+                return False, (
+                    "chat mode ran scripts/start_local_ui.py --page, a UI pointer only "
+                    "ui/both modes give"
+                )
             return (
                 False,
                 "chat mode ran scripts/start_local_ui.py, which only ui/both modes should start",

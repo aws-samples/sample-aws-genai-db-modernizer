@@ -13,12 +13,17 @@ work in-process and reports a single JSON result.
 Usage:
     uv run python scripts/start_local_ui.py [--artifact-root ./artifacts] [--rebuild] [--timeout 180]
     uv run python scripts/start_local_ui.py --stop
+    uv run python scripts/start_local_ui.py --page summary|results|assignments --job-id <job_id>
+
+`--page` starts nothing: it prints the URL of that page of the job, so the
+commands quote it instead of composing it by hand (#1233).
 
 Outputs JSON to stdout (the only output the caller parses):
     {"status": "ready", "api": "http://localhost:8000", "ui": "http://localhost:3000",
      "pids": {"api": 123, "serve": 456}, "ui_build": "rebuilt" | "reused"}
     {"status": "error", "reason": "..."}
     {"status": "stopped", "pids": {"api": 123, "serve": 456}}
+    {"status": "url", "ui_url": "http://localhost:3000/analysis/monitor/summary/<job_id>"}
 
 Exit codes: 0 ready/stopped, 1 generic error (timeout, port in use, build
 failure), 2 npm registry auth failure (E401).
@@ -60,6 +65,12 @@ UI_URL = f"http://localhost:{UI_PORT}"
 API_PROBE_URL = f"http://127.0.0.1:{API_PORT}"
 UI_PROBE_URL = f"http://127.0.0.1:{UI_PORT}"
 UI_LISTEN = f"tcp://127.0.0.1:{UI_PORT}"
+# The UI route of each job page `--page` can name (src/ui/src/AppRoutes.js).
+JOB_PAGES = {
+    "summary": "/analysis/monitor/summary/{job_id}",
+    "results": "/analysis/results/{job_id}",
+    "assignments": "/analysis/assignments/{job_id}",
+}
 UI_DIR = REPO_ROOT / "src" / "ui"
 STATE_DIR = REPO_ROOT / ".local-ui"
 POLL_INTERVAL_SECONDS = 1.0
@@ -407,6 +418,29 @@ def run_start(artifact_root: Path, rebuild: bool, timeout: float) -> tuple[dict[
     }, 1
 
 
+def job_page_url(job_id: str, page: str) -> str:
+    """The local UI URL of ``page`` (a JOB_PAGES key) for ``job_id``.
+
+    Raises ValueError for an unknown page or a job id that is not a plain
+    name, so nothing but a job id ever lands in the URL path."""
+    if page not in JOB_PAGES:
+        raise ValueError(f"unknown page {page!r}; expected one of {sorted(JOB_PAGES)}")
+    from scripts._sandbox import is_plain_name
+
+    if not is_plain_name(job_id):
+        raise ValueError(f"--job-id {job_id!r} is not a job id")
+    return UI_URL + JOB_PAGES[page].format(job_id=job_id)
+
+
+def run_page(job_id: str | None, page: str) -> tuple[dict[str, Any], int]:
+    if not job_id:
+        return {"status": "error", "reason": "--page needs --job-id"}, 1
+    try:
+        return {"status": "url", "ui_url": job_page_url(job_id, page)}, 0
+    except ValueError as exc:
+        return {"status": "error", "reason": str(exc)}, 1
+
+
 def run_stop() -> tuple[dict[str, Any], int]:
     pids = read_pids()
     killed = kill_pids(pids)
@@ -439,6 +473,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Stop the servers started by a previous run (reads .local-ui/pids.json)",
     )
+    parser.add_argument(
+        "--page",
+        choices=sorted(JOB_PAGES),
+        help="Print the UI URL of this page of --job-id and exit (starts nothing)",
+    )
+    parser.add_argument("--job-id", help="The job whose page --page prints")
     return parser.parse_args(argv)
 
 
@@ -448,6 +488,10 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     violation = sandbox_violation(args)
     if violation:
         return {"status": "error", "reason": violation}, 1
+    if args.page:
+        if args.stop:
+            return {"status": "error", "reason": "--page and --stop cannot be combined"}, 1
+        return run_page(args.job_id, args.page)
     artifact_root = Path(args.artifact_root).resolve()
     if args.stop:
         return run_stop()

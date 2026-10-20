@@ -373,7 +373,9 @@ obvious entries lives here instead:
   multi-command shell pipeline it replaced couldn't be allowlisted at all.
   Both the bare and `*`-suffixed forms are listed because it's untested
   whether a headless run ever invokes the script with zero arguments (it
-  always does, today) — keeping both avoids relying on that.
+  always does, today) — keeping both avoids relying on that. The `*` form
+  also covers `--page summary|results --job-id <id>`, which starts nothing
+  and prints the job page's `ui_url` the command quotes (#1233).
 - `Bash(uv run python scripts/search_artifacts.py *)`: the headless session
   may have no Grep tool (Claude Code 2.1.288 in the internal validation
   pipeline does not) and `grep` through Bash is not allowed, so the shared

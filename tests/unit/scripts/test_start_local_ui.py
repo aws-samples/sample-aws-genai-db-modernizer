@@ -633,3 +633,84 @@ def test_restart_waits_for_ports_to_be_released(
     result, code = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
     assert code == 0
     assert result["pids"] == {"api": 333, "serve": 444}
+
+
+# Issue #1233: the commands quote a job page's URL from `--page` instead of
+# pointing at the UI root or composing the URL by hand.
+@pytest.mark.parametrize(
+    ("page", "path"),
+    [
+        ("summary", "/analysis/monitor/summary/job-1a2b"),
+        ("results", "/analysis/results/job-1a2b"),
+        ("assignments", "/analysis/assignments/job-1a2b"),
+    ],
+)
+def test_page_prints_the_job_page_url_and_starts_nothing(
+    monkeypatch: pytest.MonkeyPatch, page: str, path: str
+) -> None:
+    def _never(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("--page must not build, start or stop anything")
+
+    for name in ("run_start", "run_stop", "build_ui", "start_api", "start_serve"):
+        monkeypatch.setattr(start_local_ui, name, _never)
+
+    args = start_local_ui.parse_args(["--page", page, "--job-id", "job-1a2b"])
+    result, code = start_local_ui.run(args)
+
+    assert code == 0
+    assert result == {"status": "url", "ui_url": f"http://localhost:3000{path}"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--page", "summary"],
+        ["--page", "summary", "--job-id", ""],
+        ["--page", "summary", "--job-id", "../etc"],
+        ["--page", "summary", "--job-id", ".."],
+        ["--page", "summary", "--job-id", "a?b=c"],
+        ["--page", "summary", "--job-id", "abc", "--stop"],
+    ],
+)
+def test_page_refuses_a_missing_or_unsafe_job_id(argv: list[str]) -> None:
+    result, code = start_local_ui.run(start_local_ui.parse_args(argv))
+
+    assert code == 1
+    assert result["status"] == "error"
+    assert "ui_url" not in result
+
+
+def test_page_rejects_an_unknown_page() -> None:
+    with pytest.raises(SystemExit):
+        start_local_ui.parse_args(["--page", "dashboard", "--job-id", "abc"])
+    with pytest.raises(ValueError, match="unknown page"):
+        start_local_ui.job_page_url("abc", "dashboard")
+
+
+def test_page_url_has_the_origin_of_the_ready_lines_ui(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #1233 review: the pointer opens the UI the ready line reported.
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(start_local_ui, "start_api", lambda root, log_dir: FakeProc(111))
+    monkeypatch.setattr(start_local_ui, "start_serve", lambda serve_bin, log_dir: FakeProc(222))
+    monkeypatch.setattr(start_local_ui, "wait_for_ready", lambda timeout: True)
+    monkeypatch.setattr(start_local_ui, "write_pids", lambda pids: None)
+    ready, _ = start_local_ui.run_start(tmp_path, rebuild=False, timeout=30)
+    for page in start_local_ui.JOB_PAGES:
+        assert start_local_ui.job_page_url("job-1", page).startswith(ready["ui"] + "/analysis/")
+
+
+def test_page_and_sandbox_share_one_name_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #1233 review: one job-id rule for --page and the CI sandbox.
+    monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+    for job_id in ["job-1", "a.b", ".x", "..", ".", "a/b", "a?b", "a b"]:
+        page, _ = start_local_ui.run(
+            start_local_ui.parse_args(["--page", "summary", "--job-id", job_id])
+        )
+        monkeypatch.delenv("MODERNIZER_CI_SANDBOX")
+        unsandboxed, _ = start_local_ui.run(
+            start_local_ui.parse_args(["--page", "summary", "--job-id", job_id])
+        )
+        monkeypatch.setenv("MODERNIZER_CI_SANDBOX", "1")
+        assert (page["status"] == "url") == (unsandboxed["status"] == "url"), job_id

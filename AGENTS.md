@@ -131,7 +131,8 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
   (chat gives only the approval-gate numbers, UI pointers, and the result
   line -- no phase summaries).
   If the UI can't start, it falls back to chat and keeps going rather than
-  failing the run.
+  failing the run. UI pointers quote the job page's `ui_url` from
+  `scripts/start_local_ui.py --page <page> --job-id <id>`, never the UI root.
 - The run ends with exactly one line
   `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` or
   `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`.

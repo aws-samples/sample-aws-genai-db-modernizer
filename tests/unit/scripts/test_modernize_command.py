@@ -733,3 +733,63 @@ def test_the_scripts_the_commands_name_accept_engines_in_use() -> None:
     for script in ("run_assessment.py", "run_collect.py"):
         source = (COMMANDS_DIR.parents[1] / "scripts" / script).read_text()
         assert '"--engines-in-use"' in source, script
+
+
+# Issue #1233: every UI pointer names the job's own page, quoted from
+# `start_local_ui.py --page` output, never the UI root or a hand-built URL.
+_HAND_BUILT_UI_URL = re.compile(r"https?://localhost(?!:<port>)(?::\d+)?(?:/[^\s>)`]*)?")
+
+
+def test_approval_gate_points_at_the_job_summary_page_from_script_output() -> None:
+    decision_gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
+    decision_gate = decision_gate.split("### Phase 6", 1)[0]
+    assert "uv run python scripts/start_local_ui.py --page summary --job-id {job_id}" in (
+        decision_gate
+    )
+    assert "quote the `ui_url` it prints verbatim" in decision_gate
+    assert "/analysis/monitor/summary/<job_id>" in decision_gate
+
+
+def test_completion_points_at_the_job_results_page_from_script_output() -> None:
+    completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
+    assert "uv run python scripts/start_local_ui.py --page results --job-id {job_id}" in (
+        completion
+    )
+    assert "quote the `ui_url` it prints verbatim" in completion
+    assert "/analysis/results/<job_id>" in completion
+
+
+def test_no_command_hard_codes_a_local_ui_url() -> None:
+    # The only localhost text a command may carry is the documented shape of
+    # the `ui_url` it quotes (`http://localhost:<port>/...`), never a port.
+    offenders = [
+        f"{path.name}: {match.group(0)}"
+        for path in sorted(COMMANDS_DIR.glob("*.md"))
+        for match in _HAND_BUILT_UI_URL.finditer(path.read_text())
+    ]
+    assert offenders == []
+
+
+def test_every_page_a_command_asks_for_is_one_start_local_ui_prints() -> None:
+    from scripts.start_local_ui import JOB_PAGES
+
+    asked = {
+        page
+        for path in COMMANDS_DIR.glob("*.md")
+        for page in re.findall(r"start_local_ui\.py --page (\S+) --job-id", path.read_text())
+    }
+    assert asked == {"summary", "results", "assignments"}
+    assert asked <= set(JOB_PAGES)
+
+
+def test_every_page_pointer_sits_inside_its_unless_chat_sentence() -> None:
+    # #1233 review: a chat run starts no UI, so each `--page` command must stay
+    # under the "Unless `{experience_mode}` is `chat`" sentence that introduces it.
+    paragraphs = _paragraphs(_modernize_text())
+    pointers = [i for i, p in enumerate(paragraphs) if "start_local_ui.py --page" in p]
+    assert len(pointers) == 2
+    for i in pointers:
+        assert paragraphs[i].startswith("```bash"), paragraphs[i]
+        lead = paragraphs[i - 1]
+        assert lead.startswith("Unless `{experience_mode}` is `chat`"), lead
+        assert lead.endswith("Run"), lead
