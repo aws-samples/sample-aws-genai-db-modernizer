@@ -450,6 +450,7 @@ def test_every_text_matcher_entry_matches_and_a_literal_does_not(
 def test_a_routine_or_view_definition_is_read_too() -> None:
     collector = _collector(
         "sqlserver",
+        tables=[_table("db.s")],
         procedures=[
             {
                 "procedure_id": "usp_Tidy",
@@ -471,10 +472,84 @@ def test_a_routine_or_view_definition_is_read_too() -> None:
 
 
 def test_query_evidence_names_the_query_and_its_tables() -> None:
-    collector = _collector("oracle", queries=["SELECT 1 FROM a", "SELECT NVL(x, 0) FROM b"])
+    collector = _collector(
+        "oracle",
+        queries=["SELECT 1 FROM a", "SELECT NVL(x, 0) FROM b"],
+        tables=[_table("db.t"), _table("db.b"), _table("db.c")],
+    )
     collector["queries"]["query_patterns"][1]["tables_accessed"] = ["db.b", "db.c"]
     gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "oracle-builtin-functions")
     assert (gap["queries"], gap["tables"], gap["objects"]) == (["q1"], ["db.b", "db.c"], [])
+
+
+def test_a_query_whose_tables_the_collector_could_not_read_adds_no_table() -> None:
+    """#1205: the collector lists ``unknown`` for an EXEC or an ALTER INDEX; it is no table."""
+    collector = _collector(
+        "sqlserver",
+        queries=["SELECT GETDATE() FROM t", "EXEC usp_PlaceOrder @CustomerID = 1"],
+        tables=[_table("db.t")],
+    )
+    patterns = collector["queries"]["query_patterns"]
+    patterns[1]["tables_accessed"] = ["unknown"]
+    patterns[0]["query_text"] = "SELECT GETDATE() FROM t JOIN u ON 1 = 1 WHERE EOMONTH(x) > 0"
+    patterns[0]["tables_accessed"] = ["db.t", "unknown", "db.missing"]
+    patterns.append(
+        {"query_id": "q2", "query_text": "SELECT EOMONTH(x)", "tables_accessed": ["unknown"]}
+    )
+    gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "sqlserver-date-functions")
+    assert gap["queries"] == ["q0", "q2"]
+    assert gap["tables"] == ["db.t"]
+
+
+def test_a_query_table_is_named_by_its_collected_id() -> None:
+    collector = _collector("oracle", queries=["SELECT NVL(x, 0) FROM b"], tables=[_table("db.b")])
+    collector["queries"]["query_patterns"][0]["tables_accessed"] = ["B"]
+    gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "oracle-builtin-functions")
+    assert gap["tables"] == ["db.b"]
+
+
+def test_a_trigger_table_is_named_by_its_collected_id() -> None:
+    """The collector writes a trigger's table by its bare name (trailgear's SalesOrder)."""
+    collector = _collector(
+        "sqlserver",
+        tables=[_table("trailgear.dbo.SalesOrder")],
+        triggers=[
+            {"trigger_id": "trg", "table_id": "SalesOrder", "definition": "CREATE TRIGGER trg"},
+            {"trigger_id": "trg2", "table_id": "Gone", "definition": "CREATE TRIGGER trg2"},
+        ],
+    )
+    gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "sqlserver-tsql-routines")
+    assert gap["tables"] == ["trailgear.dbo.SalesOrder"]
+    assert {o["id"] for o in gap["objects"]} >= {"trg", "trg2"}
+
+
+@pytest.mark.parametrize(
+    ("name", "resolved"),
+    [
+        ("b", []),  # collected under two schemas: ambiguous, left out
+        ("s1.b", ["db.s1.b"]),
+        ("db.s2.b", ["db.s2.b"]),
+        ('"S1"."B"', ["db.s1.b"]),  # quoted and case-folded
+        ("s3.b", []),
+    ],
+)
+def test_a_bare_name_in_two_schemas_is_dropped_but_a_qualified_one_resolves(
+    name: str, resolved: list[str]
+) -> None:
+    collector = _collector(
+        "oracle", queries=["SELECT NVL(x, 0) FROM b"], tables=[_table("db.s1.b"), _table("db.s2.b")]
+    )
+    collector["queries"]["query_patterns"][0]["tables_accessed"] = [name]
+    gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "oracle-builtin-functions")
+    assert (gap["queries"], gap["tables"]) == (["q0"], resolved)
+
+
+def test_without_a_collected_schema_only_the_unknown_placeholder_is_dropped() -> None:
+    collector = _collector("oracle", queries=["SELECT NVL(x, 0) FROM b"])
+    collector["database_schema"]["tables"] = []
+    collector["queries"]["query_patterns"][0]["tables_accessed"] = ["b", "unknown"]
+    gap = _gap(detect_relational_gaps(collector, "aurora_postgresql"), "oracle-builtin-functions")
+    assert gap["tables"] == ["b"]
 
 
 def test_column_evidence_names_the_column_and_its_table() -> None:

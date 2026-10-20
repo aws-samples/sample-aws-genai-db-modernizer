@@ -83,6 +83,9 @@ def test_every_found_gap_names_evidence_that_exists(run: PipelineResult) -> None
         ("triggers", "trigger_id"),
     ):
         object_ids |= {o[id_key] for o in schema.get(key) or []}
+    table_ids = {t["table_id"] for t in schema["tables"]}
     for gap in _gaps(run)["gaps"]:
         assert set(gap["queries"]) <= query_ids, gap["rule_id"]
+        # #1205: the collector's "unknown" placeholder is no table.
+        assert set(gap["tables"]) <= table_ids, gap["rule_id"]
         assert {o["id"] for o in gap["objects"]} <= object_ids, gap["rule_id"]

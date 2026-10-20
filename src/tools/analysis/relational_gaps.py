@@ -32,6 +32,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.gaps import (
     AURORA_TARGETS,
     GAP_IMPACTS,
@@ -190,13 +191,37 @@ def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
 
 
+def _collected_tables(names: Iterable[Any], resolver: TableNameResolver | None) -> tuple[str, ...]:
+    """The collected table or view ids a query's ``tables_accessed`` names.
+
+    The evidence names only tables the collection defines (#1205): the collector lists
+    ``unknown`` for a statement whose tables it could not read (an ``EXEC``, an
+    ``ALTER INDEX``), and a name the schema does not hold or holds twice resolves to
+    nothing (a bare name collected under two schemas is ambiguous, so it is dropped
+    too, while a schema-qualified one resolves), so such a query adds no table. It
+    still counts as a query. A trigger's
+    table goes through the same reading (the collector writes its bare name). With no
+    collected schema there is nothing to resolve against: every name stays except the
+    ``unknown`` placeholder.
+    """
+    out: set[str] = set()
+    for name in names:
+        if resolver is None:
+            if str(name) != "unknown":
+                out.add(str(name))
+        elif (table_id := resolver.resolve(str(name))) is not None:
+            out.add(table_id)
+    return tuple(sorted(out))
+
+
 def _texts(collector: Mapping[str, Any], engine: str) -> list[_Text]:
     """Every query and definition of the collection, tokenized once."""
     schema = collector.get("database_schema") or {}
+    resolver = TableNameResolver.from_collector(collector)
     out: list[_Text] = []
     for q in _as_list((collector.get("queries") or {}).get("query_patterns")):
         if isinstance(q, Mapping) and q.get("query_id") and q.get("query_text"):
-            tables = tuple(str(t) for t in _as_list(q.get("tables_accessed")))
+            tables = _collected_tables(_as_list(q.get("tables_accessed")), resolver)
             out.append(
                 _Text("query", str(q["query_id"]), sql_tokens(str(q["query_text"]), engine), tables)
             )
@@ -214,7 +239,7 @@ def _texts(collector: Mapping[str, Any], engine: str) -> list[_Text]:
             )
     for t in _as_list(schema.get("triggers")):
         if isinstance(t, Mapping) and t.get("trigger_id") and t.get("definition"):
-            tables = (str(t["table_id"]),) if t.get("table_id") else ()
+            tables = _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
             out.append(
                 _Text(
                     "trigger",
@@ -226,9 +251,15 @@ def _texts(collector: Mapping[str, Any], engine: str) -> list[_Text]:
     return out
 
 
-def _schema_evidence(rule: GapRule, collector: Mapping[str, Any], evidence: _Evidence) -> None:
+def _schema_evidence(
+    rule: GapRule,
+    collector: Mapping[str, Any],
+    evidence: _Evidence,
+    resolver: TableNameResolver | None,
+) -> None:
     match = rule.match
     schema = collector.get("database_schema") or {}
+    # Evidence from the schema itself: its table ids are collected ids, nothing to resolve.
     types = {t.lower() for t in match.data_types}
     engines = {e.lower() for e in match.storage_engines}
     languages = {lang.lower() for lang in match.routine_languages}
@@ -270,8 +301,9 @@ def _schema_evidence(rule: GapRule, collector: Mapping[str, Any], evidence: _Evi
         for t in _as_list(schema.get("triggers")):
             if isinstance(t, Mapping) and t.get("trigger_id"):
                 evidence.objects.add(("trigger", str(t["trigger_id"])))
-                if t.get("table_id"):
-                    evidence.tables.add(str(t["table_id"]))
+                evidence.tables.update(
+                    _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
+                )
 
 
 def _line_text(line: tuple[int, ...] | None) -> str | None:
@@ -335,6 +367,7 @@ def detect_relational_gaps(
     texts = _texts(collector, engine) if needs_text else []
     word_sets = [frozenset(t.tokens.tokens) for t in texts]
 
+    resolver = TableNameResolver.from_collector(collector)
     gaps: list[dict[str, Any]] = []
     for rule in applicable:
         evidence = _Evidence()
@@ -348,7 +381,7 @@ def detect_relational_gaps(
                 for text, words in zip(texts, word_sets, strict=True):
                     if _text_hit(rule, text, words, user_routines):
                         evidence.add_text(text)
-            _schema_evidence(rule, collector, evidence)
+            _schema_evidence(rule, collector, evidence, resolver)
             if not evidence:
                 continue
         gaps.append(

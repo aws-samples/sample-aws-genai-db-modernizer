@@ -207,6 +207,10 @@ def is_engine_system_object(table_id: str, source: SourceScope | None = None) ->
     return not qualified and (bare.startswith("pg_") or bare == "information_schema")
 
 
+def _unquoted_lower(name: str) -> str:
+    return "".join(c for c in name if c not in '`"[]').strip().lower()
+
+
 class TableNameResolver:
     """Resolves a parsed name to the collector's canonical ``table_id``/``view_id``.
 
@@ -215,9 +219,11 @@ class TableNameResolver:
     1. an exact match on a known ``table_id``/``view_id``;
     2. an exact match on a table's/view's bare ``table_name``/``view_name``;
     3. a match on :func:`normalize_table_name` (unquoted, lower-case, no
-       schema/db prefix) of either of the above.
+       schema/db prefix) of either of the above;
+    4. a partly qualified name (``s1.b``) that is the tail of exactly one id, for a bare
+       name collected under several schemas.
 
-    Steps 2 and 3 are accepted only when exactly one table or view matches --
+    Steps 2 to 4 are accepted only when exactly one table or view matches --
     an ambiguous name (two different tables that happen to share a bare name
     or normalize to the same key) is left unresolved rather than silently
     mapped to the wrong table.
@@ -232,6 +238,7 @@ class TableNameResolver:
         self._canonical_ids = canonical_ids
         self._by_name = by_name
         self._by_normalized = by_normalized
+        self._cleaned_ids = {cid: _unquoted_lower(cid) for cid in canonical_ids}
 
     @classmethod
     def from_collector(cls, collector_output: Mapping) -> TableNameResolver | None:
@@ -306,7 +313,16 @@ class TableNameResolver:
         candidates = self._by_normalized.get(normalize_table_name(name))
         if candidates and len(candidates) == 1:
             return next(iter(candidates))
-        return None
+        return self._by_qualified_suffix(name)
+
+    def _by_qualified_suffix(self, name: str) -> str | None:
+        """A partly qualified name (``s1.b``) names the one id that ends with it, when the
+        bare name is collected under several schemas (``db.s1.b``, ``db.s2.b``)."""
+        cleaned = _unquoted_lower(name)
+        if "." not in cleaned:
+            return None
+        found = [cid for cid, c in self._cleaned_ids.items() if c.endswith("." + cleaned)]
+        return found[0] if len(found) == 1 else None
 
     def known_ids(self) -> frozenset[str]:
         """Every canonical ``table_id``/``view_id`` this resolver knows about."""

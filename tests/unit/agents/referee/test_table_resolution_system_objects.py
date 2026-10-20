@@ -168,3 +168,16 @@ class TestCollectedDatabaseNameIsNotASchema:
         assert (
             is_engine_system_object("shop.sys.orders", SourceScope("shop", "PostgreSQL")) is False
         )
+
+
+def test_a_partly_qualified_name_resolves_when_the_bare_name_is_in_two_schemas():
+    """#1207: ``s1.b`` is the tail of exactly one id; the bare ``b`` stays ambiguous."""
+    from src.agents.referee.table_resolution import TableNameResolver
+
+    resolver = TableNameResolver.from_known_ids(["db.s1.b", "db.s2.b", "db.s1.c"])
+    assert resolver is not None
+    assert resolver.resolve("b") is None
+    assert resolver.resolve("s1.b") == "db.s1.b"
+    assert resolver.resolve('"S2"."B"') == "db.s2.b"
+    assert resolver.resolve("s3.b") is None
+    assert resolver.resolve("c") == "db.s1.c"
