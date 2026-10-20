@@ -4,7 +4,7 @@ A table's writes land on one engine, its source of truth; another engine that
 serves the table's reads reads a copy kept in sync from it via CDC, so those
 reads are eventually consistent. The engineering report states it per table,
 after its wave plan: the source of truth, the replicas, the CDC direction and the
-risk, naming the reads a replica serves. It formats ``facts.table_sources`` (``src.shared.report_facts.table_source_facts``,
+reads a replica serves, then the risk once for all of them (#1170). It formats ``facts.table_sources`` (``src.shared.report_facts.table_source_facts``,
 ADR-032); nothing here counts a table or a query.
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine
+from src.shared.report_facts import replica_risk_text, shared_replica_risk_text
 
 from . import escaping
 from .facts import report_facts
@@ -36,6 +37,42 @@ def cdc_direction(row: dict[str, Any]) -> str:
     """``DynamoDB → Aurora PostgreSQL, DocumentDB``: CDC runs from the source of truth."""
     replicas = ", ".join(display_engine(str(e)) for e in row.get("replica_engines") or [])
     return f"{display_engine(str(row.get('source_of_truth', '')))} → {replicas}"
+
+
+def _risks_md(rows: list[dict[str, Any]]) -> list[str]:
+    """The risk of the replicated tables, stated once (#1170).
+
+    Every stored risk worded by ``replica_risk_text`` differs from the next only in
+    the source of truth, the replicas and the read count, which the table above
+    gives for each row. Those risks are stated once, naming the sources of truth.
+    A stored risk worded any other way (a report written with older wording) is
+    printed as stored, for its own table.
+    """
+    sources: list[str] = []
+    own: list[dict[str, Any]] = []
+    for row in rows:
+        source = str(row.get("source_of_truth", ""))
+        replicas = [str(e) for e in row.get("replica_engines") or []]
+        count = row.get("replica_read_count")
+        if isinstance(count, int) and row.get("risk") == replica_risk_text(source, replicas, count):
+            if source not in sources:
+                sources.append(source)
+        else:
+            own.append(row)
+    out: list[str] = []
+    if sources:
+        lead = (
+            "Every other table above has this risk." if own else "Every table above has this risk."
+        )
+        out.append(f"{lead} {escaping.md_text(shared_replica_risk_text(sources))}")
+    if own:
+        out += ["", "The risk of each table below:", ""] if sources else ["The risk of each:", ""]
+        for row in own:
+            out.append(
+                f"- `{escaping.md_cell(escaping.md_code(row.get('table', '?')))}`: "
+                f"{escaping.md_text(row.get('risk', ''))}"
+            )
+    return out
 
 
 def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
@@ -63,15 +100,7 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
                 f"| {escaping.md_cell(cdc_direction(row))} "
                 f"| {escaping.md_cell(row.get('replica_read_count', 0))} |"
             )
-        # The risks name the replica-served reads, whose ids can be long: a list
-        # wraps where a table cell would not.
-        out += ["", "The risk of each:", ""]
-        for row in rows:
-            out.append(
-                f"- `{escaping.md_cell(escaping.md_code(row.get('table', '?')))}`: "
-                f"{escaping.md_text(row.get('risk', ''))}"
-            )
-        out.append("")
+        out += ["", *_risks_md(rows), ""]
     more = facts.get("more_replicated_count") or 0
     if more:
         out += [

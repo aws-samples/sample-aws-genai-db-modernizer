@@ -117,11 +117,15 @@ def test_a_moved_query_states_where_it_started_and_ended(report) -> None:
     head = next(
         line for line in appendix.splitlines() if line.startswith(f"### `{moved['query_id']}`")
     )
-    assert "moved" in head
-    assert f"{moved['first_assignment']['to_engine_name']} to {moved['final_engine_name']}" in head
-    # The engine that scored higher and the step that decided against it.
-    if moved["outscored_by"]:
-        assert f"- {md_text(moved['outscored_by'][0]['explanation'])}" in appendix
+    assert (
+        f"moved from {moved['first_assignment']['to_engine_name']} to "
+        f"{moved['final_engine_name']}" in head
+    )
+    # The engine that scored higher and the step that decided against it: a
+    # consolidation step above already says it (#1170), so its line is left out.
+    better = moved["outscored_by"][0]
+    assert better["decided_by_rule"] == "consolidate.no_unique_value" and not better["in_plan"]
+    assert f"- {md_text(better['explanation'])}" not in appendix
 
 
 def test_the_rest_are_summarised_by_rule_not_listed(report) -> None:
@@ -224,7 +228,8 @@ def test_trace_text_is_escaped(report) -> None:
 def test_the_tie_wording_on_the_trailgear_numbers(report) -> None:
     """#339 review, on trailgear's figures: 8 queries tied at some step, 5 of them
     settled in v2, 3 still open ("Unresolved engine ties (3 queries)"). Only the
-    open ones may read "unresolved"; a settled one "was tied"."""
+    open ones may read "unresolved"; a settled one "settled tie" (#1170: not the
+    bare "(was tied)")."""
     stored = report["facts"]["query_trace"]
     stored.update(
         listed_query_count=25,
@@ -245,12 +250,12 @@ def test_the_tie_wording_on_the_trailgear_numbers(report) -> None:
     settled = next(r for r in stored["listed_queries"] if r["tied"])
     assert not settled["open_tie"]
     head = next(line for line in md.splitlines() if line.startswith(f"### `{settled['query_id']}`"))
-    assert "(was tied)" in head and "unresolved" not in head
+    assert head.endswith(": stays on DynamoDB; settled tie") and "unresolved" not in head
     # The same query with its tie still open.
     settled["open_tie"] = True
     md = render_engineering_report_md(report)
     head = next(line for line in md.splitlines() if line.startswith(f"### `{settled['query_id']}`"))
-    assert "(unresolved tie)" in head
+    assert head.endswith(": listed on DynamoDB; unresolved tie")
 
 
 def test_steps_carry_the_querys_own_number(report) -> None:
@@ -336,7 +341,7 @@ def test_near_identical_entries_become_one_entry_with_a_count() -> None:
     assert _groups(report)[0]["query_count"] == 25
     appendix = _appendix(render_engineering_report_md(report))
     assert appendix.count("\n### ") == 1
-    assert "### 25 queries (moved): " in appendix
+    assert "### 25 queries: moved from " in appendix
     assert "1 entry below cover 25 queries" in appendix
     # The story is told once.
     assert appendix.count("- Step 1, version 1") == 1
@@ -439,7 +444,7 @@ def test_a_report_without_stored_groups_gets_them_from_the_facts_layer(stored: s
         trace.update(trace_groups=[], trace_group_count=0)
     appendix = _appendix(render_engineering_report_md(report))
     assert appendix.count("\n### ") == 1
-    assert "### 3 queries (moved): " in appendix
+    assert "### 3 queries: moved from " in appendix
     assert "1 entry below cover 3 queries" in appendix
 
 
@@ -467,7 +472,7 @@ def test_an_old_report_loaded_through_the_contract_still_prints_its_entries() ->
     assert loaded["facts"]["query_trace"]["trace_groups"] == []
     appendix = _appendix(render_engineering_report_md(loaded))
     assert appendix.count("\n### ") == 1
-    assert "### 3 queries (moved): " in appendix
+    assert "### 3 queries: moved from " in appendix
 
 
 def test_a_lone_query_keeps_its_tables_and_sql() -> None:
@@ -516,7 +521,10 @@ def test_a_group_heading_carries_its_open_tie_count() -> None:
     (group,) = _groups(report)
     assert group["open_tie_count"] == 4 == facts["open_tie_query_count"]
     appendix = _appendix(render_engineering_report_md(report))
-    assert "### 4 queries (moved, 4 unresolved ties): " in appendix
+    head = next(
+        line for line in appendix.splitlines() if line.startswith("### 4 queries: moved from ")
+    )
+    assert head.endswith("; 4 unresolved ties")
     assert "each query is listed under the final engine" in appendix
     # The renderer prints the stored count, never its own.
     group["open_tie_count"] = 7

@@ -278,7 +278,7 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
     """#339 review: the appendix says "unresolved" only for ties still open, so
     its "(N still open)" is the "Unresolved engine ties (N)" count (since #1002
     discourse has 33 open ties and trailgear none: its 4 first-assignment ties all
-    clear in the reality check), and every listed tie that was settled reads "was tied"."""
+    clear in the reality check), and every listed tie that was settled reads "settled tie"."""
     report = _report_json(run)
     trace = (report.get("facts") or {}).get("query_trace") or {}
     if not trace.get("listed_query_count"):
@@ -299,7 +299,7 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
     open_in_full = sum(1 for r in rows if r["open_tie"])
     # #1108: an entry is one query or a group of queries whose trace reads the
     # same; a group's heading carries its open-tie count ("26 unresolved ties"),
-    # a single query's its "unresolved tie" label. They add up either way.
+    # a single query's its "; unresolved tie" (#1170). They add up either way.
     groups = trace.get("trace_groups") or []
     assert sum(int(g["open_tie_count"]) for g in groups) == open_in_full
     labelled = 0
@@ -308,7 +308,7 @@ def test_the_trace_appendix_agrees_with_the_unresolved_ties(run: PipelineResult)
             n = re.search(r"\b(\d+) unresolved ties?\b", heading)
             labelled += int(n.group(1)) if n else 0
         else:
-            labelled += int("(unresolved tie" in heading or ", unresolved tie" in heading)
+            labelled += int(heading.endswith("; unresolved tie") or "; unresolved tie, " in heading)
     assert labelled == open_in_full
     assert "left in an unresolved tie" not in md
 

@@ -234,11 +234,17 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     if len(ids) > 3:
         id_bits += f" (+{len(ids) - 3} more)"
 
-    label = unsupported_pattern_label(u)
-    head_bits = [f"**{escaping.md_text(label)}**"]
-    if id_bits:
-        head_bits.append(f"({id_bits})")
-    head = " ".join(head_bits)
+    if str(u.get("pattern_type") or "").strip().strip("*"):
+        head_bits = [f"**{escaping.md_text(unsupported_pattern_label(u))}**"]
+        if id_bits:
+            head_bits.append(f"({id_bits})")
+        head = " ".join(head_bits)
+    elif id_bits:
+        # #1170: with no pattern type, the generic label under "Unsupported
+        # patterns" says nothing; the entry names its queries instead.
+        head = f"{'Query' if len(ids) == 1 else 'Queries'} {id_bits}"
+    else:
+        head = ""
 
     body = escaping.md_text(unsupported_pattern_text(u))
 
@@ -491,10 +497,12 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
         for t in current:
             by_engine.setdefault(t.get("engine") or "(general)", []).append(t)
         for eng, items in by_engine.items():
-            # #572: eng is a raw engine id (or "(general)"/"reality-check", neither a
-            # known engine -- display_engine's title-case fallback would read oddly
-            # for the hyphenated "reality-check", so both are left unchanged).
-            heading = eng if eng in ("(general)", "reality-check") else display_engine(eng)
+            # #572: eng is a raw engine id, or "(general)"/"reality-check", neither a
+            # known engine; display_engine's title-case fallback would read oddly for
+            # them. #1170: "reality-check" is a source id, so it reads "Reality check".
+            heading = {"(general)": "(general)", "reality-check": "Reality check"}.get(
+                eng, display_engine(eng)
+            )
             out += [f"### {escaping.md_text(heading)}", ""]
             for t in items:
                 desc = str(t.get("description", "")).strip()

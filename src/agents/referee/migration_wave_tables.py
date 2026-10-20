@@ -469,12 +469,21 @@ def _table_group_coverage_parts(
                 ]
             )
     if reverse_tables:
-        for other in sorted(reverse_tables, key=lambda e: (engine_wave_number.get(e) or 999, e)):
+        owners = sorted(reverse_tables, key=lambda e: (engine_wave_number.get(e) or 999, e))
+        for i, other in enumerate(owners):
             owned_table_list = sorted(reverse_tables[other])
             n_t = len(owned_table_list)
             n_q = len(reverse_queries.get(other, set()))
             wave_no = engine_wave_number.get(other)
             wave_text = f"wave {wave_no}" if wave_no else "a later wave"
+            # #1170: with several owners, the sync is stated once, after the last.
+            last = i == len(owners) - 1
+            tail = (
+                f"; keep a {display_engine(engine)} copy of "
+                f"{'all of them' if len(owners) > 1 else 'them'} in sync via CDC."
+                if last
+                else ", and"
+            )
             clauses.append(
                 [
                     {
@@ -482,8 +491,8 @@ def _table_group_coverage_parts(
                         "items": owned_table_list,
                     },
                     {
-                        "text": f" {display_engine(other)} owns ({wave_text}) and keeps owning; "
-                        f"keep a {display_engine(engine)} copy of them in sync via CDC.",
+                        "text": f" {display_engine(other)} owns ({wave_text}) and keeps owning"
+                        + tail,
                         "items": [],
                     },
                 ]

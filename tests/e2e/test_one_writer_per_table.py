@@ -16,7 +16,11 @@ from pathlib import Path
 from src.agents.referee.write_groups import collector_write_groups, table_sources
 from src.report.escaping import md_text
 from src.shared.engine_names import display_engine
-from src.shared.report_facts import table_source_facts
+from src.shared.report_facts import (
+    replica_risk_text,
+    shared_replica_risk_text,
+    table_source_facts,
+)
 from tests.e2e.deliverable_figures import pdf_page_texts
 from tests.e2e.pipeline import PipelineResult
 
@@ -115,7 +119,13 @@ def test_every_deliverable_states_the_replicas(run: PipelineResult) -> None:
         replicas = ", ".join(display_engine(e) for e in row["replica_engines"])
         cdc = f"{display_engine(row['source_of_truth'])} → {replicas}"
         assert f"| `{row['table']}` | {display_engine(row['source_of_truth'])} | {cdc} |" in md
-        assert f"- `{row['table']}`: {md_text(row['risk'])}" in md.splitlines()
+        # #1170: each row's risk is the standard sentence, so the report states it
+        # once for every row, naming the sources of truth.
+        assert row["risk"] == replica_risk_text(
+            row["source_of_truth"], row["replica_engines"], row["replica_read_count"]
+        )
+    sources = list(dict.fromkeys(row["source_of_truth"] for row in rows))
+    assert md.count(md_text(shared_replica_risk_text(sources))) == 1
     pdf = " ".join(pdf_page_texts(str(run.deliverable("executive-report.pdf"))))
     assert "Sources of truth and replicas" not in pdf
     assert "Eventually consistent: " not in pdf

@@ -1713,19 +1713,40 @@ REPLICA_READS_NAMED = 5
 TABLE_SOURCES_SHOWN = 25
 
 
-def _replica_risk(source: str, replicas: list[str], reads: list[str]) -> str:
+def replica_risk_text(source: str, replicas: list[str], read_count: int) -> str:
     """The eventual-consistency risk of a replicated table: the mechanism, its
     bound and the mitigation (#951). The reads are counted, not listed: their
     ids are ``replica_read_query_ids``, next to this text."""
-    noun = "read" if len(reads) == 1 else "reads"
+    noun = "read" if read_count == 1 else "reads"
     source_name = display_engine(source)
     return (
-        f"Eventually consistent: {len(reads)} {noun} on "
+        f"Eventually consistent: {read_count} {noun} on "
         f"{', '.join(display_engine(e) for e in replicas)} read a copy kept in sync from "
         f"{source_name} via CDC, so each sees a write only after CDC applies it, behind by "
         f"the replication lag; a read that must see its own write should read from "
         f"{source_name}."
     )
+
+
+def shared_replica_risk_text(sources: list[str]) -> str:
+    """The same risk, once for every replicated table whose source of truth is one
+    of ``sources``: the engineering report's table gives each table's source, its
+    replicas and its read count, so the sentence names none of them (#1170)."""
+    names = [display_engine(s) for s in sources]
+    if len(names) == 1:
+        source, mitigation = names[0], names[0]
+    else:
+        listed = ", ".join(names[:-1]) + f" or {names[-1]}"
+        source, mitigation = f"its source of truth ({listed})", "the source of truth"
+    return (
+        f"Eventually consistent: a read on a replica reads a copy kept in sync from {source} "
+        "via CDC, so it sees a write only after CDC applies it, behind by the replication "
+        f"lag; a read that must see its own write should read from {mitigation}."
+    )
+
+
+def _replica_risk(source: str, replicas: list[str], reads: list[str]) -> str:
+    return replica_risk_text(source, replicas, len(reads))
 
 
 def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:

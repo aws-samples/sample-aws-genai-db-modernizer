@@ -18,7 +18,11 @@ import pytest
 from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
 from src.report.sources_of_truth import SOURCES_OF_TRUTH_INTRO
-from src.shared.report_facts import TABLE_SOURCES_SHOWN, compute_report_facts
+from src.shared.report_facts import (
+    TABLE_SOURCES_SHOWN,
+    compute_report_facts,
+    shared_replica_risk_text,
+)
 from tests.executive_pdf import executive_text
 
 MD_HEADING = "## Sources of truth and replicas"
@@ -84,7 +88,12 @@ def test_the_engineering_report_states_each_tables_source_replicas_cdc_and_risk(
     assert SOURCES_OF_TRUTH_INTRO in section
     row = next(line for line in section.splitlines() if line.startswith("| `trailgear.Shipment`"))
     assert row == "| `trailgear.Shipment` | DynamoDB | DynamoDB → Aurora PostgreSQL | 2 |"
-    assert f"- `trailgear.Shipment`: {md_text(RISK)}" in section.splitlines()
+    # #1170: one source of truth, so the risk is stated once for every table.
+    assert (
+        "Every table above has this risk. " + md_text(shared_replica_risk_text(["dynamodb"]))
+        in section.splitlines()
+    )
+    assert report["facts"]["table_sources"]["replicated_tables"][0]["risk"] == RISK
     assert (
         "1 written table runs every query on the source of truth, with no replica: "
         "trailgear.Customer." in section

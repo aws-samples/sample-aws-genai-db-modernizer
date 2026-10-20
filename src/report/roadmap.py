@@ -127,7 +127,12 @@ _SUGGESTED_PATH_NOTE = (
 _GROUP_KIND_LABELS = {"co_dependency": "co-dependency", "independent": "independent"}
 
 
-def _owner_list_md(owners: list[dict[str, Any]], cap: int = 15) -> str:
+# How many names the kept-in-sync line and the wave's table list show before "+N more".
+_OWNERS_SHOWN = 15
+_TABLES_SHOWN = 20
+
+
+def _owner_list_md(owners: list[dict[str, Any]], cap: int = _OWNERS_SHOWN) -> str:
     shown = ", ".join(
         f"`{escaping.md_code(o['table'])}` -> {escaping.md_text(display_engine(o['owner']))} "
         f"({escaping.md_text(o.get('sync', ''))})"
@@ -157,6 +162,61 @@ def _owner_lines_md(wf: dict[str, Any]) -> list[str]:
             f"with its owner): {_owner_list_md(shared)}"
         )
     return out
+
+
+def _same_tables(a: list[Any], b: list[Any]) -> bool:
+    """Whether two table lists name the same tables (a presentation check, #1170)."""
+    return bool(a) and {str(t) for t in a} == {str(t) for t in b}
+
+
+def _replicated_by_source(report: dict[str, Any]) -> dict[str, list[str]]:
+    """The tables "Sources of truth and replicas" lists, by their source of truth.
+
+    Empty when that section does not list every replicated table, so a gate only
+    points at it for a list it shows in full.
+    """
+    ts = report_facts(report).get("table_sources")
+    if not isinstance(ts, dict) or ts.get("more_replicated_count"):
+        return {}
+    out: dict[str, list[str]] = {}
+    for row in ts.get("replicated_tables") or []:
+        if isinstance(row, dict):
+            out.setdefault(str(row.get("source_of_truth")), []).append(str(row.get("table")))
+    return out
+
+
+def _gate_text(w: dict[str, Any], wf: dict[str, Any], replicated: dict[str, list[str]]) -> str:
+    """A wave's gate, each table list named once (#1170).
+
+    The gate's parts (``gate_parts``, #1028) join back to the stored gate. A list
+    the section already gives in full is referred to instead of repeated: the
+    wave's kept-in-sync tables, the wave's own table list, or the tables the
+    wave's engines write that "Sources of truth and replicas" lists. Any other
+    list, and a gate with no parts, is printed as stored.
+    """
+    parts = w.get("gate_parts")
+    if not isinstance(parts, list) or not parts:
+        return str(w.get("gate") or "")
+    kept = [o.get("table") for o in wf.get("kept_in_sync") or [] if isinstance(o, dict)]
+    tables = w.get("tables") or []
+    written = [t for e in w.get("engines") or [] for t in replicated.get(str(e), [])]
+    out: list[str] = []
+    for part in parts:
+        text = part.get("text") if isinstance(part, dict) else None
+        items = (part.get("items") if isinstance(part, dict) else None) or []
+        out.append(str(text or ""))
+        if not items:
+            continue
+        # Only a list shown in full above is referred to; a capped one is printed here.
+        if not kept[_OWNERS_SHOWN:] and _same_tables(items, kept):
+            out.append(" (the tables kept in sync above)")
+        elif not tables[_TABLES_SHOWN:] and _same_tables(items, tables):
+            out.append(" (the tables listed above)")
+        elif _same_tables(items, written):
+            out.append(' (listed under "Sources of truth and replicas" below)')
+        else:
+            out.append(f" ({', '.join(str(i) for i in items)})")
+    return "".join(out)
 
 
 def _roadmap_md(report: dict[str, Any]) -> list[str]:
@@ -195,6 +255,7 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         )
         out.append("")
     facts = _facts_by_wave(report)
+    replicated = _replicated_by_source(report)
     for w in waves:
         names = ", ".join(display_engine(e) for e in w.get("engines") or [])
         wf = facts.get(int(w.get("wave") or 0)) or wave_facts(w)
@@ -216,8 +277,8 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
                 if w.get("cutover_query_count") is not None
                 else f"{plural_noun(served, 'table')}"
             )
-            shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:20])
-            more = f" (+{len(tables) - 20} more)" if len(tables) > 20 else ""
+            shown = ", ".join(f"`{escaping.md_code(t)}`" for t in tables[:_TABLES_SHOWN])
+            more = f" (+{len(tables) - _TABLES_SHOWN} more)" if len(tables) > _TABLES_SHOWN else ""
             # #951: the headline's "M to move" stated here too, next to the
             # kept-in-sync line below, so the report shows both halves.
             moving = wf.get("moving_tables")
@@ -232,8 +293,12 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             out.append(f"- {len(groups)} table {plural_noun(len(groups), 'group')}:")
             for g in groups:
                 g_table_ids = g.get("tables") or []
-                g_tables = ", ".join(f"`{escaping.md_code(t)}`" for t in g_table_ids[:10])
-                more = f" (+{len(g_table_ids) - 10} more)" if len(g_table_ids) > 10 else ""
+                if not tables[_TABLES_SHOWN:] and _same_tables(g_table_ids, tables):
+                    # #1170: the group is the wave's own table list, just above.
+                    g_tables, more = "the wave's source tables above", ""
+                else:
+                    g_tables = ", ".join(f"`{escaping.md_code(t)}`" for t in g_table_ids[:10])
+                    more = f" (+{len(g_table_ids) - 10} more)" if len(g_table_ids) > 10 else ""
                 g_n = g.get("query_count", 0)
                 kind_raw = _GROUP_KIND_LABELS.get(g.get("kind") or "", g.get("kind") or "")
                 kind = f", {escaping.md_text(kind_raw)}" if kind_raw else ""
@@ -254,6 +319,7 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
             )
         out += _owner_lines_md(wf)
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
-        out.append(f"- Gate before the next wave: {escaping.md_text(w.get('gate') or '-')}")
+        gate = _gate_text(w, wf, replicated)
+        out.append(f"- Gate before the next wave: {escaping.md_text(gate or '-')}")
         out.append("")
     return out

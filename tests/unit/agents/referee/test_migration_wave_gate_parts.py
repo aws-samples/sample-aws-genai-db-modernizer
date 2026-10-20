@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.agents.referee.migration_wave_tables import gate_parts_text
+from src.agents.referee.migration_wave_tables import (
+    _table_group_coverage_note,
+    gate_parts_text,
+)
 from src.contracts.synthesis_output import MigrationWave, SynthesisOutputContract
 from src.report.engineering_report import render_engineering_report_md
 from src.report.escaping import md_text
@@ -195,3 +198,28 @@ def test_a_saved_report_written_before_gate_parts_still_loads_and_renders_its_ga
     md = render_engineering_report_md(report)
     for w in waves:
         assert f"- Gate before the next wave: {md_text(w['gate'])}" in md, w["wave"]
+
+
+def test_tables_kept_in_sync_from_two_owners_state_the_sync_once():
+    """#1170: the reverse clauses for two owners name each owner's tables, then
+    say once that this wave's engine keeps a copy of all of them in sync."""
+    synced = [
+        {"table": "t_a", "owner": "aurora_postgresql", "sync": "CDC"},
+        {"table": "t_d", "owner": "documentdb", "sync": "CDC"},
+    ]
+    queries = [
+        {"query_id": "q1", "assigned_engine": "dynamodb", "source_tables": ["t_a"]},
+        {"query_id": "q2", "assigned_engine": "dynamodb", "source_tables": ["t_d"]},
+    ]
+    note = _table_group_coverage_note(
+        {"t_own"}, synced, queries, "dynamodb", {"aurora_postgresql": 1, "documentdb": 3}, 3
+    )
+    assert note == (
+        " 1 query read 1 table (t_a) Aurora PostgreSQL owns (wave 1) and keeps owning, and "
+        "1 query read 1 table (t_d) DocumentDB owns (wave 3) and keeps owning; keep a "
+        "DynamoDB copy of all of them in sync via CDC."
+    )
+    one = _table_group_coverage_note(
+        {"t_own"}, synced[:1], queries[:1], "dynamodb", {"aurora_postgresql": 1}, 3
+    )
+    assert one.endswith("and keeps owning; keep a DynamoDB copy of them in sync via CDC.")

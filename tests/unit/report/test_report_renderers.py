@@ -167,7 +167,10 @@ class TestEngineeringReport:
         line = engineering_report._unsupported_pattern_md(documentdb_style)
         assert "{" not in line and "[" not in line and "'" not in line
         assert "CTE queries with window functions" in line
-        assert "unsupported pattern" in line  # no pattern_type -> generic label
+        # #1170: no pattern_type, so no generic "unsupported pattern" label; the
+        # entry names its query instead.
+        assert "unsupported pattern" not in line
+        assert line.startswith("Query `abc123`: ")
 
     def test_unsupported_pattern_md_string_query_ids_is_one_id(self) -> None:
         """A bare string under query_ids is one malformed id, not a list to

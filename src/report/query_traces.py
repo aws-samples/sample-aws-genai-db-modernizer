@@ -31,21 +31,27 @@ def _score(value: Any) -> str:
 
 
 def _kinds(row: dict[str, Any], group: dict[str, Any] | None = None) -> str:
-    """Why the query is listed, from the facts layer's row: a tie still open is an
-    "unresolved tie" (as in "Unresolved engine ties"), a settled one "was tied".
-    A group's entry (#1108) states its stored open-tie count instead ("26
-    unresolved ties"), so the headings add up to "Unresolved engine ties"."""
-    tie = "unresolved tie" if row.get("open_tie") else "was tied"
+    """Why the query is listed beyond its move, from the facts layer's row: a tie
+    still open is an "unresolved tie" (as in "Unresolved engine ties"), a settled
+    one a "settled tie". A group's entry (#1108) states its stored open-tie count
+    instead ("26 unresolved ties"), so the headings add up to "Unresolved engine
+    ties". The move itself is the heading's path (#1170)."""
+    tie = "unresolved tie" if row.get("open_tie") else "settled tie"
     if group is not None and row.get("open_tie"):
         open_ties = int(group.get("open_tie_count") or 0)
         tie = f"{open_ties} {plural_noun(open_ties, 'unresolved tie', 'unresolved ties')}"
     labels = (
-        ("moved", "moved"),
         ("tied", tie),
         ("overridden", "overridden"),
         ("pinned", "pinned by a listed rule"),
     )
     return ", ".join(label for key, label in labels if row.get(key))
+
+
+def _heading_tail(path: str, kinds: str) -> str:
+    """``moved from DocumentDB to Aurora MySQL`` or ``stays on DynamoDB``, then
+    ``; settled tie`` and the other reasons it is listed (#1170: no bare labels)."""
+    return f"{path}; {kinds}" if kinds else path
 
 
 def _tables_md(tables: list[Any]) -> str:
@@ -71,6 +77,21 @@ def _candidates_md(step: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+# The reason code of a move the reality check made because the engine it left
+# adds too little (``ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE``).
+_CONSOLIDATED = "consolidate.no_unique_value"
+
+
+def _consolidated_engines(report: dict[str, Any]) -> set[str]:
+    """The engines whose consolidation line "Migration trade-offs" still lists
+    (``facts.reality_check_decisions``, ADR-032 Decision 7)."""
+    return {
+        str(d.get("engine"))
+        for d in report_facts(report).get("reality_check_decisions") or []
+        if isinstance(d, dict) and d.get("kind") == "consolidation" and d.get("engine")
+    }
+
+
 def _step_md(step: dict[str, Any], first: bool, previous: dict[str, Any] | None) -> list[str]:
     """One step: its version, rule and reason, and every engine's score or
     gate when they differ from the step before (the first step always)."""
@@ -88,6 +109,20 @@ def _step_md(step: dict[str, Any], first: bool, previous: dict[str, Any] | None)
     return out
 
 
+def _said_by_a_step(better: dict[str, Any], steps: list[dict[str, Any]]) -> bool:
+    """Whether a step shown above already says why ``better`` lost the query: the
+    step that took the query off it was a consolidation, and the engine is not in
+    the final plan (#1170). Its line would repeat that step."""
+    if better.get("in_plan") or not better.get("left_it"):
+        return False
+    return any(
+        s.get("step") == better.get("decided_by_step")
+        and s.get("from_engine") == better.get("engine")
+        and s.get("reason_code") == _CONSOLIDATED
+        for s in steps
+    )
+
+
 def _trace_md(
     trace: dict[str, Any], row: dict[str, Any], group: dict[str, Any] | None = None
 ) -> list[str]:
@@ -96,14 +131,16 @@ def _trace_md(
     first = trace.get("first_assignment") or {}
     start = first.get("to_engine_name")
     end = trace.get("final_engine_name") or "?"
-    path = f"{start} to {end}" if start and start != end else f"on {end}"
+    # #1170: a tie still open is only listed on its engine, pending the customer.
+    stays = "listed on" if row.get("open_tie") else "stays on"
+    path = f"moved from {start} to {end}" if start and start != end else f"{stays} {end}"
     tables = [t for t in trace.get("source_tables") or [] if t]
     on = f" on {_tables_md(tables)}" if tables else ""
     if group is not None:
         count = int(group.get("query_count") or 0)
         out = [
-            f"### {count} {plural_noun(count, 'query', 'queries')} "
-            f"({escaping.md_text(_kinds(row, group))}): {escaping.md_text(path)}",
+            f"### {count} {plural_noun(count, 'query', 'queries')}: "
+            f"{escaping.md_text(_heading_tail(path, _kinds(row, group)))}",
             "",
             "Queries: "
             + ", ".join(f"`{escaping.md_code(i)}`" for i in group.get("short_ids") or []),
@@ -114,14 +151,15 @@ def _trace_md(
         ]
     else:
         out = [
-            f"### `{escaping.md_code(trace.get('query_id', '?'))}`{on} "
-            f"({escaping.md_text(_kinds(row))}): {escaping.md_text(path)}",
+            f"### `{escaping.md_code(trace.get('query_id', '?'))}`{on}: "
+            f"{escaping.md_text(_heading_tail(path, _kinds(row)))}",
             "",
         ]
         if trace.get("query_excerpt"):
             out += [f"`{escaping.md_code(trace['query_excerpt'])}`", ""]
     previous: dict[str, Any] | None = None
-    for step in ([first] if first else []) + list(trace.get("moves") or []):
+    steps = ([first] if first else []) + list(trace.get("moves") or [])
+    for step in steps:
         out += _step_md(step, first=step is first, previous=previous)
         previous = step
     final_score = trace.get("final_score")
@@ -148,6 +186,8 @@ def _trace_md(
         )
         out.append(f"- Runner-up: {escaping.md_text(runner['explanation'])}{basis}")
     for better in trace.get("outscored_by") or []:
+        if isinstance(better, dict) and _said_by_a_step(better, steps):
+            continue
         if isinstance(better, dict) and better.get("explanation"):
             # #951: the explanation starts "<engine> scored higher", so no label
             # repeats it.
@@ -267,6 +307,19 @@ def query_traces_md(report: dict[str, Any]) -> list[str]:
             "",
         ]
     rows = {str(r.get("query_id")): r for r in facts.get("listed_queries") or []}
+    consolidated = _consolidated_engines(report)
+    if any(
+        m.get("reason_code") == _CONSOLIDATED and m.get("from_engine") in consolidated
+        for t in by_id.values()
+        for m in t.get("moves") or []
+        if isinstance(m, dict)
+    ):
+        # #1170: the consolidation's reason is stated once, under Migration trade-offs.
+        out += [
+            'A step marked "engine consolidated away" moved its query for the reason given '
+            'under "Migration trade-offs" (Reality check).',
+            "",
+        ]
     # A report written before 1.41 gets its groups from report_facts (#1108).
     for group in facts.get("trace_groups") or []:
         rep = str(group.get("representative_id"))
