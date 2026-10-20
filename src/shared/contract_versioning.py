@@ -246,7 +246,7 @@ def is_model_io(path: str) -> bool:
 # refuses any other untyped trace; ``tests/unit/contracts/test_decision_trace_base.py``
 # pins the set exactly.
 UNTYPED_TRACE_ENGINES: frozenset[str] = frozenset(
-    {"aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
+    {"aurora_mysql", "aurora_postgresql", "elasticache", "opensearch"}
 )
 
 # Internal artifacts (ADR-008 Decision 1, amendment of 2026-10-20, #1192): every other
@@ -410,6 +410,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (
         r"analysis-dynamodb/decision-trace\.json",
         "src.contracts.dynamodb_decision_trace:DynamoDBDecisionTrace",
+    ),
+    (
+        r"analysis-documentdb/decision-trace\.json",
+        "src.contracts.documentdb_decision_trace:DocumentDBDecisionTrace",
     ),
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),

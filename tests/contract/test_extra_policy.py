@@ -36,6 +36,7 @@ _ANSWER = "a model's answer: an unknown key is refused (#976)"
 _ROUND_TRIP = "a read-back artifact that keeps unknown keys on a round trip (#976)"
 _TRACE = "a DynamoDB decision trace section: unknown keys kept (#973)"
 _TRACE_BASE = "a shared decision trace section: unknown keys kept (#1187)"
+_DOCDB_TRACE = "a DocumentDB decision trace section: unknown keys kept (#1188)"
 _REPORT = "the synthesis report keeps unknown keys on a round trip"
 
 # "module.Class" -> (extra setting, why). Every other model uses "ignore".
@@ -81,6 +82,8 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "RecommendationDerivation",
             "TableGroup",
             "LlmAdvisorTrace",
+            "ManyToManyRelationship",
+            "ForeignKeyRelationship",
         )
     },
     **{
@@ -98,8 +101,15 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "DenormalizationOpportunityTrace",
             "SecondaryIndexDominanceTrace",
             "LlmAdvisorTrace",
-            "ManyToManyRelationship",
-            "ForeignKeyRelationship",
+        )
+    },
+    **{
+        f"documentdb_decision_trace.{name}": ("allow", _DOCDB_TRACE)
+        for name in (
+            "DocumentDBDecisionTrace",
+            "EmbeddingCandidateTrace",
+            "DenormalizationStrategyTrace",
+            "DocumentDBCompatibilityTrace",
         )
     },
     **{

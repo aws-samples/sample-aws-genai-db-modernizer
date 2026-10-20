@@ -165,6 +165,7 @@ def test_carries_contract_tells_a_contract_from_a_raw_collection() -> None:
         ("db/job/load-test-dynamodb/v1/results/summary.json", "LoadTestOutput"),
         ("db/job/load-test-dynamodb/v1/results/q-7.json", "PatternResult"),
         ("db/job/analysis-dynamodb/decision-trace.json", "DynamoDBDecisionTrace"),
+        ("db/job/analysis-documentdb/decision-trace.json", "DocumentDBDecisionTrace"),
     ],
 )
 def test_each_contract_file_maps_to_its_model(path: str, model: str) -> None:
@@ -172,10 +173,12 @@ def test_each_contract_file_maps_to_its_model(path: str, model: str) -> None:
     assert found is not None and found.__name__ == model
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     "path",
     [
-        "db/job/analysis-documentdb/decision-trace.json",
+        # Still untyped (#1189); the DocumentDB trace this entry used to name is typed.
+        "db/job/analysis-opensearch/decision-trace.json",
         "db/job/collector/sql_shadow.json",
         "db/job/assignment/v1/access_patterns.json",
         "db/job/schema-unknown_engine/v1/schema_output.json",

@@ -1,7 +1,7 @@
 """The one writer of an analysis agent's ``decision-trace.json`` (#973, #1187).
 
 A trace registered as a contract for its path in ``src/shared/contract_versioning.py``
-(today ``DynamoDBDecisionTrace``, for ``analysis-dynamodb/decision-trace.json``) is
+(``DynamoDBDecisionTrace``, ``DocumentDBDecisionTrace``) is
 written through its model, so a trace the model refuses (a renamed field, an unknown
 ``subtype``) is never stored, and the file says the contract's current
 ``contract_version`` (ADR-008 Decisions 1 and 2).

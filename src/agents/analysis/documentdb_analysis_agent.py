@@ -113,10 +113,10 @@ def analyze_for_documentdb_deterministic(
         llm_status="skipped",
         llm_duration=0.0,
         llm_attempts=0,
+        relationships=relationships,
     )
 
     mermaid_diagram = generate_mermaid_er_diagram(collector_output, embedding_candidates)
-    decision_trace["relationships"] = relationships
 
     return output, decision_trace, mermaid_diagram
 

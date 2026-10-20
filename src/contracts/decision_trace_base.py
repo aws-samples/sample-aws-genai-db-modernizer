@@ -24,6 +24,7 @@ builder added without declaring it.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,6 +113,38 @@ class LlmAdvisorTrace(BaseModel):
     status: str
     duration_seconds: float
     attempts: int
+
+
+class ManyToManyRelationship(BaseModel):
+    """A junction table joining two tables."""
+
+    model_config = KEEP_UNKNOWN
+
+    type: Literal["M:N"]
+    junction_table: str
+    table_a: str
+    table_b: str
+    columns_a: list[str]
+    columns_b: list[str]
+    description: str
+
+
+class ForeignKeyRelationship(BaseModel):
+    """One foreign key, one-to-one or one-to-many."""
+
+    model_config = KEEP_UNKNOWN
+
+    type: Literal["1:1", "1:M"]
+    from_table: str
+    to_table: str
+    from_columns: list[str]
+    to_columns: list[str]
+    description: str
+
+
+Relationship = Annotated[
+    ManyToManyRelationship | ForeignKeyRelationship, Field(discriminator="type")
+]
 
 
 class DecisionTraceBase(BaseModel):

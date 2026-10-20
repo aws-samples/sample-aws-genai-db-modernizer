@@ -36,11 +36,9 @@ DB, JOB = "mydb", "job-1"
 # and from UNTYPED_TRACE_ENGINES in the same change, and moves it to TYPED_ENGINES.
 # Putting an engine back (or dropping a registration) means editing these sets,
 # which a reviewer sees; a subset check would let the baseline go stale.
-PENDING_BASELINE = frozenset(
-    {"aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
-)
+PENDING_BASELINE = frozenset({"aurora_mysql", "aurora_postgresql", "elasticache", "opensearch"})
 # The engines whose trace is a registered contract.
-TYPED_ENGINES = frozenset({"dynamodb"})
+TYPED_ENGINES = frozenset({"documentdb", "dynamodb"})
 
 # Trace contracts that do not extend DecisionTraceBase, each with its reason. Every
 # other registered trace contract must extend it.

@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from src.contracts.analysis_output import (
     AntiPattern,
@@ -22,6 +22,21 @@ from src.contracts.analysis_output import (
     ScoreBreakdown,
     TableRecommendation,
     WorkloadAnalysis,
+)
+from src.contracts.decision_trace_base import (
+    LlmAdvisorTrace,
+    PatternSummary,
+    QueryMatch,
+    RecommendationDerivation,
+    Relationship,
+    TableGroup,
+    TraceSummary,
+)
+from src.contracts.documentdb_decision_trace import (
+    DenormalizationStrategyTrace,
+    DocumentDBCompatibilityTrace,
+    DocumentDBDecisionTrace,
+    EmbeddingCandidateTrace,
 )
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
@@ -770,6 +785,8 @@ def estimate_documentdb_costs(
 # Decision trace
 # ---------------------------------------------------------------------------
 
+_RELATIONSHIP: TypeAdapter[Relationship] = TypeAdapter(Relationship)
+
 
 def build_decision_trace(
     collector_output: dict,
@@ -782,8 +799,14 @@ def build_decision_trace(
     llm_status: str = "skipped",
     llm_duration: float = 0.0,
     llm_attempts: int = 0,
+    relationships: list[dict] | None = None,
 ) -> dict:
-    """Build decision trace artifact for specialist calibration."""
+    """Build the decision trace artifact for specialist calibration.
+
+    It is built as ``DocumentDBDecisionTrace`` (#1188), so a section the contract
+    refuses fails here, and returned as the dict the one writer stores
+    (``src/agents/analysis/decision_trace.py``).
+    """
     from src.tools.analysis.dynamodb_analysis_tools import build_table_groups
 
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
@@ -840,45 +863,47 @@ def build_decision_trace(
         for rec in table_recommendations
     ]
 
-    return {
-        "trace_version": "1.0",
-        "agent": "documentdb-analysis-agent",
-        "summary": {
-            "queries_analyzed": len(queries),
-            "queries_matched": len(matched_qids),
-            "queries_unmatched": len(queries) - len(matched_qids),
-            "patterns_detected": len(workload_analysis.patterns_detected),
-            "anti_patterns_detected": len(workload_analysis.anti_patterns_detected or []),
-        },
-        "query_matches": query_matches,
-        "pattern_summaries": pattern_summaries,
-        "recommendation_derivations": derivations,
-        "table_groups": [
-            {"group_root": root, "tables": members}
+    trace = DocumentDBDecisionTrace(
+        summary=TraceSummary(
+            queries_analyzed=len(queries),
+            queries_matched=len(matched_qids),
+            queries_unmatched=len(queries) - len(matched_qids),
+            patterns_detected=len(workload_analysis.patterns_detected),
+            anti_patterns_detected=len(workload_analysis.anti_patterns_detected or []),
+        ),
+        query_matches=[QueryMatch.model_validate(m) for m in query_matches],
+        pattern_summaries=[PatternSummary.model_validate(p) for p in pattern_summaries],
+        recommendation_derivations=[
+            RecommendationDerivation.model_validate(d) for d in derivations
+        ],
+        table_groups=[
+            TableGroup(group_root=root, tables=members)
             for root, members in table_groups.items()
             if len(members) > 1
         ],
-        "embedding_candidates": (
-            [asdict(c) for c in embedding_candidates] if embedding_candidates else []
+        embedding_candidates=[
+            EmbeddingCandidateTrace.model_validate(asdict(c)) for c in embedding_candidates or []
+        ],
+        polymorphic_tables=polymorphic_tables or [],
+        denormalization_strategies=[
+            DenormalizationStrategyTrace.model_validate(d) for d in denorm_strategies or []
+        ],
+        llm_advisor=LlmAdvisorTrace(
+            status=llm_status, duration_seconds=llm_duration, attempts=llm_attempts
         ),
-        "polymorphic_tables": polymorphic_tables or [],
-        "denormalization_strategies": denorm_strategies or [],
-        "llm_advisor": {
-            "status": llm_status,
-            "duration_seconds": llm_duration,
-            "attempts": llm_attempts,
-        },
-        "documentdb_compatibility": {
-            "target_version": DOCUMENTDB_TARGET_VERSION,
-            "cluster_type": DOCUMENTDB_TARGET_CLUSTER,
-            "version_dependent_features_detected": _detect_version_dependent_features(
+        documentdb_compatibility=DocumentDBCompatibilityTrace(
+            target_version=DOCUMENTDB_TARGET_VERSION,
+            cluster_type=DOCUMENTDB_TARGET_CLUSTER,
+            version_dependent_features_detected=_detect_version_dependent_features(
                 queries, source_engine_of(collector_output)
             ),
-            "unsupported_features_detected": _detect_unsupported_features(
+            unsupported_features_detected=_detect_unsupported_features(
                 queries, source_engine_of(collector_output)
             ),
-        },
-    }
+        ),
+        relationships=[_RELATIONSHIP.validate_python(r) for r in relationships or []],
+    )
+    return trace.model_dump(mode="json")
 
 
 def _detect_version_dependent_features(queries: list[dict], source_engine: str = "") -> list[str]:

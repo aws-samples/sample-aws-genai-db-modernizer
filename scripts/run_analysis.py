@@ -241,13 +241,17 @@ def run_finalize(store, job_id: str, db: str, engine: str) -> None:
     elif engine == "documentdb":
         from src.agents.analysis.documentdb_analysis_agent import apply_documentdb_llm_output
         from src.contracts.analysis_output import AnalysisOutputContract
+        from src.contracts.documentdb_decision_trace import DocumentDBDecisionTrace
         from src.shared.contract_versioning import load_contract
         from src.tools.analysis.documentdb_analysis_tools import LlmDocumentDBOutput
 
         contract = load_contract(
             AnalysisOutputContract, partial_data["contract"], artifact=partial_path
         )
-        trace = partial_data["decision_trace"]
+        # The partial's trace is checked like the stored one (#1188).
+        trace = load_contract(
+            DocumentDBDecisionTrace, partial_data["decision_trace"], artifact=partial_path
+        ).model_dump(mode="json")
         mermaid = partial_data.get("mermaid_diagram", "")
         llm_docdb = LlmDocumentDBOutput.model_validate(llm_response)
         updated_contract, trace = apply_documentdb_llm_output(contract, llm_docdb, trace)

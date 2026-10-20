@@ -35,7 +35,7 @@ Version History:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ from src.contracts.analysis_output import MigrationComplexity
 # The shared sections, re-exported: the DynamoDB trace writes them as the base has them.
 from src.contracts.decision_trace_base import (
     PatternSummary,
+    Relationship,
     TableGroup,
     TraceSummary,
 )
@@ -222,38 +223,6 @@ class LlmAdvisorTrace(base.LlmAdvisorTrace):
 
     aggregate_key_designs: list[AggregateKeyDesign]
     denormalization_strategies: list[DenormStrategy]
-
-
-class ManyToManyRelationship(BaseModel):
-    """A junction table joining two tables."""
-
-    model_config = _KEEP_UNKNOWN
-
-    type: Literal["M:N"]
-    junction_table: str
-    table_a: str
-    table_b: str
-    columns_a: list[str]
-    columns_b: list[str]
-    description: str
-
-
-class ForeignKeyRelationship(BaseModel):
-    """One foreign key, one-to-one or one-to-many."""
-
-    model_config = _KEEP_UNKNOWN
-
-    type: Literal["1:1", "1:M"]
-    from_table: str
-    to_table: str
-    from_columns: list[str]
-    to_columns: list[str]
-    description: str
-
-
-Relationship = Annotated[
-    ManyToManyRelationship | ForeignKeyRelationship, Field(discriminator="type")
-]
 
 
 class DynamoDBDecisionTrace(base.DecisionTraceBase):

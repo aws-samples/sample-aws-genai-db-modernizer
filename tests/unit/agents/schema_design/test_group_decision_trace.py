@@ -191,6 +191,11 @@ class TestScopeDecisionTrace:
         assert "polymorphic_tables" not in scoped
         assert scope_decision_trace({}, GROUP_A) == {}
 
+    def test_a_typed_trace_keeps_its_contract_version(self):
+        """The designer checks the scoped trace's version (#1188), so scoping keeps it."""
+        trace = {**_trace(), "contract_version": "1.0"}
+        assert scope_decision_trace(trace, GROUP_A)["contract_version"] == "1.0"
+
 
 class TestEveryTraceKeyIsHandled:
     """A key an analysis starts writing must be scoped or declared workload-wide."""

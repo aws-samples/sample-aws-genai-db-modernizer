@@ -23,8 +23,9 @@ from src.tools.analysis.documentdb_analysis_tools import (
 )
 from src.tools.sql.query_facts import source_engine_of
 
-# Keys that name no query and no table: the trace's identity and run status.
-WORKLOAD_WIDE_KEYS = frozenset({"trace_version", "agent", "llm_advisor"})
+# Keys that name no query and no table: the trace's identity, contract version (a
+# typed trace's, so the designer still checks it) and run status.
+WORKLOAD_WIDE_KEYS = frozenset({"contract_version", "trace_version", "agent", "llm_advisor"})
 
 
 def _names(tables: list[dict]) -> set[str]:

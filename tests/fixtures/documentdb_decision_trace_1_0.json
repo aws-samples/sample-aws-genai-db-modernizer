@@ -1,0 +1,563 @@
+{
+  "trace_version": "1.0",
+  "agent": "documentdb-analysis-agent",
+  "summary": {
+    "queries_analyzed": 14,
+    "queries_matched": 5,
+    "queries_unmatched": 9,
+    "patterns_detected": 2,
+    "anti_patterns_detected": 0
+  },
+  "query_matches": [
+    {
+      "query_id": "q01-product-by-id",
+      "query_text_preview": "SELECT product_id, name, description, price, stock_quantity, avg_rating, review_count FROM products WHERE product_id = ?",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q02-user-by-id",
+      "query_text_preview": "SELECT user_id, username, display_name, email FROM users WHERE user_id = ?",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q03-products-by-category",
+      "query_text_preview": "SELECT product_id, name, price, avg_rating FROM products WHERE category_id = ? AND is_active = 1 ORDER BY avg_rating DES",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q04-session-lookup",
+      "query_text_preview": "SELECT session_id, user_id, session_data, expires_at FROM sessions WHERE session_id = ? AND expires_at > NOW()",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q05-session-upsert",
+      "query_text_preview": "INSERT INTO sessions (session_id, user_id, session_data, expires_at, last_activity_at) VALUES (?, ?, ?, ?, NOW()) ON DUP",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q06-user-sessions",
+      "query_text_preview": "SELECT session_id, ip_address, user_agent, last_activity_at FROM sessions WHERE user_id = ? AND expires_at > NOW() ORDER",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q07-top-rated-products",
+      "query_text_preview": "SELECT product_id, name, avg_rating, review_count FROM products WHERE is_active = 1 AND review_count >= 10 ORDER BY avg_",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q08-best-sellers",
+      "query_text_preview": "SELECT p.product_id, p.name, SUM(oi.quantity) AS total_sold FROM products p JOIN order_items oi ON p.product_id = oi.pro",
+      "matched_patterns": [
+        "documentdb-04"
+      ],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q09-daily-revenue",
+      "query_text_preview": "SELECT DATE(created_at) AS order_date, COUNT(*) AS order_count, SUM(total_amount) AS revenue FROM orders WHERE created_a",
+      "matched_patterns": [
+        "documentdb-05"
+      ],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q10-hourly-orders",
+      "query_text_preview": "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS hour_bucket, COUNT(*) AS orders, SUM(total_amount) AS revenue FRO",
+      "matched_patterns": [
+        "documentdb-05"
+      ],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q11-cart-items",
+      "query_text_preview": "SELECT c.cart_id, c.product_id, c.quantity, p.name, p.price FROM shopping_carts c JOIN products p ON c.product_id = p.pr",
+      "matched_patterns": [
+        "documentdb-04"
+      ],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q12-create-order",
+      "query_text_preview": "INSERT INTO orders (user_id, status, total_amount, shipping_address_json, created_at, updated_at) VALUES (?, 'pending', ",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q13-full-catalog-export",
+      "query_text_preview": "SELECT p.product_id, p.name, p.description, p.price, p.stock_quantity, p.avg_rating, p.review_count, p.category_id FROM ",
+      "matched_patterns": [],
+      "matched_anti_patterns": []
+    },
+    {
+      "query_id": "q14-product-reviews",
+      "query_text_preview": "SELECT r.review_id, r.user_id, u.username, r.rating, r.title, r.body, r.created_at FROM product_reviews r JOIN users u O",
+      "matched_patterns": [
+        "documentdb-04"
+      ],
+      "matched_anti_patterns": []
+    }
+  ],
+  "pattern_summaries": [
+    {
+      "pattern_id": "documentdb-04",
+      "pattern_type": "nested-document",
+      "catalog_base_score": 85,
+      "queries_matched_count": 3,
+      "tables_involved": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.product_reviews",
+        "ecommerce.products",
+        "ecommerce.shopping_carts",
+        "ecommerce.users"
+      ]
+    },
+    {
+      "pattern_id": "documentdb-05",
+      "pattern_type": "aggregation-pipeline",
+      "catalog_base_score": 75,
+      "queries_matched_count": 2,
+      "tables_involved": [
+        "ecommerce.orders"
+      ]
+    }
+  ],
+  "recommendation_derivations": [
+    {
+      "table_id": "ecommerce.users",
+      "segments_contributing": [
+        "documentdb-04"
+      ],
+      "score_breakdown": {
+        "pattern_match": 97,
+        "complexity": 85,
+        "performance": 40,
+        "cost": 75
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 82
+    },
+    {
+      "table_id": "ecommerce.products",
+      "segments_contributing": [
+        "documentdb-04"
+      ],
+      "score_breakdown": {
+        "pattern_match": 97,
+        "complexity": 65,
+        "performance": 75,
+        "cost": 80
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 83
+    },
+    {
+      "table_id": "ecommerce.orders",
+      "segments_contributing": [
+        "documentdb-04",
+        "documentdb-05"
+      ],
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 60,
+        "performance": 75,
+        "cost": 55
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 81
+    },
+    {
+      "table_id": "ecommerce.order_items",
+      "segments_contributing": [
+        "documentdb-04"
+      ],
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 70,
+        "performance": 55,
+        "cost": 45
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 79
+    },
+    {
+      "table_id": "ecommerce.sessions",
+      "segments_contributing": [],
+      "score_breakdown": {
+        "pattern_match": 10,
+        "complexity": 80,
+        "performance": 60,
+        "cost": 70
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 42
+    },
+    {
+      "table_id": "ecommerce.product_reviews",
+      "segments_contributing": [
+        "documentdb-04"
+      ],
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 75,
+        "performance": 40,
+        "cost": 70
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 80
+    },
+    {
+      "table_id": "ecommerce.shopping_carts",
+      "segments_contributing": [
+        "documentdb-04"
+      ],
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 85,
+        "performance": 40,
+        "cost": 80
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 84
+    },
+    {
+      "table_id": "ecommerce.daily_analytics",
+      "segments_contributing": [],
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 85,
+        "performance": 0,
+        "cost": 50
+      },
+      "weights_used": {
+        "pattern_match": 0.48,
+        "complexity": 0.26,
+        "performance": 0.16,
+        "cost": 0.1
+      },
+      "weighted_confidence": 27
+    }
+  ],
+  "table_groups": [
+    {
+      "group_root": "ecommerce.order_items",
+      "tables": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.product_reviews",
+        "ecommerce.products",
+        "ecommerce.sessions",
+        "ecommerce.shopping_carts",
+        "ecommerce.users"
+      ]
+    }
+  ],
+  "embedding_candidates": [
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.orders",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 10.0,
+      "co_access_ratio": 0.0,
+      "independent_child_reads": 3,
+      "child_write_frequency": 0.5,
+      "estimated_doc_size_kb": 5.98,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.orders",
+      "child_table": "ecommerce.order_items",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 2.4,
+      "co_access_ratio": 1.0,
+      "independent_child_reads": 0,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 0.94,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.order_items",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 48.0,
+      "co_access_ratio": 1.0,
+      "independent_child_reads": 0,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 9.22,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.sessions",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 4.0,
+      "co_access_ratio": 0.0,
+      "independent_child_reads": 2,
+      "child_write_frequency": 10.0,
+      "estimated_doc_size_kb": 0.96,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.product_reviews",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 6.0,
+      "co_access_ratio": 0.0,
+      "independent_child_reads": 1,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 5.73,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.product_reviews",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 3.0,
+      "co_access_ratio": 1.0,
+      "independent_child_reads": 0,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 2.19,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.shopping_carts",
+      "relationship_type": "one_to_one",
+      "avg_children_per_parent": 0.6,
+      "co_access_ratio": 0.0,
+      "independent_child_reads": 1,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 0.41,
+      "exceeds_16mb": false
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.shopping_carts",
+      "relationship_type": "one_to_many",
+      "avg_children_per_parent": 1.2,
+      "co_access_ratio": 1.0,
+      "independent_child_reads": 0,
+      "child_write_frequency": 0,
+      "estimated_doc_size_kb": 2.17,
+      "exceeds_16mb": false
+    }
+  ],
+  "polymorphic_tables": [],
+  "denormalization_strategies": [
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.orders",
+      "strategy": "reference",
+      "rationale": "Fallback rule: one_to_many, avg_children=10.0, co_access=0.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.orders",
+      "child_table": "ecommerce.order_items",
+      "strategy": "embed",
+      "rationale": "Fallback rule: one_to_many, avg_children=2.4, co_access=1.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.order_items",
+      "strategy": "embed",
+      "rationale": "Fallback rule: one_to_many, avg_children=48.0, co_access=1.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.sessions",
+      "strategy": "reference",
+      "rationale": "Fallback rule: one_to_many, avg_children=4.0, co_access=0.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.product_reviews",
+      "strategy": "reference",
+      "rationale": "Fallback rule: one_to_many, avg_children=6.0, co_access=0.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.product_reviews",
+      "strategy": "embed",
+      "rationale": "Fallback rule: one_to_many, avg_children=3.0, co_access=1.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.users",
+      "child_table": "ecommerce.shopping_carts",
+      "strategy": "reference",
+      "rationale": "Fallback rule: one_to_one, avg_children=0.6, co_access=0.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    },
+    {
+      "parent_table": "ecommerce.products",
+      "child_table": "ecommerce.shopping_carts",
+      "strategy": "embed",
+      "rationale": "Fallback rule: one_to_many, avg_children=1.2, co_access=1.0",
+      "trade_offs": "Rule-based: LLM advisor was disabled or failed",
+      "risk_level": "low"
+    }
+  ],
+  "llm_advisor": {
+    "status": "skipped",
+    "duration_seconds": 0.0,
+    "attempts": 0
+  },
+  "documentdb_compatibility": {
+    "target_version": "8.0.2",
+    "cluster_type": "instance-based",
+    "version_dependent_features_detected": [],
+    "unsupported_features_detected": []
+  },
+  "relationships": [
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.orders",
+      "to_table": "ecommerce.users",
+      "from_columns": [
+        "user_id"
+      ],
+      "to_columns": [
+        "user_id"
+      ],
+      "description": "1:M: orders.user_id \u2192 ecommerce.users.user_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.order_items",
+      "to_table": "ecommerce.orders",
+      "from_columns": [
+        "order_id"
+      ],
+      "to_columns": [
+        "order_id"
+      ],
+      "description": "1:M: order_items.order_id \u2192 ecommerce.orders.order_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.order_items",
+      "to_table": "ecommerce.products",
+      "from_columns": [
+        "product_id"
+      ],
+      "to_columns": [
+        "product_id"
+      ],
+      "description": "1:M: order_items.product_id \u2192 ecommerce.products.product_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.sessions",
+      "to_table": "ecommerce.users",
+      "from_columns": [
+        "user_id"
+      ],
+      "to_columns": [
+        "user_id"
+      ],
+      "description": "1:M: sessions.user_id \u2192 ecommerce.users.user_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.product_reviews",
+      "to_table": "ecommerce.products",
+      "from_columns": [
+        "product_id"
+      ],
+      "to_columns": [
+        "product_id"
+      ],
+      "description": "1:M: product_reviews.product_id \u2192 ecommerce.products.product_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.product_reviews",
+      "to_table": "ecommerce.users",
+      "from_columns": [
+        "user_id"
+      ],
+      "to_columns": [
+        "user_id"
+      ],
+      "description": "1:M: product_reviews.user_id \u2192 ecommerce.users.user_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.shopping_carts",
+      "to_table": "ecommerce.users",
+      "from_columns": [
+        "user_id"
+      ],
+      "to_columns": [
+        "user_id"
+      ],
+      "description": "1:M: shopping_carts.user_id \u2192 ecommerce.users.user_id"
+    },
+    {
+      "type": "1:M",
+      "from_table": "ecommerce.shopping_carts",
+      "to_table": "ecommerce.products",
+      "from_columns": [
+        "product_id"
+      ],
+      "to_columns": [
+        "product_id"
+      ],
+      "description": "1:M: shopping_carts.product_id \u2192 ecommerce.products.product_id"
+    }
+  ]
+}
