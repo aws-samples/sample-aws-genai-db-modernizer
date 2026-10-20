@@ -92,6 +92,12 @@ class ColumnDDL:
     needs_judgment: bool
     judgment_reason: str
     fragment: str  # e.g. '"email" VARCHAR(255) NOT NULL'
+    # What the draft made of the source default (#611): the DEFAULT clause it
+    # emits (" DEFAULT ..." or ""), and whether the column is an identity
+    # (AUTO_INCREMENT) column, from the source or from a sequence default.
+    default_clause: str = ""
+    identity: bool = False
+    default_dropped: bool = False  # the draft dropped it; the reason is a column note
 
 
 @dataclass
@@ -281,6 +287,11 @@ def _column_from(
         needs_judgment=resolution.needs_judgment,
         judgment_reason=resolution.reason,
         fragment=fragment,
+        default_clause="" if auto_increment else default.clause,
+        identity=bool(auto_increment),
+        # Dropped means a reason and no clause. A translation that rewrites a default
+        # to nothing always says why, so it reads as dropped too, by design.
+        default_dropped=bool(default.reason) and not default.clause and not auto_increment,
     )
 
 

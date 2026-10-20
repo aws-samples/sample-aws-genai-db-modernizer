@@ -230,17 +230,25 @@ _DEFAULT_LIMIT = 40
 
 
 def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residual: bool) -> str:
-    """``name TYPE [NOT NULL] [AI] [DEFAULT x] [(source t) | (residual; source t)]``."""
+    """``name TYPE [NOT NULL] [AI] [DEFAULT x | (default dropped)] [(source t) | ...]``.
+
+    The identity flag and the default are the draft's, not the collector's (#611): the
+    line agrees with the DDL the delta is designed for. Why a default was dropped or
+    rewritten is in ``column_notes``.
+    """
     parts = [f"{ddl_col.name} {ddl_col.aurora_type}"]
     if not col.nullable:
         parts.append("NOT NULL")
-    if col.is_auto_increment:
+    if ddl_col.identity:
         parts.append("AI")
-    if col.default_value is not None and not col.is_auto_increment:
-        default = str(col.default_value)
+    elif ddl_col.default_clause:
+        # The limit applies to the value, as it did to the raw default before #611.
+        default = ddl_col.default_clause.strip().removeprefix("DEFAULT ")
         if len(default) > _DEFAULT_LIMIT:
             default = default[:_DEFAULT_LIMIT] + "..."
         parts.append(f"DEFAULT {default}")
+    elif ddl_col.default_dropped:
+        parts.append("(default dropped)")
     raw = base.source_data_types.get((table.table_name, col.column_name))
     if residual:
         parts.append(f"(residual; source {raw or '?'})")
