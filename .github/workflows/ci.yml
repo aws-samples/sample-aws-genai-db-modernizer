@@ -290,6 +290,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # A pull request's checkout is its merge into main: HEAD^1 is main's tip,
+          # the base the pending-bump step compares the contract snapshots with.
+          fetch-depth: 2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: '3.12'
@@ -307,6 +311,32 @@ jobs:
         # `test` shards; this job runs only the contract validation script,
         # which no test covers (#956).
         run: uv run python scripts/validate_contracts.py src/contracts/*.py
+      - name: Check pending contract bumps
+        # A pull request declares a bump kind in src/contracts/pending/ and the number is
+        # assigned after its last rebase (ADR-008 Decision 8). Pending files are valid on
+        # a pull request; the merge queue and main refuse them, so main never holds one.
+        # It also compares the contracts with main's committed snapshots (--against), so
+        # a shape change with no version move and no pending file fails even when the
+        # branch regenerated its own snapshot. The base is main's tip: HEAD^1 of a pull
+        # request's merge commit, the merge group's base, or the commit before a push.
+        env:
+          REQUIRE_RESOLVED: ${{ github.event_name != 'pull_request' && '--require-resolved' || '' }}
+          EVENT: ${{ github.event_name }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            merge_group) base="$MERGE_GROUP_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          against=()
+          if [ -n "$base" ] && [ "$base" != 0000000000000000000000000000000000000000 ]; then
+            git cat-file -e "$base^{commit}" 2>/dev/null || git fetch -q --depth=1 origin "$base"
+            against=(--against "$base")
+          fi
+          uv run python scripts/resolve_contract_versions.py --check $REQUIRE_RESOLVED "${against[@]}"
 
   ui-build:
     runs-on: ubuntu-latest

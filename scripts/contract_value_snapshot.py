@@ -41,7 +41,7 @@ import json
 import re
 import sys
 import typing
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -180,8 +180,18 @@ def unversioned_value_sets(snapshot: dict[str, Any]) -> list[str]:
     return sorted(k for k, v in snapshot.items() if v["version"] is None)
 
 
-def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list[str]:
-    """Every problem between the committed and a fresh snapshot, one string per set."""
+def evaluate_snapshot(
+    committed: dict[str, Any],
+    actual: dict[str, Any],
+    pending_modules: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Every problem between the committed and a fresh snapshot, one string per set.
+
+    ``pending_modules`` maps a contract module to the strongest bump kind its pending
+    files declare (ADR-008 Decision 8): a value change that kind covers is accepted
+    with the version left at main's until ``scripts/resolve_contract_versions.py``.
+    """
+    pending_modules = pending_modules or {}
     problems: list[str] = []
     for key in sorted(set(committed) | set(actual)):
         before, after = committed.get(key), actual.get(key)
@@ -216,11 +226,19 @@ def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list
         module, old, new = after["module"], before["version"], after["version"]
         if old is None or new is None:
             problems.append(f"{key}: {detail}, but {module} has no version to bump.")
+        elif old == new and module in pending_modules:
+            declared = pending_modules[module]
+            if declared != "major" and bump == "major":
+                problems.append(
+                    f"{key}: published values changed ({detail}), which needs a MAJOR bump "
+                    f"of {module}, but its pending bump declares only {declared.upper()}."
+                )
         elif old == new:
             problems.append(
                 f"{key}: published values changed ({detail}) but the version of {module} is "
-                f"still {new!r}. ADR-008 Decision 3 requires a {bump.upper()} bump. Bump it, "
-                f"update the Version History, then run: {REGENERATE_COMMAND}"
+                f"still {new!r}. ADR-008 Decision 3 requires a {bump.upper()} bump. Declare it "
+                f"with: uv run python scripts/bump_contract.py {module} {bump} --reason ... "
+                f"(ADR-008 Decision 8)"
             )
         elif bump == "major" and major_version(new) <= major_version(old):
             problems.append(
@@ -231,6 +249,44 @@ def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list
             problems.append(
                 f"{key}: the version of {module} moved {old!r} -> {new!r} ({detail}) but the "
                 f"committed snapshot wasn't regenerated. Run: {REGENERATE_COMMAND}"
+            )
+    return problems
+
+
+def evaluate_against_base(
+    base: dict[str, Any],
+    actual: dict[str, Any],
+    pending_modules: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Every published value change since ``base`` (main's committed snapshot) whose
+    module version did not move enough and that no pending bump covers (#1158); the
+    counterpart of ``contract_schema_snapshot.evaluate_against_base``."""
+    pending_modules = pending_modules or {}
+    problems: list[str] = []
+    for key in sorted(set(base) & set(actual)):
+        before, after = base[key], actual[key]
+        removed = sorted(set(before["values"]) - set(after["values"]))
+        added = sorted(set(after["values"]) - set(before["values"]))
+        if not removed and not added:
+            continue
+        bump = "major" if removed else "minor"
+        module, old, new = after["module"], before["version"], after["version"]
+        if old is None or new is None:
+            continue  # evaluate_snapshot reports a module with no version
+        if old == new:
+            declared = pending_modules.get(module)
+            if declared == "major" or (declared == "minor" and bump == "minor"):
+                continue
+            problems.append(
+                f"{key}: published values changed since main (removed {removed!r}, added "
+                f"{added!r}) but the version of {module} is still {new!r} and no pending "
+                f"bump covers it. Run: uv run python scripts/bump_contract.py {module} {bump} "
+                "--reason ..."
+            )
+        elif bump == "major" and major_version(new) <= major_version(old):
+            problems.append(
+                f"{key}: removed {removed!r} since main, which needs a MAJOR bump of {module}, "
+                f"but it only moved {old!r} -> {new!r}."
             )
     return problems
 

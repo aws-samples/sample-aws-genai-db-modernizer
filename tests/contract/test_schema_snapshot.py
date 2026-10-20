@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+from scripts.contract_bumps import load_pending, pending_kinds
 from scripts.contract_schema_snapshot import (
     EXCLUDED_NO_DEFAULT,
     REGENERATE_COMMAND,
@@ -64,7 +65,9 @@ def test_schema_snapshot_file_matches_a_fresh_rebuild() -> None:
     """
     committed = _load_committed()
     actual = build_snapshot()
-    problems = evaluate_snapshot(committed, actual)
+    # A bump a pending file declares is accepted until it is resolved (ADR-008
+    # Decision 8); the merge queue refuses a pending file, so main never holds one.
+    problems = evaluate_snapshot(committed, actual, pending_kinds(load_pending()))
     assert not problems, "\n".join(problems)
 
 

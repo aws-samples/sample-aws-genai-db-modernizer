@@ -8,7 +8,7 @@ import types
 from typing import Any, Literal
 
 from scripts import contract_value_snapshot as cvs
-from scripts.contract_value_snapshot import evaluate_snapshot, module_version
+from scripts.contract_value_snapshot import evaluate_against_base, evaluate_snapshot, module_version
 
 
 def _entry(version: str | None, *values: str) -> dict[str, Any]:
@@ -105,3 +105,32 @@ def test_module_version_reads_the_real_sources() -> None:
     assert module_version("triage_output") == triage_default
     assert module_version("move_ledger") is not None
     assert module_version("query_trace") == module_version("synthesis_output")
+
+
+def test_a_pending_bump_covers_an_added_value() -> None:
+    """ADR-008 Decision 8 (#1158): a pending bump of the module stands in for the
+    version move until it is resolved."""
+    before, after = {"m.Reason": _entry("1.0", "a")}, {"m.Reason": _entry("1.0", "a", "b")}
+    assert evaluate_snapshot(before, after) != []
+    assert evaluate_snapshot(before, after, {"m": "minor"}) == []
+    assert evaluate_snapshot(before, after, {"other": "major"}) != []
+
+
+def test_a_pending_minor_bump_does_not_cover_a_removed_value() -> None:
+    before, after = {"m.Reason": _entry("1.0", "a", "b")}, {"m.Reason": _entry("1.0", "a")}
+    (problem,) = evaluate_snapshot(before, after, {"m": "minor"})
+    assert "MAJOR" in problem and "declares only MINOR" in problem
+    assert evaluate_snapshot(before, after, {"m": "major"}) == []
+
+
+def test_a_value_change_with_a_regenerated_snapshot_but_no_bump_fails_against_main() -> None:
+    main, branch = {"m.Reason": _entry("1.0", "a")}, {"m.Reason": _entry("1.0", "a", "b")}
+    assert evaluate_snapshot(branch, branch) == []
+    (problem,) = evaluate_against_base(main, branch)
+    assert "no pending bump covers it" in problem
+    assert evaluate_against_base(main, branch, {"m": "minor"}) == []
+    assert evaluate_against_base(main, {"m.Reason": _entry("1.1", "a", "b")}) == []
+    (problem,) = evaluate_against_base(
+        {"m.Reason": _entry("1.0", "a", "b")}, {"m.Reason": _entry("1.0", "a")}, {"m": "minor"}
+    )
+    assert "no pending bump covers it" in problem

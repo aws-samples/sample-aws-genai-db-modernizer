@@ -68,8 +68,10 @@ per line)::
 
     uv run python scripts/contract_schema_snapshot.py --write
 
-Whichever of two concurrent contract-changing PRs lands second must rerun
-this and commit the result (the test fails until it does).
+A pull request declares its bump with ``scripts/bump_contract.py`` and leaves this
+file at main's until ``scripts/resolve_contract_versions.py`` assigns the number and
+regenerates it after the last rebase (ADR-008 Decision 8, #1158), so two concurrent
+contract-changing pull requests no longer both rewrite it.
 """
 
 from __future__ import annotations
@@ -80,6 +82,7 @@ import importlib
 import json
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -521,6 +524,9 @@ def diff_fields(before: dict[str, Any], after: dict[str, Any], path: str = "") -
     return changes
 
 
+_KIND_RANK = {"none": 0, "minor": 1, "major": 2}
+
+
 def overall_bump(changes: list[Change]) -> str:
     """``"major"``, ``"minor"`` or ``"none"`` -- the bump CONTRIBUTING.md's
     Contract Changes rule requires overall, given every per-path change."""
@@ -535,14 +541,23 @@ def _format_changes(changes: list[Change]) -> str:
     return "; ".join(f"{path}: {description} ({bump})" for path, bump, description in changes)
 
 
-def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+def evaluate_snapshot(
+    committed: dict[str, Any], actual: dict[str, Any], pending: Mapping[str, str] | None = None
+) -> list[str]:
     """Every problem between a committed snapshot and a freshly built one,
     one string per contract -- shared by ``tests/contract/test_schema_snapshot.py``
     (the real contracts) and ``tests/unit/scripts/test_contract_schema_snapshot.py``
     (synthetic models, one per case), so neither can drift from what
     ``--write`` and the real test actually check. See module docstring for
     the bump rules.
+
+    ``pending`` maps a contract to the bump kind a pending file declares for it
+    (``scripts/contract_bumps.py``, ADR-008 Decision 8). A shape change that a
+    pending bump covers is accepted with the version and the snapshot left at
+    main's; ``scripts/resolve_contract_versions.py`` writes both after the last
+    rebase. A pending kind smaller than the change requires is a problem.
     """
+    pending = pending or {}
     problems: list[str] = []
     for key in sorted(set(committed) | set(actual)):
         before, after = committed.get(key), actual.get(key)
@@ -583,12 +598,24 @@ def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list
             )
             continue
 
+        declared = pending.get(key)
+        if before["version"] == after["version"] and declared is not None:
+            if _KIND_RANK[declared] >= _KIND_RANK[bump]:
+                continue
+            problems.append(
+                f"{key}: schema changed ({change_text}), which needs a {bump.upper()} bump, but "
+                f"the pending bump declares only {declared.upper()}. Run: "
+                f"uv run python scripts/bump_contract.py {key} {bump} --reason ..."
+            )
+            continue
+
         if before["version"] == after["version"]:
             problems.append(
                 f"{key}: schema changed ({change_text}) but contract_version is still "
                 f"{after['version']!r}. CONTRIBUTING.md's Contract Changes section requires "
-                f"a {bump.upper()} version bump here. Bump contract_version, update the "
-                f"model's Version History docstring, then run: {REGENERATE_COMMAND}"
+                f"a {bump.upper()} version bump here. Declare it with: uv run python "
+                f"scripts/bump_contract.py {key} {bump} --reason ... (the number is assigned "
+                f"after your last rebase, ADR-008 Decision 8)"
             )
             continue
 
@@ -608,6 +635,48 @@ def evaluate_snapshot(committed: dict[str, Any], actual: dict[str, Any]) -> list
             f"({change_text}) but the committed snapshot wasn't regenerated to match. "
             f"Run: {REGENERATE_COMMAND}"
         )
+    return problems
+
+
+def evaluate_against_base(
+    base: dict[str, Any], actual: dict[str, Any], pending: Mapping[str, str] | None = None
+) -> list[str]:
+    """Every shape change since ``base`` (main's committed snapshot) that did not move
+    the version enough and has no pending bump that covers it (ADR-008 Decisions 3
+    and 8, #1158).
+
+    ``evaluate_snapshot`` compares a fresh build with the branch's own committed
+    snapshot, so a branch that changes a contract, forgets to declare the bump and
+    regenerates the snapshot passes it. This compares with main's snapshot instead:
+    the ``validate-contracts`` job and ``ci/pre_merge.sh`` run it against the merge
+    base. A contract new or removed since ``base`` is left to ``evaluate_snapshot``.
+    """
+    pending = pending or {}
+    problems: list[str] = []
+    for key in sorted(set(base) & set(actual)):
+        before, after = base[key], actual[key]
+        changes = diff_fields(before["fields"], after["fields"])
+        if not changes:
+            continue
+        bump = overall_bump(changes)
+        detail = _format_changes(changes)
+        if before["version"] == after["version"]:
+            declared = pending.get(key)
+            if declared is not None and _KIND_RANK[declared] >= _KIND_RANK[bump]:
+                continue
+            problems.append(
+                f"{key}: schema changed since main ({detail}) but contract_version is still "
+                f"{after['version']!r} and no pending bump covers it"
+                + (f" (the pending bump declares only {declared.upper()})" if declared else "")
+                + f". Run: uv run python scripts/bump_contract.py {key} {bump} --reason ..."
+            )
+        elif bump == "major" and major_version(after["version"]) <= major_version(
+            before["version"]
+        ):
+            problems.append(
+                f"{key}: schema changed since main ({detail}), which needs a MAJOR bump, but "
+                f"contract_version only moved {before['version']!r} -> {after['version']!r}."
+            )
     return problems
 
 

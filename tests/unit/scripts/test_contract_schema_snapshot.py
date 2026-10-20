@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from scripts.contract_schema_snapshot import (
     diff_fields,
+    evaluate_against_base,
     evaluate_snapshot,
     field_summary,
     overall_bump,
@@ -306,3 +307,81 @@ def test_the_pattern_with_a_minor_bump_needs_no_major_bump() -> None:
     assert "wasn't regenerated" in bumped and "MAJOR" not in bumped
     (unbumped,) = evaluate_snapshot(committed, {"m.C": entry(After, "1.0")})
     assert "requires a MINOR version bump" in unbumped
+
+
+def _snapshot_entry(model: type[BaseModel], version: str) -> dict:
+    fields = field_summary(model)
+    return {"version": version, "schema_hash": schema_hash(fields), "fields": fields}
+
+
+class _Base(BaseModel):
+    contract_version: str = Field(default="1.0")
+    name: str
+
+
+class _Added(BaseModel):
+    contract_version: str = Field(default="1.0")
+    name: str
+    extra: str | None = None
+
+
+class _Removed(BaseModel):
+    contract_version: str = Field(default="1.0")
+
+
+def test_a_pending_minor_bump_covers_an_added_optional_field() -> None:
+    """ADR-008 Decision 8 (#1158): with a pending bump declared, the version and the
+    snapshot stay at main's and the shape change is accepted."""
+    committed = {"m.C": _snapshot_entry(_Base, "1.0")}
+    actual = {"m.C": _snapshot_entry(_Added, "1.0")}
+    assert evaluate_snapshot(committed, actual) != []
+    assert evaluate_snapshot(committed, actual, {"m.C": "minor"}) == []
+    assert evaluate_snapshot(committed, actual, {"m.C": "major"}) == []
+
+
+def test_a_pending_minor_bump_does_not_cover_a_removed_field() -> None:
+    committed = {"m.C": _snapshot_entry(_Base, "1.0")}
+    actual = {"m.C": _snapshot_entry(_Removed, "1.0")}
+    (problem,) = evaluate_snapshot(committed, actual, {"m.C": "minor"})
+    assert "needs a MAJOR bump" in problem and "declares only MINOR" in problem
+    assert evaluate_snapshot(committed, actual, {"m.C": "major"}) == []
+
+
+def test_a_pending_bump_covers_only_its_own_contract() -> None:
+    committed = {"m.C": _snapshot_entry(_Base, "1.0"), "m.D": _snapshot_entry(_Base, "1.0")}
+    actual = {"m.C": _snapshot_entry(_Added, "1.0"), "m.D": _snapshot_entry(_Added, "1.0")}
+    (problem,) = evaluate_snapshot(committed, actual, {"m.C": "minor"})
+    assert problem.startswith("m.D:") and "bump_contract.py m.D minor" in problem
+
+
+def test_a_pending_bump_does_not_excuse_a_hand_bump_left_unregenerated() -> None:
+    committed = {"m.C": _snapshot_entry(_Base, "1.0")}
+    actual = {"m.C": _snapshot_entry(_Added, "1.1")}
+    (problem,) = evaluate_snapshot(committed, actual, {"m.C": "minor"})
+    assert "wasn't regenerated" in problem
+
+
+def test_a_change_with_a_regenerated_snapshot_but_no_bump_fails_against_main() -> None:
+    """Reviewer case (#1209): a field added, the bump not declared, and the snapshot
+    regenerated: the branch's own snapshot matches, so ``evaluate_snapshot`` passes;
+    compared with main's snapshot it fails, unless a pending bump covers it or the
+    version moved."""
+    main = {"m.C": _snapshot_entry(_Base, "1.0")}
+    branch = {"m.C": _snapshot_entry(_Added, "1.0")}
+    assert evaluate_snapshot(branch, branch) == []
+    (problem,) = evaluate_against_base(main, branch)
+    assert "schema changed since main" in problem and "no pending bump covers it" in problem
+    assert evaluate_against_base(main, branch, {"m.C": "minor"}) == []
+    assert evaluate_against_base(main, {"m.C": _snapshot_entry(_Added, "1.1")}) == []
+    assert evaluate_against_base(main, main) == []
+
+
+def test_against_main_a_removal_needs_a_major_move_or_pending_major() -> None:
+    main = {"m.C": _snapshot_entry(_Base, "1.0")}
+    (problem,) = evaluate_against_base(main, {"m.C": _snapshot_entry(_Removed, "1.1")})
+    assert "needs a MAJOR bump" in problem
+    (problem,) = evaluate_against_base(
+        main, {"m.C": _snapshot_entry(_Removed, "1.0")}, {"m.C": "minor"}
+    )
+    assert "declares only MINOR" in problem
+    assert evaluate_against_base(main, {"m.C": _snapshot_entry(_Removed, "2.0")}) == []

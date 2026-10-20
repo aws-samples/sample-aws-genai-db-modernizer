@@ -94,6 +94,20 @@ else
     printf '%s\n' "$contract_out" | sed 's/^/       /'
   fi
 fi
+# Pending bumps (ADR-008 Decision 8): fine while the PR is open, refused by the merge queue.
+pending="$(helper pending)"
+if [ -n "$pending" ]; then
+  note "warn contracts: $(printf '%s\n' "$pending" | wc -l | tr -d ' ') pending bump(s); after the last rebase, before the merge queue, run: uv run python scripts/resolve_contract_versions.py --base $base"
+  printf '%s\n' "$pending" | sed 's/^/       /'
+fi
+# Every contract change since the merge base moves its version or has a pending bump,
+# even when the branch regenerated its own snapshot (ADR-008 Decision 8).
+if against_out="$(uv run python scripts/resolve_contract_versions.py --check --against "$(git merge-base HEAD "$base")" 2>&1)"; then
+  note "ok   contracts: every contract change since the merge base is versioned or declared"
+else
+  fail "contracts: a contract changed without a version bump or a pending bump"
+  printf '%s\n' "$against_out" | grep -v '^ok\|^pending' | sed 's/^/       /'
+fi
 
 # e. Generated files that differ from main must still match their generator.
 check_generated() {  # check_generated NAME "path|path" command...

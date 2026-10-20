@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+from scripts.contract_bumps import load_pending, pending_kinds, pending_module_kinds
 from scripts.contract_value_snapshot import (
     REGENERATE_COMMAND,
     SNAPSHOT_PATH,
@@ -30,7 +31,8 @@ def _load_committed() -> dict[str, Any]:
 
 
 def test_value_set_snapshot_matches_a_fresh_rebuild() -> None:
-    problems = evaluate_snapshot(_load_committed(), build_snapshot())
+    pending = pending_module_kinds(pending_kinds(load_pending()))
+    problems = evaluate_snapshot(_load_committed(), build_snapshot(), pending)
     assert not problems, "\n".join(problems)
 
 

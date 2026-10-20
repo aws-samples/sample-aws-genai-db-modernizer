@@ -507,6 +507,20 @@ in `tests/contract/value_set_snapshot.json`. Adding a value is a MINOR bump of
 the publishing contract, removing or renaming one is MAJOR. Regenerate with
 `uv run python scripts/contract_value_snapshot.py --write`.
 
+Do not pick the new number yourself: parallel pull requests used to claim the same one and renumber it on every rebase (#1158, ADR-008 Decision 8). Declare the bump kind instead, which writes one file under `src/contracts/pending/` and nothing else:
+
+```bash
+uv run python scripts/bump_contract.py synthesis_output minor --reason "Added optional ``foo`` (what and why)." --issue 1234
+```
+
+Leave the version, the Version History and both snapshots at main's while the pull request is open; the snapshot tests accept a change the declared kind covers. After your last rebase onto main, before the merge queue, assign the number and regenerate both snapshots in one step, then amend and push:
+
+```bash
+uv run python scripts/resolve_contract_versions.py
+```
+
+The merge queue refuses a pull request that still has a pending file, and `validate-contracts` fails a contract change since main with neither a version move nor a pending bump, even if you regenerated the snapshot. A contract the resolver cannot edit is refused by `bump_contract.py`, which says how to bump it by hand. If your branch is stacked on another that has since merged, delete that branch's pending file after rebasing; the resolver refuses it.
+
 A contract written to disk declares its own version,
 `contract_version: str = Field(default="X.Y", pattern=r"^\d+\.\d+$", ...)`,
 and a writer that builds a new version of a file from an earlier one stamps
@@ -524,9 +538,9 @@ regenerates the snapshot.
 
 Many pull requests land on `main` every day, so a branch that was green yesterday can conflict or break today.
 
-- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version collisions, runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
+- Run `./ci/pre_merge.sh` before you push and before you ask for a merge. It fetches main, reports how far behind you are, checks for conflicts and contract version problems (a hand-written version that collides with main's, a contract change with no bump or pending bump), runs your new and changed tests against main's code and lists those that pass there, runs lint and tests (`--quick` skips only the full test suite), and prints the `needs_llm_run` verdict.
 - Rebase onto the latest main and re-test right before merging, not only when you opened the PR.
-- Take the next contract version at rebase time. If another PR already used your `contract_version`, bump to the next one and regenerate the schema snapshot.
+- Do not take a contract version number yourself: declare the bump kind with `uv run python scripts/bump_contract.py` and run `uv run python scripts/resolve_contract_versions.py` after your last rebase (see Contract Changes, ADR-008 Decision 8).
 - Never hand-merge a generated snapshot (the routing snapshot, `tests/contract/schema_snapshot.json`, `tests/contract/value_set_snapshot.json`, rendered catalog docs). Take main's copy and regenerate it on top of it.
 - Run `./ci/needs_llm_run.sh` early. If it says `e2e-llm: required`, start that run before the review rounds, not after.
 - `main` has a merge queue. Use "Merge when ready" to add your PR to it: the queue re-runs the required checks on top of main and the PRs ahead of yours, then merges it, or removes it from the queue and shows the failing check.

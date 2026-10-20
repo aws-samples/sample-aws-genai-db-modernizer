@@ -12,6 +12,7 @@ from ci.pre_merge import (
     contract_versions,
     next_version,
     parse_merge_tree,
+    pending_bumps,
     pick_remote,
 )
 
@@ -63,7 +64,8 @@ def test_next_version_is_the_minor_bump():
     [
         ("1.0", "1.0", "1.1", "ok", "higher"),
         ("1.0", "1.1", "1.2", "ok", "higher"),
-        ("1.0", "1.1", "1.1", "error", "take the next version (1.2)"),
+        ("1.0", "1.1", "1.1", "error", "declare the bump instead"),
+        ("1.0", "1.1", "1.1", "error", "or take 1.2 by hand"),
         ("1.0", "1.3", "1.1", "error", "lower than main's 1.3"),
         ("1.0", "1.0", "1.0", "warn", "still at 1.0"),
         ("1.0", "1.1", "1.0", "ok", "unchanged"),
@@ -91,3 +93,36 @@ def test_ci_workflow_reports_on_a_merge_group():
     assert "merge_group" in triggers
     # Required checks must not read pull request context, which a merge group lacks.
     assert "github.event.pull_request" not in workflow.read_text().replace("\n#", "")
+
+
+@pytest.mark.parametrize(
+    ("base", "main", "head", "level", "text"),
+    [
+        ("1.0", "1.0", "1.0", "ok", "pending minor bump declared"),
+        ("1.0", "1.1", "1.0", "ok", "pending minor bump declared"),
+        ("1.0", "1.0", "1.1", "error", "keep one"),
+    ],
+)
+def test_check_contract_with_a_pending_bump(base, main, head, level, text):
+    """ADR-008 Decision 8 (#1158): a pending bump keeps main's version until it is
+    resolved; a pending file next to a hand-written version is a mistake."""
+    got_level, message = check_contract(
+        "src/contracts/x.py", _contract(base), _contract(main), _contract(head), "minor"
+    )
+    assert got_level == level
+    assert text in message
+
+
+def test_pending_bumps_reads_each_file_and_flags_invalid_ones():
+    texts = {
+        "src/contracts/pending/a.C.x.toml": 'contract = "a.C"\nkind = "minor"\nreason = "r"\n',
+        "src/contracts/pending/b.y.toml": 'contract = "b"\nkind = "major"\nreason = "r"\n',
+        "src/contracts/pending/c.z.toml": 'contract = "c"\nkind = "patch"\n',
+        "src/contracts/pending/d.z.toml": "contract = ",
+    }
+    assert pending_bumps(texts) == [
+        ("a.C", "minor"),
+        ("b", "major"),
+        ("src/contracts/pending/c.z.toml", "invalid"),
+        ("src/contracts/pending/d.z.toml", "invalid"),
+    ]

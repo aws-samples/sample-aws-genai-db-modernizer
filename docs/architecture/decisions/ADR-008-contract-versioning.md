@@ -128,7 +128,7 @@ output = CollectorOutput(
 
 ## Decision
 
-We will implement **Semantic Versioning for Contracts** with seven decisions.
+We will implement **Semantic Versioning for Contracts** with eight decisions.
 
 ### 1. Every contract carries a `contract_version`
 
@@ -159,6 +159,36 @@ A field is marked deprecated, with a warning in code, for at least one MAJOR ver
 ### 7. A single version is deployed at a time
 
 There are no multi-version deployments. A version mismatch only arises when a job resumes after an upgrade or a rollback.
+
+### 8. A pull request declares the bump kind; the number is assigned after its last rebase
+
+*Added (2026-10-19, #1158):* parallel pull requests used to claim the same number (four held `synthesis_output` 1.40 at once) and each renumbered its version, its Version History entry and both snapshots on every rebase. A pull request that changes a contract now runs `uv run python scripts/bump_contract.py <contract> minor|major --reason "..." --issue N`, which writes one file, `src/contracts/pending/<contract>.<slug>.toml`, and nothing else. The slug defaults to the branch name. Two pull requests can share a file name (two forks' `patch-1` branches): that is harmless, because each pull request's tree holds only its own pending files and the merge queue refuses any pending file, so two of them never meet on main. `bump_contract.py` refuses, when the bump is declared, a contract the resolver could not edit, and says how to bump it by hand.
+
+While a bump is pending, the contract keeps main's `contract_version`, Version History and snapshots. The schema and value-set snapshot checks accept a change that the declared kind covers; a kind smaller than the change requires (a MINOR declared for a removed field) still fails.
+
+After the last rebase, before the merge queue, `uv run python scripts/resolve_contract_versions.py` resolves the pending bumps. Its `--base` defaults to the public repository's remote (`upstream` on a fork, else `origin`), the same remote `ci/pre_merge.sh` picks and names in the command it prints. For each contract with a pending file it:
+
+- takes main's version of the contract;
+- moves it by the strongest declared kind (several pending files for one contract make one bump);
+- writes the new default and a Version History entry built from the files' reasons and issues;
+- deletes those files;
+- regenerates both snapshots.
+
+It refuses when HEAD does not contain main. A contract it cannot resolve is reported with what to do, and the PR's other bumps are still resolved. There are three such cases:
+
+- a contract the resolver cannot edit;
+- a contract the branch also moved by hand;
+- a pending file whose bump already landed: its reason is already a Version History entry, as when a stacked branch is rebased onto the resolved commit of the branch below it and re-adds that branch's pending file.
+
+The `validate-contracts` job, a required check, runs `resolve_contract_versions.py --check --against <main's tip>`. On a pull request, main's tip is HEAD^1 of the merge commit; in the merge queue, the merge group's base; on a push, the commit before it. The check does three things:
+
+- it validates every pending file: a known contract, a kind and a reason, a contract the resolver could edit, and a bump that has not already landed;
+- it compares the contracts with main's committed snapshots, so a shape or value change with no version move and no pending file fails even when the branch regenerated its own snapshot (`--against`, which `ci/pre_merge.sh` also runs against the merge base);
+- on the merge queue and on main it adds `--require-resolved`, so main never holds a pending file.
+
+Decisions 1 and 3 therefore hold on main as before: every shape change moves the version, and older artifacts load under Decision 4.
+
+What this does not do: two pull requests that both resolve before either merges still claim the same number. The merge queue then fails the second, because its Version History entry and snapshot lines conflict with the first's. Its author rebases, takes main's side of those hunks, declares the bump again and resolves. Resolving is the last step before the queue to keep that window short. The resolver edits a contract whose `contract_version` default is a literal in its own class and whose Version History (in the class docstring, else the module docstring) has the current version as its newest entry, or a module versioned by its Version History alone with no version constant. For the rest (today the three Aurora and DocumentDB design outputs, `assignment_models.ValidationResult`, `schema_design_input.SchemaDesignGroupsManifest` and `model_flag`), `bump_contract.py` says what is missing and the bump is made by hand. PATCH stays out (Alternative 2): the kinds are `minor` and `major`.
 
 ### Agent Version Support Requirements
 
@@ -604,6 +634,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 5. Optional fields by default | `tests/unit/scripts/test_contract_schema_snapshot.py`<br>`tests/contract/test_extra_policy.py::test_every_model_has_its_recorded_extra_setting`<br>`tests/contract/test_extra_policy.py::test_no_read_back_artifact_refuses_unknown_fields`<br>`tests/unit/contracts/test_newer_files_load.py::test_an_assignment_with_a_newer_move_and_finding_loads`<br>`tests/unit/test_assignment_overrides.py::TestApproveAsIsKeepsNewerFields::test_unknown_top_level_and_query_fields_survive`<br>`tests/e2e/test_pipeline.py::test_every_read_back_artifact_loads_a_newer_file_with_unknown_fields` |
 | 6. Deprecate before removing | by design -- removing a field already needs a MAJOR bump under Decision 3, which the schema snapshot guard (`tests/contract/test_schema_snapshot.py`) enforces |
 | 7. A single version is deployed at a time | by design -- a deployment property, not something code can check |
+| 8. A pull request declares the bump kind; the number is assigned after its last rebase | `tests/unit/scripts/test_contract_bumps.py::test_resolution_takes_the_next_number_above_mains`<br>`tests/unit/scripts/test_contract_bumps.py::test_resolution_counts_from_main_after_another_pr_took_the_number`<br>`tests/unit/scripts/test_contract_bumps.py::test_several_pending_files_for_one_contract_make_one_bump`<br>`tests/unit/scripts/test_contract_bumps.py::test_a_hand_bump_with_a_pending_file_is_refused`<br>`tests/unit/scripts/test_contract_bumps.py::test_check_accepts_pending_files_and_require_resolved_refuses_them`<br>`tests/unit/scripts/test_contract_bumps.py::test_the_merge_queue_refuses_a_pending_bump`<br>`tests/unit/scripts/test_contract_schema_snapshot.py::test_a_pending_minor_bump_covers_an_added_optional_field`<br>`tests/unit/scripts/test_contract_schema_snapshot.py::test_a_pending_minor_bump_does_not_cover_a_removed_field`<br>`tests/unit/scripts/test_contract_value_snapshot.py::test_a_pending_minor_bump_does_not_cover_a_removed_value`<br>`tests/unit/ci/test_pre_merge.py::test_check_contract_with_a_pending_bump`<br>`tests/unit/scripts/test_contract_bumps.py::test_a_contract_it_cannot_edit_does_not_block_the_others`<br>`tests/unit/scripts/test_contract_bumps.py::test_bump_contract_refuses_a_contract_it_cannot_resolve`<br>`tests/unit/scripts/test_contract_bumps.py::test_check_refuses_a_pending_file_it_could_not_resolve`<br>`tests/unit/scripts/test_contract_bumps.py::test_a_pending_file_whose_bump_already_landed_is_refused`<br>`tests/unit/scripts/test_contract_bumps.py::test_the_default_base_is_the_public_repos_remote`<br>`tests/unit/scripts/test_contract_schema_snapshot.py::test_a_change_with_a_regenerated_snapshot_but_no_bump_fails_against_main`<br>`tests/unit/scripts/test_contract_value_snapshot.py::test_a_value_change_with_a_regenerated_snapshot_but_no_bump_fails_against_main` |
 | Amendment 2026-10-16 (Decision 4, #970): adapters only when a MAJOR bump ships | `tests/unit/contracts/test_contract_versioning.py::test_a_different_major_is_refused_naming_artifact_and_both_versions`<br>`tests/unit/contracts/test_contract_versioning.py::test_a_reality_check_saved_at_1_x_loads_through_its_adapter`<br>`tests/unit/contracts/test_contract_versioning.py::test_a_reality_check_at_a_major_with_no_adapter_is_refused` |
 
 ---
@@ -728,6 +759,7 @@ Release v2.0.0 (user-facing, breaking changes)
 | 1.9 | 2026-10-17 | Architecture Team | Decision 1: the skipped placeholders (schema output, synthesis report) are contracts of their own, written through their models and checked by their `status` first (#1023) |
 | 1.10 | 2026-10-18 | Architecture Team | Decision 5: approving an assignment as-is patches the stored file, so a newer MINOR's top-level and per-query fields are kept (#1056) |
 | 1.11 | 2026-10-18 | Architecture Team | Decision 1: the last five contracts declare `contract_version` with the MAJOR.MINOR pattern (#1006); Decision 3: adopting exactly that pattern on `contract_version` (from an unpatterned string or a MAJOR.MINOR `Literal`) is a MINOR change |
+| 1.12 | 2026-10-19 | Architecture Team | Decision 8 added and guarded: a pull request declares the bump kind in a pending file and `scripts/resolve_contract_versions.py` assigns the number above main's after the last rebase; the merge queue refuses a pending file (#1158) |
 
 ---
 
