@@ -557,8 +557,6 @@ def test_the_merge_queue_refuses_a_pending_bump() -> None:
     import yaml
 
     workflow = Path(__file__).resolve().parents[3] / ".github/workflows/ci.yml"
-    if not workflow.exists():  # trees without .github/workflows have nothing to check
-        return
     loaded = yaml.safe_load(workflow.read_text())
     assert "merge_group" in (loaded.get("on") or loaded[True])  # PyYAML reads `on:` as True
     job = loaded["jobs"]["validate-contracts"]

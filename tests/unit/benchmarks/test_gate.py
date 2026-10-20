@@ -56,10 +56,12 @@ def test_every_stage_gates_exactly_its_reviewed_cases(stage: str) -> None:
         for c in index["cases"]
         if json.loads((stage_dir / c["path"] / "expected.json").read_text()).get("reviewed")
     )
-    if not (stage_dir / "gate.json").exists():
-        assert reviewed == [], f"{stage}: reviewed cases {reviewed} but no gate.json"
-        return
-    assert sorted(gate_mod.load_gate(stage_dir)["min_case_acceptable_accuracy"]) == reviewed
+    if not reviewed:
+        # load_gate refuses empty floors, so a stage with no reviewed case has no gate.json.
+        assert not (stage_dir / "gate.json").exists(), f"{stage}: gate.json but no reviewed case"
+    else:
+        # load_gate raises when gate.json is missing.
+        assert sorted(gate_mod.load_gate(stage_dir)["min_case_acceptable_accuracy"]) == reviewed
 
 
 def _bias_toward(engine: str, bonus: int = 60):

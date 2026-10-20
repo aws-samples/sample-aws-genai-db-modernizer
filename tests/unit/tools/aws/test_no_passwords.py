@@ -64,13 +64,11 @@ class TestDatabaseCredentialsComeFromSecretsManager:
         assert creds["password"] == "from-the-secret"  # pragma: allowlist secret
 
     def test_no_collector_side_module_reads_a_password_from_the_environment(self) -> None:
-        roots = [
-            REPO_ROOT / "src" / "tools" / "aws",
-            REPO_ROOT / "src" / "agents" / "collector",
-            REPO_ROOT / "src" / "contracts" / "collector_input.py",
-        ]
-        files = [f for r in roots for f in ([r] if r.is_file() else sorted(r.rglob("*.py")))]
-        assert files
+        packages = [REPO_ROOT / "src" / "tools" / "aws", REPO_ROOT / "src" / "agents" / "collector"]
+        contract = REPO_ROOT / "src" / "contracts" / "collector_input.py"
+        files = [contract, *(f for d in packages for f in sorted(d.rglob("*.py")))]
+        assert contract.is_file()
+        assert all(any(d.rglob("*.py")) for d in packages)
         offenders = [f.name for f in files if PASSWORD_ENV_READ.search(f.read_text())]
         assert not offenders, f"passwords read from the environment in: {offenders}"
 

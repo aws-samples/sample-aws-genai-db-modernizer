@@ -827,10 +827,17 @@ def _qualify(stack: list[str]) -> str:
     return ".".join(stack)
 
 
+_REFEREE_MODULE_FILES = {
+    ".".join(p.relative_to(_REPO_ROOT).with_suffix("").parts): p
+    for p in (_REPO_ROOT / "src" / "agents" / "referee").rglob("*.py")
+}
+
+
 def _referee_module_source(module: str) -> str | None:
-    """Source of a ``src.agents.referee`` module, or None if there is no such file."""
-    path = _REPO_ROOT / Path(*module.split(".")).with_suffix(".py")
-    return path.read_text() if path.is_file() else None
+    """Source of a ``src.agents.referee`` module, or None if no file under
+    ``src/agents/referee/`` is that module (a package name, say)."""
+    path = _REFEREE_MODULE_FILES.get(module)
+    return None if path is None else path.read_text()
 
 
 _REAL_MODULE_EXPORTS: dict[str, frozenset[str]] = {}

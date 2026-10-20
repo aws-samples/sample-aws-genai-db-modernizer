@@ -86,8 +86,6 @@ def test_check_contract_ignores_files_without_a_version():
 
 def test_ci_workflow_reports_on_a_merge_group():
     workflow = Path(__file__).resolve().parents[3] / ".github/workflows/ci.yml"
-    if not workflow.exists():  # trees without .github/workflows have nothing to check
-        return
     loaded = yaml.safe_load(workflow.read_text())
     triggers = loaded.get("on") or loaded[True]  # PyYAML reads a bare `on:` as True
     assert "merge_group" in triggers

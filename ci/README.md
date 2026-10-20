@@ -4,6 +4,8 @@ CI-agnostic entry points. Every CI system (GitHub Actions today, GitLab CI in a
 later plan) calls these scripts rather than inlining commands, so "what does CI
 run" has one answer and a passing local run means a passing CI run.
 
+Every CI environment runs the same tree, so a red required check in any CI environment stops merges, even when it fails on code the PR didn't touch: file it and fix it first. A test never branches on which tree it runs in: `tests/unit/ci/test_no_tree_dependent_escapes.py` fails on any test that passes because a repo path does not exist (an early return, `continue`, skip, swallowed `FileNotFoundError`, or asserts wrapped in `if p.exists():`, and `skipif`/`xfail`/`skipUnless` on such a check); assert unconditionally instead. Its docstring lists what it follows and what it cannot see.
+
 Run any of them locally with `make lint`, `make test`, `make e2e` (or invoke the
 scripts directly — they all accept extra pytest args after the script name).
 

@@ -68,8 +68,7 @@ def test_rejects_paths_outside_repo(attr: str, value: str) -> None:
 def test_rejects_symlink_escaping_repo(tmp_path: Path) -> None:
     link = REPO_ROOT / "test-results" / "_sandbox_escape_link"
     link.parent.mkdir(exist_ok=True)
-    if link.is_symlink() or link.exists():
-        link.unlink()
+    link.unlink(missing_ok=True)  # a link left by an interrupted run
     link.symlink_to(tmp_path, target_is_directory=True)
     try:
         assert _sandbox.sandbox_violation(_ns(artifact_root=str(link)), environ=ON) is not None

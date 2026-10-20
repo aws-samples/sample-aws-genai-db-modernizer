@@ -113,17 +113,10 @@ def _cited_paths() -> set[str]:
 
 
 def _missing_paths(repo_root: Path, cited: set[str]) -> list[str]:
-    # `.github/...` paths are GitHub-only (issue templates, workflows). The
-    # internal validation mirror keeps a partial .github/ (only
-    # pull_request_template.md), so .github/ itself existing proves nothing;
-    # .github/workflows/ marks the GitHub source tree. Without it, skip them.
-    github_source = (repo_root / ".github" / "workflows").is_dir()
     missing = []
     for path in sorted(cited):
         if "<" in path or path.endswith(("...", "…")):
             continue  # placeholder
-        if path.startswith(".github/") and not github_source:
-            continue
         if "*" in path:
             if not list(repo_root.glob(path)):
                 missing.append(path)
@@ -135,25 +128,18 @@ def _missing_paths(repo_root: Path, cited: set[str]) -> list[str]:
 def test_every_cited_path_exists() -> None:
     cited = _cited_paths()
     assert any(c.startswith("scripts/") for c in cited)
+    assert any(c.startswith(".github/") for c in cited)
     missing = _missing_paths(REPO_ROOT, cited)
     assert not missing, f"AGENTS.md cites paths that do not exist: {missing}"
 
 
-def test_github_paths_checked_in_the_github_source_tree(tmp_path: Path) -> None:
-    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+def test_github_paths_are_checked_like_any_other(tmp_path: Path) -> None:
+    # Every CI environment runs the same tree (#1238): a missing .github/ path
+    # is reported, whether or not .github/ or .github/workflows/ exists.
     cited = {".github/ISSUE_TEMPLATE/", "scripts/missing.py"}
     assert _missing_paths(tmp_path, cited) == [".github/ISSUE_TEMPLATE/", "scripts/missing.py"]
-
-
-def test_github_paths_skipped_in_a_mirror_without_workflows(tmp_path: Path) -> None:
-    # Mirror shape: .github/ holds only pull_request_template.md.
-    (tmp_path / ".github").mkdir()
-    (tmp_path / ".github" / "pull_request_template.md").write_text("x")
-    cited = {".github/ISSUE_TEMPLATE/", "scripts/missing.py"}
-    assert _missing_paths(tmp_path, cited) == ["scripts/missing.py"]
-    (tmp_path / ".github" / "pull_request_template.md").unlink()
-    (tmp_path / ".github").rmdir()
-    assert _missing_paths(tmp_path, cited) == ["scripts/missing.py"]
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    assert _missing_paths(tmp_path, cited) == [".github/ISSUE_TEMPLATE/", "scripts/missing.py"]
 
 
 def test_every_uv_run_script_exists() -> None:
