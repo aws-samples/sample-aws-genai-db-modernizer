@@ -175,6 +175,19 @@ field to bump, and no release-prep PR for the version itself.
 git log v1.4.0..HEAD --pretty=format:"%s" | grep -E "^(feat|fix)"
 ```
 
+Refresh the help site's sample report: it renders a recorded model run, committed under `docs/examples/wordpress/sample-run/`, and that run should come from the release being prepared. Run `/modernize` on the WordPress sample in Claude Code (`docs/examples/wordpress/wordpress.zip`) on the release candidate, then copy the run in and open a PR with it. Only ever refresh from a synthetic or public sample such as WordPress, never from a customer's database:
+
+```bash
+uv run python scripts/build_docs_sample.py --refresh-from artifacts/wordpress/<job>
+# Update the release and synthesis contract version in
+# docs/examples/wordpress/sample-run/README.md and the release in docs/sample.md
+uv run pytest tests/unit/scripts/test_build_docs_sample.py -q
+```
+
+The refresh copies two outputs, the synthesis `report.json` and the collected names, and refuses the job when either carries one of these (`private_markers` in `scripts/build_docs_sample.py`): a local path, an e-mail address, a non-public URL, an internal hostname, an IP address, an AWS account id, an AWS ARN, an AWS access key id, an API token, a private key, or this machine's user name. It then regenerates the folder's entries in `.secrets.baseline`, so detect-secrets still scans the sample at commit (and gitleaks in CI) and flags anything new in it.
+
+A pattern list cannot judge free text: the report carries model-written prose (the summary, the reality-check review, the risks and trade-offs) where a customer name or an internal reference would not match any pattern. Before the refresh PR merges, a person reads the diff of the refreshed `report.json`'s prose fields.
+
 **Step 3: Tag Release**
 
 ```bash

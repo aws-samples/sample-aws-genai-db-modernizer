@@ -12,8 +12,12 @@ paths = [
   '''\.secrets\.baseline''',
   '''\.gitlab-ci\.yml''',
   '''uv\.lock''',
-  '''docs/.*\.md''',
-  '''docs/examples/.*\.json''',
+  # Docs prose and the sample collections, but not the recorded sample run under
+  # docs/examples/wordpress/sample-run/, which is scanned like any committed data (#1260).
+  '''docs/[^/]+\.md''',
+  '''docs/(?:architecture|contracts|data-specs|guides|ui-specs)/.*\.md''',
+  '''docs/examples/[^/]+/[^/]+\.json''',
+  '''docs/examples/[^/]+/load-test-results/.*\.json''',
   '''docs/examples/.*\.mmd''',
   '''scripts/setup_dev\.sh''',
   '''tests/unit/tools/aws/test_credential_manager\.py''',

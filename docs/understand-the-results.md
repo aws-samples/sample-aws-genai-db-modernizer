@@ -78,4 +78,4 @@ The engineering report carries the risk posture (the overall risk is the highest
 
 ## See it on real data
 
-[Sample report](sample.md) shows each of these deliverables for the WordPress sample, built without a model, so you can see the output before you run anything.
+[Sample report](sample.md) shows each of these deliverables for the WordPress sample, from a real model run, so you can see the output before you run anything.

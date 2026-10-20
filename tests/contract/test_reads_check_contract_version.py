@@ -151,6 +151,9 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/atx_bootstrap_reference.py", "<module>", "raw"): _REFERENCE,
     ("scripts/atx_subagent_test.py", "<module>", "<expr>"): _REFERENCE,
     ("scripts/atx_tool_test.py", "<module>", "<expr>"): _REFERENCE,
+    ("scripts/build_docs_sample.py", "update_scan_baseline", "data"): (
+        "the repository's detect-secrets baseline (.secrets.baseline), not a contract"
+    ),
     (
         "scripts/run_assessment.py",
         "_read_state",

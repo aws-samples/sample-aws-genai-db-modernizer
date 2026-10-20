@@ -1,7 +1,8 @@
 name: Docs
 
-# Builds the help site (mkdocs.yml, docs_dir: docs) plus the deterministic
-# WordPress sample rendered into site/sample/ by scripts/build_docs_sample.py.
+# Builds the help site (mkdocs.yml, docs_dir: docs) plus the recorded
+# WordPress sample run (docs/examples/wordpress/sample-run/) rendered into
+# site/sample/ by scripts/build_docs_sample.py with the current renderers.
 # PRs get the built site as a downloadable artifact; pushes to main that touch
 # the site's own inputs deploy it to GitHub Pages. Replaces the old
 # api-docs.yml (removed with the hosted API docs, #175/#341).

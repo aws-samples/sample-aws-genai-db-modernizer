@@ -1,0 +1,1503 @@
+{
+  "_note": "Trimmed by scripts/build_docs_sample.py --refresh-from: only the collected names the executive report keeps out of its text.",
+  "database_schema": {
+    "tables": [
+      {
+        "table_id": "wordpress.wp_actionscheduler_actions",
+        "table_name": "wp_actionscheduler_actions",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "action_id"
+          },
+          {
+            "column_name": "args"
+          },
+          {
+            "column_name": "attempts"
+          },
+          {
+            "column_name": "claim_id"
+          },
+          {
+            "column_name": "extended_args"
+          },
+          {
+            "column_name": "group_id"
+          },
+          {
+            "column_name": "hook"
+          },
+          {
+            "column_name": "last_attempt_gmt"
+          },
+          {
+            "column_name": "last_attempt_local"
+          },
+          {
+            "column_name": "priority"
+          },
+          {
+            "column_name": "schedule"
+          },
+          {
+            "column_name": "scheduled_date_gmt"
+          },
+          {
+            "column_name": "scheduled_date_local"
+          },
+          {
+            "column_name": "status"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_claims",
+        "table_name": "wp_actionscheduler_claims",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "claim_id"
+          },
+          {
+            "column_name": "date_created_gmt"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_groups",
+        "table_name": "wp_actionscheduler_groups",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "group_id"
+          },
+          {
+            "column_name": "slug"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_logs",
+        "table_name": "wp_actionscheduler_logs",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "action_id"
+          },
+          {
+            "column_name": "log_date_gmt"
+          },
+          {
+            "column_name": "log_date_local"
+          },
+          {
+            "column_name": "log_id"
+          },
+          {
+            "column_name": "message"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_commentmeta",
+        "table_name": "wp_commentmeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "comment_id"
+          },
+          {
+            "column_name": "meta_id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_comments",
+        "table_name": "wp_comments",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "comment_agent"
+          },
+          {
+            "column_name": "comment_approved"
+          },
+          {
+            "column_name": "comment_author"
+          },
+          {
+            "column_name": "comment_author_email"
+          },
+          {
+            "column_name": "comment_author_IP"
+          },
+          {
+            "column_name": "comment_author_url"
+          },
+          {
+            "column_name": "comment_content"
+          },
+          {
+            "column_name": "comment_date"
+          },
+          {
+            "column_name": "comment_date_gmt"
+          },
+          {
+            "column_name": "comment_ID"
+          },
+          {
+            "column_name": "comment_karma"
+          },
+          {
+            "column_name": "comment_parent"
+          },
+          {
+            "column_name": "comment_post_ID"
+          },
+          {
+            "column_name": "comment_type"
+          },
+          {
+            "column_name": "user_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_links",
+        "table_name": "wp_links",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "link_description"
+          },
+          {
+            "column_name": "link_id"
+          },
+          {
+            "column_name": "link_image"
+          },
+          {
+            "column_name": "link_name"
+          },
+          {
+            "column_name": "link_notes"
+          },
+          {
+            "column_name": "link_owner"
+          },
+          {
+            "column_name": "link_rating"
+          },
+          {
+            "column_name": "link_rel"
+          },
+          {
+            "column_name": "link_rss"
+          },
+          {
+            "column_name": "link_target"
+          },
+          {
+            "column_name": "link_updated"
+          },
+          {
+            "column_name": "link_url"
+          },
+          {
+            "column_name": "link_visible"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_options",
+        "table_name": "wp_options",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "autoload"
+          },
+          {
+            "column_name": "option_id"
+          },
+          {
+            "column_name": "option_name"
+          },
+          {
+            "column_name": "option_value"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_postmeta",
+        "table_name": "wp_postmeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "meta_id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "post_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_posts",
+        "table_name": "wp_posts",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "comment_count"
+          },
+          {
+            "column_name": "comment_status"
+          },
+          {
+            "column_name": "guid"
+          },
+          {
+            "column_name": "ID"
+          },
+          {
+            "column_name": "menu_order"
+          },
+          {
+            "column_name": "ping_status"
+          },
+          {
+            "column_name": "pinged"
+          },
+          {
+            "column_name": "post_author"
+          },
+          {
+            "column_name": "post_content"
+          },
+          {
+            "column_name": "post_content_filtered"
+          },
+          {
+            "column_name": "post_date"
+          },
+          {
+            "column_name": "post_date_gmt"
+          },
+          {
+            "column_name": "post_excerpt"
+          },
+          {
+            "column_name": "post_mime_type"
+          },
+          {
+            "column_name": "post_modified"
+          },
+          {
+            "column_name": "post_modified_gmt"
+          },
+          {
+            "column_name": "post_name"
+          },
+          {
+            "column_name": "post_parent"
+          },
+          {
+            "column_name": "post_password"
+          },
+          {
+            "column_name": "post_status"
+          },
+          {
+            "column_name": "post_title"
+          },
+          {
+            "column_name": "post_type"
+          },
+          {
+            "column_name": "to_ping"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_term_relationships",
+        "table_name": "wp_term_relationships",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "object_id"
+          },
+          {
+            "column_name": "term_order"
+          },
+          {
+            "column_name": "term_taxonomy_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_term_taxonomy",
+        "table_name": "wp_term_taxonomy",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "count"
+          },
+          {
+            "column_name": "description"
+          },
+          {
+            "column_name": "parent"
+          },
+          {
+            "column_name": "taxonomy"
+          },
+          {
+            "column_name": "term_id"
+          },
+          {
+            "column_name": "term_taxonomy_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_termmeta",
+        "table_name": "wp_termmeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "meta_id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "term_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_terms",
+        "table_name": "wp_terms",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "name"
+          },
+          {
+            "column_name": "slug"
+          },
+          {
+            "column_name": "term_group"
+          },
+          {
+            "column_name": "term_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_usermeta",
+        "table_name": "wp_usermeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "umeta_id"
+          },
+          {
+            "column_name": "user_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_users",
+        "table_name": "wp_users",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "display_name"
+          },
+          {
+            "column_name": "ID"
+          },
+          {
+            "column_name": "user_activation_key"
+          },
+          {
+            "column_name": "user_email"
+          },
+          {
+            "column_name": "user_login"
+          },
+          {
+            "column_name": "user_nicename"
+          },
+          {
+            "column_name": "user_pass"
+          },
+          {
+            "column_name": "user_registered"
+          },
+          {
+            "column_name": "user_status"
+          },
+          {
+            "column_name": "user_url"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_admin_note_actions",
+        "table_name": "wp_wc_admin_note_actions",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "action_id"
+          },
+          {
+            "column_name": "actioned_text"
+          },
+          {
+            "column_name": "label"
+          },
+          {
+            "column_name": "name"
+          },
+          {
+            "column_name": "nonce_action"
+          },
+          {
+            "column_name": "nonce_name"
+          },
+          {
+            "column_name": "note_id"
+          },
+          {
+            "column_name": "query"
+          },
+          {
+            "column_name": "status"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_admin_notes",
+        "table_name": "wp_wc_admin_notes",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "content"
+          },
+          {
+            "column_name": "content_data"
+          },
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "date_reminder"
+          },
+          {
+            "column_name": "icon"
+          },
+          {
+            "column_name": "image"
+          },
+          {
+            "column_name": "is_deleted"
+          },
+          {
+            "column_name": "is_read"
+          },
+          {
+            "column_name": "is_snoozable"
+          },
+          {
+            "column_name": "layout"
+          },
+          {
+            "column_name": "locale"
+          },
+          {
+            "column_name": "name"
+          },
+          {
+            "column_name": "note_id"
+          },
+          {
+            "column_name": "source"
+          },
+          {
+            "column_name": "status"
+          },
+          {
+            "column_name": "title"
+          },
+          {
+            "column_name": "type"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_category_lookup",
+        "table_name": "wp_wc_category_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "category_id"
+          },
+          {
+            "column_name": "category_tree_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_customer_lookup",
+        "table_name": "wp_wc_customer_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "city"
+          },
+          {
+            "column_name": "country"
+          },
+          {
+            "column_name": "customer_id"
+          },
+          {
+            "column_name": "date_last_active"
+          },
+          {
+            "column_name": "date_registered"
+          },
+          {
+            "column_name": "email"
+          },
+          {
+            "column_name": "first_name"
+          },
+          {
+            "column_name": "last_name"
+          },
+          {
+            "column_name": "postcode"
+          },
+          {
+            "column_name": "state"
+          },
+          {
+            "column_name": "user_id"
+          },
+          {
+            "column_name": "username"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_download_log",
+        "table_name": "wp_wc_download_log",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "download_log_id"
+          },
+          {
+            "column_name": "permission_id"
+          },
+          {
+            "column_name": "timestamp"
+          },
+          {
+            "column_name": "user_id"
+          },
+          {
+            "column_name": "user_ip_address"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_addresses",
+        "table_name": "wp_wc_order_addresses",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "address_1"
+          },
+          {
+            "column_name": "address_2"
+          },
+          {
+            "column_name": "address_type"
+          },
+          {
+            "column_name": "city"
+          },
+          {
+            "column_name": "company"
+          },
+          {
+            "column_name": "country"
+          },
+          {
+            "column_name": "email"
+          },
+          {
+            "column_name": "first_name"
+          },
+          {
+            "column_name": "id"
+          },
+          {
+            "column_name": "last_name"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "phone"
+          },
+          {
+            "column_name": "postcode"
+          },
+          {
+            "column_name": "state"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_coupon_lookup",
+        "table_name": "wp_wc_order_coupon_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "coupon_id"
+          },
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "discount_amount"
+          },
+          {
+            "column_name": "order_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_operational_data",
+        "table_name": "wp_wc_order_operational_data",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "cart_hash"
+          },
+          {
+            "column_name": "coupon_usages_are_counted"
+          },
+          {
+            "column_name": "created_via"
+          },
+          {
+            "column_name": "date_completed_gmt"
+          },
+          {
+            "column_name": "date_paid_gmt"
+          },
+          {
+            "column_name": "discount_tax_amount"
+          },
+          {
+            "column_name": "discount_total_amount"
+          },
+          {
+            "column_name": "download_permission_granted"
+          },
+          {
+            "column_name": "id"
+          },
+          {
+            "column_name": "new_order_email_sent"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "order_key"
+          },
+          {
+            "column_name": "order_stock_reduced"
+          },
+          {
+            "column_name": "prices_include_tax"
+          },
+          {
+            "column_name": "recorded_sales"
+          },
+          {
+            "column_name": "shipping_tax_amount"
+          },
+          {
+            "column_name": "shipping_total_amount"
+          },
+          {
+            "column_name": "woocommerce_version"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_product_lookup",
+        "table_name": "wp_wc_order_product_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "coupon_amount"
+          },
+          {
+            "column_name": "customer_id"
+          },
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "order_item_id"
+          },
+          {
+            "column_name": "product_gross_revenue"
+          },
+          {
+            "column_name": "product_id"
+          },
+          {
+            "column_name": "product_net_revenue"
+          },
+          {
+            "column_name": "product_qty"
+          },
+          {
+            "column_name": "shipping_amount"
+          },
+          {
+            "column_name": "shipping_tax_amount"
+          },
+          {
+            "column_name": "tax_amount"
+          },
+          {
+            "column_name": "variation_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_stats",
+        "table_name": "wp_wc_order_stats",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "customer_id"
+          },
+          {
+            "column_name": "date_completed"
+          },
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "date_created_gmt"
+          },
+          {
+            "column_name": "date_paid"
+          },
+          {
+            "column_name": "net_total"
+          },
+          {
+            "column_name": "num_items_sold"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "parent_id"
+          },
+          {
+            "column_name": "returning_customer"
+          },
+          {
+            "column_name": "shipping_total"
+          },
+          {
+            "column_name": "status"
+          },
+          {
+            "column_name": "tax_total"
+          },
+          {
+            "column_name": "total_sales"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_order_tax_lookup",
+        "table_name": "wp_wc_order_tax_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "order_tax"
+          },
+          {
+            "column_name": "shipping_tax"
+          },
+          {
+            "column_name": "tax_rate_id"
+          },
+          {
+            "column_name": "total_tax"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_orders",
+        "table_name": "wp_wc_orders",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "billing_email"
+          },
+          {
+            "column_name": "currency"
+          },
+          {
+            "column_name": "customer_id"
+          },
+          {
+            "column_name": "customer_note"
+          },
+          {
+            "column_name": "date_created_gmt"
+          },
+          {
+            "column_name": "date_updated_gmt"
+          },
+          {
+            "column_name": "id"
+          },
+          {
+            "column_name": "ip_address"
+          },
+          {
+            "column_name": "parent_order_id"
+          },
+          {
+            "column_name": "payment_method"
+          },
+          {
+            "column_name": "payment_method_title"
+          },
+          {
+            "column_name": "status"
+          },
+          {
+            "column_name": "tax_amount"
+          },
+          {
+            "column_name": "total_amount"
+          },
+          {
+            "column_name": "transaction_id"
+          },
+          {
+            "column_name": "type"
+          },
+          {
+            "column_name": "user_agent"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_orders_meta",
+        "table_name": "wp_wc_orders_meta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "order_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_product_attributes_lookup",
+        "table_name": "wp_wc_product_attributes_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "in_stock"
+          },
+          {
+            "column_name": "is_variation_attribute"
+          },
+          {
+            "column_name": "product_id"
+          },
+          {
+            "column_name": "product_or_parent_id"
+          },
+          {
+            "column_name": "taxonomy"
+          },
+          {
+            "column_name": "term_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_product_download_directories",
+        "table_name": "wp_wc_product_download_directories",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "enabled"
+          },
+          {
+            "column_name": "url"
+          },
+          {
+            "column_name": "url_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_product_meta_lookup",
+        "table_name": "wp_wc_product_meta_lookup",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "average_rating"
+          },
+          {
+            "column_name": "downloadable"
+          },
+          {
+            "column_name": "max_price"
+          },
+          {
+            "column_name": "min_price"
+          },
+          {
+            "column_name": "onsale"
+          },
+          {
+            "column_name": "product_id"
+          },
+          {
+            "column_name": "rating_count"
+          },
+          {
+            "column_name": "sku"
+          },
+          {
+            "column_name": "stock_quantity"
+          },
+          {
+            "column_name": "stock_status"
+          },
+          {
+            "column_name": "tax_class"
+          },
+          {
+            "column_name": "tax_status"
+          },
+          {
+            "column_name": "total_sales"
+          },
+          {
+            "column_name": "virtual"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_rate_limits",
+        "table_name": "wp_wc_rate_limits",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "rate_limit_expiry"
+          },
+          {
+            "column_name": "rate_limit_id"
+          },
+          {
+            "column_name": "rate_limit_key"
+          },
+          {
+            "column_name": "rate_limit_remaining"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_reserved_stock",
+        "table_name": "wp_wc_reserved_stock",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "expires"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "product_id"
+          },
+          {
+            "column_name": "stock_quantity"
+          },
+          {
+            "column_name": "timestamp"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_tax_rate_classes",
+        "table_name": "wp_wc_tax_rate_classes",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "name"
+          },
+          {
+            "column_name": "slug"
+          },
+          {
+            "column_name": "tax_rate_class_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_wc_webhooks",
+        "table_name": "wp_wc_webhooks",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "api_version"
+          },
+          {
+            "column_name": "date_created"
+          },
+          {
+            "column_name": "date_created_gmt"
+          },
+          {
+            "column_name": "date_modified"
+          },
+          {
+            "column_name": "date_modified_gmt"
+          },
+          {
+            "column_name": "delivery_url"
+          },
+          {
+            "column_name": "failure_count"
+          },
+          {
+            "column_name": "name"
+          },
+          {
+            "column_name": "pending_delivery"
+          },
+          {
+            "column_name": "secret"
+          },
+          {
+            "column_name": "status"
+          },
+          {
+            "column_name": "topic"
+          },
+          {
+            "column_name": "user_id"
+          },
+          {
+            "column_name": "webhook_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_api_keys",
+        "table_name": "wp_woocommerce_api_keys",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "consumer_key"
+          },
+          {
+            "column_name": "consumer_secret"
+          },
+          {
+            "column_name": "description"
+          },
+          {
+            "column_name": "key_id"
+          },
+          {
+            "column_name": "last_access"
+          },
+          {
+            "column_name": "nonces"
+          },
+          {
+            "column_name": "permissions"
+          },
+          {
+            "column_name": "truncated_key"
+          },
+          {
+            "column_name": "user_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_attribute_taxonomies",
+        "table_name": "wp_woocommerce_attribute_taxonomies",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "attribute_id"
+          },
+          {
+            "column_name": "attribute_label"
+          },
+          {
+            "column_name": "attribute_name"
+          },
+          {
+            "column_name": "attribute_orderby"
+          },
+          {
+            "column_name": "attribute_public"
+          },
+          {
+            "column_name": "attribute_type"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+        "table_name": "wp_woocommerce_downloadable_product_permissions",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "access_expires"
+          },
+          {
+            "column_name": "access_granted"
+          },
+          {
+            "column_name": "download_count"
+          },
+          {
+            "column_name": "download_id"
+          },
+          {
+            "column_name": "downloads_remaining"
+          },
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "order_key"
+          },
+          {
+            "column_name": "permission_id"
+          },
+          {
+            "column_name": "product_id"
+          },
+          {
+            "column_name": "user_email"
+          },
+          {
+            "column_name": "user_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_log",
+        "table_name": "wp_woocommerce_log",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "context"
+          },
+          {
+            "column_name": "level"
+          },
+          {
+            "column_name": "log_id"
+          },
+          {
+            "column_name": "message"
+          },
+          {
+            "column_name": "source"
+          },
+          {
+            "column_name": "timestamp"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+        "table_name": "wp_woocommerce_order_itemmeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "meta_id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "order_item_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_items",
+        "table_name": "wp_woocommerce_order_items",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "order_id"
+          },
+          {
+            "column_name": "order_item_id"
+          },
+          {
+            "column_name": "order_item_name"
+          },
+          {
+            "column_name": "order_item_type"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_payment_tokenmeta",
+        "table_name": "wp_woocommerce_payment_tokenmeta",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "meta_id"
+          },
+          {
+            "column_name": "meta_key"
+          },
+          {
+            "column_name": "meta_value"
+          },
+          {
+            "column_name": "payment_token_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_payment_tokens",
+        "table_name": "wp_woocommerce_payment_tokens",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "gateway_id"
+          },
+          {
+            "column_name": "is_default"
+          },
+          {
+            "column_name": "token"
+          },
+          {
+            "column_name": "token_id"
+          },
+          {
+            "column_name": "type"
+          },
+          {
+            "column_name": "user_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_sessions",
+        "table_name": "wp_woocommerce_sessions",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "session_expiry"
+          },
+          {
+            "column_name": "session_id"
+          },
+          {
+            "column_name": "session_key"
+          },
+          {
+            "column_name": "session_value"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_shipping_zone_locations",
+        "table_name": "wp_woocommerce_shipping_zone_locations",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "location_code"
+          },
+          {
+            "column_name": "location_id"
+          },
+          {
+            "column_name": "location_type"
+          },
+          {
+            "column_name": "zone_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_shipping_zone_methods",
+        "table_name": "wp_woocommerce_shipping_zone_methods",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "instance_id"
+          },
+          {
+            "column_name": "is_enabled"
+          },
+          {
+            "column_name": "method_id"
+          },
+          {
+            "column_name": "method_order"
+          },
+          {
+            "column_name": "zone_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_shipping_zones",
+        "table_name": "wp_woocommerce_shipping_zones",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "zone_id"
+          },
+          {
+            "column_name": "zone_name"
+          },
+          {
+            "column_name": "zone_order"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_tax_rate_locations",
+        "table_name": "wp_woocommerce_tax_rate_locations",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "location_code"
+          },
+          {
+            "column_name": "location_id"
+          },
+          {
+            "column_name": "location_type"
+          },
+          {
+            "column_name": "tax_rate_id"
+          }
+        ]
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_tax_rates",
+        "table_name": "wp_woocommerce_tax_rates",
+        "schema_name": "wordpress",
+        "columns": [
+          {
+            "column_name": "tax_rate"
+          },
+          {
+            "column_name": "tax_rate_class"
+          },
+          {
+            "column_name": "tax_rate_compound"
+          },
+          {
+            "column_name": "tax_rate_country"
+          },
+          {
+            "column_name": "tax_rate_id"
+          },
+          {
+            "column_name": "tax_rate_name"
+          },
+          {
+            "column_name": "tax_rate_order"
+          },
+          {
+            "column_name": "tax_rate_priority"
+          },
+          {
+            "column_name": "tax_rate_shipping"
+          },
+          {
+            "column_name": "tax_rate_state"
+          }
+        ]
+      }
+    ],
+    "views": [],
+    "procedures": [],
+    "triggers": []
+  }
+}

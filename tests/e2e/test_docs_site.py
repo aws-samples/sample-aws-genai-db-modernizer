@@ -68,6 +68,15 @@ def docs_site() -> Iterator[str]:
         thread.join(timeout=5)
 
 
+def _sample_run_release() -> str:
+    """The release the recorded sample run's README names (``| Release | vX |``)."""
+    readme = REPO / "docs" / "examples" / "wordpress" / "sample-run" / "README.md"
+    for line in readme.read_text(encoding="utf-8").splitlines():
+        if line.startswith("| Release |"):
+            return line.split("|")[2].strip()
+    raise AssertionError(f"{readme} names no release")
+
+
 def _nav_links(page: Page, origin: str) -> list[str]:
     # `.href` (not `getAttribute("href")`): with `navigation.instant` enabled,
     # Material's client-side router rewrites every link's `href` *attribute* to
@@ -113,11 +122,12 @@ def test_sample_report_stays_in_theme(page: Page, docs_site: str) -> None:
     assert page.locator(".md-nav--primary").count() > 0
     content = page.content()
     assert "Sample report" in content
-    # Explains what the reader is looking at: one example, how it was
-    # produced, and how it differs from a real Claude Code run.
+    # Explains what the reader is looking at: one example, and how it was
+    # produced -- a real model run at a named release (#1260), with schemas.
     assert "wordpress" in content.lower()
-    assert "deterministic" in content.lower()
-    assert "Schema Design" in content
+    assert "real model run" in content
+    assert _sample_run_release() in content
+    assert "schema designs" in content
 
 
 def test_sample_report_deliverables_resolve(page: Page, docs_site: str) -> None:

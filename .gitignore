@@ -75,6 +75,9 @@ docs/examples/**/*.json
 # has no data and would (as it long did) silently skip. The broad rule above is
 # what kept it uncommitted in the first place.
 !docs/examples/**/load-test-results/**/schema_output.json
+# ...and so is the recorded WordPress model run the help site's sample page renders
+# (docs/examples/wordpress/sample-run/README.md, #1260).
+!docs/examples/wordpress/sample-run/**/*.json
 
 # Asciinema recordings (large binary files)
 *.cast
