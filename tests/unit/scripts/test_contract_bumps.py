@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from scripts import bump_contract
 from scripts import resolve_contract_versions as rcv
@@ -421,13 +422,126 @@ def test_the_default_base_is_the_public_repos_remote(monkeypatch) -> None:
     assert rcv.default_base() == "upstream/main"
 
 
+def _stub_against(monkeypatch, ref_schema, fresh_schema, ref_values=None, fresh_values=None):
+    """Point ``_against`` at synthetic snapshots: ``ref_*`` are what ``git show REF:``
+    returns, ``fresh_*`` what a build of the tree returns. Nothing reads the repo's
+    real contracts, so a pending bump elsewhere in the tree cannot change the result
+    (#1223)."""
+    import json
+
+    from scripts import contract_schema_snapshot as schema
+    from scripts import contract_value_snapshot as values
+
+    ref_values = ref_values or {}
+    files = {
+        "tests/contract/schema_snapshot.json": json.dumps(ref_schema),
+        "tests/contract/value_set_snapshot.json": json.dumps(ref_values),
+    }
+
+    class Proc:
+        def __init__(self, out):
+            self.returncode, self.stdout = (0, out) if out is not None else (128, "")
+
+    monkeypatch.setattr(rcv, "_git", lambda *args: Proc(files.get(args[1].split(":", 1)[1])))
+    monkeypatch.setattr(schema, "build_snapshot", lambda: fresh_schema)
+    monkeypatch.setattr(values, "build_snapshot", lambda: fresh_values or ref_values)
+
+
+class _Plain(BaseModel):
+    name: str
+
+
+class _WithExtra(BaseModel):
+    name: str
+    extra: str | None = None
+
+
+def _schema_entry(version: str, with_extra: bool = False) -> dict:
+    from scripts.contract_schema_snapshot import field_summary, schema_hash
+
+    fields = field_summary(_WithExtra if with_extra else _Plain)
+    return {"version": version, "schema_hash": schema_hash(fields), "fields": fields}
+
+
 @pytest.mark.passes_on_main
-def test_check_against_head_finds_nothing_on_a_clean_tree() -> None:
-    """``--against`` compares with a ref's committed snapshots; this tree's own
-    snapshots match it, so there is no problem. A branch that changes a contract
-    keeps main's snapshots and declares the bump (ADR-008 Decision 8), so the
-    comparison reads this tree's pending bumps, as ``--check`` does (#377)."""
-    assert rcv._against("HEAD", pending_kinds(load_pending())) == []
+def test_check_against_a_ref_finds_nothing_when_nothing_changed(monkeypatch) -> None:
+    snap = {"m.C": _schema_entry("1.0")}
+    _stub_against(monkeypatch, snap, snap)
+    assert rcv._against("REF", {}) == []
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_accepts_a_declared_pending_bump(monkeypatch) -> None:
+    """A changed contract whose bump is declared and not yet resolved (the version and
+    the snapshot still at the ref's) is clean."""
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0")}, {"m.C": _schema_entry("1.0", with_extra=True)}
+    )
+    assert rcv._against("REF", {"m.C": "minor"}) == []
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_fails_an_undeclared_change(monkeypatch) -> None:
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0")}, {"m.C": _schema_entry("1.0", with_extra=True)}
+    )
+    (problem,) = rcv._against("REF", {})
+    assert problem.startswith("m.C: schema changed since main") and "no pending bump" in problem
+    (problem,) = rcv._against("REF", {"m.Other": "minor"})  # a bump of another contract
+    assert problem.startswith("m.C:")
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_checks_published_values_too(monkeypatch) -> None:
+    snap = {"m.C": _schema_entry("1.0")}
+    before = {"m.R": {"module": "m", "version": "1.0", "values": ["a"]}}
+    after = {"m.R": {"module": "m", "version": "1.0", "values": ["a", "b"]}}
+    _stub_against(monkeypatch, snap, snap, before, after)
+    (problem,) = rcv._against("REF", {})
+    assert problem.startswith("m.R: published values changed since main")
+    assert rcv._against("REF", {"m.C": "minor"}) == []
+    (problem,) = rcv._against("REF", {"x.C": "minor"})  # a bump of another module
+    assert problem.startswith("m.R:")
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_accepts_a_version_that_moved_enough(monkeypatch) -> None:
+    """A resolved bump: the version moved by at least what the change needs."""
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0")}, {"m.C": _schema_entry("1.1", with_extra=True)}
+    )
+    assert rcv._against("REF", {}) == []
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0", with_extra=True)}, {"m.C": _schema_entry("2.0")}
+    )
+    assert rcv._against("REF", {}) == []
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_needs_a_major_for_a_removed_field(monkeypatch) -> None:
+    """Removing a field needs MAJOR: a MINOR move, or a declared MINOR, is not enough."""
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0", with_extra=True)}, {"m.C": _schema_entry("1.1")}
+    )
+    (problem,) = rcv._against("REF", {})
+    assert problem.startswith("m.C:") and "needs a MAJOR bump" in problem
+    _stub_against(
+        monkeypatch, {"m.C": _schema_entry("1.0", with_extra=True)}, {"m.C": _schema_entry("1.0")}
+    )
+    (problem,) = rcv._against("REF", {"m.C": "minor"})
+    assert "the pending bump declares only MINOR" in problem
+    assert rcv._against("REF", {"m.C": "major"}) == []
+
+
+@pytest.mark.passes_on_main
+def test_check_against_a_ref_without_snapshots_says_so(monkeypatch) -> None:
+    monkeypatch.setattr(
+        rcv, "_git", lambda *args: type("P", (), {"returncode": 128, "stdout": ""})()
+    )
+    assert rcv._against("REF", {}) == [
+        "REF has no tests/contract/schema_snapshot.json to compare with",
+        "REF has no tests/contract/value_set_snapshot.json to compare with",
+    ]
 
 
 def test_check_refuses_a_pending_file_for_an_unknown_contract(monkeypatch, capsys) -> None:
