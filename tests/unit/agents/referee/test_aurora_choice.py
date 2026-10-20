@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from src.agents.referee.aurora_choice import (
     FEATURE_SIGNALS,
     MARGIN_RATIO,
@@ -222,6 +224,57 @@ class TestExactTiePrefersPostgresqlByMaintainerRule:
         )
         assert winner == "aurora_postgresql"
         assert "tipped by: Babelfish compatibility" in trace["reason"]
+        assert "maintainer rule" not in trace["reason"]
+
+    def test_totals_equal_up_to_float_noise_are_an_exact_tie(self):
+        # #711: 0.1 + 0.2 == 0.30000000000000004, which float == calls unequal.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 0.1 + 0.2, "aurora_postgresql": 0.3}, features={}
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["margin"] == 0.0
+        assert trace["totals"] == {"aurora_mysql": 0.3, "aurora_postgresql": 0.3}
+        assert trace["reason"].startswith(MAINTAINER_TIE_REASON)
+        assert "higher total" not in trace["reason"]
+
+    def test_float_noise_never_hides_a_feature_decided_exact_tie(self):
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH,
+            {"aurora_mysql": 0.1 + 0.2, "aurora_postgresql": 0.3},
+            features={"babelfish_compatible": True},
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["reason"].startswith("exact tie on total adjusted score")
+
+    def test_float_noise_across_a_rounding_boundary_is_still_an_exact_tie(self):
+        # 0.001 + 0.234 == 0.23500000000000001: rounding would split it 0.24 vs 0.23.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 0.001 + 0.234, "aurora_postgresql": 0.235}, features={}
+        )
+        assert winner == "aurora_postgresql"
+        assert trace["margin"] == 0.0
+        assert trace["reason"].startswith(MAINTAINER_TIE_REASON)
+
+    @pytest.mark.passes_on_main  # a real lead below the traced precision stays a lead
+    def test_a_real_lead_smaller_than_the_traced_precision_is_not_a_tie(self):
+        # ADR-031 Decision 6: with no feature, the higher total wins, however small the
+        # lead; 0.304 vs 0.296 is a real 0.008 gap, not noise.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 0.304, "aurora_postgresql": 0.296}, features={}
+        )
+        assert winner == "aurora_mysql"
+        assert "maintainer rule" not in trace["reason"]
+        assert trace["margin"] == -0.01
+
+    @pytest.mark.passes_on_main  # a real difference must stay a close call
+    def test_a_difference_the_trace_shows_is_not_a_tie(self):
+        # Negative case: 0.31 vs 0.30 differ at the traced precision, so the close
+        # call still goes to the higher total and never cites the tie rule.
+        winner, trace = choose_heterogeneous_engine(
+            self.BOTH, {"aurora_mysql": 0.31, "aurora_postgresql": 0.3}, features={}
+        )
+        assert winner == "aurora_mysql"
+        assert trace["margin"] == -0.01
         assert "maintainer rule" not in trace["reason"]
 
 

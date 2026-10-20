@@ -294,6 +294,12 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/agents/referee/aurora_choice.py": (
+        frozenset({"_TIE_TOLERANCE", "_TOTAL_DIGITS"}),
+        "float arithmetic, not a routing rule: the noise tolerance under which two summed "
+        "totals are the exact tie ADR-031 Decision 6 names (#711), and the decimals the "
+        "choice trace prints",
+    ),
     "src/agents/referee/access_pattern.py": (
         frozenset({"_LOW_CARDINALITY_SHARE", "SMALL_TABLE_MAX_ROWS", "WORKLOAD_KEY_LOOKUPS"}),
         _DETECTION + ": when an index's leading column is too coarse to be a key (#728), "

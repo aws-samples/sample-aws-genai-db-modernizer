@@ -29,6 +29,7 @@ source whose own dialect leans MySQL-compatible. #445 tracks adding it.
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
@@ -57,6 +58,12 @@ AURORA_ENGINES = catalog.engine_ids(status=catalog.ACTIVE, role="relational")
 # tie-break instead of a bare name preference) -- it is not "the same as" that
 # fallback's default any more, now that the fallback has none of its own.
 MARGIN_RATIO = catalog.threshold("aurora_choice_margin_ratio")
+# The decimal places the choice trace records each total and the margin at.
+_TOTAL_DIGITS = 2
+# Two totals within this tolerance of each other are an exact tie (#711): float
+# noise from summing (0.1 + 0.2 vs 0.3) is not a lead, but any real difference,
+# however small, still is (ADR-031 Decision 6: with no feature, the higher total wins).
+_TIE_TOLERANCE = 1e-9
 
 # The relational engine an exact tie goes to: the engine file with ``exact_tie_preferred``
 # (ADR-031 Decision 6 Amendment 1; catalog data since #1081, so this module names no
@@ -263,7 +270,7 @@ def choose_heterogeneous_engine(
     if len(engines) == 1:
         engine = engines[0]
         return engine, {
-            "totals": {engine: round(float(totals.get(engine, 0.0)), 2)},
+            "totals": {engine: round(float(totals.get(engine, 0.0)), _TOTAL_DIGITS)},
             "margin": None,
             "deciding_features": [],
             "reason": "only one Aurora engine competed",
@@ -284,13 +291,17 @@ def choose_heterogeneous_engine(
         favoured, active = None, []
     (other,) = (e for e in engines if e != preferred)
     total = {e: float(totals.get(e, 0.0)) for e in engines}
-    margin = total[preferred] - total[other]
+    # An exact tie up to float noise (#711), never rounded: a real 0.008 lead is a lead.
+    exact_tie = math.isclose(
+        total[preferred], total[other], rel_tol=_TIE_TOLERANCE, abs_tol=_TIE_TOLERANCE
+    )
+    margin = 0.0 if exact_tie else total[preferred] - total[other]
     larger = max(total.values())
     is_close = larger <= 0 or abs(margin) <= MARGIN_RATIO * larger
     higher = preferred if margin > 0 else other
     side_by_side = " vs ".join(f"{total[e]:.1f}" for e in engines)
 
-    if margin == 0:
+    if exact_tie:
         # A feature is checked first (ADR-031 Decision 6 amendment ordering), and only an
         # exact tie that no feature breaks falls to the maintainer rule.
         deciding_features = active
@@ -326,8 +337,8 @@ def choose_heterogeneous_engine(
         reason = f"higher total adjusted score wins ({side_by_side})"
 
     return winner, {
-        "totals": {e: round(total[e], 2) for e in engines},
-        "margin": round(margin, 2),
+        "totals": {e: round(total[e], _TOTAL_DIGITS) for e in engines},
+        "margin": round(margin, _TOTAL_DIGITS),
         "deciding_features": deciding_features,
         "reason": reason,
     }
