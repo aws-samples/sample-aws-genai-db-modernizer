@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from src.shared.migration_risk_rules import backfill_report_risks
+from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
 
 from . import executive_report, renderers
 
@@ -281,7 +282,15 @@ def render_deliverables(
         # into it would risk failing validation for the sake of a filename.
         Deliverable(
             "assessment-data",
-            json.dumps({"_artifact": data, **report}, indent=2).encode("utf-8"),
+            # Audit fields (a model's rejected text, its warnings) are diagnostics:
+            # a report written before they left report.json still carries them (#1211).
+            json.dumps(
+                {
+                    "_artifact": data,
+                    **{k: v for k, v in report.items() if k not in STYLE_AUDIT_FIELDS},
+                },
+                indent=2,
+            ).encode("utf-8"),
             "JSON",
             f"Assessment Data (raw): {database_name}",
             data["filename"],

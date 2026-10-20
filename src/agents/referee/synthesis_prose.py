@@ -27,8 +27,8 @@ text is checked, whatever mode wrote the design and however old it is:
 
 The collected table and column names are passed in as ``identifiers``, so a
 customer table named ``journeys`` never counts as the word. Each rejection is
-returned as one line for ``report.json``'s ``prose_style_rejections`` (an audit
-field no deliverable renders). The schema design output on disk is never
+returned as one line; synthesis writes them to the job's
+``_logs/prose_style_rejections.json`` (diagnostics, never ``report.json``, #1211). The schema design output on disk is never
 changed: it keeps the model's text.
 """
 

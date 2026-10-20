@@ -566,7 +566,10 @@ STYLE_AUDIT_FIELDS = frozenset(
         "summary_validation_warnings",  # SynthesisOutputContract.summary_validation_warnings
         "executive_summary_llm",  # RealityCheckOutputContract.executive_summary_llm
         "executive_summary_validation_warnings",  # RealityCheckOutputContract (#236)
-        "prose_style_rejections",  # SynthesisOutputContract.prose_style_rejections (#1034)
+        # SynthesisOutputContract.prose_style_rejections (#1034). Since #1211 synthesis
+        # writes it to the job's _logs; the name stays for reports written before, and
+        # the assessment-data deliverable strips every field in this set.
+        "prose_style_rejections",
     }
 )
 

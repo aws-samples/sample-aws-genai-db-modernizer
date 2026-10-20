@@ -8,26 +8,24 @@ trace (``summary_validation_warnings``, ``executive_summary_validation_warnings`
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from src.agents.referee.reality_check_summary import (
-    build_final_summary,
-    finalize_executive_summary,
-)
+import pytest
+
+from src.agents.referee.reality_check_summary import build_final_summary, finalize_executive_summary
 from src.agents.referee.synthesis_handler import apply_synthesis_llm_output
 from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.report.formatting import fallback_withheld_reason
 from src.shared.prose_style import find_style_hits
+from src.tools.validation.customer_text_guard import scan_json
 from tests.unit.agents.referee.test_reality_check_summary import (
     ACCURATE_SUMMARIES,
     AFTER,
     BEFORE,
     CONSOLIDATIONS,
 )
-from tests.unit.agents.referee.test_synthesis_migration_waves import (
-    DB,
-    JOB,
-)
+from tests.unit.agents.referee.test_synthesis_migration_waves import DB, JOB
 from tests.unit.agents.referee.test_synthesis_migration_waves import store as migration_waves_store
 
 DET_SUMMARY = "deterministic fallback summary"
@@ -203,9 +201,13 @@ def test_synthesis_reads_every_schema_design_through_the_cleaner(store) -> None:
     assert trade_off["impact"] == (
         "Review this trade-off with the DynamoDB schema design before migration."
     )
-    assert report["prose_style_rejections"] == [
-        'dynamodb trade_offs[0].impact: plain-prose style list ("ensures")'
-    ]
+    # #1211: the rejection lines name raw engine ids, so they are diagnostics in
+    # the job's _logs and never in report.json.
+    assert not report["prose_style_rejections"]
+    assert store.read_json(f"{DB}/{JOB}/_logs/prose_style_rejections-v2.json")[
+        "prose_style_rejections"
+    ] == ['dynamodb trade_offs[0].impact: plain-prose style list ("ensures")']
+    assert [f for f in scan_json(report) if f.path.startswith("$.prose_style_rejections")] == []
     assert store.read_json(key)["trade_offs"][0]["impact"] == (
         "This ensures profile reads stay fast."
     )
@@ -431,3 +433,84 @@ class TestJudgeHedgesAtEverySeam:
         schema = {"trade_offs": [{"description": "x", "impact": BOUNDED_TEXT}]}
         cleaned, rejections = clean_schema_design_prose("dynamodb", schema)
         assert cleaned["trade_offs"][0]["impact"] == BOUNDED_TEXT and not rejections
+
+
+@pytest.mark.passes_on_main
+def test_a_clean_design_writes_no_rejection_log(store) -> None:
+    from src.agents.referee.synthesis_handler import (
+        _write_synthesis_report,
+        run_synthesis_deterministic,
+    )
+
+    store.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json",
+        {"trade_offs": [{"description": "One GetItem per profile.", "impact": "Reads stay fast."}]},
+    )
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+    _write_synthesis_report(store, result, assignment_version=2)
+    report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+    assert report["prose_style_rejections"] == []
+    assert not (store.base_dir / DB / JOB / "_logs" / "prose_style_rejections-v2.json").exists()
+
+
+_LEGACY_LINE = 'dynamodb trade_offs[20].impact: plain-prose style list ("ensures")'
+
+
+def _legacy_report() -> dict:
+    import json
+    from pathlib import Path
+
+    old: dict = json.loads(Path("tests/unit/report/fixtures/wordpress_report.json").read_text())
+    old["contract_version"] = "1.41"
+    old["prose_style_rejections"] = [_LEGACY_LINE]
+    return old
+
+
+@pytest.mark.passes_on_main
+def test_a_report_written_before_1_42_still_loads_its_rejections() -> None:
+    from src.contracts.synthesis_output import SynthesisOutputContract
+
+    loaded = SynthesisOutputContract.model_validate(_legacy_report())
+    assert loaded.prose_style_rejections == [_LEGACY_LINE]
+
+
+def test_re_rendering_a_1_41_report_never_copies_its_rejections(tmp_path) -> None:
+    """#1211 review: assessment-data.json is the raw report plus an envelope, so a
+    report written before 1.42 must not leak the audit fields through it."""
+    from src.report import deliverables as dl
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
+
+    old = _legacy_report()
+    old["summary_llm"] = "Model text as received."
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    key = "db/job-1/synthesis/v1/report.json"
+    store.write_json(key, old)
+    rendered = dl.render_deliverables(store, "job-1", "db", key)
+    files = {e.filename: d.content for e, d in rendered.folder_files()}
+    assert files
+    for name, content in files.items():
+        if name.endswith(".pdf"):
+            continue
+        assert _LEGACY_LINE.encode() not in content, name
+    for d in rendered.items:
+        assert _LEGACY_LINE.encode() not in d.content, d.name
+    data = next(d for d in rendered.items if d.name == "assessment-data")
+    raw = json.loads(data.content)
+    assert not STYLE_AUDIT_FIELDS & raw.keys()
+    assert "_artifact" in raw and raw["job_id"] == old["job_id"]
+    # the stored report itself is untouched
+    assert store.read_json(key)["prose_style_rejections"] == [_LEGACY_LINE]
+
+
+def test_each_synthesis_version_has_its_own_rejection_log(store) -> None:
+    from src.agents.referee.synthesis_handler import _write_prose_style_rejections
+
+    result = {"database_name": DB, "job_id": JOB}
+    _write_prose_style_rejections(store, result, ["a"], 1)
+    _write_prose_style_rejections(store, result, ["b"], 2)
+    _write_prose_style_rejections(store, result, [], 3)
+    log = f"{DB}/{JOB}/_logs/prose_style_rejections-v"
+    assert store.read_json(f"{log}1.json")["prose_style_rejections"] == ["a"]
+    assert store.read_json(f"{log}2.json")["prose_style_rejections"] == ["b"]
+    assert not (store.base_dir / f"{log}3.json").exists()

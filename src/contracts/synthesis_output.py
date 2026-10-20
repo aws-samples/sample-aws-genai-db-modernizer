@@ -437,6 +437,10 @@ Version History:
   (RetiredInUseEngine): an engine the source runs today that the plan retires is stated
   once, with its counted saving or why none, where its queries went and the
   consolidation reason
+- 1.46 (2026-10-20, #1211): `prose_style_rejections` is no longer written to
+  `report.json`: its lines quote model text and name raw engine ids, so synthesis writes
+  them to `_logs/prose_style_rejections-v<N>.json`. The field stays on the contract,
+  empty by default, so an older report that has lines still loads with them.
 """
 
 from datetime import datetime
@@ -1722,7 +1726,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.45",
+        default="1.46",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -1757,7 +1761,8 @@ class SynthesisOutputContract(BaseModel):
         default_factory=list,
         description=(
             "Model-written schema-design fields replaced by deterministic text because "
-            "they used an item of the plain-prose style list (#1034); audit only"
+            "they used an item of the plain-prose style list (#1034). Legacy: written to "
+            "report.json up to 1.41; since then it lives in the job's _logs (#1211)"
         ),
     )
     recommended_architecture: dict[str, Any] = Field(

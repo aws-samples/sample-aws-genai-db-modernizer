@@ -884,6 +884,30 @@ def _trigger_tables(collector: dict | None) -> dict[str, str]:
     return out
 
 
+def _write_prose_style_rejections(
+    store: ArtifactStore, result: dict, rejections: list[str] | None, assignment_version: int
+) -> None:
+    """Keep the style-list rejections (#1034) in the job's ``_logs``, never in report.json.
+
+    Each line quotes the model's text and names an engine id, so it is
+    diagnostics, not customer text (#1211). The file is versioned like the
+    report (``prose_style_rejections-v<N>.json``), so a later synthesis never
+    reads or overwrites an earlier version's lines. Nothing is written when
+    none was rejected.
+    """
+    if not rejections:
+        return
+    store.write_json(
+        f"{result['database_name']}/{result['job_id']}/_logs/"
+        f"prose_style_rejections-v{assignment_version}.json",
+        {
+            "job_id": result["job_id"],
+            "assignment_version": assignment_version,
+            "prose_style_rejections": list(rejections),
+        },
+    )
+
+
 def _write_synthesis_report(
     store: ArtifactStore,
     result: dict,
@@ -891,6 +915,9 @@ def _write_synthesis_report(
 ) -> None:
     """Validate against SynthesisOutputContract and write the report JSON."""
     data = result["data"]
+    _write_prose_style_rejections(
+        store, result, getattr(data, "prose_style_rejections", None), assignment_version
+    )
     output_data: dict = {
         "job_id": result["job_id"],
         "database_name": result["database_name"],
@@ -902,8 +929,6 @@ def _write_synthesis_report(
         "summary_source": result.get("summary_source", "deterministic"),
         "summary_llm": result.get("summary_llm"),
         "summary_validation_warnings": result.get("summary_validation_warnings", []),
-        # #1034: schema-design prose sent back to deterministic text (audit only).
-        "prose_style_rejections": list(getattr(data, "prose_style_rejections", None) or []),
         "recommended_architecture": result["architecture"],
         "table_mappings": result["table_mappings"],
         "query_groups": result["query_groups"],
