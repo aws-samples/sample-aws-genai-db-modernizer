@@ -4,7 +4,8 @@ import ipaddress
 import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from src.shared.database_name import validate_database_name as _validate_database_name
 from src.shared.job_id import validate_job_id as _validate_job_id
@@ -235,6 +236,26 @@ class CollectionOptions(BaseModel):
 DETECT_FROM_FILE = "auto"
 
 
+def _field_error(field: str, message: str) -> ValidationError:
+    """A validation error whose ``loc`` names ``field`` (#1303).
+
+    A model_validator's plain ValueError has an empty field path, so the 422 said ``["body"]``
+    and a client could not tell which input to fix. The text is the same as the ValueError's.
+    """
+    return ValidationError.from_exception_data(
+        "AssessmentRequest",
+        [
+            InitErrorDetails(
+                type=PydanticCustomError(
+                    "value_error", "Value error, {reason}", {"reason": message}
+                ),
+                loc=(field,),
+                input=None,
+            )
+        ],
+    )
+
+
 class AssessmentRequest(BaseModel):
     source_database_type: str
     database_name: str
@@ -304,7 +325,7 @@ class AssessmentRequest(BaseModel):
     @model_validator(mode="after")
     def validate_connection_required(self):
         if self.collection_mode in ("live", "ddl") and not self.connection:
-            raise ValueError("connection is required for live and ddl modes")
+            raise _field_error("connection", "connection is required for live and ddl modes")
         # Live collection reads the database credentials from one secret, so a live
         # request must name it; otherwise it only fails later, in the collector (#1024).
         if (
@@ -312,16 +333,18 @@ class AssessmentRequest(BaseModel):
             and self.connection
             and not self.connection.secret_reference()
         ):
-            raise ValueError(
+            raise _field_error(
+                "connection",
                 "live mode needs a secret reference: set connection.secret_arn or "
-                "connection.secret_name"
+                "connection.secret_name",
             )
         if self.collection_mode == "offline" and not self.offline_s3_key:
-            raise ValueError("offline_s3_key is required for offline mode")
+            raise _field_error("offline_s3_key", "offline_s3_key is required for offline mode")
         if self.source_database_type == DETECT_FROM_FILE and self.collection_mode != "offline":
-            raise ValueError(
+            raise _field_error(
+                "collection_mode",
                 f"source_database_type {DETECT_FROM_FILE!r} (detect from the file) needs "
-                "collection_mode offline: a live or DDL collection has no file to read it from"
+                "collection_mode offline: a live or DDL collection has no file to read it from",
             )
         return self
 
