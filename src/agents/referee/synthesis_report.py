@@ -25,7 +25,7 @@ from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrus
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, PATTERN_LABELS, overlay_summary
-from src.agents.referee.routed_confidence import routed_fits
+from src.agents.referee.routed_confidence import RoutedFit, routed_fits
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.substring_match import substring_match_risks
 from src.agents.referee.synthesis_grounding import (
@@ -374,6 +374,23 @@ def is_cache_layer(entry: dict) -> bool:
     return bool(entry.get("role") == "cache_layer")
 
 
+def routed_fits_of(data: SynthesisData) -> dict[str, RoutedFit]:
+    """Each engine's routed fit from the effective assignment (#152, #1325).
+
+    The one call every consumer shares: the ranking in ``report.json`` and the analysis
+    API, which serves the cache layer's figure from it, so they cannot differ.
+    """
+    return routed_fits(
+        data.assignment,
+        data.triage,
+        data.source_queries,
+        {e: a.analysis or {} for e, a in data.engines.items()},
+        source_tables=[str(t["table_id"]) for t in data.source_tables if t.get("table_id")],
+        source_engine=source_engine_of(data.collector),
+        schema_tables=data.source_tables,
+    )
+
+
 def build_ranking(data: SynthesisData) -> list[dict]:
     """Rank target engines by the share of the workload routed to them (#152).
 
@@ -392,15 +409,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
     ranking = []
     assignment_dist = _compute_assignment_distribution(data)
     overlay = build_cache_overlay(data) or {}
-    fits = routed_fits(
-        data.assignment,
-        data.triage,
-        data.source_queries,
-        {e: a.analysis or {} for e, a in data.engines.items()},
-        source_tables=[str(t["table_id"]) for t in data.source_tables if t.get("table_id")],
-        source_engine=source_engine_of(data.collector),
-        schema_tables=data.source_tables,
-    )
+    fits = routed_fits_of(data)
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}

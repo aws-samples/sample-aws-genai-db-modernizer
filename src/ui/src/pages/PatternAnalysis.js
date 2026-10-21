@@ -27,6 +27,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import EngineBadge from "../components/EngineBadge";
 import EngineFitFigure from "../components/EngineFitFigure";
+import { isCacheEngine } from "../utils/cacheLayer";
 
 
 
@@ -295,6 +296,9 @@ const PatternAnalysisPage = memo(() => {
 
     return {
       avgConfidence: facts.avg_confidence_score ?? 0,
+      // #1325: the cache layer's figure is the fit of the reads routed to it, served by the API
+      routedCacheFit: facts.routed_cache_fit ?? 0,
+      routedCacheFitApplicable: facts.routed_cache_fit_applicable === true,
       monthlyCost: facts.monthly_cost_usd ?? 0,
       tablesAnalyzed: facts.tables_analyzed ?? 0,
       queriesCovered: facts.queries_covered ?? 0,
@@ -638,7 +642,12 @@ const PatternAnalysisPage = memo(() => {
                   </Box>
 
                   <ColumnLayout columns={2} variant="text-grid">
-                    <EngineFitFigure target={target} value={engineMetrics.avgConfidence} t={t} />
+                    <EngineFitFigure
+                      target={target}
+                      value={isCacheEngine(target) ? engineMetrics.routedCacheFit : engineMetrics.avgConfidence}
+                      applicable={engineMetrics.routedCacheFitApplicable}
+                      t={t}
+                    />
 
                     <Box>
                       <Box variant="awsui-key-label">{t('engine-analysis.summary.monthly-cost')}</Box>

@@ -44,7 +44,7 @@ afterEach(() => {
   container.remove();
 });
 
-const renderFigure = (target) => act(() => root.render(<EngineFitFigure target={target} value={41} t={t} />));
+const renderFigure = (target, props = {}) => act(() => root.render(<EngineFitFigure target={target} value={41} t={t} {...props} />));
 
 test('the cache layer reads as a cache fit with its definition', () => {
   renderFigure('elasticache');
@@ -59,4 +59,17 @@ test('an owning engine keeps the workload fit label and no cache definition', ()
   expect(container.textContent).toContain('Avg workload fit');
   expect(container.textContent).not.toContain('cache fit');
   expect(container.textContent).not.toContain(CACHE_FIT_DEFINITION);
+});
+
+test('a cache layer with no routed reads reads as not applicable, not as a percentage (#1325)', () => {
+  renderFigure('elasticache', { applicable: false });
+  expect(container.textContent).toContain('Avg cache fit');
+  expect(container.textContent).toContain('Not applicable');
+  expect(container.textContent).not.toContain('41%');
+  expect(container.textContent).toContain(CACHE_FIT_DEFINITION);
+});
+
+test('an owning engine ignores the applicable flag (#1325)', () => {
+  renderFigure('dynamodb', { applicable: false });
+  expect(container.textContent).toContain('41%');
 });

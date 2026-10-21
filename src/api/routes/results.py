@@ -14,11 +14,12 @@ from src.report.facts import report_facts
 from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
 from src.report.risks import NO_OPEN_RISKS_CAVEAT
+from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
-from src.shared.report_facts import analysis_overview_facts
+from src.shared.report_facts import analysis_overview_facts, routed_cache_fit_facts
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
@@ -239,6 +240,12 @@ async def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_para
     except Exception:
         withheld = "the triage output could not be read"
     facts = analysis_overview_facts(data, signals, agent_type)
+    if agent_type in CACHE_ENGINES:
+        # #1325: the cache layer's "Avg cache fit" is the fit of the reads routed to it, the
+        # figure the reports state; the analysis average above stays for audit.
+        facts.update(
+            routed_cache_fit_facts(*s3_service.read_routed_cache_fit(db_name, job_id, agent_type))
+        )
     if withheld:
         facts["signal_query_total"] = 0
         facts["signal_count"] = 0

@@ -746,6 +746,7 @@
   "cache-layer.engine-badge-suffix": " (cache layer)",
   "engine-analysis.summary.avg-confidence": "Avg workload fit",
   "engine-analysis.summary.avg-cache-fit": "Avg {{fit}}",
+  "engine-analysis.summary.cache-fit-not-applicable": "Not applicable",
   "engine-analysis.summary.monthly-cost": "Monthly cost",
   "engine-analysis.summary.tables-analyzed": "Tables analyzed",
   "engine-analysis.summary.queries-covered": "Queries covered",

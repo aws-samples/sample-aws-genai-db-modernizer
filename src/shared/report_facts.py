@@ -2292,6 +2292,23 @@ def mean_table_fit(analysis: Mapping[str, Any]) -> float:
     return total / len(recs) if recs else 0.0
 
 
+def routed_cache_fit_facts(confidence: int | None, queries: int) -> dict[str, Any]:
+    """The cache layer's routed fit, as the pattern analysis page shows it (#1325, ADR-032).
+
+    ``confidence`` and ``queries`` are the cache entry's ``routed_confidence`` and
+    ``routed_queries``: the mean fit of the reads the latest assignment routes to the cache
+    layer, the figure the reports state. With no reads routed to it the figure is not
+    applicable (``routed_cache_fit_applicable`` is false and the fit is ``None``); the page
+    never falls back to the analysis average, which is a different quantity.
+    """
+    applicable = confidence is not None and queries > 0
+    return {
+        "routed_cache_fit": confidence if applicable else None,
+        "routed_cache_queries": queries,
+        "routed_cache_fit_applicable": applicable,
+    }
+
+
 def analysis_overview_facts(
     analysis: Mapping[str, Any],
     signals: Iterable[Any] | None = None,

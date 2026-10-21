@@ -163,3 +163,46 @@ test('an analysis without facts shows zeros, not a figure of its own', async () 
   expect(container.textContent).not.toContain('50%');
   expect(container.querySelector('.pie-total').textContent).toBe('0');
 });
+
+// #1325: the cache layer's "Avg cache fit" is the fit of the reads routed to it, served as a fact.
+// The raw table scores below would average 50 and the analysis average fact is 81: the page must
+// print the routed figure, or "not applicable" when no read is routed to the cache layer.
+const CACHE_FACTS = {
+  ...ANALYSIS.facts,
+  routed_cache_fit: 96,
+  routed_cache_queries: 4,
+  routed_cache_fit_applicable: true,
+};
+
+test('the cache layer prints the routed cache fit, not the analysis average', async () => {
+  window.history.pushState({}, '', '/analysis/patterns/job-1?target=elasticache');
+  await renderPage({ ...ANALYSIS, facts: CACHE_FACTS });
+  const text = container.textContent;
+
+  expect(text).toContain('engine-analysis.summary.avg-cache-fit');
+  expect(text).toContain('96%');
+  expect(text).not.toContain('81%');
+  expect(text).not.toContain('50%');
+});
+
+test('a cache layer with no routed reads shows the figure as not applicable', async () => {
+  window.history.pushState({}, '', '/analysis/patterns/job-1?target=elasticache');
+  await renderPage({
+    ...ANALYSIS,
+    facts: { ...ANALYSIS.facts, routed_cache_fit: null, routed_cache_queries: 0, routed_cache_fit_applicable: false },
+  });
+  const text = container.textContent;
+
+  expect(text).toContain('engine-analysis.summary.cache-fit-not-applicable');
+  expect(text).not.toContain('81%');
+  expect(text).not.toContain('50%');
+  expect(text).not.toContain('0%');
+});
+
+test('an old response without the routed fact never shows the analysis average for the cache layer', async () => {
+  window.history.pushState({}, '', '/analysis/patterns/job-1?target=elasticache');
+  await renderPage(ANALYSIS);
+
+  expect(container.textContent).not.toContain('81%');
+  expect(container.textContent).toContain('engine-analysis.summary.cache-fit-not-applicable');
+});

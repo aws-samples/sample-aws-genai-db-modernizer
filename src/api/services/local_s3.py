@@ -3,9 +3,12 @@ S3 artifacts service retired, #175)."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from src.shared.contract_versioning import ContractVersionError
+
+logger = logging.getLogger(__name__)
 
 
 class _MockS3Client:
@@ -175,6 +178,33 @@ class LocalS3Service:
 
     def read_analysis(self, database_name: str, job_id: str, agent_type: str) -> dict | None:
         return self.read_artifact(database_name, job_id, f"analysis-{agent_type}", "analysis.json")
+
+    def read_routed_cache_fit(
+        self, database_name: str, job_id: str, engine: str
+    ) -> tuple[int | None, int]:
+        """``(fit, reads)`` the latest assignment routes to the cache layer ``engine`` (#1325).
+
+        Computed at read time with the call the reports' ranking uses (``routed_fits_of``), so
+        a saved job needs no backfill. ``(None, 0)`` when nothing is routed to it, there is no
+        assignment, or the job's artifacts cannot be read: the page then shows the figure as
+        not applicable instead of failing the analysis it sits on.
+        """
+        from src.agents.referee.synthesis_data import load_synthesis_data
+        from src.agents.referee.synthesis_report import routed_fits_of
+        from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+        try:
+            version = resolve_effective_assignment_version(self._store, database_name, job_id)
+            if version <= 0:
+                return None, 0
+            data = load_synthesis_data(self._store, job_id, database_name, version)
+            fit = routed_fits_of(data).get(engine)
+        except Exception:
+            logger.warning(
+                "Routed cache fit unavailable for %s/%s", database_name, job_id, exc_info=True
+            )
+            return None, 0
+        return (fit.confidence, fit.queries) if fit else (None, 0)
 
     def read_synthesis(self, database_name: str, job_id: str) -> dict | None:
         from src.storage.assignment_versioning import synthesis_report_candidates
