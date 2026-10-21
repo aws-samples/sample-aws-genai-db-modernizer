@@ -27,6 +27,7 @@ from src.shared.report_facts import (
     retired_in_use_engine_facts,
     shares_replica_risk,
     unservable_query_facts,
+    wave_one_moved_by_later_waves,
 )
 
 from .waves import resolve_migration_waves
@@ -41,7 +42,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     before 1.41 no ``query_trace.trace_groups`` (#1108; a 1.40 block re-dumped through
     the contract has them empty while queries have a full trace), one written before
     1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), one
-    written before #1120 no cross-engine wave 1 figures or note, and one written before
+    written before #1120 no cross-engine wave 1 figures or note, one written before #1284
+    no ``waves[].moved_by_later_waves``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -137,6 +139,12 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #1120: a cross-engine wave 1 counted in full
             # and its note, from the same function synthesis calls.
             missing.update(_cross_engine_backfill(report, facts))
+        rows = missing.get("waves", waves)
+        if isinstance(rows, list) and any(
+            isinstance(w, dict) and "moved_by_later_waves" not in w for w in rows
+        ):
+            # A block written before #1284: wave 1's later-wave moves, from the same function.
+            missing["waves"] = _moved_by_later_waves_backfill(report, rows)
         return {**facts, **missing} if missing else facts
     return compute_report_facts(report, waves=resolve_migration_waves(report))
 
@@ -165,6 +173,22 @@ def _cross_engine_backfill(report: dict[str, Any], facts: dict[str, Any]) -> dic
         out["engines"] = engines
         out["tables_migrate"] = moved
     return out
+
+
+def _moved_by_later_waves_backfill(report: dict[str, Any], rows: list[Any]) -> list[Any]:
+    """The #1284 ``moved_by_later_waves`` on each stored wave row that lacks it; a row
+    that is not a record is kept as stored (the contract refuses it, not this reader)."""
+    waves = resolve_migration_waves(report)
+    moved = wave_one_moved_by_later_waves(waves)
+    first = next((int(w.get("wave") or 0) for w in waves if w.get("homogeneity") is not None), None)
+    return [
+        (
+            {**r, "moved_by_later_waves": moved if int(r.get("wave") or 0) == first else None}
+            if isinstance(r, dict) and "moved_by_later_waves" not in r
+            else r
+        )
+        for r in rows
+    ]
 
 
 def wave_facts_by_number(report: dict[str, Any]) -> dict[int, dict[str, Any]]:

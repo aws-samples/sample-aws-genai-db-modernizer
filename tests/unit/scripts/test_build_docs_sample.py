@@ -292,7 +292,14 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     older = copy.deepcopy(report)
     _BACKFILLED[figure](older["facts"])
     assert older["facts"] != report["facts"]  # the figure really was removed
-    assert report_facts(older) == report["facts"]
+    # The recorded run's own block, read through the same reader: a figure added after
+    # the run was recorded (#1284's waves[].moved_by_later_waves) is filled in for both,
+    # every figure the run stored is read as stored.
+    assert report_facts(older) == report_facts(report)
+    read = copy.deepcopy(report_facts(report))
+    for row in read["waves"]:
+        row.pop("moved_by_later_waves")
+    assert read == report["facts"]
 
 
 def test_committed_run_is_only_what_the_renderers_read() -> None:

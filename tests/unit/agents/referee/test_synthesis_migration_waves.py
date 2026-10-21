@@ -14,6 +14,7 @@ import pytest
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
 from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.contract_versioning import current_version
+from src.shared.report_facts import compute_report_facts
 from src.storage.local_store import LocalArtifactStore
 
 DB = "shop"
@@ -400,7 +401,13 @@ class TestMigrationWavesKeepRealUnmappedTablesButDropNoise:
         assert "db.made_up_seq" not in aurora["tables"]
         # The rationale reconciles wave 1's full count against the smaller mapped
         # total, instead of leaving the two numbers to disagree with no explanation.
-        assert "2 of these tables and views are mapped to a target engine in a later wave" in (
+        assert "2 of these tables and views are mapped to a target engine in the migration map" in (
             aurora["rationale"]
         )
-        assert "the other 1 stay" in aurora["rationale"]
+        # #1284: "orders" is mapped to Aurora MySQL itself, so only "users" moves in
+        # a later wave (DynamoDB); the figure is the facts layer's, stated once.
+        assert compute_report_facts(result)["waves"][0]["moved_by_later_waves"] == 1
+        assert (
+            "later waves move 1 of the 3 off Aurora MySQL, and the other 2 stay on Aurora MySQL."
+        ) in aurora["rationale"]
+        assert "in a later wave" not in aurora["rationale"]

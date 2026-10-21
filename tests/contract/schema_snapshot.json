@@ -21028,6 +21028,23 @@
                             "type": "boolean"
                           }
                         },
+                        "moved_by_later_waves": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "moving_by_engine": {
                           "required": false,
                           "schema": {
@@ -24715,8 +24732,8 @@
         }
       }
     },
-    "schema_hash": "67725a659139c79c8d1fb19702cfccd0de0465b9438328dd0b4668060c34fa28",
-    "version": "1.50"
+    "schema_hash": "ed9c073c49de5313283e374bfcd2b879b3ce6376b6f5824de7c667c5057aeb3d",
+    "version": "1.51"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

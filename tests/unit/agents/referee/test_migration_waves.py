@@ -323,10 +323,55 @@ class TestAuroraWave:
         )
         aurora = waves[0]
         assert "subsets of these 6 tables and views" in aurora["rationale"]
-        assert "4 of these tables and views are mapped to a target engine in a later wave" in (
-            aurora["rationale"]
+        # #1284: the 4 are the migration map's rows, not what a later wave moves:
+        # wp_options is mapped and stays on Aurora MySQL, so later waves move 3.
+        assert (
+            "4 of these tables and views are mapped to a target engine in the migration map; "
+            "later waves move 3 of the 6 off Aurora MySQL, and the other 3 stay on Aurora MySQL."
+        ) in aurora["rationale"]
+
+    def test_a_mapped_table_that_stays_on_aurora_is_never_said_to_move(self):
+        # #1284: "N mapped to a target engine in a later wave" counted every
+        # migration-map row, including the ones mapped to Aurora itself.
+        waves = _build(mapped_tables=KNOWN_TABLES)
+        rationale = waves[0]["rationale"]
+        assert "in a later wave" not in rationale
+        assert "later waves move 3 of the 4 off Aurora MySQL" in rationale
+        # One table left: singular agreement.
+        assert "the other 1 stays on Aurora MySQL." in rationale
+
+    def test_the_moved_count_does_not_depend_on_what_is_mapped(self):
+        # Only the migration map's count follows mapped_tables; what later waves
+        # move is read off the waves, mapped or not.
+        few = _build(mapped_tables={"wp_options"})[0]["rationale"]
+        assert "1 of these tables and views is mapped" in few
+        assert "later waves move 3 of the 4 off Aurora MySQL" in few
+
+    def test_no_later_wave_moving_anything_is_said_plainly(self):
+        # Everything stays on Aurora: no later migrating wave, nothing moves.
+        waves = _build(
+            ranking=[{"target": "aurora_mysql", "assigned_queries": 5, "workload_percent": 100.0}],
+            table_assignments=[
+                t | {"primary_engine": "aurora_mysql", "engines": ["aurora_mysql"]}
+                for t in TABLE_ASSIGNMENTS
+            ],
+            query_assignments=[q | {"assigned_engine": "aurora_mysql"} for q in QUERY_ASSIGNMENTS],
+            cache_overlay=None,
+            mapped_tables=KNOWN_TABLES,
         )
-        assert "the other 2 stay on Aurora MySQL unchanged" in aurora["rationale"]
+        rationale = waves[0]["rationale"]
+        assert (
+            "4 of these tables and views are mapped to a target engine in the migration map"
+            in rationale
+        )
+        assert "no later wave moves any of the 4 off Aurora MySQL" in rationale
+
+    def test_cross_engine_wave_1_states_the_same_split(self):
+        waves = _build(source_engine="sqlserver", mapped_tables=KNOWN_TABLES)
+        rationale = waves[0]["rationale"]
+        assert waves[0]["homogeneity"] == "cross_engine"
+        assert "in a later wave" not in rationale
+        assert "later waves move 3 of the 4 off Aurora MySQL, and the other 1 stays" in rationale
 
     def test_no_mapped_tables_adds_no_reconciling_sentence(self):
         # #380: no schema design ran for any engine (e.g. --llm-mode none) ->

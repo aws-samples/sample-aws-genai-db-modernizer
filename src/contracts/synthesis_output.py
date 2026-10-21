@@ -466,6 +466,9 @@ Version History:
 - 1.50 (2026-10-20, #1232): facts.table_sources.replicated_tables[].shares_replica_risk:
   whether a row's stored risk is the standard sentence the deliverables state once
   (#1232); filled in for older reports
+- 1.51 (2026-10-21, #1284): facts.waves[].moved_by_later_waves: how many of wave 1's
+  tables and views a later wave moves off its Aurora engine, the figure wave 1's
+  rationale now states instead of calling every mapped table a later-wave move.
 """
 
 from datetime import datetime
@@ -1066,6 +1069,17 @@ class WaveFacts(BaseModel):
             "Aurora engine with its current data model), with the relational gap counts. "
             "Every deliverable prints it under wave 1, followed by facts.relational_gaps "
             "when lists_relational_gaps is set"
+        ),
+    )
+    moved_by_later_waves: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Wave 1 only, when it names an Aurora engine (#1284): how many of its tables "
+            "and views a later migrating wave moves off that engine (one of the wave's "
+            "engines owns it). Wave 1's rationale states it next to the migration map's "
+            "count. None for every other wave, a heterogeneous wave 1 and a block stored "
+            "before the field (the facts reader fills it in)"
         ),
     )
     lists_relational_gaps: bool = Field(
@@ -1829,7 +1843,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.50",
+        default="1.51",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

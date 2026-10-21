@@ -50,7 +50,6 @@ def _aurora_wave(
     known: set[str] | None,
     table_assignments: list[dict[str, Any]],
     source_version: Any,
-    mapped_tables: set[str] | None = None,
     cross_engine: bool = False,
     aurora_engine_choice: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
@@ -95,22 +94,8 @@ def _aurora_wave(
     this wave finishes, before any later wave has moved its own share away.
     Set by the caller (``build_migration_waves``) once every wave exists.
 
-    ``mapped_tables`` (#380 review) is the caller's set of tables some
-    engine's schema design actually mapped (``table_mappings``' own
-    ``source_table`` set, already resolved against the collector's real
-    schema). It never narrows ``tables`` -- wave 1 still carries every
-    collected base table and view, because that is what "the whole source
-    database moves 1:1" actually means, and every other deliverable
-    (``roadmap.py``, ``executive_report.py``) keeps this wave's ``table_count``
-    as the whole collected schema. It is used only to add one explanatory
-    sentence to the rationale, reconciling this wave's full count against the
-    migration map's smaller "N tables mapped to a target engine" total (the
-    #380 complaint was the two counts disagreeing with no explanation, not
-    that wave 1 counted too much): "``M`` of these are mapped to a target
-    engine in a later wave; the other ``K`` stay on ``<engine>`` unchanged."
-    Omitted (``None``) when the caller has nothing mapped at all (no schema
-    design ran for any engine, e.g. ``--llm-mode none``) -- there is nothing
-    to reconcile against yet.
+    The sentence reconciling this wave's count with the migration map's is added by
+    the caller once every wave exists (:func:`wave_one_map_sentence`, #380, #1284).
     """
     source_engine = (source_engine or "").strip().lower()
     if not source_engine or source_engine in _ALREADY_AURORA:
@@ -154,18 +139,6 @@ def _aurora_wave(
             f"later waves have moved their share; later waves move subsets of these "
             f"{len(tables)} tables and views out of {target_name}."
         )
-        if mapped_tables is not None:
-            # #380 review: reconciles this wave's full table-and-view count
-            # against the migration map's smaller "mapped" total, so the two
-            # numbers disagreeing (322 vs 280 in the field) reads as explained,
-            # not contradictory.
-            mapped_count = len(set(tables) & mapped_tables)
-            unmapped_count = len(tables) - mapped_count
-            rationale += (
-                f" {mapped_count} of these tables and views are mapped to a target engine "
-                f"in a later wave; the other {unmapped_count} stay on {target_name} "
-                "unchanged."
-            )
         gate = (
             "Schema and data parity validated against the source database before cutover; "
             "decommission the legacy source once replication lag is zero."
@@ -214,14 +187,6 @@ def _aurora_wave(
             f"have moved their share; later waves move subsets of these {len(tables)} "
             f"tables and views out of {target_name}."
         )
-        if mapped_tables is not None:
-            mapped_count = len(set(tables) & mapped_tables)
-            unmapped_count = len(tables) - mapped_count
-            rationale += (
-                f" {mapped_count} of these tables and views are mapped to a target engine "
-                f"in a later wave; the other {unmapped_count} stay on {target_name} "
-                "unchanged."
-            )
         gate = (
             f"Cross-engine move: validate the schema and query translation to {target_name} "
             "(SQL dialect and data types converted, with the current data model) before "
@@ -586,3 +551,41 @@ def _merge_kv_and_document_waves(dynamo: dict[str, Any], doc: dict[str, Any]) ->
         "_doc_owned": doc_owned,
         "_doc_synced": doc_owners,
     }
+
+
+def wave_one_map_sentence(
+    wave: dict[str, Any], mapped_tables: set[str], moved_by_later_waves: int
+) -> str:
+    """The sentence wave 1's rationale ends with when a schema design mapped tables
+    (#380 review, #1284), for a wave 1 that names its Aurora engine.
+
+    ``mapped_tables`` is the caller's set of tables some engine's schema design
+    mapped (``table_mappings``' ``source_table`` set, resolved against the collected
+    schema). It never narrows the wave's ``tables``: wave 1 carries every collected
+    base table and view, because that is what "the whole source database moves 1:1"
+    means, and every other deliverable keeps its ``table_count`` as the whole
+    collected schema. The sentence reconciles that count with the migration map's
+    smaller "N tables mapped to a target engine" (the #380 complaint was the two
+    counts disagreeing with no explanation).
+
+    #1284: the map's rows include tables mapped to the Aurora engine itself (the
+    retained core) and to the cache layer, which stay on Aurora; so the sentence
+    says what the mapped count is, and states the tables a later wave moves off
+    Aurora apart: ``moved_by_later_waves``, the facts layer's
+    ``wave_one_moved_by_later_waves`` (``facts.waves[].moved_by_later_waves``).
+    """
+    tables = [str(t) for t in wave.get("tables") or []]
+    target_name = display_engine(str((wave.get("engines") or [""])[0]))
+    total = len(tables)
+    mapped_count = len(set(tables) & mapped_tables)
+    head = (
+        f" {mapped_count} of these tables and views {'is' if mapped_count == 1 else 'are'} "
+        "mapped to a target engine in the migration map; "
+    )
+    if not moved_by_later_waves:
+        return head + f"no later wave moves any of the {total} off {target_name}."
+    rest = total - moved_by_later_waves
+    return head + (
+        f"later waves move {moved_by_later_waves} of the {total} off {target_name}, and the "
+        f"other {rest} {'stays' if rest == 1 else 'stay'} on {target_name}."
+    )

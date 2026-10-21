@@ -48,6 +48,10 @@ E2E_LLM: tuple[str, ...] = (
     "src/agents/referee/reality_check_request.py",
     "src/agents/referee/synthesis_handler.py",
     "src/agents/referee/synthesis_report.py",
+    # The migration waves (rationale text included) go into the executive-summary
+    # model's input (prepare_synthesis_llm_input); their map sentence only appears
+    # when schema design ran, which a deterministic run never does (#1284).
+    "src/agents/referee/migration_wave*.py",
     "src/agents/referee/consolidation_validator.py",  # corrections and sanity sweep
     "src/tools/schema/aurora_common/design_view.py",
     "src/tools/schema/aurora_common/delta_merge.py",

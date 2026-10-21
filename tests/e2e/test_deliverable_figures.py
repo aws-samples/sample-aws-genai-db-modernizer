@@ -47,7 +47,8 @@ from typing import Any
 import pytest
 
 from src.agents.referee.table_assignments import retained_engine_for
-from src.shared.report_facts import compute_report_facts
+from src.shared.engine_names import display_engine
+from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from tests.e2e.deliverable_figures import (
     SEVERITIES,
@@ -386,3 +387,28 @@ def test_a_heterogeneous_wave_1_says_it_is_not_yet_optimized(run: PipelineResult
     for gap in gaps:
         assert norm(gap["feature"]) in md_wave1, gap["rule_id"]
         assert norm(gap["feature"]) in pdf_wave1, gap["rule_id"]
+
+
+def test_designed_wave_1_states_what_later_waves_move(designed_job: PipelineResult) -> None:
+    """#1284: wave 1's map sentence counts the migration map's rows as mapped, and
+    states apart the facts layer's figure for what later waves move off Aurora, so a
+    table mapped to Aurora itself is never said to move; the engineering report and
+    the PDF show the same sentence."""
+    report = _report_json(designed_job)
+    wave1 = _waves(report)[0]
+    moved = report["facts"]["waves"][0]["moved_by_later_waves"]
+    total = int(wave1["table_count"])
+    assert moved == wave_one_moved_by_later_waves(_waves(report))
+    target = display_engine(wave1["engines"][0])
+    sentence = f"later waves move {moved} of the {total} off {target}"
+    assert sentence in wave1["rationale"]
+    assert "in a later wave" not in wave1["rationale"]
+    texts = {
+        "engineering report": md_plain(
+            designed_job.deliverable("engineering-report.md").read_text()
+        ),
+        "PDF": " ".join(pdf_page_texts(str(designed_job.deliverable("executive-report.pdf")))),
+    }
+    for deliverable, text in texts.items():
+        assert sentence in norm(text), f"{deliverable} does not show {sentence!r}"
+        assert "mapped to a target engine in a later wave" not in norm(text), deliverable

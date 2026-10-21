@@ -252,6 +252,7 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
         "critical_high_risks": 0,
         "heterogeneous_note": None,
         "lists_relational_gaps": False,
+        "moved_by_later_waves": None,
     }
     owners = _owner_entries(wave)
     outside: dict[str, dict[str, Any]] = {}
@@ -668,6 +669,26 @@ def _migrating_wave_tables(
         moving |= tables - outside
         synced |= outside
     return moving, synced - moving, waved
+
+
+def wave_one_moved_by_later_waves(waves: list[dict[str, Any]]) -> int | None:
+    """How many of wave 1's tables and views a later wave moves off its Aurora engine
+    (#1284), or None when wave 1 names no Aurora engine (a heterogeneous source with
+    none picked, a source already on Aurora, no waves).
+
+    "Moves" is the migrating waves' own definition, the one behind "N tables migrate"
+    and the Migration map's "N migrate": a table one of the wave's engines owns; a
+    table a migrating wave only keeps in sync, the cache and the read-model waves move
+    nothing. Wave 1's rationale states this figure next to the migration map's count,
+    so a table mapped to the Aurora engine itself is never said to move.
+    """
+    first = next((w for w in waves if w.get("homogeneity") is not None), None)
+    if first is None or first.get("homogeneity") not in ("homogeneous", "cross_engine"):
+        return None
+    if not first.get("engines"):
+        return None
+    moving, _, _ = _migrating_wave_tables(waves)
+    return len({str(t) for t in first.get("tables") or [] if t} & moving)
 
 
 def map_split_facts(
@@ -2161,6 +2182,11 @@ def compute_report_facts(
                 row["views"] = max(row["served_tables"] - tables_analyzed, 0)
                 row["tables_only"] = row["served_tables"] - row["views"]
     view_count = next((row["views"] for row in wave_rows if row["views"] is not None), None)
+    # #1284: what later waves move off wave 1's Aurora engine, on wave 1's row.
+    moved_later = wave_one_moved_by_later_waves(waves)
+    for row, w in zip(wave_rows, waves, strict=True):
+        if w.get("homogeneity") is not None:
+            row["moved_by_later_waves"] = moved_later
     migration_total = sum(e["tables_migrate"] for e in engines if e["role"] == MIGRATION_TARGET)
     wave_total = sum(row["moving_tables"] or 0 for row in wave_rows if row["migrating"])
     tables_migrate = migration_total or wave_total

@@ -136,6 +136,7 @@ from src.agents.referee.migration_wave_builders import (
     _merge_kv_and_document_waves,
     _other_target_wave,
     _search_wave,
+    wave_one_map_sentence,
 )
 from src.agents.referee.migration_wave_tables import (
     _cache_overlap_note,
@@ -160,6 +161,7 @@ from src.shared.migration_wave_engines import (
     RELATIONAL_ENGINES,
     SEARCH_ENGINES,
 )
+from src.shared.report_facts import wave_one_moved_by_later_waves
 
 # ``_durable_owner`` is imported from here by callers; it lives in migration_wave_tables.
 __all__ = ["_durable_owner", "build_migration_waves"]
@@ -226,8 +228,9 @@ def build_migration_waves(
     ``mapped_tables`` (#380) is the caller's set of tables some engine's
     schema design actually mapped (``table_mappings``' own ``source_table``
     set, after it has resolved out model-written noise) -- see
-    :func:`_aurora_wave` for the explanatory sentence it adds to wave 1's
-    rationale (it never narrows wave 1's own table list).
+    :func:`wave_one_map_sentence` for the explanatory sentence it adds to
+    wave 1's rationale once every wave exists (it never narrows wave 1's own
+    table list).
 
     ``source`` (#835) is the collected database's name and engine: a database named
     ``sys`` or ``mysql`` is not read as that system schema in ``known_tables``.
@@ -307,7 +310,6 @@ def build_migration_waves(
         known,
         table_assignments,
         source_version,
-        mapped_tables=mapped,
         cross_engine=cross_engine,
         aurora_engine_choice=aurora_engine_choice,
     )
@@ -463,6 +465,12 @@ def build_migration_waves(
         waves[0]["cutover_query_count"] = sum(
             w.get("query_count") or 0 for w in waves if w.get("share_basis") != "calls"
         )
+        # #380 review, #1284: reconcile wave 1's whole-schema count with the
+        # migration map's, stating apart what a later wave actually moves (the
+        # facts layer's figure, so the two never disagree).
+        moved = wave_one_moved_by_later_waves(waves)
+        if mapped is not None and moved is not None:
+            waves[0]["rationale"] += wave_one_map_sentence(waves[0], mapped, moved)
 
     for w in waves:
         # #1028: every wave carries its gate as parts; a gate with no table
