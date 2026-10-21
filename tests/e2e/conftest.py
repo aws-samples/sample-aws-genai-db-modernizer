@@ -245,7 +245,9 @@ def _ensure_port_free(port: int) -> None:
             pytest.fail(
                 f"port {port} is already in use ({exc}). Something -- maybe a "
                 "leftover `uvicorn` or `serve` from a previous e2e run -- is "
-                "already listening on it; stop it and re-run."
+                "already listening on it; stop it and re-run, or move this run "
+                "with E2E_API_PORT / E2E_UI_PORT (the UI build bakes the API port "
+                "in: rebuild it with the same E2E_API_PORT, see ci/lib.sh)."
             )
 
 

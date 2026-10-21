@@ -19,8 +19,9 @@ import json
 import re
 from pathlib import Path
 
+import playwright.sync_api
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from tests.e2e.pipeline import PipelineResult
@@ -285,7 +286,7 @@ def test_a_querys_trace_opens_from_the_routing_table(
     # #1028: the section opens collapsed; its header expands it.
     assert not section.get_by_role("table", name="Query routing").is_visible()
     _expand_query_routing(page)
-    section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
+    _wait_for_query_routing_rows(section, r, ev)
     if not r.external:  # wordpress lists 107 queries: more than one page of 25
         section.get_by_role("button", name="Next page").wait_for(timeout=READY_MS)
         section.get_by_role("button", name="Previous page").wait_for(timeout=READY_MS)
@@ -328,6 +329,39 @@ def _expand_query_routing(page: Page) -> None:
     header = page.locator('#query-routing-section [aria-expanded="false"]').first
     header.click()
     page.locator('#query-routing-section [aria-expanded="true"]').first.wait_for(timeout=READY_MS)
+
+
+# #887: the table lists GET /assessments/{job_id}/query-journeys, read from the
+# context graph. The wait is on the table's own outcome, its first query or the
+# load error the page shows (the UI client gives a request 30 s, see
+# GlobalConfigurations.timeout), not on network silence. The budget covers
+# rendering the rows on a loaded machine; CI measures a few seconds.
+ROUTING_DATA_TIMEOUT_MS = 60_000
+ROUTING_LOAD_ERROR = "The query list could not be loaded"
+
+
+def _wait_for_query_routing_rows(
+    section: Locator, r: PipelineResult, ev: dict[str, list[str]]
+) -> None:
+    """Wait until the opened query routing section lists its queries. A failure names
+    the job, the request the table waits for and the API errors seen so far, instead
+    of a bare locator timeout (#887)."""
+    # A query's open control exists only in a data row; the table's loading and
+    # empty states are one merged placeholder row, so a bare row is no signal.
+    queries = section.get_by_role("button", name=re.compile(f"^{OPEN_TRACE}"))
+    settled = queries.first.or_(section.get_by_text(ROUTING_LOAD_ERROR)).first
+    try:
+        settled.wait_for(timeout=ROUTING_DATA_TIMEOUT_MS)
+    except playwright.sync_api.TimeoutError:
+        pass
+    if queries.count() == 0:
+        pytest.fail(
+            f"{r.db}/{r.job_id}: the Query routing table lists no query after waiting up "
+            f"to {ROUTING_DATA_TIMEOUT_MS // 1000}s for its first row or its load error. "
+            f"It lists GET /api/v1/assessments/{r.job_id}/query-journeys; API errors so "
+            f"far: {ev['failed']}; console errors: {ev['console']}; the section reads: "
+            f"{section.inner_text()[:300]!r}"
+        )
 
 
 def _report_wave_stats(r: PipelineResult) -> dict[str, tuple[str, str]]:
@@ -1043,12 +1077,12 @@ def test_query_routing_table_fits_its_card_at_1440(
     right. The table now fits its card, and Engine and Routing are on the first screen."""
     page.set_viewport_size({"width": 1440, "height": 900})
     for r in all_runs:
+        ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        expect(page.locator("#query-routing-section")).to_be_visible(timeout=READY_MS)
-        _expand_query_routing(page)
         section = page.locator("#query-routing-section")
-        section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
-        section.locator("table tbody tr").first.wait_for(timeout=READY_MS)
+        expect(section).to_be_visible(timeout=READY_MS)
+        _expand_query_routing(page)
+        _wait_for_query_routing_rows(section, r, ev)
         m = page.evaluate("""() => {
               const table = document.querySelector('#query-routing-section table');
               const scroller = table.parentElement;
