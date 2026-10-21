@@ -29,3 +29,11 @@ export function fitPhrase(pctText) {
   const note = rest.join(' (');
   return `${pct} ${WORKLOAD_FIT_WORD}` + (note ? ` (${note}` : '');
 }
+
+/** The cache layer's figure is never shown under the workload fit label (#1291). */
+export const CACHE_FIT_LABEL = 'Cache fit';
+
+export const CACHE_FIT_DEFINITION =
+  'Cache fit: how closely the cache layer\'s capabilities match the ' +
+  'reads it fronts. The cache layer owns no queries, so this is not a workload ' +
+  'fit and is not compared with the owning engines\' figures.';

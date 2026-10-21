@@ -40,7 +40,7 @@ from typing import Any
 import pytest
 
 from src.report import renderers
-from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
+from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 from tests.executive_pdf import engineering_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "e2e09_report.json"
@@ -149,3 +149,55 @@ def test_md_states_the_definition_exactly_once_with_routed_confidence() -> None:
     assert rep["ranking"][0].get("routed_confidence") is not None
     full_text = engineering_text(rep)
     assert full_text.count(WORKLOAD_FIT_DEFINITION) == 1
+
+
+# Issue #1291: a listed cache layer's figure is a cache fit of the reads it fronts, so
+# every deliverable states what that is once, next to the workload fit definition.
+def test_engineering_report_states_the_cache_fit_definition_once() -> None:
+    md = renderers.render_engineering_report_md(_routed_report())
+    assert md.count(CACHE_FIT_DEFINITION) == 1
+    assert md.count(WORKLOAD_FIT_DEFINITION) == 1
+    # the cache fit line follows the workload fit line, under the same table
+    assert md.index(WORKLOAD_FIT_DEFINITION) < md.index(CACHE_FIT_DEFINITION)
+
+
+def test_reports_without_a_cache_layer_have_no_cache_fit_definition() -> None:
+    from tests.executive_pdf import executive_text
+
+    rep = _routed_report()
+    rep["ranking"] = [r for r in rep["ranking"] if r["target"] != "elasticache"]
+    rep.pop("cache_overlay")
+    rep["recommended_architecture"]["databases"] = [
+        d for d in rep["recommended_architecture"]["databases"] if d["service"] != "elasticache"
+    ]
+    md = renderers.render_engineering_report_md(rep)
+    assert md.count(WORKLOAD_FIT_DEFINITION) == 1
+    assert CACHE_FIT_DEFINITION not in md
+    assert "Cache fit:" not in " ".join(executive_text(rep).split())
+
+
+def test_executive_report_states_the_cache_fit_definition_once() -> None:
+    from tests.executive_pdf import executive_text
+
+    text = " ".join(executive_text(_routed_report()).split())
+    assert text.count(" ".join(CACHE_FIT_DEFINITION.split())) == 1
+
+
+def _report_without_cache_layer() -> dict[str, Any]:
+    rep = _routed_report()
+    rep["ranking"] = [r for r in rep["ranking"] if r["target"] != "elasticache"]
+    rep.pop("cache_overlay")
+    rep["recommended_architecture"]["databases"] = [
+        d for d in rep["recommended_architecture"]["databases"] if d["service"] != "elasticache"
+    ]
+    return rep
+
+
+GOLDEN = Path(__file__).parent / "fixtures" / "engineering_report_no_cache_layer.md"
+
+
+def test_engineering_report_without_a_cache_layer_is_unchanged() -> None:
+    """#1291: the output with no cache layer is byte-for-byte what origin/main rendered
+    before the cache fit line existed (the golden was generated on main's code)."""
+    md = renderers.render_engineering_report_md(_report_without_cache_layer())
+    assert md == GOLDEN.read_text(encoding="utf-8")

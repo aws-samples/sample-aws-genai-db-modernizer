@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine
+from src.shared.report_facts import CACHE_LAYER
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
     unsupported_pattern_text,
 )
-from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION, WORKLOAD_FIT_LABEL
+from src.shared.workload_fit_labels import (
+    CACHE_FIT_DEFINITION,
+    WORKLOAD_FIT_DEFINITION,
+    WORKLOAD_FIT_LABEL,
+)
 
 from . import escaping
 from .architecture import (
@@ -605,6 +610,11 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
         # all, even though "Target engines" above already shows the figure.
         out.append(f"*{escaping.md_text(WORKLOAD_FIT_DEFINITION)}*")
         out.append("")
+        # #1291: a listed cache layer's figure is a cache fit of the reads it fronts,
+        # not a workload fit; say so once, under the same table.
+        if any(e.get("role") == CACHE_LAYER for e in target_engines):
+            out.append(f"*{escaping.md_text(CACHE_FIT_DEFINITION)}*")
+            out.append("")
     return out
 
 

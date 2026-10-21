@@ -26,6 +26,7 @@ import { SideNavigationConfigurations, ApiConfigurations } from "../config/Globa
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import EngineBadge from "../components/EngineBadge";
+import EngineFitFigure from "../components/EngineFitFigure";
 
 
 
@@ -649,10 +650,7 @@ const PatternAnalysisPage = memo(() => {
                   </Box>
 
                   <ColumnLayout columns={2} variant="text-grid">
-                    <Box>
-                      <Box variant="awsui-key-label">{t('engine-analysis.summary.avg-confidence')}</Box>
-                      <Box fontSize="heading-xl" fontWeight="bold">{engineMetrics.avgConfidence}%</Box>
-                    </Box>
+                    <EngineFitFigure target={target} value={engineMetrics.avgConfidence} t={t} />
 
                     <Box>
                       <Box variant="awsui-key-label">{t('engine-analysis.summary.monthly-cost')}</Box>

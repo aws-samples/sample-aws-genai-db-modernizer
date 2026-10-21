@@ -64,8 +64,9 @@ from reportlab.platypus import (
 
 from src.shared import catalog
 from src.shared.engine_names import display_engine
+from src.shared.report_facts import CACHE_LAYER
 from src.shared.risk_severity import severity_of
-from src.shared.workload_fit_labels import WORKLOAD_FIT_DEFINITION
+from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
 from .architecture import _architecture_engines
 from .cache_layer import cache_layer_text
@@ -962,6 +963,8 @@ def _why(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> l
         accents = [_engine_color(e["engine"]) for e in _architecture_engines(report)]
         flow.append(_table(st, ("Engine", "Role", "Why"), rows, (2, 1.6, 8.4), row_accents=accents))
         flow += [_gap(6), _para(WORKLOAD_FIT_DEFINITION, st["small"])]
+        if any(e.get("role") == CACHE_LAYER for e in _architecture_engines(report)):
+            flow += [_gap(2), _para(CACHE_FIT_DEFINITION, st["small"])]
     decisions = []
     for d in facts.get("reality_check_decisions") or []:
         # The reality check's own line, "<title>: <detail>", as every deliverable shows it.

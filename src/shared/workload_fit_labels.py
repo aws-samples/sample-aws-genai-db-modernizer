@@ -41,3 +41,15 @@ WORKLOAD_FIT_DEFINITION = (
     "patterns of the queries routed to it. It is not a probability that the "
     "migration will succeed."
 )
+
+#: The short label for the cache layer's figure (#1291). The cache layer owns no
+#: query, so its figure is never shown under ``WORKLOAD_FIT_LABEL``.
+CACHE_FIT_LABEL = "Cache fit"
+
+#: Stated once, right after ``WORKLOAD_FIT_DEFINITION``, in every deliverable that
+#: lists a cache layer (#1291): what the cache layer's figure measures.
+CACHE_FIT_DEFINITION = (
+    "Cache fit: how closely the cache layer's capabilities match the "
+    "reads it fronts. The cache layer owns no queries, so this is not a workload "
+    "fit and is not compared with the owning engines' figures."
+)

@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 
 from src.shared.workload_fit_labels import (
+    CACHE_FIT_DEFINITION,
+    CACHE_FIT_LABEL,
     WORKLOAD_FIT_DEFINITION,
     WORKLOAD_FIT_LABEL,
     WORKLOAD_FIT_WORD,
@@ -53,6 +55,11 @@ class TestWorkloadFitLabelsJsMatchesPython:
     def test_definition_matches(self):
         js_text = JS_PATH.read_text(encoding="utf-8")
         assert _extract_js_const(js_text, "WORKLOAD_FIT_DEFINITION") == WORKLOAD_FIT_DEFINITION
+
+    def test_cache_fit_label_and_definition_match(self):
+        js_text = JS_PATH.read_text(encoding="utf-8")
+        assert _extract_js_const(js_text, "CACHE_FIT_LABEL") == CACHE_FIT_LABEL
+        assert _extract_js_const(js_text, "CACHE_FIT_DEFINITION") == CACHE_FIT_DEFINITION
 
     def test_definition_says_not_a_probability(self):
         # A regression guard on the definition's content, not just its presence:
