@@ -2272,3 +2272,63 @@ def compute_report_facts(
         # #1146: the queries and the distinct query patterns they make.
         "query_pattern_counts": query_pattern_facts(report, engines),
     }
+
+
+def table_fit_score(rec: Any) -> float:
+    """A table recommendation's fit score; a missing or non-number score counts as 0 (#1312)."""
+    score = rec.get("confidence_score") if isinstance(rec, Mapping) else None
+    return score if isinstance(score, (int, float)) and not isinstance(score, bool) else 0
+
+
+def mean_table_fit(analysis: Mapping[str, Any]) -> float:
+    """The unrounded mean fit score of an analysis's table recommendations (#1312).
+
+    A table with no numeric score counts as 0, so a missing or non-number score changes the
+    mean the same way everywhere: synthesis (``report.json``), the analysis API and the job
+    summary all read it from here.
+    """
+    recs = [r for r in (analysis.get("table_recommendations") or []) if isinstance(r, Mapping)]
+    total = sum(table_fit_score(r) for r in recs)
+    return total / len(recs) if recs else 0.0
+
+
+def analysis_overview_facts(
+    analysis: Mapping[str, Any],
+    signals: Iterable[Any] | None = None,
+    engine: str | None = None,
+) -> dict[str, Any]:
+    """The engine overview figures of one analysis artifact (#1312, ADR-032).
+
+    The pattern analysis page, the job's agent summary and each ``report.json`` ranking entry
+    show the average fit of the engine's tables, its table, pattern and anti-pattern counts,
+    its cost and the queries its patterns cover. They are computed here, from ``analysis.json``,
+    so a saved job of any age answers the same way and the page only formats them.
+    ``anti_pattern_query_counts`` lists, in the order of ``anti_patterns_detected``, how many
+    queries each one names. ``signal_query_total`` and ``signal_count`` (the page's "total
+    queries" under the signal chart and the signal tab count) are added when the triage
+    ``signals`` are given: those of the signals that name ``engine``.
+    """
+    recs = [r for r in (analysis.get("table_recommendations") or []) if isinstance(r, Mapping)]
+    workload = analysis.get("workload_analysis") or {}
+    raw_patterns = workload.get("patterns_detected") or []
+    patterns = [p for p in raw_patterns if isinstance(p, Mapping)]
+    anti_patterns = workload.get("anti_patterns_detected") or []
+    cost = (analysis.get("cost_estimate") or {}).get("monthly_cost_usd")
+    facts: dict[str, Any] = {
+        "avg_confidence_score": round(mean_table_fit(analysis)),
+        "tables_analyzed": len(recs),
+        "monthly_cost_usd": cost if isinstance(cost, (int, float)) else 0,
+        "patterns_detected": len(raw_patterns),
+        "anti_patterns_detected": len(anti_patterns),
+        "anti_pattern_query_counts": [
+            len(a.get("query_ids") or []) if isinstance(a, Mapping) else 0 for a in anti_patterns
+        ],
+        "queries_covered": len({q for p in patterns for q in (p.get("query_ids") or [])}),
+    }
+    if signals is not None:
+        mine = [s for s in signals if isinstance(s, Mapping) and engine in (s.get("targets") or [])]
+        facts["signal_count"] = len(mine)
+        facts["signal_query_total"] = sum(
+            s["query_count"] for s in mine if isinstance(s.get("query_count"), (int, float))
+        )
+    return facts

@@ -14,9 +14,11 @@ from src.report.facts import report_facts
 from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
 from src.report.risks import NO_OPEN_RISKS_CAVEAT
+from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
+from src.shared.report_facts import analysis_overview_facts
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
@@ -222,7 +224,26 @@ async def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_para
         raise HTTPException(
             status_code=404, detail=f"Analysis output for {agent_type} not available"
         )
-    return data
+    # The engine overview figures are computed here, once, for every job old or new; the
+    # pattern analysis page only formats them (#1312, ADR-032).
+    # Triage only adds the signal figures: a triage file this code cannot read must not
+    # take the analysis away from the page (it did not read triage before #1312).
+    signals = None
+    withheld = None
+    try:
+        triage = s3_service.read_triage(db_name, job_id)
+        found = triage.get("signals") if isinstance(triage, dict) else None
+        signals = found if isinstance(found, list) else []
+    except ContractVersionError:
+        withheld = "the triage output is at another contract version"
+    except Exception:
+        withheld = "the triage output could not be read"
+    facts = analysis_overview_facts(data, signals, agent_type)
+    if withheld:
+        facts["signal_query_total"] = 0
+        facts["signal_count"] = 0
+        facts["signals_withheld_reason"] = withheld
+    return {**data, "facts": facts}
 
 
 @router.get("/{job_id}/reality-check")

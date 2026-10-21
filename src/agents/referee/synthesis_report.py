@@ -53,6 +53,11 @@ from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
+from src.shared.report_facts import (
+    analysis_overview_facts,
+    mean_table_fit,
+    table_fit_score,
+)
 from src.shared.risk_severity import overall_risk_level
 from src.shared.signal_labels import signal_noun
 from src.shared.skill_sections import skill_sections, skill_subsections
@@ -401,14 +406,11 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         analysis = artifacts.analysis or {}
         table_recs = analysis.get("table_recommendations") or []
         workload = analysis.get("workload_analysis", {})
-        cost = analysis.get("cost_estimate", {})
         aggregates = analysis.get("aggregate_recommendations") or []
 
-        avg_confidence = (
-            sum(t.get("confidence_score", 0) for t in table_recs) / len(table_recs)
-            if table_recs
-            else 0
-        )
+        # One definition of the engine's overview figures, shared with the analysis API (#1312).
+        overview = analysis_overview_facts(analysis)
+        avg_confidence = mean_table_fit(analysis)
 
         patterns = workload.get("patterns_detected") or []
         anti_patterns = workload.get("anti_patterns_detected") or []
@@ -421,7 +423,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             else "MEDIUM"
         )
 
-        monthly_cost = cost.get("monthly_cost_usd", 0)
+        monthly_cost = overview["monthly_cost_usd"]
         pattern_score = min(len(patterns) / 5, 1.0)
         anti_penalty = min(len(anti_patterns) * 0.1, 0.3)
         weight = round(
@@ -442,24 +444,18 @@ def build_ranking(data: SynthesisData) -> list[dict]:
         fit = fits.get(engine)
         entry = {
             "target": engine,
-            "confidence_score": round(avg_confidence),  # backward compat
-            "analysis_confidence": round(avg_confidence),
+            "confidence_score": overview["avg_confidence_score"],  # backward compat
+            "analysis_confidence": overview["avg_confidence_score"],
             "routed_confidence": fit.confidence if fit else None,
             "weight": weight,
             "monthly_cost_usd": monthly_cost,
-            "tables_analyzed": len(table_recs),
-            "tables_highly_suitable": sum(
-                1 for t in table_recs if t.get("confidence_score", 0) >= 80
-            ),
-            "tables_suitable": sum(
-                1 for t in table_recs if 60 <= t.get("confidence_score", 0) < 80
-            ),
-            "tables_marginal": sum(
-                1 for t in table_recs if 40 <= t.get("confidence_score", 0) < 60
-            ),
-            "tables_not_suitable": sum(1 for t in table_recs if t.get("confidence_score", 0) < 40),
-            "patterns_detected": len(patterns),
-            "anti_patterns_detected": len(anti_patterns),
+            "tables_analyzed": overview["tables_analyzed"],
+            "tables_highly_suitable": sum(1 for t in table_recs if table_fit_score(t) >= 80),
+            "tables_suitable": sum(1 for t in table_recs if 60 <= table_fit_score(t) < 80),
+            "tables_marginal": sum(1 for t in table_recs if 40 <= table_fit_score(t) < 60),
+            "tables_not_suitable": sum(1 for t in table_recs if table_fit_score(t) < 40),
+            "patterns_detected": overview["patterns_detected"],
+            "anti_patterns_detected": overview["anti_patterns_detected"],
             "migration_complexity_avg": most_common,
             "aggregate_count": len(aggregates),
             "schema_design_available": bool(schema_tables),
@@ -558,8 +554,7 @@ def build_table_mappings(data: SynthesisData) -> list[dict]:
 
         # Get per-table confidence from analysis
         table_confidence = {
-            t["table_id"]: t.get("confidence_score", 0)
-            for t in (analysis.get("table_recommendations") or [])
+            t["table_id"]: table_fit_score(t) for t in (analysis.get("table_recommendations") or [])
         }
 
         table_defs = schema_table_defs(engine, schema)

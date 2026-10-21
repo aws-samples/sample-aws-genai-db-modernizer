@@ -271,16 +271,12 @@ const PatternAnalysisPage = memo(() => {
 
 
   //--## Filter signals by target
-  const filteredSignals = useMemo(() => {
-    if (!triageData?.signals || !target) return [];
-
-    const filtered = triageData.signals.filter(signal =>
-      signal.targets && signal.targets.includes(target)
-    );
-
-    // Sort by query_count descending (highest first)
-    return filtered.sort((a, b) => (b.query_count || 0) - (a.query_count || 0));
-  }, [triageData, target]);
+  const filteredSignals = useMemo(() => (
+    // Highest query_count first.
+    (triageData?.signals || [])
+      .filter(signal => signal.targets && signal.targets.includes(target))
+      .sort((a, b) => (b.query_count || 0) - (a.query_count || 0)) // facts: presentation (sort order of the signals, no figure shown)
+  ), [triageData, target]);
 
 
   //--## Get query details by query_id
@@ -294,27 +290,19 @@ const PatternAnalysisPage = memo(() => {
   const engineMetrics = useMemo(() => {
     if (!target || !analysisData) return null;
 
-    // Calculate stats from analysis data
-    const recs = analysisData.table_recommendations || [];
-    const scores = recs.map(r => r.confidence_score);
-    const avgConfidence = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-
-    const monthlyCost = analysisData.cost_estimate?.monthly_cost_usd || 0;
-    const patternsDetected = analysisData.workload_analysis?.patterns_detected?.length || 0;
-    const antiPatterns = analysisData.workload_analysis?.anti_patterns_detected?.length || 0;
-
-    // Get unique query IDs from patterns
-    const queriesCovered = new Set(
-      (analysisData.workload_analysis?.patterns_detected || []).flatMap(p => p.query_ids || [])
-    ).size;
+    // The figures are computed once on the server (analysis `facts`, #1312); this only reads them.
+    const facts = analysisData.facts || {};
 
     return {
-      avgConfidence,
-      monthlyCost,
-      tablesAnalyzed: recs.length,
-      queriesCovered,
-      patterns: patternsDetected,
-      antiPatterns
+      avgConfidence: facts.avg_confidence_score ?? 0,
+      monthlyCost: facts.monthly_cost_usd ?? 0,
+      tablesAnalyzed: facts.tables_analyzed ?? 0,
+      queriesCovered: facts.queries_covered ?? 0,
+      patterns: facts.patterns_detected ?? 0,
+      antiPatterns: facts.anti_patterns_detected ?? 0,
+      signalQueryTotal: facts.signal_query_total ?? 0,
+      signalCount: facts.signal_count ?? 0,
+      antiPatternQueryCounts: facts.anti_pattern_query_counts || []
     };
   }, [target, analysisData]);
 
@@ -326,7 +314,7 @@ const PatternAnalysisPage = memo(() => {
     return filteredSignals.map((signal, index) => ({
       title: formatSignalName(signal.signal),
       value: signal.query_count || 0,
-      color: `hsl(${(index * 360) / filteredSignals.length}, 70%, 50%)`
+      color: `hsl(${(index * 360) / filteredSignals.length}, 70%, 50%)` // facts: presentation (chart colour hue, not a figure)
     }));
   }, [filteredSignals, formatSignalName]);
 
@@ -471,7 +459,7 @@ const PatternAnalysisPage = memo(() => {
       tabs.push({
         id: 'anti-patterns',
         // nosemgrep: missing-template-string-indicator
-        label: `⚠️ ${t('pattern-analysis.anti-patterns.tab-label', { count: antiPatterns.length })}`,
+        label: `⚠️ ${t('pattern-analysis.anti-patterns.tab-label', { count: analysisData?.facts?.anti_patterns_detected ?? 0 })}`,
         content: (
           <SpaceBetween size="l">
             {antiPatterns.map((antiPattern, index) => (
@@ -517,7 +505,7 @@ const PatternAnalysisPage = memo(() => {
                     </Box>
                     <Box>
                       <Box variant="awsui-key-label">{t('pattern-analysis.anti-patterns.affected-queries')}</Box>
-                      <Badge color="grey">{antiPattern.query_ids?.length || 0}</Badge>
+                      <Badge color="grey">{analysisData?.facts?.anti_pattern_query_counts?.[index] ?? 0}</Badge>
                     </Box>
                   </ColumnLayout>
 
@@ -631,7 +619,7 @@ const PatternAnalysisPage = memo(() => {
                       data={patternChartData}
                       variant="donut"
                       size="medium"
-                      innerMetricValue={filteredSignals.reduce((sum, s) => sum + (s.query_count || 0), 0).toString()}
+                      innerMetricValue={engineMetrics.signalQueryTotal.toString()}
                       innerMetricDescription={t('pattern-analysis.chart.total-queries')}
                       hideFilter
                       hideLegend={false}
@@ -686,7 +674,7 @@ const PatternAnalysisPage = memo(() => {
             {/* Signals/Patterns */}
             <Container
               header={
-                <Header variant="h2" description={t('pattern-analysis.detected-patterns.description', { count: filteredSignals.length, target })}>
+                <Header variant="h2" description={t('pattern-analysis.detected-patterns.description', { count: engineMetrics?.signalCount ?? 0, target })}>
                   {t('pattern-analysis.detected-patterns.title')}
                 </Header>
               }

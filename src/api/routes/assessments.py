@@ -33,6 +33,7 @@ from src.api.services.local_execution import (
 from src.api.services.local_s3 import LocalS3Service
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.ranking import engine_confidence, main_engine
+from src.shared.report_facts import analysis_overview_facts
 from src.tools.validation.ingestion_limits import IngestionLimitError, check_file_size
 
 logger = logging.getLogger(__name__)
@@ -712,21 +713,14 @@ def _extract_artifact_summary(database_name: str, job_id: str, agent_name: str) 
             data = s3_service.read_analysis(database_name, job_id, agent_type)
             if not data:
                 return None
-            table_recs = data.get("table_recommendations", [])
-            patterns = data.get("workload_analysis", {}).get("patterns_detected", [])
-            anti_patterns = data.get("workload_analysis", {}).get("anti_patterns_detected", [])
             cost = data.get("cost_estimate", {})
-            avg_confidence = 0
-            if table_recs:
-                avg_confidence = round(
-                    sum(t.get("confidence_score", 0) for t in table_recs) / len(table_recs)
-                )
+            overview = analysis_overview_facts(data)
             return {
                 "target_database": agent_type,
-                "tables_analyzed": len(table_recs),
-                "avg_confidence_score": avg_confidence,
-                "patterns_detected": len(patterns),
-                "anti_patterns_detected": len(anti_patterns or []),
+                "tables_analyzed": overview["tables_analyzed"],
+                "avg_confidence_score": overview["avg_confidence_score"],
+                "patterns_detected": overview["patterns_detected"],
+                "anti_patterns_detected": overview["anti_patterns_detected"],
                 "monthly_cost_usd": cost.get("monthly_cost_usd"),
             }
 

@@ -265,7 +265,7 @@ const JobMonitoringSummaryPage = memo(() => {
             const selected = res.triage.selected_agents || [];
             const skipped = res.triage.skipped_agents || [];
             setTriageInsights({
-              signalCount: signals.length,
+              signalCount: signals.length, // facts: presentation (raw triage signal count, tracked in #1319)
               topSignals: signals.slice(0, 5).map(s => ({
                 name: s.signal,
                 queryCount: s.query_ids?.length || 0,
