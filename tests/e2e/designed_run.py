@@ -22,6 +22,7 @@ import json
 from collections.abc import Collection
 from pathlib import Path
 
+from src.agents.schema_design.output_contract import cite_queries
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
@@ -185,8 +186,25 @@ def write_dynamodb_design(
             "engine": "",
         },
     ]
+    if designed:
+        # #1321: a designer cited a query by a bare id prefix, as a model run did;
+        # the output gate writes the query's label, so the report shows no bare id.
+        cited = str(designed[0][0]["query_id"])
+        design["trade_offs"].append(
+            {
+                "description": f"The first designed read (query {cited[:8]}) runs as one Query.",
+                "impact": f"Query {cited[:8]} reads one partition per call.",
+                "source_tables": [],
+                "target_tables": tables[:1],
+                "query_ids": [cited],
+                "engine": "",
+            }
+        )
     base = f"{db}/{job_id}/schema-dynamodb/v{version}"
-    store.write_json(f"{base}/schema_output.json", design)
+    # The gate's citation step (``write_schema_output`` runs it), without the gate's
+    # contract check: a map that leaves every table out is written on purpose.
+    key = f"{base}/schema_output.json"
+    store.write_json(key, cite_queries(store, key, design))
     store.write_json(f"{base}/design_trace.json", {"trace": []})
     return len(design["access_patterns"])
 

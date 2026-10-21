@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 //##-- AWS UI Objects
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import ProseText from '../components/ProseText';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -1177,7 +1178,7 @@ const AnalysisResultsPage = memo(() => {
     {
       id: 'description',
       header: t('analysis-results.explorer.col-description'),
-      cell: item => item.description || '—',
+      cell: item => (item.description ? <ProseText text={item.description} /> : '—'),
       width: 300
     }
   ], [t, handlePatternClick]);
@@ -1292,10 +1293,10 @@ const AnalysisResultsPage = memo(() => {
             second line never renders). */}
         {ap.description && (
           <Container>
-            <Box fontSize="body-m">{ap.description}</Box>
+            <Box fontSize="body-m"><ProseText text={ap.description} /></Box>
             {ap.patternDescription && ap.patternDescription !== ap.description && (
               <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 's' }}>
-                {ap.patternDescription}
+                <ProseText text={ap.patternDescription} />
               </Box>
             )}
           </Container>
@@ -1468,7 +1469,7 @@ const AnalysisResultsPage = memo(() => {
         {!ap.inScope && ap.outOfScopeReason && (
           <Container>
             <Box color="text-status-error" fontSize="body-m">
-              <strong>{t('analysis-results.pattern-detail.out-of-scope-reason')}:</strong> {ap.outOfScopeReason}
+              <strong>{t('analysis-results.pattern-detail.out-of-scope-reason')}:</strong> <ProseText text={ap.outOfScopeReason} />
             </Box>
           </Container>
         )}
@@ -1591,7 +1592,7 @@ const AnalysisResultsPage = memo(() => {
                         {
                           id: 'description',
                           header: 'Description',
-                          cell: item => item.description
+                          cell: item => <ProseText text={item.description} />
                         }
                       ]}
                       items={dg.patterns}
@@ -1901,7 +1902,7 @@ const AnalysisResultsPage = memo(() => {
             <Container id="executive-summary-section" header={<Header variant="h2">{t('analysis-results.executive-summary.title')}</Header>}>
               <SpaceBetween size="m">
                 <Box variant="p" fontSize="body-m">
-                  {synthesis?.summary || 'No summary available.'}
+                  {synthesis?.summary ? <ProseText text={synthesis.summary} /> : 'No summary available.'}
                 </Box>
                 {summaryFallback.isFallback && (
                   <SummaryFallbackNotice
@@ -2448,10 +2449,10 @@ const AnalysisResultsPage = memo(() => {
                                         <Box fontSize="body-s" color="text-body-secondary">{risk.risk_id}</Box>
                                       )}
                                     </SpaceBetween>
-                                    <Box fontSize="body-s">{body}</Box>
+                                    <Box fontSize="body-s"><ProseText text={body} /></Box>
                                     {showMitigation && (
                                       <Box fontSize="body-s" color="text-body-secondary">
-                                        <b>{t('analysis-results.risk-assessment.mitigation')}:</b> {risk.mitigation}
+                                        <b>{t('analysis-results.risk-assessment.mitigation')}:</b> <ProseText text={risk.mitigation} />
                                       </Box>
                                     )}
                                     {affectedTables.length > 0 && (
@@ -2462,7 +2463,7 @@ const AnalysisResultsPage = memo(() => {
                                     {Array.isArray(risk.details) && risk.details.length > 0 && (
                                       <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
                                         {risk.details.map((detail, i) => (
-                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary">{detail}</Box></li>
+                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={detail} /></Box></li>
                                         ))}
                                       </ul>
                                     )}
@@ -2499,7 +2500,7 @@ const AnalysisResultsPage = memo(() => {
                                     <Box fontSize="body-s" color="text-body-secondary">{fromEngine}</Box>
                                   )}
                                 </SpaceBetween>
-                                <Box fontSize="body-s">{body}</Box>
+                                <Box fontSize="body-s"><ProseText text={body} /></Box>
                                 {risk.reason && (
                                   <Box fontSize="body-s" color="text-body-secondary">
                                     {t('analysis-results.risk-assessment.resolved-reason', { reason: risk.reason })}
@@ -2555,11 +2556,11 @@ const AnalysisResultsPage = memo(() => {
                                       <SpaceBetween direction="horizontal" size="xs" alignItems="center">
                                         <Icon name="status-positive" />
                                         <Link variant="primary" fontSize="body-s" fontWeight="bold" onFollow={() => {}} external={false}>
-                                          <span style={{ textDecoration: 'underline' }}>{tradeOff.description}</span>
+                                          <span style={{ textDecoration: 'underline' }}><ProseText text={tradeOff.description} /></span>
                                         </Link>
                                       </SpaceBetween>
                                       {tradeOff.impact && (
-                                        <Box fontSize="body-s" color="text-body-secondary">{tradeOff.impact}</Box>
+                                        <Box fontSize="body-s" color="text-body-secondary"><ProseText text={tradeOff.impact} /></Box>
                                       )}
                                       {(tradeOff.source_tables?.length > 0 || tradeOff.target_tables?.length > 0) && (
                                         <Box fontSize="body-s" padding={{ left: 'xl' }}>
@@ -2664,10 +2665,10 @@ const AnalysisResultsPage = memo(() => {
                                       <SpaceBetween size="xxs">
                                         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
                                           <Badge color="blue">{idx + 1}</Badge>
-                                          <Box fontSize="body-s" style={{ flex: 1 }}>{tradeOff.description.replace(/^\[PE note\]\s*/, '')}</Box>
+                                          <Box fontSize="body-s" style={{ flex: 1 }}><ProseText text={tradeOff.description.replace(/^\[PE note\]\s*/, '')} /></Box>
                                         </div>
                                         {tradeOff.impact && (
-                                          <Box fontSize="body-s" color="text-body-secondary" padding={{ left: 'xl' }}>{tradeOff.impact}</Box>
+                                          <Box fontSize="body-s" color="text-body-secondary" padding={{ left: 'xl' }}><ProseText text={tradeOff.impact} /></Box>
                                         )}
                                       </SpaceBetween>
                                     </Box>
@@ -2828,9 +2829,9 @@ const AnalysisResultsPage = memo(() => {
                                       <Box fontSize="body-s" fontWeight="bold">
                                         {opt.target ? `${opt.category ? `${optimizationLabel(opt.category)}: ` : ''}${opt.target}` : optimizationLabel(opt.category)}
                                       </Box>
-                                      <Box fontSize="body-s">{opt.recommendation}</Box>
+                                      <Box fontSize="body-s"><ProseText text={opt.recommendation} /></Box>
                                       {opt.rationale && (
-                                        <Box fontSize="body-s" color="text-body-secondary">{opt.rationale}</Box>
+                                        <Box fontSize="body-s" color="text-body-secondary"><ProseText text={opt.rationale} /></Box>
                                       )}
                                     </SpaceBetween>
                                   </Box>
@@ -2878,7 +2879,7 @@ const AnalysisResultsPage = memo(() => {
                                         {
                                           id: 'reason',
                                           header: t('analysis-results.aurora-design.col-reason'),
-                                          cell: q => q.reason || '—',
+                                          cell: q => (q.reason ? <ProseText text={q.reason} /> : '—'),
                                         },
                                       ]}
                                       items={group.queries}

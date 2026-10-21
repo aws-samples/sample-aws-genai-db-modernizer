@@ -76,6 +76,7 @@ from src.shared.engine_elimination import eliminated_engines as settled_eliminat
 from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.engines_in_use import engines_in_use
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
+from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.shared.skill_sections import skill_sections
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
@@ -319,7 +320,7 @@ def apply_reality_check_llm_output(
     Returns an updated copy of deterministic_result (mutated in place).
     """
     result = deterministic_result
-    response = parse_reality_check_response(llm_output)
+    response = _cite_queries(result, parse_reality_check_response(llm_output))
 
     if response.consolidation_corrections:
         # Model flags (ADR-031 Decision 11 as amended 2026-10-14, #647): each
@@ -340,6 +341,27 @@ def apply_reality_check_llm_output(
         result.pop("executive_summary_validation_warnings", None)
 
     return result
+
+
+def _cite_queries(
+    deterministic_result: dict, response: RealityCheckModelResponse
+) -> RealityCheckModelResponse:
+    """``response`` (validated) with every bare id of a job's query, in its str
+    fields (the summary), replaced by the query's report label
+    (``src.shared.query_citations``, #1321). The job's queries are the
+    collection's and the ones the assignment names.
+
+    The routing flags (``consolidation_corrections``) are never rewritten: they
+    are checked against ``ModelFlag`` exactly as the model wrote them, so a
+    formatting step never decides whether a flag counts (ADR-031 Decision 11),
+    and their explanations reach no deliverable."""
+    citations = QueryCitations(
+        collector_query_ids(deterministic_result.get("collector_output"))
+        | named_query_ids(deterministic_result.get("assignment"))
+    )
+    if not citations:
+        return response
+    return citations.fields(response)
 
 
 # ---------------------------------------------------------------------------

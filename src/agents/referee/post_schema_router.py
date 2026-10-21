@@ -31,7 +31,7 @@ from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags
 from src.agents.referee.move_ledger import group_key
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.tie_break import group_tie
-from src.contracts.model_flag import FlagReason, ModelFlag
+from src.contracts.model_flag import MAX_EXPLANATION_CHARS, FlagReason, ModelFlag
 from src.contracts.move_ledger import MoveEvidence
 from src.contracts.post_schema_router_output import (
     HeldQuery,
@@ -40,6 +40,7 @@ from src.contracts.post_schema_router_output import (
     TerminalQuery,
 )
 from src.shared.engine_names import display_engine
+from src.shared.query_citations import clip
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,9 @@ def _unsupported_as_flags(schema_output: dict, engine: str) -> list[ModelFlag]:
             query_ids=[str(q) for q in entry["query_ids"]],
             flagged_engine=engine,  # type: ignore[arg-type]  # checked by the caller
             reason_category=FlagReason.MISSING_FEATURE,
-            explanation=str(entry["reason"])[:300] or "unsupported pattern",
+            # Cut on a label boundary: the gate may have written a query's label
+            # (#1321), and a cut inside it would leave an unpaired backtick.
+            explanation=clip(str(entry["reason"]), MAX_EXPLANATION_CHARS) or "unsupported pattern",
         )
         for entry in _extract_unsupported_query_ids(schema_output, engine)
     ]

@@ -82,6 +82,7 @@ from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.prose_style import collector_identifiers, replace_dashes
+from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.shared.report_facts import retired_in_use_engine_facts
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
@@ -677,11 +678,14 @@ def apply_synthesis_llm_output(
         return deterministic_result
     # The one response contract both modes share (#628); raises
     # pydantic.ValidationError when the answer is off it.
-    llm_summary = parse_executive_summary_response(llm_output).executive_summary
+    response = parse_executive_summary_response(llm_output)
     # #1034: dashes are replaced mechanically; every check below reads the
     # cleaned text, and the customer sees it when nothing rejects it.
     # ``summary_llm`` keeps the text as received, for audit.
-    raw_summary = llm_summary
+    raw_summary = response.executive_summary
+    # #1321: every str field of the response cites a query by its report label,
+    # never by a bare id.
+    llm_summary = _cite_queries(deterministic_result, response).executive_summary
     identifiers = collector_identifiers(
         getattr(deterministic_result.get("data"), "collector", None)
     ) | set(deterministic_result.get("known_tables") or [])
@@ -736,6 +740,20 @@ def apply_synthesis_llm_output(
         deterministic_result["executive_summary"] = summary_text
         deterministic_result["summary_source"] = "llm"
     return deterministic_result
+
+
+def _cite_queries(
+    deterministic_result: dict, response: ExecutiveSummaryResponse
+) -> ExecutiveSummaryResponse:
+    """``response`` (validated) with every bare id of a job's query, in any of its
+    str fields, replaced by the query's report label (``src.shared.query_citations``,
+    #1321). The job's queries are the collection's and the ones the result names."""
+    collector = getattr(deterministic_result.get("data"), "collector", None)
+    named = named_query_ids({k: v for k, v in deterministic_result.items() if k != "data"})
+    citations = QueryCitations(collector_query_ids(collector) | named)
+    if not citations:
+        return response
+    return citations.fields(response)
 
 
 # ---------------------------------------------------------------------------

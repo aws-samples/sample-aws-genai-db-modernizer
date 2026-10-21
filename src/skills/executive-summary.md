@@ -64,6 +64,8 @@ The plain-prose style list. Finalize replaces dashes and rejects a summary that 
 - None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
 - Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
 
+Cite a query by its label, the first 8 characters of its id in backticks ("query `8c66eaee`"), never by a bare id or id prefix ("query 8c66eaee"). Finalize writes that label for any bare id of a known query it finds.
+
 Also:
 
 - Never use the words 'straightforward', 'cutting-edge', 'synergy', 'paradigm', 'realm', 'foster', and no other hedging ("is recommended", "not the only option").

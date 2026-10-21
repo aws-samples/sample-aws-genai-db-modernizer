@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 
 //##-- Cloudscape
 import AppLayoutToolbar from "@cloudscape-design/components/app-layout";
+import ProseText from '../components/ProseText';
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -802,7 +803,7 @@ const AssignmentGatePage = memo(() => {
       <Container>
         <div className="gate-hero">
           <div className="gate-hero__headline">{headline}</div>
-          <div className="gate-hero__summary">{executiveSummary}</div>
+          <div className="gate-hero__summary"><ProseText text={executiveSummary} /></div>
           {summaryFallback.isFallback && (
             <SummaryFallbackNotice
               className="gate-hero__fallback-note"
@@ -872,7 +873,7 @@ const AssignmentGatePage = memo(() => {
                             {t('assignment-gate.optimization-details.queries-moved', { count: c.query_count })}
                           </Box>
                         </Box>
-                        <Box fontSize="body-s" color="text-body-secondary">{c.reason}</Box>
+                        <Box fontSize="body-s" color="text-body-secondary"><ProseText text={c.reason} /></Box>
                       </SpaceBetween>
                     </Box>
                   ))}

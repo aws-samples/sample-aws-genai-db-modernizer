@@ -82,3 +82,5 @@ Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaroun
 - No hedges: "not the only one", "typically", "generally", "might", "could potentially", "a moment", "briefly", "if that matters", "for a short time", "where possible", "typical values are far smaller", "may see the old value", "roughly", "usually", "likely" ("generally available" is fine). State the fact. A softener on an effect is fine only with its bound in the sentence ("stale until the TTL expires", "up to about 1 s behind"), and "roughly" only before a figure ("roughly 40%").
 - None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
 - Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
+
+Cite a query by its label, the first 8 characters of its `query_id` in backticks ("query `8c66eaee`"), never by a bare id or id prefix ("query 8c66eaee"); the full id goes in the item's `query_ids`. The output gate writes that label for any bare id of a known query it finds, so a bare id never reaches the report.
