@@ -66,10 +66,23 @@ def test_many_callers_of_one_shape_are_capped_and_counted() -> None:
     assert p["query_tags_dropped"] == 5
 
 
-def test_trailing_comments_are_not_tags() -> None:
+def test_a_trailing_sqlcommenter_comment_is_a_tag_and_free_text_is_not() -> None:
     [p] = _transform_queries([_row(f"{SQL} /*controller='cart'*/")], "shop", {"cart"})
-    assert p["query_tags"] == []
+    assert p["query_tags"] == ["controller='cart'"]
     assert p["query_text"] == f"{SQL} /*controller='cart'*/"
+    [p] = _transform_queries([_row(f"{SQL} /* hot path */")], "shop", {"cart"})
+    assert p["query_tags"] == []
+
+
+def test_rows_merged_into_a_shape_keep_leading_and_trailing_tags_deduplicated() -> None:
+    rows = [
+        _row(f"/* batch */ {SQL} /*controller='cart'*/"),
+        _row(f"{SQL} /*controller='cart'*/"),
+        _row(f"{SQL} /*controller='cart',route='%2Fa'*/"),
+    ]
+    [p] = _transform_queries(rows, "shop", {"cart"}, source_engine="postgresql")
+    assert p["query_tags"] == ["batch", "controller='cart'", "controller='cart',route='%2Fa'"]
+    assert p["query_tags_dropped"] == 0
 
 
 @pytest.mark.parametrize(
@@ -100,6 +113,10 @@ _PARITY = [
     ("postgresql", f"-- event = hourly_job\n/* a /* b */ c */ {SQL}"),
     ("sqlserver", f"-- endpoint: CartController.Add\n/* x /* y */ z */ {SQL}"),
     ("oracle", f"/* insert com.shop.Cart */ {SQL}"),
+    ("mysql", f"{SQL} /*controller='cart',route='%2Fa'*/"),
+    ("postgresql", f"/* a */ {SQL} /*x='y /* z */'*/"),
+    ("sqlserver", f"{SQL} /*x='y'*/"),
+    ("oracle", f"{SQL} /*x='y'*/"),
     ("mysql", SQL),
 ]
 

@@ -57,10 +57,12 @@ class TestStatementTags:
                 "sqlserver",
                 ["endpoint: CartController.Add", "request: 42"],
             ),
-            # trailing and inline comments are not tags
-            ("SELECT * FROM cart /*controller='cart'*/", "mysql", []),
+            # a trailing comment is a tag only when it parses as sqlcommenter pairs (#1313)
+            ("SELECT * FROM cart /*controller='cart'*/", "mysql", ["controller='cart'"]),
+            ("SELECT * FROM cart /* free text */", "mysql", []),
             ("SELECT * FROM cart -- endpoint: x\n", "postgresql", []),
             ("SELECT /* inline */ * FROM cart", "mysql", []),
+            ("SELECT /*a='b'*/ * FROM cart", "mysql", []),
             ("/* lead */ SELECT /* inline */ * FROM cart /* trail */", "mysql", ["lead"]),
             # a statement that is only a line comment has no code, so no leading comment
             ("-- endpoint: x", "mysql", []),
@@ -104,6 +106,106 @@ class TestStatementTags:
         assert_linear(
             lambda n: "/*" + "x" * n + "*/ SELECT 1", lambda t: statement_tags(t, "mysql")
         )
+
+
+class TestTrailingSqlcommenterTags:
+    """A trailing comment is a tag only when ``parse_sqlcommenter`` reads it (#1313)."""
+
+    @pytest.mark.parametrize(
+        "sql, engine, expected",
+        [
+            # the shape sqlcommenter appends
+            (
+                "SELECT * FROM cart /*action='add',controller='cart'*/",
+                "postgresql",
+                ["action='add',controller='cart'"],
+            ),
+            # before the closing semicolon, where drivers put it
+            ("SELECT 1 FROM cart /*controller='cart'*/;", "postgresql", ["controller='cart'"]),
+            # free text and malformed sqlcommenter are not tags
+            ("SELECT 1 FROM cart /* hot path */", "postgresql", []),
+            ("SELECT 1 FROM cart /*controller='cart*/", "postgresql", []),
+            ("SELECT 1 FROM cart /*controller='cart',*/", "postgresql", []),
+            ("SELECT 1 FROM cart /*controller='a',controller='b'*/", "postgresql", []),
+            ("SELECT 1 FROM cart /**/", "postgresql", []),
+            # leading and trailing, leading first
+            (
+                "/* batch job */ SELECT 1 FROM cart /*controller='cart'*/",
+                "mysql",
+                ["batch job", "controller='cart'"],
+            ),
+            # each trailing comment is judged alone
+            (
+                "SELECT 1 FROM cart /*route='%2Fcart'*/ /* note */ /*db='x'*/",
+                "sqlserver",
+                ["route='%2Fcart'", "db='x'"],
+            ),
+            # a statement that is only a tag is a leading tag, once
+            ("/*controller='cart'*/", "mysql", ["controller='cart'"]),
+            ("/*controller='cart'*/ SELECT 1", "mysql", ["controller='cart'"]),
+            # a comment marker inside a string literal or quoted name is data
+            ("SELECT '/*controller=''cart''*/' FROM cart", "postgresql", []),
+            ("SELECT \"/*controller='a'*/\" FROM cart", "postgresql", []),
+            ("SELECT 'x' FROM cart /*controller='cart'*/", "postgresql", ["controller='cart'"]),
+            ("SELECT 1 FROM cart WHERE a = 'it''s /*b='c'*/", "postgresql", []),
+            # an unterminated block is code, not a comment
+            ("SELECT 1 FROM cart /*controller='cart'", "postgresql", []),
+            # a line comment is a tag only with its newline, as for leading comments
+            ("SELECT 1 FROM cart -- controller='cart'", "postgresql", []),
+            ("SELECT 1 FROM cart\n-- controller='cart'\n", "postgresql", ["controller='cart'"]),
+            ("SELECT 1 FROM cart # controller='cart'\n", "mysql", ["controller='cart'"]),
+            ("SELECT 1 FROM cart # controller='cart'\n", "postgresql", []),
+            # nested block comments in PostgreSQL and SQL Server
+            ("SELECT 1 /*a='b' /* c */ */", "postgresql", []),
+            ("SELECT 1 /* x /*a='b'*/ */", "sqlserver", []),
+            ("SELECT 1 /*a='b'*/ /* c */", "sqlserver", ["a='b'"]),
+            # an executable comment is code
+            ("SELECT 1 /*!40101 a='b' */", "mysql", []),
+            ("SELECT 1 /*x='y /* z */'*/", "postgresql", ["x='y /* z */'"]),
+            # a hint is not a tag
+            ("SELECT 1 /*+ a='b' */", "oracle", []),
+        ],
+    )
+    def test_trailing(self, sql: str, engine: str, expected: list[str]) -> None:
+        assert statement_tags(sql, engine) == expected
+
+    @pytest.mark.passes_on_main  # a negative case: the comment is no tag before and after
+    def test_mysql_ends_a_block_at_the_first_close(self) -> None:
+        # /*a='b' /* c */ ends at the first */: the body is not sqlcommenter
+        assert statement_tags("SELECT 1 /*a='b' /* c */", "mysql") == []
+
+    def test_the_same_tag_leading_and_trailing_is_one_tag(self) -> None:
+        rows = [
+            "/*controller='cart'*/ SELECT 1 /*controller='cart'*/",
+            "SELECT 1 /*controller='cart'*/",
+            "SELECT 1 /*action='add'*/",
+        ]
+        acc = QueryTags.of(rows, "mysql")
+        assert acc.fields() == {
+            "query_tags": ["controller='cart'", "action='add'"],
+            "query_tags_dropped": 0,
+        }
+
+    def test_trailing_tags_share_the_caps_and_the_dropped_count(self) -> None:
+        rows = [f"SELECT 1 /*trace='{i}'*/" for i in range(MAX_QUERY_TAGS + 3)]
+        fields = QueryTags.of(rows, "postgresql").fields()
+        assert fields["query_tags"] == [f"trace='{i}'" for i in range(MAX_QUERY_TAGS)]
+        assert fields["query_tags_dropped"] == 3
+        huge = "SELECT 1 /*v='" + "x" * MAX_QUERY_TAG_CHARS + "'*/"
+        assert QueryTags.of([huge, "SELECT 1 /*a='b'*/"], "postgresql").fields() == {
+            "query_tags": ["a='b'"],
+            "query_tags_dropped": 1,
+        }
+
+    @pytest.mark.passes_on_main  # a time bound the new scan must also meet
+    @pytest.mark.parametrize("engine", ["postgresql", "mysql"])
+    def test_trailing_tags_read_in_linear_time(self, engine: str) -> None:
+        def read(t: str) -> list[str]:
+            return statement_tags(t, engine)
+
+        assert_linear(lambda n: "SELECT 1 " + "/*" * (n // 2), read)
+        assert_linear(lambda n: "SELECT 1 " + "/* a */" * (n // 7), read)
+        assert_linear(lambda n: "SELECT '" + "'" * n, read)
 
 
 class TestQueryTags:
@@ -243,7 +345,7 @@ _ALLOWED = {
 }
 _TAG_RE = re.compile(
     r"\b(?:query_tags|query_tags_dropped|without_query_tags|statement_tags|QueryTags"
-    r"|QUERY_TAG_FIELDS|parse_sqlcommenter|leading_comments)\b"
+    r"|QUERY_TAG_FIELDS|parse_sqlcommenter|leading_comments|trailing_comments)\b"
 )
 
 

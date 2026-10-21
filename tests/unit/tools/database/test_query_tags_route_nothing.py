@@ -51,7 +51,7 @@ def _stable(value):
     return value
 
 
-def _route(tmp: Path, name: str, raw: dict, tag: bool) -> dict:
+def _route(tmp: Path, name: str, raw: dict, tag: bool, expect_tags: bool = False) -> dict:
     import scripts.run_assessment as run_assessment
 
     tmp.mkdir()
@@ -65,7 +65,8 @@ def _route(tmp: Path, name: str, raw: dict, tag: bool) -> dict:
         base = f"{db}/{job_id}"
         collector = store.read_json(f"{base}/collector/output.json")
         patterns = collector["queries"]["query_patterns"]
-        assert all(q["query_tags"] == [] for q in patterns)  # these samples have none
+        # these samples have none, unless the test put a trailing sqlcommenter comment on each
+        assert all(bool(q["query_tags"]) == expect_tags for q in patterns)
         if tag:
             for i, q in enumerate(patterns):
                 q["query_tags"] = [
@@ -105,5 +106,22 @@ def test_tags_change_no_routing(tmp_path: Path, name: str) -> None:
     plain = _route(tmp_path / "plain", name, raw, tag=False)
     tagged = _route(tmp_path / "tagged", name, raw, tag=True)
     assert plain["engines"]  # the run routed every query
+    for key in ("engines", "trace", "access_patterns", "triage", "analyses"):
+        assert tagged[key] == plain[key], key
+
+
+@pytest.mark.parametrize("name", ["trailgear", "wordpress"])
+def test_trailing_sqlcommenter_comments_change_no_routing(tmp_path: Path, name: str) -> None:
+    """Statements that end with a sqlcommenter comment (#1313) become tags, and route the same."""
+    raw = _sample(name)
+    commented = json.loads(json.dumps(raw))
+    for i, q in enumerate(commented["queries"]):
+        # before the closing semicolon, where sqlcommenter drivers put it
+        body = q["query_text"].rstrip()
+        end = ";" if body.endswith(";") else ""
+        q["query_text"] = f"{body.removesuffix(';')} /*controller='c{i % 7}',route='%2Fr{i}'*/{end}"
+    plain = _route(tmp_path / "plain", name, raw, tag=False)
+    tagged = _route(tmp_path / "tagged", name, commented, tag=False, expect_tags=True)
+    assert plain["engines"]
     for key in ("engines", "trace", "access_patterns", "triage", "analyses"):
         assert tagged[key] == plain[key], key

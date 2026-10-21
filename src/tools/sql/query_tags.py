@@ -9,8 +9,12 @@ query shape, every row's tags, not only the representative text's.
 
 ``QueryPattern.query_tags`` holds them: each distinct leading-comment text, markers
 removed and trimmed, in first-seen order across every row merged into the shape.
-Trailing and inline comments are not tags. The leading comments are read with the
-shared comment rule (:func:`src.shared.sql_comments.leading_comments`) in the
+Inline comments are not tags, and a trailing comment is one only when it parses as
+sqlcommenter ``key='value'`` pairs (:func:`parse_sqlcommenter`, #1313): sqlcommenter
+and Rails QueryLogs append their comment, and a free-text trailing comment says
+nothing a caller can join on. Leading and trailing tags are deduplicated together.
+The comments are read with the shared comment rules
+(:func:`src.shared.sql_comments.leading_comments` and ``trailing_comments``) in the
 source dialect: ``#`` line comments and executable comments (``/*! ... */``, code,
 not a comment) in the MySQL family, nested block comments in PostgreSQL and SQL
 Server. An optimizer hint (``/*+ ... */``) is a comment but not a tag.
@@ -31,9 +35,11 @@ with :func:`without_query_tags`. ``query_text`` itself is unchanged (#1180), so 
 representative row's leading comment still reaches prompts inside it.
 
 Which sources produce tags depends on the text each collector reads: PostgreSQL keeps
-every leading comment; MySQL and MariaDB read ``DIGEST_TEXT``, which has its comments
-removed, so they give none; the SQL Server and Oracle collectors replace newlines with
-spaces, so only block-comment tags survive there.
+every leading comment and every sqlcommenter trailing comment; MySQL and MariaDB read
+``DIGEST_TEXT``, which has its comments removed, so they give none; the SQL Server and
+Oracle collectors replace newlines with spaces, so only block-comment tags survive there
+(a ``--`` comment runs into the statement): sqlcommenter writes block comments, so its
+tags do.
 
 :func:`parse_sqlcommenter` reads a tag in sqlcommenter's ``key='value'`` format
 into its URL-decoded pairs, for callers that join on them; the contract keeps the
@@ -47,7 +53,7 @@ from collections.abc import Iterable
 from typing import Any
 from urllib.parse import unquote
 
-from src.shared.sql_comments import block_comments_nest, leading_comments
+from src.shared.sql_comments import block_comments_nest, leading_comments, trailing_comments
 from src.tools.sql.facade import sqlglot_dialect
 
 __all__ = [
@@ -72,25 +78,34 @@ QUERY_TAG_FIELDS = ("query_tags", "query_tags_dropped")
 
 
 def statement_tags(sql: str, source_engine: str) -> list[str]:
-    """The tags ``sql`` opens with, read in ``source_engine``'s dialect: each leading
-    comment's text, trimmed, in order. Empty comments and optimizer hints are not
-    tags. Not deduplicated or capped (see :class:`QueryTags`). Never raises."""
+    """The tags of ``sql``, read in ``source_engine``'s dialect: each leading comment's
+    text, trimmed, in order, then each trailing comment that parses as sqlcommenter
+    pairs (:func:`parse_sqlcommenter`, #1313). Empty comments and optimizer hints are
+    not tags. Not deduplicated or capped (see :class:`QueryTags`). Never raises."""
     engine = (source_engine or "").strip().lower()
     mysql_family = sqlglot_dialect(engine) == "mysql"
-    texts = leading_comments(
-        sql or "",
-        hash_comments=mysql_family,
-        nested=block_comments_nest(engine),
-        mysql_executable=mysql_family,
-    )
+    options = {
+        "hash_comments": mysql_family,
+        "nested": block_comments_nest(engine),
+        "mysql_executable": mysql_family,
+    }
     tags = []
-    for text in texts:
-        tag = text.strip()
-        # An optimizer hint has its + right after the marker (/*+ or --+); a comment
-        # that only starts with + after a space (/* +1 retry */) is a tag.
-        if tag and not text.startswith("+"):
+    for text in leading_comments(sql or "", **options):
+        tag = _tag_of(text)
+        if tag:
+            tags.append(tag)
+    for text in trailing_comments(sql or "", **options):
+        tag = _tag_of(text)
+        if tag and parse_sqlcommenter(tag):
             tags.append(tag)
     return tags
+
+
+def _tag_of(text: str) -> str:
+    """A comment's trimmed text, or "" for an empty comment or an optimizer hint.
+    A hint has its + right after the marker (/*+ or --+); a comment that only starts
+    with + after a space (/* +1 retry */) is a tag."""
+    return "" if text.startswith("+") else text.strip()
 
 
 class QueryTags:

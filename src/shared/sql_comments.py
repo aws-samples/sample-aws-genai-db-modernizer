@@ -31,6 +31,7 @@ __all__ = [
     "strip_comments",
     "strip_leading_comments",
     "strip_trailing_comments",
+    "trailing_comments",
     "unwrap_executable_comment",
 ]
 
@@ -54,6 +55,10 @@ _EXECUTABLE_COMMENT_OPEN_RE = re.compile(r"/\*M?!\d*")
 
 # A character that can open a string literal or a comment (strip_comments).
 _COMMENT_OR_QUOTE_START_RE = re.compile(r"['/#-]")
+
+# A character that can open a quoted literal or name, a comment, or end a statement
+# (trailing_comments).
+_TRAILING_SCAN_START_RE = re.compile(r"""['"`/#;-]""")
 
 
 def block_comments_nest(dialect: str | None) -> bool:
@@ -204,6 +209,86 @@ def strip_trailing_comments(text: str, *, nested: bool = False) -> str:
             code_end = i
             comment_after_code = False
     return text[:code_end] if comment_after_code else text
+
+
+def _quote_end(text: str, start: int, backslash: bool) -> int:
+    """The index just past the quoted literal or name opened at ``start``, or the
+    text's length when it is unterminated. A doubled quote is an escaped quote;
+    ``backslash`` also reads ``\\x`` as an escape (MySQL string literals)."""
+    quote = text[start]
+    i = start + 1
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if backslash and ch == "\\" and quote != "`":
+            i += 2
+        elif ch == quote:
+            if text.startswith(quote, i + 1):
+                i += 2
+            else:
+                return i + 1
+        else:
+            i += 1
+    return n
+
+
+def trailing_comments(
+    text: str,
+    *,
+    hash_comments: bool = False,
+    nested: bool = False,
+    mysql_executable: bool = False,
+) -> list[str]:
+    """The text of each comment ``text`` ends with, in order, markers removed.
+
+    The comments after the statement's last code character, in the same form as
+    :func:`leading_comments` (whitespace is kept; callers trim). Quoted literals
+    and names are read as data, so a comment marker inside one starts nothing, and
+    a statement-ending ``;`` does not make the comments before it inline. A
+    comment in the middle of the statement is not listed, and neither is anything in
+    a statement that is only comments (those are leading). As for leading comments,
+    a line comment counts only with its newline, and an unterminated ``/*`` is code.
+    The options are those of :func:`strip_leading_comments`: ``mysql_executable``
+    reads ``/*! ... */`` as code. One forward pass, linear in the text's length.
+    """
+    n = len(text)
+    i = 0
+    pending: list[tuple[int, int]] = []
+    seen_code = False
+    any_close_left = True  # as in strip_trailing_comments
+    while i < n:
+        ch = text[i]
+        if ch.isspace() or ch == ";":
+            i += 1
+        elif ch in "'\"`":
+            i = _quote_end(text, i, backslash=hash_comments)
+            pending, seen_code = [], True
+        elif text.startswith("--", i) or (hash_comments and ch == "#"):
+            marker = 2 if ch == "-" else 1
+            newline = text.find("\n", i)
+            if newline < 0:
+                break  # no newline: the rest of the text is this one comment's
+            pending.append((i + marker, newline))
+            i = newline
+        elif text.startswith("/*", i):
+            if mysql_executable and _EXECUTABLE_COMMENT_OPEN_RE.match(text, i):
+                close = text.find("*/", i + 2)
+                i = n if close < 0 else close + 2
+                pending, seen_code = [], True
+                continue
+            end = _block_end(text, i, nested) if any_close_left else -1
+            if end < 0:
+                any_close_left = False
+                pending, seen_code = [], True
+                i += 2
+                continue
+            pending.append((i + 2, end - 2))
+            i = end
+        else:
+            pending, seen_code = [], True
+            following = _TRAILING_SCAN_START_RE.search(text, i + 1)
+            i = n if following is None else following.start()
+    return [text[start:end] for start, end in pending] if seen_code else []
 
 
 def unwrap_executable_comment(text: str) -> str:

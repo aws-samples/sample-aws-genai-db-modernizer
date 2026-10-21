@@ -17,6 +17,7 @@ from src.shared.sql_comments import (
     strip_comments,
     strip_leading_comments,
     strip_trailing_comments,
+    trailing_comments,
     unwrap_executable_comment,
 )
 from tests.unit.tools.sql._timing import assert_linear
@@ -370,3 +371,36 @@ class TestStripComments:
         assert_linear(lambda n: "'" + "x" * n, strip_comments)
         assert_linear(lambda n: "x '/*' " * (n // 7), strip_comments)
         assert_linear(lambda n: "x " + "/*" * (n // 2), lambda t: strip_comments(t, nested=True))
+
+
+class TestTrailingComments:
+    """The comments a statement ends with, string-literal aware (#1313)."""
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("SELECT 1", []),
+            ("SELECT 1 /* a */", [" a "]),
+            ("SELECT 1 /* a */ /* b */ ;", [" a ", " b "]),
+            ("SELECT 1 /* a */ FROM t", []),
+            ("/* a */ SELECT 1", []),
+            ("/* a */", []),
+            ("SELECT '/* a */'", []),
+            ("SELECT 'it''s' /* a */", [" a "]),
+            ("SELECT 1 /* open", []),
+            ("SELECT 1 -- a", []),
+            ("SELECT 1 -- a\n", [" a"]),
+            ("SELECT 1 /* a */ -- b", [" a "]),
+        ],
+    )
+    def test_lists_trailing_comments(self, text, expected):
+        assert trailing_comments(text) == expected
+
+    def test_options(self):
+        assert trailing_comments("SELECT 1 # a\n", hash_comments=True) == [" a"]
+        assert trailing_comments("SELECT 1 # a\n") == []
+        assert trailing_comments("SELECT 1 /* a /* b */ c */", nested=True) == [" a /* b */ c "]
+        assert trailing_comments("SELECT 1 /* a /* b */") == [" a /* b "]
+        assert trailing_comments("SELECT 1 /*! a */", mysql_executable=True) == []
+        # a backslash escapes a quote in a MySQL literal only
+        assert trailing_comments("SELECT 'a\\' /* b */'", hash_comments=True) == []
