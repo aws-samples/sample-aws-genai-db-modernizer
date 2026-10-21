@@ -151,7 +151,7 @@
       "postgresql",
       "sqlserver"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.DeploymentType": {
     "module": "collector_output",
@@ -160,7 +160,7 @@
       "on_premises",
       "rds_instance"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.ForeignKeyAction": {
     "module": "collector_output",
@@ -171,7 +171,7 @@
       "SET DEFAULT",
       "SET NULL"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.IndexType": {
     "module": "collector_output",
@@ -184,7 +184,7 @@
       "other",
       "spatial"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.NormalizedDataType": {
     "module": "collector_output",
@@ -204,7 +204,7 @@
       "uuid",
       "xml"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.ParameterMode": {
     "module": "collector_output",
@@ -213,7 +213,7 @@
       "INOUT",
       "OUT"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.ProcedureType": {
     "module": "collector_output",
@@ -222,7 +222,7 @@
       "PROCEDURE",
       "TRIGGER_FUNCTION"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.QueryLogSource": {
     "module": "collector_output",
@@ -236,7 +236,7 @@
       "slow_query_log",
       "v_dollar_sql"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.QueryType": {
     "module": "collector_output",
@@ -248,7 +248,7 @@
       "SELECT",
       "UPDATE"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.StorageType": {
     "module": "collector_output",
@@ -259,7 +259,7 @@
       "io2",
       "magnetic"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.TriggerEventType": {
     "module": "collector_output",
@@ -268,7 +268,7 @@
       "INSERT",
       "UPDATE"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.TriggerForEach": {
     "module": "collector_output",
@@ -276,7 +276,7 @@
       "ROW",
       "STATEMENT"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "collector_output.TriggerTiming": {
     "module": "collector_output",
@@ -285,7 +285,7 @@
       "BEFORE",
       "INSTEAD OF"
     ],
-    "version": "3.4"
+    "version": "3.5"
   },
   "documentdb_decision_trace.EmbeddingRelationshipType": {
     "module": "documentdb_decision_trace",

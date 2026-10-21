@@ -1091,9 +1091,9 @@ def finalize_assignment_review(
     # in production.
     from src.agents.referee.feasibility_review import review_assignment_feasibility
     from src.contracts.feasibility_models import FindingSeverity
+    from src.storage.collector_for_models import read_collector_for_models
 
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key) if store.exists(collector_key) else {}
+    collector_output = read_collector_for_models(store, database_name, job_id, missing_ok=True)
     findings = review_assignment_feasibility(effective_assignment, collector_output)
     blocking = [f for f in findings if f.severity is FindingSeverity.BLOCKING]
     findings_json = [f.model_dump(mode="json") for f in findings]

@@ -130,7 +130,9 @@ def _get_analysis_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
 
 def run_external(store, job_id: str, db: str, engine: str) -> None:
     """Run deterministic pass and write partial results + LLM request."""
-    collector_output = store.read_json(f"{db}/{job_id}/collector/output.json")
+    from src.storage.collector_for_models import read_collector_for_models
+
+    collector_output = read_collector_for_models(store, db, job_id)
     analysis_input = _build_analysis_input(job_id, db, engine, collector_output)
 
     if engine == "dynamodb":
@@ -168,7 +170,9 @@ def run_external(store, job_id: str, db: str, engine: str) -> None:
 
 def run_standard(store, job_id: str, db: str, engine: str, llm_mode: str) -> None:
     """Run full analysis (none or bedrock LLM mode) and write final results."""
-    collector_output = store.read_json(f"{db}/{job_id}/collector/output.json")
+    from src.storage.collector_for_models import read_collector_for_models
+
+    collector_output = read_collector_for_models(store, db, job_id)
     analysis_input = _build_analysis_input(job_id, db, engine, collector_output)
 
     if engine == "dynamodb":

@@ -30,6 +30,7 @@ from src.contracts.schema_revision_models import (
     VerificationResult,
 )
 from src.storage.artifact_store import ArtifactStore
+from src.storage.collector_for_models import read_collector_for_models
 
 logger = logging.getLogger(__name__)
 
@@ -389,10 +390,9 @@ def _dispatch_llm_redesign(
     context_tmp.close()
 
     # Find collector and analysis paths from the store
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
     analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
 
-    collector_data = store.read_json(collector_key)
+    collector_data = read_collector_for_models(store, database_name, job_id)
     analysis_data = store.read_json(analysis_key)
 
     collector_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)

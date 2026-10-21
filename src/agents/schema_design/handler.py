@@ -45,6 +45,7 @@ from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
+from src.storage.collector_for_models import read_collector_for_models
 from src.tools.schema.design_metrics import (
     METRIC_ENGINES,
     UNFILTERED_PATTERNS_KEY,
@@ -301,8 +302,7 @@ def prepare_schema_design_input(
       for DocumentDB and OpenSearch also decision_trace (the engine's analysis
       trace scoped to the filtered queries and tables, #1068) when one exists
     """
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
 
     if assignment_version > 0:
         assignment_key = (
@@ -712,8 +712,7 @@ def run_schema_design(
         print(f"[schema-design/{target_type}] Loaded partial output from previous run")
 
     # --- Read collector output via ArtifactStore ---
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
     print(f"[schema-design/{target_type}] Loaded collector output")
 
     # --- Filter by assignment when versioned ---
@@ -857,8 +856,7 @@ def run_schema_split(
     print(f"[schema-split/{target_type}] Starting for {database_name}")
 
     # Read collector output
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
 
     # Filter by assignment
     queries = collector_output.get("queries", {}).get("query_patterns", [])
@@ -1082,8 +1080,7 @@ def run_schema_design_auto(
     artifact_version = assignment_version if assignment_version > 0 else 1
 
     # Count in-scope queries for this engine
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
 
     if assignment_version > 0:
         assignment_key = (
@@ -1281,8 +1278,7 @@ def run_schema_design_with_injected(
     )
 
     # Read collector output
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
 
     # Filter by assignment + injected queries
     if assignment_version > 0:

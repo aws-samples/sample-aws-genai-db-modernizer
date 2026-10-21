@@ -7373,6 +7373,24 @@
                         "type": "string"
                       }
                     },
+                    "query_tags": {
+                      "required": false,
+                      "schema": {
+                        "items": {
+                          "kind": "scalar",
+                          "type": "string"
+                        },
+                        "kind": "array"
+                      }
+                    },
+                    "query_tags_dropped": {
+                      "required": false,
+                      "schema": {
+                        "kind": "scalar",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
                     "query_text": {
                       "required": true,
                       "schema": {
@@ -7769,8 +7787,8 @@
         }
       }
     },
-    "schema_hash": "3fb2414f23ac1f4abec4c3b25528fa78e48cc2fb1e65346122c2f39266333fb8",
-    "version": "3.4"
+    "schema_hash": "b4eb5af93c742369f3045cc7affbb0532a0d1dd9223d333ee20c33738ef7f870",
+    "version": "3.5"
   },
   "design_metrics.DesignMetricsContract": {
     "fields": {

@@ -106,3 +106,35 @@ def pytest_runtest_makereport(item, call):
             "`integration` so it is explicitly deselected from the gated run "
             "(-m 'not integration') rather than silently skipped."
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests never call a real model (AGENTS.md). Some unit tests reach a Bedrock call
+# path their patches do not cover (the reality check's boto3 validator, an analysis
+# advisor's or the synthesis summary's model): without credentials botocore fails
+# before sending, but with credentials (a developer machine, a runner with vended
+# credentials) the request would reach Bedrock. Every request to a Bedrock endpoint
+# is refused here, before it is signed or sent. A botocore Stubber or a patched
+# client never gets this far, so tests that build a Bedrock client and stub its
+# answers are unaffected. Covered by tests/unit/test_no_real_model_calls.py.
+# ---------------------------------------------------------------------------
+import botocore.endpoint  # noqa: E402
+
+
+class RealModelCallBlocked(RuntimeError):
+    """A test tried to send a request to a real Bedrock endpoint."""
+
+
+_real_make_request = botocore.endpoint.Endpoint.make_request
+
+
+def _refuse_bedrock_requests(self, operation_model, request_dict):
+    if "bedrock" in str(getattr(self, "host", "")):
+        raise RealModelCallBlocked(
+            f"a test tried to call {self.host} ({operation_model.name}); tests never call a "
+            "real model: patch the model entry point"
+        )
+    return _real_make_request(self, operation_model, request_dict)
+
+
+botocore.endpoint.Endpoint.make_request = _refuse_bedrock_requests  # type: ignore[method-assign]

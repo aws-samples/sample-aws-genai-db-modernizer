@@ -318,6 +318,8 @@ class PostgreSQLRemoteCollector:
                     "has_text_search": shape["has_text_search"],
                     "text_search_type": shape["text_search_type"],
                     "parsed_facts": shape["parsed_facts"],
+                    "query_tags": shape["query_tags"],
+                    "query_tags_dropped": shape["query_tags_dropped"],
                     "has_time_range_filter": _has_time_range_filter(query_text),
                     # PostgreSQL-specific
                     "cache_hit_ratio_pct": round(shared_hit / max(total_blks, 1) * 100, 2),

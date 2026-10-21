@@ -84,6 +84,7 @@ from src.storage.assignment_versioning import (
     reality_check_run_for_lineage,
     resolve_reality_check_input_version,
 )
+from src.storage.collector_for_models import read_collector_for_models
 from src.tools.sql.query_facts import remember_collected_facts
 
 logger = logging.getLogger(__name__)
@@ -125,8 +126,7 @@ def run_reality_check_deterministic(
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
     triage = store.read_json(triage_key)
 
-    collector_key = f"{database_name}/{job_id}/collector/output.json"
-    collector_output = store.read_json(collector_key)
+    collector_output = read_collector_for_models(store, database_name, job_id)
     remember_collected_facts(collector_output)
 
     # Load analysis outputs for each engine in the triage

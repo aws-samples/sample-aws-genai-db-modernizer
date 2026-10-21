@@ -37,6 +37,7 @@ from typing import Any
 from src.tools.sql import facade
 from src.tools.sql.facade import SqlReading, TableRef, TableReferences
 from src.tools.sql.query_facts import query_facts, remember_stored_facts
+from src.tools.sql.query_tags import QueryTags
 from src.tools.sql.stored_facts import stored_reading
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ class LiveQueryReader:
     """Reads one live collection's query texts through the facade.
 
     ``fields`` returns the query-text keys of one query pattern (the text-search ones
-    included, #929); ``log_fallbacks``
+    included, #929, and the leading comment tags, #1180); ``log_fallbacks``
     logs, once per collection, how many queries used the regex fallback. A
     facade error logs its stack trace for the first query it hits only.
     """
@@ -136,6 +137,8 @@ class LiveQueryReader:
             "has_text_search": searches.text_search,
             "text_search_type": searches.text_search_type(),
             "parsed_facts": stored,
+            # The leading comment tags, read as the offline parser reads them (#1180).
+            **QueryTags.of([sql], self.source_engine).fields(),
         }
 
     def log_fallbacks(self) -> None:

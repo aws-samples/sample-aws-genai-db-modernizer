@@ -615,7 +615,9 @@ def run_analysis_core(engine: str, job_id: str, database_name: str, store=None) 
             f"Collector output not found at '{collector_key}'. " "Run the collector agent first."
         )
 
-    collector_output = store.read_json(collector_key)
+    from src.storage.collector_for_models import read_collector_for_models
+
+    collector_output = read_collector_for_models(store, database_name, job_id)
 
     # Deferred imports — avoid loading heavy analysis modules at core.py import time.
     from src.contracts.analysis_input import AnalysisInput, TargetDatabase
@@ -1547,7 +1549,9 @@ def _source_engine(store, job_id: str, database_name: str) -> str:
     already completed.
     """
     try:
-        collector = store.read_json(f"{database_name}/{job_id}/collector/output.json")
+        from src.storage.collector_for_models import read_collector_for_models
+
+        collector = read_collector_for_models(store, database_name, job_id)
         engine = collector.get("metadata", {}).get("source_database", {}).get("engine")
         return str(engine or "").strip().lower()
     except Exception:  # noqa: BLE001

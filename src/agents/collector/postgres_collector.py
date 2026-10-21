@@ -487,6 +487,8 @@ def _build_queries(raw: list[dict]) -> Queries:
             has_aggregations=p.get("has_aggregations"),
             has_subqueries=p.get("has_subqueries"),
             parsed_facts=p.get("parsed_facts"),
+            query_tags=p.get("query_tags") or [],
+            query_tags_dropped=p.get("query_tags_dropped") or 0,
             has_text_search=p.get("has_text_search"),
             text_search_type=p.get("text_search_type"),
             has_time_range_filter=p.get("has_time_range_filter"),

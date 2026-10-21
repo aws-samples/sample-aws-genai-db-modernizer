@@ -27,6 +27,7 @@ import re
 
 __all__ = [
     "block_comments_nest",
+    "leading_comments",
     "strip_comments",
     "strip_leading_comments",
     "strip_trailing_comments",
@@ -82,6 +83,45 @@ def _block_end(text: str, start: int, nested: bool) -> int:
     return -1
 
 
+def _leading_comment_run(
+    text: str, hash_comments: bool, nested: bool, mysql_executable: bool
+) -> tuple[int, list[tuple[int, int]]]:
+    """Where the comments ``text`` opens with end, and each one's body.
+
+    Returns ``(cut, bodies)``: ``cut`` is the index just past the last leading
+    comment (0 when there is none) and ``bodies`` the ``(start, end)`` span of
+    each comment's text inside its markers, in order. The one scan behind
+    :func:`strip_leading_comments` and :func:`leading_comments`; see the former
+    for which comments count.
+    """
+    n = len(text)
+    i = cut = 0
+    bodies: list[tuple[int, int]] = []
+    while True:
+        while i < n and text[i].isspace():
+            i += 1
+        line = 2 if text.startswith("--", i) else 0
+        if not line and hash_comments and text.startswith("#", i):
+            line = 1
+        if line:
+            newline = text.find("\n", i)
+            if newline < 0:
+                break
+            bodies.append((i + line, newline))
+            i = cut = newline + 1
+        elif mysql_executable and _EXECUTABLE_COMMENT_OPEN_RE.match(text, i):
+            break
+        elif text.startswith("/*", i):
+            end = _block_end(text, i, nested)
+            if end < 0:
+                break
+            bodies.append((i + 2, end - 2))
+            i = cut = end
+        else:
+            break
+    return cut, bodies
+
+
 def strip_leading_comments(
     text: str,
     *,
@@ -102,29 +142,29 @@ def strip_leading_comments(
     which is code (see :func:`unwrap_executable_comment`). Text that opens with
     no comment is returned unchanged.
     """
-    n = len(text)
-    i = cut = 0
-    while True:
-        while i < n and text[i].isspace():
-            i += 1
-        if text.startswith("--", i) or (hash_comments and text.startswith("#", i)):
-            newline = text.find("\n", i)
-            if newline < 0:
-                break
-            i = cut = newline + 1
-        elif mysql_executable and _EXECUTABLE_COMMENT_OPEN_RE.match(text, i):
-            break
-        elif text.startswith("/*", i):
-            end = _block_end(text, i, nested)
-            if end < 0:
-                break
-            i = cut = end
-        else:
-            break
+    cut, _ = _leading_comment_run(text, hash_comments, nested, mysql_executable)
     if cut == 0:
         return text
     rest = text[cut:]
     return rest.lstrip() if strip_following_space else rest
+
+
+def leading_comments(
+    text: str,
+    *,
+    hash_comments: bool = False,
+    nested: bool = False,
+    mysql_executable: bool = False,
+) -> list[str]:
+    """The text of each comment ``text`` opens with, in order, markers removed.
+
+    The comments :func:`strip_leading_comments` removes, with the same options:
+    ``-- a`` gives ``" a"``, ``/* b */`` gives ``" b "`` (whitespace is kept;
+    callers trim). A nested block's inner markers are part of its text. A
+    comment after the first code character is not leading, so it is not listed.
+    """
+    _, bodies = _leading_comment_run(text, hash_comments, nested, mysql_executable)
+    return [text[start:end] for start, end in bodies]
 
 
 def strip_trailing_comments(text: str, *, nested: bool = False) -> str:

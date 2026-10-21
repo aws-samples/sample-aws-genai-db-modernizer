@@ -65,6 +65,7 @@ from src.tools.aws.s3_storage import init_storage, load_json, save_json
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
 from src.tools.database.mysql_tools import MySQLRemoteCollector
+from src.tools.sql.query_tags import QueryTags
 
 logger = logging.getLogger(__name__)
 
@@ -895,6 +896,8 @@ def _build_queries(
             has_aggregations=p.get("has_aggregations"),
             has_subqueries=p.get("has_subqueries"),
             parsed_facts=p.get("parsed_facts"),
+            query_tags=p.get("query_tags") or [],
+            query_tags_dropped=p.get("query_tags_dropped") or 0,
             has_text_search=p.get("has_text_search"),
             text_search_type=p.get("text_search_type"),
             has_time_range_filter=p.get("has_time_range_filter"),
@@ -937,6 +940,12 @@ def _merge_into_queries(live_queries: Queries, aws_patterns: list[dict]) -> Quer
                 p.query_text = pi_text
                 # The stored facts are the text's (#934): the new text's, read the same way.
                 p.parsed_facts = aq.get("parsed_facts")
+            # Both texts' leading comment tags, this pattern's first (#1180). A tag
+            # both sides dropped counts twice: only whether any was dropped is exact.
+            tags = QueryTags()
+            tags.add(p.query_tags, p.query_tags_dropped)
+            tags.add(aq.get("query_tags") or [], aq.get("query_tags_dropped") or 0)
+            p.query_tags, p.query_tags_dropped = tags.tags, tags.dropped
             if p.calls_per_second is None and aq.get("calls_per_second"):
                 p.calls_per_second = aq["calls_per_second"]
             if p.db_load_contribution_percent is None and aq.get("db_load_contribution_percent"):
@@ -993,6 +1002,8 @@ def _dict_to_query_pattern(d: dict) -> QueryPattern:
         has_aggregations=d.get("has_aggregations"),
         has_subqueries=d.get("has_subqueries"),
         parsed_facts=d.get("parsed_facts"),
+        query_tags=d.get("query_tags") or [],
+        query_tags_dropped=d.get("query_tags_dropped") or 0,
         has_text_search=d.get("has_text_search"),
         text_search_type=d.get("text_search_type"),
         has_time_range_filter=d.get("has_time_range_filter") or _detect_time_range(query_text),

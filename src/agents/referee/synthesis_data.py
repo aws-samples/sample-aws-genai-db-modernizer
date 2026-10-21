@@ -27,6 +27,7 @@ from src.storage.assignment_versioning import (
     reality_check_run_for_lineage,
     resolve_reality_check_input_version,
 )
+from src.storage.collector_for_models import read_collector_for_models
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +111,12 @@ def load_synthesis_data(
     )
 
     # Collector
-    data.collector = _read_artifact(
-        store,
-        f"{database_name}/{job_id}/collector/output.json",
-        required=False,
-    )
+    # Optional, as every artifact here; read without the caller's query tags (#1180).
+    try:
+        data.collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+    except Exception as e:  # noqa: BLE001 -- an unreadable optional artifact, as _read_artifact
+        logger.warning("Optional artifact unreadable: collector output — %s", e)
+        data.collector = {}
 
     # Assignment (when versioned)
     if assignment_version > 0:

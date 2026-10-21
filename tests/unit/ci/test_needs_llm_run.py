@@ -378,6 +378,17 @@ REVIEWED_DETERMINISTIC_IMPORTS: dict[str, str] = {
         "reach analysis.json through the analysis tools, which are in E2E_LLM, so gating the "
         "whole facts module would pull every routing-only facts PR into e2e-llm"
     ),
+    "src/storage/collector_for_models.py": (
+        "the one read of the collector output for every model-facing step (#1180): the "
+        "schema-design handler, revision handler and group merger, the analysis handler and "
+        "scripts/run_analysis.py (whose AnalysisInput the DynamoDB and DocumentDB advisors and "
+        "prepare_*_llm_input read), the reality check, the synthesis data and the ATX analysis "
+        "and feasibility tools; it only removes the query tags. That nothing of them reaches a "
+        "model input is checked without a model by tests/unit/agents/"
+        "test_query_tags_reach_no_model.py (every request file, prompt and designer input of "
+        "a tagged job), and that those modules read through it by tests/unit/storage/"
+        "test_collector_for_models.py"
+    ),
 }
 
 

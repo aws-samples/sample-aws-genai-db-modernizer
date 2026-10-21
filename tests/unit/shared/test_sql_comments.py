@@ -13,6 +13,7 @@ import pytest
 
 from src.shared.sql_comments import (
     block_comments_nest,
+    leading_comments,
     strip_comments,
     strip_leading_comments,
     strip_trailing_comments,
@@ -74,6 +75,42 @@ class TestStripTrailingComments:
         assert_linear(lambda n: "--" * (n // 2) + "\nx", strip_trailing_comments)
         assert_linear(lambda n: "/*" + "*//*" * (n // 4) + "x", strip_trailing_comments)
         assert_linear(lambda n: "x /* " * (n // 5), strip_trailing_comments)
+
+
+class TestLeadingComments:
+    """The comments a statement opens with, the ones strip_leading_comments removes (#1180)."""
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("SELECT 1", []),
+            ("/* a */ SELECT 1", [" a "]),
+            ("  /* a */ /* b */SELECT 1", [" a ", " b "]),
+            ("-- a\r\n  -- b\n SELECT 1", [" a\r", " b"]),
+            ("SELECT 1 /* trailing */", []),
+            ("/* a */ SELECT /* inline */ 1", [" a "]),
+            ("-- a", []),
+            ("/* open SELECT 1", []),
+            ("# a\nSELECT 1", []),
+            ("", []),
+        ],
+    )
+    def test_lists_leading_comments(self, text, expected):
+        assert leading_comments(text) == expected
+
+    def test_options_match_strip_leading_comments(self):
+        assert leading_comments("# a\n/* b */ SELECT 1", hash_comments=True) == [" a", " b "]
+        assert leading_comments("/* a /* b */ c */ x", nested=True) == [" a /* b */ c "]
+        assert leading_comments("/* a /* b */ c */ x") == [" a /* b "]
+        assert leading_comments("/* a */ /*!40101 SET x */", mysql_executable=True) == [" a "]
+
+    @pytest.mark.parametrize("make", PATHOLOGICAL.values(), ids=PATHOLOGICAL.keys())
+    def test_pathological_input_finishes_fast(self, make):
+        def run(text: str) -> None:
+            leading_comments(text)
+            leading_comments(text, hash_comments=True, nested=True)
+
+        assert_linear(make, run, sizes=PATHOLOGICAL_SIZES)
 
 
 class TestStripLeadingComments:
@@ -138,6 +175,15 @@ class TestSharedCases:
     )
     def test_leading_case(self, case):
         assert strip_leading_comments(case["text"], **case["options"]) == case["expected"]
+
+    @pytest.mark.parametrize(
+        "case", SHARED_CASES["leading"], ids=[repr(c["text"]) for c in SHARED_CASES["leading"]]
+    )
+    def test_leading_comments_are_what_is_stripped(self, case):
+        """leading_comments lists a comment exactly when strip_leading_comments cuts one (#1180)."""
+        options = {k: v for k, v in case["options"].items() if k != "strip_following_space"}
+        stripped = strip_leading_comments(case["text"], **options)
+        assert bool(leading_comments(case["text"], **options)) == (stripped != case["text"])
 
 
 class TestNestedBlockComments:

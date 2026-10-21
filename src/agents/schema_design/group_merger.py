@@ -32,6 +32,7 @@ from src.contracts.schema_design_input import ExcludedQuery
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.contract_versioning import ContractVersionError
 from src.storage.artifact_store import ArtifactStore
+from src.storage.collector_for_models import read_collector_for_models
 
 logger = logging.getLogger(__name__)
 
@@ -345,7 +346,7 @@ def merge_schema_groups(
 
         collector_key = f"{database_name}/{job_id}/collector/output.json"
         try:
-            collector = store.read_json(collector_key)
+            collector = read_collector_for_models(store, database_name, job_id)
         except ContractVersionError:
             raise  # an unreadable collector output fails the merge, not just its keys
         except Exception as exc:

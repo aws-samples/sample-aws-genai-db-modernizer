@@ -20,6 +20,11 @@ Version History:
   ``Table.collation`` (the MySQL family reports both), read by the relational-move gap
   check. Backward compatible: both default to None (not reported), and a rule that
   needs them then finds nothing.
+- 3.5 (2026-10-21, #1180): Added optional ``QueryPattern.query_tags`` (each distinct
+  leading-comment text of every row merged into the shape, in first-seen order) and
+  ``QueryPattern.query_tags_dropped`` (how many tags the count and length caps dropped),
+  so a caller can join a statement to its own code. Backward compatible: both default to
+  empty (no tags).
 """
 
 import re
@@ -493,6 +498,33 @@ class QueryPattern(BaseModel):
         ..., description="Normalized query text (anonymized if PII protection enabled)"
     )
     query_type: QueryType | None = Field(None, description="Primary operation type")
+    query_tags: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Each distinct leading-comment text (markers removed, trimmed) of every row "
+            "merged into this shape, in first-seen order, such as sqlcommenter's "
+            "controller='cart',action='add' or a plain 'endpoint: CartController.Add'; empty "
+            "when there are none. Trailing and inline comments are not tags. Read from "
+            "query_text as collected, so nothing new is collected. Untrusted customer text, "
+            "for joining a statement to the caller's code: no routing or scoring step reads "
+            "it, and every model input is built without this field (query_text keeps the "
+            "representative row's leading comment, so that text still reaches prompts inside "
+            "query_text). Capped (src.tools.sql.query_tags): see "
+            "query_tags_dropped. Which sources fill it, from the text each collector reads: "
+            "PostgreSQL every leading comment (pg_stat_statements keeps the text); MySQL and "
+            "MariaDB none (DIGEST_TEXT has its comments removed); SQL Server and Oracle block "
+            "comments only (their collectors replace newlines with spaces, so a -- comment "
+            "runs into the statement); RDS Performance Insights what its statement text keeps"
+        ),
+    )
+    query_tags_dropped: int = Field(
+        0,
+        ge=0,
+        description=(
+            "How many tags the caps dropped (distinct tags past the count cap, or a tag longer "
+            "than the length cap); 0 exactly when query_tags is complete"
+        ),
+    )
     frequency_per_hour: float = Field(
         ..., ge=0, description="Average frequency of this query pattern per hour"
     )
@@ -700,7 +732,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="3.4",
+        default="3.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

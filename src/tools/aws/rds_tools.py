@@ -271,6 +271,8 @@ def get_performance_insights_queries(
                     "has_text_search": shape["has_text_search"],
                     "text_search_type": shape["text_search_type"],
                     "parsed_facts": shape["parsed_facts"],
+                    "query_tags": shape["query_tags"],
+                    "query_tags_dropped": shape["query_tags_dropped"],
                     "wait_events": wait_events,  # Global wait events (not per-SQL for MySQL)
                 }
             )
@@ -528,6 +530,8 @@ def get_database_insights(
                     "has_text_search": shape["has_text_search"],
                     "text_search_type": shape["text_search_type"],
                     "parsed_facts": shape["parsed_facts"],
+                    "query_tags": shape["query_tags"],
+                    "query_tags_dropped": shape["query_tags_dropped"],
                 }
             )
         reader.log_fallbacks()

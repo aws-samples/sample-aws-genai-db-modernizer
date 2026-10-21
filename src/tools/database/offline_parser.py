@@ -199,7 +199,7 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
     }
 
 
-def _merge_query_variants(raw: list[dict]) -> list[dict]:
+def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
     """Merge rows that share a ``digest`` into one row per query shape.
 
     This is the safety net for every offline collection format (#386): SQL Server's
@@ -219,8 +219,15 @@ def _merge_query_variants(raw: list[dict]) -> list[dict]:
     min/max across variants; one representative ``query_text`` is kept (the
     variant with the highest ``total_time_ms``). Pattern order is
     deterministic: one row per digest, in order of first appearance.
+
+    Every merged row gets ``query_tags`` and ``query_tags_dropped``: the leading
+    comment tags of all its variants' texts, in row order, read in the
+    ``source_engine`` dialect (:class:`src.tools.sql.query_tags.QueryTags`, #1180),
+    so the tags of a variant whose text is not the representative are kept too.
     """
     import hashlib
+
+    from src.tools.sql.query_tags import QueryTags
 
     groups: dict[str, list[dict]] = {}
     order: list[str] = []
@@ -258,9 +265,13 @@ def _merge_query_variants(raw: list[dict]) -> list[dict]:
     merged_rows = []
     for key in order:
         variants = groups[key]
+        tags = QueryTags.of(
+            (str(v.get("query_text") or "") for v in variants), source_engine
+        ).fields()
         if len(variants) == 1:
             row = dict(variants[0])
             row["digest"] = key
+            row.update(tags)
             merged_rows.append(row)
             continue
 
@@ -293,6 +304,7 @@ def _merge_query_variants(raw: list[dict]) -> list[dict]:
         if last_seens:
             merged["last_seen"] = max(last_seens)
 
+        merged.update(tags)
         merged_rows.append(merged)
 
     return merged_rows
@@ -607,7 +619,7 @@ def _transform_queries(
     patterns = []
     fallbacks: Counter[str] = Counter()
     case_folded = _case_folded_names(known_table_names, source_engine)
-    for r in _merge_query_variants(raw):
+    for r in _merge_query_variants(raw, source_engine):
         query_text = str(r.get("query_text") or "")
         exec_count = r.get("execution_count") or 1
         total_rows_sent = r.get("total_rows_sent") or 0
@@ -660,6 +672,9 @@ def _transform_queries(
                 "query_id": digest,
                 "query_text": query_text,
                 "query_type": query_type,
+                # Every merged row's leading comment tags (#1180).
+                "query_tags": r["query_tags"],
+                "query_tags_dropped": r["query_tags_dropped"],
                 "execution_count": exec_count,
                 "frequency_per_hour": exec_count / 24,
                 "calls_per_second": exec_count / (24 * 3600),

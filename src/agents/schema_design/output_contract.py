@@ -30,6 +30,7 @@ from pydantic import BaseModel, ValidationError
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.storage.artifact_store import ArtifactStore
+from src.storage.collector_for_models import read_collector_for_models
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,15 @@ def cite_queries(store: ArtifactStore, key: str, output: Any) -> Any:
     """
     ids = named_query_ids(output)
     if "/schema-" in key:
-        collector_key = f"{key.split('/schema-', 1)[0]}/collector/output.json"
+        database_name, _, job_id = key.split("/schema-", 1)[0].rpartition("/")
         try:
-            if store.exists(collector_key):
-                ids |= collector_query_ids(store.read_json(collector_key))
+            # Read without the caller's query tags (#1180); only the ids are used.
+            collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+            ids |= collector_query_ids(collector)
         except (
             Exception
         ) as exc:  # noqa: BLE001 -- an unreadable collection leaves the design's own ids
-            logger.debug("collection unreadable at %s: %s", collector_key, exc)
+            logger.debug("collection unreadable for %s/%s: %s", database_name, job_id, exc)
     citations = QueryCitations(ids)
     # Only prose fields are rewritten (``is_prose_field``). The free-form data
     # fields of every designer contract (DocumentDB filters, pipelines, examples)
