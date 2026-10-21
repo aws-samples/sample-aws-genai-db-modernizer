@@ -2,7 +2,17 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.storage.artifact_store import ArtifactStore
+
+
+@pytest.fixture(autouse=True)
+def _no_executive_summary_model(monkeypatch):
+    """The default llm_mode reaches the summary's Bedrock model; no answer keeps the deterministic summary."""
+    monkeypatch.setattr(
+        "src.agents.referee.synthesis_handler.generate_executive_summary", lambda llm_input: None
+    )
 
 
 def _mock_store(artifacts: dict[str, dict]) -> MagicMock:

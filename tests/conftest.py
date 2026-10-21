@@ -127,14 +127,70 @@ class RealModelCallBlocked(RuntimeError):
 
 _real_make_request = botocore.endpoint.Endpoint.make_request
 
+# Every refusal, as (test node id, message). Code under test often swallows the
+# exception (a model failure falls back to the deterministic result), so the
+# exception alone does not fail the test: the session-end check below does (#1318).
+MODEL_REFUSALS: list[tuple[str, str]] = []
+
 
 def _refuse_bedrock_requests(self, operation_model, request_dict):
     if "bedrock" in str(getattr(self, "host", "")):
-        raise RealModelCallBlocked(
+        message = (
             f"a test tried to call {self.host} ({operation_model.name}); tests never call a "
             "real model: patch the model entry point"
         )
+        current = os.environ.get("PYTEST_CURRENT_TEST", "<outside a test>")
+        MODEL_REFUSALS.append((current.rsplit(" (", 1)[0], message))
+        raise RealModelCallBlocked(message)
     return _real_make_request(self, operation_model, request_dict)
 
 
 botocore.endpoint.Endpoint.make_request = _refuse_bedrock_requests  # type: ignore[method-assign]
+
+
+@pytest.fixture(autouse=True)
+def forget_expected_model_refusals(request):
+    """A test marked `expects_model_refusal` tests the guard itself: its refusals do not count."""
+    before = len(MODEL_REFUSALS)
+    yield
+    if request.node.get_closest_marker("expects_model_refusal"):
+        del MODEL_REFUSALS[before:]
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if any test reached the refusal above, even if it swallowed the error."""
+    config = session.config
+    if hasattr(config, "workeroutput"):  # an xdist worker: hand the list to the controller
+        config.workeroutput["model_refusals"] = list(MODEL_REFUSALS)
+        return
+    offenders = list(MODEL_REFUSALS) + list(getattr(config, "_worker_model_refusals", []))
+    if not offenders:
+        return
+    lines = sorted({f"  {node}" for node, _ in offenders})
+    reporter = config.pluginmanager.get_plugin("terminalreporter")
+    text = (
+        f"\n{len(lines)} test(s) reached the Bedrock guard in tests/conftest.py "
+        "(they depend on a model call failing; patch the model entry point instead):\n"
+        + "\n".join(lines)
+    )
+    if reporter is not None:
+        reporter.write_line(text, red=True)
+    else:
+        print(text)
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+class _CollectWorkerModelRefusals:
+    """xdist controller only: collect the refusals each worker recorded."""
+
+    def pytest_testnodedown(self, node, error):
+        refusals = getattr(node, "workeroutput", {}).get("model_refusals", [])
+        node.config._worker_model_refusals = [
+            *getattr(node.config, "_worker_model_refusals", []),
+            *(tuple(r) for r in refusals),
+        ]
+
+
+def pytest_configure(config):
+    if config.pluginmanager.hasplugin("xdist"):
+        config.pluginmanager.register(_CollectWorkerModelRefusals(), "collect-worker-refusals")

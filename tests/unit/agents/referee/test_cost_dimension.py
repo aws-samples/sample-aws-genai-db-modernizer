@@ -153,6 +153,8 @@ def test_every_engines_table_scoring_weights_all_four_dimensions_including_cost(
 ) -> None:
     """Run the engine's real analysis and look at the weights it hands to the scorer."""
     module, analyze, target = ENGINE_ANALYSES[engine]
+    # The analysis advisors are the model entry point here; this test is about weights.
+    monkeypatch.setenv("ENABLE_LLM_ADVISOR", "false")
     seen: list[tuple[ScoreBreakdown, dict[str, float]]] = []
 
     def spy(scores: ScoreBreakdown, weights: dict[str, float] | None = None) -> int:
