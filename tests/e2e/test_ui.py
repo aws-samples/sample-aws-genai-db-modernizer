@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from tests.e2e.pipeline import PipelineResult
@@ -49,6 +49,12 @@ ENGINE_LABELS = {
 }
 
 
+# How long a page may take to render its fetched data. A readiness wait returns the moment
+# the content shows, so this is a ceiling for a slow runner and the large discourse
+# sample (about 10 s cold on CI), never a delay; Playwright's 5 s default is too tight.
+READY_MS = 60_000
+
+
 def _watch(page: Page) -> dict[str, list[str]]:
     ev: dict[str, list[str]] = {"console": [], "pageerror": [], "failed": []}
 
@@ -73,6 +79,18 @@ def _watch(page: Page) -> dict[str, list[str]]:
     return ev
 
 
+def _loaded(page: Page, r: PipelineResult) -> None:
+    """Wait until the results page has rendered ``r``'s data (#1320).
+
+    Network idle can fire before the fetch that fills the page has started or finished,
+    leaving only "Loading assessment results...". The migration roadmap section and the
+    source database name render only once the results are loaded (the loading state shows
+    neither), and ``expect`` retries until they do.
+    """
+    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+    expect(page.get_by_text(r.db).first).to_be_visible(timeout=READY_MS)
+
+
 def _top_engine_label(r: PipelineResult) -> str:
     """The highest-ranked target engine from the synthesis report, as the UI labels it.
 
@@ -89,7 +107,10 @@ def _top_engine_label(r: PipelineResult) -> str:
 def test_dashboard_lists_both_jobs(page: Page, ui: str, all_runs: list[PipelineResult]) -> None:
     ev = _watch(page)
     page.goto(f"{ui}/dashboard")
-    page.wait_for_load_state("networkidle")
+    for r in all_runs:
+        expect(page.get_by_text(r.job_id).or_(page.get_by_text(r.db)).first).to_be_visible(
+            timeout=READY_MS
+        )
     text = page.inner_text("body")
     for r in all_runs:
         assert r.job_id in text or r.db in text, f"{r.db}/{r.job_id} not on dashboard"
@@ -102,7 +123,7 @@ def test_results_page_shows_the_ranked_engines(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        _loaded(page, r)
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert r.db in text, (r.db, "source database name missing")
@@ -123,7 +144,8 @@ def test_old_results_v2_route_redirects_to_results(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results-v2/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}/?$"), timeout=READY_MS)
+        _loaded(page, r)
         assert page.url.rstrip("/").endswith(f"/analysis/results/{r.job_id}"), (
             r.db,
             page.url,
@@ -145,7 +167,7 @@ def test_assignments_page_recommends_the_ranked_engines(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/assignments/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        expect(page.get_by_text(f"Your {r.db} workload").first).to_be_visible(timeout=READY_MS)
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert f"Your {r.db} workload" in text, (r.db, "workload summary missing")
@@ -166,7 +188,8 @@ def test_legacy_report_route_redirects_to_results(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/report/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        expect(page).to_have_url(re.compile(rf"/analysis/results/{r.job_id}/?$"), timeout=READY_MS)
+        _loaded(page, r)
         assert page.url.rstrip("/").endswith(f"/analysis/results/{r.job_id}"), (
             r.db,
             page.url,
@@ -192,7 +215,10 @@ def test_removed_job_pages_fall_through_to_the_dashboard(
     r = all_runs[0]
     ev = _watch(page)
     page.goto(f"{ui}/{route}/{r.job_id}")
-    page.wait_for_load_state("networkidle")
+    expect(page).to_have_url(re.compile(r"/dashboard/?$"), timeout=READY_MS)
+    expect(page.get_by_text(r.db).or_(page.get_by_text(r.job_id)).first).to_be_visible(
+        timeout=READY_MS
+    )
     assert page.url.rstrip("/").endswith("/dashboard"), (route, page.url)
     text = page.inner_text("body")
     assert "Engine analysis:" not in text, route
@@ -208,7 +234,13 @@ def test_pattern_analysis_page_renders_for_a_selected_engine(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/patterns/{r.job_id}?target=dynamodb")
-        page.wait_for_load_state("networkidle")
+        # "Key Value Lookups" is a pattern name the page draws only from the fetched pattern
+        # analysis (the loading state shows "0 patterns detected" and "Loading patterns..."),
+        # and both samples route key value lookups to dynamodb, so it marks the loaded page.
+        # innerText, not textContent: a hidden SVG label carries the same words.
+        expect(page.locator("body")).to_contain_text(
+            "Key Value Lookups", use_inner_text=True, timeout=READY_MS
+        )
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert "patterns detected for dynamodb" in text, (r.db, "pattern analysis body missing")
@@ -248,15 +280,15 @@ def test_a_querys_trace_opens_from_the_routing_table(
 
     ev = _watch(page)
     page.goto(f"{ui}/analysis/results/{r.job_id}")
-    page.wait_for_load_state("networkidle")
     section = page.locator("#query-routing-section")
+    expect(section).to_be_visible(timeout=READY_MS)
     # #1028: the section opens collapsed; its header expands it.
     assert not section.get_by_role("table", name="Query routing").is_visible()
     _expand_query_routing(page)
-    section.get_by_role("table", name="Query routing").wait_for()
+    section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
     if not r.external:  # wordpress lists 107 queries: more than one page of 25
-        section.get_by_role("button", name="Next page").wait_for()
-        section.get_by_role("button", name="Previous page").wait_for()
+        section.get_by_role("button", name="Next page").wait_for(timeout=READY_MS)
+        section.get_by_role("button", name="Previous page").wait_for(timeout=READY_MS)
     if trace is not None:
         qid = trace["query_id"]
         section.get_by_role("button", name="Routing changed or decided").click()
@@ -269,9 +301,9 @@ def test_a_querys_trace_opens_from_the_routing_table(
     page.keyboard.press("Enter")
 
     modal = page.get_by_role("dialog")
-    modal.get_by_text(f"Query Journey: {qid}").wait_for()
+    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
     modal.get_by_role("tab", name="Why this engine").click()
-    modal.get_by_test_id("query-trace-final").first.wait_for()
+    modal.get_by_test_id("query-trace-final").first.wait_for(timeout=READY_MS)
     first = modal.get_by_test_id("query-trace-first")
     no_ledger = modal.get_by_test_id("query-trace-no-ledger")
     assert (
@@ -282,7 +314,9 @@ def test_a_querys_trace_opens_from_the_routing_table(
         move = next(
             m for m in trace["moves"] if m["from_engine"] and m["from_engine"] != m["to_engine"]
         )
-        modal.get_by_test_id("query-trace-moves").get_by_text(move["explanation"]).wait_for()
+        modal.get_by_test_id("query-trace-moves").get_by_text(move["explanation"]).wait_for(
+            timeout=READY_MS
+        )
         assert trace["final_engine_name"] in text, (r.db, "final engine missing from the trace")
         assert "No later routing step changed this query." not in text
     assert "undefined" not in text and "NaN" not in text
@@ -293,7 +327,7 @@ def _expand_query_routing(page: Page) -> None:
     """Open the query routing section, collapsed when the page opens (#1028)."""
     header = page.locator('#query-routing-section [aria-expanded="false"]').first
     header.click()
-    page.locator('#query-routing-section [aria-expanded="true"]').first.wait_for()
+    page.locator('#query-routing-section [aria-expanded="true"]').first.wait_for(timeout=READY_MS)
 
 
 def _report_wave_stats(r: PipelineResult) -> dict[str, tuple[str, str]]:
@@ -329,9 +363,8 @@ def test_results_page_shows_the_reports_wave_plan(
         gates = {str(w["wave"]): w.get("gate") or "" for w in report["migration_waves"]}
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
         section = page.locator("#migration-roadmap-section")
-        section.wait_for()
+        section.wait_for(timeout=READY_MS)
         cards = section.locator("[data-wave]").all()
         shown = {
             str(c.get_attribute("data-wave")): " ".join(
@@ -406,9 +439,8 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         assert rows, r.db
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
         section = page.locator("#sources-of-truth-section")
-        section.wait_for()
+        section.wait_for(timeout=READY_MS)
         n = facts["written_table_count"]
         assert f"Sources of truth and replicas ({n} written tables)" in section.inner_text(), r.db
         first = rows[0]["table"]
@@ -416,7 +448,7 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         # Opened from the keyboard, as a reader without a mouse would.
         section.locator('[aria-expanded="false"]').first.focus()
         page.keyboard.press("Enter")
-        section.locator('[aria-expanded="true"]').first.wait_for()
+        section.locator('[aria-expanded="true"]').first.wait_for(timeout=READY_MS)
         text = section.inner_text()
         if facts["single_engine_table_count"]:
             assert ", ".join(facts["single_engine_tables"]) in text, r.db
@@ -455,10 +487,9 @@ def test_results_page_downloads_the_deliverables_folder(
         assert expected == list(buttons), (r.db, expected)
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
         section = page.locator("#deliverables-section")
         rows = section.locator("[data-deliverable]")
-        rows.first.wait_for()
+        rows.first.wait_for(timeout=READY_MS)
         assert [x.get_attribute("data-deliverable") for x in rows.all()] == expected, r.db
         assert [x.inner_text().strip() for x in rows.all()] == list(buttons.values()), r.db
         for name in expected:
@@ -504,8 +535,7 @@ def test_results_page_shows_the_headline_first(
     for r in all_runs:
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#migration-roadmap-section").wait_for()
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         present = page.evaluate(
             "ids => ids.filter(id => document.getElementById(id))", SECTION_ORDER
         )
@@ -562,8 +592,7 @@ def test_results_page_states_the_resolved_risks_by_severity(
         assert f"({severities})" in md, r.db
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#migration-roadmap-section").wait_for()
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         header = page.get_by_text(expected, exact=True)
         assert header.count() == 1, (r.db, expected)
         checked += 1
@@ -586,9 +615,8 @@ def test_results_page_states_the_distinct_query_patterns(
         assert found and tuple(int(g.replace(",", "")) for g in found.groups()) == expected, r.db
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
         line = page.locator('[data-figure="query-patterns"]')
-        line.wait_for()
+        line.wait_for(timeout=READY_MS)
         shown = figure.fullmatch(line.inner_text().strip())
         assert shown, (r.db, line.inner_text())
         assert tuple(int(g.replace(",", "")) for g in shown.groups()) == expected, r.db
@@ -609,8 +637,7 @@ def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
         assert (NO_OPEN_RISKS_CAVEAT in md) == no_open, r.db
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#migration-roadmap-section").wait_for()
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         note = page.locator("#no-open-risks-note")
         assert note.count() == (1 if no_open else 0), r.db
         if no_open:
@@ -637,8 +664,7 @@ def test_results_page_states_the_caveat_even_with_no_other_risk_content(
     page.route(re.compile(rf"/assessments/{r.job_id}/results$"), strip_risks)
     ev = _watch(page)
     page.goto(f"{ui}/analysis/results/{r.job_id}")
-    page.wait_for_load_state("networkidle")
-    page.locator("#migration-roadmap-section").wait_for()
+    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
     note = page.locator("#no-open-risks-note")
     assert note.count() == 1
     assert note.inner_text().strip() == NO_OPEN_RISKS_CAVEAT
@@ -669,8 +695,7 @@ def test_results_page_names_a_resolved_risks_tables(
         header = f"{n} {'risk' if n == 1 else 'risks'} resolved by the assignment: {severities}"
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#migration-roadmap-section").wait_for()
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         page.get_by_text(header, exact=True).click()
         line = f"Affects: {', '.join(resolved[0]['affected_tables'])}"
         assert page.get_by_text(line, exact=True).count() >= 1, (r.db, line)
@@ -691,8 +716,7 @@ def test_results_page_shows_the_same_risks_as_report_json(
         risks = report["risk_assessment"]["risks"]
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#migration-roadmap-section").wait_for()
+        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
             n = int(by_severity.get(severity) or 0)
             tab = page.get_by_role("tab", name=f"{severity} ({n})", exact=True)
@@ -720,7 +744,17 @@ def test_ui_shows_only_the_product_name(
         f"/analysis/results/{r.job_id}",
     ):
         page.goto(f"{ui}{path}")
-        page.wait_for_load_state("networkidle")
+        # Content only the loaded page shows, so the text scan below never reads a spinner.
+        if path == "/dashboard":
+            expect(page.get_by_role("link", name=r.job_id).first).to_be_visible(timeout=READY_MS)
+        elif path == "/analysis/create":
+            expect(page.get_by_role("heading", name="Create analysis")).to_be_visible(
+                timeout=READY_MS
+            )
+        elif path.startswith("/analysis/monitor/summary/"):
+            page.locator("[data-sankey-node]").first.wait_for(timeout=READY_MS)
+        else:
+            _loaded(page, r)
         text = page.inner_text("body")
         assert not re.search(r"\bATX\b|AWS\s+Transform|transform", text, re.IGNORECASE), path
         assert "Database Modernizer Assessment Tool" in text, path
@@ -752,8 +786,7 @@ def _leaked_forbidden_text(text: str) -> list[str]:
 def _open_results(page: Page, ui: str, r: PipelineResult) -> dict[str, list[str]]:
     ev = _watch(page)
     page.goto(f"{ui}/analysis/results/{r.job_id}")
-    page.wait_for_load_state("networkidle")
-    page.locator("#migration-roadmap-section").wait_for()
+    page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
     return ev
 
 
@@ -871,8 +904,7 @@ def test_results_page_states_the_pending_engine_choices(
         n, q = facts.get("pending_choice_count") or 0, facts.get("pending_choice_query_count") or 0
         ev = _watch(page)
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("#sources-of-truth-section").wait_for()
+        page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
         note = page.locator("#engine-choices-note")
         if n:
             tables = "table still ties" if n == 1 else "tables still tie"
@@ -892,11 +924,11 @@ def test_query_routing_table_fits_its_card_at_1440(
     page.set_viewport_size({"width": 1440, "height": 900})
     for r in all_runs:
         page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        expect(page.locator("#query-routing-section")).to_be_visible(timeout=READY_MS)
         _expand_query_routing(page)
         section = page.locator("#query-routing-section")
-        section.get_by_role("table", name="Query routing").wait_for()
-        section.locator("table tbody tr").first.wait_for()
+        section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
+        section.locator("table tbody tr").first.wait_for(timeout=READY_MS)
         m = page.evaluate("""() => {
               const table = document.querySelector('#query-routing-section table');
               const scroller = table.parentElement;
@@ -1005,8 +1037,20 @@ def test_sankey_cache_label_clears_its_node_and_sub_label(
             f"{ui}/analysis/results/{r.job_id}",
         ):
             page.goto(url)
-            page.wait_for_load_state("networkidle")
-            for g in page.evaluate(_SANKEY_CACHE_LABEL_BOXES):
+            # The Sankey itself must be drawn before its labels are measured, whether or
+            # not this run has a cache layer: an empty scan of a page that has not
+            # rendered would pass vacuously.
+            page.locator("[data-sankey-node]").first.wait_for(timeout=READY_MS)
+            labels = page.evaluate(_SANKEY_CACHE_LABEL_BOXES)
+            if report.get("cache_overlay"):
+                assert labels, (
+                    r.db,
+                    url,
+                    "the report keeps a cache layer but the Sankey draws none",
+                )
+            else:
+                assert not labels, (r.db, url, "the Sankey draws a cache layer the report lacks")
+            for g in labels:
                 where = (r.db, url, g["label"])
                 assert not _overlap(g["name"], g["node"]), where
                 assert not _overlap(g["sub"], g["node"]), where
