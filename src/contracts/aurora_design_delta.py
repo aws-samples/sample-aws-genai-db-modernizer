@@ -261,7 +261,10 @@ class IndexSpec(BaseModel):
     index_name: str = Field(..., description="Index name (plain identifier)")
     columns: list[str] = Field(..., min_length=1, description="Indexed columns of this table")
     unique: bool = Field(default=False, description="UNIQUE index")
-    method: Literal["btree", "hash", "gin", "gist", "brin"] | None = Field(
+    # ``None`` inside the Literal (not ``Literal[...] | None``) so the Bedrock tool
+    # schema lists null among the values instead of a nullable-typed enum, which
+    # Bedrock refuses (#1281).
+    method: Literal["btree", "hash", "gin", "gist", "brin", None] = Field(
         default=None, description="Index access method (Aurora PostgreSQL only)"
     )
     include: list[str] = Field(

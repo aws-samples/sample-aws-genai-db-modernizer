@@ -4,7 +4,7 @@
     "values": [
       "DOC"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "access_pattern_id_prefixes.dynamodb": {
     "module": "dynamodb_model_output",
@@ -328,7 +328,7 @@
       "updateMany",
       "updateOne"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "documentdb_model_output.EMBED_STRATEGY": {
     "module": "documentdb_model_output",
@@ -337,7 +337,7 @@
       "hybrid",
       "reference"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "documentdb_model_output.INDEX_TYPE": {
     "module": "documentdb_model_output",
@@ -348,7 +348,7 @@
       "text",
       "unique"
     ],
-    "version": "1.0"
+    "version": "1.1"
   },
   "dynamodb_decision_trace.DenormSubtype": {
     "module": "dynamodb_decision_trace",

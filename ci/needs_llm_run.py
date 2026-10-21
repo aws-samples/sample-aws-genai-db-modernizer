@@ -105,6 +105,16 @@ BEDROCK_SMOKE: tuple[str, ...] = (
     "src/shared/bedrock_guardrail.py",
     "src/tools/schema/aurora_common/bedrock_delta.py",
     "src/atx_orchestrator/*.py",  # runtime/* uses agent_builder_sdk for plumbing, still listed
+    # Answer models a Strands agent sends to Bedrock as its tool schema
+    # (structured_output_model=): a shape change here is proven only when Bedrock
+    # accepts the converted schema (#1281; tests/contract/test_bedrock_tool_schemas.py).
+    "src/contracts/*_model_output.py",
+    "src/contracts/aurora_design_delta.py",
+    "src/contracts/dynamodb_pe_review.py",
+    "src/contracts/reality_check_model_response.py",
+    "src/contracts/executive_summary_response.py",
+    "src/tools/analysis/documentdb_analysis_tools.py",
+    "src/tools/analysis/dynamodb_analysis_tools.py",
 )
 RUNS: dict[str, tuple[str, ...]] = {"e2e-llm": E2E_LLM, "bedrock-smoke": BEDROCK_SMOKE}
 MODEL_FACING: tuple[str, ...] = E2E_LLM + BEDROCK_SMOKE

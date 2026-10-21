@@ -3,13 +3,19 @@
 Defines the structured output that the DocumentDB schema design agent
 produces — collection definitions, indexes, embedding decisions,
 access patterns translated to MongoDB query language.
+
+Version History:
+- 1.0: Initial version.
+- 1.1 (2026-10-21, #1281): an index's ``index_type`` also accepts null, read as
+  ``compound``, so the Bedrock tool schema lists null among its values instead
+  of a nullable-typed enum, which Bedrock refuses.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .schema_design_output import TradeOff
 
@@ -60,7 +66,10 @@ class IndexDefinition(BaseModel):
     keys: dict[str, int] = Field(
         ..., description="Index key spec, e.g. {'user_id': 1, 'created_at': -1}"
     )
-    index_type: INDEX_TYPE = Field(
+    # ``None`` is listed among the values so the Bedrock tool schema carries no
+    # nullable-typed enum, which Bedrock refuses (#1281); it reads as the default,
+    # so a validated index always has one of the five types.
+    index_type: Literal[INDEX_TYPE, None] = Field(
         default="compound", description="Index type: compound, single, text, partial, unique"
     )
     partial_filter: dict | None = Field(
@@ -72,6 +81,11 @@ class IndexDefinition(BaseModel):
     )
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_validator("index_type", mode="before")
+    @classmethod
+    def _null_index_type_is_compound(cls, v: object) -> object:
+        return "compound" if v is None else v
 
 
 class CollectionDefinition(BaseModel):
@@ -182,7 +196,7 @@ class DocumentDBModelOutputContract(BaseModel):
     """Output contract for the DocumentDB schema design agent."""
 
     contract_version: str = Field(
-        default="1.0",
+        default="1.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

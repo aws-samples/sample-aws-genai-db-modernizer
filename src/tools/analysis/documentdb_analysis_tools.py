@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 from src.contracts.analysis_output import (
     AntiPattern,
@@ -236,7 +236,11 @@ class DenormalizationStrategy(BaseModel):
     trade_offs: str
     hybrid_embedded_fields: list[str] | None = None
     estimated_document_size_kb: float | None = None
-    risk_level: Literal["low", "medium", "high"] = "low"
+    # Required: an enum with a default becomes a nullable-typed enum in the Bedrock
+    # tool schema, which Bedrock refuses (#1281).
+    risk_level: Literal["low", "medium", "high"] = Field(
+        description="Migration risk of this strategy: low, medium or high"
+    )
 
 
 class LlmDocumentDBOutput(BaseModel):

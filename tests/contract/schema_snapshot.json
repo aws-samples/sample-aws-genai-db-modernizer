@@ -9155,7 +9155,8 @@
                             "partial",
                             "single",
                             "text",
-                            "unique"
+                            "unique",
+                            null
                           ]
                         }
                       },
@@ -9434,8 +9435,8 @@
         }
       }
     },
-    "schema_hash": "3419233389085655cc7968db051090fcf8de8c7cd003df6a2c7418d42245e7b6",
-    "version": "1.0"
+    "schema_hash": "1f352802915299b66bac5dc4e5c8052bd81e39ff9f4057bd2b982ba003155558",
+    "version": "1.1"
   },
   "dynamodb_decision_trace.DynamoDBDecisionTrace": {
     "fields": {

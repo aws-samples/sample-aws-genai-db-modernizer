@@ -33,6 +33,7 @@ def _runs(*paths: str) -> dict[str, list[str]]:
     return verdict(list(paths))
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     "path",
     [
@@ -49,7 +50,6 @@ def _runs(*paths: str) -> dict[str, list[str]]:
         "src/agents/referee/migration_wave_builders.py",
         "src/agents/referee/migration_wave_tables.py",
         "src/tools/schema/aurora_common/design_view.py",
-        "src/tools/analysis/documentdb_analysis_tools.py",
         "src/tools/analysis/documentdb_pattern_catalog.py",
         "src/tools/analysis/redis_analysis_tools.py",
         "src/tools/analysis/aurora_common_pattern_catalog.py",
@@ -75,6 +75,9 @@ def test_headless_paths_need_e2e_llm_only(path: str) -> None:
         "src/atx_orchestrator/app.py",
         "src/atx_orchestrator/subagents/base.py",
         "src/shared/role_bedrock_model.py",
+        "src/contracts/reality_check_model_response.py",
+        "src/contracts/executive_summary_response.py",
+        "src/contracts/dynamodb_pe_review.py",
     ],
 )
 def test_bedrock_only_paths_need_bedrock_smoke_only(path: str) -> None:
@@ -91,6 +94,11 @@ def test_bedrock_only_paths_need_bedrock_smoke_only(path: str) -> None:
         "src/agents/analysis/dynamodb_analysis_agent.py",
         "scripts/run_schema_design.py",
         "src/shared/models.py",
+        # #1281: answer models sent to Bedrock as tool schemas, also read headless.
+        "src/tools/analysis/documentdb_analysis_tools.py",
+        "src/tools/analysis/dynamodb_analysis_tools.py",
+        "src/contracts/documentdb_model_output.py",
+        "src/contracts/aurora_design_delta.py",
     ],
 )
 def test_shared_file_needs_both(p: str) -> None:
