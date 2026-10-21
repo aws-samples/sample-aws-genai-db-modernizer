@@ -20,6 +20,9 @@ from collections.abc import Callable
 SIZES = (500_000, 4_000_000)
 # Only a hang (the quadratic regex took about an hour on 1 MB) gets near this.
 HANG_CEILING_S = 10.0
+# assert_linear passes only on the best of at least this many samples of each
+# size: a single sample slowed by load could pass quadratic code (#1304).
+MIN_ROUNDS = 2
 
 
 def _timed(fn: Callable[[], object]) -> float:
@@ -82,11 +85,19 @@ def assert_linear(
 
     The small and large runs alternate, so a burst of load from other tests on
     the runner hits both sizes rather than skewing the ratio. Sampling stops as
-    soon as the ratio of the two best times is under the limit: more samples can
-    only lower a best time, so linear code passes in the first rounds on a quiet
-    machine and keeps getting chances on a noisy one, while quadratic code (a
-    ratio near the square of the size step in every sample) never gets under it.
+    soon as the ratio of the two best times is under the limit, from round
+    MIN_ROUNDS on: more samples can only lower a best time, so linear code
+    passes in the first rounds on a quiet machine and keeps getting chances on a
+    noisy one, while quadratic code (a ratio near the square of the size step in
+    every sample) never gets under it.
+
+    Load only ever inflates a sample, so a pass is the one verdict noise can
+    fake: one small run slowed past the margin (about 2.8x for an 8x step) makes
+    quadratic code read as linear. A pass therefore needs the best of at least
+    MIN_ROUNDS samples of each size, never a single one (#1304).
     """
+    if max_rounds < MIN_ROUNDS:
+        raise ValueError(f"max_rounds must be at least {MIN_ROUNDS}, got {max_rounds}")
     small_n, large_n = sizes
     limit = max_scaling_ratio(sizes)
     small, large = make_text(small_n), make_text(large_n)
@@ -94,11 +105,13 @@ def assert_linear(
     fn(large)
     t_small = t_large = float("inf")
     ratio = float("inf")
-    for _ in range(max_rounds):
+    for rounds in range(1, max_rounds + 1):
         t_small = min(t_small, _timed(lambda: fn(small)))
         assert t_small < HANG_CEILING_S, f"size {small_n:,} took {t_small:.2f}s"
         t_large = min(t_large, _timed(lambda: fn(large)))
         ratio = t_large / max(t_small, 1e-6)
+        if rounds < MIN_ROUNDS:
+            continue
         if ratio < limit and (backstop_s is None or t_large < backstop_s):
             return
     if ratio < limit:

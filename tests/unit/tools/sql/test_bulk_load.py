@@ -118,11 +118,19 @@ def test_long_input_does_not_backtrack(make):
 
 def test_the_growth_check_catches_a_quadratic_rescan():
     """The check above still fails quadratic code on these inputs: the same scan
-    plus a rescan of the rest of the text from every other character (#1230)."""
+    plus a rescan of the rest of the text from every 25th character (#1230).
+
+    The quadratic part must dominate the small run, or one slow sample on a
+    loaded runner makes it read as linear (#1304). ``str.find`` of one
+    character is a vectorized ``memchr``, about 15x cheaper per character than
+    ``str.count``, so the old rescan from every other character left the linear
+    part (the Python loop and the scan) a third of the small run: a ratio under
+    x50 instead of x64. This rescan runs about a twelfth of the loop iterations
+    and reads near x58, against the x22.6 limit."""
 
     def rescanning(sql: str):
-        for i in range(0, len(sql), 2):
-            sql.find("\0", i)
+        for i in range(0, len(sql), 25):
+            sql.count("\0", i)
         return bulk_load_table(sql)
 
     with pytest.raises(AssertionError, match="not linear"):

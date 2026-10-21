@@ -81,20 +81,35 @@ def _recording(calls: list[int]):
     return fn
 
 
-def test_linear_code_is_sampled_once_after_the_warm_up(monkeypatch) -> None:
-    """A quiet machine: warm up both sizes, one alternating round, stop."""
+def test_linear_code_is_sampled_twice_after_the_warm_up(monkeypatch) -> None:
+    """A quiet machine: warm up both sizes, MIN_ROUNDS alternating rounds, stop."""
     calls: list[int] = []
-    _scripted(monkeypatch, [0.1, 0.8])
+    _scripted(monkeypatch, [0.1, 0.8] * 2)
     assert_linear(lambda n: "x" * n, _recording(calls))
-    assert calls == [SMALL, LARGE] * 2
+    assert _timing.MIN_ROUNDS == 2
+    assert calls == [SMALL, LARGE] * 3
+
+
+def test_one_slow_small_sample_cannot_pass_quadratic_code(monkeypatch) -> None:
+    """Load slows the first small run 3x (x21, under the limit) and nothing
+    else: one sample must not decide a pass (#1304). The second round's best
+    small time puts the ratio back at x64, in that round and every later one."""
+    _scripted(monkeypatch, [0.3, 6.4] + [0.1, 6.4] * 4)
+    with pytest.raises(AssertionError, match=r"\(x64.0, limit x22.6\): not linear"):
+        assert_linear(lambda n: "x" * n, lambda text: None, max_rounds=5)
+
+
+def test_fewer_than_min_rounds_is_refused() -> None:
+    with pytest.raises(ValueError, match="max_rounds must be at least 2"):
+        assert_linear(lambda n: "x" * n, lambda text: None, max_rounds=1)
 
 
 def test_a_noisy_round_gets_more_samples_and_keeps_the_best_times(monkeypatch) -> None:
-    """Round 1 is hit by load (ratio 40); round 2's best times pass (0.5 vs 4.0)."""
+    """Rounds 1 and 2 are hit by load (ratio 40); round 3's best times pass (0.5 vs 4.0)."""
     calls: list[int] = []
-    _scripted(monkeypatch, [1.0, 40.0, 0.5, 4.0])
+    _scripted(monkeypatch, [1.0, 40.0] * 2 + [0.5, 4.0])
     assert_linear(lambda n: "x" * n, _recording(calls))
-    assert calls == [SMALL, LARGE] * 3
+    assert calls == [SMALL, LARGE] * 4
 
 
 def test_quadratic_code_uses_every_round_then_fails(monkeypatch) -> None:
@@ -119,21 +134,21 @@ def test_the_limit_is_exclusive_at_the_edge(monkeypatch, large_time, passes) -> 
 def test_custom_sizes_set_the_inputs_and_the_limit(monkeypatch) -> None:
     """A 4x step: x7.9 passes the x8 limit, x8.1 fails it."""
     calls: list[int] = []
-    _scripted(monkeypatch, [0.1, 0.79])
+    _scripted(monkeypatch, [0.1, 0.79] * 2)
     assert_linear(lambda n: "x" * n, _recording(calls), sizes=(10, 40))
-    assert calls == [10, 40] * 2
+    assert calls == [10, 40] * 3
 
-    _scripted(monkeypatch, [0.1, 0.81])
+    _scripted(monkeypatch, [0.1, 0.81] * 2)
     with pytest.raises(AssertionError, match="limit x8.0"):
-        assert_linear(lambda n: "x" * n, lambda text: None, max_rounds=1, sizes=(10, 40))
+        assert_linear(lambda n: "x" * n, lambda text: None, max_rounds=2, sizes=(10, 40))
 
 
 def test_the_backstop_takes_a_later_round_under_it(monkeypatch) -> None:
-    """Round 1 grows linearly (x8) but is over the 0.5 s backstop; round 2 fits."""
+    """Rounds 1 and 2 grow linearly (x8) but are over the 0.5 s backstop; round 3 fits."""
     calls: list[int] = []
-    _scripted(monkeypatch, [0.1, 0.8, 0.1, 0.3])
+    _scripted(monkeypatch, [0.1, 0.8] * 2 + [0.1, 0.3])
     assert_linear(lambda n: "x" * n, _recording(calls), backstop_s=0.5)
-    assert calls == [SMALL, LARGE] * 3
+    assert calls == [SMALL, LARGE] * 4
 
 
 def test_linear_code_over_the_backstop_in_every_round_fails(monkeypatch) -> None:
@@ -145,7 +160,7 @@ def test_linear_code_over_the_backstop_in_every_round_fails(monkeypatch) -> None
 def test_time_is_this_threads_cpu_time(monkeypatch) -> None:
     """Only ``thread_time`` exists on this clock: a wall-clock or process-wide
     helper would raise."""
-    ticks = iter([0.0, 0.1, 0.1, 0.8])
+    ticks = iter([0.0, 0.1, 0.1, 0.8] * 2)
     clock = SimpleNamespace(thread_time=lambda: next(ticks))
     monkeypatch.setattr(_timing, "time", clock)
     assert_linear(lambda n: "x" * n, lambda text: None)
