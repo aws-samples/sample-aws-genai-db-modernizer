@@ -242,7 +242,7 @@ class AssessmentRequest(BaseModel):
     options: CollectionOptions | None = None
     target_databases: list[str] | None = None
     full_analysis: bool = False
-    collection_mode: str = "live"  # live, ddl, or offline
+    collection_mode: Literal["live", "ddl", "offline"] = "live"
     offline_s3_key: str | None = None
     cluster_id: str | None = (
         None  # RDS instance/cluster ID — auto-discovers VPC, SG, port for live mode
@@ -254,7 +254,14 @@ class AssessmentRequest(BaseModel):
     def _check_database_name(cls, value: str) -> str:
         return _validate_database_name(value)
 
-    @field_validator("source_database_type", "collection_mode")
+    @field_validator("collection_mode", mode="before")
+    @classmethod
+    def _normalize_collection_mode(cls, value: object) -> object:
+        # The collector acts only on the exact lower-case names, so "LIVE" must not skip
+        # the live checks (#1290); anything else is a 422 from the Literal.
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("source_database_type")
     @classmethod
     def _check_names(cls, value: str, info) -> str:  # type: ignore[no-untyped-def]
         return validate_name(value, info.field_name)

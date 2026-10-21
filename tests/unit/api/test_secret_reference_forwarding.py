@@ -243,3 +243,43 @@ class TestALiveRequestNeedsASecretReference:
         body = {**_live_request(), "collection_mode": "ddl"}
         resp = client.post("/api/v1/assessments", json=body)
         assert resp.status_code == 202, resp.text
+
+
+class TestCollectionModeIsNormalized:
+    """#1290: the mode is matched case-insensitively and limited to the three the collector reads."""
+
+    @pytest.mark.parametrize("mode", ["LIVE", "Live", " live "])
+    def test_a_live_request_in_any_case_still_needs_a_secret_reference(
+        self, mode, real_store
+    ) -> None:
+        body = {**_live_request(), "collection_mode": mode}
+        resp = client.post("/api/v1/assessments", json=body)
+
+        assert resp.status_code == 422, resp.text
+        assert "connection.secret_arn" in resp.text
+        assert not (real_store / "test_db").exists()
+
+    @pytest.mark.parametrize("mode", ["LIVE", "Ddl", "OFFLINE"])
+    def test_the_mode_is_forwarded_in_lower_case(self, mode) -> None:
+        body = {
+            **_live_request(secret_arn=SECRET_ARN),
+            "collection_mode": mode,
+            "offline_s3_key": "test_db/job/uploads/collector-output.json",
+        }
+        request = assessments.AssessmentRequest(**body)
+        assert request.collection_mode == mode.lower()
+
+    @pytest.mark.parametrize("mode", ["lve", "", "online", "live;ddl", None, 3])
+    def test_any_other_mode_is_a_422(self, mode, real_store) -> None:
+        body = {**_live_request(secret_arn=SECRET_ARN), "collection_mode": mode}
+        resp = client.post("/api/v1/assessments", json=body)
+
+        assert resp.status_code == 422, resp.text
+        assert "collection_mode" in resp.text
+        assert not (real_store / "test_db").exists()
+
+    @pytest.mark.passes_on_main  # what must keep working
+    def test_a_missing_mode_defaults_to_live(self) -> None:
+        body = _live_request(secret_arn=SECRET_ARN)
+        body.pop("collection_mode", None)
+        assert assessments.AssessmentRequest(**body).collection_mode == "live"
