@@ -16,6 +16,8 @@ import stat
 import sys
 from pathlib import Path
 
+import pytest
+
 from ci.llm import judge
 from tests.unit.tools.sql._timing import assert_cost_ratio, assert_linear
 
@@ -133,7 +135,7 @@ def test_fail_on_mean(tmp_path: Path) -> None:
     _build_job_dir(tmp_path)
     argv_file = tmp_path / "argv.json"
     # every criterion individually clears the default min_score (2), but the
-    # mean (2.0) is below the default pass_mean (3.5).
+    # mean (2.0) is below the default pass_mean (3.0).
     stub = _write_stub(tmp_path, _outer(_inner(ALL_TWOS)), argv_file)
 
     result, code = judge.run_judge(
@@ -144,6 +146,33 @@ def test_fail_on_mean(tmp_path: Path) -> None:
     assert result["pass"] is False
     assert result["mean"] == 2.0
     assert min(result["scores"].values()) >= 2
+
+
+def _run_with_mean_scores(tmp_path: Path, scores: dict) -> tuple[dict, int]:
+    _build_job_dir(tmp_path)
+    stub = _write_stub(tmp_path, _outer(_inner(scores)), tmp_path / "argv.json")
+    return judge.run_judge(artifact_root=str(tmp_path), db=DB, job=JOB, claude_bin=str(stub))
+
+
+def test_mean_just_below_three_fails(tmp_path: Path) -> None:
+    # 2.857 (the 2026-10 judge range is 2.86 to 3.43): above the old 2.5, below 3.0
+    names = list(judge.CRITERIA)
+    scores = dict.fromkeys(names, 3) | {names[0]: 2}
+    result, code = _run_with_mean_scores(tmp_path, scores)
+
+    assert code == 1, result
+    assert result["pass"] is False
+    assert 2.5 < result["mean"] < 3.0
+
+
+@pytest.mark.passes_on_main
+def test_mean_of_exactly_three_passes(tmp_path: Path) -> None:
+    # the pass rule is ``mean >= pass_mean``: a mean equal to the bar passes
+    result, code = _run_with_mean_scores(tmp_path, dict.fromkeys(judge.CRITERIA, 3))
+
+    assert code == 0, result
+    assert result["pass"] is True
+    assert result["mean"] == 3.0
 
 
 def test_unparseable_judge_response_is_exit_code_2(tmp_path: Path) -> None:
@@ -325,7 +354,7 @@ def test_front_matter_thresholds_are_honoured(tmp_path: Path) -> None:
     custom_rubric = tmp_path / "custom-rubric.md"
     custom_rubric.write_text("---\npass_mean: 4.9\nmin_score: 1\n---\n\nbody text\n")
 
-    # Default thresholds (pass_mean 3.5) would pass with mean 4.0.
+    # Default thresholds (pass_mean 3.0) would pass with mean 4.0.
     default_result, default_code = judge.run_judge(
         artifact_root=str(tmp_path), db=DB, job=JOB, claude_bin=str(stub)
     )

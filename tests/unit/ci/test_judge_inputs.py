@@ -595,10 +595,9 @@ def test_the_scored_names_are_the_folder_the_render_step_writes() -> None:
 
 
 def test_rubric_thresholds_unchanged() -> None:
-    # 2.5 for now (first rubric-v3-era main run scored 2.714 on filed defects);
-    # #1077 raises it to 3.0, then 3.5, as #1047, #1095 and #951 land
+    # 3.0 is the bare minimum (#1077 decision, 2026-10-20); 3.5 is the later target
     pass_mean, min_score, _ = judge.load_rubric(judge.DEFAULT_RUBRIC_PATH)
-    assert (pass_mean, min_score) == (2.5, 2)
+    assert (pass_mean, min_score) == (3.0, 2)
 
 
 def test_run3_fixture_assignment_matches_run3_after_distribution() -> None:

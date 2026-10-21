@@ -1,6 +1,6 @@
 ---
 rubric_version: 3
-pass_mean: 2.5
+pass_mean: 3.0
 min_score: 2
 ---
 
@@ -15,9 +15,9 @@ under the same `rubric_version`, the run also fails when one criterion's
 median drops by 2 or more, or two or more criteria drop by 1; a baseline from
 another rubric version is recorded as not compared. Thresholds live here, not
 in code, so adjusting them never requires touching `judge.py`. `pass_mean` is
-2.5 for now: the first run of this rubric on main scored 2.714 on real,
-already-filed defects; #1077 raises it to 3.0 when #1047, #1095 and a #951
-fix land, then to 3.5. Bump `rubric_version`
+3.0, the bare minimum (#1077, 2026-10-20); 3.5 or more
+is the later target, reached through quality improvements. A mean of exactly
+3.0 passes (the comparison is `>=`). Bump `rubric_version`
 whenever a criterion or an anchor changes.
 
 This judge grades the deliverables: whether they state the facts correctly,
