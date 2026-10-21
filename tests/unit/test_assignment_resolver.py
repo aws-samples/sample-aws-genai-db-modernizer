@@ -18,8 +18,9 @@ from src.agents.referee.query_scoring import (
 )
 from src.agents.referee.table_resolution import TableNameResolver
 from src.contracts.assignment_models import QueryAssignment
-from src.contracts.move_ledger import MovePass
+from src.contracts.move_ledger import MovePass, ReasonCode
 from src.shared.engine_capabilities import FUZZY_SEARCH_ENGINES, TEXT_SEARCH_ENGINES
+from src.shared.move_reasons import render_move_reason
 
 
 def _make_collector(query_ids: list[str], tables: list[str] | None = None) -> dict:
@@ -543,6 +544,52 @@ class TestUtilityStatementsExcludedFromRouting:
             "utility/metadata statement, kept on the source-compatible relational engine "
             "(Aurora MySQL)"
         )
+
+    @pytest.mark.parametrize(
+        ("source", "text", "pinned"),
+        [
+            ("sqlserver", "SELECT NEXT VALUE FOR [dbo].[Seq] AS [N]", "aurora_postgresql"),
+            ("oracle", "SELECT obj_description($1::regclass::oid, $2)", "aurora_postgresql"),
+        ],
+    )
+    def test_a_heterogeneous_pin_move_records_it_is_not_source_compatible(
+        self, source, text, pinned
+    ):
+        """#1292: neither Aurora engine is source-compatible for SQL Server or Oracle, so
+        the pin's move reason names the chosen engine without the claim, and the pin
+        itself (the engine) is the one the resolver already picked."""
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", pinned])
+        collector = self._collector_with_metadata({"q1": text}, source)
+        for q in collector["queries"]["query_patterns"]:
+            q["tables_accessed"] = ["unknown"]
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            pinned: _make_analysis(pinned, ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+
+        assert next(qa for qa in result.query_assignments if qa.query_id == "q1").assigned_engine
+        pin = next(m for m in result.moves if m.reason_code == ReasonCode.OVERRIDE_UTILITY)
+        assert pin.evidence.source_compatible is False
+        sentence = render_move_reason(pin)
+        assert "source-compatible" not in sentence
+        assert "chosen relational engine" in sentence
+
+    def test_a_homogeneous_pin_move_records_it_is_source_compatible(self):
+        resolver = AssignmentResolver()
+        triage = _make_triage(["dynamodb", "aurora_mysql"])
+        collector = self._collector_with_metadata({"q1": "SHOW TABLES"}, "mysql")
+        analysis = {
+            "dynamodb": _make_analysis("dynamodb", ["db.users"], confidence=95),
+            "aurora_mysql": _make_analysis("aurora_mysql", ["db.users"], confidence=10),
+        }
+
+        result = resolver.resolve(triage, analysis, collector)
+        pin = next(m for m in result.moves if m.reason_code == ReasonCode.OVERRIDE_UTILITY)
+        assert pin.evidence.source_compatible is True
+        assert "source-compatible relational engine" in render_move_reason(pin)
 
     def test_no_aurora_engine_falls_back_rather_than_unset(self):
         """With no Aurora candidate, the pin never leaves the query unset.

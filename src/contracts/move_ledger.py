@@ -133,6 +133,9 @@ Version History:
   ``MoveEvidence.capability_waivers``: a key-scoped COUNT placed on the engine its
   table's writes are on, once a capability waiver lets that engine score it (ADR-031
   Decision 2 Amendment 12).
+- 1.10 (2026-10-21, #1292): Added the optional MoveEvidence.source_compatible: whether a
+  utility pin's engine is the source's own dialect, so a heterogeneous source is never
+  called source-compatible; records without it still load.
 """
 
 from __future__ import annotations
@@ -369,6 +372,14 @@ class MoveEvidence(BaseModel):
         description=(
             "For a Move that changes the query's tie: its tied_engines before the "
             "Move (sorted). Empty otherwise"
+        ),
+    )
+    source_compatible: bool | None = Field(
+        None,
+        description=(
+            "For a utility pin (override.utility): True when the engine it pinned to is "
+            "the source's own dialect, False when it is not (a heterogeneous source: "
+            "neither Aurora engine is). None when not recorded or not a utility pin"
         ),
     )
     capability_waivers: list[CapabilityWaiver] = Field(

@@ -252,7 +252,7 @@ def _first_assignment(move: Move) -> str:
     if code == ReasonCode.OVERRIDE_UTILITY:
         return (
             f"Kept on {to}: administration and metadata statements stay on the "
-            "source-compatible relational engine."
+            f"{_utility_engine_kind(move)} relational engine."
         )
     if code == ReasonCode.FALLBACK_NO_SCORE:
         return f"No engine could score this query, so it falls back to {to}."
@@ -349,8 +349,8 @@ def _engine_change(move: Move) -> str:
         )
     elif code == ReasonCode.OVERRIDE_UTILITY:
         why = (
-            "administration and metadata statements stay on the source-compatible "
-            "relational engine"
+            "administration and metadata statements stay on the "
+            f"{_utility_engine_kind(move)} relational engine"
         )
     elif code == ReasonCode.OVERRIDE_TEXT_SEARCH:
         why = "the query needs full-text search"
@@ -379,7 +379,7 @@ def _same_engine(move: Move) -> str:
     if code == ReasonCode.OVERRIDE_UTILITY:
         return (
             f"Pinned to {to}: administration and metadata statements stay on the "
-            "source-compatible relational engine."
+            f"{_utility_engine_kind(move)} relational engine."
         )
     if code == ReasonCode.CUSTOMER_PICK:
         return f"The customer confirmed {to} for this query."
@@ -416,6 +416,14 @@ def _decided_for_you(move: Move) -> str:
             + ")"
         )
     return f"tied{with_}, decided automatically: {rule}{scores}; review if needed"
+
+
+def _utility_engine_kind(move: Move) -> str:
+    """ "source-compatible" only when the pin's evidence says the engine is the source's
+    own dialect; "chosen" otherwise, so a heterogeneous source (neither Aurora engine is
+    source-compatible, ADR-031 Decision 6 Amendment 1) and an older record that did not
+    keep the fact are never given the claim (#1292)."""
+    return "source-compatible" if move.evidence.source_compatible is True else "chosen"
 
 
 def render_move_reason(move: Move) -> str:

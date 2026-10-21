@@ -1976,6 +1976,22 @@
                         ]
                       }
                     },
+                    "source_compatible": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
                     "tie_rule": {
                       "required": false,
                       "schema": {
@@ -2721,8 +2737,8 @@
         }
       }
     },
-    "schema_hash": "562baae4801161bc2dc5a5d16ff47bf234281a33fe7cb99725298fcce914b38c",
-    "version": "1.20"
+    "schema_hash": "41bd207bffd351d146a162f56b375558633c038789bfc61eec452399ae640fcf",
+    "version": "1.21"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -15692,6 +15708,22 @@
                             ]
                           }
                         },
+                        "source_compatible": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "boolean"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "tie_rule": {
                           "required": false,
                           "schema": {
@@ -15979,8 +16011,8 @@
         }
       }
     },
-    "schema_hash": "6a4131e8624c34cffd3cfc7076beffc186d21f8be215adf0a9ee39d174e9c26a",
-    "version": "1.5"
+    "schema_hash": "4f4b5164cd96fffe05c97ade7b29c6cbf4798ee51be93d2aaa756d70491818f5",
+    "version": "1.6"
   },
   "reality_check_model_response.RealityCheckModelResponse": {
     "fields": {

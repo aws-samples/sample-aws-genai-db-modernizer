@@ -313,3 +313,37 @@ def test_a_group_pulled_by_an_auto_pick_never_credits_the_customer(code: ReasonC
     assert "customer" not in sentence
     customer = render_move_reason(move.model_copy(update={"actor": MoveActor.CUSTOMER}))
     assert "customer" in customer
+
+
+def _utility_pin(from_engine: str | None, source_compatible: bool | None) -> Move:
+    evidence = {} if source_compatible is None else {"source_compatible": source_compatible}
+    return _move(
+        pass_=MovePass.UTILITY_PIN,
+        from_engine=from_engine,
+        to_engine="aurora_postgresql",
+        reason_code=ReasonCode.OVERRIDE_UTILITY,
+        evidence=evidence,
+    )
+
+
+# A first assignment, an engine change and a same-engine pin all share the clause (#1292).
+@pytest.mark.parametrize("from_engine", [None, "dynamodb", "aurora_postgresql"])
+class TestUtilityPinWording:
+    @pytest.mark.passes_on_main  # what a homogeneous source must keep saying
+    def test_a_source_compatible_pin_keeps_the_claim(self, from_engine):
+        sentence = render_move_reason(_utility_pin(from_engine, True))
+        assert "source-compatible relational engine" in sentence
+        _assert_public(sentence)
+
+    def test_a_heterogeneous_pin_names_the_chosen_engine_and_never_the_claim(self, from_engine):
+        sentence = render_move_reason(_utility_pin(from_engine, False))
+        assert "Aurora PostgreSQL" in sentence
+        assert "source-compatible" not in sentence
+        assert "chosen relational engine" in sentence
+        _assert_public(sentence)
+
+    def test_a_record_that_did_not_keep_the_fact_makes_no_claim(self, from_engine):
+        """Saved ledgers written before the field existed still load and render."""
+        move = _utility_pin(from_engine, None)
+        assert move.evidence.source_compatible is None
+        assert "source-compatible" not in render_move_reason(move)

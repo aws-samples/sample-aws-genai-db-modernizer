@@ -90,7 +90,7 @@
       "reality_check",
       "source_of_truth_reroute"
     ],
-    "version": "1.20"
+    "version": "1.21"
   },
   "assignment_models.AssignmentStatus": {
     "module": "assignment_models",
@@ -102,7 +102,7 @@
       "reroute_rolled_back",
       "rerouted_after_approval"
     ],
-    "version": "1.20"
+    "version": "1.21"
   },
   "capability_ids": {
     "module": "triage_output",
@@ -603,7 +603,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "1.20"
+    "version": "1.21"
   },
   "feasibility_models.FindingKind": {
     "module": "feasibility_models",
@@ -653,7 +653,7 @@
       "model_flag",
       "rule"
     ],
-    "version": "1.9"
+    "version": "1.10"
   },
   "move_ledger.MovePass": {
     "module": "move_ledger",
@@ -678,7 +678,7 @@
       "tie",
       "utility_pin"
     ],
-    "version": "1.9"
+    "version": "1.10"
   },
   "move_ledger.ReasonCode": {
     "module": "move_ledger",
@@ -711,7 +711,7 @@
       "tie.source_compatible",
       "tie.stability"
     ],
-    "version": "1.9"
+    "version": "1.10"
   },
   "phase_models.Phase": {
     "module": "phase_models",

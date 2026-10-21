@@ -150,6 +150,8 @@ Version History:
   ledger).
 - 1.20 (2026-10-20, #1151): Version bump only: ``accepted_feasibility_findings[].kind``
   gains ``stranded_count`` (feasibility findings, #1151).
+- 1.21 (2026-10-21, #1292): No field of its own. Move evidence gained the optional
+  source_compatible (move ledger).
 """
 
 from datetime import datetime
@@ -556,7 +558,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.20", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.21", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

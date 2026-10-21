@@ -429,6 +429,7 @@ class AssignmentResolver:
             group_scores: Mapping[str, float] | None = None,
             signal: str | None = None,
             replaced_engine: str | None = None,
+            source_compatible: bool | None = None,
             group_gates: Iterable[GroupGate] = (),
         ) -> MoveEvidence:
             """The query's candidate ladder (every analyzed engine), plus what the pass saw."""
@@ -445,6 +446,7 @@ class AssignmentResolver:
                 group_gates=list(group_gates),
                 signal=signal,
                 replaced_engine=replaced_engine,
+                source_compatible=source_compatible,
             )
 
         def _group_gates(group: Iterable[str]) -> list[GroupGate]:
@@ -929,7 +931,14 @@ class AssignmentResolver:
                     reason_code=ReasonCode.OVERRIDE_UTILITY,
                     score_after=_score(qid, utility_engine),
                     runner_up=best_other(_ownable_scores(query_by_id[qid]), utility_engine),
-                    evidence=_evidence(query_by_id[qid], replaced_engine=ledger.engine_of(qid)),
+                    evidence=_evidence(
+                        query_by_id[qid],
+                        replaced_engine=ledger.engine_of(qid),
+                        # Only the source's own Aurora dialect is source-compatible; a
+                        # heterogeneous source has none (#1292).
+                        source_compatible=SOURCE_ENGINE_TO_AURORA.get(source_engine)
+                        == utility_engine,
+                    ),
                 )
                 assigned_confidence[qid] = 100
                 # Only the source's own Aurora dialect is source-compatible; for a
