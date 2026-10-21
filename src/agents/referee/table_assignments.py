@@ -12,6 +12,7 @@ from src.agents.referee.aurora_choice import (
     pick_aurora_engine,
     source_database_engine,
 )
+from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.referee.tie_break import break_tie
 from src.agents.referee.tie_break import settled_counts as settled_workload_counts
@@ -61,6 +62,9 @@ def retained_engine_for(
     the reconstruction see both engines in use and resolve the ambiguity by
     alphabetical sort, not by the resolver's actual decision.
 
+    A choice the customer's engine scope made (``basis="engine_scope"``, #1327) wins
+    over the source's own dialect: the scope left that engine out.
+
     ``query_assignments`` (#381), when given and ``aurora_engine_choice`` is
     not, recovers the same Aurora engine from the current assignment's own
     routing instead: by the time an assignment exists, the resolver's own
@@ -86,19 +90,24 @@ def retained_engine_for(
     the cache-layer "Why" cell cannot name different engines for the same
     assignment.
     """
+    engine: str | None = None
+    basis: str | None = None
+    if isinstance(aurora_engine_choice, str):
+        engine = aurora_engine_choice
+    elif isinstance(aurora_engine_choice, Mapping):
+        engine, basis = aurora_engine_choice.get("engine"), aurora_engine_choice.get("basis")
+    elif aurora_engine_choice is not None:
+        engine = getattr(aurora_engine_choice, "engine", None)
+        basis = getattr(aurora_engine_choice, "basis", None)
+    # #1327 (ADR-031 Decision 2 Amendment 14): a customer's engine scope that left
+    # out the source-compatible engine chose the other one, for any source.
+    if basis == SCOPE_BASIS and engine in AURORA_ENGINES:
+        return engine
     native = SOURCE_ENGINE_TO_AURORA.get(source_database_engine(collector_output))
     if native:
         return native
-    if aurora_engine_choice is not None:
-        engine: str | None
-        if isinstance(aurora_engine_choice, str):
-            engine = aurora_engine_choice
-        elif isinstance(aurora_engine_choice, Mapping):
-            engine = aurora_engine_choice.get("engine")
-        else:
-            engine = getattr(aurora_engine_choice, "engine", None)
-        if engine in AURORA_ENGINES:
-            return engine
+    if engine in AURORA_ENGINES:
+        return engine
     if not query_assignments:
         return None
     query_assignments = list(query_assignments)

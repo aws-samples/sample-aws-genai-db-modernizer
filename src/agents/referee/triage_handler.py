@@ -1,5 +1,6 @@
 """Referee-Triage agent handler — reads collector output, selects analysis agents."""
 
+from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import UTC, datetime
 
@@ -15,8 +16,17 @@ from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import remember_collected_facts
 
 
-def run_triage(job_id: str, database_name: str, store: ArtifactStore) -> None:
-    """Run the triage agent. Reads collector output, writes triage decisions via ArtifactStore."""
+def run_triage(
+    job_id: str,
+    database_name: str,
+    store: ArtifactStore,
+    engine_scope: Iterable[str] | None = None,
+) -> None:
+    """Run the triage agent. Reads collector output, writes triage decisions via ArtifactStore.
+
+    ``engine_scope`` is the customer's engine scope (#1327, ADR-031 Decision 2
+    Amendment 14), recorded in ``triage.json``; ``None`` is every engine.
+    """
     import time
 
     start_time = time.time()
@@ -33,7 +43,7 @@ def run_triage(job_id: str, database_name: str, store: ArtifactStore) -> None:
 
     # Run triage
     print("[triage] Analyzing workload signals...")
-    result = triage(collector_output)
+    result = triage(collector_output, engine_scope=engine_scope)
 
     print(f"[triage] Signals detected: {len(result.signals)}")
     for sig in result.signals:
@@ -64,6 +74,7 @@ def run_triage(job_id: str, database_name: str, store: ArtifactStore) -> None:
         query_capabilities=result.query_capabilities,
         confidence_score=_compute_triage_confidence(result),
         timestamp=datetime.now(UTC),
+        engine_scope=result.engine_scope,
     )
 
     key = f"{database_name}/{job_id}/referee-triage/triage.json"

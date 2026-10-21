@@ -165,7 +165,10 @@ async def get_assignments(
     store = _require_store()
     # A saved assignment that split a table's writes is re-routed to one source of
     # truth before it is shown (#992), so the customer reviews and edits that version.
-    reroute_split_writes(store, database_name, job_id)
+    try:
+        reroute_split_writes(store, database_name, job_id)
+    except AssignmentOverrideError as exc:  # a reroute outside the engine scope (#1327)
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     version = _latest_assignment_version(store, database_name, job_id)
     if version == 0:
         raise HTTPException(status_code=404, detail="No assignment artifact found")

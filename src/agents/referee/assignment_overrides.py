@@ -42,6 +42,12 @@ from src.agents.referee.cache_overlay import (
 )
 from src.agents.referee.capability_registry import missing_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.agents.referee.engine_scope import (
+    OutOfScopeAssignment,
+    check_in_scope,
+    scope_of,
+    scope_text,
+)
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply_to_assignment,
@@ -314,6 +320,30 @@ def _write_split_message(
         f"{display_engine(first_engine)}: both write table {table}, and a table's writes "
         "stay on one engine, its source of truth. Pick one engine for both."
     )
+
+
+class OutOfScopeOverride(AssignmentOverrideError):
+    """A pick or a cache pin onto an engine the customer's engine scope leaves out
+    (#1327, ADR-031 Decision 2 Amendment 14). Refused before anything is applied, with
+    the scope named and how to widen it."""
+
+    def __init__(self, query_id: str, engine: str, scope: Iterable[str], *, cache: bool) -> None:
+        self.query_id = query_id
+        self.engine = engine
+        self.scope = sorted(scope)
+        what = "cache this query" if cache else "move this query there"
+        super().__init__(
+            f"Query {query_id}: {display_engine(engine)} is not in the customer's engine "
+            f"scope ({scope_text(self.scope)}). Add {display_engine(engine)} to the scope "
+            f"to {what}."
+        )
+
+
+class OutOfScopeVersion(AssignmentOverrideError, OutOfScopeAssignment):
+    """A customer edit or a source-of-truth reroute would write a version with a query
+    on, tied with or cached by an engine outside the customer's engine scope (#1327).
+    Nothing is written; the API answers 400 and the AWS Transform tools a refused edit,
+    as for every ``AssignmentOverrideError``."""
 
 
 class ExcludedEngineOverride(AssignmentOverrideError):
@@ -660,10 +690,22 @@ def apply_assignment_overrides(
     # an in_scope toggle is a scoping change, not an engine reassignment. A cache
     # engine is never an owner (#296): naming it, or ``cached``, pins the cache
     # overlay and keeps the owner.
+    scope = scope_of(triage)
     for override in overrides:
         qa = qa_map.get(override.query_id)
         if qa is None:
             raise UnknownQuery(override.query_id)
+        # #1327: a pick or a cache pin never leaves the customer's engine scope.
+        if scope is not None:
+            if override.assigned_engine is not None and override.assigned_engine not in scope:
+                raise OutOfScopeOverride(
+                    override.query_id,
+                    override.assigned_engine,
+                    scope,
+                    cache=override.assigned_engine in CACHE_OVERLAY_ENGINES,
+                )
+            if override.cached is True and cache not in scope:
+                raise OutOfScopeOverride(override.query_id, cache, scope, cache=True)
         # #381 review round 2: reject a re-route onto the losing Aurora engine up
         # front, with a clear reason, instead of letting it fall through to the
         # generic "did not analyze it" validator error.
@@ -944,6 +986,9 @@ def apply_assignment_overrides(
         loaded.stored_state,
         state_of(new_assignment.query_assignments),
         "customer gate",
+    )
+    check_in_scope(
+        new_assignment.query_assignments, scope, "customer gate", error=OutOfScopeVersion
     )
     new_path = assignment_artifact_path(database_name, job_id, new_version)
     store.write_json(new_path, new_assignment.model_dump(mode="json"))
@@ -1710,6 +1755,12 @@ def reroute_split_writes(
         loaded.stored_state,
         state_of(new_assignment.query_assignments),
         "source-of-truth reroute",
+    )
+    check_in_scope(
+        new_assignment.query_assignments,
+        scope_of(loaded.triage),
+        "source-of-truth reroute",
+        error=OutOfScopeVersion,
     )
     path = assignment_artifact_path(database_name, job_id, version + 1)
     if store.exists(path):

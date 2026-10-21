@@ -319,6 +319,14 @@ def _gap_sentence(relational_gaps: Mapping[str, Any] | None) -> str:
     figure per impact."""
     if relational_gaps is None:
         return ""
+    if relational_gaps.get("feature_rules_checked") == 0:
+        # #1327: a conversion the gap catalog has no feature rules for (a customer's
+        # engine scope sending MySQL to Aurora PostgreSQL, #1330) was not checked, so
+        # "no gaps" would claim a check that did not run.
+        return (
+            " The relational gap check has no feature rules for this conversion yet, so "
+            "its feature gaps were not checked."
+        )
     stored = relational_gaps.get("gaps_by_impact")
     counts = {
         k: int(n)

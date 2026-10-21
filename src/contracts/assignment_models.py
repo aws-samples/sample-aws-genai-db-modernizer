@@ -152,10 +152,14 @@ Version History:
   gains ``stranded_count`` (feasibility findings, #1151).
 - 1.21 (2026-10-21, #1292): No field of its own. Move evidence gained the optional
   source_compatible (move ledger).
+- 1.22 (2026-10-22, #1327): Added ``AuroraEngineChoice.basis`` (``workload`` or
+  ``engine_scope``): a choice the customer's engine scope made, with empty totals
+  (ADR-031 Decision 2 Amendment 14). A choice written before reads as ``workload``.
 """
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -403,9 +407,17 @@ class AuroraEngineChoice(BaseModel):
     for source features (recursive CTEs, sequences, ``MERGE``, JSON, multiple
     schemas, the Babelfish compatibility path, ...) to tip the choice, per
     ``aurora_choice.choose_heterogeneous_engine``. Always present for a
-    heterogeneous source, never for a homogeneous one (MySQL/MariaDB ->
-    Aurora MySQL, PostgreSQL -> Aurora PostgreSQL keep their own dialect
-    without a competition to record).
+    heterogeneous source with both Aurora engines analysed; a homogeneous source
+    (MySQL/MariaDB -> Aurora MySQL, PostgreSQL -> Aurora PostgreSQL) keeps its
+    own dialect without a competition to record.
+
+    ``basis`` says who made the choice (#1327, ADR-031 Decision 2 Amendment 14):
+    ``"workload"``, the comparison above; or ``"engine_scope"``, the customer's
+    engine scope, which left exactly one Aurora engine in (a homogeneous source
+    whose source-compatible engine it leaves out, or a heterogeneous source with one
+    Aurora engine in scope), so nothing was compared: ``totals`` is empty and
+    ``margin`` is ``None``. A choice written before ``basis`` reads as
+    ``"workload"``.
     """
 
     source_engine: str = Field(..., description="The collector's source database engine")
@@ -424,6 +436,10 @@ class AuroraEngineChoice(BaseModel):
         description="Source features that tipped a close call (empty when the totals decided it)",
     )
     reason: str = Field(..., description="One-line explanation of the decision")
+    basis: Literal["workload", "engine_scope"] = Field(
+        "workload",
+        description=("Who chose: the workload comparison, or the customer's engine scope (#1327)"),
+    )
 
 
 class PostSchemaReroute(BaseModel):
@@ -558,7 +574,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.21", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.22", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

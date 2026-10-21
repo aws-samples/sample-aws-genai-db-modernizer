@@ -62,6 +62,7 @@ from src.agents.referee.co_dependency import (
     group_engine_scores,
     is_significant_join,
 )
+from src.agents.referee.engine_scope import check_in_scope, scope_aurora_choice, scope_of
 from src.agents.referee.move_ledger import (
     MoveLedger,
     apply,
@@ -352,9 +353,15 @@ class AssignmentResolver:
         # ``retained_engine_for(collector_output)`` again, because that helper only
         # knows ``SOURCE_ENGINE_TO_AURORA`` -- it has no way to see the #381 choice
         # this method just made.
-        effective_relational_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine) or (
+        # A customer's engine scope (#1327, ADR-031 Decision 2 Amendment 14) that left
+        # exactly one Aurora engine in, not the source's own, made the choice: recorded
+        # like #381's, so wave 1 and the gap check name the in-scope engine.
+        scope = scope_of(triage)
+        if aurora_engine_choice is None:
+            aurora_engine_choice = scope_aurora_choice(source_engine, analysis_outputs, scope)
+        effective_relational_engine = (
             aurora_engine_choice.engine if aurora_engine_choice else None
-        )
+        ) or SOURCE_ENGINE_TO_AURORA.get(source_engine)
 
         # Capability guarantee for a homogeneous source (review of #474, round 3):
         # this exact query already ran on the source database, so the
@@ -1101,6 +1108,10 @@ class AssignmentResolver:
         # #616 (ADR-031 Amendment 3): v1 must replay from its own Moves, the same
         # write-time check every later version passes.
         check_replay(ledger.moves, {}, state_of(query_assignments), "first assignment")
+        # #1327: no engine outside the customer's engine scope is ever assigned; a
+        # query only an out-of-scope engine (the Aurora fallback) would take stops the
+        # run, named, instead of being forced onto it.
+        check_in_scope(query_assignments, scope, "first assignment")
 
         return Assignment(
             job_id=collector_output.get("job_id", "unknown"),

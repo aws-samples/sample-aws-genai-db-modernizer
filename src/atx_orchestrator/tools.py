@@ -610,9 +610,15 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     store = _make_store()
     # A saved assignment that split a table's writes is re-routed to one source of
     # truth before the customer is shown it (#992), so they review that version.
-    from src.agents.referee.assignment_overrides import reroute_split_writes
+    from src.agents.referee.assignment_overrides import (
+        AssignmentOverrideError,
+        reroute_split_writes,
+    )
 
-    reroute_split_writes(store, database_name, job_id)
+    try:
+        reroute_split_writes(store, database_name, job_id)
+    except AssignmentOverrideError as e:  # a reroute outside the engine scope (#1327)
+        return json.dumps({"status": "invalid_edit", "error": str(e), "job_id": job_id})
     version = resolve_effective_assignment_version(store, database_name, job_id)
     if version == 0:
         return json.dumps(
@@ -720,9 +726,15 @@ def open_detailed_routing_review(job_id: str, database_name: str) -> str:
     store = _make_store()
     # A saved assignment that split a table's writes is re-routed to one source of
     # truth before the customer is shown it (#992), so they review that version.
-    from src.agents.referee.assignment_overrides import reroute_split_writes
+    from src.agents.referee.assignment_overrides import (
+        AssignmentOverrideError,
+        reroute_split_writes,
+    )
 
-    reroute_split_writes(store, database_name, job_id)
+    try:
+        reroute_split_writes(store, database_name, job_id)
+    except AssignmentOverrideError as e:  # a reroute outside the engine scope (#1327)
+        return json.dumps({"status": "invalid_edit", "error": str(e), "job_id": job_id})
     version = resolve_effective_assignment_version(store, database_name, job_id)
     if version == 0:
         return json.dumps(
@@ -924,7 +936,10 @@ def finalize_assignment_review(
     # shown before the rule (their submission is then rebased onto it).
     from src.agents.referee.assignment_overrides import reroute_split_writes
 
-    rerouted = reroute_split_writes(store, database_name, job_id)
+    try:
+        rerouted = reroute_split_writes(store, database_name, job_id)
+    except AssignmentOverrideError as e:  # a reroute outside the engine scope (#1327)
+        return json.dumps({"status": "invalid_edit", "error": str(e), "job_id": job_id})
     reroute_note: dict = {}
     if rerouted is not None:
         version = rerouted.assignment.version

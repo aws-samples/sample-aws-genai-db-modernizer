@@ -128,6 +128,7 @@ from typing import Any
 
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import AURORA_ENGINES
+from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.migration_wave_builders import (
     _aurora_wave,
     _cache_wave,
@@ -251,7 +252,19 @@ def build_migration_waves(
     # wave 1 as a dialect-and-schema conversion rather than a 1:1 carry-over, so it
     # never claims "no data model changes" for one of these sources.
     cross_engine = False
-    if retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
+    scope_choice = (aurora_engine_choice or {}).get("engine")
+    if (aurora_engine_choice or {}).get("basis") == SCOPE_BASIS and scope_choice in AURORA_ENGINES:
+        # #1327 (ADR-031 Decision 2 Amendment 14): the customer's engine scope left
+        # out the source-compatible engine, so wave 1 converts the source to the
+        # Aurora engine it chose: a cross-engine move, as for a heterogeneous source.
+        # Only when some query ends on it: a conversion to an engine that serves
+        # nothing is no step of the plan, so wave 1 then names no target, as for a
+        # heterogeneous source whose chosen engine serves nothing (never the
+        # source-compatible engine the scope left out).
+        serves = int((by_engine.get(str(scope_choice)) or {}).get("assigned_queries") or 0) > 0
+        retained_engine = str(scope_choice) if serves else None
+        cross_engine = serves
+    elif retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
         # #583/#586 review: ``retained_engine_for`` is the one shared helper for
         # "which Aurora engine is retained" (``aurora_engine_choice`` first, then
         # ``query_assignments``' own ``assigned_engine``, then the shared

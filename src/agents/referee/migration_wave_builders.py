@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agents.referee.aurora_choice import describe_features
+from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.migration_wave_tables import (
     _dedupe_table_owners,
     _durable_owner,
@@ -22,6 +23,7 @@ from src.shared.engine_names import (
     SOURCE_ENGINE_DISPLAY_NAMES,
     display_engine,
     heterogeneous_source_clause,
+    scoped_source_clause,
 )
 from src.shared.migration_wave_engines import (
     CACHE_ENGINES,
@@ -158,6 +160,7 @@ def _aurora_wave(
         n = int(owner_entry.get("assigned_queries") or 0)
         share = round(float(owner_entry.get("workload_percent") or 0.0), 1)
         decision = ""
+        scoped = (aurora_engine_choice or {}).get("basis") == SCOPE_BASIS
         if aurora_engine_choice:
             totals = aurora_engine_choice.get("totals") or {}
             if totals:
@@ -172,13 +175,21 @@ def _aurora_wave(
                 decision += f"; tipped by {describe_features(features)}"
             if decision:
                 decision += "."
-        rationale = (
-            f"{heterogeneous_source_clause(source_engine, version_number)}, "
+        # #1327: a choice the customer's engine scope made states the scope, not a
+        # competition between the two Aurora engines (none ran).
+        scope_reason = str((aurora_engine_choice or {}).get("reason") or "")
+        opening = (
+            f"{scoped_source_clause(source_engine, scope_reason, version_number)}. "
+            if scoped
             # #381 review: never "earned the move" -- that reads as a decisive win even
             # when the actual decision was a tie-break or an unneeded default (an exact
             # tie, or a close call with no deciding feature). "Selected" is accurate
             # whichever of those the trace in ``decision`` (if present) turns out to be.
+            else f"{heterogeneous_source_clause(source_engine, version_number)}, "
             f"and the assignment resolver selected {target_name} to serve it.{decision} "
+        )
+        rationale = (
+            f"{opening}"
             # #1120: one story with the wave's not-yet-optimized note: the dialect and
             # the types are converted, the data model stays as it is.
             "This is a cross-engine move: the SQL dialect and the data types are "

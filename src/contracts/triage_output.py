@@ -14,6 +14,9 @@ Version History:
   ``offset_window`` (#968); ``scan_engine`` now means a recursive CTE only. A triage.json
   written before lists ``scan_engine`` for a window function too and still loads: it gates
   as strictly as it did.
+- 1.4 (2026-10-22, #1327): Added optional ``engine_scope``: the customer's engine scope,
+  sorted engine ids, or None for every engine (ADR-031 Decision 2 Amendment 14). A
+  triage.json written before reads as None.
 
 Note (#493, no schema change, version unchanged): the capability id
 ``inverted_index`` in ``query_capabilities`` is now ``text_pattern_match``. A
@@ -71,7 +74,7 @@ class TriageOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.4", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
     job_id: str = Field(..., description="Job identifier")
     database_name: str = Field(..., description="Source database name")
@@ -91,3 +94,11 @@ class TriageOutputContract(BaseModel):
     )
     confidence_score: int = Field(..., ge=0, le=100, description="Triage confidence (0-100)")
     timestamp: datetime = Field(..., description="When triage was run")
+    engine_scope: list[str] | None = Field(
+        default=None,
+        description=(
+            "The customer's engine scope, sorted engine ids (#1327, ADR-031 Decision 2 "
+            "Amendment 14); None when every engine is in scope. Every engine it leaves out "
+            "is in skipped_agents with the reason 'Not in the customer's engine scope'."
+        ),
+    )

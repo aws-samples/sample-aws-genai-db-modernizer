@@ -27,6 +27,7 @@ from src.agents.referee.consolidation_validator import (
     sanity_sweep,
     validate_consolidations,
 )
+from src.agents.referee.engine_scope import check_in_scope, scope_of
 from src.agents.referee.model_flags import (
     apply_consolidation_flags,
     ignored_flag_outcome,
@@ -608,6 +609,13 @@ def write_reality_check_result(
         result["analysis_outputs"],
         dead_engines=eliminated,
     )
+    # #1327: checked again on what is written, after the refresh recomputed each
+    # query's cache fields (the check in ``_check_replay`` ran before it).
+    check_in_scope(
+        revised_assignment.get("query_assignments", []),
+        scope_of(result.get("triage")),
+        "reality check",
+    )
     revised_key = f"{database_name}/{job_id}/assignment/v{new_version}/assignment.json"
     # #972, #1018: written now, so today's version, never the spread one's.
     store.write_json(revised_key, stamp_artifact_version(revised_key, revised_assignment))
@@ -817,6 +825,8 @@ def _check_replay(result: dict, moves: list) -> None:
     """
     start = result.get("input_state") or state_of(result["assignment"].get("query_assignments", []))
     check_replay(moves, start, state_of(result["revised_assignments"]), "reality check")
+    # #1327: the revision keeps every query inside the customer's engine scope.
+    check_in_scope(result["revised_assignments"], scope_of(result.get("triage")), "reality check")
 
 
 def _ledger(result: dict) -> MoveLedger:

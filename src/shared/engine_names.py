@@ -108,3 +108,18 @@ def heterogeneous_source_clause(source_engine: str, version: str = "") -> str:
         f"{source[:1].upper()}{source[1:]}{detail} has no Aurora engine of its own dialect: "
         "Aurora MySQL and Aurora PostgreSQL both competed on the collected workload"
     )
+
+
+def scoped_source_clause(source_engine: str, reason: str, version: str = "") -> str:
+    """The opening of the sentence for an Aurora engine the customer's engine scope
+    chose (#1327, ADR-031 Decision 2 Amendment 14), in place of
+    :func:`heterogeneous_source_clause`: nothing competed, the scope decided.
+
+    ``reason`` is ``AuroraEngineChoice.reason`` ("The customer's engine scope leaves
+    out Aurora MySQL, ..."); ``version`` as for the heterogeneous clause.
+    """
+    source = display_source_database(source_engine)
+    detail = f" ({version})" if version else ""
+    said = reason.strip().rstrip(".")
+    said = said[:1].lower() + said[1:] if said[:4] == "The " else said
+    return f"For {source}{detail}, {said}"

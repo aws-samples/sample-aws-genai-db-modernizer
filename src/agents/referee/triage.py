@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, HOT_READ_MIN_CALLS_PER_SECOND
@@ -112,10 +113,24 @@ class TriageResult:
     deferred: dict[str, list[str]] = field(default_factory=dict)  # phase 1 agents (not dispatched)
     signals: list[TriageSignal] = field(default_factory=list)
     query_capabilities: dict[str, list[str]] = field(default_factory=dict)  # query_id -> [caps]
+    engine_scope: list[str] | None = None  # the customer's engine scope (#1327)
 
 
-def triage(collector_output: dict) -> TriageResult:
-    """Analyze collector output and decide which analysis agents to run."""
+def triage(collector_output: dict, engine_scope: Iterable[str] | None = None) -> TriageResult:
+    """Analyze collector output and decide which analysis agents to run.
+
+    ``engine_scope`` is the customer's engine scope (engine catalog ids, ADR-031
+    Decision 2 Amendment 14, #1327): only engines in it are candidates, and the
+    engines it leaves out are skipped with :data:`~src.agents.referee.engine_scope.
+    SCOPE_SKIPPED_REASON`. ``None``, the default, is every engine.
+    """
+    from src.agents.referee.engine_scope import (  # import cycle
+        normalize_engine_scope,
+        scoped_aurora_agents,
+    )
+
+    normalized = normalize_engine_scope(engine_scope)
+    scope = frozenset(normalized) if normalized is not None else None
     signals = _detect_schema_signals(collector_output)
     signals.extend(_detect_query_signals(collector_output))
 
@@ -136,10 +151,16 @@ def triage(collector_output: dict) -> TriageResult:
         aurora_agents = sorted(ANALYSIS_AGENTS & AURORA_ENGINES)
     else:
         aurora_agents = []
+    aurora_agents, swapped_from = scoped_aurora_agents(source_engine, aurora_agents, scope)
 
     result = _select_agents(
-        signals, aurora_agents=aurora_agents, no_source_engine=not source_engine
+        signals,
+        aurora_agents=aurora_agents,
+        no_source_engine=not source_engine,
+        scope=scope,
+        swapped_from=swapped_from,
     )
+    result.engine_scope = list(normalized) if normalized is not None else None
 
     # Detect hard capability requirements per query
     result.query_capabilities = detect_query_capabilities(collector_output, signals)
@@ -614,6 +635,8 @@ def _select_agents(
     aurora_agents: list[str] | None = None,
     *,
     no_source_engine: bool = False,
+    scope: frozenset[str] | None = None,
+    swapped_from: str | None = None,
 ) -> TriageResult:
     """Select the analysis agents to dispatch: every query-owning engine (#726).
 
@@ -636,8 +659,15 @@ def _select_agents(
     with none (#381, both compete and the resolver picks one) or when no source
     engine is recorded (``no_source_engine``, #726, the same competition), 0
     otherwise.
+
+    ``scope`` (#1327) is the customer's engine scope, ``None`` for every engine:
+    only engines in it are candidates, and every engine it leaves out is skipped
+    with ``SCOPE_SKIPPED_REASON``. ``aurora_agents`` already holds the scope's Aurora
+    engines; ``swapped_from`` is the source-compatible engine the scope left out when
+    the other Aurora engine took its place, so its reason says so.
     """
     from src.agents.referee.aurora_choice import AURORA_ENGINES  # import cycle
+    from src.agents.referee.engine_scope import SCOPE_SKIPPED_REASON, swap_reason
 
     result = TriageResult(signals=signals)
 
@@ -646,6 +676,8 @@ def _select_agents(
 
     aurora_agents = aurora_agents or []
     owning = ANALYSIS_AGENTS - AURORA_ENGINES - CACHE_OVERLAY_ENGINES
+    if scope is not None:
+        owning &= scope
     candidates = owning | set(aurora_agents)
 
     evidence: dict[str, list[str]] = defaultdict(list)
@@ -657,8 +689,11 @@ def _select_agents(
                 result.deferred.setdefault(target, []).append(f"{sig.signal}: {sig.evidence}")
             else:
                 evidence[target].append(f"{sig.signal}: {sig.evidence}")
-    # A cache overlay engine joins only on its own signals (it owns no query).
-    candidates |= CACHE_OVERLAY_ENGINES & set(evidence)
+    # A cache overlay engine joins only on its own signals (it owns no query), and
+    # only when the scope lists it.
+    candidates |= (
+        CACHE_OVERLAY_ENGINES & set(evidence) & (scope if scope is not None else ALL_AGENTS)
+    )
 
     for agent in sorted(candidates):
         reasons = list(evidence.get(agent, []))
@@ -678,6 +713,8 @@ def _select_agents(
                     "Source engine has no Aurora dialect of its own, so both Aurora "
                     "engines compete on workload fit",
                 )
+            elif swapped_from is not None:
+                reasons.insert(0, swap_reason(swapped_from, agent))
             else:
                 reasons.insert(
                     0, "Source engine is relational; Aurora analysis provides baseline scoring"
@@ -685,10 +722,14 @@ def _select_agents(
         result.selected[agent] = reasons or [UNNAMED_ENGINE_REASON]
 
     # Only an Aurora flavour the source rules out, or a cache overlay engine no
-    # signal names, is skipped (never both selected and skipped).
+    # signal names, is skipped (never both selected and skipped); with a scope, so
+    # is every engine it leaves out, whatever else would be said of it.
     for agent in sorted(AURORA_ENGINES - set(aurora_agents)):
         result.skipped[agent] = "Source engine does not match this Aurora variant"
     for agent in sorted(CACHE_OVERLAY_ENGINES - candidates):
         result.skipped[agent] = "No matching workload signals detected"
+    if scope is not None:
+        for agent in sorted(ANALYSIS_AGENTS - scope):
+            result.skipped[agent] = SCOPE_SKIPPED_REASON
 
     return result

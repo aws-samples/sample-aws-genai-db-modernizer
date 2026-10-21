@@ -469,6 +469,10 @@ Version History:
 - 1.51 (2026-10-21, #1284): facts.waves[].moved_by_later_waves: how many of wave 1's
   tables and views a later wave moves off its Aurora engine, the figure wave 1's
   rationale now states instead of calling every mapped table a later-wave move.
+- 1.52 (2026-10-22, #1327): Added optional ``RelationalGapFacts.feature_rules_checked``:
+  the applicable rules that look at what the source uses, 0 for a conversion the gap
+  catalog has no feature rules for; wave 1's note then says its feature gaps were not
+  checked. None in a report written before.
 """
 
 from datetime import datetime
@@ -1633,6 +1637,15 @@ class RelationalGapFacts(BaseModel):
         False, description="Whether the source's version was compared (homogeneous sources)"
     )
     rules_checked: int = Field(0, ge=0, description="Catalog rules that apply to this move")
+    feature_rules_checked: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Of rules_checked, the ones that look at what the source uses rather than its "
+            "version (#1327); 0 means the catalog has no feature rules for this conversion. "
+            "None in a report written before the count."
+        ),
+    )
     gaps: list[RelationalGap] = Field(
         default_factory=list, description="Most severe impact first, then by rule id"
     )
@@ -1843,7 +1856,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.51",
+        default="1.52",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

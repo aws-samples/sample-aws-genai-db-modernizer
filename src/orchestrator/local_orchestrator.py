@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from src.agents.referee.engine_scope import check_in_scope, scope_from_store
 from src.agents.referee.query_pattern import write_access_patterns
 from src.agents.referee.write_groups import assignment_placement_groups, assignment_unit_weights
 from src.contracts.phase_models import (
@@ -846,6 +847,11 @@ class LocalOrchestrator(Orchestrator):
             state_of(refreshed.get("query_assignments", [])),
             "post-schema reroute",
         )
+        check_in_scope(
+            refreshed.get("query_assignments", []),
+            scope_from_store(self.store, database_name, job_id),
+            "post-schema reroute",
+        )
         if count_warnings:
             refreshed["validation_warnings"] = [
                 *(refreshed.get("validation_warnings") or []),
@@ -1072,6 +1078,13 @@ class LocalOrchestrator(Orchestrator):
             # abandoned reroute back to the version it restates.
             "moves": self._rollback_moves(revised, assignment),
         }
+        # The restated version was checked when written; checked again here, as every
+        # writer is (#1327), since ``_rollback_moves`` has no store to read it from.
+        check_in_scope(
+            restated.get("query_assignments", []),
+            scope_from_store(self.store, database_name, job_id),
+            "post-schema rollback",
+        )
         rollback_key = assignment_artifact_path(database_name, job_id, rollback)
         self.store.write_json(rollback_key, stamp_artifact_version(rollback_key, restated))
         write_access_patterns(self.store, database_name, job_id, rollback)

@@ -25,6 +25,7 @@ from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrus
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, PATTERN_LABELS, overlay_summary
+from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.routed_confidence import RoutedFit, routed_fits
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.substring_match import substring_match_risks
@@ -47,7 +48,11 @@ from src.contracts.model_flag import validation_error_note
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
-from src.shared.engine_names import SOURCE_ENGINE_DISPLAY_NAMES, heterogeneous_source_clause
+from src.shared.engine_names import (
+    SOURCE_ENGINE_DISPLAY_NAMES,
+    heterogeneous_source_clause,
+    scoped_source_clause,
+)
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
@@ -3160,11 +3165,18 @@ def build_summary(
     # at all; without it the sentence is skipped, same as with no recorded choice.
     if aurora_choice and aurora_choice.get("engine") and source_engine:
         chosen_name = display_name(aurora_choice["engine"])
-        parts.append(
-            f"{heterogeneous_source_clause(source_engine)}, and "
-            f"{chosen_name} was selected to serve it (a cross-engine, dialect-and-schema "
-            "conversion, not a 1:1 carry-over)."
-        )
+        if aurora_choice.get("basis") == SCOPE_BASIS:
+            # #1327: the customer's engine scope chose; nothing competed.
+            parts.append(
+                f"{scoped_source_clause(source_engine, str(aurora_choice.get('reason') or ''))} "
+                "(a cross-engine, dialect-and-schema conversion, not a 1:1 carry-over)."
+            )
+        else:
+            parts.append(
+                f"{heterogeneous_source_clause(source_engine)}, and "
+                f"{chosen_name} was selected to serve it (a cross-engine, dialect-and-schema "
+                "conversion, not a 1:1 carry-over)."
+            )
 
     has_assignment = any("assigned_queries" in r for r in ranking)
     with_workload = sorted(

@@ -405,6 +405,10 @@ def detect_relational_gaps(
         "target_lines": target_lines,
         "version_checked": version_checked,
         "rules_checked": len(applicable),
+        # #1327: the rules that look at what the source uses, not at its version. A
+        # conversion the catalog has none for (MySQL to Aurora PostgreSQL, #1330) is
+        # not checked for feature gaps, which the wave note says.
+        "feature_rules_checked": sum(1 for r in applicable if r.match.version is None),
         "gaps": gaps,
         "gaps_by_impact": {
             impact: sum(1 for g in gaps if g["impact"] == impact) for impact in GAP_IMPACTS
