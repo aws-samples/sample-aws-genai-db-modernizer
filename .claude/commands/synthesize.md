@@ -78,6 +78,11 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
      reading `report.json` for it). It explains why the cache layer is smaller
      than at the assignment gate.
 
+   State each figure plainly. Leave out a line whose figure the report does not
+   carry (for example no source cost), and never comment on what you did or did not
+   read: the summary describes the assessment, not your process. Give each top risk
+   with its mitigation from the report; when a risk has none, list it alone.
+
 6. **Update state**
    Set `phase_status.synthesis` = "complete"
    Tell user where the deliverables are: the `deliverables_dir` the render step printed,

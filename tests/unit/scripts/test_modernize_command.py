@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
 
@@ -844,3 +846,55 @@ def test_the_cache_layer_fit_is_never_presented_as_a_workload_fit() -> None:
     assert "never in a workload fit column or list next to the owners' figures" in present
     completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
     assert "the cache layer's figure is its cache fit, never shown as a workload fit" in completion
+
+
+# Issue #1249: the final summary states only facts that were read, and never
+# narrates the run's own process.
+def _completion_text() -> str:
+    return _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
+
+
+def test_completion_summary_states_only_facts_that_were_read() -> None:
+    completion = _completion_text()
+    assert "Build the final summary only from the `/synthesize` subagent's final report" in (
+        completion
+    )
+    assert "do not open `report.json` or any other artifact for it" in completion
+    assert "leave out a line whose figure those sources do not carry" in completion
+    assert "Report any `partial` render `errors`" in completion
+    assert "List each top risk with its mitigation, or alone when the report gives none" in (
+        completion
+    )
+    assert "files you opened with the Read tool" not in completion
+
+
+def test_completion_summary_never_narrates_the_run_itself() -> None:
+    completion = _completion_text()
+    assert "The summary is about the assessment, never about the run" in completion
+    assert "do not name a phase or step number" in completion
+
+
+@pytest.mark.passes_on_main  # guards result-line and tool-use wording main already has
+def test_completion_keeps_the_result_line_rules() -> None:
+    completion = _completion_text()
+    assert "End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id>" in (
+        completion
+    )
+    assert "failed phase=<phase> reason=<one line>" in completion
+    assert "Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line" in (
+        completion
+    )
+    # The Completion section dispatches nothing; the tool-use rule sits in the
+    # Phase 7 dispatch just before it and must stay word for word.
+    phase_7 = _modernize_text().split("### Phase 7: Synthesis", 1)[1].split("### Completion", 1)[0]
+    assert TOOL_USE_RULE + SEARCH_AS_IS in phase_7
+
+
+def test_synthesize_present_report_omits_missing_figures_and_process_comments() -> None:
+    text = (COMMANDS_DIR / "synthesize.md").read_text()
+    step = text.split("5. **Present report**", 1)[1].split("6. **Update state**", 1)[0]
+    assert "Leave out a line whose figure the report does not" in step
+    assert "never comment on what you did or did not" in step
+    before_note, _, after_note = step.partition("than at the assignment gate.")
+    assert "State each figure plainly" in after_note
+    assert "State each figure plainly" not in before_note
