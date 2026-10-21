@@ -109,6 +109,46 @@ class NormalizedQuery:
 # ``DatabaseEngine`` in src/contracts/collector_input.py.
 _MYSQL_FAMILY_DIALECTS = frozenset({"mysql", "mariadb"})
 
+
+_EXECUTABLE_OPEN_RE = re.compile(r"/\*M?!")
+
+
+def without_comments_after_terminator(text: str, source_engine: str | None) -> str:
+    """``text`` cut after its last statement-ending ``;`` when only comments follow it.
+
+    ``MERGE ...; /*a='b'*/`` becomes ``MERGE ...;``: a parser reads the comment as one
+    more (empty) statement, so it must not reach one (#1335). The text is read with the
+    scan that knows the quote forms of ``source_engine`` (a source engine or dialect
+    name): a ``;`` in a string literal, a quoted name, a dollar quote, ``E'...'``,
+    Oracle ``q'{...}'``, a SQL Server ``[...]`` name or a comment ends nothing.
+    Only comments and whitespace may follow that ``;``. Code after it (a second
+    statement, a MySQL ``/*! ... */`` executable comment, an unterminated ``/*`` or
+    quote) leaves the text unchanged, and so does text with no ``;``, or none followed
+    by a comment. A ``--`` (or MySQL ``#``) comment with no newline runs to the end.
+    """
+    if ";" not in text:
+        return text
+    engine = (source_engine or "").strip().lower()
+    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS)
+    if scan.unterminated_quote or scan.unterminated_comment:
+        return text
+    mask, comments = scan.mask, scan.comment_mask
+    last = -1
+    for m in re.finditer(";", text):
+        if not mask[m.start()]:
+            last = m.end()
+    if last < 0:
+        return text
+    tail = range(last, len(text))
+    if not any(comments[k] for k in tail):
+        return text
+    if any(not (text[k].isspace() or comments[k]) for k in tail):
+        return text
+    if engine in _MYSQL_FAMILY_DIALECTS and _EXECUTABLE_OPEN_RE.search(text, last):
+        return text
+    return text[:last]
+
+
 # ---------------------------------------------------------------------------
 # Quote, comment and paren scanning
 # ---------------------------------------------------------------------------
@@ -116,6 +156,8 @@ _MYSQL_FAMILY_DIALECTS = frozenset({"mysql", "mariadb"})
 _QUOTE_CHARS = ("'", '"', "`")
 
 _POSTGRES_DIALECTS = frozenset({"postgresql", "postgres"})
+# SQL Server quotes a name in brackets: [a name]; ``]]`` is a literal ``]``.
+_BRACKET_DIALECTS = frozenset({"sqlserver", "tsql", "mssql"})
 # Oracle alternative quoting: q'[...]', q'(...)', q'{...}', q'<...>' or q'!...!' (and the
 # national nq'...' form); the text runs until the closing delimiter and a quote.
 _ORACLE_Q_QUOTE_RE = re.compile(r"(?:[nN])?[qQ]'(?P<d>[^\s])")
@@ -142,7 +184,7 @@ class _Scan:
     unterminated_comment: bool
 
 
-def _scan(text: str, dialect: str) -> _Scan:
+def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
     """Single pass over ``text`` tracking quoted/comment spans and parens.
 
     ``mask[i]`` is True wherever character ``i`` sits inside a string
@@ -171,6 +213,9 @@ def _scan(text: str, dialect: str) -> _Scan:
     runs to the end of the text is complete by grammar (no closing token
     is required); only an unterminated ``/* ... */`` counts as a
     truncation signal, the same way an unterminated quote does.
+
+    ``brackets`` also reads a SQL Server ``[name]`` as quoted (off by default, so the
+    other callers' masks stay as they were).
     """
     is_mysql = dialect.lower() in _MYSQL_FAMILY_DIALECTS
     is_oracle = dialect.lower() == "oracle"
@@ -221,7 +266,7 @@ def _scan(text: str, dialect: str) -> _Scan:
                 mask[i] = mask[i + 1] = True
                 i += 2
                 continue
-            if ch in _QUOTE_CHARS:
+            if ch in _QUOTE_CHARS or (brackets and ch == "["):
                 state = ch
                 mask[i] = True
                 i += 1
@@ -310,8 +355,8 @@ def _scan(text: str, dialect: str) -> _Scan:
             mask[i + 1] = True
             i += 2
             continue
-        if ch == state:
-            if i + 1 < n and text[i + 1] == state:
+        if ch == ("]" if state == "[" else state):
+            if i + 1 < n and text[i + 1] == ch:
                 mask[i + 1] = True
                 i += 2
                 continue

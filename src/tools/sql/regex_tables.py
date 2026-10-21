@@ -37,6 +37,7 @@ import re
 from src.shared.sql_comments import block_comments_nest, strip_leading_comments
 from src.tools.database.sql_cte import drop_cte_references
 from src.tools.sql.bulk_load import bulk_load_table, copy_table
+from src.tools.sql.normalize import without_comments_after_terminator
 
 
 def is_merge_statement(query_text: str, source_engine: str = "") -> bool:
@@ -62,6 +63,8 @@ def regex_table_refs(query_text: str, source_engine: str = "") -> list[tuple[lis
     ``source_engine`` (a source engine or sqlglot dialect name) says how its
     comments nest.
     """
+    # A comment after the closing ';' is no part of the statement (#1335).
+    query_text = without_comments_after_terminator(query_text, source_engine)
     target = copy_table(query_text, source_engine) or bulk_load_table(query_text, source_engine)
     if target is not None:
         return [target]

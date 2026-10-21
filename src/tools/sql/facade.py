@@ -63,7 +63,12 @@ import sqlglot
 from sqlglot import exp
 
 from src.shared.sql_comments import strip_leading_comments
-from src.tools.sql.normalize import NormalizedQuery, normalize_digest_text, quoted_mask
+from src.tools.sql.normalize import (
+    NormalizedQuery,
+    normalize_digest_text,
+    quoted_mask,
+    without_comments_after_terminator,
+)
 from src.tools.sql.refs import ColumnUse, TableRef
 from src.tools.sql.regex_facts import (
     TIMESTAMP_COLUMN_NAME_RE,
@@ -534,7 +539,8 @@ def _cut_short(sql: str, normalized: NormalizedQuery, source_engine: str) -> boo
 
 def _parse(sql: str, source_engine: str) -> _Parsed:
     """Parse ``sql`` once, or say why the regex fallback answers instead."""
-    sql = sql or ""
+    # A comment after the closing ';' is no part of the statement (#1335).
+    sql = without_comments_after_terminator(sql or "", source_engine)
     dialect = sqlglot_dialect(source_engine)
     if len(sql) > MAX_SQL_CHARS:
         return _Parsed(sql, dialect, truncated=False, fallback_reason="too_long")
