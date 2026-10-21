@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 
+from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
 from src.contracts.agent_interaction_models import AgentQuestion
 from src.contracts.assignment_models import ValidationResult
 from src.shared.bedrock_guardrail import (
@@ -81,11 +82,15 @@ def _bedrock_validate(question: AgentQuestion, answer: str) -> ValidationResult:
     # With a guardrail on, the customer's answer is tagged so the prompt-attack
     # filter evaluates it (InvokeModel only evaluates tagged content).
     guarded_answer, guardrail_body = tag_guarded_input(answer)
+    # The question names customer tables and the answer is the customer's own
+    # text: both are framed as data, not instructions (#1317).
     prompt = (
-        f"Does the following answer adequately address the question?\n\n"
-        f"Question: {question.question}\n"
-        f"Answer: {guarded_answer}\n\n"
-        f"Respond with only 'yes' or 'no'."
+        "Does the answer in the block below adequately address the question in it?\n\n"
+        + frame_untrusted(
+            f"Question: {question.question}\nAnswer: {guarded_answer}",
+            label="a question about the customer's database and the customer's answer",
+        )
+        + "\n\nRespond with only 'yes' or 'no'."
     )
     model_id = resolve_model_id(Role.LIGHT_CHECK)
     response = client.invoke_model(
@@ -98,6 +103,7 @@ def _bedrock_validate(question: AgentQuestion, answer: str) -> ValidationResult:
                 **invoke_model_body(
                     Role.LIGHT_CHECK, [{"role": "user", "content": prompt}], model_id=model_id
                 ),
+                "system": SYSTEM_PROMPT_DATA_DIRECTIVE,
                 **guardrail_body,
             }
         ),

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, TypeAdapter
 
+from src.agents.prompt_framing import frame_untrusted
 from src.agents.referee.access_pattern import (
     KEY_SCOPED_COUNT_FACT,
     SMALL_TABLE_MAX_ROWS,
@@ -154,16 +155,19 @@ class LlmAdvisor(LlmAdvisorBase):
             elif isinstance(d, dict):
                 denorm_data.append(d)
 
-        return (
-            "Analyze the following database workload and produce DynamoDB key design "
-            "recommendations and denormalization strategies.\n\n"
+        workload = (
             f"## Deterministic Analysis Results\n{deterministic_results}\n\n"
             f"## Database Schema\n{schema}\n\n"
             f"## Query Patterns\n{queries}\n\n"
             f"## Identified Aggregates\n{agg_data}\n\n"
-            f"## Denormalization Opportunities\n{denorm_data}\n\n"
-            "Produce a key design (partition_key, optional sort_key, rationale) for each "
-            "aggregate, and a denormalization strategy for each opportunity."
+            f"## Denormalization Opportunities\n{denorm_data}"
+        )
+        return (
+            "Analyze the following database workload and produce DynamoDB key design "
+            "recommendations and denormalization strategies.\n\n"
+            + frame_untrusted(workload, label="the database workload to analyze")
+            + "\n\nProduce a key design (partition_key, optional sort_key, rationale) for "
+            "each aggregate, and a denormalization strategy for each opportunity."
         )
 
     def _parse_result(self, result) -> LlmAdvisorOutput | None:

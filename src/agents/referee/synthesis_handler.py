@@ -17,6 +17,7 @@ LLM seam functions (for Skill Sync / external LLM integration):
 
 from datetime import UTC, datetime
 
+from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
 from src.agents.referee.flagged_unservable import flagged_unservable_records
@@ -1286,7 +1287,9 @@ def run_synthesis(
             if assignment_version == 0
             else f"{database_name}/{job_id}/synthesis/v{assignment_version}/llm_input.json"
         )
-        store.write_json(llm_input_key, llm_input)
+        # The file says its content is data, not instructions (#1317); the Bedrock
+        # prompt frames the same payload with frame_untrusted instead.
+        store.write_json(llm_input_key, with_untrusted_notice(llm_input))
         print(f"[synthesis] LLM input written to {llm_input_key}")
 
     # llm_mode == "none" — keep the deterministic summary already set

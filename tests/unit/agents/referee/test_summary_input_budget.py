@@ -251,7 +251,13 @@ class TestBudget:
         for one default Read page."""
         _, payload = large
         written = headless_text(payload)
-        assert written == json.dumps(payload, indent=2, default=str)
+        # As written: led by the untrusted-data notice (#1317).
+        assert json.loads(written).pop("untrusted_data_notice")
+        assert written == json.dumps(
+            {"untrusted_data_notice": json.loads(written)["untrusted_data_notice"], **payload},
+            indent=2,
+            default=str,
+        )
         compact = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
         assert len(compact) < len(written)
         assert estimate_tokens(payload) * CHARS_PER_TOKEN >= len(written)

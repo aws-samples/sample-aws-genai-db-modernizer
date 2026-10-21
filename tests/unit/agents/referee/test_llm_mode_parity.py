@@ -47,6 +47,9 @@ from tests.unit.agents.referee.test_synthesis_effective_risks import DB as SYN_D
 from tests.unit.agents.referee.test_synthesis_effective_risks import JOB as SYN_JOB
 from tests.unit.agents.referee.test_synthesis_effective_risks import _seed as _seed_synthesis_base
 
+# The request files' untrusted-data notice key (#1317).
+UNTRUSTED_NOTICE_KEY = "untrusted_data_notice"
+
 # ---------------------------------------------------------------------------
 # A Bedrock stand-in: answers every call with the one model answer under test
 # ---------------------------------------------------------------------------
@@ -414,6 +417,9 @@ class TestExecutiveSummarySameAnswerSameResult:
         headless_store = synthesis_store("headless")
         run_synthesis(SYN_JOB, SYN_DB, headless_store, assignment_version=2, llm_mode="external")
         llm_input = headless_store.read_json(f"{SYN_DB}/{SYN_JOB}/synthesis/v2/llm_input.json")
+        # Only the file says its content is data (#1317); the prompt frames it instead.
+        assert next(iter(llm_input)) == UNTRUSTED_NOTICE_KEY
+        llm_input = {k: v for k, v in llm_input.items() if k != UNTRUSTED_NOTICE_KEY}
         headless_store.write_json(
             f"{SYN_DB}/{SYN_JOB}/synthesis/v2/llm_response.json", {"executive_summary": summary}
         )
@@ -507,6 +513,33 @@ class TestExecutiveSummaryBudgetParity:
             script.run_finalize(store, SYN_JOB, SYN_DB, 2)
         report = store.read_json(f"{SYN_DB}/{SYN_JOB}/synthesis/v2/report.json")
         assert report["summary_input_budget"]["list_limit"] == 7
+
+    def test_the_line_cap_holds_for_the_written_file(self, synthesis_store, monkeypatch):
+        """#1317: the cap measures the file as written, notice included."""
+        from src.agents.referee import summary_input_budget
+
+        key = f"{SYN_DB}/{SYN_JOB}/synthesis/v2/llm_input.json"
+
+        def written_lines(name: str) -> tuple[int, dict]:
+            store = synthesis_store(name)
+            run_synthesis(SYN_JOB, SYN_DB, store, assignment_version=2, llm_mode="external")
+            text = (store.base_dir / key).read_text(encoding="utf-8")
+            return text.count("\n") + 1, json.loads(text)
+
+        lines, request = written_lines("uncapped-lines")
+        assert next(iter(request)) == UNTRUSTED_NOTICE_KEY
+        assert summary_input_budget.headless_lines(request) == lines
+        # A cap of exactly the written file's lines keeps it whole. One line less
+        # is over the cap for the file as written, so the request is cut, and its
+        # status describes the written file: within the cap exactly when it says so
+        # (this small sample's fixed part cannot shrink by a line).
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_LINE_BUDGET", lines)
+        assert "input_budget" not in written_lines("at-cap")[1]
+        monkeypatch.setattr(summary_input_budget, "SUMMARY_INPUT_LINE_BUDGET", lines - 1)
+        capped_lines, capped = written_lines("one-under")
+        status = capped["input_budget"]
+        assert status["lines"] == capped_lines
+        assert status["within_budget"] is (capped_lines <= lines - 1)
 
     def test_an_uncapped_request_records_no_status(self, synthesis_store):
         bedrock_report, headless_report, _, headless_request = (

@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 
+from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.table_resolution import PSEUDO_TABLES, TableNameResolver
 from src.agents.schema_design.group_input import (
     READ_PAGE_CHARS,
@@ -523,19 +524,24 @@ def _group_input(
     total_queries: int,
     decision_trace: dict | None = None,
 ) -> dict:
-    return build_group_input(
-        job_id=job_id,
-        database_name=database_name,
-        engine=engine,
-        group_index=idx,
-        group_name=group["group_name"],
-        primary_tables=group["primary_tables"],
-        group_queries=group["queries"],
-        group_tables=group_tables,
-        collector_output=collector_output,
-        analysis_output=analysis_output,
-        total_queries=total_queries,
-        decision_trace=decision_trace,
+    # The group subagent reads this file: it says its content is data, not
+    # instructions (#1317). The Bedrock group designer reads only its
+    # collector_output and analysis_output, and frames them in its prompt.
+    return with_untrusted_notice(
+        build_group_input(
+            job_id=job_id,
+            database_name=database_name,
+            engine=engine,
+            group_index=idx,
+            group_name=group["group_name"],
+            primary_tables=group["primary_tables"],
+            group_queries=group["queries"],
+            group_tables=group_tables,
+            collector_output=collector_output,
+            analysis_output=analysis_output,
+            total_queries=total_queries,
+            decision_trace=decision_trace,
+        )
     )
 
 

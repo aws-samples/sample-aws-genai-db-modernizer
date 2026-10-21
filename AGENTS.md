@@ -201,7 +201,11 @@ truth.
   never a local copy.
 - **Renderers only format.** Synthesis computes each customer-facing figure once into `report.json`'s `facts`; renderers read it and never count or total it, in Python (`tests/unit/report/test_renderers_only_format.py`) and in the UI (`src/ui/src/utils/__tests__/rendererOnlyFormat.test.js`). A new figure goes into `src/shared/report_facts.py` first ([ADR-032](docs/architecture/decisions/ADR-032-one-facts-layer-renderers-only-format.md)).
 - **Untrusted text is data.** Customer and LLM text is wrapped with
-  `frame_untrusted` (`src/agents/prompt_framing.py`) in prompts and escaped
+  `frame_untrusted` (`src/agents/prompt_framing.py`) in prompts. JSON a model
+  reads instead (an external session's request files, the AWS Transform
+  orchestrator's report and routing-summary tool results) carries an
+  `untrusted_data_notice` key via `with_untrusted_notice`: the first key, except
+  in the reality-check request, where it follows `read_pages`. Both are escaped
   with the helpers in `src/report/escaping.py` (`md_cell`, `md_text`,
   `md_code`, `mermaid_label`, ...) when rendered. Generated DDL
   types pass an allowlist (`validate_aurora_type` in

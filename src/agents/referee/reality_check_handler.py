@@ -13,7 +13,11 @@ from datetime import UTC, datetime
 
 from pydantic import ValidationError
 
-from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.prompt_framing import (
+    SYSTEM_PROMPT_DATA_DIRECTIVE,
+    frame_untrusted,
+    with_untrusted_notice,
+)
 from src.agents.referee.assignment_overrides import refresh_consolidated_assignment
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import normalize_cache_owners
@@ -272,7 +276,9 @@ def prepare_reality_check_llm_input(deterministic_result: dict) -> dict:
             det["before_distribution"], det["after_distribution"], det.get("consolidations")
         ),
     )
-    return with_read_pages(request)
+    # Only the external session reads this request; the file says its content is
+    # data, not instructions (#1317). The Bedrock prompts frame their own blocks.
+    return with_read_pages(with_untrusted_notice(request))
 
 
 def absorption_candidates(

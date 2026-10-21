@@ -130,6 +130,7 @@ def _get_analysis_output_schema(engine: str) -> dict:  # type: ignore[type-arg]
 
 def run_external(store, job_id: str, db: str, engine: str) -> None:
     """Run deterministic pass and write partial results + LLM request."""
+    from src.agents.prompt_framing import with_untrusted_notice
     from src.storage.collector_for_models import read_collector_for_models
 
     collector_output = read_collector_for_models(store, db, job_id)
@@ -163,7 +164,8 @@ def run_external(store, job_id: str, db: str, engine: str) -> None:
     llm_request_path = f"{db}/{job_id}/llm_requests/analysis_{engine}.json"
 
     store.write_json(partial_path, _serialize_results(contract, trace, mermaid))
-    store.write_json(llm_request_path, llm_request)
+    # The file says its content is data, not instructions (#1317).
+    store.write_json(llm_request_path, with_untrusted_notice(llm_request))
 
     _output({"status": "awaiting_llm", "llm_request": llm_request_path})
 

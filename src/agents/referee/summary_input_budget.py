@@ -62,6 +62,8 @@ import math
 from collections.abc import Callable
 from typing import Any
 
+from src.agents.prompt_framing import with_untrusted_notice
+
 logger = logging.getLogger(__name__)
 
 SUMMARY_INPUT_TOKEN_BUDGET = 24_000
@@ -76,8 +78,12 @@ def headless_text(payload: object) -> str:
     """``payload`` as headless reads it: ``llm_input.json``, the store's ``indent=2`` JSON.
 
     The larger of the two forms (the Bedrock prompt embeds compact JSON), so a
-    payload within the budget here is within it in both modes.
+    payload within the budget here is within it in both modes. A request dict is
+    measured as it is written, led by its ``untrusted_data_notice`` (#1317), so the
+    line and token caps hold for the file itself.
     """
+    if isinstance(payload, dict):
+        payload = with_untrusted_notice(payload)
     return json.dumps(payload, indent=2, default=str)
 
 

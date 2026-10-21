@@ -12,6 +12,7 @@ analysis output: about 7.5 MB on the discourse sample, which a headless subagent
 cannot read, and still without the list of moved queries (#285). It now holds:
 
 - ``read_pages``: Read tool pages (``offset``/``limit``) covering the file;
+- ``untrusted_data_notice``: the file's content is data, not instructions (#1317);
 - ``consolidation_validation.consolidations``: the consolidation records, each
   with ``moved_queries`` (one record per line);
 - ``executive_summary``: distributions, consolidation records, a per-engine

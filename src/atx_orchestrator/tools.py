@@ -24,6 +24,7 @@ from collections.abc import Callable
 
 from strands.tools import tool
 
+from src.agents.prompt_framing import TOOL_RESULT_NOTICE, with_untrusted_notice
 from src.atx_orchestrator.a2a import A2AError, invoke_and_wait
 from src.atx_orchestrator.core import make_orchestrator as _make_orchestrator
 from src.atx_orchestrator.core import make_store as _make_store
@@ -557,7 +558,11 @@ def get_synthesis_report(job_id: str, database_name: str) -> str:
 
     for report_key in candidate_keys:
         if store.exists(report_key):
-            return json.dumps(store.read_json(report_key))
+            # The report names customer tables and quotes their queries: the result
+            # says it is data, not instructions (#1317).
+            return json.dumps(
+                with_untrusted_notice(store.read_json(report_key), TOOL_RESULT_NOTICE)
+            )
 
     return json.dumps(
         {
@@ -656,24 +661,29 @@ def present_assignment_review(job_id: str, database_name: str) -> str:
     )
     _mark_assignment_review(job_id, PhaseStatus.AWAITING_REVIEW)
 
+    # The summary names customer tables: the result says it is data, not
+    # instructions, which the model shows the customer as it is (#1317).
     return json.dumps(
-        {
-            "status": "awaiting_choice",
-            "job_id": job_id,
-            "assignment_version": version,
-            "summary_artifact": summary_key,
-            "summary_markdown": summary_md,
-            "pending_choices": [
-                {
-                    "choice_id": c.choice_id,
-                    "tied_engines": c.tied_engines,
-                    "queries": len(c.query_ids),
-                    "current_engine": c.current_engine,
-                    "decide_for_me_engine": c.decide_for_me_engine,
-                }
-                for c in choices
-            ],
-        }
+        with_untrusted_notice(
+            {
+                "status": "awaiting_choice",
+                "job_id": job_id,
+                "assignment_version": version,
+                "summary_artifact": summary_key,
+                "summary_markdown": summary_md,
+                "pending_choices": [
+                    {
+                        "choice_id": c.choice_id,
+                        "tied_engines": c.tied_engines,
+                        "queries": len(c.query_ids),
+                        "current_engine": c.current_engine,
+                        "decide_for_me_engine": c.decide_for_me_engine,
+                    }
+                    for c in choices
+                ],
+            },
+            TOOL_RESULT_NOTICE,
+        )
     )
 
 

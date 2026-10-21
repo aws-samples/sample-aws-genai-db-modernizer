@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+from src.agents.prompt_framing import frame_untrusted
 from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
@@ -283,14 +284,17 @@ class LlmDocumentDBAdvisor(LlmAdvisorBase):
         deterministic_results = kwargs.get("deterministic_results", {})
         embedding_candidates = kwargs.get("embedding_candidates", [])
         cand_data = [asdict(c) for c in embedding_candidates]
-        return (
-            "Analyze the following database workload and produce DocumentDB embedding "
-            "vs referencing decisions.\n\n"
+        workload = (
             f"## Deterministic Results\n{deterministic_results}\n\n"
             f"## Schema\n{schema}\n\n"
             f"## Query Patterns\n{queries}\n\n"
-            f"## Embedding Candidates\n{cand_data}\n\n"
-            "For each candidate, decide: embed, reference, or hybrid."
+            f"## Embedding Candidates\n{cand_data}"
+        )
+        return (
+            "Analyze the following database workload and produce DocumentDB embedding "
+            "vs referencing decisions.\n\n"
+            + frame_untrusted(workload, label="the database workload to analyze")
+            + "\n\nFor each candidate, decide: embed, reference, or hybrid."
         )
 
     def _parse_result(self, result) -> LlmDocumentDBOutput | None:

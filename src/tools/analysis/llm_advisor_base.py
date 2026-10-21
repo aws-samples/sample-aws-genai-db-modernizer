@@ -69,10 +69,13 @@ class LlmAdvisorBase(ABC):
         """
         from strands import Agent
 
+        from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE
+
         model = build_bedrock_model(Role.ANALYSIS_ADVISOR)
         return Agent(
             model=model,
-            system_prompt=self.system_prompt,
+            # The prompt's collector content is framed as data (#1317).
+            system_prompt=self.system_prompt + "\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE,
             tools=[],
             structured_output_model=self._output_model(),
             callback_handler=None,
@@ -84,7 +87,13 @@ class LlmAdvisorBase(ABC):
 
     @abstractmethod
     def _build_prompt(self, schema: dict, queries: list[dict], **kwargs) -> str:
-        """Build the LLM prompt for a single group of queries."""
+        """Build the LLM prompt for a single group of queries.
+
+        Every collector-derived section (schema, query patterns with their
+        ``query_text``, and the deterministic results that name tables and
+        columns) goes inside one ``frame_untrusted`` block; only the task
+        sentences stay outside it (#1317).
+        """
 
     @abstractmethod
     def _parse_result(self, result) -> BaseModel | None:

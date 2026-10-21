@@ -23,6 +23,7 @@ import tempfile
 from datetime import UTC, datetime
 
 from src.agents.interaction import read_answers, read_partial_output
+from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
 from src.agents.referee.query_pattern import ACCESS_PATTERNS_FILE, redesign_requirements
 from src.agents.referee.table_resolution import TableNameResolver
@@ -692,7 +693,8 @@ def run_schema_design(
         version = assignment_version if assignment_version > 0 else 1
         prefix = f"{database_name}/{job_id}"
         input_key = f"{prefix}/schema-{target_type}/v{version}/llm_input.json"
-        store.write_json(input_key, llm_input)
+        # The file says its content is data, not instructions (#1317).
+        store.write_json(input_key, with_untrusted_notice(llm_input))
         print(f"[schema-design/{target_type}] external mode — input written to {input_key}")
         return EMPTY_REPORT
 

@@ -34,6 +34,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from src.agents.prompt_framing import with_untrusted_notice
 from src.contracts.model_flag import parse_model_flags
 from src.storage.artifact_store import ArtifactStore
 
@@ -302,8 +303,9 @@ def prepare_pe_review_llm_input(
                 "design": _review_design(engine, design),
             }
             key = request_key(db, job_id, engine, group)
-            # Indented, so the reviewer can page it with Read offset/limit.
-            store.write_bytes(key, _dumps(request).encode("utf-8"))
+            # Indented, so the reviewer can page it with Read offset/limit. The
+            # file says its content is data, not instructions (#1317).
+            store.write_bytes(key, _dumps(with_untrusted_notice(request)).encode("utf-8"))
             reviews.append(
                 {
                     "engine": engine,

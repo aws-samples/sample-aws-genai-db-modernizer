@@ -175,6 +175,7 @@ def _aurora_delta_request(llm_request: dict, engine: str) -> dict:
 
 def run_external(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Prepare LLM input payload and write it; print awaiting_llm status."""
+    from src.agents.prompt_framing import with_untrusted_notice
     from src.agents.schema_design.handler import prepare_schema_design_input
 
     llm_request = prepare_schema_design_input(
@@ -193,6 +194,8 @@ def run_external(store, job_id: str, db: str, engine: str, assignment_version: i
         # Inject the output schema so the LLM knows exactly what to produce
         llm_request["output_schema"] = _get_output_schema(engine)
 
+    # The file says its content is data, not instructions (#1317).
+    llm_request = with_untrusted_notice(llm_request)
     llm_request_path = f"{db}/{job_id}/llm_requests/schema_design_{engine}.json"
     if engine in _AURORA_ENGINES:
         from src.tools.schema.aurora_common.design_view import render_request

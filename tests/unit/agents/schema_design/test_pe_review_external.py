@@ -126,6 +126,18 @@ class TestPrepare:
         assert group["query_ids"] == ["q5"] and group["group"] == 1
         assert group["response_file"].endswith("llm_responses/pe_review_dynamodb_group_1.json")
 
+    def test_every_request_says_its_content_is_data(self, store) -> None:
+        # #1317: the design carries customer table and column names.
+        from src.agents import prompt_framing
+
+        prepared = pe.prepare_pe_review_llm_input(store, DB, JOB, V)
+        assert prepared["reviews"]
+        for review in prepared["reviews"]:
+            request = json.loads(Path(review["request"]).read_text(encoding="utf-8"))
+            first = next(iter(request))
+            assert first == "untrusted_data_notice"
+            assert request[first] == getattr(prompt_framing, "REQUEST_FILE_NOTICE", None)
+
     def test_engines_whose_review_cannot_flag_are_skipped_with_a_reason(self, store) -> None:
         prepared = pe.prepare_pe_review_llm_input(store, DB, JOB, V)
         [skip] = prepared["skipped"]
