@@ -247,3 +247,48 @@ test('every key the component uses resolves to an English label', () => {
   expect(keys.length).toBeGreaterThan(10);
   keys.forEach((key) => expect(t(key, { count: 2 })).not.toBe(key));
 });
+
+describe('the keys the redesign considered (#1361)', () => {
+  const refused = {
+    column: 'user_profiles.granted_title_badge_id',
+    table_id: 'discourse.user_profiles',
+    via: 'not_null_test',
+    outcome: 'refused',
+    reasons: ['already_a_key', 'rewritten_by_write', 'no_selectivity_signal'],
+    explanation:
+      "refused for an IS NOT NULL test (a sparse index), for 3 reasons: (1) already indexed in the source; (2) a column the statement's own write rewrites; (3) an IS NOT NULL test with no selectivity signal",
+  };
+  const accepted = {
+    column: 'orders.email',
+    table_id: 'shop.orders',
+    via: 'equality',
+    outcome: 'accepted',
+    reasons: [],
+    explanation: 'accepted: a key the redesign may assume for an equality filter',
+  };
+
+  test('each candidate shows its outcome and the server sentence naming every guard', () => {
+    render({ trace: { ...movedTrace, key_candidates: [refused, accepted] } });
+    const items = Array.from(section('query-trace-key-candidates').querySelectorAll('li'));
+    expect(items.map((li) => [li.getAttribute('data-column'), li.getAttribute('data-outcome')])).toEqual([
+      ['user_profiles.granted_title_badge_id', 'refused'],
+      ['orders.email', 'accepted'],
+    ]);
+    expect(items[0].textContent).toContain('refused');
+    expect(items[0].textContent).toContain("(2) a column the statement's own write rewrites");
+    expect(items[1].textContent).toContain('accepted: a key the redesign may assume');
+    expect(text('query-trace-key-candidates')).toContain('Keys the redesign considered');
+  });
+
+  test('a trace with none, or written before them, shows no section', () => {
+    render({ trace: movedTrace });
+    expect(section('query-trace-key-candidates')).toBeNull();
+    render({ trace: { ...movedTrace, key_candidates: [] } });
+    expect(section('query-trace-key-candidates')).toBeNull();
+  });
+
+  test('a job before the move ledger still shows them', () => {
+    render({ trace: { query_id: 'q', has_ledger: false, final_engine_name: 'DynamoDB', key_candidates: [refused] } });
+    expect(section('query-trace-key-candidates')).not.toBeNull();
+  });
+});

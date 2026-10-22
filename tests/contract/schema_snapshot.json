@@ -25700,6 +25700,78 @@
                             "type": "boolean"
                           }
                         },
+                        "key_candidates": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "column": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "explanation": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "outcome": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "accepted",
+                                      "refused"
+                                    ]
+                                  }
+                                },
+                                "reasons": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "already_a_key",
+                                        "composite_tail",
+                                        "correlated_pin",
+                                        "keyset_walk",
+                                        "no_selectivity_signal",
+                                        "not_in_schema",
+                                        "not_key_eligible",
+                                        "rewritten_by_write"
+                                      ]
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "table_id": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "via": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "enum",
+                                    "values": [
+                                      "equality",
+                                      "not_null_test",
+                                      "or_branch"
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
                         "moves": {
                           "required": false,
                           "schema": {
@@ -27976,8 +28048,8 @@
         }
       }
     },
-    "schema_hash": "538d0783ed82b348a7fda9d766736a4164d9d96e8ed567dc715053d0d5cf430f",
-    "version": "1.57"
+    "schema_hash": "ad4c7ffab6591473cf2a21bbe4e132137a86ef57fa5568f345c82ed71ff44f83",
+    "version": "1.58"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

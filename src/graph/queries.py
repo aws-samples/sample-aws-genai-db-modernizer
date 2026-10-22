@@ -478,7 +478,8 @@ def query_trace(store: GraphStore, query_id: str) -> QueryTraceResponse | None:
     )
     if not head:
         return None
-    effective = store.graph_meta()["effective_version"] or None
+    meta = store.graph_meta()
+    effective = meta["effective_version"] or None
     rows = (
         store.query(
             "MATCH (q:Query {id: $qid})-[m:MOVED]->(e:Engine) "
@@ -497,4 +498,21 @@ def query_trace(store: GraphStore, query_id: str) -> QueryTraceResponse | None:
     moves = [_move_from_edge(r) for r in rows]
     assigned = head[0].get("engine")
     plan = _plan_engines(store) if moves else set()
-    return build_query_trace(query_id, moves, assigned, plan, effective)
+    return build_query_trace(
+        query_id, moves, assigned, plan, effective, _key_candidates(store, query_id, meta)
+    )
+
+
+def _key_candidates(store: GraphStore, query_id: str, meta: dict) -> list:
+    """The query's ``key_candidates_json`` (#1361); none on a graph of an older schema
+    revision (no such column) or an unreadable value."""
+    if int(meta.get("schema_revision") or 0) < 2:
+        return []
+    rows = store.query(
+        "MATCH (q:Query {id: $qid}) RETURN q.key_candidates_json AS keys", {"qid": query_id}
+    )
+    try:
+        keys = _json.loads((rows[0].get("keys") if rows else None) or "[]")
+    except ValueError:
+        return []
+    return keys if isinstance(keys, list) else []

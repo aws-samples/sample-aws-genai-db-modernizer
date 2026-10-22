@@ -85,6 +85,41 @@ class TraceStep(BaseModel):
 
 TraceBasis = Literal["query", "group_mean"]
 
+# Why the redesign refused a candidate key column (#1361): the keys of
+# ``src.agents.referee.redesign_findings.REFUSAL_REASONS`` (a test keeps the two equal).
+KeyRefusal = Literal[
+    "already_a_key",
+    "not_in_schema",
+    "correlated_pin",
+    "keyset_walk",
+    "rewritten_by_write",
+    "composite_tail",
+    "no_selectivity_signal",
+    "not_key_eligible",
+]
+
+
+class TraceKeyCandidate(BaseModel):
+    """One column the redesign considered as a key for the query (#1361, ADR-031
+    Decision 2 Amendment 13): accepted, or refused with every guard that refused it.
+
+    Read from the assignment's access-pattern record (``candidate_keys``), which the
+    redesign model writes once; renderers only format it.
+    """
+
+    column: str = Field(..., description="The column, as table.column")
+    table_id: str = Field(..., description="The collected table id")
+    via: Literal["equality", "or_branch", "not_null_test"] = Field(
+        ..., description="The filter the key would serve"
+    )
+    outcome: Literal["accepted", "refused"]
+    reasons: list[KeyRefusal] = Field(
+        default_factory=list, description="Every guard that refused it, in guard order"
+    )
+    explanation: str = Field(
+        ..., description="The candidate in one plain sentence, built from the codes when read"
+    )
+
 
 class TraceRunnerUp(BaseModel):
     """The engine of the final plan that came closest to the query.
@@ -192,6 +227,13 @@ class QueryTraceResponse(BaseModel):
         ),
     )
     summary: str = Field("", description="One line for the whole trace")
+    key_candidates: list[TraceKeyCandidate] = Field(
+        default_factory=list,
+        description=(
+            "Each column the redesign considered as a key for the query, accepted or "
+            "refused and why (#1361). Empty for a job written before the record held them"
+        ),
+    )
 
 
 class QueryTraceEntry(QueryTraceResponse):

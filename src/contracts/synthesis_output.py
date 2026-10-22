@@ -506,6 +506,10 @@ Version History:
   value an older report reads back as (its price date is unknown).
 - 1.57 (2026-10-23, #1369): MigrationWave.homogeneity description: a wave 1 with no
   Aurora engine also covers a customer engine scope with no relational engine
+- 1.58 (2026-10-23, #1361): Added optional query_traces[].key_candidates
+  (TraceKeyCandidate, src.contracts.query_trace): each column the redesign considered as
+  a key for the query, accepted or refused with every guard that refused it; a report
+  written before has none
 """
 
 from datetime import datetime
@@ -2142,7 +2146,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.57",
+        default="1.58",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

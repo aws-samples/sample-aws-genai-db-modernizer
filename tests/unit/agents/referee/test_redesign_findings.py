@@ -533,7 +533,7 @@ def test_a_fixable_substring_scan_costs_nothing_and_no_note_says_it_scores_lower
 def test_the_record_carries_both_scores_the_assumed_key_and_each_finding():
     collector = _collector([REDESIGNED, WHOLE, KEYED])
     record = access_patterns_record(collector, _outputs())
-    assert record["schema_version"] == 2 and record["redesigned_queries"] == 1
+    assert record["schema_version"] == 3 and record["redesigned_queries"] == 1
     rows = {r["query_id"]: r for r in record["queries"]}
     row = rows["redesigned"]
     assert row["class"] == "ad_hoc_filter" and row["class_scores"][KV] == 0

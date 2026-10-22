@@ -750,13 +750,27 @@
     ],
     "version": "1.1"
   },
+  "query_trace.KeyRefusal": {
+    "module": "query_trace",
+    "values": [
+      "already_a_key",
+      "composite_tail",
+      "correlated_pin",
+      "keyset_walk",
+      "no_selectivity_signal",
+      "not_in_schema",
+      "not_key_eligible",
+      "rewritten_by_write"
+    ],
+    "version": "1.58"
+  },
   "query_trace.TraceBasis": {
     "module": "query_trace",
     "values": [
       "group_mean",
       "query"
     ],
-    "version": "1.57"
+    "version": "1.58"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -911,6 +925,6 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.57"
+    "version": "1.58"
   }
 }

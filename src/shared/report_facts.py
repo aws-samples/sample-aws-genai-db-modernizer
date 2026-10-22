@@ -1454,6 +1454,13 @@ def _trace_signature(trace: Mapping[str, Any], row: Mapping[str, Any]) -> str:
                 for o in trace.get("outscored_by") or []
                 if isinstance(o, Mapping)
             ],
+            # The appendix prints each key the redesign considered (#1361), which
+            # names the query's own columns: queries with other keys read differently.
+            "key_candidates": [
+                [k.get("column"), k.get("explanation")]
+                for k in trace.get("key_candidates") or []
+                if isinstance(k, Mapping)
+            ],
         },
         sort_keys=True,
     )

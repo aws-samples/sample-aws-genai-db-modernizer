@@ -13,7 +13,7 @@ from src.contracts.move_ledger import Move
 from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
 from src.shared.engine_names import display_engine
-from src.shared.query_trace import assignment_lineage
+from src.shared.query_trace import assignment_lineage, candidate_keys_by_query
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,23 @@ def populate_from_collector(collector_output: dict, store: GraphStore) -> None:
             "MERGE (q)-[:READS_FROM]->(st)",
             {"rows": edge_rows},
         )
+
+
+def populate_from_access_patterns(record: dict, store: GraphStore) -> int:
+    """Set each Query's ``key_candidates_json`` from the effective version's
+    access-pattern record (#1361): the columns the redesign considered as a key for
+    it, accepted or refused and why. A record written before #1361 holds none.
+    Returns the number of queries set."""
+    rows = [
+        {"id": qid, "keys": json.dumps(found)}
+        for qid, found in sorted(candidate_keys_by_query(record).items())
+    ]
+    if rows:
+        store.execute(
+            "UNWIND $rows AS r MATCH (q:Query {id: r.id}) SET q.key_candidates_json = r.keys",
+            {"rows": rows},
+        )
+    return len(rows)
 
 
 def populate_from_triage(triage_output: dict, store: GraphStore) -> None:
@@ -715,6 +732,14 @@ def rebuild_graph(
             assignment_version,
         ):
             populate_from_moves(version, graph_store)
+        # 4c. The candidate keys of each query, from the effective version's
+        # access-pattern record (#1361). An older job has none: a missing file is a
+        # partial run, like any artifact.
+        access_patterns = _read_safe(
+            f"{prefix}/assignment/v{assignment_version}/access_patterns.json"
+        )
+        if access_patterns:
+            populate_from_access_patterns(access_patterns, graph_store)
 
     # 5. Reality check
     # The run the effective assignment descends from (#193). The lineage is read

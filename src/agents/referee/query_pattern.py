@@ -12,8 +12,9 @@ the one place that calls it, so every per-query score in the pipeline reads the 
 classes.
 
 :func:`access_patterns_record` records, per query, the class routing used, why, the facts
-its score read, its score on each engine and, per engine whose score is a parity anchor
-(#936), the anchor note: the assignment writes it next to each version
+its score read, its score on each engine, per engine whose score is a parity anchor
+(#936) the anchor note, and each column the redesign considered as a key, accepted or
+refused and why (#1361): the assignment writes it next to each version
 (``assignment/v<N>/access_patterns.json``); routing reads none of it.
 
 A ``utility`` or ``unparsed`` statement has no class score
@@ -247,19 +248,26 @@ def access_patterns_record(
                     {k: v for k, v in f.items() if k != "query_id"} for f in own
                 ],
                 "redesign": _redesign_record(model.redesign(query)),
+                "candidate_keys": (
+                    [c.as_record() for c in model.redesigns.candidate_keys(query)] if scored else []
+                ),
             }
         )
     return {
         # Version 2 (#1231) adds each query's ``anti_pattern_findings``; a version 1
         # record has none, and every reader treats a missing list as no finding.
-        "schema_version": 2,
+        # Version 3 (#1361) adds each query's ``candidate_keys``; an older record has
+        # none, and ``query_trace.candidate_keys_by_query`` reads a missing list as none.
+        "schema_version": 3,
         "about": (
             "Each query's access-pattern class and class scores, as routing scored its "
             "pattern dimension as written (ADR-031 Decision 14, Amendments 5 and 7, #728); "
             "for a query a redesign applies to, ``redesign``: the keys it assumes and the "
-            "class and class scores routing scored instead; and its anti-pattern findings, "
+            "class and class scores routing scored instead; its anti-pattern findings, "
             "each fixable by redesign or intrinsic (ADR-031 Decision 2 Amendment 13, "
-            "#1231). Routing does not read this file."
+            "#1231); and ``candidate_keys``: each column the redesign considered as a key, "
+            "accepted or refused with every guard that refused it (#1361). Routing does not "
+            "read this file."
         ),
         "by_class": dict(sorted(by_class.items())),
         "findings_by_kind": dict(sorted(by_kind.items())),

@@ -14,7 +14,8 @@ import Badge from "@cloudscape-design/components/badge";
  * It shows the first assignment with every engine's score or gate, each later
  * Move with its version and rendered reason, the final engine, the runner-up
  * (an engine of the final plan) with its gap or gate, the engines that scored
- * higher with the step that decided against each, and an open tie. Every
+ * higher with the step that decided against each, an open tie, and the keys
+ * the redesign considered for the query, accepted or refused (#1361). Every
  * sentence is the server's (`src/shared/move_reasons.py`); this component only
  * lays them out, and React escapes every string it renders.
  *
@@ -73,6 +74,33 @@ function StepLabel({ step, t }) {
   );
 }
 
+// #1361: each column the redesign considered as a key for the query, accepted
+// or refused, with the server's sentence naming every guard that refused it.
+function KeyCandidates({ candidates, t }) {
+  if (!candidates || candidates.length === 0) return null;
+  return (
+    <section data-testid="query-trace-key-candidates">
+      <Box variant="h3">{t('analysis-results.query-trace.key-candidates')}</Box>
+      <Box fontSize="body-s" color="text-body-secondary">
+        {t('analysis-results.query-trace.key-candidates-intro')}
+      </Box>
+      <ul style={{ margin: 0, paddingLeft: '20px' }}>
+        {candidates.map((k) => (
+          <li key={`${k.table_id}:${k.column}:${k.via}`} data-column={k.column} data-outcome={k.outcome}>
+            <code>{k.column}</code>{' '}
+            <Badge color={k.outcome === 'accepted' ? 'green' : 'grey'}>
+              {t(k.outcome === 'accepted'
+                ? 'analysis-results.query-trace.key-accepted'
+                : 'analysis-results.query-trace.key-refused')}
+            </Badge>
+            <Box>{k.explanation}</Box>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 // The rule of the step that decided against an engine: the query's own step
 // number (`decided_by_step`), never the ledger's version-wide seq.
 function ruleOfStep(trace, stepNumber) {
@@ -119,6 +147,7 @@ const QueryDecisionTrace = memo(({ trace, loading, error, t }) => {
           <Box variant="awsui-key-label">{t('analysis-results.query-trace.final')}</Box>
           <Box data-testid="query-trace-final">{trace.final_engine_name || '—'}</Box>
         </div>
+        <KeyCandidates candidates={trace.key_candidates} t={t} />
       </SpaceBetween>
     );
   }
@@ -228,6 +257,8 @@ const QueryDecisionTrace = memo(({ trace, loading, error, t }) => {
           </Box>
         </section>
       )}
+
+      <KeyCandidates candidates={trace.key_candidates} t={t} />
     </SpaceBetween>
   );
 });

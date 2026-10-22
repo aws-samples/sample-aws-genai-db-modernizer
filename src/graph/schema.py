@@ -12,7 +12,9 @@ from src.graph.store import GraphStore
 # kind of edge.
 # - 1 (#339): GraphMeta, and MOVED edges (the move ledger of every lineage
 #   version). Every graph saved before reads as revision 0.
-GRAPH_SCHEMA_REVISION = 1
+# - 2 (#1361): ``Query.key_candidates_json``, the columns the redesign considered
+#   as a key for the query (the effective version's access-pattern record).
+GRAPH_SCHEMA_REVISION = 2
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -26,6 +28,7 @@ NODE_TABLES = [
         id STRING, sql_text STRING, calls_per_second DOUBLE,
         operation_type STRING, in_scope BOOLEAN,
         frequency_per_hour DOUBLE, performance_json STRING, characteristics_json STRING,
+        key_candidates_json STRING,
         PRIMARY KEY (id)
     )""",
     """CREATE NODE TABLE IF NOT EXISTS SourceTable (

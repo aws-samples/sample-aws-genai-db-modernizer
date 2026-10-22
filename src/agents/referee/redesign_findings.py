@@ -20,6 +20,13 @@ read twice, through this one module:
   walk (a range over a key) reads every row whatever is indexed, so it gets no sparse
   index.
 
+Every column the redesign considers as a key is recorded (``RedesignModel.candidate_keys``,
+#1361): accepted, or refused with every guard that refused it (``REFUSAL_REASONS``), not
+only the first. A pin on a column the source already keys is anchored as written, so it is
+no candidate; an ``IS NOT NULL`` test on a column the source already indexes is (the class
+as written never anchors on it), and is refused as already a key. The record changes no
+score: what is accepted is what the guards above accept.
+
 A redesign *applies* when it turns the query into a key lookup or a key-scoped read it
 was not as written. Each engine's pattern dimension is then the better of its two class
 scores (``query_pattern.QueryPatternModel.pattern_score``): a redesign never makes an
@@ -60,16 +67,35 @@ from src.agents.referee.access_pattern import (
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.transaction_shape import transaction_shape
 from src.shared.catalog.patterns import removed_by_redesign
+
+# The candidate-key codes and their sentences live in one place (#1361), shared with the
+# trace that renders them.
+from src.shared.key_refusals import (
+    ACCEPTED,
+    ALREADY_A_KEY,
+    COMPOSITE_TAIL,
+    CORRELATED_PIN,
+    KEYSET_WALK,
+    NO_SELECTIVITY_SIGNAL,
+    NOT_IN_SCHEMA,
+    NOT_KEY_ELIGIBLE,
+    OUTCOMES,
+    REFUSAL_REASONS,
+    REFUSED,
+    REWRITTEN_BY_WRITE,
+    VIA_EQUALITY,
+    VIA_NOT_NULL_TEST,
+    VIA_OR_BRANCH,
+    VIA_TEXT,
+    candidate_explanation,
+    in_guard_order,
+    refusal_sentence,
+)
 from src.tools.sql.query_facts import query_facts, source_engine_of
 
 FIXABLE = "fixable"
 INTRINSIC = "intrinsic"
 KINDS: tuple[str, ...] = (FIXABLE, INTRINSIC)
-
-# How a redesign key serves the filter it is assumed for.
-VIA_EQUALITY = "equality"
-VIA_NOT_NULL_TEST = "not_null_test"
-VIA_OR_BRANCH = "or_branch"
 
 _ANCHORED = frozenset({KEY_LOOKUP, KEY_SCOPED})
 # Pattern type (and alias) -> what a redesign removes, from the pattern catalog.
@@ -136,12 +162,47 @@ class FindingKind:
 
 
 @dataclass(frozen=True)
+class KeyCandidate:
+    """One column the redesign considered as a key for a query (#1361): the filter it
+    serves (``via``), whether it was ``accepted`` or ``refused``, and every guard that
+    refused it (``reasons``, keys of :data:`REFUSAL_REASONS`, in guard order)."""
+
+    table: str
+    column: str
+    via: str
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        return f"{_short(self.table)}.{self.column}"
+
+    @property
+    def outcome(self) -> str:
+        return REFUSED if self.reasons else ACCEPTED
+
+    def explanation(self) -> str:
+        """The decision-trace sentence for this candidate (``key_refusals``)."""
+        return candidate_explanation(self.via, self.reasons)
+
+    def as_record(self) -> dict:
+        """The record's row: codes only; the trace builds the sentence when read."""
+        return {
+            "column": self.label,
+            "table_id": self.table,
+            "via": self.via,
+            "outcome": self.outcome,
+            "reasons": list(self.reasons),
+        }
+
+
+@dataclass(frozen=True)
 class _Candidates:
     added: Mapping[str, frozenset[str]]
     sparse: Mapping[str, frozenset[str]]
     keys: tuple[AssumedKey, ...]
-    refused: tuple[tuple[str, str], ...]  # (label, why no key)
+    refused: tuple[tuple[str, str], ...]  # (label and filter, why no key)
     unknown: tuple[str, ...]
+    considered: tuple[KeyCandidate, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -230,8 +291,16 @@ class RedesignModel:
         added: dict[str, set[str]] = {}
         sparse: dict[str, set[str]] = {}
         keys: dict[tuple[str, str], AssumedKey] = {}
-        refused: dict[str, str] = {}
+        # (table, column, filter) -> the refused candidate, with every guard that refused
+        # it for that filter (#1361): a column filtered two ways is two rows.
+        refused: dict[tuple[str, str, str], KeyCandidate] = {}
         unknown: set[str] = set()
+
+        def refuse(table: str, column: str, via: str, reasons: list[str]) -> None:
+            found = refused.get((table, column, via))
+            merged = [*(found.reasons if found else ()), *reasons]
+            refused[(table, column, via)] = KeyCandidate(table, column, via, in_guard_order(merged))
+
         for scope in query_access(query, self.keys, self.source_engine).scopes:
             for table in scope.tables:
                 table_keys = self.keys.tables.get(table)
@@ -239,64 +308,98 @@ class RedesignModel:
                     continue
                 walks_a_key = bool(scope.ranged.get(table, frozenset()) & table_keys.key_columns)
                 correlated = scope.correlated.get(table, frozenset())
-                wanted: list[tuple[str, str]] = [
-                    (c, VIA_EQUALITY)
-                    for c in sorted(scope.pinned.get(table, ()))
-                    if c not in correlated
-                ]
+                wanted: list[tuple[str, str]] = []
+                pins = [(c, VIA_EQUALITY) for c in sorted(scope.pinned.get(table, ()))]
                 for branch in scope.or_pinned:
-                    wanted += [
-                        (c, VIA_OR_BRANCH)
-                        for c in sorted(branch.get(table, ()))
-                        if c not in correlated
-                    ]
-                if not walks_a_key:
-                    wanted += [
-                        (c, VIA_NOT_NULL_TEST) for c in sorted(scope.not_null_tested.get(table, ()))
-                    ]
+                    pins += [(c, VIA_OR_BRANCH) for c in sorted(branch.get(table, ()))]
+                for column, via in pins:
+                    if column not in correlated:
+                        wanted.append((column, via))
+                    elif column not in table_keys.key_columns:
+                        refuse(table, column, via, [CORRELATED_PIN])
+                for column in sorted(scope.not_null_tested.get(table, ())):
+                    if not walks_a_key:
+                        wanted.append((column, VIA_NOT_NULL_TEST))
+                    else:
+                        already = [ALREADY_A_KEY] if column in table_keys.key_columns else []
+                        refuse(table, column, VIA_NOT_NULL_TEST, [*already, KEYSET_WALK])
                 by_name, row_count = self.columns.get(table, ({}, None))
                 tails = self.composite_tails.get(table, frozenset())
                 for column, via in wanted:
                     label = f"{_short(table)}.{column}"
-                    if column in table_keys.key_columns or (table, column) in keys:
+                    if (table, column) in keys:
                         continue
+                    reasons: list[str] = []
+                    if column in table_keys.key_columns:
+                        # A pin on a key is anchored as written, so it is no candidate. An
+                        # IS NOT NULL test never anchors as written: the trace names it.
+                        if via != VIA_NOT_NULL_TEST:
+                            continue
+                        reasons.append(ALREADY_A_KEY)
                     info = by_name.get(column)
                     if info is None:
-                        unknown.add(label)
-                    elif column in rewritten:
-                        refused[label] = "a column the statement's own write rewrites"
-                    elif column in tails:
-                        refused[label] = "a later column of a composite key, not a key alone"
-                    elif via == VIA_NOT_NULL_TEST and column not in self.partial.get(
+                        if not reasons:
+                            unknown.add(label)
+                        refuse(table, column, via, [*reasons, NOT_IN_SCHEMA])
+                        continue
+                    if column in rewritten:
+                        reasons.append(REWRITTEN_BY_WRITE)
+                    if column in tails:
+                        reasons.append(COMPOSITE_TAIL)
+                    if via == VIA_NOT_NULL_TEST and column not in self.partial.get(
                         table, frozenset()
                     ):
-                        refused[label] = (
-                            "an IS NOT NULL test with no selectivity signal (no partial index "
-                            "or statistics), which may read most rows"
-                        )
-                    elif not is_redesign_key_eligible(info, row_count):
-                        refused[label] = (
-                            "a date, time, true/false, enum or category column, or one the "
-                            "statistics show low-cardinality"
-                        )
-                    else:
-                        added.setdefault(table, set()).add(column)
-                        if via == VIA_NOT_NULL_TEST:
-                            sparse.setdefault(table, set()).add(column)
-                        cardinality = info.get("cardinality")
-                        keys[(table, column)] = AssumedKey(
-                            table,
-                            column,
-                            via,
-                            cardinality if isinstance(cardinality, int) else "unknown",
-                        )
+                        reasons.append(NO_SELECTIVITY_SIGNAL)
+                    if not is_redesign_key_eligible(info, row_count):
+                        reasons.append(NOT_KEY_ELIGIBLE)
+                    if reasons:
+                        refuse(table, column, via, reasons)
+                        continue
+                    added.setdefault(table, set()).add(column)
+                    if via == VIA_NOT_NULL_TEST:
+                        sparse.setdefault(table, set()).add(column)
+                    cardinality = info.get("cardinality")
+                    keys[(table, column)] = AssumedKey(
+                        table,
+                        column,
+                        via,
+                        cardinality if isinstance(cardinality, int) else "unknown",
+                    )
+        accepted = [KeyCandidate(k.table, k.column, k.via) for k in keys.values()]
+        # An accepted column needs no other key, so its refusals for other filters go.
+        open_refusals = [c for c in refused.values() if (c.table, c.column) not in keys]
+        considered = sorted([*accepted, *open_refusals], key=lambda c: (c.table, c.column, c.via))
+        filters_of: dict[str, int] = {}
+        for c in open_refusals:
+            filters_of[c.label] = filters_of.get(c.label, 0) + 1
         return _Candidates(
             added={t: frozenset(c) for t, c in added.items()},
             sparse={t: frozenset(c) for t, c in sparse.items()},
             keys=tuple(keys[k] for k in sorted(keys)),
-            refused=tuple(sorted(refused.items())),
+            refused=tuple(
+                sorted(
+                    (
+                        (
+                            c.label
+                            if filters_of[c.label] == 1
+                            else f"{c.label} ({VIA_TEXT.get(c.via, c.via)})"
+                        ),
+                        refusal_sentence(c.reasons),
+                    )
+                    for c in open_refusals
+                    if c.reasons != (NOT_IN_SCHEMA,)
+                )
+            ),
             unknown=tuple(sorted(unknown)),
+            considered=tuple(considered),
         )
+
+    def candidate_keys(self, query: Mapping) -> tuple[KeyCandidate, ...]:
+        """Every column the redesign considered as a key for ``query``, accepted or
+        refused with each guard that refused it (#1361); none for a query it cannot read.
+        A pin on a column the source already keys is anchored as written, so it is none."""
+        candidates = self._candidate_keys(query)
+        return candidates.considered if candidates is not None else ()
 
     def redesign(self, query: Mapping) -> QueryRedesign | None:
         """The redesign that applies to ``query``, or None (see the module docstring)."""
@@ -457,15 +560,20 @@ def fixable_keys(findings: tuple[AntiPatternFinding, ...]) -> frozenset[tuple[st
 
 
 __all__ = [
+    "ACCEPTED",
     "FIXABLE",
     "INTRINSIC",
     "KINDS",
+    "OUTCOMES",
+    "REFUSAL_REASONS",
+    "REFUSED",
     "VIA_EQUALITY",
     "VIA_NOT_NULL_TEST",
     "VIA_OR_BRANCH",
     "AntiPatternFinding",
     "AssumedKey",
     "FindingKind",
+    "KeyCandidate",
     "QueryRedesign",
     "RedesignModel",
     "fixable_keys",

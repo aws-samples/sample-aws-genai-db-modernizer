@@ -192,6 +192,14 @@ def _trace_md(
             # #951: the explanation starts "<engine> scored higher", so no label
             # repeats it.
             out.append(f"- {escaping.md_text(better['explanation'])}")
+    for key in trace.get("key_candidates") or []:
+        # #1361: each column the redesign considered as a key, and why it was
+        # accepted or refused (the sentence is the redesign model's).
+        if isinstance(key, dict) and key.get("column") and key.get("explanation"):
+            out.append(
+                f"- Redesign key `{escaping.md_code(key['column'])}`: "
+                f"{escaping.md_text(key['explanation'])}."
+            )
     tied = trace.get("tied_engine_names") or []
     if tied:
         who = "each query" if group is not None else "the query"

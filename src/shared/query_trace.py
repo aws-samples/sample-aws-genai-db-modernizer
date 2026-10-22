@@ -15,6 +15,10 @@ Two readers, one implementation:
   :func:`ledger_moves`) and writes the traces of the queries whose routing has
   a story into ``report.json`` (``query_traces``) for the engineering report.
 
+Each trace also carries the columns the redesign considered as a key for the
+query, accepted or refused and why (``key_candidates``, #1361), as the
+assignment's access-pattern record holds them (:func:`key_candidates_of`).
+
 Every sentence comes from ``src.shared.move_reasons``. A record only: nothing
 here changes routing.
 """
@@ -36,6 +40,7 @@ from src.contracts.query_trace import (
     TraceBasis,
     TraceCandidate,
     TraceEngineScore,
+    TraceKeyCandidate,
     TraceOutscored,
     TraceRuleCount,
     TraceRunnerUp,
@@ -44,6 +49,7 @@ from src.contracts.query_trace import (
     UnservableQuery,
 )
 from src.shared.engine_names import display_engine
+from src.shared.key_refusals import candidate_explanation
 from src.shared.move_reasons import (
     GROUP_OWNER_GATE,
     gate_text,
@@ -350,12 +356,42 @@ def _runner_up(
     return runner, outscored
 
 
+def candidate_keys_by_query(record: Mapping | None) -> dict[str, list[dict]]:
+    """``query_id -> candidate_keys`` of every query with any, from an access-pattern
+    record (#1361). A record written before version 3, or none, holds none."""
+    out: dict[str, list[dict]] = {}
+    for row in (record or {}).get("queries") or []:
+        found = [dict(c) for c in row.get("candidate_keys") or [] if isinstance(c, Mapping)]
+        if found and row.get("query_id"):
+            out[str(row["query_id"])] = found
+    return out
+
+
+def key_candidates_of(rows: Iterable[Mapping] | None) -> list[TraceKeyCandidate]:
+    """A query's ``candidate_keys`` rows (the access-pattern record's, #1361) as the
+    trace holds them. The record stores codes only; the sentence is built here, from the
+    one builder the anti-pattern evidence uses (``key_refusals``). A row this release
+    cannot read (a newer reason code) is left out rather than failing the whole trace."""
+    out = []
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        try:
+            reasons = [str(r) for r in row.get("reasons") or []]
+            explanation = candidate_explanation(str(row.get("via") or ""), reasons)
+            out.append(TraceKeyCandidate.model_validate({**row, "explanation": explanation}))
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
 def build_query_trace(
     query_id: str,
     moves: list[tuple[int, Move]],
     final_engine: str | None,
     plan: set[str],
     effective_version: int | None = None,
+    key_candidates: Iterable[Mapping] | None = None,
 ) -> QueryTraceResponse:
     """The query's decision trace from its Moves (``(version, Move)``, in order).
 
@@ -363,11 +399,15 @@ def build_query_trace(
     last Move's engine when unknown) and ``plan`` the engines the effective
     assignment uses. With no Moves (a job written before the move ledger)
     ``has_ledger`` is False and only the final engine is set.
+    ``key_candidates``: the query's ``candidate_keys`` rows from the
+    access-pattern record (#1361), none when the record predates them.
     """
+    keys = key_candidates_of(key_candidates)
     if not moves:
         return QueryTraceResponse(
             query_id=query_id,
             has_ledger=False,
+            key_candidates=keys,
             final_engine=final_engine,
             final_engine_name=display_engine(final_engine) if final_engine else None,
             effective_version=effective_version,
@@ -405,6 +445,7 @@ def build_query_trace(
         tied_engine_names=[display_engine(e) for e in last.tied_engines],
         runner_up=runner_up,
         outscored_by=outscored,
+        key_candidates=keys,
         summary=render_trace_summary(
             final,
             final_score,
@@ -481,6 +522,7 @@ def query_trace_digest(
     effective_version: int,
     query_texts: Mapping[str, str] | None = None,
     query_capabilities: Mapping[str, Iterable[str]] | None = None,
+    key_candidates: Mapping[str, Iterable[Mapping]] | None = None,
 ) -> QueryTraceDigest:
     """The decision traces synthesis writes into report.json (``query_traces``).
 
@@ -496,6 +538,8 @@ def query_trace_digest(
     ``close_calls`` too, listed or not (#730), and every query that
     ``is_unservable`` in ``unservable``, with the capabilities
     ``query_capabilities`` (triage's per-query map) says it needs (#729).
+    ``key_candidates`` maps a query id to its access-pattern record's
+    ``candidate_keys`` (#1361).
     """
     qas = [qa for qa in effective.get("query_assignments") or [] if qa.get("query_id")]
     by_query = ledger_moves(assignment_lineage(read, effective_version))
@@ -509,7 +553,12 @@ def query_trace_digest(
     for qa in qas:
         qid = str(qa["query_id"])
         trace = build_query_trace(
-            qid, by_query.get(qid, []), qa.get("assigned_engine"), plan, effective_version
+            qid,
+            by_query.get(qid, []),
+            qa.get("assigned_engine"),
+            plan,
+            effective_version,
+            (key_candidates or {}).get(qid),
         )
         dumped = trace.model_dump(mode="json", by_alias=True)
         kinds = trace_kinds(dumped)

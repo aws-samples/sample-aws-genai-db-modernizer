@@ -933,8 +933,30 @@ def _query_traces(
         if isinstance(q, dict) and q.get("query_id")
     }
     capabilities = triage_query_capabilities(triage)
-    digest = query_trace_digest(assignment, _read, version, texts, capabilities)
+    digest = query_trace_digest(
+        assignment,
+        _read,
+        version,
+        texts,
+        capabilities,
+        _key_candidates(store, database_name, job_id, version),
+    )
     return digest.model_dump(mode="json", by_alias=True)
+
+
+def _key_candidates(
+    store: ArtifactStore, database_name: str, job_id: str, version: int
+) -> dict[str, list[dict]]:
+    """``query_id -> candidate_keys`` from assignment ``v<version>``'s access-pattern
+    record (#1361); none without a version or a record (one written before #1361)."""
+    if version <= 0:
+        return {}
+    key = f"{database_name}/{job_id}/assignment/v{version}/{ACCESS_PATTERNS_FILE}"
+    if not store.exists(key):
+        return {}
+    from src.shared.query_trace import candidate_keys_by_query
+
+    return candidate_keys_by_query(store.read_json(key))
 
 
 def _query_pattern_groups(data: SynthesisData) -> list[dict] | None:

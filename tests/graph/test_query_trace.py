@@ -506,6 +506,56 @@ class TestRebuild:
         assert stats["complete"] is True
         assert graph_store.graph_meta()["effective_version"] == 2
 
+    def test_rebuild_reads_the_effective_versions_candidate_keys(self, graph_store, sample):
+        """#1361: the trace API shows the keys the redesign considered for the query,
+        from the effective version's access-pattern record (not an older version's)."""
+        qid = _settled_with_runner_up(sample)
+        row = {
+            "column": "wp_wc_product_meta_lookup.sku",
+            "table_id": "wordpress.wp_wc_product_meta_lookup",
+            "via": "equality",
+            "outcome": "refused",
+            "reasons": ["rewritten_by_write"],
+        }
+        older = {**row, "reasons": ["not_key_eligible"]}
+        files = self._files(
+            sample,
+            {
+                "wordpress/job/assignment/v2/access_patterns.json": {
+                    "schema_version": 3,
+                    "queries": [{"query_id": qid, "candidate_keys": [row]}],
+                },
+                "wordpress/job/assignment/v1/access_patterns.json": {
+                    "schema_version": 3,
+                    "queries": [{"query_id": qid, "candidate_keys": [older]}],
+                },
+            },
+        )
+        rebuild_graph("wordpress", "job", _DirStore(files), graph_store)
+        trace = query_trace(graph_store, qid)
+        assert [k.model_dump() for k in trace.key_candidates] == [
+            {
+                **row,
+                "explanation": "refused for an equality filter: a column the statement's "
+                "own write rewrites",
+            }
+        ]
+        assert query_trace(graph_store, _never_moved(sample)).key_candidates == []
+
+    def test_a_record_before_1361_gives_no_candidate_keys(self, graph_store, sample):
+        files = self._files(
+            sample,
+            {
+                "wordpress/job/assignment/v2/access_patterns.json": {
+                    "schema_version": 2,
+                    "queries": [{"query_id": _settled_with_runner_up(sample), "redesign": None}],
+                }
+            },
+        )
+        stats = rebuild_graph("wordpress", "job", _DirStore(files), graph_store)
+        assert stats["complete"] is True
+        assert query_trace(graph_store, _settled_with_runner_up(sample)).key_candidates == []
+
     def test_lineage_skips_a_version_the_effective_one_does_not_descend_from(self, sample):
         stale = {**sample["v2"], "version": 2}
         fresh = {**sample["v1"], "version": 3, "previous_version": None}
