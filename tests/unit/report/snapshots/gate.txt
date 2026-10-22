@@ -1,0 +1,33 @@
+## Assignment for approval: wordpress (job job1)
+
+Recommended architecture: Aurora MySQL, DynamoDB and ElastiCache
+
+Reality check removed DocumentDB and kept the rest.
+
+| Engine | Queries before | Queries final | Share of final | Outcome |
+|---|---:|---:|---:|---|
+| Aurora MySQL | 59 | 67 | 62.6% | kept |
+| DynamoDB | 38 | 40 | 37.4% | kept |
+| DocumentDB | 9 | 0 | 0% | dropped |
+
+Total: 107 queries.
+
+Consolidations:
+- DocumentDB to Aurora MySQL: 7 queries. No unique features
+- DocumentDB to DynamoDB: 1 query
+
+Small engines kept:
+- OpenSearch: Full-text search stays
+
+Cache layer: ElastiCache fronts 20 cached reads, 83.4% of calls, and owns no queries.
+
+Architectural patterns:
+- Event-Driven Sync
+  - When: Several engines need the same data
+  - Streams feed the cache.
+
+Engine choices to settle before schema design:
+- `theme_fields` (13 queries): Both score 71 for these queries.
+  - DocumentDB, score 71: Flexible docs
+  - DynamoDB, score 71: Key access
+  - Decide for me picks DynamoDB: Higher unrounded score.

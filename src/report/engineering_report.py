@@ -124,22 +124,32 @@ def _withheld_note(report: dict[str, Any], trust: bool, summary: Any) -> str | N
     return None
 
 
-def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
-    """Engineering Report "Executive summary" section (ported from the retired
-    multi-page PDF report, #1020): the summary the run wrote, why a generated one was
-    withheld, and that no language model decides an assignment."""
+def summary_paragraphs(
+    report: dict[str, Any], trust: bool | None = None
+) -> tuple[list[str], str | None]:
+    """The executive summary as the deliverables show it: its paragraphs and the note on why a
+    generated one was withheld (None when nothing was). ``/modernize``'s printed summary
+    (#1307) reads the same function, so the two cannot differ."""
+    trust = summary_trusted(report) if trust is None else trust
     summary = report.get("summary") if trust else report.get("summary_deterministic")
     summary = summary or report.get("summary_deterministic")
     if summary and summary == report.get("summary_deterministic"):
         summary = label_summary_counts(summary, report)
+    paragraphs = [c.strip() for c in str(summary or "").strip().split("\n") if c.strip()]
+    return paragraphs, _withheld_note(report, trust, summary)
+
+
+def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
+    """Engineering Report "Executive summary" section (ported from the retired
+    multi-page PDF report, #1020): the summary the run wrote, why a generated one was
+    withheld, and that no language model decides an assignment."""
+    paragraphs, withheld = summary_paragraphs(report, trust)
     out = ["## Executive summary", ""]
-    if summary:
-        for chunk in str(summary).strip().split("\n"):
-            if chunk.strip():
-                out += [escaping.md_text(chunk.strip()), ""]
+    if paragraphs:
+        for chunk in paragraphs:
+            out += [escaping.md_text(chunk), ""]
     else:
         out += ["No executive summary was generated for this run.", ""]
-    withheld = _withheld_note(report, trust, summary)
     if withheld:
         out += [f"*{escaping.md_text(withheld)}*", ""]
     out += [f"*{escaping.md_text(NO_MODEL_DECIDES_NOTE)}*", ""]

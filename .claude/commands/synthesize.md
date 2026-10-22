@@ -58,30 +58,21 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    synthesis report, or rendering failed) stop and report it.
 
 5. **Present report**
-   Show:
-   - Engine ranking, in report order (largest workload share first, cache layer last),
-     with each owning engine's `routed_confidence` presented as its workload fit: the
-     mean fit of the queries routed to it. Say "no table-level evidence" when
-     `routed_confidence_evidence` is `signal_only`. The cache layer (`role`
-     `cache_layer`) owns no queries, so its `routed_confidence` is its cache fit, the
-     mean fit of the cached reads it fronts: write it as "N% cache fit across its
-     cached reads", as the reports and the results page do, never in a workload fit
-     column or list next to the owners' figures, so it is not compared with them.
-     `analysis_confidence` is the average over every analyzed table, kept for audit;
-     do not present it as the engine's fit
-   - Architecture recommendation (single/multi/hybrid)
-   - TCO comparison (current RDS vs target)
-   - Top risks and mitigations
-   - Executive summary
-   - `cache_safety_net_notes`, when non-empty on step 3e's `--finalize` status
-     line: quote each note verbatim (no paraphrasing or re-rounding, and no
-     reading `report.json` for it). It explains why the cache layer is smaller
-     than at the assignment gate.
+   Print the report from the facts in `report.json`, then quote it verbatim:
 
-   State each figure plainly. Leave out a line whose figure the report does not
-   carry (for example no source cost), and never comment on what you did or did not
-   read: the summary describes the assessment, not your process. Give each top risk
-   with its mitigation from the report; when a risk has none, list it alone.
+   ```bash
+   uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --final
+   ```
+
+   It prints the executive summary, the headline figures, one line per engine with why (the
+   cache layer's figure is the reads it fronts, never a workload fit next to the owners'),
+   the open risks by severity with the most severe ones and their mitigations, and where to
+   look next (the deliverables), and it leaves out a line whose figure the report does not
+   carry (for example no source cost). Do not
+   retype or paraphrase it, add a figure of your own, or read `report.json` for it.
+   A JSON line `{"status": "error", ...}` is a failure of this step. Never comment
+   on what you did or did not read: the summary describes the assessment, not your
+   process.
 
 6. **Update state**
    Set `phase_status.synthesis` = "complete"

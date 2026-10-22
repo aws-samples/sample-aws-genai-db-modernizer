@@ -101,16 +101,17 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   ``scripts/start_local_ui.py`` (to start, not ``--stop``) anywhere in the
   transcript -- fail. For ``--mode ui`` or ``--mode both``, no such tool_use
   ran, or no later tool_result reported ``"status": "ready"`` -- fail.
-* missing UI pointers (``--mode ui`` or ``--mode both``, #1242): the
-  orchestrator never ran ``scripts/start_local_ui.py --page summary`` or
-  ``--page results``, never quoted the ``ui_url`` either printed in its own
+* missing UI pointers (``--mode ui`` or ``--mode both``, #1242, #1307): the
+  orchestrator never got the summary page's URL (``scripts/print_summary.py
+  --gate``'s ``Summary page`` line, or ``scripts/start_local_ui.py --page
+  summary``) or the results page's (``--final``'s ``Results page`` line, or
+  ``--page results``), never quoted either in its own
   (top-level) text, or quoted the summary page only after schema design
   started (``scripts/run_schema_design.py`` or a ``/design-schema-*``
-  dispatch) rather than at the approval gate -- a **warning**, not a failure,
-  until #1249 moves the gate text into script output: it prints to stderr and
-  is recorded as ``ui_pointer_warning`` (the reason) in summary.json and
-  results.json. It checks the URLs only, not the gate table or the
-  post-reality-check summary.
+  dispatch) rather than at the approval gate -- fail (#1307; it only warned
+  while the model composed the gate and completion text, before
+  ``scripts/print_summary.py`` printed them). It checks the URLs only, not
+  the gate table or the summary.
 
 On failure, check-transcript still prints the aggregated cost/turn/usage
 fields next to ``error``, and ``results`` copies them (plus
@@ -295,6 +296,10 @@ def check_mode(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | No
 # `start_local_ui.py --page <page>` output (#1233, #1242).
 _UI_POINTER_PAGES = ("summary", "results")
 _UI_URL_RE = re.compile(r'"ui_url"\s*:\s*"([^"]+)"')
+# The results-page URL line scripts/print_summary.py --final prints, and the summary-page
+# URL line --gate ends with (#1307).
+_PRINTED_RESULTS_RE = re.compile(r"^- Results page[^:\n]*: (\S+)\s*$", re.MULTILINE)
+_PRINTED_SUMMARY_RE = re.compile(r"^- Summary page[^:\n]*: (\S+)\s*$", re.MULTILINE)
 
 
 def _phase6_starts(rtype: str, block: dict[str, Any]) -> bool:
@@ -333,12 +338,16 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
     """In ui/both mode the orchestrator quotes each job page's ``ui_url``
     to the user (#1242): the summary page at the approval gate, before
     schema design starts, and the results page at completion. Each URL must
-    come from a top-level ``start_local_ui.py --page <page>`` tool_result and
+    come from a top-level ``start_local_ui.py --page <page>`` tool_result (the summary page's may
+    instead be the ``Summary page`` line of ``print_summary.py --gate``, the results page's the
+    ``Results page`` line of ``print_summary.py --final``, #1307) and
     appear in a top-level assistant text block (or the final result text).
     Subagent messages never count. Chat mode is never checked."""
     if mode == "chat":
         return True, None
     pending: dict[str, str] = {}  # tool_use id -> page
+    printed_final: set[str] = set()  # print_summary.py --final tool_use ids
+    printed_gate: set[str] = set()  # print_summary.py --gate tool_use ids
     urls: dict[str, str] = {}
     quoted_at: dict[str, int] = {}
     phase6_at: int | None = None
@@ -368,18 +377,40 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
                     for page in _UI_POINTER_PAGES:
                         if re.search(rf"--page[ =]{page}\b", command):
                             pending[str(block.get("id"))] = page
+                elif isinstance(command, str) and "scripts/print_summary.py" in command:
+                    if re.search(r"--final\b", command):
+                        printed_final.add(str(block.get("id")))
+                    elif re.search(r"--gate\b", command):
+                        printed_gate.add(str(block.get("id")))
             elif rtype == "user" and block.get("type") == "tool_result":
-                page = pending.get(str(block.get("tool_use_id")))
-                url = _page_url_from_result(_text_from_content(block.get("content")))
+                use_id = str(block.get("tool_use_id"))
+                result_text = _text_from_content(block.get("content"))
+                page = pending.get(use_id)
+                url = _page_url_from_result(result_text)
                 if page and url:
                     urls[page] = url
+                printed = (
+                    _PRINTED_RESULTS_RE.search(result_text) if use_id in printed_final else None
+                )
+                if printed:
+                    urls["results"] = printed.group(1)
+                gate_url = (
+                    _PRINTED_SUMMARY_RE.search(result_text) if use_id in printed_gate else None
+                )
+                if gate_url:
+                    urls["summary"] = gate_url.group(1)
         position += 1
         for text in texts:
             _mark_quoted(text, urls, quoted_at, position)
     for page in _UI_POINTER_PAGES:
         if page not in urls:
             return False, (
-                f"{mode} mode never got a ui_url from scripts/start_local_ui.py --page {page}"
+                f"{mode} mode never got a {page}-page ui_url from "
+                + (
+                    "scripts/print_summary.py --gate (or start_local_ui.py --page summary)"
+                    if page == "summary"
+                    else "scripts/print_summary.py --final (or start_local_ui.py --page results)"
+                )
             )
         if page not in quoted_at:
             return False, (
@@ -985,14 +1016,12 @@ def check_transcript(
     if not mode_ok:
         raise fail(mode_reason or "mode assertion failed")
 
-    # #1242: a warning, not a failure, until #1249 puts the gate text in script
-    # output the command quotes; the model still has to relay the URL itself.
+    # #1242, #1307: the gate block and the completion summary come from
+    # scripts/print_summary.py output the command quotes, so a page URL that was
+    # never relayed is a failure.
     pointers_ok, pointers_reason = check_ui_pointers(records, mode)
     if not pointers_ok:
-        print(
-            f"warning: missing UI pointer (not a failure yet): {pointers_reason}", file=sys.stderr
-        )
-        fields = {**fields, "ui_pointer_warning": pointers_reason}
+        raise fail(f"missing UI pointer: {pointers_reason}")
 
     if state_file is not None and state_file.is_file():
         try:
@@ -1108,7 +1137,6 @@ def build_results_row(
     rule_violations: dict[str, Any] | None = None
     unlisted_tool_denials: dict[str, Any] | None = None
     prevented_by_hook: dict[str, Any] | None = None
-    ui_pointer_warning: str | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -1141,8 +1169,6 @@ def build_results_row(
         unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
         prevented_raw = summary.get("prevented_by_hook")
         prevented_by_hook = prevented_raw if isinstance(prevented_raw, dict) else None
-        pointer_raw = summary.get("ui_pointer_warning")
-        ui_pointer_warning = pointer_raw if isinstance(pointer_raw, str) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -1212,7 +1238,6 @@ def build_results_row(
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
         "prevented_by_hook": prevented_by_hook,
-        "ui_pointer_warning": ui_pointer_warning,
         "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
         "pass": overall_pass,

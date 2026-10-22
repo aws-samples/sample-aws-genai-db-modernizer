@@ -158,6 +158,7 @@ with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
   `run_assessment.py` writes its progress to
   `artifacts/<db>/<job>/_logs/run_assessment.log` and prints a final
   `{"log": ...}` line (`--verbose` restores full stdout).
+- `scripts/print_summary.py` is the one pipeline script whose stdout is Markdown, not a JSON status line: `/modernize` quotes its `--gate` and `--final` output verbatim instead of composing the approval-gate block and the final summary, and a failure is one JSON `{"status": "error", ...}` line. With `--mode ui|both` both blocks carry the job pages' URLs; the headless check fails a run that never quotes them, or quotes the gate's only after schema design starts (`check_ui_pointers`).
 - Allowlisted scripts refuse paths outside the repo under
   `MODERNIZER_CI_SANDBOX=1` (`scripts/_sandbox.py`).
 

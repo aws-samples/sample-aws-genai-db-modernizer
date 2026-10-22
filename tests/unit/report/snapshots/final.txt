@@ -1,0 +1,49 @@
+## Assessment: wordpress (job job1)
+
+### Executive summary
+
+Analyzed 50 tables.
+
+A second paragraph.
+
+### At a glance
+
+- Workload: 107 queries in 97 distinct query patterns
+- Target engines: Aurora MySQL, ElastiCache (cache layer)
+- Projected monthly cost: $582.76
+- Migration: 3 waves
+- Cache layer note: The cache layer shrank to 12 reads.
+
+### Engines
+
+- Aurora MySQL (Retained, 62.6% of queries, $318.80/mo): 73% mean fit across 67 queries \(2 queries without table-level evidence\).
+- ElastiCache (Cache layer, 20 cached reads · 83.4% of calls, $165.55/mo): Cache layer for 20 hot reads.
+
+### Risks
+
+Overall risk: HIGH
+Open risks: 7 (2 high, 5 medium)
+Resolved by the assignment: 2 (2 medium)
+
+Most severe first:
+- HIGH, DynamoDB (RISK-001): Risk number 1
+  - Mitigation: Mitigation number 1
+- HIGH, DynamoDB (RISK-002): Risk number 2
+  - Mitigation: Mitigation number 2
+- MEDIUM, DynamoDB (RISK-003): Risk number 3
+  - Mitigation: Mitigation number 3
+- MEDIUM, DynamoDB (RISK-004): Risk number 4
+  - Mitigation: Mitigation number 4
+- MEDIUM, DynamoDB (RISK-005): Risk number 5
+  - Mitigation: Mitigation number 5
+
+The results page and the engineering report list every open risk.
+
+### Where to look next
+
+- `artifacts/wordpress/job1/deliverables/executive-report.pdf`: Executive report (PDF). For: Executives and stakeholders deciding whether to proceed.
+- `artifacts/wordpress/job1/deliverables/engineering-report.md`: Engineering report (Markdown). For: The team that will build it: schemas, migration waves, risks.
+- `artifacts/wordpress/job1/deliverables/assessment-data.json`: Assessment Data (JSON). For: Tools and scripts: the complete machine-readable assessment.
+- `artifacts/wordpress/job1/deliverables/index.md`: lists each file and the assignment version
+- Results page (the interactive report): http://localhost:3000/analysis/results/job1
+- Summary page (the query flow and the assignment): http://localhost:3000/analysis/monitor/summary/job1

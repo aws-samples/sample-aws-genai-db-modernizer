@@ -1606,34 +1606,36 @@ def _drop_url_from_texts(records: list[dict], url: str) -> list[dict]:
     return out
 
 
-def test_both_mode_run_that_never_quotes_the_gate_url_warns(tmp_path: Path) -> None:
-    # The #1242 run: --page summary ran, its ui_url was never shown.
+def _fails_with(tmp_path: Path, records: list[dict], match: str) -> None:
+    with pytest.raises(run.TranscriptError, match=match):
+        run.check_transcript(_transcript(tmp_path, records), "ui")
+
+
+def test_both_mode_run_that_never_quotes_the_gate_url_fails(tmp_path: Path) -> None:
+    # The #1242 run: --page summary ran, its ui_url was never shown. A warning
+    # until #1307 printed the gate and completion text; fatal since.
     records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
-    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "never quoted the summary-page ui_url" in summary["ui_pointer_warning"]
+    _fails_with(tmp_path, records, "missing UI pointer: ui mode never quoted the summary-page")
 
 
-def test_run_that_never_asks_for_the_summary_page_warns(tmp_path: Path) -> None:
+def test_run_that_never_asks_for_the_summary_page_fails(tmp_path: Path) -> None:
     records = [
         rec
         for rec in _ui_records()
         if "--page summary" not in json.dumps(rec) and _SUMMARY_URL not in json.dumps(rec)
     ]
-    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "--page summary" in summary["ui_pointer_warning"]
+    _fails_with(tmp_path, records, "--page summary")
 
 
-def test_run_that_never_quotes_the_results_url_warns(tmp_path: Path) -> None:
+def test_run_that_never_quotes_the_results_url_fails(tmp_path: Path) -> None:
     records = _drop_url_from_texts(_ui_records(), _RESULTS_URL)
-    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "never quoted the results-page ui_url" in summary["ui_pointer_warning"]
+    _fails_with(tmp_path, records, "never quoted the results-page ui_url")
 
 
-def test_gate_url_quoted_only_after_schema_design_starts_warns(tmp_path: Path) -> None:
+def test_gate_url_quoted_only_after_schema_design_starts_fails(tmp_path: Path) -> None:
     records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
     records[-2]["message"]["content"][0]["text"] += f"\nSummary page: {_SUMMARY_URL}"
-    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "only after schema design started" in summary["ui_pointer_warning"]
+    _fails_with(tmp_path, records, "only after schema design started")
 
 
 def test_gate_url_quoted_only_by_a_subagent_does_not_count(tmp_path: Path) -> None:
@@ -1644,8 +1646,114 @@ def test_gate_url_quoted_only_by_a_subagent_does_not_count(tmp_path: Path) -> No
         "message": {"role": "assistant", "content": [{"type": "text", "text": _SUMMARY_URL}]},
     }
     records.insert(5, subagent_text)
-    summary = run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "never quoted the summary-page ui_url" in summary["ui_pointer_warning"]
+    _fails_with(tmp_path, records, "never quoted the summary-page ui_url")
+
+
+def test_the_results_url_may_come_from_the_printed_final_summary() -> None:
+    # #1307: `print_summary.py --final --mode ui` lists the results page itself.
+    records = _ui_records()
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use" and "--page results" in block["input"].get(
+                "command", ""
+            ):
+                block["input"]["command"] = (
+                    "uv run python scripts/print_summary.py --job-id dry00002 "
+                    "--db wordpress --final --mode ui"
+                )
+            elif block.get("type") == "tool_result" and _RESULTS_URL in json.dumps(block):
+                block["content"][0]["text"] = (
+                    "## Assessment: wordpress (job dry00002)\n\n### Where to look next\n\n"
+                    f"- Results page (the interactive report): {_RESULTS_URL}\n"
+                )
+    assert run.check_ui_pointers(records, "ui") == (True, None)
+
+
+_GATE_COMMAND = (
+    "uv run python scripts/print_summary.py --job-id dry00002 --db wordpress --gate --mode ui"
+)
+_GATE_BLOCK = (
+    "## Assignment for approval: wordpress (job dry00002)\n\n"
+    "| Engine | Queries before | Queries final | Share of final | Outcome |\n\n"
+    f"- Summary page (the query flow and every query's engine): {_SUMMARY_URL}\n"
+)
+
+
+def _gate_printed_records() -> list[dict]:
+    """The UI run, with the summary page's URL from the printed gate block (#1307)
+    instead of a separate ``start_local_ui.py --page summary`` call."""
+    records = _ui_records()
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use" and "--page summary" in block["input"].get(
+                "command", ""
+            ):
+                block["input"]["command"] = _GATE_COMMAND
+            elif block.get("type") == "tool_result" and _SUMMARY_URL in json.dumps(block):
+                block["content"][0]["text"] = _GATE_BLOCK
+    return records
+
+
+def test_the_summary_url_may_come_from_the_printed_gate_block() -> None:
+    assert run.check_ui_pointers(_gate_printed_records(), "ui") == (True, None)
+
+
+def test_a_gate_block_run_alongside_schema_design_and_never_quoted_fails(tmp_path: Path) -> None:
+    # The PR 1358 e2e-llm runs: the gate block and the DynamoDB split ran in one batch of
+    # tool calls and the gate was never written out; the summary URL reached the user
+    # only in the final summary.
+    records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
+    gate_use = next(
+        rec
+        for rec in records
+        if rec.get("type") == "assistant"
+        and any(
+            b.get("input", {}).get("command") == _GATE_COMMAND for b in rec["message"]["content"]
+        )
+    )
+    split_rec = next(
+        rec
+        for rec in records
+        if rec.get("type") == "assistant"
+        and any(
+            "--split" in b.get("input", {}).get("command", "") for b in rec["message"]["content"]
+        )
+    )
+    split_use = next(b for b in split_rec["message"]["content"] if b.get("type") == "tool_use")
+    gate_use["message"]["content"].append(split_use)
+    split_rec["message"]["content"] = [
+        b for b in split_rec["message"]["content"] if b is not split_use
+    ]
+    records[-2]["message"]["content"][0]["text"] += f"\nSummary page: {_SUMMARY_URL}"
+    _fails_with(tmp_path, records, "only after schema design started")
+
+
+@pytest.mark.passes_on_main  # guards that the new gate-block source stays the gate's only
+def test_the_gate_url_counts_only_from_the_gate_block_not_the_final_summary(
+    tmp_path: Path,
+) -> None:
+    # The final summary also lists the summary page, but only the gate's URL is the pointer
+    # the user follows before approving.
+    records = [
+        rec
+        for rec in _ui_records()
+        if "--page summary" not in json.dumps(rec) and _SUMMARY_URL not in json.dumps(rec)
+    ]
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use" and "--page results" in block["input"].get(
+                "command", ""
+            ):
+                block["input"]["command"] = (
+                    "uv run python scripts/print_summary.py --job-id dry00002 "
+                    "--db wordpress --final --mode ui"
+                )
+            elif block.get("type") == "tool_result" and _RESULTS_URL in json.dumps(block):
+                block["content"][0]["text"] = (
+                    f"- Results page (the interactive report): {_RESULTS_URL}\n"
+                    f"- Summary page (the query flow and the assignment): {_SUMMARY_URL}\n"
+                )
+    _fails_with(tmp_path, records, "never got a summary-page ui_url")
 
 
 def test_design_schema_dispatch_also_marks_schema_design_start() -> None:
@@ -1668,21 +1776,14 @@ def test_chat_mode_needs_no_ui_pointers() -> None:
 
 
 @pytest.mark.passes_on_main
-def test_a_run_that_quotes_both_urls_has_no_ui_pointer_warning() -> None:
+def test_a_run_that_quotes_both_urls_passes_without_a_pointer_warning() -> None:
     summary = run.check_transcript(FIXTURES / "synthetic-success-ui.jsonl", "ui")
     assert "ui_pointer_warning" not in summary
 
 
-def test_ui_pointer_warning_warns_on_stderr_and_never_fails(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # #1242 review: a warning until #1249 moves the gate text into script output.
-    records = _drop_url_from_texts(_ui_records(), _SUMMARY_URL)
-    run.check_transcript(_transcript(tmp_path, records), "ui")
-    assert "warning: missing UI pointer" in capsys.readouterr().err
-
-
-def test_results_carry_the_ui_pointer_warning(tmp_path: Path) -> None:
+def test_a_missing_ui_pointer_no_longer_leaves_a_warning_field(tmp_path: Path) -> None:
+    # #1307: the pointer check is fatal, so a summary never carries the old warning field,
+    # and an old summary.json that still has one is not copied into results.json.
     summary_path = tmp_path / "summary.json"
     _write_summary(
         summary_path, ui_pointer_warning="ui mode never quoted the summary-page ui_url x"
@@ -1695,4 +1796,4 @@ def test_results_carry_the_ui_pointer_warning(tmp_path: Path) -> None:
         judge_path=tmp_path / "judge.json",
         git_sha="abc",
     )
-    assert row["ui_pointer_warning"] == "ui mode never quoted the summary-page ui_url x"
+    assert "ui_pointer_warning" not in row

@@ -10,7 +10,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 ## Arguments
 
 - `<collector_file>` — path to collector output JSON (required); the `.json` file (a bundled sample whose `.json` is not extracted yet, such as `docs/examples/wordpress/wordpress-collection.json`, is extracted from its tracked `.zip` by the script)
-- `--auto` — unattended run: never ask the user anything. Skips every decision gate's question (auto-approve), never what the gate shows: the post-reality-check summary, the approval-gate table and the summary-page URL still appear. It also means "decide for me": every pending engine choice is settled by the deterministic rule and recorded as decided automatically; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
+- `--auto` — unattended run: never ask the user anything. Skips every decision gate's question (auto-approve), never what the gate shows: the approval-gate block and the summary-page URL still appear. It also means "decide for me": every pending engine choice is settled by the deterministic rule and recorded as decided automatically; on a phase failure, abort (see Error Handling). Equivalent to `-y`.
 - `--mode chat|ui|both` — experience mode. Default is `both`: results in chat with the local UI alongside. `--mode chat` is chat only, with no UI. `--mode ui` is UI-first: chat carries only the approval-gate numbers, UI pointers, the one-sentence database-name notice (Phases 1-5, only when the name was rewritten), and the final result line — no phase summaries. `--auto` without `--mode` also means `both`.
 - `--engines-in-use <ids>` — optional, comma-separated engine ids (for example `opensearch,elasticache`) of the other AWS databases the application already runs today. Never ask the user for it, with or without `--auto`: absent means only the source engine counts. Pass it through unchanged as `--engines-in-use {engines_in_use}` in Phases 1-5, and omit the flag when it was not given.
 - `--target-databases <ids>` — optional, comma-separated engine ids (for example `dynamodb,aurora_postgresql`): the customer's engine scope, the only engines the plan may route to. Never ask the user for it, with or without `--auto`: absent means every engine. Pass it through unchanged as `--target-databases {target_databases}` on the first `scripts/run_assessment.py` command only (the one with `--file`, see Phases 1-5), and omit the flag when it was not given. Never add it to `--resume-reality-check`, `--choose` or `--decide-for-me`: the job keeps the scope it started with, and those commands refuse the flag. If the scope leaves queries no in-scope engine can serve, the run goes on: the assignment line carries `unservable_queries` (how many), those queries have no engine, and the deliverables list them as a blocking risk. Say the number once with the assignment results, and that a new run with an engine added to the scope can serve them; never treat it as a phase failure.
@@ -81,30 +81,19 @@ Its stdout is the whole tool result: one JSON status line per phase (`{"phase": 
 
 **After resume-reality-check completes:**
 
-- Unless `{experience_mode}` is `ui`, present a brief summary: selected engines and why, query distribution across engines, reality check consolidations and any reversals, architecture patterns detected. Source the distribution and consolidations from the `reality_check` status line, not from memory.
+- Go straight to the approval gate below: its block is the post-reality-check summary, so do not write a second one.
 
 ### Decision Gate: Assignment Approval
 
-After reality check, present the final assignment — this is the approval gate, so these numbers appear in every mode, including `ui`. Read them from the `reality_check` status line `run_assessment.py` printed (the `--resume-reality-check` line, or the direct `"status": "complete"` line), never from opening `reality-check/output.json` or an assignment artifact. That line always carries the data below, so never tell the user you have not read it or do not have the numbers.
-
-Show a compact table, one row per engine, built from that line's fields:
-
-- `before_distribution` vs `after_distribution`: each engine's query count v1 → final, and its share of the total
-- `eliminated_engines`: the engines to label dropped. Read this list; never infer "dropped" from an `after_distribution` count (an eliminated engine can keep a nonzero count for an out-of-scope query). Every other engine in `after_distribution` survived
-- `consolidations`: each entry's `from`, `to`, `queries` and `reason`
-- `sweep_kept`, when non-empty: each entry's `engine` and `reason` (a small engine the sanity sweep kept), alongside `consolidations`
-- `cache_overlay`, when present: `query_count` cached reads serving `call_share_percent`% of calls
-- `schema_design_engines`: the engines Phase 6 designs next. With `cache_overlay`, its engine is in this list even though it owns no row in `after_distribution`.
-
-When `before_distribution` and `after_distribution` are identical (or `consolidations` and `eliminated_engines` are both empty), say so explicitly — reality check changed nothing — instead of an empty-looking table.
-
-Unless `{experience_mode}` is `chat`, also point the user at the job's summary page before they decide: it has the Sankey and the full query-to-engine breakdown. Run
+After reality check, present the final assignment — this is the approval gate, so these numbers appear in every mode, including `ui`. Print the block from the job's artifacts:
 
 ```bash
-uv run python scripts/start_local_ui.py --page summary --job-id {job_id}
+uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --gate --mode {experience_mode}
 ```
 
-and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/monitor/summary/<job_id>`); never give the UI root or build the URL yourself.
+Its stdout is the whole block, in Markdown: the engine table (queries before and final, share of the final total, kept or dropped), the consolidations and the small engines kept, the cache layer, and the engines whose schema design runs next (or, when engine choices are pending, the tables to settle). It says so itself when reality check changed nothing. Unless `{experience_mode}` is `chat`, its last line is the job's summary page (`http://localhost:<port>/analysis/monitor/summary/<job_id>`), which has the Sankey and the full query-to-engine breakdown: that line is the UI pointer for the gate, so never give the UI root or build the URL yourself. Quote it verbatim: do not retype, reorder or paraphrase it, and add no table or figure of your own. Its numbers never come from opening `reality-check/output.json` or an assignment artifact, and never tell the user you have not read them. A JSON line `{"status": "error", ...}` (or a non-zero exit) is a failure of the gate step: present its `message` (see Error Handling).
+
+Run it on its own, never in the same batch of tool calls as another command: you quote its stdout before anything else runs. A tool result is not shown to the user, so the block reaches them only when you write it out in your own message, and that message comes before any Phase 6 command or dispatch.
 
 **Pending engine choices.** The line's `pending_choices` lists, one entry per table, queries that tie between engines, so no routing rule picks one (`choice`, `table`, `queries`, `engines` with each `score`, `unrounded_score` and `trade_off`, `why_tied`, `listed_under`, `decide_for_me` and `decide_for_me_reason`). A model never picks one: the customer does, or the deterministic "decide for me" rule does.
 
@@ -114,7 +103,7 @@ and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/mon
 Ask: "Approve this assignment and continue to Schema Design, or modify?"
 Only proceed to schema design after user approval (unless `--auto`).
 
-With `--auto`, skip only that question: the summary (unless `ui`), the gate table and, unless `chat`, the summary-page `ui_url` are still shown, in that order, before Phase 6 starts.
+With `--auto`, skip only that question: the gate block and, unless `chat`, the summary-page `ui_url` are still shown, in that order, before Phase 6 starts.
 
 ### Phase 6: Schema Design (Parallel Subagents)
 
@@ -234,17 +223,13 @@ Run /synthesize for job_id={job_id} db={database_name}. Unattended: do not ask t
 
 ### Completion
 
-Unless `{experience_mode}` is `ui`, show the final report summary (engines, architecture recommendation, TCO, top risks with their mitigations; the cache layer's figure is its cache fit, never shown as a workload fit next to the owners', as `/synthesize` step 5 says) and the deliverables the synthesize step rendered, all in one folder, <!-- deliverables-list -->`./artifacts/{db}/{job}/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each file, who it is for and the assignment version<!-- /deliverables-list -->. If the `/synthesize` subagent reported `cache_safety_net_notes`, relay them verbatim: they explain why the cache layer is smaller than at the assignment gate.
-
-Build the final summary only from the `/synthesize` subagent's final report and the status lines the scripts printed; do not open `report.json` or any other artifact for it. State each figure plainly, as the reports do, and leave out a line whose figure those sources do not carry (for example no source cost); never fill it from memory. Report any `partial` render `errors` the subagent relayed. List each top risk with its mitigation, or alone when the report gives none. The summary is about the assessment, never about the run: do not comment on what you or a subagent did or did not read, and do not name a phase or step number.
-
-Unless `{experience_mode}` is `chat`, add that the full interactive report is on the job's results page. Run
+Print the final summary from the synthesis `report.json` facts, with `--mode {experience_mode}`:
 
 ```bash
-uv run python scripts/start_local_ui.py --page results --job-id {job_id}
+uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --final --mode {experience_mode}
 ```
 
-and quote the `ui_url` it prints verbatim (`http://localhost:<port>/analysis/results/<job_id>`); never give the UI root or build the URL yourself.
+Its stdout is the whole summary, in Markdown, at the depth of the results page: the executive summary, the headline figures (workload, target engines, projected cost, with the source cost and the savings when the collection carries a baseline, the retired engines, the migration waves), one line per engine with why, the open risks by severity with the most severe ones and their mitigations, and where to look next: the files of the deliverables folder <!-- deliverables-list -->`./artifacts/{db}/{job}/deliverables/`: `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each file, who it is for and the assignment version<!-- /deliverables-list --> (it names any file that was not rendered), and, unless `{experience_mode}` is `chat`, the URLs of the results page and the summary page. Quote it verbatim in every mode but `ui`, where chat carries only the UI pointers: quote only its `Results page` line there. Do not retype, reorder or paraphrase it, add a figure of your own, or open `report.json` or any other artifact for it. The cache layer's figure is the reads it fronts, never shown as a workload fit. The summary is about the assessment, never about the run: do not comment on what you or a subagent did or did not read, and do not name a phase or step number. The copy `/synthesize` printed went to its subagent report, not to the user. A JSON line `{"status": "error", ...}` (or a non-zero exit) is a failure of the completion step: present its `message` (see Error Handling).
 
 End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db> mode=<mode>` (also when not `--auto`), where `<mode>` is `{experience_mode}` — `chat` if the UI never started or fell back. Under `--auto`, your final message must always contain a `MODERNIZE_RESULT` line: `complete` as above, or `failed phase=<phase> reason=<one line>`.
 

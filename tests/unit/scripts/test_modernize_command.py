@@ -198,37 +198,35 @@ def test_ui_mode_suppresses_phase_summaries_but_keeps_approval_gate_numbers() ->
     # UI pointers and the result line -- no reality-check/schema-design/
     # completion phase summaries.
     text = _modernize_text()
-    assert "Unless `{experience_mode}` is `ui`, present a brief summary" in text
+    assert "present a brief summary" not in text  # the gate block is the summary (#1307)
     assert "Unless `{experience_mode}` is `ui`, tell the user schema design is complete" in text
     completion = text.split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
-    assert "Unless `{experience_mode}` is `ui`, show the final report summary" in completion
+    assert "chat carries only the UI pointers: quote only its `Results page` line" in completion
     decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1].split(
         "### Phase 6", 1
     )[0]
     assert "including `ui`" in decision_gate
 
 
-def test_decision_gate_requires_the_concrete_distribution() -> None:
-    # Issue #329: a chat-only approval gate was satisfied by a vague prose
-    # summary ("Which engines survived", "Query distribution") with no
-    # required numbers, so a maintainer approved without seeing the v1 -> v2
-    # shift. The gate must now name the concrete status-line fields and
-    # forbid presenting it as unread.
+def test_decision_gate_quotes_the_printed_block_not_a_composed_table() -> None:
+    # Issue #329 asked the gate to show the concrete distribution; since #1307 the
+    # block is printed by a script from the artifacts and the command quotes it.
     text = _modernize_text()
     decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1].split(
         "### Phase 6", 1
     )[0]
-    for field in (
-        "before_distribution",
-        "after_distribution",
-        "consolidations",
-        "cache_overlay",
-        "schema_design_engines",
-    ):
-        assert f"`{field}`" in decision_gate, f"Decision Gate does not name `{field}`"
-    assert "never from opening" in decision_gate
-    assert "never tell the user you have not read it" in decision_gate
-    assert "identical" in decision_gate  # the no-op case is called out explicitly
+    assert (
+        "uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --gate"
+        in decision_gate
+    )
+    assert "Quote it verbatim" in decision_gate
+    assert "add no table or figure of your own" in decision_gate
+    assert "never come from opening `reality-check/output.json`" in decision_gate
+    assert "never tell the user you have not read them" in decision_gate
+    assert "It says so itself when reality check changed nothing" in decision_gate
+    # The status line still drives the steps after the gate.
+    assert "`schema_design_engines`" in text
+    assert "`pending_choices`" in text
 
 
 def test_schema_design_phase_names_the_engine_list_field() -> None:
@@ -769,16 +767,33 @@ _HAND_BUILT_UI_URL = re.compile(r"https?://localhost(?!:<port>)(?::\d+)?(?:/[^\s
 
 
 def test_approval_gate_points_at_the_job_summary_page_from_script_output() -> None:
+    # Since the PR 1358 e2e-llm runs the printed gate block carries the summary-page URL
+    # itself (unless chat), so one quoted block shows both and no second command can be
+    # batched away (#1307).
     decision_gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
     decision_gate = decision_gate.split("### Phase 6", 1)[0]
-    assert "uv run python scripts/start_local_ui.py --page summary --job-id {job_id}" in (
+    assert (
+        "uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} "
+        "--gate --mode {experience_mode}" in decision_gate
+    )
+    assert "scripts/start_local_ui.py --page summary" not in decision_gate
+    assert "/analysis/monitor/summary/<job_id>" in decision_gate
+    assert "never give the UI root or build the URL yourself" in decision_gate
+
+
+def test_the_gate_block_is_written_out_before_schema_design_starts() -> None:
+    # The PR 1358 e2e-llm runs batched the gate command with Phase 6's first command and
+    # never wrote the block out: tool output is not shown to the user.
+    decision_gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
+    decision_gate = " ".join(decision_gate.split("### Phase 6", 1)[0].split())
+    assert "Run it on its own, never in the same batch of tool calls as another command" in (
         decision_gate
     )
-    assert "quote the `ui_url` it prints verbatim" in decision_gate
-    assert "/analysis/monitor/summary/<job_id>" in decision_gate
+    assert "A tool result is not shown to the user" in decision_gate
+    assert "before any Phase 6 command or dispatch" in decision_gate
 
 
-def test_auto_skips_only_the_gate_question_never_its_table_or_url() -> None:
+def test_auto_skips_only_the_gate_question_never_its_block_or_url() -> None:
     # Issue #1242: an --auto --mode both run skipped the gate table and URL.
     text = _modernize_text()
     auto_arg = next(line for line in text.splitlines() if line.startswith("- `--auto`"))
@@ -788,18 +803,19 @@ def test_auto_skips_only_the_gate_question_never_its_table_or_url() -> None:
     decision_gate = text.split("### Decision Gate: Assignment Approval", 1)[1]
     decision_gate = decision_gate.split("### Phase 6", 1)[0]
     assert "With `--auto`, skip only that question" in decision_gate
-    assert "summary-page `ui_url` are still shown, in that order, before Phase 6 starts" in (
+    assert "the gate block and, unless `chat`, the summary-page `ui_url` are still shown" in (
         decision_gate
     )
+    assert "in that order, before Phase 6 starts" in decision_gate
 
 
-def test_completion_points_at_the_job_results_page_from_script_output() -> None:
+def test_completion_gets_the_results_page_url_from_the_printed_summary() -> None:
+    # Since #1307 the final summary lists the page URLs itself (job_page_url, the function
+    # `start_local_ui.py --page` prints), so the command no longer asks for them separately.
     completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
-    assert "uv run python scripts/start_local_ui.py --page results --job-id {job_id}" in (
-        completion
-    )
-    assert "quote the `ui_url` it prints verbatim" in completion
-    assert "/analysis/results/<job_id>" in completion
+    assert "--final --mode {experience_mode}" in completion
+    assert "the URLs of the results page and the summary page" in completion
+    assert "start_local_ui.py --page results" not in completion
 
 
 def test_no_command_hard_codes_a_local_ui_url() -> None:
@@ -821,21 +837,20 @@ def test_every_page_a_command_asks_for_is_one_start_local_ui_prints() -> None:
         for path in COMMANDS_DIR.glob("*.md")
         for page in re.findall(r"start_local_ui\.py --page (\S+) --job-id", path.read_text())
     }
-    assert asked == {"summary", "results", "assignments"}
+    # The summary and results pages come from print_summary.py's --gate and --final (#1307).
+    assert asked == {"assignments"}
     assert asked <= set(JOB_PAGES)
 
 
-def test_every_page_pointer_sits_inside_its_unless_chat_sentence() -> None:
-    # #1233 review: a chat run starts no UI, so each `--page` command must stay
-    # under the "Unless `{experience_mode}` is `chat`" sentence that introduces it.
-    paragraphs = _paragraphs(_modernize_text())
-    pointers = [i for i, p in enumerate(paragraphs) if "start_local_ui.py --page" in p]
-    assert len(pointers) == 2
-    for i in pointers:
-        assert paragraphs[i].startswith("```bash"), paragraphs[i]
-        lead = paragraphs[i - 1]
-        assert lead.startswith("Unless `{experience_mode}` is `chat`"), lead
-        assert lead.endswith("Run"), lead
+def test_every_page_pointer_follows_the_experience_mode() -> None:
+    # #1233 review: a chat run starts no UI, so no page URL may be printed for it. Since
+    # #1307 /modernize asks for no page itself: print_summary.py prints the URLs only
+    # when its --mode is not chat, and every call passes the run's mode.
+    text = _modernize_text()
+    assert "start_local_ui.py --page" not in text
+    calls = re.findall(r"scripts/print_summary\.py ([^\n`]*)", text)
+    assert len(calls) == 2
+    assert all(c.endswith("--mode {experience_mode}") for c in calls), calls
 
 
 def test_the_orchestrator_sets_single_pass_schema_status_from_the_script() -> None:
@@ -863,15 +878,16 @@ def test_error_handling_retries_every_non_complete_schema_status() -> None:
 
 def test_the_cache_layer_fit_is_never_presented_as_a_workload_fit() -> None:
     # Issue #1251: a final summary showed ElastiCache "Workload fit 41%" next to
-    # the owners' 73% and 85%, so the cache layer read as a weak choice.
+    # the owners' 73% and 85%. Since #1307 the script prints the summary, and its
+    # cache layer row carries the reads it fronts (tests/unit/report/test_printed_summary.py).
     synthesize = (COMMANDS_DIR / "synthesize.md").read_text()
     present = synthesize.split("5. **Present report**", 1)[1].split("6. **Update state**", 1)[0]
     present = " ".join(present.split())
-    assert "each owning engine's `routed_confidence` presented as its workload fit" in present
-    assert '"N% cache fit across its cached reads"' in present
-    assert "never in a workload fit column or list next to the owners' figures" in present
+    assert "the cache layer's figure is the reads it fronts, never a workload fit" in present
     completion = _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
-    assert "the cache layer's figure is its cache fit, never shown as a workload fit" in completion
+    assert "The cache layer's figure is the reads it fronts, never shown as a workload fit" in (
+        completion
+    )
 
 
 # Issue #1249: the final summary states only facts that were read, and never
@@ -880,18 +896,19 @@ def _completion_text() -> str:
     return _modernize_text().split("### Completion", 1)[1].split("## Waiting Rule", 1)[0]
 
 
-def test_completion_summary_states_only_facts_that_were_read() -> None:
+def test_completion_summary_is_printed_from_facts_and_quoted_verbatim() -> None:
     completion = _completion_text()
-    assert "Build the final summary only from the `/synthesize` subagent's final report" in (
-        completion
+    assert (
+        "uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --final"
+        in completion
     )
-    assert "do not open `report.json` or any other artifact for it" in completion
-    assert "leave out a line whose figure those sources do not carry" in completion
-    assert "Report any `partial` render `errors`" in completion
-    assert "List each top risk with its mitigation, or alone when the report gives none" in (
-        completion
-    )
-    assert "files you opened with the Read tool" not in completion
+    assert "from the synthesis `report.json` facts" in completion
+    assert "Quote it verbatim" in completion
+    assert "or open `report.json` or any other artifact for it" in completion
+    assert "at the depth of the results page" in completion
+    assert "one line per engine with why" in completion
+    assert "(it names any file that was not rendered)" in completion
+    assert "Build the final summary only from" not in completion  # no longer composed
 
 
 def test_completion_summary_never_narrates_the_run_itself() -> None:
@@ -916,11 +933,35 @@ def test_completion_keeps_the_result_line_rules() -> None:
     assert TOOL_USE_RULE + SEARCH_AS_IS in phase_7
 
 
-def test_synthesize_present_report_omits_missing_figures_and_process_comments() -> None:
+def test_synthesize_present_report_quotes_the_printed_summary() -> None:
     text = (COMMANDS_DIR / "synthesize.md").read_text()
-    step = text.split("5. **Present report**", 1)[1].split("6. **Update state**", 1)[0]
-    assert "Leave out a line whose figure the report does not" in step
-    assert "never comment on what you did or did not" in step
-    before_note, _, after_note = step.partition("than at the assignment gate.")
-    assert "State each figure plainly" in after_note
-    assert "State each figure plainly" not in before_note
+    step = " ".join(
+        text.split("5. **Present report**", 1)[1].split("6. **Update state**", 1)[0].split()
+    )
+    assert (
+        "uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --final"
+        in step
+    )
+    assert "quote it verbatim" in step
+    assert "leaves out a line whose figure the report does not carry" in step
+    assert "Never comment on what you did or did not read" in step
+    assert "read `report.json` for it" in step
+
+
+def test_the_commands_run_print_summary_only_with_its_documented_flags() -> None:
+    runs: list[str] = []
+    for path in sorted(COMMANDS_DIR.glob("*.md")):
+        for match in re.finditer(r"scripts/print_summary\.py ([^\n`]*)", path.read_text()):
+            args = match.group(1).split()
+            assert args[:4] == ["--job-id", "{job_id}", "--db", "{database_name}"], (
+                path.name,
+                args,
+            )
+            assert args[4:] in (
+                ["--gate", "--mode", "{experience_mode}"],
+                ["--final"],
+                ["--final", "--mode", "{experience_mode}"],
+            ), (path.name, args)
+            runs.append(f"{path.name} {args[4]}")
+    # The gate block and the completion summary in /modernize, and /synthesize's report step.
+    assert sorted(runs) == ["modernize.md --final", "modernize.md --gate", "synthesize.md --final"]

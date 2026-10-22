@@ -243,11 +243,11 @@ line -- and that the run's mode matches what actually happened (`chat` never
 started the local UI; `ui`/`both` started it via
 `scripts/start_local_ui.py` and got back a `{"status": "ready"}` tool
 result). In `ui`/`both` it also checks the UI pointers (#1242): the
-orchestrator's own text quotes the `ui_url` that
-`start_local_ui.py --page summary` printed, before schema design starts,
-and the one `--page results` printed. A miss only warns for now (stderr,
-and `ui_pointer_warning` in `summary.json` and `results.json`); it becomes a
-failure once #1249 moves the gate text into script output. It checks the
+orchestrator's own text quotes the summary page's URL, the `Summary page` line
+`print_summary.py --gate --mode ui|both` ends with (or the `ui_url`
+`start_local_ui.py --page summary` printed), before schema design starts,
+and the results page's, the `Results page` line of `print_summary.py --final --mode ui|both` (or the `ui_url` `--page results` printed, #1307). A miss fails the run (`transcript_error` in `results.json`); it only warned
+before #1307, while the model composed the gate and completion text. It checks the
 URLs only, not the gate table or the summary. Then the deliverable checks (`tests/e2e`, pointed at the headless
 job via `E2E_ARTIFACT_ROOT`/`E2E_DB`/`E2E_JOB` -- see "external-job mode"
 under `e2e.sh`'s own test suite) and the judge run exactly as they do for a
@@ -408,6 +408,13 @@ obvious entries lives here instead:
   always does, today) — keeping both avoids relying on that. The `*` form
   also covers `--page summary|results --job-id <id>`, which starts nothing
   and prints the job page's `ui_url` the command quotes (#1233).
+- `Bash(uv run python scripts/print_summary.py *)`: prints the approval-gate
+  block (`--gate`) and the completion summary (`--final`) the command quotes
+  verbatim (#1307); with `--mode ui|both` they carry the job pages' URLs, so
+  `/modernize` runs no `start_local_ui.py --page` call for them. It only reads the job's artifacts and prints Markdown, so
+  the figures come from the facts layer, not from the model; the sandbox
+  refuses its `--artifact-root` outside the repo and a `--db`/`--job-id` that
+  is not a plain name, like the other scripts.
 - `Bash(uv run python scripts/search_artifacts.py *)`: the headless session
   may have no Grep tool (Claude Code 2.1.288 in the internal validation
   pipeline does not) and `grep` through Bash is not allowed, so the shared
