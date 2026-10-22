@@ -37,6 +37,7 @@ _ROUND_TRIP = "a read-back artifact that keeps unknown keys on a round trip (#97
 _TRACE = "a DynamoDB decision trace section: unknown keys kept (#973)"
 _TRACE_BASE = "a shared decision trace section: unknown keys kept (#1187)"
 _DOCDB_TRACE = "a DocumentDB decision trace section: unknown keys kept (#1188)"
+_OS_TRACE = "an OpenSearch decision trace section: unknown keys kept (#1189)"
 _REPORT = "the synthesis report keeps unknown keys on a round trip"
 
 # "module.Class" -> (extra setting, why). Every other model uses "ignore".
@@ -116,6 +117,18 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
         "allow",
         "a recorded approval: a hand-written record keeps its other keys (#1257)",
     ),
+    **{
+        f"opensearch_decision_trace.{name}": ("allow", _OS_TRACE)
+        for name in (
+            "OpenSearchDecisionTrace",
+            "TraceSummary",
+            "QueryMatch",
+            "PatternSummary",
+            "RecommendationDerivation",
+            "TimeseriesCriteriaMet",
+            "WorkloadClassificationTrace",
+        )
+    },
     "elasticache_decision_trace.ElastiCacheDecisionTrace": (
         "allow",
         "the ElastiCache decision trace: unknown keys kept (#1191)",

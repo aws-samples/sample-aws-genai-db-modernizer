@@ -14762,6 +14762,471 @@
     "schema_hash": "64811396f5f4ddd35b69134c2e971b022be21b20b2f2428c09d3eabda00003c0",
     "version": "1.0"
   },
+  "opensearch_decision_trace.OpenSearchDecisionTrace": {
+    "fields": {
+      "agent": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "pattern_summaries": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "catalog_base_score": {
+                "required": true,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "pattern_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "pattern_type": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "queries_matched_count": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "integer"
+                }
+              },
+              "tables_involved": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "total_calls_per_second": {
+                "required": true,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "query_matches": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "matched_anti_patterns": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "matched_patterns": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "query_text_preview": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "signals": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "recommendation_derivations": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "final_recommendation": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "HIGHLY_SUITABLE",
+                    "MARGINAL",
+                    "NOT_SUITABLE",
+                    "SUITABLE"
+                  ]
+                }
+              },
+              "score_breakdown": {
+                "required": true,
+                "schema": {
+                  "kind": "object",
+                  "properties": {
+                    "complexity": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "cost": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "pattern_match": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "performance": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              "segments_contributing": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "weighted_confidence": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "integer"
+                }
+              },
+              "weights_used": {
+                "required": true,
+                "schema": {
+                  "additional": {
+                    "kind": "scalar",
+                    "type": "number"
+                  },
+                  "kind": "object"
+                }
+              },
+              "workload_type": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "NOT_SUITABLE",
+                    "SEARCH",
+                    "TIMESERIES"
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "summary": {
+        "required": true,
+        "schema": {
+          "kind": "object",
+          "properties": {
+            "anti_patterns_detected": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "patterns_detected": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_analyzed": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_matched": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_unmatched": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "tables_not_suitable": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "tables_search": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "tables_timeseries": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "timestamp_columns": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "name_fallbacks": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "object",
+                      "properties": {
+                        "query_id": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "read_by_name": {
+                          "required": true,
+                          "schema": {
+                            "items": {
+                              "kind": "scalar",
+                              "type": "string"
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "timestamp_column": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "kind": "array"
+                  }
+                },
+                "read_by": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "trace_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "workload_classifications": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "search_pattern_count": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "integer"
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "timeseries_criteria_met": {
+                "required": true,
+                "schema": {
+                  "kind": "object",
+                  "properties": {
+                    "high_ingest": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "boolean"
+                      }
+                    },
+                    "staleness": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "boolean"
+                      }
+                    },
+                    "timestamp_range": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              },
+              "workload_type": {
+                "required": true,
+                "schema": {
+                  "kind": "enum",
+                  "values": [
+                    "NOT_SUITABLE",
+                    "SEARCH",
+                    "TIMESERIES"
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      }
+    },
+    "schema_hash": "0c862a9a8c4473e51cb25159a18dc892b6443de065c1ca52c5f2cfbef5eb92ff",
+    "version": "1.0"
+  },
   "opensearch_model_output.OpenSearchModelOutputContract": {
     "fields": {
       "access_patterns": {

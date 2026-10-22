@@ -30,11 +30,12 @@ from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.dynamodb_pe_review import ROUTING_FLAGS_DESCRIPTION
 from src.contracts.model_flag import RoutingFlagEntry
+from src.contracts.opensearch_decision_trace import OpenSearchDecisionTrace
 from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.contracts.schema_design_output import TradeOff
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
-from src.shared.contract_versioning import load_contract
+from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.base_schema_agent import AgentInputPaths, enforce_design_numbers
@@ -241,7 +242,10 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
     decision_trace: dict = {}
     if trace_path and os.path.exists(trace_path):
         with open(trace_path, encoding="utf-8") as f:
-            decision_trace = json.load(f)
+            raw_trace = json.load(f)
+        # A versioned contract since #1189: refuse another MAJOR; a legacy trace loads.
+        check_contract_version(raw_trace, OpenSearchDecisionTrace, artifact=trace_path)
+        decision_trace = raw_trace
 
     print(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "

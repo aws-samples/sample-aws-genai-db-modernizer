@@ -35,6 +35,15 @@ from src.contracts.analysis_output import (
     TableRecommendation,
     WorkloadAnalysis,
 )
+from src.contracts.decision_trace_base import TimestampColumnsTrace
+from src.contracts.opensearch_decision_trace import (
+    OpenSearchDecisionTrace,
+    PatternSummary,
+    QueryMatch,
+    RecommendationDerivation,
+    TraceSummary,
+    WorkloadClassificationTrace,
+)
 from src.shared.catalog import patterns as catalog_patterns
 from src.tools.analysis.opensearch_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
@@ -1007,23 +1016,29 @@ def build_opensearch_decision_trace(
     tables_timeseries = sum(1 for wt in classifications.values() if wt == WorkloadType.TIMESERIES)
     tables_not_suitable = sum(1 for wt in classifications.values() if wt is None)
 
-    return {
-        "trace_version": "1.0",
-        "agent": "opensearch-analysis-agent",
-        "summary": {
-            "queries_analyzed": len(queries),
-            "queries_matched": len(matched_qids),
-            "queries_unmatched": len(queries) - len(matched_qids),
-            "patterns_detected": len(workload_analysis.patterns_detected),
-            "anti_patterns_detected": len(workload_analysis.anti_patterns_detected or []),
-            "tables_search": tables_search,
-            "tables_timeseries": tables_timeseries,
-            "tables_not_suitable": tables_not_suitable,
-        },
-        "query_matches": query_matches,
-        "pattern_summaries": pattern_summaries,
-        "workload_classifications": workload_classifications,
-        "recommendation_derivations": derivations,
+    # Built as its contract (#1189), so a section the contract refuses fails here, and
+    # returned as the dict the one writer stores (src/agents/analysis/decision_trace.py).
+    return OpenSearchDecisionTrace(
+        summary=TraceSummary(
+            queries_analyzed=len(queries),
+            queries_matched=len(matched_qids),
+            queries_unmatched=len(queries) - len(matched_qids),
+            patterns_detected=len(workload_analysis.patterns_detected),
+            anti_patterns_detected=len(workload_analysis.anti_patterns_detected or []),
+            tables_search=tables_search,
+            tables_timeseries=tables_timeseries,
+            tables_not_suitable=tables_not_suitable,
+        ),
+        query_matches=[QueryMatch.model_validate(m) for m in query_matches],
+        pattern_summaries=[PatternSummary.model_validate(p) for p in pattern_summaries],
+        workload_classifications=[
+            WorkloadClassificationTrace.model_validate(c) for c in workload_classifications
+        ],
+        recommendation_derivations=[
+            RecommendationDerivation.model_validate(d) for d in derivations
+        ],
         # How the timestamp-column fact was read (#935): by type, or by name and why.
-        "timestamp_columns": timestamp_column_trace(collector_output),
-    }
+        timestamp_columns=TimestampColumnsTrace.model_validate(
+            timestamp_column_trace(collector_output)
+        ),
+    ).model_dump(mode="json")

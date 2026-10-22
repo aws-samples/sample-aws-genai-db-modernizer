@@ -434,6 +434,7 @@ def test_every_internal_entry_has_a_one_line_reason() -> None:
         assert reason.strip() and "\n" not in reason, pattern
 
 
+@pytest.mark.passes_on_main
 def test_no_path_is_both_a_contract_and_internal() -> None:
     """An internal pattern never covers a registered contract file (a typed file
     leaves INTERNAL_ARTIFACTS when it is registered)."""
@@ -442,7 +443,7 @@ def test_no_path_is_both_a_contract_and_internal() -> None:
     trace = "db/job/analysis-dynamodb/decision-trace.json"
     assert _contract_of(trace) is not None
     assert not versioning.is_internal_artifact(trace)
-    assert versioning.is_internal_artifact("db/job/analysis-opensearch/decision-trace.json")
+    assert versioning.is_internal_artifact("db/job/analysis-aurora_mysql/decision-trace.json")
 
 
 @pytest.mark.parametrize(

@@ -234,7 +234,7 @@ def test_the_trace_file_is_a_registered_contract_file() -> None:
 
 
 @pytest.mark.passes_on_main
-@pytest.mark.parametrize("engine", ["opensearch", "aurora_postgresql"])
+@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
 def test_other_engines_traces_stay_unregistered(engine: str) -> None:
     assert contract_for_artifact(f"{DB}/{JOB}/analysis-{engine}/decision-trace.json") is None
 
@@ -335,8 +335,8 @@ def test_the_handler_stamps_the_current_version_over_a_stale_one(tmp_path: Path)
 @pytest.mark.passes_on_main
 def test_other_engines_traces_are_written_as_they_are(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    run_analysis(JOB, DB, "opensearch", store, llm_mode="none")
-    written = _raw_file(tmp_path, f"{DB}/{JOB}/analysis-opensearch/decision-trace.json")
+    run_analysis(JOB, DB, "aurora_mysql", store, llm_mode="none")
+    written = _raw_file(tmp_path, f"{DB}/{JOB}/analysis-aurora_mysql/decision-trace.json")
     assert "contract_version" not in written
 
 

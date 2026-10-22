@@ -1,0 +1,426 @@
+{
+  "trace_version": "1.0",
+  "agent": "opensearch-analysis-agent",
+  "summary": {
+    "queries_analyzed": 14,
+    "queries_matched": 7,
+    "queries_unmatched": 7,
+    "patterns_detected": 3,
+    "anti_patterns_detected": 2,
+    "tables_search": 0,
+    "tables_timeseries": 0,
+    "tables_not_suitable": 8
+  },
+  "query_matches": [
+    {
+      "query_id": "q01-product-by-id",
+      "query_text_preview": "SELECT product_id, name, description, price, stock_quantity, avg_rating, review_count FROM products WHERE product_id = ?",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q02-user-by-id",
+      "query_text_preview": "SELECT user_id, username, display_name, email FROM users WHERE user_id = ?",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q03-products-by-category",
+      "query_text_preview": "SELECT product_id, name, price, avg_rating FROM products WHERE category_id = ? AND is_active = 1 ORDER BY avg_rating DES",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q04-session-lookup",
+      "query_text_preview": "SELECT session_id, user_id, session_data, expires_at FROM sessions WHERE session_id = ? AND expires_at > NOW()",
+      "matched_patterns": [
+        "os-05"
+      ],
+      "matched_anti_patterns": [],
+      "signals": [
+        "time_range_query",
+        "timestamp_range_filter"
+      ]
+    },
+    {
+      "query_id": "q05-session-upsert",
+      "query_text_preview": "INSERT INTO sessions (session_id, user_id, session_data, expires_at, last_activity_at) VALUES (?, ?, ?, ?, NOW()) ON DUP",
+      "matched_patterns": [
+        "os-07"
+      ],
+      "matched_anti_patterns": [],
+      "signals": [
+        "high_ingest"
+      ]
+    },
+    {
+      "query_id": "q06-user-sessions",
+      "query_text_preview": "SELECT session_id, ip_address, user_agent, last_activity_at FROM sessions WHERE user_id = ? AND expires_at > NOW() ORDER",
+      "matched_patterns": [
+        "os-05"
+      ],
+      "matched_anti_patterns": [],
+      "signals": [
+        "time_range_query",
+        "timestamp_range_filter"
+      ]
+    },
+    {
+      "query_id": "q07-top-rated-products",
+      "query_text_preview": "SELECT product_id, name, avg_rating, review_count FROM products WHERE is_active = 1 AND review_count >= 10 ORDER BY avg_",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q08-best-sellers",
+      "query_text_preview": "SELECT p.product_id, p.name, SUM(oi.quantity) AS total_sold FROM products p JOIN order_items oi ON p.product_id = oi.pro",
+      "matched_patterns": [
+        "os-05"
+      ],
+      "matched_anti_patterns": [
+        "os-ap-01"
+      ],
+      "signals": [
+        "time_range_query",
+        "multi_table_join",
+        "timestamp_range_filter"
+      ]
+    },
+    {
+      "query_id": "q09-daily-revenue",
+      "query_text_preview": "SELECT DATE(created_at) AS order_date, COUNT(*) AS order_count, SUM(total_amount) AS revenue FROM orders WHERE created_a",
+      "matched_patterns": [
+        "os-05",
+        "os-06"
+      ],
+      "matched_anti_patterns": [],
+      "signals": [
+        "time_range_query",
+        "time_aggregation",
+        "timestamp_range_filter"
+      ]
+    },
+    {
+      "query_id": "q10-hourly-orders",
+      "query_text_preview": "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS hour_bucket, COUNT(*) AS orders, SUM(total_amount) AS revenue FRO",
+      "matched_patterns": [
+        "os-05"
+      ],
+      "matched_anti_patterns": [],
+      "signals": [
+        "time_range_query",
+        "timestamp_range_filter"
+      ]
+    },
+    {
+      "query_id": "q11-cart-items",
+      "query_text_preview": "SELECT c.cart_id, c.product_id, c.quantity, p.name, p.price FROM shopping_carts c JOIN products p ON c.product_id = p.pr",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q12-create-order",
+      "query_text_preview": "INSERT INTO orders (user_id, status, total_amount, shipping_address_json, created_at, updated_at) VALUES (?, 'pending', ",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q13-full-catalog-export",
+      "query_text_preview": "SELECT p.product_id, p.name, p.description, p.price, p.stock_quantity, p.avg_rating, p.review_count, p.category_id FROM ",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "signals": []
+    },
+    {
+      "query_id": "q14-product-reviews",
+      "query_text_preview": "SELECT r.review_id, r.user_id, u.username, r.rating, r.title, r.body, r.created_at FROM product_reviews r JOIN users u O",
+      "matched_patterns": [],
+      "matched_anti_patterns": [
+        "os-ap-03",
+        "os-ap-03"
+      ],
+      "signals": []
+    }
+  ],
+  "pattern_summaries": [
+    {
+      "pattern_id": "os-05",
+      "pattern_type": "time-range-query",
+      "catalog_base_score": 85,
+      "queries_matched_count": 5,
+      "tables_involved": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.products",
+        "ecommerce.sessions"
+      ],
+      "total_calls_per_second": 16.8
+    },
+    {
+      "pattern_id": "os-06",
+      "pattern_type": "time-aggregation",
+      "catalog_base_score": 90,
+      "queries_matched_count": 1,
+      "tables_involved": [
+        "ecommerce.orders"
+      ],
+      "total_calls_per_second": 0.2
+    },
+    {
+      "pattern_id": "os-07",
+      "pattern_type": "high-ingest",
+      "catalog_base_score": 90,
+      "queries_matched_count": 1,
+      "tables_involved": [
+        "ecommerce.sessions"
+      ],
+      "total_calls_per_second": 10.0
+    }
+  ],
+  "workload_classifications": [
+    {
+      "table_id": "ecommerce.users",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": false,
+        "high_ingest": false,
+        "staleness": true
+      }
+    },
+    {
+      "table_id": "ecommerce.products",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": true,
+        "high_ingest": false,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.orders",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": true,
+        "high_ingest": false,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.order_items",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": true,
+        "high_ingest": false,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.sessions",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": true,
+        "high_ingest": true,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.product_reviews",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": false,
+        "high_ingest": false,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.shopping_carts",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": false,
+        "high_ingest": false,
+        "staleness": false
+      }
+    },
+    {
+      "table_id": "ecommerce.daily_analytics",
+      "workload_type": "NOT_SUITABLE",
+      "reason": "No search or time-series patterns detected: NOT_SUITABLE",
+      "search_pattern_count": 0,
+      "timeseries_criteria_met": {
+        "timestamp_range": false,
+        "high_ingest": false,
+        "staleness": true
+      }
+    }
+  ],
+  "recommendation_derivations": [
+    {
+      "table_id": "ecommerce.users",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.products",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.orders",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.order_items",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.sessions",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.product_reviews",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.shopping_carts",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    },
+    {
+      "table_id": "ecommerce.daily_analytics",
+      "workload_type": "NOT_SUITABLE",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 0,
+        "performance": 0,
+        "cost": 0
+      },
+      "weights_used": {
+        "pattern_match": 0.45,
+        "complexity": 0.25,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 0,
+      "final_recommendation": "NOT_SUITABLE"
+    }
+  ],
+  "timestamp_columns": {
+    "read_by": "column type",
+    "name_fallbacks": []
+  }
+}

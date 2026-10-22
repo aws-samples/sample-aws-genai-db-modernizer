@@ -83,11 +83,12 @@ def _read_decision_trace(
     if target_type not in ("documentdb", "opensearch"):
         return None
     trace_key = f"{database_name}/{job_id}/analysis-{target_type}/decision-trace.json"
-    try:
-        return store.read_json(trace_key)
-    except Exception as exc:
-        print(f"[schema-design/{target_type}] Decision trace not found: {exc}")
+    if not store.exists(trace_key):
+        print(f"[schema-design/{target_type}] Decision trace not found: {trace_key}")
         return None
+    # Only a missing trace is skipped. A trace at another contract MAJOR (or one the
+    # store cannot read) raises, and stops the designer like every other checked read.
+    return store.read_json(trace_key)
 
 
 def _design_analysis_output(

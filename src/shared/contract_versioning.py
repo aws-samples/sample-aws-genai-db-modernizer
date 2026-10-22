@@ -245,9 +245,7 @@ def is_model_io(path: str) -> bool:
 # MySQL, #1191 ElastiCache). ``write_decision_trace`` writes these as plain dicts and
 # refuses any other untyped trace; ``tests/unit/contracts/test_decision_trace_base.py``
 # pins the set exactly.
-UNTYPED_TRACE_ENGINES: frozenset[str] = frozenset(
-    {"aurora_mysql", "aurora_postgresql", "opensearch"}
-)
+UNTYPED_TRACE_ENGINES: frozenset[str] = frozenset({"aurora_mysql", "aurora_postgresql"})
 
 # Internal artifacts (ADR-008 Decision 1, amendment of 2026-10-20, #1192): every other
 # JSON file a run writes that is neither a registered contract (below) nor model I/O
@@ -413,6 +411,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (
         r"analysis-elasticache/decision-trace\.json",
         "src.contracts.elasticache_decision_trace:ElastiCacheDecisionTrace",
+    ),
+    (
+        r"analysis-opensearch/decision-trace\.json",
+        "src.contracts.opensearch_decision_trace:OpenSearchDecisionTrace",
     ),
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),

@@ -713,6 +713,15 @@
     ],
     "version": "1.10"
   },
+  "opensearch_decision_trace.OpenSearchWorkloadType": {
+    "module": "opensearch_decision_trace",
+    "values": [
+      "NOT_SUITABLE",
+      "SEARCH",
+      "TIMESERIES"
+    ],
+    "version": "1.0"
+  },
   "phase_models.Phase": {
     "module": "phase_models",
     "values": [
