@@ -1,10 +1,9 @@
-"""Every analysis engine's decision trace is a contract, or pending (ADR-008 Decision 1, #1187).
+"""Every analysis engine's decision trace is a contract (ADR-008 Decision 1, #1187, #1190).
 
 Only the DynamoDB trace was a versioned contract; the other engines' traces were
 plain dicts that any change passed. The shared sections now live in
 ``DecisionTraceBase``, ``write_decision_trace`` refuses a trace that has no
-registered contract, and the engines not typed yet are listed in
-``UNTYPED_TRACE_ENGINES``, which may only shrink.
+registered contract, and every analysis engine's trace is registered.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import pytest
 
 from src.agents.analysis import decision_trace as writer
 from src.agents.analysis.decision_trace import (
-    UNTYPED_TRACE_ENGINES,
     UntypedDecisionTraceError,
     trace_engine,
     write_decision_trace,
@@ -32,13 +30,12 @@ from tests.fixtures.ecommerce_collector_output import get_ecommerce_collector_ou
 
 DB, JOB = "mydb", "job-1"
 
-# The exact pending set: an engine PR that types its trace removes the engine here
-# and from UNTYPED_TRACE_ENGINES in the same change, and moves it to TYPED_ENGINES.
-# Putting an engine back (or dropping a registration) means editing these sets,
-# which a reviewer sees; a subset check would let the baseline go stale.
-PENDING_BASELINE = frozenset({"aurora_mysql", "aurora_postgresql"})
-# The engines whose trace is a registered contract.
-TYPED_ENGINES = frozenset({"documentdb", "dynamodb", "elasticache", "opensearch"})
+# The engines whose trace is a registered contract: every analysis engine. Dropping a
+# registration, or adding an engine without one, means editing this set, which a
+# reviewer sees.
+TYPED_ENGINES = frozenset(
+    {"aurora_mysql", "aurora_postgresql", "documentdb", "dynamodb", "elasticache", "opensearch"}
+)
 
 # Trace contracts that do not extend DecisionTraceBase, each with its reason. Every
 # other registered trace contract must extend it.
@@ -59,40 +56,24 @@ def _analysis_engines() -> frozenset[str]:
     return engine_ids(status="active")
 
 
-def test_every_analysis_trace_is_a_contract_or_pending() -> None:
-    problems = []
-    for engine in sorted(_analysis_engines()):
-        registered = contract_for_artifact(_key(engine)) is not None
-        pending = engine in UNTYPED_TRACE_ENGINES
-        if not registered and not pending:
-            problems.append(f"{engine}: no contract registered and not pending")
-        if registered and pending:
-            problems.append(f"{engine}: registered, so remove it from UNTYPED_TRACE_ENGINES")
+def test_every_analysis_trace_is_a_registered_contract() -> None:
+    problems = [
+        f"{engine}: no contract registered in _ARTIFACT_CONTRACTS"
+        for engine in sorted(_analysis_engines())
+        if contract_for_artifact(_key(engine)) is None
+    ]
     assert not problems, "\n".join(problems)
-
-
-def test_the_pending_set_is_exactly_the_baseline() -> None:
-    assert UNTYPED_TRACE_ENGINES == PENDING_BASELINE, (
-        "UNTYPED_TRACE_ENGINES moved: type a trace by removing its engine from both "
-        "UNTYPED_TRACE_ENGINES and PENDING_BASELINE (and adding it to TYPED_ENGINES); "
-        "an engine never goes back to a plain dict"
-    )
-    unknown = sorted(UNTYPED_TRACE_ENGINES - _analysis_engines())
-    assert not unknown, f"not an analysis engine, remove from UNTYPED_TRACE_ENGINES: {unknown}"
 
 
 def test_the_typed_engines_are_exactly_the_registered_traces() -> None:
     registered = {e for e in _analysis_engines() if contract_for_artifact(_key(e)) is not None}
     assert registered == TYPED_ENGINES
-    assert not TYPED_ENGINES & PENDING_BASELINE
-    assert TYPED_ENGINES | PENDING_BASELINE == _analysis_engines()
+    assert TYPED_ENGINES == _analysis_engines()
 
 
-def test_exactly_the_pending_traces_are_declared_internal() -> None:
-    """A pending engine's trace is a declared internal artifact (#1192), a typed one
-    is a contract and not internal."""
-    internal = {e for e in _analysis_engines() if is_internal_artifact(_key(e))}
-    assert internal == UNTYPED_TRACE_ENGINES
+def test_no_analysis_trace_is_a_declared_internal_artifact() -> None:
+    """A typed trace is a contract (#1192), so none is listed as internal."""
+    assert not {e for e in _analysis_engines() if is_internal_artifact(_key(e))}
 
 
 def test_every_trace_contract_extends_the_base_unless_exempt() -> None:
@@ -210,23 +191,15 @@ def test_a_shared_derivation_without_segments_writes_none() -> None:
     assert "segments_contributing" not in derivation.model_dump()
 
 
-def test_a_pending_engine_trace_is_written_as_it_is(tmp_path: Path) -> None:
-    store = LocalArtifactStore(base_dir=str(tmp_path))
-    engine = sorted(UNTYPED_TRACE_ENGINES)[0]
-    trace = {"agent": f"{engine}-analysis-agent", "anything": [1, 2]}
-    write_decision_trace(store, _key(engine), trace)
-    assert json.loads((tmp_path / _key(engine)).read_text()) == trace
-
-
-def test_an_untyped_trace_for_an_engine_not_pending_is_refused(
+def test_a_trace_with_no_registered_contract_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Dropping an engine's registration does not turn its trace back into a plain dict."""
     store = LocalArtifactStore(base_dir=str(tmp_path))
-    engine = sorted(UNTYPED_TRACE_ENGINES)[0]
-    monkeypatch.setattr(writer, "UNTYPED_TRACE_ENGINES", UNTYPED_TRACE_ENGINES - {engine})
-    with pytest.raises(UntypedDecisionTraceError, match=engine):
-        write_decision_trace(store, _key(engine), {"agent": "x"})
-    assert not (tmp_path / _key(engine)).exists()
+    monkeypatch.setattr(writer, "contract_for_artifact", lambda key: None)
+    with pytest.raises(UntypedDecisionTraceError, match="aurora_mysql"):
+        write_decision_trace(store, _key("aurora_mysql"), {"agent": "x"})
+    assert not (tmp_path / _key("aurora_mysql")).exists()
 
 
 def test_an_unknown_engine_trace_is_refused(tmp_path: Path) -> None:

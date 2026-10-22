@@ -443,7 +443,7 @@ def test_no_path_is_both_a_contract_and_internal() -> None:
     trace = "db/job/analysis-dynamodb/decision-trace.json"
     assert _contract_of(trace) is not None
     assert not versioning.is_internal_artifact(trace)
-    assert versioning.is_internal_artifact("db/job/analysis-aurora_mysql/decision-trace.json")
+    assert versioning.is_internal_artifact("db/job/collector/sql_shadow.json")
 
 
 @pytest.mark.parametrize(

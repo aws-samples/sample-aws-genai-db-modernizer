@@ -315,7 +315,7 @@ def _apply_<target>_adjustments(scores, profile):
 
 The agent writes both. Referee-Synthesis only reads `analysis.json`. Specialists read `decision-trace.json` for calibration. No contract change needed.
 
-Write the trace with `write_decision_trace` (`src/agents/analysis/decision_trace.py`). The DynamoDB trace is a versioned contract, `DynamoDBDecisionTrace` in `src/contracts/dynamodb_decision_trace.py` (#973): it is written through that model, carries a `contract_version`, and is checked on read like every stored contract. The other engines' traces are still plain dicts; the example below is the DynamoDB shape.
+Write the trace with `write_decision_trace` (`src/agents/analysis/decision_trace.py`). Every engine's trace is a versioned contract in `src/contracts/` (for example `DynamoDBDecisionTrace` in `dynamodb_decision_trace.py`, #973): it is written through its model, carries a `contract_version`, and is checked on read like every stored contract. The writer refuses a trace with no contract registered for its path in `src/shared/contract_versioning.py`, so a new engine types its trace (on `DecisionTraceBase` if it shares the core sections) and registers the path. The example below is the DynamoDB shape.
 
 ### Trace structure
 

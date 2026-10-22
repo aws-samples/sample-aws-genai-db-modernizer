@@ -38,6 +38,7 @@ _TRACE = "a DynamoDB decision trace section: unknown keys kept (#973)"
 _TRACE_BASE = "a shared decision trace section: unknown keys kept (#1187)"
 _DOCDB_TRACE = "a DocumentDB decision trace section: unknown keys kept (#1188)"
 _OS_TRACE = "an OpenSearch decision trace section: unknown keys kept (#1189)"
+_AURORA_TRACE = "an Aurora decision trace section: unknown keys kept (#1190)"
 _REPORT = "the synthesis report keeps unknown keys on a round trip"
 
 # "module.Class" -> (extra setting, why). Every other model uses "ignore".
@@ -127,6 +128,15 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "RecommendationDerivation",
             "TimeseriesCriteriaMet",
             "WorkloadClassificationTrace",
+        )
+    },
+    **{
+        f"aurora_decision_trace.{name}": ("allow", _AURORA_TRACE)
+        for name in (
+            "AuroraDecisionTrace",
+            "QueryMatch",
+            "PatternSummary",
+            "RecommendationDerivation",
         )
     },
     "elasticache_decision_trace.ElastiCacheDecisionTrace": (

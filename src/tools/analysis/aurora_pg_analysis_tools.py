@@ -23,6 +23,13 @@ from src.contracts.analysis_output import (
     TableRecommendation,
     WorkloadAnalysis,
 )
+from src.contracts.aurora_decision_trace import (
+    AuroraDecisionTrace,
+    PatternSummary,
+    QueryMatch,
+    RecommendationDerivation,
+)
+from src.contracts.decision_trace_base import LlmAdvisorTrace, TraceSummary
 from src.tools.analysis.aurora_common_analysis_tools import (
     _apply_aurora_common_adjustments,
     _count_inbound_fks,
@@ -364,22 +371,21 @@ def build_aurora_pg_decision_trace(
             }
         )
 
-    return {
-        "trace_version": "1.0",
-        "agent": "aurora-pg-analysis-agent",
-        "summary": {
-            "queries_analyzed": len(queries),
-            "queries_matched": len(matched_qids),
-            "queries_unmatched": len(queries) - len(matched_qids),
-            "patterns_detected": len(workload_analysis.patterns_detected),
-            "anti_patterns_detected": len(workload_analysis.anti_patterns_detected or []),
-        },
-        "query_matches": query_matches,
-        "pattern_summaries": pattern_summaries,
-        "recommendation_derivations": derivations,
-        "llm_advisor": {
-            "status": "skipped",
-            "duration_seconds": 0.0,
-            "attempts": 0,
-        },
-    }
+    # Built as its contract (#1190), so a section the contract refuses fails here, and
+    # returned as the dict the one writer stores (src/agents/analysis/decision_trace.py).
+    return AuroraDecisionTrace(
+        agent="aurora-pg-analysis-agent",
+        summary=TraceSummary(
+            queries_analyzed=len(queries),
+            queries_matched=len(matched_qids),
+            queries_unmatched=len(queries) - len(matched_qids),
+            patterns_detected=len(workload_analysis.patterns_detected),
+            anti_patterns_detected=len(workload_analysis.anti_patterns_detected or []),
+        ),
+        query_matches=[QueryMatch.model_validate(m) for m in query_matches],
+        pattern_summaries=[PatternSummary.model_validate(p) for p in pattern_summaries],
+        recommendation_derivations=[
+            RecommendationDerivation.model_validate(d) for d in derivations
+        ],
+        llm_advisor=LlmAdvisorTrace(status="skipped", duration_seconds=0.0, attempts=0),
+    ).model_dump(mode="json")

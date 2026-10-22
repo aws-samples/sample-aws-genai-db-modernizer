@@ -24,11 +24,12 @@ from strands import Agent
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_customer_requests
 from src.contracts.analysis_output import AnalysisOutputContract
+from src.contracts.aurora_decision_trace import AuroraDecisionTrace
 from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
-from src.shared.contract_versioning import load_contract
+from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.aurora_common.bedrock_delta import designer_prompt as build_designer_prompt
@@ -146,7 +147,10 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
     decision_trace: dict = {}
     if trace_path and os.path.exists(trace_path):
         with open(trace_path, encoding="utf-8") as f:
-            decision_trace = json.load(f)
+            raw_trace = json.load(f)
+        # A versioned contract since #1190: refuse another MAJOR; a legacy trace loads.
+        check_contract_version(raw_trace, AuroraDecisionTrace, artifact=trace_path)
+        decision_trace = raw_trace
 
     print(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "

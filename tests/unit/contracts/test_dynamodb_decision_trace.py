@@ -233,12 +233,6 @@ def test_the_trace_file_is_a_registered_contract_file() -> None:
     assert contract_for_artifact(TRACE_KEY) is DynamoDBDecisionTrace
 
 
-@pytest.mark.passes_on_main
-@pytest.mark.parametrize("engine", ["aurora_mysql", "aurora_postgresql"])
-def test_other_engines_traces_stay_unregistered(engine: str) -> None:
-    assert contract_for_artifact(f"{DB}/{JOB}/analysis-{engine}/decision-trace.json") is None
-
-
 def test_a_trace_written_before_the_version_still_loads(tmp_path: Path) -> None:
     legacy = json.loads(json.dumps(_built_trace()))
     del legacy["contract_version"]  # what every trace before #973 looked like
@@ -330,14 +324,6 @@ def test_the_handler_stamps_the_current_version_over_a_stale_one(tmp_path: Path)
     with patch("src.agents.analysis.dynamodb_analysis_agent.analyze_for_dynamodb", stale):
         run_analysis(JOB, DB, "dynamodb", store, llm_mode="none")
     assert _raw_file(tmp_path, TRACE_KEY)["contract_version"] == CURRENT
-
-
-@pytest.mark.passes_on_main
-def test_other_engines_traces_are_written_as_they_are(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    run_analysis(JOB, DB, "aurora_mysql", store, llm_mode="none")
-    written = _raw_file(tmp_path, f"{DB}/{JOB}/analysis-aurora_mysql/decision-trace.json")
-    assert "contract_version" not in written
 
 
 def test_the_analysis_script_writes_the_trace_through_its_model(tmp_path: Path) -> None:

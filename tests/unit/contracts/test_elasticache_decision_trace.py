@@ -17,7 +17,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.agents.analysis.decision_trace import UNTYPED_TRACE_ENGINES
 from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
 from src.agents.analysis.handler import run_analysis
 from src.agents.schema_design.group_trace import scope_decision_trace
@@ -90,7 +89,6 @@ def _put(tmp_path: Path, key: str, data: dict) -> None:
 
 def test_the_trace_is_registered_and_no_longer_pending() -> None:
     assert contract_for_artifact(TRACE_KEY) is ElastiCacheDecisionTrace
-    assert "elasticache" not in UNTYPED_TRACE_ENGINES
 
 
 def test_the_agent_builds_the_model() -> None:

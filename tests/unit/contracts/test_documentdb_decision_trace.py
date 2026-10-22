@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.agents.analysis.decision_trace import UNTYPED_TRACE_ENGINES
 from src.agents.analysis.documentdb_analysis_agent import (
     analyze_for_documentdb_deterministic,
     apply_documentdb_llm_output,
@@ -82,7 +81,6 @@ def _put(tmp_path: Path, key: str, data: dict) -> None:
 def test_the_trace_is_registered_on_the_shared_base() -> None:
     assert contract_for_artifact(TRACE_KEY) is DocumentDBDecisionTrace
     assert issubclass(DocumentDBDecisionTrace, DecisionTraceBase)
-    assert "documentdb" not in UNTYPED_TRACE_ENGINES
 
 
 def test_the_builder_builds_the_model() -> None:

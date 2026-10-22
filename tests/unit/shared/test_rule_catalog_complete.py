@@ -189,11 +189,6 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         "the agent types the container entrypoint dispatches to analysis: pinned to every "
         "catalog engine id by test_engine_catalog.TestEveryKnownEngineHasACatalogFile",
     ),
-    "src/shared/contract_versioning.py": (
-        frozenset({"UNTYPED_TRACE_ENGINES"}),
-        "the engines whose decision trace is not a contract yet (#1187): a migration list "
-        "that only shrinks, pinned by test_decision_trace_base, not a routing rule",
-    ),
     "src/api/services/local_execution.py": (frozenset({"_ENGINES"}), _PINNED),
     "src/atx_orchestrator/core.py": (
         frozenset(

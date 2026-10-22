@@ -2791,6 +2791,389 @@
     "schema_hash": "481b2b83377b28119ca74ec058bdc4f420bd95b4ef3c65a9ccdb36a9892493c6",
     "version": "1.0"
   },
+  "aurora_decision_trace.AuroraDecisionTrace": {
+    "fields": {
+      "agent": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "llm_advisor": {
+        "required": true,
+        "schema": {
+          "kind": "object",
+          "properties": {
+            "attempts": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "duration_seconds": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "number"
+              }
+            },
+            "status": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "pattern_summaries": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "catalog_base_score": {
+                "required": true,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "pattern_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "pattern_type": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "queries_matched_count": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "integer"
+                }
+              },
+              "tables_involved": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "total_calls_per_second": {
+                "required": true,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "query_matches": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "locking_clause": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "matched_anti_patterns": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "matched_patterns": {
+                "required": true,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "mysql_features": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "pg_features": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "query_text_preview": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "recommendation_derivations": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "migration_complexity": {
+                "required": true,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "enum",
+                      "values": [
+                        "HIGH",
+                        "LOW",
+                        "MEDIUM"
+                      ]
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "score_breakdown": {
+                "required": true,
+                "schema": {
+                  "kind": "object",
+                  "properties": {
+                    "complexity": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "cost": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "pattern_match": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    },
+                    "performance": {
+                      "required": true,
+                      "schema": {
+                        "kind": "scalar",
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              },
+              "segments_contributing": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "table_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "weighted_confidence": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "integer"
+                }
+              },
+              "weights_used": {
+                "required": true,
+                "schema": {
+                  "additional": {
+                    "kind": "scalar",
+                    "type": "number"
+                  },
+                  "kind": "object"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
+      "summary": {
+        "required": true,
+        "schema": {
+          "kind": "object",
+          "properties": {
+            "anti_patterns_detected": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "patterns_detected": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_analyzed": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_matched": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            },
+            "queries_unmatched": {
+              "required": true,
+              "schema": {
+                "kind": "scalar",
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "trace_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      }
+    },
+    "schema_hash": "5ae15b9153de0172a81b9b183f7b17a3e68e21aeffd35742d34f80d2e285b102",
+    "version": "1.0"
+  },
   "aurora_mysql_model_output.AuroraMySQLModelOutputContract": {
     "fields": {
       "access_patterns": {

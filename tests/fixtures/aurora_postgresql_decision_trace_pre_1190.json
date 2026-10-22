@@ -1,0 +1,386 @@
+{
+  "trace_version": "1.0",
+  "agent": "aurora-pg-analysis-agent",
+  "summary": {
+    "queries_analyzed": 14,
+    "queries_matched": 13,
+    "queries_unmatched": 1,
+    "patterns_detected": 6,
+    "anti_patterns_detected": 2
+  },
+  "query_matches": [
+    {
+      "query_id": "q01-product-by-id",
+      "query_text_preview": "SELECT product_id, name, description, price, stock_quantity, avg_rating, review_count FROM products WHERE product_id = ?",
+      "matched_patterns": [
+        "aurora-common-10",
+        "aurora-common-12"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q02-user-by-id",
+      "query_text_preview": "SELECT user_id, username, display_name, email FROM users WHERE user_id = ?",
+      "matched_patterns": [
+        "aurora-common-10",
+        "aurora-common-12"
+      ],
+      "matched_anti_patterns": [
+        "aurora-anti-05",
+        "aurora-anti-06"
+      ],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q03-products-by-category",
+      "query_text_preview": "SELECT product_id, name, price, avg_rating FROM products WHERE category_id = ? AND is_active = 1 ORDER BY avg_rating DES",
+      "matched_patterns": [
+        "aurora-common-08",
+        "aurora-common-10"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q04-session-lookup",
+      "query_text_preview": "SELECT session_id, user_id, session_data, expires_at FROM sessions WHERE session_id = ? AND expires_at > NOW()",
+      "matched_patterns": [
+        "aurora-common-10",
+        "aurora-common-12"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q05-session-upsert",
+      "query_text_preview": "INSERT INTO sessions (session_id, user_id, session_data, expires_at, last_activity_at) VALUES (?, ?, ?, ?, NOW()) ON DUP",
+      "matched_patterns": [
+        "aurora-common-10"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q06-user-sessions",
+      "query_text_preview": "SELECT session_id, ip_address, user_agent, last_activity_at FROM sessions WHERE user_id = ? AND expires_at > NOW() ORDER",
+      "matched_patterns": [
+        "aurora-common-10"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q07-top-rated-products",
+      "query_text_preview": "SELECT product_id, name, avg_rating, review_count FROM products WHERE is_active = 1 AND review_count >= 10 ORDER BY avg_",
+      "matched_patterns": [
+        "aurora-common-08",
+        "aurora-common-10"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q08-best-sellers",
+      "query_text_preview": "SELECT p.product_id, p.name, SUM(oi.quantity) AS total_sold FROM products p JOIN order_items oi ON p.product_id = oi.pro",
+      "matched_patterns": [
+        "aurora-common-01",
+        "aurora-common-02",
+        "aurora-common-08"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q09-daily-revenue",
+      "query_text_preview": "SELECT DATE(created_at) AS order_date, COUNT(*) AS order_count, SUM(total_amount) AS revenue FROM orders WHERE created_a",
+      "matched_patterns": [
+        "aurora-common-02"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q10-hourly-orders",
+      "query_text_preview": "SELECT DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00') AS hour_bucket, COUNT(*) AS orders, SUM(total_amount) AS revenue FRO",
+      "matched_patterns": [
+        "aurora-common-02"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q11-cart-items",
+      "query_text_preview": "SELECT c.cart_id, c.product_id, c.quantity, p.name, p.price FROM shopping_carts c JOIN products p ON c.product_id = p.pr",
+      "matched_patterns": [
+        "aurora-common-09"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q12-create-order",
+      "query_text_preview": "INSERT INTO orders (user_id, status, total_amount, shipping_address_json, created_at, updated_at) VALUES (?, 'pending', ",
+      "matched_patterns": [
+        "aurora-common-10"
+      ],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q13-full-catalog-export",
+      "query_text_preview": "SELECT p.product_id, p.name, p.description, p.price, p.stock_quantity, p.avg_rating, p.review_count, p.category_id FROM ",
+      "matched_patterns": [],
+      "matched_anti_patterns": [],
+      "pg_features": [],
+      "locking_clause": null
+    },
+    {
+      "query_id": "q14-product-reviews",
+      "query_text_preview": "SELECT r.review_id, r.user_id, u.username, r.rating, r.title, r.body, r.created_at FROM product_reviews r JOIN users u O",
+      "matched_patterns": [
+        "aurora-common-08",
+        "aurora-common-09"
+      ],
+      "matched_anti_patterns": [
+        "aurora-anti-05",
+        "aurora-anti-06"
+      ],
+      "pg_features": [],
+      "locking_clause": null
+    }
+  ],
+  "pattern_summaries": [
+    {
+      "pattern_id": "aurora-common-01",
+      "pattern_type": "complex-join",
+      "catalog_base_score": 90,
+      "queries_matched_count": 1,
+      "tables_involved": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.products"
+      ],
+      "total_calls_per_second": 0.5
+    },
+    {
+      "pattern_id": "aurora-common-02",
+      "pattern_type": "aggregation-analytics",
+      "catalog_base_score": 85,
+      "queries_matched_count": 3,
+      "tables_involved": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.products"
+      ],
+      "total_calls_per_second": 0.8
+    },
+    {
+      "pattern_id": "aurora-common-08",
+      "pattern_type": "pagination",
+      "catalog_base_score": 85,
+      "queries_matched_count": 4,
+      "tables_involved": [
+        "ecommerce.order_items",
+        "ecommerce.orders",
+        "ecommerce.product_reviews",
+        "ecommerce.products",
+        "ecommerce.users"
+      ],
+      "total_calls_per_second": 5.5
+    },
+    {
+      "pattern_id": "aurora-common-09",
+      "pattern_type": "simple-join",
+      "catalog_base_score": 70,
+      "queries_matched_count": 2,
+      "tables_involved": [
+        "ecommerce.product_reviews",
+        "ecommerce.products",
+        "ecommerce.shopping_carts",
+        "ecommerce.users"
+      ],
+      "total_calls_per_second": 4.5
+    },
+    {
+      "pattern_id": "aurora-common-10",
+      "pattern_type": "standard-crud",
+      "catalog_base_score": 60,
+      "queries_matched_count": 8,
+      "tables_involved": [
+        "ecommerce.orders",
+        "ecommerce.products",
+        "ecommerce.sessions",
+        "ecommerce.users"
+      ],
+      "total_calls_per_second": 45.0
+    },
+    {
+      "pattern_id": "aurora-common-12",
+      "pattern_type": "key-value-lookup",
+      "catalog_base_score": 80,
+      "queries_matched_count": 3,
+      "tables_involved": [
+        "ecommerce.products",
+        "ecommerce.sessions",
+        "ecommerce.users"
+      ],
+      "total_calls_per_second": 30.0
+    }
+  ],
+  "recommendation_derivations": [
+    {
+      "table_id": "ecommerce.users",
+      "score_breakdown": {
+        "pattern_match": 87,
+        "complexity": 95,
+        "performance": 40,
+        "cost": 75
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 78,
+      "migration_complexity": "HIGH"
+    },
+    {
+      "table_id": "ecommerce.products",
+      "score_breakdown": {
+        "pattern_match": 84,
+        "complexity": 75,
+        "performance": 85,
+        "cost": 80
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 81,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.orders",
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 90,
+        "performance": 85,
+        "cost": 65
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 90,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.order_items",
+      "score_breakdown": {
+        "pattern_match": 100,
+        "complexity": 90,
+        "performance": 65,
+        "cost": 55
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 85,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.sessions",
+      "score_breakdown": {
+        "pattern_match": 80,
+        "complexity": 100,
+        "performance": 60,
+        "cost": 70
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 81,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.product_reviews",
+      "score_breakdown": {
+        "pattern_match": 98,
+        "complexity": 95,
+        "performance": 50,
+        "cost": 70
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 84,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.shopping_carts",
+      "score_breakdown": {
+        "pattern_match": 90,
+        "complexity": 100,
+        "performance": 40,
+        "cost": 80
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 82,
+      "migration_complexity": "LOW"
+    },
+    {
+      "table_id": "ecommerce.daily_analytics",
+      "score_breakdown": {
+        "pattern_match": 0,
+        "complexity": 85,
+        "performance": 0,
+        "cost": 50
+      },
+      "weights_used": {
+        "pattern_match": 0.4,
+        "complexity": 0.3,
+        "performance": 0.2,
+        "cost": 0.1
+      },
+      "weighted_confidence": 30,
+      "migration_complexity": "LOW"
+    }
+  ],
+  "llm_advisor": {
+    "status": "skipped",
+    "duration_seconds": 0.0,
+    "attempts": 0
+  }
+}

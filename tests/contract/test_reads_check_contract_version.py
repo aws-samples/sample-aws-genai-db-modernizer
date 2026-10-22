@@ -104,7 +104,6 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
 # (path, enclosing function, name the parsed JSON is bound to) -> what the
 # direct file read reads, for a read whose result reaches none of HELPERS.
 _REVISION = "revision_context.json: revision instructions, not a contract"
-_TRACE = "the analysis decision trace, not a typed contract yet (#973)"
 _K6 = "the load generator's own summary files"
 _REFERENCE = "the raw offline upload (a collection, no contract) the script seeds"
 FILE_READS: dict[tuple[str, str, str], str] = {
@@ -136,10 +135,6 @@ FILE_READS: dict[tuple[str, str, str], str] = {
             "elasticache",
             "opensearch",
         )
-    },
-    **{
-        (f"src/tools/schema/{engine}_schema_agent.py", "load_agent_input", "decision_trace"): _TRACE
-        for engine in ("aurora_mysql", "aurora_postgresql")
     },
     ("src/agents/load_test/dynamodb/runner.py", "run", "summary"): _K6,
     ("src/agents/load_test/dynamodb/runner.py", "run", "raw"): _K6,
@@ -554,8 +549,8 @@ PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
     ("src/agents/load_test/handler.py", "base"): "db/job/load-test-dynamodb/v1",
     # The one decision-trace writer takes the key from its callers (the analysis
     # handler, scripts/run_analysis.py, the transform core); it writes a trace through
-    # the contract registered for its path and refuses an untyped one unless its engine
-    # is still pending (#973, #1187): any engine's trace path.
+    # the contract registered for its path and refuses an untyped one (#973, #1187): any
+    # engine's trace path.
     ("src/agents/analysis/decision_trace.py", "key"): _trace_paths(),
     # The group merger writes the merged design trace under its caller's version
     # folder (#1192's declared-artifact scan).

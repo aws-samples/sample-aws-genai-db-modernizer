@@ -167,6 +167,8 @@ def test_carries_contract_tells_a_contract_from_a_raw_collection() -> None:
         ("db/job/analysis-dynamodb/decision-trace.json", "DynamoDBDecisionTrace"),
         ("db/job/analysis-documentdb/decision-trace.json", "DocumentDBDecisionTrace"),
         ("db/job/analysis-opensearch/decision-trace.json", "OpenSearchDecisionTrace"),
+        ("db/job/analysis-aurora_postgresql/decision-trace.json", "AuroraDecisionTrace"),
+        ("db/job/analysis-aurora_mysql/decision-trace.json", "AuroraDecisionTrace"),
     ],
 )
 def test_each_contract_file_maps_to_its_model(path: str, model: str) -> None:
@@ -178,8 +180,6 @@ def test_each_contract_file_maps_to_its_model(path: str, model: str) -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        # Still untyped (#1190); the OpenSearch trace this entry used to name is typed.
-        "db/job/analysis-aurora_postgresql/decision-trace.json",
         "db/job/collector/sql_shadow.json",
         "db/job/assignment/v1/access_patterns.json",
         "db/job/schema-unknown_engine/v1/schema_output.json",

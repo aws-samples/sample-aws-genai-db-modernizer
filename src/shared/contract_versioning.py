@@ -239,14 +239,6 @@ def is_model_io(path: str) -> bool:
     return any(pattern.search(path) for pattern in _MODEL_IO)
 
 
-# Engines whose ``analysis-<engine>/decision-trace.json`` is not a contract yet
-# (#1187). It only shrinks: each engine leaves it when its trace is typed and
-# registered below (#1188 DocumentDB, #1189 OpenSearch, #1190 Aurora PostgreSQL and
-# MySQL, #1191 ElastiCache). ``write_decision_trace`` writes these as plain dicts and
-# refuses any other untyped trace; ``tests/unit/contracts/test_decision_trace_base.py``
-# pins the set exactly.
-UNTYPED_TRACE_ENGINES: frozenset[str] = frozenset({"aurora_mysql", "aurora_postgresql"})
-
 # Internal artifacts (ADR-008 Decision 1, amendment of 2026-10-20, #1192): every other
 # JSON file a run writes that is neither a registered contract (below) nor model I/O
 # (above), with why it is not a contract. Callers may not rely on their shape. A
@@ -262,14 +254,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "diagnostic rewritten every collect, read by no phase",
     ),
     # Analysis
-    # One entry per engine whose trace is not typed yet, removed with it (#1187).
-    *(
-        (
-            rf"analysis-{engine}/decision-trace\.json",
-            "an analysis decision trace not typed yet (UNTYPED_TRACE_ENGINES)",
-        )
-        for engine in sorted(UNTYPED_TRACE_ENGINES)
-    ),
     (
         r"analysis-[^/]+/er-diagram\.json",
         "the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis",
@@ -398,8 +382,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"uploads/collector-output\.json", _COLLECTOR),
     (r"referee-triage/triage\.json", "src.contracts.triage_output:TriageOutputContract"),
     (r"analysis-[^/]+/analysis\.json", "src.contracts.analysis_output:AnalysisOutputContract"),
-    # Each engine's typed trace (#973, #1187). An engine not registered here is in
-    # UNTYPED_TRACE_ENGINES (above) until it is typed.
+    # Each engine's typed trace (#973, #1187): ``write_decision_trace`` refuses the trace
+    # of an engine not registered here, and
+    # ``tests/unit/contracts/test_decision_trace_base.py`` fails on an analysis engine
+    # with no entry.
     (
         r"analysis-dynamodb/decision-trace\.json",
         "src.contracts.dynamodb_decision_trace:DynamoDBDecisionTrace",
@@ -415,6 +401,14 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (
         r"analysis-opensearch/decision-trace\.json",
         "src.contracts.opensearch_decision_trace:OpenSearchDecisionTrace",
+    ),
+    (
+        r"analysis-aurora_postgresql/decision-trace\.json",
+        "src.contracts.aurora_decision_trace:AuroraDecisionTrace",
+    ),
+    (
+        r"analysis-aurora_mysql/decision-trace\.json",
+        "src.contracts.aurora_decision_trace:AuroraDecisionTrace",
     ),
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),
