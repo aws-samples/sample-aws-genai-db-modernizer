@@ -25,7 +25,9 @@ def run_triage(
     """Run the triage agent. Reads collector output, writes triage decisions via ArtifactStore.
 
     ``engine_scope`` is the customer's engine scope (#1327, ADR-031 Decision 2
-    Amendment 14), recorded in ``triage.json``; ``None`` is every engine.
+    Amendment 14), recorded in ``triage.json``. ``None`` takes the scope the job was
+    started with (``decisions/engine_scope.json``, #1328: the API's, the CLI's or the
+    orchestrator's ``target_databases``), and with no such decision every engine.
     """
     import time
 
@@ -40,6 +42,13 @@ def run_triage(
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
     print(f"[triage] Loaded collector: {len(tables)} tables, {len(queries)} queries")
+
+    if engine_scope is None:
+        from src.agents.referee.engine_scope import recorded_engine_scope
+
+        engine_scope = recorded_engine_scope(store, database_name, job_id)
+        if engine_scope is not None:
+            print(f"[triage] Customer's engine scope: {', '.join(engine_scope)}")
 
     # Run triage
     print("[triage] Analyzing workload signals...")

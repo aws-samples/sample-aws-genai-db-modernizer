@@ -178,3 +178,21 @@ test('a report written before the figure shows no query patterns line', () => {
   render({ queryPatterns: null });
   expect(container.querySelector('[data-figure="query-patterns"]')).toBeNull();
 });
+
+// #1328: the customer's engine scope, the line every deliverable states.
+describe('the engine scope line', () => {
+  const scopeLine = () => container.querySelector('[data-figure="engine-scope"]');
+
+  test('names the scope engines by display name, in the facts order, as the customer\'s choice', () => {
+    render({ engineScope: ['aurora_postgresql', 'dynamodb'] });
+    expect(scopeLine().textContent).toBe("Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)");
+    expect(container.querySelector('[data-tile="target-engines"]').contains(scopeLine())).toBe(true);
+  });
+
+  test('shows nothing for a job with no scope or a report written before it', () => {
+    [null, undefined, []].forEach((engineScope) => {
+      render({ engineScope });
+      expect(scopeLine()).toBeNull();
+    });
+  });
+});

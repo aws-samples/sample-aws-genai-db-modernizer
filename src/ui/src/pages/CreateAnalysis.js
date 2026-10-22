@@ -36,7 +36,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 import { buildConnection } from "../utils/connectionPayload";
-import { selectedTargetEngines, targetEngineSelection } from "../utils/targetEngines";
+import { selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
 import TargetEngineCheckboxes from "../components/TargetEngineCheckboxes";
 function SourceDatabaseSection({ formData, setFormData, errors }) {
   const { t } = useTranslation();
@@ -965,13 +965,19 @@ function DatabaseAnalysisForm() {
       addFlashbarMessage({ type: 'error', header: 'No upload', content: 'Please upload a file first.', dismissible: true, id: `error-${Date.now()}` });
       return;
     }
+    if (selectedTargetEngines(offlineTargetDatabases).length === 0) {
+      // An empty scope is refused by the API too (#1328); say so before sending.
+      addFlashbarMessage({ type: 'error', header: 'No target database', content: 'Please select at least one target database', dismissible: true, id: `error-${Date.now()}` });
+      return;
+    }
 
     setLoading(true);
     setUploadState("submitting");
 
     try {
       const apiManager = new ApiManager();
-      const targetDatabasesArray = selectedTargetEngines(offlineTargetDatabases);
+      // #1328: the engine scope the analysis applies (null when every engine is ticked).
+      const targetDatabasesArray = targetDatabasesScope(offlineTargetDatabases);
 
       const results = await apiManager.execute([{
         id: 'create-assessment',
@@ -1039,8 +1045,8 @@ function DatabaseAnalysisForm() {
     try {
       const apiManager = new ApiManager();
 
-      // Build target databases array
-      const targetDatabasesArray = selectedTargetEngines(formData.targetDatabases);
+      // #1328: the engine scope the analysis applies (null when every engine is ticked).
+      const targetDatabasesArray = targetDatabasesScope(formData.targetDatabases);
 
       // Credentials go by reference only (a Secrets Manager ARN or name),
       // never a password (#723, ADR-004 Decision 5).

@@ -4,6 +4,8 @@ import json
 from dataclasses import asdict
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.agents.referee.triage import triage
 from src.storage.artifact_store import ArtifactStore
 
@@ -561,6 +563,7 @@ class TestTriageSignalTraceability:
 
 
 class TestTriageHandler:
+    @pytest.mark.passes_on_main  # #1328: the mock store now says it has no scope decision
     def test_handler_reads_collector_and_writes_triage(self):
         collector_output = {
             "database_schema": {"tables": []},
@@ -580,6 +583,7 @@ class TestTriageHandler:
         }
         store = MagicMock(spec=ArtifactStore)
         store.read_json.return_value = collector_output
+        store.exists.return_value = False  # no engine scope decision (#1328)
 
         from src.agents.referee.triage_handler import run_triage
 
@@ -598,6 +602,7 @@ class TestTriageHandler:
         assert "signals" in body
         assert isinstance(body["signals"], list)
 
+    @pytest.mark.passes_on_main  # #1328: the mock store now says it has no scope decision
     def test_handler_signals_have_query_ids(self):
         collector_output = {
             "database_schema": {"tables": []},
@@ -617,6 +622,7 @@ class TestTriageHandler:
         }
         store = MagicMock(spec=ArtifactStore)
         store.read_json.return_value = collector_output
+        store.exists.return_value = False  # no engine scope decision (#1328)
 
         from src.agents.referee.triage_handler import run_triage
 

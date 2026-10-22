@@ -737,6 +737,32 @@ def test_the_scripts_the_commands_name_accept_engines_in_use() -> None:
         assert '"--engines-in-use"' in source, script
 
 
+def test_target_databases_is_an_optional_never_asked_argument_passed_to_the_script() -> None:
+    # #1328: the customer's engine scope reaches run_assessment.py from /modernize only
+    # when the user gives one; /modernize never asks for it.
+    modernize = _modernize_text()
+    args = modernize.split("## Arguments", 1)[1].split("## Step 0", 1)[0]
+    assert "`--target-databases <ids>`" in args
+    line = next(x for x in args.splitlines() if "`--target-databases <ids>`" in x)
+    assert "Never ask the user for it, with or without `--auto`" in line
+    assert "absent means every engine" in line
+    assert "on the first `scripts/run_assessment.py` command only" in line
+    assert "in Phases 1-5" not in line  # the resume commands refuse the flag
+    pipeline = modernize.split("## Pipeline", 1)[1]
+    assert "add `--target-databases {target_databases}` to it" in pipeline
+    # #1328 review: no command that continues a job past triage carries the flag.
+    later = [
+        x
+        for x in pipeline.splitlines()
+        if "scripts/run_assessment.py" in x
+        and any(f in x for f in ("--resume-reality-check", "--choose", "--decide-for-me"))
+    ]
+    assert later, "the resume and choice commands are listed"
+    assert not any("--target-databases" in x for x in later), later
+    source = (COMMANDS_DIR.parents[1] / "scripts" / "run_assessment.py").read_text()
+    assert '"--target-databases"' in source
+
+
 # Issue #1233: every UI pointer names the job's own page, quoted from
 # `start_local_ui.py --page` output, never the UI root or a hand-built URL.
 _HAND_BUILT_UI_URL = re.compile(r"https?://localhost(?!:<port>)(?::\d+)?(?:/[^\s>)`]*)?")

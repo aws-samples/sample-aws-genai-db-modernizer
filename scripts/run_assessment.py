@@ -412,9 +412,16 @@ def phase_triage(store, job_id: str, db: str) -> list[str]:
 
     artifact = _path(store, triage_path)
     _log_artifact("triage", artifact)
+    scope = triage_output.get("engine_scope")
     _output(
         "triage",
-        {"status": "complete", "selected": selected, "skipped": skipped, "artifact": artifact},
+        {
+            "status": "complete",
+            "selected": selected,
+            "skipped": skipped,
+            **({"engine_scope": scope} if scope is not None else {}),
+            "artifact": artifact,
+        },
     )
     return selected
 
@@ -1016,6 +1023,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--target-databases",
+        default=None,
+        metavar="ENGINES",
+        help=(
+            "Comma-separated engine ids the plan may route to, the customer's engine scope "
+            "(for example dynamodb,aurora_postgresql; #1328). Active engines only. Recorded "
+            "as the job's decisions/engine_scope.json; left out, every engine is considered"
+        ),
+    )
+    parser.add_argument(
         "--resume-reality-check",
         action="store_true",
         help="Resume reality check after LLM response has been written",
@@ -1075,9 +1092,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     from src.shared.engines_in_use import parse_engines_in_use_option
+    from src.shared.target_databases import parse_target_databases_option
 
     try:
         args.engines_in_use_ids = parse_engines_in_use_option(args.engines_in_use)
+        args.target_database_ids = parse_target_databases_option(args.target_databases)
     except ValueError as exc:
         parser.error(str(exc))
     if args.llm_mode == "bedrock":
@@ -1150,6 +1169,16 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     from src.storage.local_store import LocalArtifactStore
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
+
+    if getattr(args, "target_database_ids", None) is not None and (
+        args.resume_reality_check or args.choose or args.decide_for_me
+    ):
+        # The scope is triage's input: a resumed or settled job keeps the one it started with.
+        _error(
+            "init",
+            "--target-databases applies when a run starts at triage (--file, or --job-id "
+            "with --db); it cannot change the scope of a job past triage",
+        )
 
     # Resume reality check after LLM response has been written
     if args.resume_reality_check:
@@ -1244,6 +1273,13 @@ def _run(args) -> None:  # type: ignore[no-untyped-def]
     else:
         _error("init", "Either --file or --job-id is required")
         return  # unreachable
+
+    # #1328: the customer's engine scope, recorded for the job; triage reads it.
+    scope = getattr(args, "target_database_ids", None)
+    if scope is not None:
+        from src.agents.referee.engine_scope import record_engine_scope
+
+        record_engine_scope(store, db_name, job_id, scope, via="cli")
 
     # Phase: Triage
     _start_phase("triage")

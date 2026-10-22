@@ -334,8 +334,8 @@ class OutOfScopeOverride(AssignmentOverrideError):
         what = "cache this query" if cache else "move this query there"
         super().__init__(
             f"Query {query_id}: {display_engine(engine)} is not in the customer's engine "
-            f"scope ({scope_text(self.scope)}). Add {display_engine(engine)} to the scope "
-            f"to {what}."
+            f"scope ({scope_text(self.scope)}), and a job's scope is fixed once it starts. "
+            f"Start a new job whose scope adds {display_engine(engine)} to {what}."
         )
 
 

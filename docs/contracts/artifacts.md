@@ -23,7 +23,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
-| `decisions/[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
+| `decisions/(?!engine_scope\.json$)[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
 | `reality-check/output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
 | `synthesis/(?:v\d+/)?report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `referee-synthesis/report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
@@ -34,6 +34,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `schema-[^/]+/confirmed\.json` | `SchemaConfirmation` (`src.contracts.schema_revision_models`) |
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | `DesignTrace` (`src.contracts.schema_design_trace`) |
 | `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
+| `decisions/engine_scope\.json` | `EngineScopeDecision` (`src.contracts.engine_scope_decision`) |
 | `[^/]+/questions\.json` | `AgentQuestions` (`src.contracts.agent_interaction_models`) |
 | `[^/]+/answers\.json` | `AgentAnswers` (`src.contracts.agent_interaction_models`) |
 | `\.meta/[^_/][^/]*\.json` | `PhaseProgression` (`src.contracts.phase_models`) |

@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from src.agents.referee.engine_scope import OutOfScopeAssignment
 from src.api.dependencies import job_id_param
 from src.api.services.local_execution import LocalExecutionService
 from src.contracts.phase_models import Phase, PhaseProgression
@@ -71,7 +72,9 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
 
     Returns HTTP 409 if phase prerequisites are not met, or if the job was
     cancelled (#518 round 1): cancelling blocks any further API-driven phase,
-    since the API only ever runs a phase synchronously inside this request.
+    since the API only ever runs a phase synchronously inside this request. Also 409
+    when the job's engine scope would place a query outside it (#1328), naming the
+    queries; nothing is written.
     """
     orch = _require_orchestrator()
 
@@ -92,6 +95,11 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
     except PhasePrerequisiteError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except TaskTokenNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OutOfScopeAssignment as exc:
+        # #1328: the customer's engine scope leaves some query no in-scope engine can
+        # serve. Nothing was written; the message names each query (until #1329 gives
+        # those queries their own state).
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return ResumeResponse(job_id=job_id, phase=body.phase.value)

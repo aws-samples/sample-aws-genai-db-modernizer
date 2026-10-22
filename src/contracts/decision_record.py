@@ -1,5 +1,8 @@
 """Decision record contract (``decisions/<name>.json``).
 
+Every name but ``engine_scope.json``, the customer's engine scope, which has its own
+contract (``EngineScopeDecision``, #1328) and is not an approval.
+
 ``decisions/`` is the job's audit trail of recorded approvals. Two records are
 known today: ``assignment_review.json``, the assignment-review gate recorded as
 passed by ``mark_assignment_reviewed`` (``src/shared/job_status.py``) when the job has

@@ -66,6 +66,7 @@ from src.shared import catalog
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import CACHE_LAYER
 from src.shared.risk_severity import severity_of
+from src.shared.target_databases import engine_scope_statement
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
 from .architecture import _architecture_engines
@@ -818,6 +819,9 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
     rationale = without_table_names(arch.get("rationale"), names)
     if rationale:
         flow += [_para(rationale, st["sub"]), _gap(12)]
+    if facts.get("engine_scope"):
+        # #1328: the customer's engine scope, stated with the recommendation.
+        flow += [_para(engine_scope_statement(facts["engine_scope"]) + ".", st["small"]), _gap(8)]
     segments = [
         (_engine_color(e["engine"]), float(e["workload"]), display_engine(e["engine"]))
         for e in engines

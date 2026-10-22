@@ -73,4 +73,23 @@ describe('errorFromResponse', () => {
     expect(typeof err.message).toBe('string');
     expect(err.message).toBe('<script>alert(1)</script> can\'t run this query');
   });
+
+  // #1328 review: FastAPI's 422 detail is a list; the scope's own message reaches the form.
+  it('uses each message of a FastAPI 422 list, without the "Value error, " prefix', () => {
+    const body = JSON.stringify({
+      detail: [{
+        type: 'value_error',
+        loc: ['body', 'target_databases'],
+        msg: "Value error, target_databases: Neptune (neptune) is not available yet (a planned engine no analysis covers); choose from dynamodb",
+      }],
+    });
+    expect(errorFromResponse(422, 'Unprocessable Entity', body).message).toBe(
+      'target_databases: Neptune (neptune) is not available yet (a planned engine no analysis covers); choose from dynamodb',
+    );
+  });
+
+  it('falls back for a 422 list with no message', () => {
+    const body = JSON.stringify({ detail: [{ loc: ['body'] }] });
+    expect(errorFromResponse(422, 'Unprocessable Entity', body).message).toBe('HTTP 422: Unprocessable Entity');
+  });
 });

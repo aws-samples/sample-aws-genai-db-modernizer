@@ -99,16 +99,27 @@ class TestTheScopeIsValidated:
         ("scope", "says"),
         [
             ([], "empty"),
-            (["dynamodb", "dynamodb"], "more than once"),
             (["dynamodb", "cassandra"], "cassandra"),
             # The generic legacy id and a future placeholder are not routing targets.
             (["aurora"], "aurora"),
             (["neptune"], "neptune"),
         ],
     )
-    def test_an_empty_duplicate_or_unknown_scope_is_refused(self, scope, says):
+    def test_an_empty_or_unknown_scope_is_refused(self, scope, says):
         with pytest.raises(EngineScopeError, match=says):
             normalize_engine_scope(scope)
+
+    def test_case_and_repeats_follow_the_one_setting_rule(self):
+        # #1328: the library path uses the target_databases rule (one validation).
+        assert normalize_engine_scope(["DynamoDB", "dynamodb", " aurora_postgresql"]) == (
+            "aurora_postgresql",
+            "dynamodb",
+        )
+
+    def test_the_library_and_the_setting_refuse_with_the_same_error(self):
+        from src.shared.target_databases import TargetDatabasesError
+
+        assert EngineScopeError is TargetDatabasesError
 
     def test_triage_refuses_an_invalid_scope(self):
         with pytest.raises(EngineScopeError):

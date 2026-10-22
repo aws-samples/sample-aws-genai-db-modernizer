@@ -1530,7 +1530,18 @@ class LocalOrchestrator(Orchestrator):
     # ------------------------------------------------------------------
 
     def start_job(self, job_id: str, config: dict) -> None:
-        """Run Phase 1 (Collect+Triage) then Phase 2 (Analysis), pause for review."""
+        """Run Phase 1 (Collect+Triage) then Phase 2 (Analysis), pause for review.
+
+        ``config["target_databases"]``, when given, is the customer's engine scope
+        (#1328): it is validated and recorded as the job's engine scope decision before
+        anything runs, and triage routes within it. Left out, every engine is considered.
+        """
+        scope = config.get("target_databases")
+        if scope is not None:
+            from src.agents.referee.engine_scope import record_engine_scope
+
+            database_name = config.get("database_name") or self._get_database_name(job_id)
+            record_engine_scope(self.store, database_name, job_id, scope, via="library")
         progression = self._new_progression(job_id)
 
         # Phase 1: Collect + Triage

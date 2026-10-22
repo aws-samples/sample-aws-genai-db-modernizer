@@ -27,6 +27,7 @@ from src.api.models.responses import (
 from src.api.secret_guard import refuse_submitted_secrets
 from src.api.services.local_execution import (
     ArtifactDeletionError,
+    JobAlreadyStartedError,
     JobRecentlyModifiedError,
     LocalExecutionService,
 )
@@ -226,7 +227,9 @@ async def create_assessment(request: AssessmentRequest):
         "source_database_type": request.source_database_type,
         "connection": request.connection.model_dump() if request.connection else {},
         "options": request.options.model_dump() if request.options else {},
-        "target_databases": request.target_databases or [],
+        # The engine scope (#1328), already normalized; None (left out) is every engine.
+        # start_execution records it as the job's decisions/engine_scope.json.
+        "target_databases": request.target_databases,
         "full_analysis": request.full_analysis,
         "synthesis_iteration": 0,
         "collection_mode": request.collection_mode,
@@ -292,6 +295,9 @@ async def create_assessment(request: AssessmentRequest):
 
     try:
         result = sfn_svc.start_execution(job_id, sfn_input)
+    except JobAlreadyStartedError as exc:
+        # #1328 review: a job's input and engine scope are fixed once it has started.
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except ValueError as exc:
         # start_execution refuses an input that carries a secret. The guard and the
         # ConnectionDetails allowlist make that unreachable from here; if it ever fires,

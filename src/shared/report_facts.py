@@ -46,6 +46,7 @@ from src.shared.engine_names import (
 )
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
+from src.shared.target_databases import engine_scope_display_order
 
 # ---------------------------------------------------------------------------
 # Engine roles
@@ -2158,6 +2159,7 @@ def compute_report_facts(
     view_ids: Iterable[str] | None = None,
     signal_overrides: Mapping[str, Iterable[str]] | None = None,
     relational_gaps: Mapping[str, Any] | None = None,
+    engine_scope: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -2171,7 +2173,8 @@ def compute_report_facts(
     ranking's reason text instead (#584). ``relational_gaps`` is the relational move's
     gap check (``src.tools.analysis.relational_gaps.detect_relational_gaps``, #471),
     which needs the collection: synthesis passes it, and a report rebuilt without the
-    collection has None.
+    collection has None. ``engine_scope`` is the customer's scope triage recorded (#1328);
+    synthesis passes it, and a report rebuilt without the triage has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -2287,6 +2290,10 @@ def compute_report_facts(
         "relational_gaps": dict(relational_gaps) if relational_gaps is not None else None,
         # #1146: the queries and the distinct query patterns they make.
         "query_pattern_counts": query_pattern_facts(report, engines),
+        # #1328: the customer's engine scope, in the order the deliverables name it.
+        "engine_scope": (
+            engine_scope_display_order(engine_scope) if engine_scope is not None else None
+        ),
     }
 
 

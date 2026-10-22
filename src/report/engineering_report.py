@@ -6,6 +6,7 @@ from typing import Any
 
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import CACHE_LAYER
+from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
     unsupported_pattern_label,
@@ -803,6 +804,10 @@ def render_engineering_report_md(
     ]
 
     facts = report_facts(report)
+    if facts.get("engine_scope"):
+        # #1328: the customer's engine scope, stated once near the top; each name is
+        # escaped, since a loaded report.json may hold any string there.
+        out += [engine_scope_statement(facts["engine_scope"], escaping.md_text) + ".", ""]
     trust = summary_trusted(report) if trust_generated_summary is None else trust_generated_summary
     out += _summary_md(report, trust)
     out += _target_engines_md(report)

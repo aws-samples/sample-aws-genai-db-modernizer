@@ -25,10 +25,15 @@ import { displayEngine } from '../utils/engineNames';
  * facts.query_pattern_counts as `{ queries, patterns }` (queryPatternCountsOf),
  * or null for a report written before it (#1146): "1,654 queries in 1,045 distinct
  * query patterns", the line the executive and engineering reports print.
+ *
+ * `engineScope` is facts.engine_scope (#1328): the customer's engine scope, engine ids
+ * already in the order the reports name them, shown under the target engines as
+ * "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)"; nothing shows
+ * for a job with no scope (null) or a report written before it.
  */
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
-  targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns,
+  targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns, engineScope,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -80,6 +85,15 @@ const ExecutiveSummaryStats = memo(({
       <div data-tile="target-engines">
         <Box variant="awsui-key-label">{t('analysis-results.executive-summary.target-engines')}</Box>
         {targetEngines}
+        {Array.isArray(engineScope) && engineScope.length > 0 && (
+          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+            <span data-figure="engine-scope">
+              {t('analysis-results.executive-summary.engine-scope', {
+                engines: engineScope.map(displayEngine).join(', '),
+              })}
+            </span>
+          </Box>
+        )}
       </div>
       {hasProjectedCost && (
         <div data-tile="projected-cost">

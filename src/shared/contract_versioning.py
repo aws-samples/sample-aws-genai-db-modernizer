@@ -405,7 +405,12 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),
     (r"reality-check/awaiting_llm\.json", "src.contracts.reality_check_marker:RealityCheckMarker"),
-    (r"decisions/[^/]+\.json", "src.contracts.decision_record:DecisionRecord"),
+    # The recorded approvals, any name but the engine scope (#1328), which is a customer
+    # input with its own contract below: each decisions/ file maps to one contract.
+    (
+        r"decisions/(?!engine_scope\.json$)[^/]+\.json",
+        "src.contracts.decision_record:DecisionRecord",
+    ),
     (
         r"reality-check/output\.json",
         "src.contracts.reality_check_output:RealityCheckOutputContract",
@@ -434,6 +439,10 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (
         r"schema-[^/]+/v\d+/design_trace_group_\d+\.json",
         "src.contracts.schema_design_trace:DesignTraceGroup",
+    ),
+    (
+        r"decisions/engine_scope\.json",
+        "src.contracts.engine_scope_decision:EngineScopeDecision",
     ),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),
     (r"[^/]+/answers\.json", "src.contracts.agent_interaction_models:AgentAnswers"),

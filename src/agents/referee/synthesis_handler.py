@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
+from src.agents.referee.engine_scope import scope_of
 from src.agents.referee.flagged_unservable import flagged_unservable_records
 from src.agents.referee.migration_risks import (
     add_migration_risks,
@@ -1156,6 +1157,8 @@ def _write_synthesis_report(
         view_ids=view_ids,
         signal_overrides=signal_overrides,
         relational_gaps=relational_gaps,
+        # #1328: the customer's engine scope triage recorded; every deliverable states it.
+        engine_scope=scope_of(data.triage),
     )
 
     output = SynthesisOutputContract.model_validate(output_data)

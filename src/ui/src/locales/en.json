@@ -249,6 +249,7 @@
   "analysis-results.executive-summary.title": "Executive summary",
   "analysis-results.executive-summary.database": "Database",
   "analysis-results.executive-summary.target-engines": "Target engines",
+  "analysis-results.executive-summary.engine-scope": "Engines in scope: {{engines}} (customer's choice)",
   "analysis-results.executive-summary.projected-cost": "Projected cost",
   "analysis-results.executive-summary.current-cost": "Current monthly cost",
   "analysis-results.executive-summary.savings": "Savings",

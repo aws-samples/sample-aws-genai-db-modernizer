@@ -59,6 +59,20 @@ def main() -> None:
         print(json.dumps({"status": "error", "message": str(exc)}))
         sys.exit(2)
 
+    if args.decision == "engine_scope":
+        # #1328: decisions/engine_scope.json is the job's engine scope (EngineScopeDecision),
+        # a customer input recorded when the job starts, not an approval to poll for.
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "message": "engine_scope is the job's engine scope, not an approval to "
+                    "poll for; it is recorded when the job starts",
+                }
+            )
+        )
+        sys.exit(2)
+
     store = LocalArtifactStore(base_dir=args.artifact_root)
     path = f"{args.db}/{args.job_id}/decisions/{args.decision}.json"
 

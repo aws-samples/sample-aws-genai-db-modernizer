@@ -473,6 +473,10 @@ Version History:
   the applicable rules that look at what the source uses, 0 for a conversion the gap
   catalog has no feature rules for; wave 1's note then says its feature gaps were not
   checked. None in a report written before.
+- 1.53 (2026-10-22, #1328): Added optional ``facts.engine_scope``: the customer's engine
+  scope (the target_databases setting triage recorded), in the order the deliverables
+  name it; every deliverable states "Engines in scope: ... (customer's choice)". None
+  for a job with no scope and for a report written before.
 """
 
 from datetime import datetime
@@ -1812,6 +1816,15 @@ class ReportFacts(BaseModel):
             "no query_pattern_groups (written before #1146)"
         ),
     )
+    engine_scope: list[str] | None = Field(
+        None,
+        description=(
+            "The customer's engine scope (#1328, the target_databases setting triage "
+            "recorded), engine ids in the order the deliverables name them (by display "
+            "name); every deliverable states 'Engines in scope: ... (customer's choice)'. "
+            "None for a job with no scope, and for a report written before"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -1856,7 +1869,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.52",
+        default="1.53",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

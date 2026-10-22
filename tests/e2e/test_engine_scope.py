@@ -208,7 +208,7 @@ def test_the_customer_gate_refuses_a_pick_onto_an_engine_outside_the_scope(
     query_id = _first_query_on(scoped, "dynamodb")
     message = _refused(scoped, QueryOverrideInput(query_id=query_id, assigned_engine=engine))
     assert "Aurora PostgreSQL, DynamoDB" in message
-    assert f"Add {display_engine(engine)} to the scope" in message
+    assert f"Start a new job whose scope adds {display_engine(engine)}" in message
 
 
 @pytest.mark.deterministic
@@ -222,7 +222,7 @@ def test_the_customer_gate_refuses_a_cache_pin_when_the_scope_leaves_out_elastic
     query_id = _first_query_on(scoped, "dynamodb")
     message = _refused(scoped, QueryOverrideInput(query_id=query_id, cached=True))
     assert "ElastiCache is not in the customer's engine scope" in message
-    assert "Add ElastiCache to the scope to cache this query" in message
+    assert "Start a new job whose scope adds ElastiCache to cache this query" in message
 
 
 def _route(db: str, base: Path, scope: list[str] | None) -> list[dict]:
@@ -276,3 +276,16 @@ def test_a_scope_of_every_engine_routes_wordpress_as_no_scope(
     assert len(every) == len(plain) >= 2
     for a, b in zip(every, plain, strict=True):
         assert _routing(a) == _routing(b), a["version"]
+
+
+@pytest.mark.deterministic
+def test_every_deliverable_states_the_scope(scoped: dict) -> None:
+    """#1328: the "Engines in scope" line #1331 deferred, from report.json's facts."""
+    statement = "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)"
+    assert scoped["report"]["facts"]["engine_scope"] == ["aurora_postgresql", "dynamodb"]
+    assert f"{statement}." in scoped["engineering"]
+    from pypdf import PdfReader
+
+    pdf = scoped["root"] / scoped["db"] / JOB / "deliverables" / "executive-report.pdf"
+    text = " ".join(" ".join(p.extract_text().split()) for p in PdfReader(pdf).pages)
+    assert statement in text

@@ -14351,6 +14351,70 @@
     "schema_hash": "0e2b68a5e49e0951cec7fb172f9761bfe5cf10b9788672f97cfd54d266faf557",
     "version": "1.1"
   },
+  "engine_scope_decision.EngineScopeDecision": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "database_name": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "decided_at": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "decided_by": {
+        "required": false,
+        "schema": {
+          "kind": "const",
+          "value": "customer"
+        }
+      },
+      "engines": {
+        "required": true,
+        "schema": {
+          "items": {
+            "kind": "scalar",
+            "type": "string"
+          },
+          "kind": "array",
+          "minItems": 1
+        }
+      },
+      "job_id": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "type": "string"
+        }
+      },
+      "via": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "api",
+            "cli",
+            "library"
+          ]
+        }
+      }
+    },
+    "schema_hash": "85c2ff8ea4bdd3e8251e910b68149355d94424eaaff8c298a4fa5aa7afbd9bd3",
+    "version": "1.0"
+  },
   "executive_summary_response.ExecutiveSummaryResponse": {
     "fields": {
       "contract_version": {
@@ -21346,6 +21410,25 @@
                     "type": "integer"
                   }
                 },
+                "engine_scope": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "items": {
+                          "kind": "scalar",
+                          "type": "string"
+                        },
+                        "kind": "array"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "engines": {
                   "required": false,
                   "schema": {
@@ -26887,8 +26970,8 @@
         }
       }
     },
-    "schema_hash": "12eaf67c212cfc8e09a9602893cdecfbf27b3ae2041f425b8ef54f52b4107aaf",
-    "version": "1.52"
+    "schema_hash": "977f336ed351d60264a58332a004feb6d45ef4992030c9774fe70820641344d7",
+    "version": "1.53"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

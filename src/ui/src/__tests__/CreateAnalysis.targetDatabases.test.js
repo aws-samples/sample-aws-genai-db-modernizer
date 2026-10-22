@@ -219,7 +219,18 @@ test('Select all ticks every active engine and never a placeholder', async () =>
 
   ids('active').forEach((id) => expect(box(ENGINE_LABELS[id]).checked).toBe(true));
   ids('future').forEach((id) => expect(box(comingSoon(id)).checked).toBe(false));
-  expect(await submitValidForm()).toEqual(ids('active'));
+  // #1328: every engine ticked is no scope at all (null), the same run as no setting.
+  expect(await submitValidForm()).toBeNull();
+});
+
+// #1328: the selection is the scope the analysis applies, sent as target_databases.
+test('the default form, every engine ticked, sends no scope', async () => {
+  expect(await submitValidForm()).toBeNull();
+});
+
+test('unticking one engine sends the scope of the rest', async () => {
+  act(() => box('ElastiCache').click());
+  expect(await submitValidForm()).toEqual(ids('active').filter((id) => id !== 'elasticache'));
 });
 
 test('the request names only the engines the user left ticked', async () => {
@@ -239,10 +250,12 @@ test('with every engine deselected the form refuses to submit', async () => {
 });
 
 // The same behaviour with literal ids, independent of the generated catalog module.
-test('after Select all the request names both Aurora engines and no placeholder or legacy id', async () => {
+test('a scope with both Aurora engines names them and no placeholder or legacy id', async () => {
   act(() => button(en['create-analysis.target-databases.select-all']).click());
+  act(() => box('DynamoDB').click());
   const sent = await submitValidForm();
   expect(sent).toEqual(expect.arrayContaining(['aurora_mysql', 'aurora_postgresql']));
+  expect(sent).not.toContain('dynamodb');
   expect(sent).not.toContain('neptune');
   expect(sent).not.toContain('keyspaces');
   expect(sent).not.toContain('aurora');

@@ -9,6 +9,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from src.shared.database_name import validate_database_name as _validate_database_name
 from src.shared.job_id import validate_job_id as _validate_job_id
+from src.shared.target_databases import normalize_target_databases
 
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 _DATABASE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_$.\-]{0,127}")
@@ -261,7 +262,14 @@ class AssessmentRequest(BaseModel):
     database_name: str
     connection: ConnectionDetails | None = None
     options: CollectionOptions | None = None
-    target_databases: list[str] | None = None
+    target_databases: list[str] | None = Field(
+        None,
+        description=(
+            "The engine scope (#1328): the active engine catalog ids the job may route "
+            'to, for example ["dynamodb", "aurora_postgresql"]. Left out means every '
+            "engine; an empty list, or a legacy, planned or unknown id, is a 422"
+        ),
+    )
     full_analysis: bool = False
     collection_mode: Literal["live", "ddl", "offline"] = "live"
     offline_s3_key: str | None = None
@@ -290,9 +298,14 @@ class AssessmentRequest(BaseModel):
     @field_validator("target_databases")
     @classmethod
     def _check_target_databases(cls, value: list[str] | None) -> list[str] | None:
+        """The engine scope (#1328): active catalog ids, lower-cased, each once, sorted.
+
+        Left out (``None``) is no scope, every engine. The character allowlist runs
+        first, so a refused value is never echoed unless it is a plain name.
+        """
         if value is None:
             return value
-        return [validate_name(v, "target_databases") for v in value]
+        return normalize_target_databases([validate_name(v, "target_databases") for v in value])
 
     @field_validator("cluster_id")
     @classmethod

@@ -55,3 +55,30 @@ def test_sandbox_rejects_decision_name_traversal(monkeypatch, capsys) -> None:
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "error"
     assert "--decision" in out["message"]
+
+
+def test_the_engine_scope_is_not_an_approval_to_poll(monkeypatch, capsys, tmp_path) -> None:
+    """#1328: decisions/engine_scope.json has its own contract and no ``status``."""
+    import json
+    import sys
+
+    import pytest
+
+    from src.agents.referee.engine_scope import record_engine_scope
+    from src.storage.local_store import LocalArtifactStore
+
+    record_engine_scope(LocalArtifactStore(str(tmp_path)), "wordpress", "job1", ["dynamodb"], "cli")
+    monkeypatch.delenv("MODERNIZER_CI_SANDBOX", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check_decision.py", "--job-id", "job1", "--db", "wordpress",
+            "--decision", "engine_scope", "--artifact-root", str(tmp_path),
+        ],
+    )  # fmt: skip
+    with pytest.raises(SystemExit) as exc:
+        check_decision.main()
+    assert exc.value.code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert "not an approval" in out["message"]

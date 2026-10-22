@@ -24,3 +24,11 @@ export const targetEngineSelection = (checked) => Object.fromEntries(
 export const selectedTargetEngines = (selection) => SELECTABLE_TARGET_ENGINES.filter(
   (id) => selection?.[id] === true,
 );
+
+// The request's `target_databases`, the engine scope (#1328): the ticked engines, or null
+// when every selectable engine is ticked, which is no scope at all (every engine, today's
+// and any the catalog adds), so the default form records no customer choice.
+export const targetDatabasesScope = (selection) => {
+  const ticked = selectedTargetEngines(selection);
+  return ticked.length === SELECTABLE_TARGET_ENGINES.length ? null : ticked;
+};

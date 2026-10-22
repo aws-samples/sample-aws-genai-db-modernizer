@@ -94,6 +94,21 @@ class ArtifactDeletionError(OSError):
         self.cause = cause
 
 
+class JobAlreadyStartedError(Exception):
+    """``start_execution`` for a job that was already started (#1328 review): its input,
+    and with it its engine scope, is fixed once the job runs. ``str(exc)`` says to start
+    a new job instead."""
+
+
+# Files that show a job was started (not merely prepared, which writes only uploads/).
+_STARTED_MARKERS = (
+    "_meta.json",
+    "collector/output.json",
+    "referee-triage/triage.json",
+    "decisions/engine_scope.json",
+)
+
+
 class LocalExecutionService:
     """Filesystem-backed execution service for local development.
 
@@ -115,10 +130,22 @@ class LocalExecutionService:
 
         Refuses an input that carries a secret rather than writing it to ``_meta.json``
         (ADR-004 Decision 5, #723); the API refuses such a request before it gets here.
+        A ``target_databases`` scope (not ``None``) is recorded as the job's engine scope
+        decision (#1328), which triage reads. A job that was already started (any of
+        ``_STARTED_MARKERS``) raises :class:`JobAlreadyStartedError` and nothing is
+        written; a prepared job (only ``uploads/``) starts.
         """
         if find_submitted_secrets(sfn_input):
             raise ValueError("refusing to store an execution input that carries a secret")
         database_name = sfn_input.get("database_name", "unknown")
+        if any(self._store.exists(f"{database_name}/{job_id}/{m}") for m in _STARTED_MARKERS):
+            # A second start would rewrite the job's input and its engine scope after
+            # triage may have routed under the first one (#1328 review).
+            raise JobAlreadyStartedError(
+                f"Job {job_id} was already started, and its input and engine scope are "
+                "fixed. Start a new job (leave job_id out, or prepare a new one) to run "
+                "with another scope."
+            )
         meta = {
             "job_id": job_id,
             "database_name": database_name,
@@ -126,6 +153,12 @@ class LocalExecutionService:
             "input": sfn_input,
         }
         self._store.write_json(f"{database_name}/{job_id}/_meta.json", meta)
+        scope = sfn_input.get("target_databases")
+        if scope is not None:
+            # #1328: the customer's engine scope, read by triage for this job.
+            from src.agents.referee.engine_scope import record_engine_scope
+
+            record_engine_scope(self._store, database_name, job_id, scope, via="api")
         return {
             "execution_arn": self._execution_arn(job_id),
             "start_date": meta["started_at"],

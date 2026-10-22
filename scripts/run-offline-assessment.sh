@@ -88,7 +88,6 @@ for i in $(seq 1 "$COUNT"); do
       \"database_name\": \"$DB_NAME\",
       \"collection_mode\": \"offline\",
       \"offline_s3_key\": \"$UPLOAD_KEY\",
-      \"target_databases\": [\"dynamodb\", \"documentdb\", \"opensearch\"],
       \"full_analysis\": false
     }")
 

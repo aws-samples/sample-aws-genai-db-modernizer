@@ -11,6 +11,7 @@ import {
   COMING_SOON_TARGET_ENGINES,
   SELECTABLE_TARGET_ENGINES,
   selectedTargetEngines,
+  targetDatabasesScope,
   targetEngineSelection,
 } from '../targetEngines';
 
@@ -68,4 +69,29 @@ test.each(Object.keys(PAGE_SOURCES))('%s keeps no hand-written target-engine lis
   expect(source).not.toMatch(/\bneptune\s*:/);
   expect(source).not.toMatch(/\bkeyspaces\s*:/);
   expect(source).not.toMatch(/\baurora\s*:/);
+});
+
+// #1328: the request's target_databases is the engine scope the analysis applies.
+describe('targetDatabasesScope', () => {
+  test('every engine ticked is no scope (null): every engine, as with no setting', () => {
+    expect(targetDatabasesScope(targetEngineSelection(true))).toBeNull();
+    // A stale placeholder key does not turn "every engine" into a scope.
+    expect(targetDatabasesScope({ ...targetEngineSelection(true), neptune: true, aurora: true })).toBeNull();
+  });
+
+  test('a subset is the scope, in catalog order', () => {
+    const selection = { ...targetEngineSelection(false), aurora_postgresql: true, dynamodb: true };
+    expect(targetDatabasesScope(selection)).toEqual(
+      SELECTABLE_TARGET_ENGINES.filter((id) => id === 'dynamodb' || id === 'aurora_postgresql'),
+    );
+  });
+
+  test('one engine short of all is still a scope', () => {
+    const selection = { ...targetEngineSelection(true), elasticache: false };
+    expect(targetDatabasesScope(selection)).toEqual(SELECTABLE_TARGET_ENGINES.filter((id) => id !== 'elasticache'));
+  });
+
+  test('nothing ticked is an empty list, which the forms refuse before sending', () => {
+    expect(targetDatabasesScope(targetEngineSelection(false))).toEqual([]);
+  });
 });

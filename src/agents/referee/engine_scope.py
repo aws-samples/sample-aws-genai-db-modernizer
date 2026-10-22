@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 from src.contracts.assignment_models import AuroraEngineChoice, QueryAssignment
 from src.shared.engine_names import display_engine
+from src.shared.target_databases import TargetDatabasesError, normalize_target_databases
 
 # The ``skipped_agents`` reason of every engine the scope leaves out.
 SCOPE_SKIPPED_REASON = "Not in the customer's engine scope"
@@ -31,8 +32,9 @@ SCOPE_SKIPPED_REASON = "Not in the customer's engine scope"
 SCOPE_BASIS: Literal["engine_scope"] = "engine_scope"
 
 
-class EngineScopeError(ValueError):
-    """An engine scope that is empty, repeats an engine or names an unknown one."""
+# The setting's one validation (#1328): a refused scope raises the setting's error, so
+# the library path, triage and every entry point refuse the same things the same way.
+EngineScopeError = TargetDatabasesError
 
 
 class OutOfScopeAssignment(RuntimeError):
@@ -42,27 +44,13 @@ class OutOfScopeAssignment(RuntimeError):
 def normalize_engine_scope(scope: Iterable[str] | None) -> tuple[str, ...] | None:
     """The scope as sorted engine ids, or ``None`` (every engine) when there is none.
 
-    Every id must be an active engine of the catalog (the engines triage can
-    analyse): an empty scope, a repeated id or any other id raises
-    :class:`EngineScopeError` naming it.
+    The one rule of :func:`src.shared.target_databases.normalize_target_databases`:
+    ids lower-cased and trimmed, a repeated id counted once, active catalog engines
+    only (the engines triage can analyse). An empty scope or any other id raises
+    :class:`EngineScopeError` (the setting's ``TargetDatabasesError``) naming it.
     """
-    if scope is None:
-        return None
-    from src.agents.referee.triage import ANALYSIS_AGENTS  # import cycle
-
-    ids = [str(e) for e in scope]
-    if not ids:
-        raise EngineScopeError("the engine scope is empty: name at least one engine")
-    repeated = sorted({e for e in ids if ids.count(e) > 1})
-    if repeated:
-        raise EngineScopeError(f"the engine scope names {', '.join(repeated)} more than once")
-    unknown = sorted(set(ids) - ANALYSIS_AGENTS)
-    if unknown:
-        raise EngineScopeError(
-            f"the engine scope names {', '.join(unknown)}, which is not a routing engine; "
-            f"choose from {', '.join(sorted(ANALYSIS_AGENTS))}"
-        )
-    return tuple(sorted(ids))
+    ids = normalize_target_databases(scope, setting="the engine scope")
+    return tuple(ids) if ids is not None else None
 
 
 def scope_of(triage: Mapping[str, Any] | None) -> frozenset[str] | None:
@@ -200,6 +188,62 @@ def check_in_scope(
         noun = "1 query" if len(outside) == 1 else f"{len(outside)} queries"
         raise error(
             f"{writer}: {noun} would be placed outside the customer's engine scope "
-            f"({scope_text(allowed)}), so nothing was written. {listed}. Add the engine "
-            "to the scope to use it; a query is never forced onto an engine outside it."
+            f"({scope_text(allowed)}), so nothing was written. {listed}. A job's scope is "
+            "fixed once it starts: to use another engine, start a new job whose scope adds it; "
+            "a query is never forced onto an engine outside the scope."
         )
+
+
+# The job's recorded scope (#1328): the one ``target_databases`` setting, as given to
+# the API, ``scripts/run_assessment.py --target-databases`` or the orchestrator.
+DECISION_FILE = "decisions/engine_scope.json"
+
+
+def decision_key(database_name: str, job_id: str) -> str:
+    """The artifact key of the job's engine scope decision."""
+    return f"{database_name}/{job_id}/{DECISION_FILE}"
+
+
+def record_engine_scope(
+    store: Any,
+    database_name: str,
+    job_id: str,
+    target_databases: Iterable[str],
+    via: Literal["api", "cli", "library"],
+) -> list[str]:
+    """Record the customer's scope for the job (``decisions/engine_scope.json``) and
+    return it normalized; triage reads it when it is not handed a scope.
+
+    Raises :class:`~src.shared.target_databases.TargetDatabasesError` (a ValueError)
+    for a value the setting refuses, before anything is written.
+    """
+    from datetime import UTC, datetime
+
+    from src.contracts.engine_scope_decision import EngineScopeDecision
+    from src.shared.target_databases import normalize_target_databases
+
+    # A list in gives a list out (``None`` only means the setting was left out).
+    engines = normalize_target_databases(list(target_databases)) or []
+    decision = EngineScopeDecision(
+        job_id=job_id,
+        database_name=database_name,
+        engines=engines,
+        via=via,
+        decided_at=datetime.now(UTC),
+    )
+    store.write_json(
+        f"{database_name}/{job_id}/decisions/engine_scope.json", decision.model_dump(mode="json")
+    )
+    return engines
+
+
+def recorded_engine_scope(store: Any, database_name: str, job_id: str) -> list[str] | None:
+    """The scope the job's decision recorded, or ``None`` (no decision: every engine)."""
+    from src.contracts.engine_scope_decision import EngineScopeDecision
+    from src.shared.contract_versioning import load_contract
+
+    key = decision_key(database_name, job_id)
+    if not store.exists(key):
+        return None
+    decision = load_contract(EngineScopeDecision, store.read_json(key), artifact=key)
+    return list(decision.engines)

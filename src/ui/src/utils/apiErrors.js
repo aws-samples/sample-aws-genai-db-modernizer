@@ -48,6 +48,14 @@ export function errorFromResponse(status, statusText, responseText) {
     if (typeof detail === 'string' && detail) {
         return new Error(detail);
     }
+    // FastAPI's 422 (#1328 review): a list of `{loc, msg}`, each message prefixed
+    // "Value error, " for a validator's own ValueError (the engine scope's included).
+    if (Array.isArray(detail)) {
+        const messages = detail
+            .map((e) => (e && typeof e.msg === 'string' ? e.msg.replace(/^Value error, /, '') : ''))
+            .filter(Boolean);
+        return messages.length ? new Error(messages.join('; ')) : fallback();
+    }
     if (detail && typeof detail === 'object') {
         const parts = [];
         if (typeof detail.message === 'string' && detail.message) {

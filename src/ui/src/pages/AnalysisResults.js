@@ -1926,6 +1926,7 @@ const AnalysisResultsPage = memo(() => {
                   projectedCost={projectedCost}
                   costBaseline={costBaseline}
                   retiredEngines={synthesis?.facts?.retired_in_use_engines}
+                  engineScope={synthesis?.facts?.engine_scope}
                   queryPatterns={queryPatternCountsOf(synthesis)}
                   targetEngines={(
                     <>
