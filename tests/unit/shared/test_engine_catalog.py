@@ -161,6 +161,12 @@ class TestEveryKnownEngineHasACatalogFile:
         assert set(atx_core._ANALYSIS_ENGINES) == ACTIVE_IDS
         assert all(k == e.target_database for k, e in atx_core._ANALYSIS_ENGINES.items())
 
+    def test_every_active_engine_has_a_cost_estimator(self) -> None:
+        """The TCO prices each kept engine with its own estimator (#1195)."""
+        from src.tools.analysis.cost_estimators import COST_ESTIMATORS
+
+        assert set(COST_ESTIMATORS) == ACTIVE_IDS
+
     def test_the_container_entrypoint_accepts_every_catalog_engine(self) -> None:
         """``entrypoint.ANALYSIS_AGENTS`` (read by AST: importing the entrypoint builds an
         artifact store)."""

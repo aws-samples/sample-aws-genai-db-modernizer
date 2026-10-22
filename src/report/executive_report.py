@@ -84,6 +84,7 @@ from .formatting import (
     _fmt_usd,
     _retired_in_use_lines,
     cost_baseline_known,
+    cost_sizing_text,
     fmt_num,
     plural_noun,
     plural_verb,
@@ -958,21 +959,24 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         flow.append(
             _table(
                 st,
-                ("Engine", "Role", "Est. monthly"),
+                ("Engine", "Role", "Est. monthly", "Sized for"),
                 [
                     [
                         _para(display_engine(e["engine"]), st["head"]),
                         e["role"],
                         _fmt_usd(e.get("cost")),
+                        # #1195: what the figure was sized for, as the facts state it.
+                        cost_sizing_text(e.get("cost_sizing")) or "-",
                     ]
                     for e in arch
                 ],
-                (3, 3, 2),
-                total=["Total", "", _fmt_usd(facts.get("engine_cost_total_usd"))],
+                (3, 3, 2, 3),
+                total=["Total", "", _fmt_usd(facts.get("engine_cost_total_usd")), ""],
                 row_accents=[_engine_color(e["engine"]) for e in arch],
             )
         )
-    assumptions = [a for a in (tco.get("assumptions") or []) if isinstance(a, str) and a]
+    # #1195: the TCO's assumption lines, as the facts state them for every deliverable.
+    assumptions = list(facts.get("cost_assumptions") or [])
     if assumptions:
         flow += [
             _gap(8),

@@ -756,7 +756,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.55"
+    "version": "1.56"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -911,6 +911,6 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.55"
+    "version": "1.56"
   }
 }

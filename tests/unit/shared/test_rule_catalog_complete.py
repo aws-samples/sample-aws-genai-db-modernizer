@@ -184,6 +184,10 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"CAPABILITY_REDESIGN_HINTS"}),
         _WORDING + ": how to redesign a query a fallback rule placed (#729)",
     ),
+    "src/tools/analysis/cost_estimators.py": (
+        frozenset({"COST_ESTIMATORS"}),
+        _PLUMBING + " (#1195); " + _PINNED,
+    ),
     "src/agents/entrypoint.py": (
         frozenset({"ANALYSIS_AGENTS"}),
         "the agent types the container entrypoint dispatches to analysis: pinned to every "

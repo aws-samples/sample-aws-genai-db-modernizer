@@ -22,6 +22,11 @@ from typing import TYPE_CHECKING
 from pydantic import ValidationError
 
 from src.agents.prompt_framing import SYSTEM_PROMPT_DATA_DIRECTIVE, frame_untrusted
+from src.agents.referee.assigned_cost import (
+    CACHE_MISS_ASSUMPTION,
+    CACHE_OVERLAY,
+    sized_cost_estimate,
+)
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, PATTERN_LABELS, overlay_summary
@@ -935,13 +940,28 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
-        cost = analysis.get("cost_estimate", {})
+        cost = analysis.get("cost_estimate") or {}
+        components = cost.get("cost_components") or {}
         monthly = cost.get("monthly_cost_usd", 0)
+        sizing: dict | None = None
+        # #1195: the analysis estimate sized the engine for the whole collection; the
+        # TCO prices it for the queries the effective assignment gives it. An analysis
+        # that priced nothing (no cost components: cost estimation turned off) keeps its
+        # figure, and so does a job with no assignment.
+        sized = sized_cost_estimate(engine, data.collector, data.assignment) if components else None
+        if sized is not None:
+            estimate, sizing = sized
+            monthly = estimate.monthly_cost_usd
+            components = estimate.cost_components
         target_costs.append(
             {
                 "database": engine,
                 "monthly_cost_usd": monthly,
-                "pricing_mode": cost.get("cost_components", {}).get("pricing_mode", "on-demand"),
+                "pricing_mode": components.get("pricing_mode", "on-demand"),
+                # #1195: what the figure was sized for (None: the analysis estimate).
+                "sizing": sizing,
+                # #1196: the price table the figure was priced from (ADR-032 Decision 6).
+                "price_list": components.get("price_list"),
             }
         )
         total_projected += monthly
@@ -983,6 +1003,18 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
                 else []
             ),
             "Does not include data transfer, backups, or global tables",
+            # #1195: a cache layer sized on its fronted reads leaves those reads billed on
+            # their owners too, every one counted as a miss; said so, not left to look
+            # like the same traffic counted twice.
+            *(
+                [CACHE_MISS_ASSUMPTION]
+                if any(
+                    (row.get("sizing") or {}).get("basis") == CACHE_OVERLAY
+                    and (row.get("sizing") or {}).get("sized_query_count")
+                    for row in target_costs
+                )
+                else []
+            ),
         ],
     }
     if retired_costs:

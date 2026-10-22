@@ -122,6 +122,8 @@ def _pdf_required(report: dict[str, Any], exp: dict[str, Any]) -> set[str]:
     req |= {"cost:total", "tables_migrate", "tied", "engine_count"}
     req |= {"choices", "auto_decided", "auto_decided_queries"} & set(exp)
     req |= {f"cost:{e}" for e in final_architecture(report)}
+    # #1195: what each engine's cost was sized for, in the cost table.
+    req |= {k for k in exp if k.startswith("sized:")}
     # #1169: each migration target's Scope cell says how many of its tables migrate.
     req |= {k for k in exp if k.startswith(("tables:", "migrate:"))}
     req |= {f"synced:{k.split(':', 1)[1]}" for k in exp if k.startswith("migrate:")}
@@ -136,6 +138,8 @@ def _engineering_required(report: dict[str, Any], exp: dict[str, Any]) -> set[st
         | ({"choices", "auto_decided", "auto_decided_queries"} & set(exp))
     )
     req |= {f"queries:{e}" for e in final_architecture(report) if e.startswith("aurora")}
+    # #1195: the Cost table's "Sized for" cell, per engine.
+    req |= {k for k in exp if k.startswith("sized:")}
     req |= {k for k in exp if k.startswith(("tables:", "migrate:"))}
     req |= {f"synced:{k.split(':', 1)[1]}" for k in exp if k.startswith("migrate:")}
     # #1169: the Migration map heading's split and the moving tables it has no row for.
@@ -222,8 +226,8 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
     recomputed = compute_report_facts(
         {k: v for k, v in report.items() if k != "facts"},
         relational_gaps=_relational_gaps_from_the_job(run, report),
-        # #1196: synthesis passes the price dates the estimates recorded, as it does the gaps.
-        price_list=_price_list_from_the_job(run, report),
+        # #1196: synthesis passes the price dates its TCO rows recorded, as it does the gaps.
+        price_list=_price_list_from_the_job(report),
     )
     assert stored == recomputed
 
@@ -243,22 +247,62 @@ def _relational_gaps_from_the_job(run: PipelineResult, report: dict[str, Any]) -
     return detect_relational_gaps(collector, target)
 
 
-def _price_list_from_the_job(run: PipelineResult, report: dict[str, Any]) -> Any:
-    """#1196: the price table each TCO engine's analysis estimate recorded."""
-    bases = {}
-    for row in (report.get("tco_analysis") or {}).get("cost_breakdown") or []:
-        engine = row["database"]
-        analysis = json.loads((run.job_dir() / f"analysis-{engine}" / "analysis.json").read_text())
-        bases[engine] = analysis["cost_estimate"]["cost_components"].get("price_list")
-    return estimates_price_basis(bases)
+def _price_list_from_the_job(report: dict[str, Any]) -> Any:
+    """#1196: the price table each TCO figure was priced from: since #1195 synthesis
+    prices each kept engine for its assigned queries, and each row records its table."""
+    rows = (report.get("tco_analysis") or {}).get("cost_breakdown") or []
+    return estimates_price_basis({row["database"]: row.get("price_list") for row in rows})
+
+
+def test_every_kept_engine_is_sized_for_its_assigned_queries(run: PipelineResult) -> None:
+    """#1195: each TCO row is sized for the engine's in-scope assigned queries (the cache
+    layer for the reads its overlay fronts), states that basis in the facts, and its
+    figure is the engine's own estimator on those queries."""
+    report = _report_json(run)
+    assignment = json.loads(
+        (
+            run.job_dir()
+            / "assignment"
+            / f"v{report['assignment_summary']['version']}"
+            / "assignment.json"
+        ).read_text()
+    )
+    in_scope = [qa for qa in assignment["query_assignments"] if qa.get("in_scope", True)]
+    cps = {
+        q["query_id"]: float(q.get("calls_per_second") or 0)
+        for q in json.loads((run.job_dir() / "collector" / "output.json").read_text())["queries"][
+            "query_patterns"
+        ]
+    }
+    facts = {e["engine"]: e for e in report["facts"]["engines"]}
+    for row in report["tco_analysis"]["cost_breakdown"]:
+        engine, sizing = row["database"], row["sizing"]
+        owned = [qa["query_id"] for qa in in_scope if qa["assigned_engine"] == engine]
+        fronted = [
+            qa["query_id"]
+            for qa in in_scope
+            if qa.get("cache_engine") == engine and not qa.get("cache_dropped")
+        ]
+        ids = owned + fronted if owned else fronted
+        assert sizing["basis"] == ("assigned_queries" if owned else "cache_overlay"), engine
+        assert sizing["sized_query_count"] == len(ids), engine
+        assert sizing["calls_per_second"] == round(sum(cps[i] for i in ids), 2), engine
+        assert facts[engine]["cost_sizing"] == sizing, engine
+    whole = sum(
+        json.loads((run.job_dir() / f"analysis-{r['database']}" / "analysis.json").read_text())[
+            "cost_estimate"
+        ]["monthly_cost_usd"]
+        for r in report["tco_analysis"]["cost_breakdown"]
+    )
+    assert report["tco_analysis"]["projected_monthly_cost"] <= round(whole, 2)
 
 
 def test_every_deliverable_states_the_price_date(run: PipelineResult) -> None:
     """#1196: report.json states the price table each TCO figure was priced from, the one
-    its analysis estimate recorded, and the PDF and engineering reports both print it."""
+    its TCO row recorded, and the PDF and engineering reports both print it."""
     report = _report_json(run)
     basis = report["facts"]["price_list"]
-    assert basis == _price_list_from_the_job(run, report)
+    assert basis == _price_list_from_the_job(report)
     assert set(basis["engine_dates"]) == {
         row["database"] for row in report["tco_analysis"]["cost_breakdown"]
     }

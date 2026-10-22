@@ -239,3 +239,47 @@ export function noEngineInScopeOf(synthesis) {
     total: f.query_total_count,
   };
 }
+
+// #1195: what an engine's cost figure was sized for (facts.engines[].cost_sizing):
+// the queries the assignment gives it, or the reads the cache layer fronts. Null for
+// the analysis estimate and for a report written before.
+export function costSizingOf(synthesis, engine) {
+  const rows = (factsOf(synthesis) && factsOf(synthesis).engines) || [];
+  const row = Array.isArray(rows) ? rows.find(r => r && r.engine === engine) : null;
+  return (row && row.cost_sizing) || null;
+}
+
+// A number as the reports print it (fmt_num): thousands separators, at most two places.
+function formatFigure(value) {
+  const n = Number(value) || 0;
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+// "Sized for 67 queries, 96.51 calls/s" / "Sized for 20 cached reads, 185.07 calls/s",
+// the reports' "Sized for" column; '' with no sizing.
+export function costSizingText(t, sizing) {
+  if (!sizing || !sizing.basis) return '';
+  if (sizing.basis === 'no_in_scope_queries') return t('analysis-results.cost-breakdown.sized-nothing');
+  const count = Number(sizing.sized_query_count) || 0;
+  const rate = Number(sizing.calls_per_second) || 0;
+  const what = t(
+    sizing.basis === 'cache_overlay'
+      ? 'analysis-results.cost-breakdown.sized-cached'
+      : 'analysis-results.cost-breakdown.sized-queries',
+    { count, formatted: formatFigure(count) },
+  );
+  const calls = t('analysis-results.cost-breakdown.sized-rate', { count: rate, formatted: formatFigure(rate) });
+  const text = t('analysis-results.cost-breakdown.sized-for', { what, rate: calls });
+  // The cache layer's reads stay billed on their owner engines too (the TCO assumption).
+  return sizing.basis === 'cache_overlay' && count
+    ? text + t('analysis-results.cost-breakdown.sized-also-on-owners')
+    : text;
+}
+
+// #1195: the TCO's assumption lines (facts.cost_assumptions), as every deliverable
+// states them; a hand-built report with no facts block shows its own list.
+export function costAssumptionsOf(synthesis) {
+  const lines = factsOf(synthesis) && factsOf(synthesis).cost_assumptions;
+  if (Array.isArray(lines)) return lines;
+  return (synthesis && synthesis.tco_analysis && synthesis.tco_analysis.assumptions) || [];
+}

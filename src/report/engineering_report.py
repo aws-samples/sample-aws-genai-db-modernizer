@@ -40,6 +40,7 @@ from .formatting import (
     _retired_in_use_lines,
     access_pattern_scope,
     cost_baseline_known,
+    cost_sizing_text,
     fallback_withheld_reason,
     fmt_num,
     label_summary_counts,
@@ -151,13 +152,19 @@ def _cost_by_engine_md(report: dict[str, Any]) -> list[str]:
     if not engines:
         return []
     facts = report_facts(report)
-    out = ["| Engine | Role | Est. monthly |", "|---|---|---|"]
+    out = ["| Engine | Role | Est. monthly | Sized for |", "|---|---|---|---|"]
     for e in engines:
+        # #1195: what the figure was sized for, as the facts layer states it.
+        sized = cost_sizing_text(e.get("cost_sizing")) or "-"
         out.append(
             f"| {escaping.md_cell(display_engine(e['engine']))} "
-            f"| {escaping.md_cell(e['role'])} | {escaping.md_cell(_fmt_usd(e.get('cost')))} |"
+            f"| {escaping.md_cell(e['role'])} | {escaping.md_cell(_fmt_usd(e.get('cost')))} "
+            f"| {escaping.md_cell(sized)} |"
         )
-    out += [f"| Total | | {escaping.md_cell(_fmt_usd(facts.get('engine_cost_total_usd')))} |", ""]
+    out += [
+        f"| Total | | {escaping.md_cell(_fmt_usd(facts.get('engine_cost_total_usd')))} | |",
+        "",
+    ]
     return out
 
 
@@ -867,6 +874,10 @@ def render_engineering_report_md(
             out.append(f"- {escaping.md_text(line)}")
         out.append("")
         out += _cost_by_engine_md(report)
+        # #1195: the TCO's assumption lines, as the facts state them for every deliverable.
+        assumptions = facts.get("cost_assumptions") or []
+        if assumptions:
+            out += [f"Assumptions: {escaping.md_text('; '.join(assumptions))}.", ""]
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)

@@ -163,6 +163,7 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "SynthesisOutputContract",
             "ConsideredEngine",
             "CostBreakdown",
+            "TargetEngineCost",
             "EngineRanking",
             "MigrationWave",
             "QueryGroup",

@@ -490,6 +490,20 @@ Version History:
   ``UnservableQueryFact.closest_engine``, an empty ``engine``), and the risk rule
   ``routing.no_engine_in_scope`` raises one blocking risk for them. Defaults to empty
   and 0, so a report written before still loads.
+- 1.56 (2026-10-23, #1195, #1196): ``tco_analysis.cost_breakdown[].sizing``
+  (``CostSizing``) and ``.price_list``: each kept engine is priced for the in-scope
+  queries the effective assignment gives it and the tables they touch (the cache layer
+  for the reads it fronts), and the row states that basis and the price table it was
+  priced from; ``facts.engines[].cost_sizing`` states it in every deliverable (basis
+  ``assigned_queries``, ``cache_overlay``, or ``no_in_scope_queries`` at $0), and
+  ``facts.cost_assumptions`` states the TCO's assumption lines, including that the owner
+  engines are billed for the reads the cache fronts as misses. Backward compatible: None
+  for an older report, whose figures were the analysis estimates. ``facts.price_list``
+  (``PriceListFacts``): the source, region, pricing model and retrieval date of the
+  price table (``src/catalog/prices.toml``) the TCO figures were estimated from, read
+  from each analysis estimate (``engine_dates``; ``retrieved_on`` when they agree), so
+  each deliverable states the price date. Backward compatible: defaults to None, the
+  value an older report reads back as (its price date is unknown).
 """
 
 from datetime import datetime
@@ -622,6 +636,25 @@ class QueryGroup(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class CostSizing(BaseModel):
+    """What a kept engine's TCO figure was sized for (#1195).
+
+    ``assigned_queries``: the in-scope queries the effective assignment gives the engine
+    (with any reads it also fronts) and the tables they touch; ``cache_overlay``: the
+    reads the cache layer fronts; ``no_in_scope_queries``: the assignment has no query in
+    scope, so the engine is sized to nothing ($0). Counts and rates follow the estimators: reads are
+    SELECTs, writes INSERT, UPDATE, DELETE and REPLACE.
+    """
+
+    basis: Literal["assigned_queries", "cache_overlay", "no_in_scope_queries"]
+    sized_query_count: int = Field(..., ge=0, description="Queries the figure was sized for")
+    calls_per_second: float = Field(..., ge=0, description="Their calls a second")
+    read_calls_per_second: float = Field(..., ge=0)
+    write_calls_per_second: float = Field(..., ge=0)
+    sized_table_count: int = Field(..., ge=0, description="Source tables those queries touch")
+    storage_gb: float = Field(..., ge=0, description="Those tables' source size, in GB")
+
+
 class CostBreakdown(BaseModel):
     """Cost breakdown per engine."""
 
@@ -629,6 +662,35 @@ class CostBreakdown(BaseModel):
     monthly_cost_usd: float = Field(..., ge=0)
 
     model_config = ConfigDict(extra="allow")
+
+
+class TargetEngineCost(CostBreakdown):
+    """One kept engine's TCO figure, with what it was sized for and priced from (#1195).
+
+    A ``CostBreakdown`` passed in (a row built before these fields) is read as one with
+    neither, so a caller that builds rows with the base model still validates."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_a_breakdown_row(cls, value: Any) -> Any:
+        if isinstance(value, CostBreakdown) and not isinstance(value, cls):
+            return value.model_dump()
+        return value
+
+    sizing: CostSizing | None = Field(
+        None,
+        description=(
+            "What the figure was sized for (#1195); None when it is the analysis estimate "
+            "(sized for the whole collection: no assignment, or a report written before)"
+        ),
+    )
+    price_list: dict[str, str] | None = Field(
+        None,
+        description=(
+            "The price table the figure was priced from (#1196, price_basis()); None when "
+            "its estimate recorded none"
+        ),
+    )
 
 
 class TCOAnalysis(BaseModel):
@@ -643,7 +705,7 @@ class TCOAnalysis(BaseModel):
     current_cost_known: bool = Field(True)
     projected_monthly_cost: float = Field(..., ge=0)
     savings_percent: float = Field(...)
-    cost_breakdown: list[CostBreakdown] | None = Field(None)
+    cost_breakdown: list[TargetEngineCost] | None = Field(None)
     # #380: engines the reality check eliminated, each with its own analysed
     # cost before removal. Not written since 1.25 (#949): it priced candidate
     # engines the source never ran. Kept so an older report still loads; never
@@ -1049,6 +1111,13 @@ class EngineFacts(BaseModel):
         ),
     )
     monthly_cost_usd: float | None = Field(None, ge=0)
+    cost_sizing: CostSizing | None = Field(
+        None,
+        description=(
+            "What monthly_cost_usd was sized for (#1195), from tco_analysis.cost_breakdown; "
+            "None for the analysis estimate and for a report written before"
+        ),
+    )
     rationale: str = Field("", description="Why the engine is in the target (#152)")
     signal_overrides: list[str] = Field(
         default_factory=list,
@@ -2010,6 +2079,13 @@ class ReportFacts(BaseModel):
             "None for a job with no scope, and for a report written before"
         ),
     )
+    cost_assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The TCO's assumption lines (tco_analysis.assumptions), as every deliverable's "
+            "cost section states them (#1195)"
+        ),
+    )
     price_list: PriceListFacts | None = Field(
         None,
         description=(
@@ -2061,7 +2137,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.55",
+        default="1.56",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

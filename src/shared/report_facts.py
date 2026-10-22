@@ -178,6 +178,25 @@ def rationale_text(value: Any) -> str:
     return ""
 
 
+def cost_assumptions(report: dict[str, Any]) -> list[str]:
+    """The TCO's assumptions as every deliverable states them (#1195): its own
+    ``tco_analysis.assumptions`` lines, text only, in order."""
+    lines = (report.get("tco_analysis") or {}).get("assumptions") or []
+    return [line for line in lines if isinstance(line, str) and line.strip()]
+
+
+def engine_cost_sizing(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """engine name -> what its TCO figure was sized for (#1195), from cost_breakdown.
+
+    A row with no sizing (the analysis estimate, or a report written before #1195) is
+    absent, so its engine states no basis."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in (report.get("tco_analysis") or {}).get("cost_breakdown") or []:
+        if isinstance(row, dict) and row.get("database") and isinstance(row.get("sizing"), dict):
+            out[str(row["database"])] = dict(row["sizing"])
+    return out
+
+
 def engine_costs(report: dict[str, Any]) -> dict[str, float]:
     """engine name -> monthly USD, from tco_analysis.cost_breakdown."""
     out: dict[str, float] = {}
@@ -539,6 +558,7 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
     src_tables = {d.get("service"): d.get("table_count") for d in dbs}
     schema_designs = report.get("schema_designs") or {}
     costs = engine_costs(report)
+    sizing = engine_cost_sizing(report)
 
     wave_served: dict[str, int] = {}
     wave_owned: dict[str, int] = {}
@@ -607,6 +627,9 @@ def engine_facts(report: dict[str, Any], waves: list[dict[str, Any]]) -> list[di
                 # them, so the Scope cell adds up and agrees with the wave plan.
                 **engine_table_split_facts(str(eng), source_tables, int(migrates or 0), split),
                 "monthly_cost_usd": costs.get(eng),
+                # #1195: what that figure was sized for (its assigned queries, or the
+                # reads the cache layer fronts); None for the analysis estimate.
+                "cost_sizing": sizing.get(str(eng)),
                 # Synthesis's per-engine rationale, built from the routed workload
                 # (#152); the ranking entry carries it for engines `databases` omits
                 "rationale": rationale_text(
@@ -2749,6 +2772,8 @@ def compute_report_facts(
         ),
         # #1196: the source, region and date of the list prices behind every cost figure.
         "price_list": dict(price_list) if price_list is not None else None,
+        # #1195: the TCO's assumptions, stated once for every deliverable's cost section.
+        "cost_assumptions": cost_assumptions(report),
     }
 
 

@@ -69,7 +69,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, costAssumptionsOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2015,13 +2015,20 @@ const AnalysisResultsPage = memo(() => {
                             ${cb.monthly_cost_usd?.toFixed(2)}
                           </Box>
                           <Box fontSize="body-s" color="text-body-secondary">/month · {cb.pricing_mode}</Box>
+                          {costSizingText(t, costSizingOf(synthesis, cb.database)) && (
+                            <Box fontSize="body-s" color="text-body-secondary">
+                              <span data-figure="cost-sizing" data-engine={cb.database}>
+                                {costSizingText(t, costSizingOf(synthesis, cb.database))}
+                              </span>
+                            </Box>
+                          )}
                         </Box>
                       );
                     })}
                   </ColumnLayout>
-                  {synthesis?.tco_analysis?.assumptions?.length > 0 && (
+                  {costAssumptionsOf(synthesis).length > 0 && (
                     <Box fontSize="body-s" color="text-body-secondary">
-                      {synthesis.tco_analysis.assumptions.join(' · ')}
+                      <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
                     </Box>
                   )}
                 </SpaceBetween>

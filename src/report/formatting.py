@@ -237,6 +237,25 @@ def price_list_text(facts: dict[str, Any]) -> str:
     return f"{basis['source']}, {basis['region']} {basis['pricing_model']}, {when}"
 
 
+def cost_sizing_text(sizing: Any) -> str:
+    """ "67 queries, 96.51 calls/s" or "20 cached reads, 185.07 calls/s, also billed on
+    their owners" (#1195).
+
+    What an engine's TCO figure was sized for (``facts.engines[].cost_sizing``): the
+    queries the assignment gives it, or the reads the cache layer fronts. "" with none
+    (the analysis estimate, or a report written before)."""
+    if not isinstance(sizing, dict) or not sizing.get("basis"):
+        return ""
+    if sizing["basis"] == "no_in_scope_queries":
+        return "no in-scope queries"
+    n, cps = sizing.get("sized_query_count") or 0, sizing.get("calls_per_second") or 0
+    cached = sizing["basis"] == "cache_overlay"
+    noun = plural_noun(n, "cached read") if cached else plural_noun(n, "query", "queries")
+    text = f"{fmt_num(n)} {noun}, {fmt_num(cps)} {plural_noun(cps, 'call')}/s"
+    # The cache layer's reads stay billed on their owner engines too (CACHE_MISS_ASSUMPTION).
+    return text + ", also billed on their owners" if cached and n else text
+
+
 def _completed_designs(report: dict[str, Any]) -> dict[str, dict]:
     """engine -> design summary, only for engines whose design completed."""
     sd = report.get("schema_designs") or {}

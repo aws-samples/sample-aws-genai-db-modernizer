@@ -225,6 +225,14 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
             exp[f"cost:{row['database']}"] = round(float(row["monthly_cost_usd"]), 2)
     if isinstance(tco.get("projected_monthly_cost"), (int, float)):
         exp["cost:total"] = round(float(tco["projected_monthly_cost"]), 2)
+    # #1195: what each figure was sized for (queries and their calls a second).
+    for row in tco.get("cost_breakdown") or []:
+        sizing = row.get("sizing") if isinstance(row, dict) else None
+        if isinstance(sizing, dict):
+            exp[f"sized:{row['database']}"] = (
+                int(sizing["sized_query_count"]),
+                round(float(sizing["calls_per_second"]), 2),
+            )
 
     risks = [r for r in (report.get("risk_assessment") or {}).get("risks") or [] if r]
     counts = Counter(str(r.get("severity", "")).upper() for r in risks)
@@ -843,6 +851,12 @@ def engineering_figures(md_text: str) -> Figures:
 
     m = re.search(r"^- Projected monthly \(target\): \$([\d,.]+)$", plain, re.M)
     f.add("cost:total", _usd(m.group(1)) if m else UNREADABLE, "Cost: Projected monthly")
+    # #1195: the Cost table's "Sized for" cell, per engine.
+    for row in _md_table_rows(h2.get("Cost", "")):
+        if len(row) >= 4 and md_plain(row[0]) != "Total":
+            sized = _sized(md_plain(row[3]))
+            if sized is not None:
+                f.add(f"sized:{engine_id(md_plain(row[0]))}", sized, "Cost table Sized for")
     queries_moved(f, md_plain(h2.get("Target engines", "")), "Target engines: Queries moved")
     query_patterns(
         f, md_plain(h2.get("Target engines", "")), "Target engines: Distinct query patterns"
@@ -975,6 +989,21 @@ def pdf_page_texts(pdf_path: str) -> list[str]:
 
 _PDF_ROLES = "Retained|Migration target|Cache layer|Search read model|Evaluated|Assessed"
 _PDF_COST_ROW = re.compile(rf"({_NAMES_RE}) (?:{_PDF_ROLES}) \$([\d,]+\.\d\d)")
+# #1195: "67 queries, 96.51 calls/s" / "20 cached reads, 185.07 calls/s".
+_SIZED = re.compile(
+    r"([\d,]+) (?:quer(?:y|ies)|cached reads?), ([\d,.]+) calls?/s(?:, also billed on their owners)?"
+)
+_PDF_SIZED_ROW = re.compile(
+    rf"({_NAMES_RE}) (?:{_PDF_ROLES}) \$[\d,]+\.\d\d ([\d,]+ (?:quer(?:y|ies)|cached reads?), "
+    r"[\d,.]+ calls?/s)"
+)
+
+
+def _sized(text: str) -> tuple[int, float] | None:
+    m = _SIZED.fullmatch(text.strip())
+    return (_int(m.group(1)), float(m.group(2).replace(",", ""))) if m else None
+
+
 _PDF_SEVERITY = re.compile(r"([\d,]+) (critical|high|medium|low|unrated)")
 
 
@@ -993,6 +1022,10 @@ def pdf_figures(text: str) -> Figures:
             eng = engine_id(name)
             f.name(eng, "Cost by engine")
             f.add(f"cost:{eng}", _usd(cost), "Cost by engine")
+        for name, sized in _PDF_SIZED_ROW.findall(table):
+            got = _sized(sized)
+            if got is not None:
+                f.add(f"sized:{engine_id(name)}", got, "Cost by engine Sized for")
         t = re.search(r"Total \$([\d,]+\.\d\d)", table)
         f.add("cost:total", _usd(t.group(1)) if t else UNREADABLE, "Cost by engine Total")
     # #1169: each migration target's Scope cell in the engine table.

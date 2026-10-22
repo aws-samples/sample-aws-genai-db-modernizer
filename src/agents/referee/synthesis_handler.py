@@ -264,6 +264,16 @@ def run_synthesis_deterministic(
         {"engine": e, "absorbed_by": a} for e, a in sorted(eliminated.items()) if e not in running
     ]
     tco = build_tco_analysis(data, retired_costs=retired_costs)
+    # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
+    # queries), never the whole-collection analysis estimate, so every cost agrees.
+    sized = {
+        str(row["database"]): row["monthly_cost_usd"]
+        for row in tco.get("cost_breakdown") or []
+        if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
+    }
+    for entry in ranking:
+        if entry.get("target") in sized:
+            entry["monthly_cost_usd"] = sized[str(entry["target"])]
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).
     known_tables: list[str] = sorted(
@@ -1249,14 +1259,13 @@ def _write_synthesis_report(
         relational_gaps=relational_gaps,
         # #1328: the customer's engine scope triage recorded; every deliverable states it.
         engine_scope=scope_of(data.triage),
-        # #1196: the price table each TCO figure's analysis estimate was priced from.
+        # #1196: the price table each TCO figure was priced from; since #1195 the TCO
+        # prices each kept engine itself, so each row records its own (ADR-032 Decision 6).
         price_list=estimates_price_basis(
             {
-                engine: (
-                    ((artifacts.analysis or {}).get("cost_estimate") or {}).get("cost_components")
-                    or {}
-                ).get("price_list")
-                for engine, artifacts in data.engines.items()
+                str(row.get("database")): row.get("price_list")
+                for row in (output_data.get("tco_analysis") or {}).get("cost_breakdown") or []
+                if isinstance(row, dict)
             }
         ),
     )

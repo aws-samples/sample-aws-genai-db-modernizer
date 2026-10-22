@@ -17,6 +17,7 @@ from src.shared.report_facts import (
     access_pattern_facts,
     apply_cross_engine_wave_one,
     compute_report_facts,
+    cost_assumptions,
     engine_served_split,
     engine_table_split_facts,
     map_split_facts,
@@ -68,6 +69,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
             # A block written before #1329: the no-engine count and the total, from the
             # same function (no scope_unservable before it, so 0 and the stored count).
             missing.update(query_total_facts(report, int(facts.get("in_scope_query_count") or 0)))
+        if "cost_assumptions" not in facts:
+            # A block written before #1195: the TCO's own assumption lines.
+            missing["cost_assumptions"] = cost_assumptions(report)
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:

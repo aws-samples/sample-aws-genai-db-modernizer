@@ -616,6 +616,34 @@ def test_results_page_states_the_price_date(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def test_results_page_states_what_each_engine_was_sized_for(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1195: each cost card states what its figure was sized for, as report.json's
+    facts.engines[].cost_sizing holds it (the reports' "Sized for" column)."""
+    from src.report.formatting import cost_sizing_text
+
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        sizing = {
+            e["engine"]: e["cost_sizing"]
+            for e in report["facts"]["engines"]
+            if e.get("cost_sizing") and e.get("monthly_cost_usd") is not None
+        }
+        assert sizing, r.db
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.wait_for_load_state("networkidle")
+        page.locator("[data-figure=cost-sizing]").first.wait_for()
+        for engine, basis in sizing.items():
+            shown = page.locator(f"[data-figure=cost-sizing][data-engine={engine}]")
+            assert shown.inner_text().strip() == f"Sized for {cost_sizing_text(basis)}", (
+                r.db,
+                engine,
+            )
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
 def test_results_page_shows_the_headline_first(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:

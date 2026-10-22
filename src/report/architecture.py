@@ -113,6 +113,7 @@ def _architecture_engines(report: dict[str, Any]) -> list[dict[str, Any]]:
             "kept_in_sync": e.get("kept_in_sync_tables"),
             "moves_to": e.get("moves_to_tables"),
             "cost": e.get("monthly_cost_usd"),
+            "cost_sizing": e.get("cost_sizing"),
             "rationale": e.get("rationale") or "",
         }
         for e in report_facts(report).get("engines") or []

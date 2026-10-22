@@ -1,7 +1,9 @@
 """Every deliverable states the date of the list prices behind its cost figures (#1196).
 
-Each analysis estimate records the price table it was priced from; synthesis states
-those dates once in ``facts.price_list`` (ADR-032), never the table it happens to load,
+Each estimate records the price table it was priced from: the analysis estimates and,
+since #1195, the TCO's own estimate of each kept engine for its assigned queries.
+Synthesis states the dates of the estimates the TCO sums once in ``facts.price_list``
+(ADR-032), never the table it happens to load,
 and the engineering report and the PDF report only format it. A report written before
 the fact existed states no date.
 """
@@ -22,6 +24,13 @@ from src.report.renderers import render_engineering_report_md
 from src.shared.catalog import prices as prices_module
 from src.shared.catalog.prices import estimates_price_basis, price_basis
 from src.shared.report_facts import compute_report_facts
+from src.tools.analysis import (
+    aurora_common_analysis_tools,
+    documentdb_analysis_tools,
+    dynamodb_analysis_tools,
+    opensearch_analysis_tools,
+    redis_analysis_tools,
+)
 from tests.executive_pdf import executive_text
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import DB, JOB
 from tests.unit.agents.referee.test_synthesis_unservable_capabilities import store as seeded_store
@@ -36,6 +45,13 @@ def _basis(day: str) -> dict[str, str]:
     }
 
 
+ESTIMATOR_MODULES = (
+    aurora_common_analysis_tools,
+    documentdb_analysis_tools,
+    dynamodb_analysis_tools,
+    opensearch_analysis_tools,
+    redis_analysis_tools,
+)
 BASIS = estimates_price_basis({"aurora_mysql": _basis("2026-10-19")})
 LINE = "List prices: AWS Price List, us-east-1 on-demand, retrieved 2026-10-19"
 
@@ -157,18 +173,44 @@ def _tco_engines(tmp_path) -> list[str]:
     return [row["database"] for row in report["tco_analysis"]["cost_breakdown"]]
 
 
-def test_a_job_resynthesized_after_a_refresh_states_its_estimates_date(
+def _refresh_the_table(monkeypatch: pytest.MonkeyPatch, day: str) -> None:
+    """The price table as refreshed on ``day``: what every estimate made now records."""
+    for module in ESTIMATOR_MODULES:
+        monkeypatch.setattr(module, "price_basis", lambda: _basis(day))
+    monkeypatch.setattr(prices_module, "price_basis", lambda: _basis(day))
+
+
+def test_a_job_resynthesized_after_a_refresh_states_the_table_its_tco_was_priced_from(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The estimates were priced on 2026-07-01; the table was refreshed since. The
-    report states the estimates' date, not the refreshed table's."""
+    """The analysis estimates were priced on 2026-07-01 and the table was refreshed since.
+    Synthesis prices each kept engine for its assigned queries (#1195), on the refreshed
+    table, so the report states the refreshed table's date: the one its figures used."""
     engines = _tco_engines(tmp_path)
     assert engines
-    monkeypatch.setattr(prices_module, "price_basis", lambda: _basis("2027-01-15"))
+    _refresh_the_table(monkeypatch, "2027-01-15")
     report = _synthesize(tmp_path / "job", {e: "2026-07-01" for e in engines})
+    rows = report["tco_analysis"]["cost_breakdown"]
+    assert {r["database"]: r["price_list"]["retrieved_on"] for r in rows} == {
+        e: "2027-01-15" for e in engines
+    }
     basis = report["facts"]["price_list"]
-    assert basis["retrieved_on"] == "2026-07-01"
-    assert basis["engine_dates"] == {e: "2026-07-01" for e in sorted(engines)}
+    assert basis["retrieved_on"] == "2027-01-15"
+    assert basis["engine_dates"] == {e: "2027-01-15" for e in sorted(engines)}
+
+
+def test_an_engine_kept_at_its_analysis_figure_states_the_analysis_date(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no assignment to size from, the TCO keeps the analysis estimate, and the
+    report states the date that estimate was priced on, not today's table."""
+    engines = _tco_engines(tmp_path)
+    _refresh_the_table(monkeypatch, "2027-01-15")
+    monkeypatch.setattr(
+        "src.agents.referee.synthesis_report.sized_cost_estimate", lambda *a, **k: None
+    )
+    report = _synthesize(tmp_path / "job", {e: "2026-07-01" for e in engines})
+    assert report["facts"]["price_list"]["retrieved_on"] == "2026-07-01"
 
 
 def test_a_job_whose_estimates_carry_no_date_states_none(tmp_path) -> None:

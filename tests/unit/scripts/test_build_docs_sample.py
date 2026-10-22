@@ -294,8 +294,8 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     assert older["facts"] != report["facts"]  # the figure really was removed
     # The recorded run's own block, read through the same reader: a figure added after
     # the run was recorded (#1284's waves[].moved_by_later_waves, #212's
-    # table_owner_lines) is filled in for both, every figure the run stored is read as
-    # stored. #212 is the one deliberate exception: the Migration map split counts each
+    # table_owner_lines, #1195's cost_assumptions) is filled in for both, every figure
+    # the run stored is read as stored. #212 is the one deliberate exception: the Migration map split counts each
     # row under its owner now, never on the cache layer, so it is read anew (same total).
     assert report_facts(older) == report_facts(report)
     read = copy.deepcopy(report_facts(report))
@@ -322,6 +322,8 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     if "query_total_count" not in stored:
         assert read.pop("no_engine_in_scope_query_count") == 0
         assert read.pop("query_total_count") == stored["in_scope_query_count"]
+    # #1195: facts.cost_assumptions, also added after the run was recorded.
+    read.pop("cost_assumptions")
     assert read == stored
 
 
