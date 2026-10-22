@@ -66,6 +66,7 @@ from src.agents.referee.write_groups import (
 from src.contracts.assignment_models import AssignmentSource
 from src.contracts.model_flag import ResponseContractError, validation_error_note
 from src.contracts.move_ledger import MoveActor, MovePass, ReasonCode
+from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
 from src.contracts.reality_check_model_response import (
     RealityCheckModelResponse,
     parse_reality_check_response,
@@ -416,7 +417,9 @@ def run_reality_check_handler(
     start_time = time.time()
 
     if assignment_version is None:
-        previous_run = reality_check_run_for_lineage(store, database_name, job_id)
+        previous_run = reality_check_run_for_lineage(
+            store, database_name, job_id, marker_fails_open=True
+        )
         if previous_run is not None:
             print(
                 f"[reality-check] Already ran for this lineage (v{previous_run.input_version}"
@@ -452,7 +455,8 @@ def run_reality_check_handler(
         # One record per line, so the Read pages in its header stay small (#285)
         store.write_bytes(llm_input_key, render_reality_check_request(llm_input).encode())
         awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
-        store.write_json(awaiting_key, {"status": "awaiting_llm", "input_key": llm_input_key})
+        marker = RealityCheckMarker(status=MarkerStatus.AWAITING_LLM, input_key=llm_input_key)
+        store.write_json(awaiting_key, marker.model_dump(mode="json", exclude_none=True))
         print(f"[reality-check] LLM input written to {llm_input_key} — awaiting external LLM")
 
     # llm_mode == "none": skip LLM entirely, use det as-is
@@ -567,7 +571,8 @@ def write_reality_check_result(
     if write_revision and store.exists(awaiting_key):
         # A completed run supersedes any external-mode preview; from here on the
         # output counts as this lineage's run (reality_check_run_for_lineage).
-        store.write_json(awaiting_key, {"status": "finalized"})
+        finalized = RealityCheckMarker(status=MarkerStatus.FINALIZED)
+        store.write_json(awaiting_key, finalized.model_dump(mode="json", exclude_none=True))
 
     if new_version is None:
         if not result["consolidations"]:
@@ -658,7 +663,9 @@ def finalize_reality_check(
     Returns the same summary shape as :func:`run_reality_check_handler`.
     """
     if assignment_version is None:
-        previous_run = reality_check_run_for_lineage(store, database_name, job_id)
+        previous_run = reality_check_run_for_lineage(
+            store, database_name, job_id, marker_fails_open=True
+        )
         if previous_run is not None:
             return _skipped(previous_run)
         assignment_version = resolve_reality_check_input_version(store, database_name, job_id)

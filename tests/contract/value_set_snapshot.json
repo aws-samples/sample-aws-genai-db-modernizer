@@ -748,6 +748,14 @@
     ],
     "version": "1.52"
   },
+  "reality_check_marker.MarkerStatus": {
+    "module": "reality_check_marker",
+    "values": [
+      "awaiting_llm",
+      "finalized"
+    ],
+    "version": "1.0"
+  },
   "referee_output.ArchitectureType": {
     "module": "referee_output",
     "values": [

@@ -18,8 +18,14 @@ policy themselves; this module reports the raw truth (0 when nothing exists).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Iterator
 from typing import NamedTuple, Protocol
+
+from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
+from src.shared.contract_versioning import load_contract
+
+logger = logging.getLogger(__name__)
 
 
 class _Lister(Protocol):
@@ -203,26 +209,47 @@ class RealityCheckRun(NamedTuple):
     """The version it wrote, or None when it consolidated nothing."""
 
 
-def _completed_reality_check_output(store: _Reader, database_name: str, job_id: str) -> dict:
+def _completed_reality_check_output(
+    store: _Reader, database_name: str, job_id: str, *, marker_fails_open: bool = False
+) -> dict:
     """Return ``reality-check/output.json`` if a completed run wrote it, else ``{}``.
 
     An external-mode run writes a deterministic preview of the output before the
     LLM response arrives, with ``reality-check/awaiting_llm.json`` at
     ``status = awaiting_llm`` until the finalize step completes. That preview does
     not count as a run.
+
+    A marker that cannot be read (invalid JSON, another MAJOR, no valid ``status``)
+    raises. With ``marker_fails_open`` its state is unknown: it is logged and the job
+    is treated as awaiting, so no ``output.json`` (possibly a preview) counts as a
+    run, and the reality check, which rewrites both files itself, can run again
+    (#1267).
     """
     prefix = f"{database_name}/{job_id}/reality-check"
     awaiting_key = f"{prefix}/awaiting_llm.json"
-    if store.exists(awaiting_key) and (
-        store.read_json(awaiting_key).get("status") == "awaiting_llm"
-    ):
-        return {}
+    if store.exists(awaiting_key):
+        try:
+            marker = load_contract(
+                RealityCheckMarker, store.read_json(awaiting_key), artifact=awaiting_key
+            )
+        except Exception as exc:
+            if not marker_fails_open:
+                raise
+            logger.warning(
+                "%s: unreadable reality-check marker, treated as awaiting (%s)",
+                awaiting_key,
+                type(exc).__name__,
+            )
+            return {}
+        else:
+            if marker.status is MarkerStatus.AWAITING_LLM:
+                return {}
     output_key = f"{prefix}/output.json"
     return store.read_json(output_key) if store.exists(output_key) else {}
 
 
 def reality_check_run_for_lineage(
-    store: _ListReader, database_name: str, job_id: str
+    store: _ListReader, database_name: str, job_id: str, *, marker_fails_open: bool = False
 ) -> RealityCheckRun | None:
     """Return the Reality Check run the effective assignment descends from, if any.
 
@@ -244,11 +271,17 @@ def reality_check_run_for_lineage(
     (ADR-028), and ADR-029 re-entry reopens the gate, not Reality Check. So a
     customer edit that descends from a run was made *after* consolidation, on
     purpose. Consolidating it again would undo the customer's routing.
+
+    ``marker_fails_open`` is for the reality check's own entry points, which rewrite
+    ``awaiting_llm.json``: a marker that cannot be read counts as no marker there
+    (see :func:`_completed_reality_check_output`). Every other reader validates.
     """
     newest = next(iter(_versions_newest_first(store, database_name, job_id)), None)
     if newest is None:
         return None
-    rc_output = _completed_reality_check_output(store, database_name, job_id)
+    rc_output = _completed_reality_check_output(
+        store, database_name, job_id, marker_fails_open=marker_fails_open
+    )
     rc_source = rc_output.get("source_assignment_version")
     rc_wrote = rc_output.get("output_assignment_version")
 

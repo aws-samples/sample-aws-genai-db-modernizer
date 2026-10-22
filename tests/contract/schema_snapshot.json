@@ -16043,6 +16043,46 @@
     "schema_hash": "4f4b5164cd96fffe05c97ade7b29c6cbf4798ee51be93d2aaa756d70491818f5",
     "version": "1.6"
   },
+  "reality_check_marker.RealityCheckMarker": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "input_key": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "type": "null"
+            },
+            {
+              "kind": "scalar",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "status": {
+        "required": true,
+        "schema": {
+          "kind": "enum",
+          "values": [
+            "awaiting_llm",
+            "finalized"
+          ]
+        }
+      }
+    },
+    "schema_hash": "4d6eb30c68c2cd3d40f11edaf58f1e7d9b989bbb1ac3ee1a5959bc115ffde149",
+    "version": "1.0"
+  },
   "reality_check_model_response.RealityCheckModelResponse": {
     "fields": {
       "consolidation_corrections": {

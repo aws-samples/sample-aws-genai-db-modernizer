@@ -20,6 +20,8 @@ import pytest
 from src.agents.referee.move_ledger import apply_to_assignment, ledger_for
 from src.agents.referee.reality_check_handler import run_reality_check_handler
 from src.contracts.move_ledger import MovePass, ReasonCode
+from src.contracts.reality_check_marker import RealityCheckMarker
+from src.shared.contract_versioning import current_version
 from src.storage.assignment_versioning import (
     assignment_artifact_path,
     resolve_downstream_assignment_version,
@@ -345,6 +347,82 @@ class TestHandlerVersions:
 
         assert summary["status"] == "awaiting_llm"
         assert not store.exists(_path(2))
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            '{"contract_version": "2.0", "status": "awaiting_llm"}',
+            "{not json",
+            '{"status": "done"}',
+        ],
+    )
+    def test_a_job_with_a_bad_marker_can_run_its_reality_check_again(self, store, bad) -> None:
+        """#1267: the handler rewrites the marker, so an unreadable one must not block it."""
+        marker = store.base_dir / DB / JOB / "reality-check" / "awaiting_llm.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(bad)
+
+        summary = _run(store)
+
+        assert summary["status"] == "complete"
+        assert store.exists(_path(2))
+        assert store.read_json(f"{DB}/{JOB}/reality-check/awaiting_llm.json") == {
+            "contract_version": current_version(RealityCheckMarker),
+            "status": "finalized",
+        }
+
+    def test_a_bad_marker_next_to_a_preview_is_not_a_completed_run(self, store) -> None:
+        """#1267: state unknown means awaiting; the re-run overwrites preview and marker."""
+        run_reality_check_handler(JOB, DB, store, llm_mode="external")
+        preview = _rc_output(store)
+        marker = store.base_dir / DB / JOB / "reality-check" / "awaiting_llm.json"
+        marker.write_text('{"contract_version": "2.0", "status": "finalized"}')
+        assert not store.exists(_path(2))
+
+        summary = _run(store)
+
+        assert summary["status"] == "complete"  # not "skipped" as a finished run
+        assert store.exists(_path(2))
+        assert _rc_output(store)["output_assignment_version"] == 2
+        assert preview["output_assignment_version"] != 2
+        assert store.read_json(f"{DB}/{JOB}/reality-check/awaiting_llm.json")["status"] == (
+            "finalized"
+        )
+
+    def test_external_mode_replaces_a_bad_marker(self, store) -> None:
+        marker = store.base_dir / DB / JOB / "reality-check" / "awaiting_llm.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("{not json")
+
+        summary = run_reality_check_handler(JOB, DB, store, llm_mode="external")
+
+        assert summary["status"] == "awaiting_llm"
+        assert store.read_json(f"{DB}/{JOB}/reality-check/awaiting_llm.json")["status"] == (
+            "awaiting_llm"
+        )
+
+    def test_external_mode_marker_is_a_versioned_contract(self, store) -> None:
+        """#1267: the marker is written through RealityCheckMarker, with the input key."""
+        run_reality_check_handler(JOB, DB, store, llm_mode="external")
+
+        assert store.read_json(f"{DB}/{JOB}/reality-check/awaiting_llm.json") == {
+            "contract_version": current_version(RealityCheckMarker),
+            "status": "awaiting_llm",
+            "input_key": f"{DB}/{JOB}/reality-check/llm_input.json",
+        }
+
+    def test_finalize_rewrites_the_marker_as_finalized(self, store) -> None:
+        from scripts.run_assessment import phase_reality_check, phase_reality_check_finalize
+
+        assert phase_reality_check(store, JOB, DB, "external") == "awaiting_llm"
+        store.write_json(f"{DB}/{JOB}/llm_responses/reality_check.json", {})
+
+        phase_reality_check_finalize(store, JOB, DB)
+
+        assert store.read_json(f"{DB}/{JOB}/reality-check/awaiting_llm.json") == {
+            "contract_version": current_version(RealityCheckMarker),
+            "status": "finalized",
+        }
 
 
 # =============================================================================

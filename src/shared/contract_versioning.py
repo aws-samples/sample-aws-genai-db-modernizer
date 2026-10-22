@@ -291,11 +291,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "recorded approvals (the assignment review and approval): typed by #1257",
     ),
     (
-        r"reality-check/awaiting_llm\.json",
-        "external-mode marker that a reality-check preview waits for the model, read by "
-        "the assignment lineage and the local API's job status: typed by #1267",
-    ),
-    (
         r"assignment/review/pending_hitl\.json",
         "AWS Transform transport state: the pending review task to resume",
     ),
@@ -425,6 +420,7 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     ),
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),
+    (r"reality-check/awaiting_llm\.json", "src.contracts.reality_check_marker:RealityCheckMarker"),
     (
         r"reality-check/output\.json",
         "src.contracts.reality_check_output:RealityCheckOutputContract",

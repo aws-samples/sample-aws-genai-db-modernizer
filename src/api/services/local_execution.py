@@ -12,8 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from src.api.secret_guard import find_submitted_secrets, strip_secrets
+from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
-from src.shared.contract_versioning import ContractVersionError
+from src.shared.contract_versioning import ContractVersionError, load_contract
 
 logger = logging.getLogger(__name__)
 
@@ -1083,11 +1084,21 @@ class LocalExecutionService:
         awaiting_path = f"{job_prefix}reality-check/awaiting_llm.json"
         if self._store.exists(awaiting_path):
             try:
-                awaiting = self._store.read_json(awaiting_path)
-                if awaiting.get("status") == "awaiting_llm":
+                awaiting = load_contract(
+                    RealityCheckMarker,
+                    self._store.read_json(awaiting_path),
+                    artifact=awaiting_path,
+                )
+                if awaiting.status is MarkerStatus.AWAITING_LLM:
                     return ("WAITING", None, None)
-            except Exception:
-                pass  # nosec B110 - fall through to RUNNING
+            except Exception as exc:
+                # An unreadable marker is not a wait: fall through to RUNNING, but say why.
+                reason = str(exc) if isinstance(exc, ContractVersionError) else type(exc).__name__
+                logger.warning(
+                    "%s: unreadable reality-check marker, job reported as running (%s)",
+                    awaiting_path,
+                    reason,
+                )
 
         return ("RUNNING", None, None)
 
