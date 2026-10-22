@@ -613,6 +613,107 @@ class TestRefreshConsolidatedAssignment:
         assert out["source"] == "reality_check"
         assert out["previous_version"] == 1
 
+    @staticmethod
+    def _cached_raw() -> dict:
+        """q1 cached by ElastiCache, q2 a safety-net drop, q3 never cached; q1 moved."""
+        from src.agents.referee.cache_overlay import dropped_reason
+
+        def qa(qid: str, engine: str, **cache) -> dict:
+            return {
+                "query_id": qid,
+                "assigned_engine": engine,
+                "confidence": 80,
+                "source_tables": ["t.users"],
+                "assignment_reason": "x",
+                "cache_engine": None,
+                "cache_pattern": None,
+                "cache_reason": None,
+                "cache_dropped": False,
+                **cache,
+            }
+
+        return {
+            "version": 3,
+            "query_assignments": [
+                qa(
+                    "q1",
+                    "aurora_mysql",
+                    cache_engine="elasticache",
+                    cache_pattern="point_lookup",
+                    cache_reason="hot point lookup",
+                ),
+                qa(
+                    "q2",
+                    "dynamodb",
+                    cache_reason=dropped_reason("elasticache"),
+                    cache_dropped=True,
+                ),
+                qa("q3", "dynamodb"),
+            ],
+            # The approved version's summary: q1 still on DynamoDB.
+            "cache_overlay": {"engine": "elasticache", "owners": {"dynamodb": 1}},
+        }
+
+    def _cache_collector(self) -> dict:
+        return self._collector(
+            [
+                {"query_id": q, "tables_accessed": ["t.users"], "calls_per_second": cps}
+                for q, cps in (("q1", 30.0), ("q2", 10.0), ("q3", 60.0))
+            ]
+        )
+
+    @staticmethod
+    def _cache_fields(out: dict) -> dict:
+        keys = ("cache_engine", "cache_pattern", "cache_reason", "cache_dropped")
+        return {qa["query_id"]: {k: qa.get(k) for k in keys} for qa in out["query_assignments"]}
+
+    def test_keep_cache_overlay_keeps_each_query_and_recomputes_the_summary(self) -> None:
+        """#1379: the post-schema reroute's refresh. Its analyses never include the
+        cache, so nothing is re-evaluated: each query's cache fields stay as given
+        (a safety-net drop stays dropped) and only the summary follows the owners."""
+        raw = self._cached_raw()
+        before = self._cache_fields(raw)
+        out = refresh_consolidated_assignment(
+            copy.deepcopy(raw),
+            self._cache_collector(),
+            {"aurora_mysql": {}, "dynamodb": {}},
+            keep_cache_overlay=True,
+        )
+        assert self._cache_fields(out) == before
+        overlay = out["cache_overlay"]
+        assert overlay["engine"] == "elasticache"
+        assert overlay["query_count"] == 1
+        assert overlay["owners"] == {"aurora_mysql": 1}
+        assert overlay["calls_per_second"] == 30.0
+        assert overlay["call_share_percent"] == 30.0
+
+    def test_keep_cache_overlay_with_nothing_cached_leaves_no_summary(self) -> None:
+        raw = self._cached_raw()
+        raw["query_assignments"][0].update(cache_engine=None, cache_pattern=None)
+        out = refresh_consolidated_assignment(
+            raw, self._cache_collector(), {"aurora_mysql": {}}, keep_cache_overlay=True
+        )
+        assert out["cache_overlay"] is None
+
+    @pytest.mark.passes_on_main  # the default, the reality check's path, is unchanged
+    def test_the_default_re_evaluates_every_query_against_the_analysed_engines(self) -> None:
+        """Without the cache's analysis, the default re-check clears every cache and
+        resets the safety-net drop: why the reroute must keep the overlay (#1379)."""
+        out = refresh_consolidated_assignment(
+            self._cached_raw(), self._cache_collector(), {"aurora_mysql": {}, "dynamodb": {}}
+        )
+        assert out["cache_overlay"] is None
+        assert all(
+            f
+            == {
+                "cache_engine": None,
+                "cache_pattern": None,
+                "cache_reason": None,
+                "cache_dropped": False,
+            }
+            for f in self._cache_fields(out).values()
+        )
+
     def test_tolerates_partial_query_assignment_dicts(self) -> None:
         # Legacy/minimal dicts (no confidence/source_tables) must not raise.
         raw = {

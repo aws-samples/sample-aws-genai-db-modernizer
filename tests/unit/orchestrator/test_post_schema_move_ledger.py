@@ -229,16 +229,23 @@ class TestTheRefreshSeesTheEngineTheRerouteEmptied:
             },
         )
         real_refresh = assignment_overrides.refresh_consolidated_assignment
-        seen: list[tuple[list[str], list[str]]] = []
+        seen: list[tuple[list[str], list[str], bool]] = []
 
-        def spy(raw, collector, analysis_outputs, *, dead_engines=None):
-            seen.append((sorted(analysis_outputs), sorted(dead_engines or [])))
-            return real_refresh(raw, collector, analysis_outputs, dead_engines=dead_engines)
+        def spy(raw, collector, analysis_outputs, *, dead_engines=None, keep_cache_overlay=False):
+            seen.append((sorted(analysis_outputs), sorted(dead_engines or []), keep_cache_overlay))
+            return real_refresh(
+                raw,
+                collector,
+                analysis_outputs,
+                dead_engines=dead_engines,
+                keep_cache_overlay=keep_cache_overlay,
+            )
 
         with patch.object(assignment_overrides, "refresh_consolidated_assignment", spy):
             CASE._run(store, [])
 
-        assert seen[0] == (["documentdb", "dynamodb"], ["dynamodb"])
+        # #1379: the reroute keeps the approved cache overlay, never re-evaluates it.
+        assert seen[0] == (["documentdb", "dynamodb"], ["dynamodb"], True)
         v2 = _version(store, 2)
         assert {qa["query_id"]: qa["warnings"] for qa in v2["query_assignments"]} == {
             "q-1": [],

@@ -1379,6 +1379,7 @@ def refresh_consolidated_assignment(
     analysis_outputs: dict[str, dict],
     *,
     dead_engines: set[str] | None = None,
+    keep_cache_overlay: bool = False,
 ) -> dict:
     """Refresh a Reality-Check consolidated assignment dict (ADR-029 Layers B+E).
 
@@ -1392,6 +1393,13 @@ def refresh_consolidated_assignment(
     other keys (including the ``reality_check_applied`` marker) are preserved and
     partial/legacy assignment dicts are tolerated — a probe model is built only to
     drive the pure computations.
+
+    ``keep_cache_overlay`` keeps every query's cache fields as ``raw`` has them and
+    recomputes only the ``cache_overlay`` summary (its owners follow the moves), the
+    rule a customer re-route follows. The post-schema reroute uses it (#1379): it
+    reads only the analyses of the engines that own queries, never the cache's, so
+    re-evaluating would clear every cached read. A cache changes after approval only
+    through the synthesis safety net, which records its own note.
     """
     qa_dicts = raw.get("query_assignments", [])
     qas = [
@@ -1438,14 +1446,15 @@ def refresh_consolidated_assignment(
     out["write_groups"] = write_groups
     out["validation_warnings"] = validation.warnings
     out["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
-    # Re-evaluate the cache overlay against the consolidated routing (#296): an
-    # overlay survives its owner's consolidation, and the summary follows scope.
-    refresh_cache_overlay(
-        out,
-        collector_output.get("queries", {}).get("query_patterns", []),
-        analysis_outputs,
-        source_database_engine(collector_output),
-    )
+    query_patterns = collector_output.get("queries", {}).get("query_patterns", [])
+    if keep_cache_overlay:
+        out["cache_overlay"] = overlay_summary(out.get("query_assignments") or [], query_patterns)
+    else:
+        # Re-evaluate the cache overlay against the consolidated routing (#296): an
+        # overlay survives its owner's consolidation, and the summary follows scope.
+        refresh_cache_overlay(
+            out, query_patterns, analysis_outputs, source_database_engine(collector_output)
+        )
     if dead_engines:
         pruned: list[dict] = []
         for qa in qa_dicts:

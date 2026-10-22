@@ -289,3 +289,124 @@ def test_a_design_trace_off_the_contract_stops_the_post_schema_pass(tmp_path_fac
         with pytest.raises(DesignTraceShapeError, match="routing_flags"):
             LocalOrchestrator(store, llm_mode="bedrock")._run_post_schema_routing(JOB, DB)
     assert not store.exists(f"{DB}/{JOB}/assignment/v3/assignment.json")
+
+
+class TestTheCacheOverlaySurvivesTheReroute:
+    """#1379: the reroute re-evaluated each query's cache overlay against the
+    engines the moves touched only, none of them a cache, so every cached read
+    lost its cache and v3's ``cache_overlay`` was null, with no reason."""
+
+    @pytest.mark.passes_on_main  # the fixture's precondition, not the fix
+    def test_v2_has_a_cache_overlay(self, rerouted):
+        assert rerouted["v2"]["cache_overlay"], "the fixture must exercise a cache overlay"
+
+    def test_v3_keeps_every_cached_read(self, rerouted):
+        def cached(assignment):
+            return {
+                qa["query_id"]: qa["cache_engine"]
+                for qa in assignment["query_assignments"]
+                if qa.get("cache_engine")
+            }
+
+        assert cached(rerouted["v3"]) == cached(rerouted["v2"])
+        overlay = rerouted["v3"]["cache_overlay"]
+        assert overlay is not None
+        assert overlay["engine"] == rerouted["v2"]["cache_overlay"]["engine"]
+        assert overlay["query_count"] == rerouted["v2"]["cache_overlay"]["query_count"]
+
+    def test_the_report_keeps_the_cache_layer(self, rerouted):
+        assert rerouted["report"].get("cache_overlay")
+
+
+CACHED_ON_DYNAMODB = "66c96f95"  # a hot point lookup DynamoDB owns, ElastiCache fronts
+
+
+@pytest.fixture(scope="module")
+def cached_query_rerouted(tmp_path_factory) -> dict:
+    """DynamoDB's PE review flags a query the cache fronts, and the approved v2
+    already carries a safety-net drop on one Aurora MySQL read (#1379)."""
+    from src.agents.referee.cache_overlay import dropped_reason, overlay_summary
+
+    root = _pipeline_copy(tmp_path_factory, "reroute-cached")
+    store = LocalArtifactStore(base_dir=str(root))
+    mark_assignment_customer_approved(store, DB, JOB)
+    key = f"{DB}/{JOB}/assignment/v2/assignment.json"
+    v2 = store.read_json(key)
+    flagged = next(
+        qa["query_id"]
+        for qa in v2["query_assignments"]
+        if qa["query_id"].startswith(CACHED_ON_DYNAMODB)
+    )
+    dropped = next(
+        qa
+        for qa in v2["query_assignments"]
+        if qa.get("cache_engine") and qa["assigned_engine"] == "aurora_mysql"
+    )
+    dropped.update(
+        cache_engine=None,
+        cache_pattern=None,
+        cache_reason=dropped_reason("elasticache"),
+        cache_dropped=True,
+    )
+    queries = store.read_json(f"{DB}/{JOB}/collector/output.json")["queries"]["query_patterns"]
+    v2["cache_overlay"] = overlay_summary(v2["query_assignments"], queries)
+    store.write_json(key, v2)
+    _fake_design(JOB, DB, "dynamodb", store, 2)
+    store.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/design_trace.json",
+        {
+            "trace": [],
+            "routing_flags": [
+                {
+                    "query_ids": [flagged],
+                    "flagged_engine": "dynamodb",
+                    "reason_category": "missing_feature",
+                    "explanation": "needs a feature the engine lacks",
+                }
+            ],
+        },
+    )
+    with patch("src.agents.schema_design.handler.run_schema_design_auto", side_effect=_fake_design):
+        LocalOrchestrator(store, llm_mode="bedrock")._run_post_schema_routing(JOB, DB)
+    return {
+        "flagged": flagged,
+        "dropped": dropped["query_id"],
+        "v2": v2,
+        "v3": store.read_json(f"{DB}/{JOB}/assignment/v3/assignment.json"),
+    }
+
+
+def _qa(assignment: dict, query_id: str) -> dict:
+    return next(qa for qa in assignment["query_assignments"] if qa["query_id"] == query_id)
+
+
+class TestAMovedCachedQueryKeepsItsCache:
+    def test_the_flagged_query_moves_and_keeps_its_cache(self, cached_query_rerouted):
+        before = _qa(cached_query_rerouted["v2"], cached_query_rerouted["flagged"])
+        after = _qa(cached_query_rerouted["v3"], cached_query_rerouted["flagged"])
+        assert before["assigned_engine"] == "dynamodb"
+        assert after["assigned_engine"] != "dynamodb"
+        assert after["cache_engine"] == before["cache_engine"] == "elasticache"
+        assert after["cache_pattern"] == before["cache_pattern"]
+
+    def test_the_summary_owners_follow_the_move(self, cached_query_rerouted):
+        before = cached_query_rerouted["v2"]["cache_overlay"]
+        after = cached_query_rerouted["v3"]["cache_overlay"]
+        assert after["query_count"] == before["query_count"]
+        moved = sum(
+            1
+            for r in cached_query_rerouted["v3"]["post_schema_reroutes"]
+            if _qa(cached_query_rerouted["v2"], r["query_id"]).get("cache_engine")
+        )
+        assert moved >= 1
+        assert after["owners"].get("dynamodb", 0) == before["owners"]["dynamodb"] - moved
+        assert sum(after["owners"].values()) == sum(before["owners"].values())
+
+    def test_a_safety_net_drop_on_the_approved_version_stays_dropped(self, cached_query_rerouted):
+        """The reroute is not a fresh cache decision: a read the safety net dropped
+        stays dropped, with its reason, until the next safety net judges it."""
+        before = _qa(cached_query_rerouted["v2"], cached_query_rerouted["dropped"])
+        after = _qa(cached_query_rerouted["v3"], cached_query_rerouted["dropped"])
+        assert after["cache_engine"] is None
+        assert after["cache_dropped"] is True
+        assert after["cache_reason"] == before["cache_reason"]

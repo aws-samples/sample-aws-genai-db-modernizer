@@ -835,10 +835,16 @@ class LocalOrchestrator(Orchestrator):
             "moves": [m.model_dump(mode="json") for m in ledger.moves],
         }
         # The derived views (table mappings, warnings) follow the moved queries,
-        # the same refresh the reality check's revision gets (ADR-029).
+        # the same refresh the reality check's revision gets (ADR-029). The cache
+        # overlay is kept as approved, its summary recomputed (#1379): a moved query
+        # keeps its cache, and only the synthesis safety net drops one, with a note.
         after = {qa["assigned_engine"] for qa in query_assignments if qa.get("in_scope", True)}
         refreshed = refresh_consolidated_assignment(
-            revised, collector, analysis_outputs, dead_engines=before - after
+            revised,
+            collector,
+            analysis_outputs,
+            dead_engines=before - after,
+            keep_cache_overlay=True,
         )
         # Refuse a version whose engines do not follow from ``version`` plus
         # its own Moves (an engine set without move_ledger, #616).

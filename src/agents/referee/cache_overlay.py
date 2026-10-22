@@ -287,7 +287,11 @@ def apply_cache_overlay(
     ``engines`` are the analyzed engines; with no cache engine among them no query
     is cached. Eligibility depends only on the query, so calling this again after
     owners change re-evaluates the overlay the same way, and clears an earlier
-    safety-net drop (the next schema design gets its own chance). A cache the
+    safety-net drop (the next schema design gets its own chance). The post-schema
+    reroute never calls this (#1379): it keeps the approved version's cache fields,
+    a safety-net drop included, and recomputes only the summary
+    (``refresh_consolidated_assignment(..., keep_cache_overlay=True)``); the next
+    synthesis safety net re-judges the drop. A cache the
     customer decided (``cache_customer_override``) is kept as decided: a pin is
     never cleared and a removal is never re-enabled. ``source_engine`` (the
     collector's) is the dialect the query facts are read in. Returns the list.
