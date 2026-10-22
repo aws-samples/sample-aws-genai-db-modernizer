@@ -8,7 +8,8 @@
 #   E2E_OUTPUT       - where Playwright artifacts (screenshots, traces, junit) and
 #                       the copied-out deliverables land. Defaults to test-results/.
 #   E2E_INSTALL_ATTEMPTS, E2E_INSTALL_BACKOFF, PLAYWRIGHT_FALLBACK_HOST - the browser
-#                       download retry (playwright_install_with_retry in lib.sh, #1346).
+#                       download retry (playwright_install_with_retry in lib.sh, #1346);
+#                       E2E_INSTALL_TIMEOUT stops one hung attempt (default 300s, #1360).
 #   E2E_REPORT_ARGS  - extra pytest args for the first invocation ONLY (below).
 #   E2E_UI_ARGS      - extra pytest args for the second invocation ONLY (below).
 #   E2E_INSTALL_ATTEMPTS, E2E_INSTALL_BACKOFF, PLAYWRIGHT_FALLBACK_HOST - the browser
@@ -79,9 +80,10 @@ browsers=(chromium webkit)
 case "$E2E_SHARD" in
   "") ;;
   ui) run_reports=0; browsers=(chromium) ;;
-  # The hash-seed suite runs the pipeline scripts in subprocesses and opens no
-  # browser page, so it skips the browser install (about 45s on CI).
-  hashseed) run_ui=0; browsers=(); report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
+  # The two determinism suites run the pipeline scripts in subprocesses and open
+  # no browser page, so they skip the browser install (about 45s on CI, and the
+  # step that hung a whole shard in #1360).
+  hashseed|determinism) run_ui=0; browsers=(); report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
   *) run_ui=0; report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
 esac
 
@@ -98,13 +100,13 @@ fi
 
 if [ ${#browsers[@]} -gt 0 ]; then
   log "install browsers (${browsers[*]})"
+  playwright_install_with_retry "${browsers[@]}"
   if [ "${CI:-}" = "true" ]; then
-    # --with-deps installs OS-level browser dependencies via apt and needs root/sudo.
-    # Fine on GitHub's Linux runners (CI=true is set automatically); on a developer's
-    # macOS machine it has nothing to install and fails looking for apt-get.
-    playwright_install_with_retry --with-deps "${browsers[@]}"
-  else
-    playwright_install_with_retry "${browsers[@]}"
+    # OS libraries need apt and root/sudo: fine on GitHub's Linux runners (CI=true is
+    # set automatically), nothing to do on a developer's macOS machine. They are
+    # installed only when a browser cannot launch, and then with apt timeouts and a
+    # mirror fallback, so a slow package mirror cannot hold the job (#1360).
+    playwright_ensure_deps "${browsers[@]}"
   fi
 fi
 

@@ -212,7 +212,7 @@ jobs:
       - name: Cache Playwright browsers
         # Most runs then never download (#1346). The ui shard installs chromium
         # only, the others chromium and webkit, so they keep separate caches.
-        if: matrix.shard != 'hashseed'
+        if: matrix.shard != 'hashseed' && matrix.shard != 'determinism'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright

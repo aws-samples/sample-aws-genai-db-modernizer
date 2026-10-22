@@ -145,7 +145,7 @@ other filter that only matches one suite's tests makes the other invocation
 collect zero items and exit 5. Use `E2E_REPORT_ARGS` / `E2E_UI_ARGS` to target
 extra args at only the first or second invocation respectively.
 
-Sharding (#956): `E2E_SHARD=<name> ./ci/e2e.sh` runs one of seven shards, the way the GitHub `e2e-shard (<name>)` jobs do; the required `e2e` job passes only when all seven did. `wordpress`, `discourse` and `trailgear` run the report checks (the first invocation) whose test id names that sample; `hashseed` runs `test_hashseed_determinism.py` and `determinism` runs `test_deliverable_determinism.py` (the two slowest suites, which rerun samples on purpose); `cross` runs the report checks that name no sample; and `ui` runs the second invocation (UI smoke + help site). The six report shards' `-k` expressions (`e2e_shard_k` in the script) assign each test to the first rule it matches, so together they select exactly the tests one unsharded run does. Only the `ui` shard builds the UI and the help site, and it installs only Chromium; `hashseed` opens no browser page and installs none. Whenever the script builds the UI (the `ui` shard or a full run), it does so in the background while the browsers install and the help site builds, writing its output to `$E2E_OUTPUT/ui-build.log` and printing it when done; a failed UI build still fails the script. Unset `E2E_SHARD` runs everything, as before.
+Sharding (#956): `E2E_SHARD=<name> ./ci/e2e.sh` runs one of seven shards, the way the GitHub `e2e-shard (<name>)` jobs do; the required `e2e` job passes only when all seven did. `wordpress`, `discourse` and `trailgear` run the report checks (the first invocation) whose test id names that sample; `hashseed` runs `test_hashseed_determinism.py` and `determinism` runs `test_deliverable_determinism.py` (the two slowest suites, which rerun samples on purpose); `cross` runs the report checks that name no sample; and `ui` runs the second invocation (UI smoke + help site). The six report shards' `-k` expressions (`e2e_shard_k` in the script) assign each test to the first rule it matches, so together they select exactly the tests one unsharded run does. Only the `ui` shard builds the UI and the help site, and it installs only Chromium; `hashseed` and `determinism` open no browser page and install none. Whenever the script builds the UI (the `ui` shard or a full run), it does so in the background while the browsers install and the help site builds, writing its output to `$E2E_OUTPUT/ui-build.log` and printing it when done; a failed UI build still fails the script. Unset `E2E_SHARD` runs everything, as before.
 
 Env vars read:
 
@@ -175,15 +175,23 @@ Env vars read:
 - `E2E_SHARD` — one shard name (`wordpress`, `discourse`, `trailgear`,
   `hashseed`, `determinism`, `cross`, `ui`) to run instead of everything; see Sharding above.
 
-Installing browsers: `uv run playwright install --with-deps chromium webkit`
-in CI (`CI=true`, set automatically by GitHub Actions) — `--with-deps` pulls
-OS-level dependencies via `apt` and needs root, which Linux CI runners have.
-Locally (including macOS, where there is no `apt`) it drops `--with-deps` and
-installs just the browser binaries. Both go through `playwright_install_with_retry`
-in `ci/lib.sh` (#1346): 3 attempts with backoff (`E2E_INSTALL_ATTEMPTS`,
-`E2E_INSTALL_BACKOFF`), the last from Playwright's other official download host
-(`PLAYWRIGHT_FALLBACK_HOST`); TLS verification is never relaxed. The GitHub
-workflow also caches `~/.cache/ms-playwright`, keyed on the Playwright version in
+Installing browsers: `uv run playwright install chromium webkit` everywhere, through
+`playwright_install_with_retry` in `ci/lib.sh` (#1346): 3 attempts with backoff
+(`E2E_INSTALL_ATTEMPTS`, `E2E_INSTALL_BACKOFF`), each attempt stopped, with its whole
+process tree, after `E2E_INSTALL_TIMEOUT` seconds (default 300, #1360), the last from
+Playwright's other official download host (`PLAYWRIGHT_FALLBACK_HOST`); TLS verification
+is never relaxed. In CI (`CI=true`, set automatically by GitHub Actions) `playwright_ensure_deps`
+then launches each browser headless (`E2E_LAUNCH_TIMEOUT`, default 120s). Nothing else
+runs when they all launch: no `apt-get update`, no package download (the old `--with-deps`
+stalled whole shards on a slow Azure mirror, #1360). The runners ship chromium's libraries but
+miss some of webkit's (for example `libevent-2.1`), so a webkit launch can fail; then
+`playwright install-deps` runs under a watchdog (`E2E_DEPS_TIMEOUT`, default 600s; the roughly 120 MB of webkit packages stay cached between attempts) and retry, with apt told to give up on a
+silent server after 30s (`Acquire::http::Timeout`, 3 retries) and, from the second attempt, pointed
+at `archive.ubuntu.com` instead of the runner's mirror list. That path also pulls Playwright's extra
+font packages (`fonts-unifont`, ...); no e2e test depends on them (the PDF is generated without a
+browser, and the browser checks read the DOM), but `install-deps` cannot skip them.
+Locally (including macOS, where there is no `apt`) only the browser binaries are installed.
+The GitHub workflow also caches `~/.cache/ms-playwright`, keyed on the Playwright version in
 `uv.lock`.
 
 ## `needs_llm_run.sh`
