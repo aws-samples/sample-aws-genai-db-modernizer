@@ -357,6 +357,12 @@ def write_aurora_mysql_design(
                 {
                     "description": "Carry the schema over 1:1",
                     "impact": "No application change for the queries that stay.",
+                    # Three cited queries on the FIRST tab of the trade-offs panel render
+                    # three query-id chips (#1353), the state a model run reached.
+                    "query_ids": [
+                        str(qa["query_id"])
+                        for qa in _cached_queries(store, db, job_id, version)[:3]
+                    ],
                 }
             ],
             "validation_passed": True,

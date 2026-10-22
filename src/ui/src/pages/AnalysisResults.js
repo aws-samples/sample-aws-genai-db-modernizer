@@ -83,6 +83,12 @@ const JOURNEY_MAX_PAGES = 50;
 // the source database, no target engine) and its target tables in the tab engine's own
 // catalog colour -- before, the targets were red, ElastiCache's colour, on every tab.
 const SOURCE_TABLE_CHIP = '#5f6b7a';
+// The trade-off query-id chips: an explicit dark text on the light chip (the
+// text inherited the page's light-grey, 1.4:1 on #e9ebed, #1353); white on the
+// hover/focus blue.
+const QUERY_CHIP_BG = '#e9ebed';
+const QUERY_CHIP_TEXT = '#0f141a';
+const QUERY_CHIP_ACTIVE_BG = '#0972d3';
 
 // #373: the severity colours the retired HTML decision report used -- red for the
 // error-level severities (CRITICAL and HIGH, kept equally severe, #270),
@@ -2627,15 +2633,16 @@ const AnalysisResultsPage = memo(() => {
                                                     padding: '1px 4px',
                                                     fontSize: '10px',
                                                     fontFamily: 'monospace',
-                                                    backgroundColor: '#e9ebed',
+                                                    backgroundColor: QUERY_CHIP_BG,
+                                                    color: QUERY_CHIP_TEXT,
                                                     borderRadius: '2px',
                                                     cursor: 'pointer',
                                                     transition: 'background-color 0.15s',
                                                   }}
-                                                  onMouseEnter={e => { e.target.style.backgroundColor = '#0972d3'; e.target.style.color = '#fff'; }}
-                                                  onMouseLeave={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
-                                                  onFocus={e => { e.target.style.backgroundColor = '#0972d3'; e.target.style.color = '#fff'; }}
-                                                  onBlur={e => { e.target.style.backgroundColor = '#e9ebed'; e.target.style.color = ''; }}
+                                                  onMouseEnter={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
+                                                  onMouseLeave={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
+                                                  onFocus={e => { e.target.style.backgroundColor = QUERY_CHIP_ACTIVE_BG; e.target.style.color = '#fff'; }}
+                                                  onBlur={e => { e.target.style.backgroundColor = QUERY_CHIP_BG; e.target.style.color = QUERY_CHIP_TEXT; }}
                                                   title={`View query history for ${qid}`}
                                                 >
                                                   {qid}
