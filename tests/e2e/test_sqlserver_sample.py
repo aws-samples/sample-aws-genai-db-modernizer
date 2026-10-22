@@ -143,11 +143,17 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     over the seven ``Product`` queries (1 to 3 each). The JSON query ``0xBE098518D277706D``
     (``OPENJSON``) now gets each engine's JSON fit (85 on both) per query: Aurora MySQL's
     80 ``LATERAL`` credit rises to 85 and it gains 2, Aurora PostgreSQL already had 85.
-    The lead goes from 32 to 30 and the features still decide."""
+    The lead goes from 32 to 30 and the features still decide.
+
+    #1287 (a write counts only against the tables it writes): 7251 to 7256 and 7281 to
+    7286. A table that a write statement only reads (a ``MERGE``/``UPDATE`` source in a
+    CTE or a FROM) no longer carries that write in its profile, so its read share rises
+    and both Aurora engines gain the same 5 points from the table-level scores. The
+    30-point lead is unchanged and the features still decide."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7251.0, 7281.0)
+    assert (mysql, pg) == (7256.0, 7286.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"

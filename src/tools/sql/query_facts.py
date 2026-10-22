@@ -77,6 +77,7 @@ from src.tools.sql.regex_facts import (
     RegexMatch,
     WildcardLike,
     has_match_against,
+    output_into_targets,
     regex_range_predicate,
     scan_sql,
 )
@@ -621,14 +622,19 @@ _KEYED_RE = re.compile(r"(?<![<>!])=|\bin\s*\(", re.IGNORECASE)
 # Leading ``--`` or ``#`` line comments and ``/* ... */`` block comments, as
 # many as the statement opens with, are stripped first (review of #303), so a
 # leading CALL/TRUNCATE/COPY is seen behind a comment too. The collector types a
-# comment-led DML statement by its verb since #1178 (``src.tools.sql.query_type``);
-# a WITH-led one is still ``OTHER``. ``src.shared.sql_comments`` strips in linear
+# comment-led DML statement by its verb since #1178 (``src.tools.sql.query_type``),
+# and a WITH-led write by its final statement since #1287; a WITH-led statement that
+# ends in SELECT (a PostgreSQL data-modifying CTE included) is still ``OTHER``. ``src.shared.sql_comments`` strips in linear
 # time (#808).
 # A DML keyword anywhere in the statement -- not just at the start -- so a
 # data-modifying CTE (``WITH w AS (INSERT INTO ... RETURNING id) SELECT ...``)
 # is caught too, the same way the collector's own query_type misses it.
+# ``UPDATE <table> [[AS] <alias>] SET`` (#1287): the table may carry an alias, with or
+# without ``AS``, and PostgreSQL allows ``UPDATE ONLY <table>``.
 _DML_KEYWORD_RE = re.compile(
-    r"\b(insert\s+into|update\s+\S+\s+set|delete\s+from|merge\s+into)\b", re.IGNORECASE
+    r"\b(insert\s+into|update\s+(?:only\s+)?\S+(?:\s+(?:as\s+)?\S+)?\s+set"
+    r"|delete\s+from|merge\s+into)\b",
+    re.IGNORECASE,
 )
 # CALL/TRUNCATE/COPY are writes but have no DML keyword of their own; anchored
 # at the start (after stripping a leading comment), since each is a statement
@@ -961,7 +967,11 @@ class QueryFacts:
         """
         if not self._has("insert", "replace", "update", "delete", "merge", "truncate"):
             return ()
-        return self._parsed.write_targets
+        targets = self._parsed.write_targets
+        if self._source_engine == "sqlserver":
+            # ``OUTPUT ... INTO <table>`` writes that table too (#1287).
+            targets = tuple(dict.fromkeys((*targets, *output_into_targets(self._text))))
+        return targets
 
     @cached_property
     def json_access(self) -> bool:

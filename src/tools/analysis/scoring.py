@@ -10,8 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import combinations
 
+from src.agents.referee.table_resolution import SourceScope
+from src.agents.referee.write_groups import written_tables
 from src.contracts.analysis_output import MigrationComplexity, ScoreBreakdown, WorkloadAnalysis
 from src.shared.catalog import default_score_weights
+from src.tools.sql.query_facts import source_engine_of
 
 
 @dataclass
@@ -62,6 +65,18 @@ def build_table_profiles(
     """
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
+
+    # A write counts against the tables it writes, never a table it only reads in a
+    # CTE or a FROM (ADR-031 Amendment 9, #1287), by the write group's target helper
+    # (``written_tables``). Only statements typed as writes are counted here, so a
+    # write typed ``OTHER`` or ``SELECT`` (a data-modifying CTE that ends in SELECT)
+    # still counts none; the write group counts it (a known gap, #1348).
+    source_engine = source_engine_of(collector_output)
+    source_scope = SourceScope.from_collector(collector_output)
+    written: dict[int, set[str]] = {}
+    for q in queries:
+        if str(q.get("query_type") or "").upper() in _WRITE_QUERY_TYPES:
+            written[id(q)] = set(written_tables(q, source_engine, source_scope))
 
     # --- Group queries by table ---
     table_queries: dict[str, list[dict]] = {}
@@ -118,7 +133,7 @@ def build_table_profiles(
                 qt = q.get("query_type", "").upper()
                 if qt in _READ_QUERY_TYPES:
                     reads += 1
-                elif qt in _WRITE_QUERY_TYPES:
+                elif qt in _WRITE_QUERY_TYPES and tid in written.get(id(q), ()):
                     writes += 1
 
                 cps = q.get("calls_per_second") or 0.0

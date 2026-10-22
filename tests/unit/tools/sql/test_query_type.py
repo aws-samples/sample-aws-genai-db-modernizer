@@ -177,3 +177,75 @@ def test_the_facade_reads_a_tagged_replace_as_the_insert_it_is(prefix: str) -> N
     so a tagged one fell back to a generic command (#1178)."""
     facts = access_facts(prefix + "REPLACE INTO t (a) VALUES (1)", "mysql")
     assert (facts.kind, facts.parsed_by) == ("insert", "sqlglot")
+
+
+@pytest.mark.parametrize(
+    ("engine", "sql", "expected"),
+    [
+        (
+            "postgresql",
+            "WITH a AS (SELECT 1) UPDATE t x SET c = 1 FROM a WHERE x.id = a.id",
+            "UPDATE",
+        ),
+        ("postgresql", "WITH a AS (SELECT 1), b AS (SELECT 2) DELETE FROM t USING a, b", "DELETE"),
+        (
+            "postgresql",
+            "-- tag\nWITH a AS (SELECT 1 AS id) INSERT INTO t SELECT id FROM a",
+            "INSERT",
+        ),
+        ("postgresql", "/* tag */ WITH RECURSIVE a AS (SELECT 1) UPDATE t SET c = 1", "UPDATE"),
+        ("sqlserver", "WITH c AS (SELECT id FROM t) UPDATE c SET x = 1", "UPDATE"),
+        ("sqlserver", "WITH c AS (SELECT id FROM t) DELETE FROM c", "DELETE"),
+        (
+            "sqlserver",
+            "WITH c AS (SELECT id FROM t) MERGE t USING c ON t.id = c.id "
+            "WHEN MATCHED THEN UPDATE SET x = 1;",
+            "MERGE",
+        ),
+        (
+            "mysql",
+            "WITH c AS (SELECT 1 AS id) UPDATE t JOIN c ON t.id = c.id SET t.x = 1",
+            "UPDATE",
+        ),
+        (
+            "mysql",
+            "# tag\nWITH c AS (SELECT 1 AS id) DELETE FROM t WHERE id IN (SELECT id FROM c)",
+            "DELETE",
+        ),
+        ("sqlserver", ";WITH c AS (SELECT id FROM t) UPDATE c SET x = 1", "UPDATE"),
+        ("sqlserver", "-- tag\n;WITH c AS (SELECT id FROM t) DELETE FROM c", "DELETE"),
+    ],
+)
+def test_a_with_led_write_is_typed_by_its_final_statement(
+    engine: str, sql: str, expected: str
+) -> None:
+    assert statement_query_type(sql, engine) == expected
+
+
+@pytest.mark.parametrize("engine", _ENGINES)
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH a AS (SELECT 1) SELECT * FROM a",
+        "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b",
+        "WITH a AS (SELECT 1) SELECT * FROM a WHERE s = 'UPDATE t SET x = 1'",
+        "WITH a AS (SELECT 'DELETE FROM t') SELECT * FROM a",
+        "WITH",
+    ],
+)
+@pytest.mark.passes_on_main
+def test_a_with_led_read_stays_other(engine: str, sql: str) -> None:
+    assert statement_query_type(sql, engine) == "OTHER"
+
+
+@pytest.mark.passes_on_main
+def test_a_postgresql_data_modifying_cte_ending_in_select_stays_other() -> None:
+    """The facade calls it a select; is_write_query re-reads the text for OTHER."""
+    sql = "WITH w AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM w"
+    assert statement_query_type(sql, "postgresql") == "OTHER"
+
+
+@pytest.mark.passes_on_main
+def test_a_select_led_statement_with_a_cte_inside_stays_a_select() -> None:
+    sql = "SELECT * FROM (WITH w AS (SELECT 1 AS a) SELECT a FROM w) q"
+    assert statement_query_type(sql, "postgresql") == "SELECT"

@@ -1459,3 +1459,35 @@ class TestWriteDetectionWithNestedComments:
             lambda n: "/*" * (n // 2) + " CALL p()",
             lambda text: is_write_query(_q("w", text, "OTHER")),
         )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "UPDATE posts p SET views = 1 WHERE p.id = 2",
+        "UPDATE posts AS p SET views = 1 WHERE p.id = 2",
+        'UPDATE "public"."posts" "p" SET views = 1',
+        "UPDATE ONLY posts p SET views = 1",
+        "WITH a AS (SELECT 1) UPDATE posts p SET views = 1 FROM a",
+        "WITH a AS (SELECT 1) UPDATE posts AS p SET views = 1 FROM a",
+        "UPDATE posts SET views = 1",
+    ],
+)
+def test_an_update_with_or_without_a_table_alias_is_a_write(text: str) -> None:
+    """``UPDATE <table> <alias> SET`` was missed by ``update\\s+\\S+\\s+set`` (#1287)."""
+    query = {"query_type": "OTHER", "query_text": text}
+    assert is_write_query(query, "postgresql")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SELECT * FROM posts p WHERE p.note = 'UPDATE posts p SET x = 1'",
+        "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (a) ON UPDATE SET NULL",
+        "WITH a AS (SELECT 1) SELECT * FROM a",
+    ],
+)
+@pytest.mark.passes_on_main
+def test_text_that_only_mentions_update_is_no_write(text: str) -> None:
+    query = {"query_type": "OTHER", "query_text": text}
+    assert not is_write_query(query, "postgresql")

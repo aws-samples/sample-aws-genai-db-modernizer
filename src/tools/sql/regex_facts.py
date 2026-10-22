@@ -759,6 +759,23 @@ def regex_write_targets(query_text: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(out))
 
 
+_OUTPUT_INTO_RE = re.compile(
+    rf"\boutput\b[^;]*?\binto\s+(?P<table>[#@]?{_IDENT}(?:\s*\.\s*{_IDENT})*)", re.IGNORECASE
+)
+
+
+def output_into_targets(query_text: str) -> tuple[str, ...]:
+    """The tables a SQL Server ``OUTPUT ... INTO <table>`` clause writes (a temp table
+    ``#t`` or a table variable ``@t`` is no collected table and is left out)."""
+    text = scan_sql(query_text or "")
+    out = [
+        _bare(m.group("table"))
+        for m in _OUTPUT_INTO_RE.finditer(text)
+        if not m.group("table").lstrip().startswith(("#", "@"))
+    ]
+    return tuple(dict.fromkeys(out))
+
+
 def _is_update(match: re.Match[str]) -> bool:
     return match.group(0).lstrip().lower().startswith("update")
 

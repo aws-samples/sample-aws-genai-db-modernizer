@@ -26,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from src.agents.referee.cache_overlay import is_locking_read, is_write_query
-from src.agents.referee.table_resolution import SourceScope
+from src.agents.referee.table_resolution import SourceScope, is_engine_system_object
 from src.agents.referee.utility_statements import is_utility_statement
 from src.tools.sql.query_facts import query_facts, source_engine_of
 
@@ -60,6 +60,9 @@ CALL_WEIGHT_FLOOR_SHARE = 0.01
 WRITE_GROUP_LABEL = "write group: one source of truth"
 
 
+_DML_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE"})
+
+
 def _bare(table: str) -> str:
     return table.rsplit(".", 1)[-1].strip('[]"`').lower()
 
@@ -79,7 +82,13 @@ def written_tables(
     text = str(query.get("query_text") or "")
     tables = [str(t) for t in query.get("tables_accessed") or [] if t and t != "unknown"]
     if is_utility_statement(text, tables, source):
-        return []
+        # An administration statement writes no table, but a DML statement that only
+        # reads a catalog (``INSERT INTO stats SELECT ... FROM information_schema.tables``)
+        # still writes its own target (#1287).
+        if str(query.get("query_type") or "").upper() not in _DML_TYPES:
+            return []
+        targets = set(query_facts(text, source_engine).write_targets)
+        return [t for t in tables if _bare(t) in targets and not is_engine_system_object(t, source)]
     out: list[str] = []
     if is_write_query(query, source_engine):
         targets = set(query_facts(text, source_engine).write_targets)
