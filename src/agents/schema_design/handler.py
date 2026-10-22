@@ -28,6 +28,7 @@ from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_que
 from src.agents.referee.query_pattern import ACCESS_PATTERNS_FILE, redesign_requirements
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
+from src.agents.schema_design.design_trace import write_design_trace
 from src.agents.schema_design.group_trace import scope_decision_trace
 from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
 from src.agents.schema_design.scope import (
@@ -819,7 +820,7 @@ def run_schema_design(
             )
         else:
             trace_out_key = f"{database_name}/{job_id}/schema-{target_type}/design_trace.json"
-        store.write_json(trace_out_key, trace_data_out)
+        write_design_trace(store, trace_out_key, trace_data_out)
 
     elapsed = time.time() - start_time
     if report.violations:
@@ -1212,7 +1213,7 @@ def run_schema_design_auto(
                 f"{database_name}/{job_id}/schema-{target_type}"
                 f"/v{artifact_version}/design_trace_group_{idx}.json"
             )
-            store.write_json(trace_key, json.loads(trace_json))
+            write_design_trace(store, trace_key, json.loads(trace_json))
         n_q = len(group_collector.get("queries", {}).get("query_patterns", []))
         print(
             f"[schema-design/{target_type}] Group {idx} done ({group['group_name']}, {n_q} queries)"

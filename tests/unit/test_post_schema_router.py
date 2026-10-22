@@ -20,6 +20,7 @@ from src.agents.referee.post_schema_router import (
 )
 from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
 from src.agents.referee.tie_break import break_tie
+from src.contracts.schema_design_trace import DesignTrace
 
 ENGINES = ["documentdb", "dynamodb", "opensearch"]
 
@@ -446,6 +447,7 @@ class TestRoutingFlagsFromTrace:
         grouped = {"groups": [{"routing_flags": [flag]}, {"trace": []}]}
         assert routing_flags_from_trace(grouped) == [flag]
         assert routing_flags_from_trace({}) == []
+        assert routing_flags_from_trace(DesignTrace.model_validate(grouped)) == [flag]
 
 
 def test_the_router_has_no_lightweight_service_parameter() -> None:

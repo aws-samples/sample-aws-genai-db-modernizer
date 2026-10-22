@@ -144,6 +144,20 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
         "the ElastiCache decision trace: unknown keys kept (#1191)",
     ),
     **{
+        f"schema_design_trace.{name}": (
+            "allow",
+            "the schema design trace: unknown keys kept, a designer may record more (#1258)",
+        )
+        for name in (
+            "DesignTrace",
+            "DesignTraceGroup",
+            "DesignTraceRun",
+            "DesignTraceEntry",
+            "DesignTraceReview",
+            "DeltaMergeTrace",
+        )
+    },
+    **{
         f"synthesis_output.{name}": ("allow", _REPORT)
         for name in (
             "SynthesisOutputContract",

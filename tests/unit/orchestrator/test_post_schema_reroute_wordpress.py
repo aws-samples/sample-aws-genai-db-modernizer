@@ -271,3 +271,21 @@ class TestTheCustomersMoveBackHolds:
         assert overridden["v4"]["post_schema_reroutes"] == []
         assert overridden["report"]["post_schema_reroutes"] == []
         assert "Moved after approval" not in overridden["engineering"]
+
+
+def test_a_design_trace_off_the_contract_stops_the_post_schema_pass(tmp_path_factory) -> None:
+    """The pass reads the PE flags through the design-trace contract (#1258): a
+    ``routing_flags`` of the wrong type fails the pass, never reads as no flags."""
+    from src.agents.schema_design.design_trace import DesignTraceShapeError
+
+    root = _pipeline_copy(tmp_path_factory, "offcontract")
+    store = LocalArtifactStore(base_dir=str(root))
+    mark_assignment_customer_approved(store, DB, JOB)
+    _fake_design(JOB, DB, "dynamodb", store, 2)
+    store.write_json(
+        f"{DB}/{JOB}/schema-dynamodb/v2/design_trace.json", {"trace": [], "routing_flags": "q-1"}
+    )
+    with patch("src.agents.schema_design.handler.run_schema_design_auto", side_effect=_fake_design):
+        with pytest.raises(DesignTraceShapeError, match="routing_flags"):
+            LocalOrchestrator(store, llm_mode="bedrock")._run_post_schema_routing(JOB, DB)
+    assert not store.exists(f"{DB}/{JOB}/assignment/v3/assignment.json")

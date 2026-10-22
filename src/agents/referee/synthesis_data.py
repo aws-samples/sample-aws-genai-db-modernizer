@@ -20,6 +20,8 @@ from src.agents.referee.cache_overlay import (
     safety_net_note,
 )
 from src.agents.referee.synthesis_prose import clean_schema_design_prose
+from src.agents.schema_design.design_trace import read_design_trace
+from src.contracts.schema_design_trace import DesignTrace
 from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.prose_style import collector_identifiers
 from src.storage.artifact_store import ArtifactStore
@@ -39,7 +41,7 @@ class EngineArtifacts:
     engine: str
     analysis: dict | None = None
     schema_design: dict | None = None
-    design_trace: dict | None = None
+    design_trace: DesignTrace | None = None
 
 
 @dataclass
@@ -245,11 +247,7 @@ def load_synthesis_data(
         else:
             trace_key = f"{database_name}/{job_id}/schema-{engine}/design_trace.json"
 
-        artifacts.design_trace = _read_artifact(
-            store,
-            trace_key,
-            required=False,
-        )
+        artifacts.design_trace = _read_design_trace(store, trace_key)
 
         data.engines[engine] = artifacts
         logger.info(
@@ -257,7 +255,7 @@ def load_synthesis_data(
             engine,
             "yes" if artifacts.analysis else "no",
             "yes" if artifacts.schema_design else "no",
-            "yes" if artifacts.design_trace else "no",
+            "yes" if artifacts.design_trace is not None else "no",
         )
 
     _apply_cache_safety_net(data)
@@ -335,6 +333,18 @@ def _apply_cache_safety_net(data: SynthesisData) -> None:
             for qa in data.assignment.get("query_assignments", [])
         ):
             del data.engines[engine]
+
+
+def _read_design_trace(store: ArtifactStore, path: str) -> DesignTrace | None:
+    """The engine's design trace as its contract, or ``None`` when it is missing (optional,
+    as every artifact here). A version or a shape the contract refuses raises, like every
+    other reader of this trace (#1258)."""
+    if not store.exists(path):
+        logger.warning("Optional artifact missing: %s", path)
+        return None
+    trace = read_design_trace(store, path)
+    print(f"[synthesis] Read {path}")
+    return trace
 
 
 def _read_artifact(store: ArtifactStore, path: str, required: bool = False) -> dict:  # type: ignore[type-arg]

@@ -18944,6 +18944,827 @@
     "schema_hash": "f76f9b98f86b67da12a6c40696a53c08c1c5e5ea64f2028cbee39f926f9d43b9",
     "version": "1.1"
   },
+  "schema_design_trace.DesignTrace": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "delta_merge": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "errors": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                },
+                "summary": {
+                  "required": true,
+                  "schema": {
+                    "kind": "object"
+                  }
+                },
+                "warnings": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "dropped_fields": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "scalar",
+                "type": "string"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "groups": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "delta_merge": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object",
+                          "properties": {
+                            "errors": {
+                              "required": true,
+                              "schema": {
+                                "items": {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                },
+                                "kind": "array"
+                              }
+                            },
+                            "summary": {
+                              "required": true,
+                              "schema": {
+                                "kind": "object"
+                              }
+                            },
+                            "warnings": {
+                              "required": true,
+                              "schema": {
+                                "items": {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                },
+                                "kind": "array"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "dropped_fields": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "items": {
+                            "kind": "scalar",
+                            "type": "string"
+                          },
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "pe_review": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object",
+                          "properties": {
+                            "error": {
+                              "required": false,
+                              "schema": {
+                                "kind": "anyOf",
+                                "members": [
+                                  {
+                                    "kind": "scalar",
+                                    "type": "null"
+                                  },
+                                  {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "source": {
+                              "required": true,
+                              "schema": {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "routing_flags": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "items": {
+                            "kind": "object"
+                          },
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "token_usage": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "trace": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "items": {
+                            "kind": "object",
+                            "properties": {
+                              "change_requests": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "scalar",
+                                  "type": "any"
+                                }
+                              },
+                              "elapsed_seconds": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "scalar",
+                                  "type": "any"
+                                }
+                              },
+                              "error": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              "iteration": {
+                                "required": true,
+                                "schema": {
+                                  "kind": "scalar",
+                                  "type": "any"
+                                }
+                              },
+                              "output_summary": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "object"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "summary": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              "type": {
+                                "required": true,
+                                "schema": {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              },
+                              "verdict": {
+                                "required": false,
+                                "schema": {
+                                  "kind": "anyOf",
+                                  "members": [
+                                    {
+                                      "kind": "scalar",
+                                      "type": "null"
+                                    },
+                                    {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "kind": "array"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "merge_reconciliation": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "scalar",
+                "type": "string"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "pe_review": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "error": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "source": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "routing_flags": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "token_usage": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "total_groups": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "type": "integer"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "trace": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "change_requests": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "elapsed_seconds": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "error": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "iteration": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "output_summary": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "type": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "verdict": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "schema_hash": "cff7cbec66eb2f6f8b9eada7257fe99b1d3c743deeccfc21d17e13d10995fbd3",
+    "version": "1.0"
+  },
+  "schema_design_trace.DesignTraceGroup": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "delta_merge": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "errors": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                },
+                "summary": {
+                  "required": true,
+                  "schema": {
+                    "kind": "object"
+                  }
+                },
+                "warnings": {
+                  "required": true,
+                  "schema": {
+                    "items": {
+                      "kind": "scalar",
+                      "type": "string"
+                    },
+                    "kind": "array"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "dropped_fields": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "scalar",
+                "type": "string"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "pe_review": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object",
+              "properties": {
+                "error": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "source": {
+                  "required": true,
+                  "schema": {
+                    "kind": "scalar",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "routing_flags": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object"
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "token_usage": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "object"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "trace": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "change_requests": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "elapsed_seconds": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "error": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "iteration": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "any"
+                    }
+                  },
+                  "output_summary": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "object"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "type": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "verdict": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "schema_hash": "218a75484e9fd5a1946f8f4d982fe5400c4f1693cc95f7f216dd9783c3bec496",
+    "version": "1.0"
+  },
   "schema_revision_models.SchemaConfirmation": {
     "fields": {
       "confirmed_at": {

@@ -543,6 +543,17 @@ def _trace_paths() -> tuple[str, ...]:
     )
 
 
+def _design_trace_paths() -> tuple[str, ...]:
+    """Every engine's design-trace path: the single and merged trace, and a group's."""
+    from src.shared.catalog import engine_ids
+
+    return tuple(
+        f"db/job/schema-{engine}/{tail}"
+        for engine in sorted(engine_ids(status="active"))
+        for tail in ("design_trace.json", "v1/design_trace.json", "v1/design_trace_group_1.json")
+    )
+
+
 # (file, name) -> the shape (or shapes) a path-prefix name holds where the renderer
 # cannot see it bound (a parameter set by the caller).
 PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
@@ -552,6 +563,10 @@ PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
     # the contract registered for its path and refuses an untyped one (#973, #1187): any
     # engine's trace path.
     ("src/agents/analysis/decision_trace.py", "key"): _trace_paths(),
+    # The one design-trace writer takes the key from its callers (the schema design
+    # handler, the group merger, the external PE review, the ATX carry-forward) and
+    # writes it through the contract registered for its path (#1258).
+    ("src/agents/schema_design/design_trace.py", "key"): _design_trace_paths(),
     # The group merger writes the merged design trace under its caller's version
     # folder (#1192's declared-artifact scan).
     ("src/agents/schema_design/group_merger.py", "base_key"): "db/job/schema-dynamodb/v1",
@@ -563,7 +578,10 @@ PATH_HINTS: dict[tuple[str, str], str | tuple[str, ...]] = {
 # given (``contract_for_artifact(key)``), so each model is written only to its own
 # paths, not to every path the writer can be given.
 PATH_CHOSEN_MODEL: frozenset[tuple[str, str]] = frozenset(
-    {("src/agents/analysis/decision_trace.py", "write_decision_trace")}
+    {
+        ("src/agents/analysis/decision_trace.py", "write_decision_trace"),
+        ("src/agents/schema_design/design_trace.py", "write_design_trace"),
+    }
 )
 
 

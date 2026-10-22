@@ -19,6 +19,7 @@ import logging
 import re
 
 from src.agents.schema_design import dynamodb_merge
+from src.agents.schema_design.design_trace import write_design_trace
 from src.agents.schema_design.dynamodb_merge import (
     MERGE_FAILURE_PREFIX,
     OVERLAP_PREFIX,
@@ -244,10 +245,16 @@ def _consolidate_design_traces(
     for idx, key in sorted(keyed):
         try:
             trace = store.read_json(key)
+        except ContractVersionError:
+            raise  # a group trace this code cannot read fails the merge, not just its group
         except Exception:
             logger.debug("Skipping unreadable trace artifact: %s", key)
             continue
-        group_traces.append(rewrite_pattern_ids(trace, pattern_maps.get(idx, {})))
+        renumbered = rewrite_pattern_ids(trace, pattern_maps.get(idx, {}))
+        # The merged file's version covers its groups; a group's own is not repeated.
+        if isinstance(renumbered, dict):
+            renumbered = {k: v for k, v in renumbered.items() if k != "contract_version"}
+        group_traces.append(renumbered)
     if group_traces or merge_notes:
         combined: dict = {"total_groups": len(group_traces), "groups": group_traces}
         total = _sum_token_usage(group_traces)
@@ -256,7 +263,7 @@ def _consolidate_design_traces(
             logger.info("schema-merge usage over %d groups | %s", len(group_traces), total)
         if merge_notes is not None:
             combined["merge_reconciliation"] = merge_notes
-        store.write_json(f"{base_key}/design_trace.json", combined)
+        write_design_trace(store, f"{base_key}/design_trace.json", combined)
 
 
 def merge_schema_groups(

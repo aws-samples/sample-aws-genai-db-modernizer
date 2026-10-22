@@ -274,14 +274,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
     ),
     # Schema design and post-schema routing
     (
-        r"schema-[^/]+/(?:v\d+/)?design_trace\.json",
-        "the schema design trace (model calls, merge notes, PE review): typed by #1258",
-    ),
-    (
-        r"schema-[^/]+/v\d+/design_trace_group_\d+\.json",
-        "one DynamoDB group's design trace, merged into design_trace.json: typed by #1258",
-    ),
-    (
         r"schema-[^/]+/v\d+/merge_record\.json",
         "the last --merge of the DynamoDB group drafts (draft hashes, errors)",
     ),
@@ -435,6 +427,14 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         "src.contracts.schema_revision_models:SchemaRevisionRequest",
     ),
     (r"schema-[^/]+/confirmed\.json", "src.contracts.schema_revision_models:SchemaConfirmation"),
+    (
+        r"schema-[^/]+/(?:v\d+/)?design_trace\.json",
+        "src.contracts.schema_design_trace:DesignTrace",
+    ),
+    (
+        r"schema-[^/]+/v\d+/design_trace_group_\d+\.json",
+        "src.contracts.schema_design_trace:DesignTraceGroup",
+    ),
     (r"[^/]+/questions\.json", "src.contracts.agent_interaction_models:AgentQuestions"),
     (r"[^/]+/answers\.json", "src.contracts.agent_interaction_models:AgentAnswers"),
     # ``.meta/<job_id>.json``; job ids never start with ``_`` (marker files do).

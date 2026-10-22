@@ -32,6 +32,8 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `schema-[^/]+/v\d+/version_meta\.json` | `SchemaVersionMeta` (`src.contracts.schema_revision_models`) |
 | `schema-[^/]+/v\d+/revision_request\.json` | `SchemaRevisionRequest` (`src.contracts.schema_revision_models`) |
 | `schema-[^/]+/confirmed\.json` | `SchemaConfirmation` (`src.contracts.schema_revision_models`) |
+| `schema-[^/]+/(?:v\d+/)?design_trace\.json` | `DesignTrace` (`src.contracts.schema_design_trace`) |
+| `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | `DesignTraceGroup` (`src.contracts.schema_design_trace`) |
 | `[^/]+/questions\.json` | `AgentQuestions` (`src.contracts.agent_interaction_models`) |
 | `[^/]+/answers\.json` | `AgentAnswers` (`src.contracts.agent_interaction_models`) |
 | `\.meta/[^_/][^/]*\.json` | `PhaseProgression` (`src.contracts.phase_models`) |
@@ -67,8 +69,6 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |
 | `assignment/v\d+/access_patterns\.json` | each query's access-pattern class and scores as routing scored them (#728, #936): an audit record written with its assignment version |
 | `assignment/review/pending_hitl\.json` | AWS Transform transport state: the pending review task to resume |
-| `schema-[^/]+/(?:v\d+/)?design_trace\.json` | the schema design trace (model calls, merge notes, PE review): typed by #1258 |
-| `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | one DynamoDB group's design trace, merged into design_trace.json: typed by #1258 |
 | `schema-[^/]+/v\d+/merge_record\.json` | the last --merge of the DynamoDB group drafts (draft hashes, errors) |
 | `schema-[^/]+/v\d+/finalize_record\.json` | the last --finalize of a single-pass engine (status, errors, response and output hashes) |
 | `schema-[^/]+/v\d+/changelog\.json` | a schema revision's changelog, shown with the revision |

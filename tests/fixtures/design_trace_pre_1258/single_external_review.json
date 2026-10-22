@@ -1,0 +1,43 @@
+{
+  "trace": [
+    {
+      "type": "pe_review",
+      "iteration": 0,
+      "verdict": "APPROVED",
+      "change_requests": 0,
+      "summary": "Serves the reads it was given."
+    }
+  ],
+  "routing_flags": [
+    {
+      "query_ids": [
+        "q2"
+      ],
+      "flagged_engine": "documentdb",
+      "reason_category": "full_scan",
+      "explanation": "filters on a non-indexed field only"
+    }
+  ],
+  "pe_review": {
+    "source": "external",
+    "verdict": "APPROVED",
+    "change_requests": [],
+    "strengths": [
+      "one collection per aggregate"
+    ],
+    "pe_notes": [
+      "watch the document size of orders"
+    ],
+    "routing_flags": [
+      {
+        "query_ids": [
+          "q2"
+        ],
+        "flagged_engine": "documentdb",
+        "reason_category": "full_scan",
+        "explanation": "filters on a non-indexed field only"
+      }
+    ],
+    "summary": "Serves the reads it was given."
+  }
+}

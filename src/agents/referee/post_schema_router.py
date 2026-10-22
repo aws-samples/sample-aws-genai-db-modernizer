@@ -31,6 +31,7 @@ from src.agents.referee.model_flags import FLAG_REASON_LABELS, parse_model_flags
 from src.agents.referee.move_ledger import group_key
 from src.agents.referee.query_scoring import ScoringContext
 from src.agents.referee.tie_break import group_tie
+from src.agents.schema_design.design_trace import parse_design_trace
 from src.contracts.model_flag import MAX_EXPLANATION_CHARS, FlagReason, ModelFlag
 from src.contracts.move_ledger import MoveEvidence
 from src.contracts.post_schema_router_output import (
@@ -39,22 +40,29 @@ from src.contracts.post_schema_router_output import (
     RouterOutput,
     TerminalQuery,
 )
+from src.contracts.schema_design_trace import DesignTrace
 from src.shared.engine_names import display_engine
 from src.shared.query_citations import clip
 
 logger = logging.getLogger(__name__)
 
 
-def routing_flags_from_trace(design_trace: Mapping) -> list[dict]:
+def routing_flags_from_trace(design_trace: DesignTrace | Mapping) -> list[dict]:
     """The PE reviewer's routing flags recorded in a ``design_trace.json``.
 
     A single design writes them at the top level; a grouped design (DynamoDB)
-    has one trace per group under ``groups``.
+    has one trace per group under ``groups``. A trace read as a dict is checked as
+    the contract first (#1258): a trace of the wrong shape raises
+    ``DesignTraceShapeError``, never reads as no flags.
     """
-    flags = list(design_trace.get("routing_flags") or [])
-    for group in design_trace.get("groups") or []:
-        if isinstance(group, Mapping):
-            flags.extend(group.get("routing_flags") or [])
+    trace: DesignTrace = (
+        design_trace
+        if isinstance(design_trace, DesignTrace)
+        else parse_design_trace(design_trace, artifact="design_trace.json")
+    )
+    flags = list(trace.routing_flags or [])
+    for group in trace.groups or []:
+        flags.extend(group.routing_flags or [])
     return flags
 
 

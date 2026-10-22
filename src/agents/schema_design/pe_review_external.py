@@ -35,6 +35,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from src.agents.prompt_framing import with_untrusted_notice
+from src.agents.schema_design.design_trace import DesignTraceShapeError, write_design_trace
 from src.contracts.model_flag import parse_model_flags
 from src.storage.artifact_store import ArtifactStore
 
@@ -450,11 +451,12 @@ def apply_pe_review_llm_output(
     else:
         trace.pop("routing_flags", None)
     trace[REVIEW_KEY] = {"source": "external", **dumped}
-    base = f"{db}/{job_id}/schema-{engine}/v{version}"
-    if group is None:
-        store.write_json(f"{base}/design_trace.json", trace)
-    else:
-        store.write_json(f"{base}/design_trace_group_{group}.json", trace)
+    try:
+        write_design_trace(store, key, trace, lenient=True)
+    except DesignTraceShapeError as exc:
+        # The trace's routing flags are not ones the router can read; nothing is written,
+        # so the step is retried (a fresh answer, or the trace corrected).
+        return {"status": "validation_failed", "errors": exc.errors}
 
     status: dict = {
         "status": "complete",
@@ -477,7 +479,6 @@ def _record_failed_review(
 ) -> dict:
     """Record a review that produced no usable answer: no flags, design unchanged."""
     message = "the review subagent returned no valid answer; the design is accepted as is"
-    base = f"{db}/{job_id}/schema-{engine}/v{version}"
     key = trace_key(db, job_id, engine, version, group)
     trace = _read(store, key)
     trace = dict(trace) if isinstance(trace, dict) else {}
@@ -488,10 +489,10 @@ def _record_failed_review(
     trace["trace"] = entries
     trace.pop("routing_flags", None)
     trace[REVIEW_KEY] = {"source": "external", "error": message}
-    if group is None:
-        store.write_json(f"{base}/design_trace.json", trace)
-    else:
-        store.write_json(f"{base}/design_trace_group_{group}.json", trace)
+    try:
+        write_design_trace(store, key, trace, lenient=True)
+    except DesignTraceShapeError as exc:
+        return {"status": "validation_failed", "errors": exc.errors}
     status: dict = {
         "status": "complete",
         "engine": engine,

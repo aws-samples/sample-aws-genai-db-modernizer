@@ -86,6 +86,24 @@ def test_the_designed_map_is_the_tables_dynamodb_reads(designed_run: PipelineRes
     assert basis["mapped_tables"] == len(served) and basis["design_coverage"] == "complete"
 
 
+def test_the_designed_runs_design_trace_is_the_contract(designed_run: PipelineResult) -> None:
+    """The trace the designed job carries is a versioned ``DesignTrace`` (#1258), and the
+    post-schema router reads its flags through the contract."""
+    from src.agents.referee.post_schema_router import routing_flags_from_trace
+    from src.agents.schema_design.design_trace import read_design_trace
+    from src.contracts.schema_design_trace import DesignTrace
+    from src.shared.contract_versioning import current_version
+
+    store = LocalArtifactStore(base_dir=str(designed_run.artifact_root))
+    version = resolve_downstream_assignment_version(store, designed_run.db, designed_run.job_id)
+    key = f"{designed_run.db}/{designed_run.job_id}/schema-dynamodb/v{version}/design_trace.json"
+    raw = json.loads((designed_run.artifact_root / key).read_text())
+    assert raw["contract_version"] == current_version(DesignTrace)
+    trace = read_design_trace(store, key)
+    assert trace.trace == []
+    assert routing_flags_from_trace(trace) == []
+
+
 def test_a_design_whose_map_leaves_moving_tables_out(
     designed_partial_run: PipelineResult,
 ) -> None:

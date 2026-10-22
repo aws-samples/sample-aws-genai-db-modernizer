@@ -2330,8 +2330,13 @@ def _copy_schema_forward(
         return False
     trace_src = f"{base_prev}/design_trace.json"
     if store.exists(trace_src):  # type: ignore[attr-defined]
-        store.write_json(  # type: ignore[attr-defined]
-            f"{base_new}/design_trace.json", store.read_json(trace_src)  # type: ignore[attr-defined]
+        # A copy at today's version, not the one copied (#1258).
+        from src.agents.schema_design.design_trace import write_design_trace
+
+        write_design_trace(
+            store,  # type: ignore[arg-type]
+            f"{base_new}/design_trace.json",
+            store.read_json(trace_src),  # type: ignore[attr-defined]
         )
     return True
 

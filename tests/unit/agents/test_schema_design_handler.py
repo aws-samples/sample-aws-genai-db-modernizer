@@ -72,6 +72,12 @@ class TestSchemaDesignHandler:
 
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/schema_output.json")
         assert artifact_store.exists("mydb/job-001/schema-dynamodb/design_trace.json")
+        # The trace is a versioned contract (#1258); the designer's other keys are kept.
+        trace = artifact_store.read_json("mydb/job-001/schema-dynamodb/design_trace.json")
+        from src.contracts.schema_design_trace import DesignTrace
+        from src.shared.contract_versioning import current_version
+
+        assert trace == {"contract_version": current_version(DesignTrace), "iterations": []}
 
     @pytest.mark.usefixtures("schema_contract_off")
     def test_versioned_output_path_when_assignment_version_set(self, artifact_store):

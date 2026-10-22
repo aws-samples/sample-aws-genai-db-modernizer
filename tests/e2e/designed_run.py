@@ -22,6 +22,7 @@ import json
 from collections.abc import Collection
 from pathlib import Path
 
+from src.agents.schema_design.design_trace import write_design_trace
 from src.agents.schema_design.output_contract import cite_queries
 from src.contracts.aurora_mysql_model_output import AuroraMySQLModelOutputContract
 from src.contracts.elasticache_model_output import ElastiCacheModelOutputContract
@@ -205,7 +206,8 @@ def write_dynamodb_design(
     # contract check: a map that leaves every table out is written on purpose.
     key = f"{base}/schema_output.json"
     store.write_json(key, cite_queries(store, key, design))
-    store.write_json(f"{base}/design_trace.json", {"trace": []})
+    # As a run writes it: through the design-trace contract (#1258).
+    write_design_trace(store, f"{base}/design_trace.json", {"trace": []})
     return len(design["access_patterns"])
 
 

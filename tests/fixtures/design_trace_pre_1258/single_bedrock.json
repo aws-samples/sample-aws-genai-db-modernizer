@@ -1,0 +1,54 @@
+{
+  "trace": [
+    {
+      "type": "designer",
+      "iteration": 0,
+      "elapsed_seconds": 0.0,
+      "output_summary": {
+        "table_definitions": 1,
+        "access_patterns": 3
+      }
+    },
+    {
+      "type": "pe_review",
+      "iteration": 0,
+      "elapsed_seconds": 0.0,
+      "verdict": "CHANGES_REQUESTED",
+      "change_requests": 1,
+      "summary": "fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the key fix the "
+    },
+    {
+      "type": "designer",
+      "iteration": 1,
+      "elapsed_seconds": 0.0,
+      "output_summary": {
+        "table_definitions": 2,
+        "access_patterns": 3
+      }
+    },
+    {
+      "type": "pe_review",
+      "iteration": 1,
+      "elapsed_seconds": 0.0,
+      "verdict": "APPROVED",
+      "change_requests": 0,
+      "summary": "ok"
+    }
+  ],
+  "routing_flags": [
+    {
+      "query_ids": [
+        "q5"
+      ],
+      "flagged_engine": "dynamodb",
+      "reason_category": "full_scan",
+      "explanation": "filters on a non-indexed field only"
+    }
+  ],
+  "token_usage": {
+    "calls": 4,
+    "inputTokens": 1200,
+    "outputTokens": 340,
+    "cacheReadInputTokens": 50
+  }
+}

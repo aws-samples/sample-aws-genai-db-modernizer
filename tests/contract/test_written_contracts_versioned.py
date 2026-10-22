@@ -44,6 +44,7 @@ from pydantic import BaseModel, Field
 from src.agents.load_test.models import SeedManifest
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.load_test_models import InfrastructureManifest, LoadTestOutput
+from src.contracts.schema_design_trace import DesignTrace, DesignTraceGroup
 
 REPO = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = ("src", "scripts")
@@ -78,6 +79,12 @@ UNTYPED_WRITE_SITES: dict[tuple[str, str, str], type[BaseModel] | tuple[type[Bas
     # its path: any engine's typed trace.
     ("src/agents/analysis/decision_trace.py", "write_decision_trace", "typed"): (
         _trace_contracts()
+    ),
+    # The one design-trace writer loads the trace through the contract registered for
+    # its path: the merged or single trace, or one group's.
+    ("src/agents/schema_design/design_trace.py", "write_design_trace", "typed"): (
+        DesignTrace,
+        DesignTraceGroup,
     ),
 }
 

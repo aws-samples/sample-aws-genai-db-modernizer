@@ -545,6 +545,7 @@ class LocalOrchestrator(Orchestrator):
         )
         from src.agents.referee.tie_break import settled_counts
         from src.agents.referee.waived_counts import pinned_counts_by_table
+        from src.agents.schema_design.design_trace import read_design_trace
         from src.contracts.post_schema_router_output import HeldQuery, QueryRouting, TerminalQuery
 
         selected_engines = run["selected_engines"]
@@ -579,7 +580,7 @@ class LocalOrchestrator(Orchestrator):
             ]:
                 if self.store.exists(trace_key):
                     flags_by_engine[engine] = routing_flags_from_trace(
-                        self.store.read_json(trace_key)
+                        read_design_trace(self.store, trace_key)
                     )
                     break
 
