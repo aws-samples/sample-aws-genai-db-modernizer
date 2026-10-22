@@ -24,7 +24,7 @@ from src.contracts.assignment_models import (
     UnresolvedNames,
 )
 from src.shared.engine_names import display_engine
-from src.shared.migration_wave_engines import NON_OWNER_ENGINES
+from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 
 logger = logging.getLogger(__name__)
 
@@ -264,11 +264,9 @@ def derive_table_assignments(
     for table_id in sorted(table_engine_counts.keys()):
         engine_counts = table_engine_counts[table_id]
         engines = sorted(engine_counts.keys())
-        owner_counts = {e: c for e, c in engine_counts.items() if e not in NON_OWNER_ENGINES}
-        if owner_counts:
-            primary_engine = min(
-                owner_counts, key=lambda e: (-owner_counts[e], e != retained_engine, e)
-            )
+        primary = primary_owner_engine(engine_counts, retained_engine)
+        if primary is not None:
+            primary_engine = primary
         elif retained_engine:
             primary_engine = retained_engine
         else:

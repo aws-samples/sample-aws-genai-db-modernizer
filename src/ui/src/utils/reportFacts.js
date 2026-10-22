@@ -169,6 +169,15 @@ export function tableSourcesOf(synthesis) {
   return ts;
 }
 
+// #212: each mapped table's owner, the engines that also read it and its cache
+// (facts.table_owner_lines), or null when the report maps no table. Every figure
+// is the facts layer's; the /results API fills it in for an older report.
+export function tableOwnershipOf(synthesis) {
+  const o = factsOf(synthesis) && factsOf(synthesis).table_owner_lines;
+  if (!o || !o.table_count) return null;
+  return o;
+}
+
 // #792: the access-pattern totals the results page shows
 // (facts.access_pattern_totals: the patterns the owner engines serve, the cache
 // layer's own apart). The explorer's live filter counts stay presentation. A

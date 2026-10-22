@@ -57,6 +57,19 @@ NON_OWNER_ENGINES: frozenset[str] = catalog.engine_ids(
 )
 
 
+def primary_owner_engine(counts: Mapping[str, int], retained_engine: str | None) -> str | None:
+    """The owner engine serving most of a table's queries, the table's ``primary_engine``
+    (``table_assignments.derive_table_assignments``): cache and search engines skipped
+    (``NON_OWNER_ENGINES``), an exact tie to ``retained_engine`` (the least migration),
+    then to the engine id, so the pick never depends on dict order. None when no owner
+    engine serves the table. The one rule the resolver and the report's owner lines use
+    (#212)."""
+    owners = {e: n for e, n in counts.items() if e and e not in NON_OWNER_ENGINES}
+    if not owners:
+        return None
+    return min(owners, key=lambda e: (-owners[e], e != retained_engine, e))
+
+
 def cache_front_description(
     retained_engine: str | None, final_owners: Mapping[str, int] | Iterable[str] | None
 ) -> str:

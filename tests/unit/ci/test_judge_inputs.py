@@ -100,6 +100,8 @@ def test_tables_served_prefers_effective_architecture() -> None:
     assert dynamodb["tables_served"] == ["items", "orders"]
     # primary_tables is table_mappings' one-engine-per-table view, kept separate
     assert dynamodb["primary_tables"] == ["orders"]
+    # A report written before #212 has no owner lines: unknown, not "owns nothing".
+    assert dynamodb["owned_tables"] is None
     assert "effective_architecture" in facts["source"]["tables_served"]
 
 
@@ -841,3 +843,21 @@ def test_prompt_never_exceeds_the_ceiling(tmp_path: Path, monkeypatch: pytest.Mo
         if len(prompt) > ceiling:
             over.append((ceiling, len(prompt) - ceiling))
     assert over == []
+
+
+def test_owned_tables_are_the_migration_maps_owners() -> None:
+    """#212: each engine's owned_tables are the facts layer's owner lines, the Owner
+    column of the Migration map, not the recommended engine."""
+    report = _report()
+    report["facts"] = {
+        "table_owner_lines": {
+            "table_lines": [
+                {"table": "shop.orders", "owner": "aurora_mysql"},
+                {"table": "shop.items", "owner": "dynamodb"},
+            ]
+        }
+    }
+    facts = judge_facts.build_facts(report, None)
+    by_engine = {e["engine"]: e for e in facts["engines"]}
+    assert by_engine["dynamodb"]["owned_tables"] == ["items"]
+    assert by_engine["dynamodb"]["primary_tables"] == ["orders"]

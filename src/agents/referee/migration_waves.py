@@ -165,7 +165,7 @@ from src.shared.migration_wave_engines import (
 from src.shared.report_facts import wave_one_moved_by_later_waves
 
 # ``_durable_owner`` is imported from here by callers; it lives in migration_wave_tables.
-__all__ = ["_durable_owner", "build_migration_waves"]
+__all__ = ["_durable_owner", "build_migration_waves", "wave_table_owners"]
 
 
 def _extend_gate_parts(parts: list[dict[str, Any]], more: list[dict[str, Any]]) -> None:
@@ -174,6 +174,119 @@ def _extend_gate_parts(parts: list[dict[str, Any]], more: list[dict[str, Any]]) 
         add_gate_text(parts, part["text"])
         if part["items"]:
             add_gate_items(parts, part["items"])
+
+
+def _retained_engine(
+    by_engine: dict[str, Any],
+    source_engine: str,
+    query_assignments: list[dict[str, Any]],
+    aurora_engine_choice: dict[str, Any] | None,
+) -> tuple[str | None, bool]:
+    """(wave 1's retained Aurora engine or None, whether wave 1 converts the source
+    to it): the engine every wave's table owner falls back to (``_durable_owner``)."""
+    retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine)
+    # #381: a source with no Aurora dialect of its own (SQL Server, Oracle, DB2) still
+    # gets a retained engine once the assignment resolver has picked one of the two
+    # competing Aurora engines -- by then only the winner ever owns a query, so it is
+    # the one (if either) actually present in ``by_engine``. ``cross_engine`` flags
+    # wave 1 as a dialect-and-schema conversion rather than a 1:1 carry-over, so it
+    # never claims "no data model changes" for one of these sources.
+    cross_engine = False
+    scope_choice = (aurora_engine_choice or {}).get("engine")
+    if (aurora_engine_choice or {}).get("basis") == SCOPE_BASIS and scope_choice in AURORA_ENGINES:
+        # #1327 (ADR-031 Decision 2 Amendment 14): the customer's engine scope left
+        # out the source-compatible engine, so wave 1 converts the source to the
+        # Aurora engine it chose: a cross-engine move, as for a heterogeneous source.
+        # Only when some query ends on it: a conversion to an engine that serves
+        # nothing is no step of the plan, so wave 1 then names no target, as for a
+        # heterogeneous source whose chosen engine serves nothing (never the
+        # source-compatible engine the scope left out).
+        serves = int((by_engine.get(str(scope_choice)) or {}).get("assigned_queries") or 0) > 0
+        retained_engine = str(scope_choice) if serves else None
+        cross_engine = serves
+    elif retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
+        # #583/#586 review: ``retained_engine_for`` is the one shared helper for
+        # "which Aurora engine is retained" (``aurora_engine_choice`` first, then
+        # ``query_assignments``' own ``assigned_engine``, then the shared
+        # ADR-031 Decision 2/12 tie-break for a genuine, unresolved tie) --
+        # ``synthesis_report._relational_aurora_engine`` calls it too, so
+        # wave 1 and the architecture/cache-layer narrative cannot name different
+        # engines for the same assignment. A fake ``collector_output`` carries
+        # just enough for ``retained_engine_for`` to see this is a heterogeneous
+        # source with no Aurora dialect of its own -- ``source_engine`` already
+        # confirmed that above.
+        fake_collector = {"metadata": {"source_database": {"engine": source_engine}}}
+        candidate = retained_engine_for(fake_collector, query_assignments, aurora_engine_choice)
+        if candidate in AURORA_ENGINES and candidate in by_engine:
+            retained_engine = candidate
+            cross_engine = True
+        elif candidate in AURORA_ENGINES:
+            # ``candidate`` names a real engine (from the choice or from
+            # ``query_assignments``) with no ``by_engine``/``ranking`` entry --
+            # nothing to build wave 1's query count and share from. Re-derive
+            # from ``query_assignments`` alone (dropping the ranking-less
+            # choice), through the same shared helper, rather than giving up.
+            fallback = retained_engine_for(fake_collector, query_assignments, None)
+            if fallback in AURORA_ENGINES and fallback in by_engine:
+                retained_engine = fallback
+                cross_engine = True
+
+    return retained_engine, cross_engine
+
+
+def _canonical_table_assignments(
+    table_assignments: list[dict[str, Any]],
+    known_tables: set[str] | list[str] | None,
+    source: SourceScope | None,
+) -> tuple[set[str] | None, list[dict[str, Any]]]:
+    """(the known tables and views, the ``table_assignments`` rows that resolve to one,
+    under the canonical id): what every wave is built from (#225)."""
+    known: set[str] | None = (
+        None
+        if known_tables is None
+        else {str(t) for t in known_tables if not is_engine_system_object(str(t), source)}
+    )
+    resolver = None if known is None else TableNameResolver.from_known_ids(known)
+
+    def _canonical_in_scope(table_id: Any) -> Any | None:
+        if not table_id or table_id in PSEUDO_TABLES:
+            return None
+        if resolver is None:
+            return table_id
+        return resolver.resolve(str(table_id))
+
+    canonical_assignments = []
+    for t in table_assignments:
+        cid = _canonical_in_scope(t.get("table_id"))
+        if cid is None:
+            continue
+        canonical_assignments.append({**t, "table_id": cid} if cid != t.get("table_id") else t)
+    return known, canonical_assignments
+
+
+def wave_table_owners(
+    *,
+    ranking: list[dict[str, Any]],
+    table_assignments: list[dict[str, Any]],
+    query_assignments: list[dict[str, Any]],
+    source_engine: str,
+    known_tables: set[str] | list[str] | None = None,
+    aurora_engine_choice: dict[str, Any] | None = None,
+    source: SourceScope | None = None,
+) -> dict[str, str]:
+    """``{table_id: owner}``: each table's owner as the wave plan states it (#212), the
+    same ``_durable_owner`` call over the same rows and retained engine
+    :func:`build_migration_waves` uses, so the Migration map's Owner column, the wave
+    plan's owner lines and its kept-in-sync counts name one engine per table. Empty
+    with no ranking, as the waves are None."""
+    if not ranking:
+        return {}
+    by_engine = {str(r["target"]): r for r in ranking if r.get("target")}
+    retained, _ = _retained_engine(
+        by_engine, (source_engine or "").lower(), query_assignments, aurora_engine_choice
+    )
+    _, rows = _canonical_table_assignments(table_assignments, known_tables, source)
+    return {str(t["table_id"]): _durable_owner(t, retained) for t in rows if t.get("table_id")}
 
 
 def build_migration_waves(
@@ -244,76 +357,11 @@ def build_migration_waves(
         return None
     by_engine = {str(r["target"]): r for r in ranking if r.get("target")}
     source_engine = (source_engine or "").lower()
-    retained_engine = SOURCE_ENGINE_TO_AURORA.get(source_engine)
-    # #381: a source with no Aurora dialect of its own (SQL Server, Oracle, DB2) still
-    # gets a retained engine once the assignment resolver has picked one of the two
-    # competing Aurora engines -- by then only the winner ever owns a query, so it is
-    # the one (if either) actually present in ``by_engine``. ``cross_engine`` flags
-    # wave 1 as a dialect-and-schema conversion rather than a 1:1 carry-over, so it
-    # never claims "no data model changes" for one of these sources.
-    cross_engine = False
-    scope_choice = (aurora_engine_choice or {}).get("engine")
-    if (aurora_engine_choice or {}).get("basis") == SCOPE_BASIS and scope_choice in AURORA_ENGINES:
-        # #1327 (ADR-031 Decision 2 Amendment 14): the customer's engine scope left
-        # out the source-compatible engine, so wave 1 converts the source to the
-        # Aurora engine it chose: a cross-engine move, as for a heterogeneous source.
-        # Only when some query ends on it: a conversion to an engine that serves
-        # nothing is no step of the plan, so wave 1 then names no target, as for a
-        # heterogeneous source whose chosen engine serves nothing (never the
-        # source-compatible engine the scope left out).
-        serves = int((by_engine.get(str(scope_choice)) or {}).get("assigned_queries") or 0) > 0
-        retained_engine = str(scope_choice) if serves else None
-        cross_engine = serves
-    elif retained_engine is None and source_engine in HETEROGENEOUS_SOURCE_ENGINES:
-        # #583/#586 review: ``retained_engine_for`` is the one shared helper for
-        # "which Aurora engine is retained" (``aurora_engine_choice`` first, then
-        # ``query_assignments``' own ``assigned_engine``, then the shared
-        # ADR-031 Decision 2/12 tie-break for a genuine, unresolved tie) --
-        # ``synthesis_report._relational_aurora_engine`` calls it too, so
-        # wave 1 and the architecture/cache-layer narrative cannot name different
-        # engines for the same assignment. A fake ``collector_output`` carries
-        # just enough for ``retained_engine_for`` to see this is a heterogeneous
-        # source with no Aurora dialect of its own -- ``source_engine`` already
-        # confirmed that above.
-        fake_collector = {"metadata": {"source_database": {"engine": source_engine}}}
-        candidate = retained_engine_for(fake_collector, query_assignments, aurora_engine_choice)
-        if candidate in AURORA_ENGINES and candidate in by_engine:
-            retained_engine = candidate
-            cross_engine = True
-        elif candidate in AURORA_ENGINES:
-            # ``candidate`` names a real engine (from the choice or from
-            # ``query_assignments``) with no ``by_engine``/``ranking`` entry --
-            # nothing to build wave 1's query count and share from. Re-derive
-            # from ``query_assignments`` alone (dropping the ranking-less
-            # choice), through the same shared helper, rather than giving up.
-            fallback = retained_engine_for(fake_collector, query_assignments, None)
-            if fallback in AURORA_ENGINES and fallback in by_engine:
-                retained_engine = fallback
-                cross_engine = True
-
-    known: set[str] | None = (
-        None
-        if known_tables is None
-        else {str(t) for t in known_tables if not is_engine_system_object(str(t), source)}
+    retained_engine, cross_engine = _retained_engine(
+        by_engine, source_engine, query_assignments, aurora_engine_choice
     )
+    known, table_assignments = _canonical_table_assignments(table_assignments, known_tables, source)
     mapped: set[str] | None = None if mapped_tables is None else {str(t) for t in mapped_tables}
-    resolver = None if known is None else TableNameResolver.from_known_ids(known)
-
-    def _canonical_in_scope(table_id: Any) -> Any | None:
-        if not table_id or table_id in PSEUDO_TABLES:
-            return None
-        if resolver is None:
-            return table_id
-        return resolver.resolve(str(table_id))
-
-    canonical_assignments = []
-    for t in table_assignments:
-        cid = _canonical_in_scope(t.get("table_id"))
-        if cid is None:
-            continue
-        canonical_assignments.append({**t, "table_id": cid} if cid != t.get("table_id") else t)
-    table_assignments = canonical_assignments
-
     waves: list[dict[str, Any]] = []
 
     aurora = _aurora_wave(

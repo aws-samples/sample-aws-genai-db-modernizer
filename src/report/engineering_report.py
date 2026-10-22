@@ -60,6 +60,15 @@ from .risks import (
 )
 from .roadmap import _roadmap_md
 from .sources_of_truth import sources_of_truth_md
+from .table_owners import (
+    OWNER_RULE,
+    also_read_by_cell,
+    cached_by_cell,
+    owner_cell,
+    ownership_facts,
+    ownership_summary_text,
+    target_cell,
+)
 from .unreviewed import unreviewed_moves_md
 from .unservable import unservable_md
 
@@ -619,6 +628,10 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
     return out
 
 
+def _fit_cell(fit: Any) -> str:
+    return "-" if fit is None else fmt_num(fit)
+
+
 def _map_gaps_md(basis: dict[str, Any], migrated: int) -> str:
     """#1169: the moving tables the schema design has no target table for yet, and the
     rows it maps to a migration target that no query routed there reads."""
@@ -839,14 +852,13 @@ def render_engineering_report_md(
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)
-    if mappings:
-        # #951: the table-level engine is a summary label (AGENTS.md: assignments map
-        # queries to engines), so it is named as the recommendation it is, never as
-        # the table's owner; the owner is its source of truth.
+    ownership = ownership_facts(report)
+    if mappings and ownership:
+        # #212: one line per table, its owner (the engine that takes its writes, never a
+        # cache), the engines that also read it and its cache, from the facts layer.
         written = (facts.get("table_sources") or {}).get("written_table_count")
-        owner_pointer = (
-            " A table's writes land on its source of truth, listed under Sources of truth "
-            "and replicas below."
+        sources_pointer = (
+            " Sources of truth and replicas below lists each written table's replica reads."
             if written
             else ""
         )
@@ -861,22 +873,29 @@ def render_engineering_report_md(
         out += [
             f"## Migration map ({mapped} {plural_noun(mapped, 'table')}{split})",
             "",
-            "Recommended engine is each table's summary label: the queries decide where "
-            f"they run, and several engines can serve one table.{split_note}{gaps}{owner_pointer}",
+            f"{escaping.md_text(OWNER_RULE)}{split_note}{gaps}{sources_pointer}",
             "",
-            f"| Source table | Recommended engine | Target | Pattern | {WORKLOAD_FIT_LABEL} |",
-            "|---|---|---|---|---|",
+            escaping.md_text(ownership_summary_text(ownership)),
+            "",
+            "| Source table | Owner | Also read by | Cached by | Target | Pattern "
+            f"| {WORKLOAD_FIT_LABEL} |",
+            "|---|---|---|---|---|---|---|",
         ]
-        for m in mappings:
+        for row in ownership.get("table_lines") or []:
             # Code-span cells go through md_cell too, as in the schema table below (#466).
-            source = escaping.md_cell(f"`{escaping.md_code(m.get('source_table', '?'))}`")
-            target = escaping.md_cell(f"`{escaping.md_code(m.get('target_table', '-'))}`")
+            source = escaping.md_cell(f"`{escaping.md_code(row.get('table', '?'))}`")
+            table, design = target_cell(row)
+            target = escaping.md_cell(
+                f"`{escaping.md_code(table)}`" + (f" ({design} design)" if design else "")
+            )
             out.append(
                 f"| {source} "
-                f"| {escaping.md_cell(display_engine(m.get('recommended_database', '?')))} "
+                f"| {escaping.md_cell(owner_cell(row))} "
+                f"| {escaping.md_cell(also_read_by_cell(row))} "
+                f"| {escaping.md_cell(cached_by_cell(row))} "
                 f"| {target} "
-                f"| {escaping.md_cell(m.get('aggregate_pattern', '-'))} "
-                f"| {escaping.md_cell(fmt_num(m.get('confidence_score', '-')))} |"
+                f"| {escaping.md_cell(row.get('aggregate_pattern') or '-')} "
+                f"| {escaping.md_cell(_fit_cell(row.get('confidence_score')))} |"
             )
         out.append("")
 

@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.tools.validation.customer_text_guard import Finding, scan_json, scan_markdown, scan_text
 from tests.e2e.pipeline import PipelineResult
 
@@ -97,3 +99,18 @@ def test_executive_summary_pdf_has_no_internal_wording(run: PipelineResult) -> N
     text = "\n".join(p.extract_text() or "" for p in reader.pages)
     findings = _filtered(scan_text(text), "executive-report.pdf")
     assert findings == [], _describe(findings)
+
+
+@pytest.mark.deterministic
+def test_designed_report_json_has_no_internal_wording(designed_run: PipelineResult) -> None:
+    """The samples' own jobs run no schema design, so their report.json has no
+    ``table_mappings``; the designed job does (#212: each row's owner line holds engine
+    ids, data the guard must treat as ids). Caught here, without an e2e-llm run."""
+    report = json.loads(designed_run.report_json().read_text())
+    assert report["table_mappings"] and report["table_mappings"][0]["owner"]
+    assert report["facts"]["table_owner_lines"]["table_lines"]
+    findings = _filtered(scan_json(report), "report.json")
+    assert findings == [], _describe(findings)
+    md = scan_markdown(designed_run.deliverable("engineering-report.md").read_text())
+    md = _filtered(md, "engineering-report.md")
+    assert md == [], _describe(md)

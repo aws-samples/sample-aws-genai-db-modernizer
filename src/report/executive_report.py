@@ -101,6 +101,7 @@ from .risks import (
 )
 from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_stats
 from .roadmap import resolve_migration_waves as _resolve_waves
+from .table_owners import OWNER_RULE_SHORT, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
 from .unservable import UNSERVABLE_INTRO, UNSERVABLE_RERUN_TEXT, unservable_title
 
@@ -146,6 +147,7 @@ CONTINUED = " (continued)"
 L_COST = "Projected monthly cost"
 L_KEPT = "Engines in the target architecture"
 L_REMOVED = "Removed by the reality check"
+L_TABLE_OWNERS = "Table owners"
 L_NONE = "None"
 L_MOVED = "move to a new engine"
 L_OVERALL = "Overall risk"
@@ -866,6 +868,14 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         )
         if notes:
             flow += [_gap(8), Paragraph(_md_markup(notes), st["small"])]
+    ownership = ownership_facts(report)
+    if ownership:
+        # #212: who owns the mapped tables, in counts (this report names no table).
+        flow += [
+            _gap(8),
+            _labelled(L_TABLE_OWNERS, ownership_summary_text(ownership), st["small"]),
+            _para(OWNER_RULE_SHORT, st["small"]),
+        ]
     return flow
 
 

@@ -1,5 +1,5 @@
 ---
-rubric_version: 3
+rubric_version: 4
 pass_mean: 3.0
 min_score: 2
 ---
@@ -31,7 +31,7 @@ ADR-030), whose gate fails a routing regression.
   the synthesis `effective_architecture` and the assignment when available):
   `totals` (architecture type, table/query/risk counts, overall risk,
   projected monthly cost), `engines[]` (workload, confidence, monthly cost,
-  `tables_served`, `primary_tables`, schema counts, assignment reasons),
+  `tables_served`, `primary_tables`, `owned_tables`, schema counts, assignment reasons),
   `eliminated_engines` (with `absorbed_by`), `reality_check` (before/after
   query distribution and each move), `tco`, `risks[]`, `mitigation_strategies`,
   `migration_waves`, `routing_margins` (close calls per engine pair) and
@@ -69,12 +69,18 @@ the deliverable.
   the table's primary engine is a different one.
   `tables_served: null` means the scope is unknown (see
   `facts.source.tables_served`), not that the engine touches no table.
-- **Ownership.** The engineering report's Migration map "Target engine" column
-  is the recommended engine for each table (`table_mappings`), not its owner.
-  Which engine owns a table's writes is stated only by the "Sources of truth
-  and replicas" section and the wave owner lines ("kept in sync from their
-  owner", "X owns them"). A map row whose target engine differs from the
-  table's owner there is not a contradiction.
+- **Ownership.** The engineering report's Migration map states one line per
+  table: Owner (the engine that takes its writes; a table no query writes is
+  owned by the engine serving most of its queries; never a cache; "no single
+  writer" when its writes sit on several engines), Also read by (the other
+  engines that read it through CDC replicas) and Cached by (the cache in front
+  of its reads). Its owners are `facts.engines[].owned_tables`, and they must
+  agree with "Sources of truth and replicas" and the wave owner lines ("kept in
+  sync from their owner", "X owns them"): an Owner that differs from a
+  table's source of truth there is a contradiction. `table_mappings`'
+  `recommended_database` (`primary_tables`) is the schema design's summary
+  label, not the owner: a recommended engine that differs from the Owner is
+  not a contradiction.
 - **Engines eliminated by reality-check** (`facts.eliminated_engines`) are
   not part of the target. Their queries moved to `absorbed_by`.
 - **Cite your evidence.** Every note names the deliverable (`facts`,
@@ -213,9 +219,9 @@ both.
 A contradiction is two statements that cannot both be true: "all writes on
 Aurora" next to a table DynamoDB owns; "overall risk LOW" next to a HIGH open
 risk; two different totals for the same figure. Not a contradiction: a table
-served by several engines (the multi-engine rule above), a Migration map
-target engine that differs from the owner in Sources of truth (the ownership
-rule above), a statement and its
+served by several engines (the multi-engine rule above), a recommended
+engine in `table_mappings` that differs from the Migration map's Owner (the
+ownership rule above), a statement and its
 stated exception, or a resolved risk listed next to the open ones.
 
 - **1** — Several contradictions, or one on a headline (the engine set, the

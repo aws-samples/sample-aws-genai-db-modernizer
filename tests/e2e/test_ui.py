@@ -469,6 +469,71 @@ def test_results_page_states_each_tables_source_of_truth_and_replicas(
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def test_results_page_states_each_tables_owner_also_read_by_and_cache(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#212: the results page states one line per mapped table, as report.json's
+    facts.table_owner_lines and the engineering report's Migration map do: its owner,
+    the engines that also read it and its cache, with the same counts. Collapsed when
+    the page opens; a job with no table_mappings has no such section. On the designed
+    wordpress job, wp_postmeta is owned by DynamoDB and also read by Aurora MySQL, and
+    wp_usermeta, which no query writes, is owned by Aurora MySQL."""
+    from src.shared.engine_names import display_engine
+
+    designed = _designed_runs(all_runs)
+    assert designed, "no job with a schema design in this session"
+    for r in all_runs:
+        report = json.loads((r.artifact_root / r.report["report"]).read_text())
+        facts = (report.get("facts") or {}).get("table_owner_lines")
+        ev = _watch(page)
+        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
+        section = page.locator("#table-owners-section")
+        if r not in designed:
+            assert facts is None and section.count() == 0, r.job_id
+            continue
+        n = facts["table_count"]
+        assert f"Table owners ({n} mapped tables)" in section.inner_text(), r.job_id
+        first = facts["table_lines"][0]["table"]
+        assert not section.locator(f'[data-table="{first}"]').is_visible(), r.job_id
+        section.locator('[aria-expanded="false"]').first.focus()
+        page.keyboard.press("Enter")
+        section.locator('[aria-expanded="true"]').first.wait_for(timeout=READY_MS)
+        owned = section.locator('[data-figure="owned-tables"] [data-engine]').all_inner_texts()
+        assert owned == [
+            f"{display_engine(e)} owns {k}" for e, k in facts["owned_table_counts"].items()
+        ], (r.job_id, owned)
+        k = facts["also_read_table_count"]
+        also = section.locator('[data-figure="also-read-tables"]').inner_text()
+        assert also.startswith(f"{k} {'table is' if k == 1 else 'tables are'} also read"), also
+        k = facts["cached_table_count"]
+        cached = section.locator('[data-figure="cached-tables"]')
+        if k:
+            text = cached.inner_text()
+            assert text.startswith(f"{k} {'table is' if k == 1 else 'tables are'} cached by"), text
+        else:
+            assert cached.count() == 0, r.job_id
+        for line in facts["table_lines"]:
+            row = section.locator(f'[data-table="{line["table"]}"]').locator("xpath=ancestor::tr")
+            owner = display_engine(line["owner"]) if line["owner"] else "—"
+            readers = ", ".join(display_engine(e) for e in line["also_read_by"]) or "—"
+            cache = display_engine(line["cached_by"]) if line["cached_by"] else "—"
+            assert row.locator('[data-cell="owner"]').inner_text() == owner, line
+            assert row.locator('[data-cell="also-read-by"]').inner_text() == readers, line
+            assert row.locator('[data-cell="cached-by"]').inner_text() == cache, line
+        if not r.external:
+            postmeta = section.locator('[data-table="wordpress.wp_postmeta"]').locator(
+                "xpath=ancestor::tr"
+            )
+            assert postmeta.locator('[data-cell="owner"]').inner_text() == "DynamoDB"
+            assert postmeta.locator('[data-cell="also-read-by"]').inner_text() == "Aurora MySQL"
+            usermeta = section.locator('[data-table="wordpress.wp_usermeta"]').locator(
+                "xpath=ancestor::tr"
+            )
+            assert usermeta.locator('[data-cell="owner"]').inner_text() == "Aurora MySQL"
+        assert ev == {"console": [], "pageerror": [], "failed": []}, (r.job_id, ev)
+
+
 def test_results_page_downloads_the_deliverables_folder(
     page: Page, ui: str, all_runs: list[PipelineResult]
 ) -> None:
@@ -517,11 +582,19 @@ SECTION_ORDER = [
     "query-routing-section",
     # #1232: Sources of truth and replicas, collapsed, after the explorer.
     "access-patterns-section",
+    # #212: Table owners, collapsed, before Sources of truth (a mapped job only).
+    "table-owners-section",
     "sources-of-truth-section",
 ]
 # Banners a report without fallback-engine queries or close calls leaves out,
-# and the explorer, which a job with no access patterns has none of.
-OPTIONAL_SECTIONS = {"unservable-section", "close-calls-section", "access-patterns-section"}
+# the explorer, which a job with no access patterns has none of, and the table
+# owners, which a job with no schema design (no table_mappings) has none of.
+OPTIONAL_SECTIONS = {
+    "unservable-section",
+    "close-calls-section",
+    "access-patterns-section",
+    "table-owners-section",
+}
 
 
 def test_results_page_shows_the_headline_first(

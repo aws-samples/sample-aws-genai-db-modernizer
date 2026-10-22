@@ -292,7 +292,8 @@ def test_the_mapped_tables_by_role_fact() -> None:
         {"source_table": "db.t3", "recommended_database": "neptune", "confidence_score": 80},
     ]
     basis = _with_facts(report)["facts"]["table_basis"]
-    assert basis["mapped_tables_by_role"] == {"Migration target": 1, "Retained": 1, "Other": 1}
+    # #212: by owner. t2's owner is DynamoDB, as the merged wave's owner line says.
+    assert basis["mapped_tables_by_role"] == {"Migration target": 2, "Other": 1}
 
 
 def test_a_percentage_total_is_rounded_once_by_the_renderer() -> None:
@@ -715,15 +716,11 @@ def _mapped_merged_report() -> dict[str, Any]:
 def test_1169_the_map_split_counts_on_the_waves_basis() -> None:
     """A mapped table migrates when its wave moves it, whatever its summary label."""
     basis = _with_facts(_mapped_merged_report())["facts"]["table_basis"]
-    assert basis["mapped_tables_by_move"] == {
-        "migrate": 2,
-        "kept_in_sync": 1,
-        "cache_layer": 1,
-        "stays": 1,
-    }
+    # #212: t5, mapped to the cache layer, counts under its owner (the retained engine).
+    assert basis["mapped_tables_by_move"] == {"migrate": 2, "kept_in_sync": 1, "stays": 2}
     assert basis["migrating_tables_not_mapped"] == 1
-    # The role split is unchanged: it still counts summary labels.
-    assert basis["mapped_tables_by_role"]["Migration target"] == 3
+    # The role split counts owners (#212): t1 and t6 by their design, t4 is Aurora's.
+    assert basis["mapped_tables_by_role"]["Migration target"] == 2
 
 
 def test_1169_the_map_split_adds_up_to_the_tables_that_migrate() -> None:
@@ -743,7 +740,7 @@ def test_1169_a_report_without_wave_tables_splits_by_role() -> None:
         w.pop("tables", None)
         w.pop("table_owners", None)
     basis = _with_facts(report)["facts"]["table_basis"]
-    assert basis["mapped_tables_by_move"] == {"migrate": 3, "stays": 1, "cache_layer": 1}
+    assert basis["mapped_tables_by_move"] == {"migrate": 3, "stays": 2}
     assert basis["migrating_tables_not_mapped"] == 0
 
 
@@ -820,8 +817,7 @@ def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
 def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
     md = render_engineering_report_md(_with_facts(_mapped_merged_report()))
     assert (
-        "## Migration map (5 tables: 2 migrate, 1 kept in sync, 1 to the cache layer, "
-        "1 stay on the source engine)"
+        "## Migration map (5 tables: 2 migrate, 1 kept in sync, 2 stay on the source engine)"
     ) in md
     assert "no target table yet for 1 of the 3 tables that migrate: `db.t2`." in md
     assert (

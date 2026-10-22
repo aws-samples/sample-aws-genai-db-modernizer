@@ -288,14 +288,14 @@ class TestEngineeringReportEscaping:
         }
         lines = renderers.render_engineering_report_md(report).splitlines()
         header = lines.index(
-            "| Source table | Recommended engine | Target | Pattern | Workload fit |"
+            "| Source table | Owner | Also read by | Cached by | Target | Pattern | Workload fit |"
         )
         row = lines[header + 2]
         cells = re.split(r"(?<!\\)\|", row)[1:-1]
-        assert len(cells) == 5, row
+        assert len(cells) == 7, row
         assert "<" not in row and ">" not in row
         assert "`Evil\\|&lt;b&gt;x&lt;/b&gt;`" in cells[0]
-        assert "`tgt\\|&lt;i&gt;y&lt;/i&gt;`" in cells[2]
+        assert "`tgt\\|&lt;i&gt;y&lt;/i&gt;`" in cells[4]
 
     def test_no_raw_newline_injected_mid_value(self) -> None:
         md = renderers.render_engineering_report_md(_report_with_injection())

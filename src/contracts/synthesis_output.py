@@ -477,6 +477,12 @@ Version History:
   scope (the target_databases setting triage recorded), in the order the deliverables
   name it; every deliverable states "Engines in scope: ... (customer's choice)". None
   for a job with no scope and for a report written before.
+- 1.54 (2026-10-22, #212): Added optional TableMapping owner, owner_basis, also_read_by
+  and cached_by, and facts.table_owner_lines (TableOwnershipFacts): each mapped table's
+  owner (the engine that takes its writes; a table no query writes, the engine serving
+  most of its queries; never a cache-only engine), the engines that also read it through
+  CDC replicas and its cache, with their counts. The Migration map split counts each row
+  under its owner. Filled in for older reports.
 """
 
 from datetime import datetime
@@ -557,12 +563,41 @@ class EngineRanking(BaseModel):
 
 
 class TableMapping(BaseModel):
-    """Mapping of a source table to its target engine."""
+    """Mapping of a source table to its target engine.
+
+    ``recommended_database`` is the schema design that maps the table with the highest
+    fit, a summary label. The owner line (#212, ADR-031 Amendment 9) says who holds
+    the table: ``owner``, the engine that takes its writes (never a cache-only engine),
+    ``also_read_by``, the other engines whose queries read it through CDC replicas, and
+    ``cached_by``, the cache in front of its reads
+    (``src.shared.report_facts.table_owner_line``). None in a report written before.
+    """
 
     source_table: str = Field(..., description="Source table ID")
     recommended_database: str = Field(..., description="Primary target engine")
     confidence_score: int = Field(..., ge=0, le=100)
     alternatives: list[dict] | None = Field(None)
+    owner: str | None = Field(
+        None,
+        description=(
+            "The table's owner as the wave plan states it: the engine that takes its writes "
+            "(one writer per table); a table no query writes, or one whose writes are split: "
+            "the owner engine serving most of its queries. Never a cache or search engine"
+        ),
+    )
+    owner_basis: Literal["writes", "split_writes", "most_queries", "retained", "design"] | None = (
+        Field(None, description="Which step of the owner rule decided the owner")
+    )
+    also_read_by: list[str] | None = Field(
+        None,
+        description=(
+            "Every other engine with an in-scope query on the table, which reads a copy kept "
+            "in sync from the owner via CDC; most queries first"
+        ),
+    )
+    cached_by: str | None = Field(
+        None, description="The cache engine fronting the table's reads, or keying it"
+    )
 
     model_config = ConfigDict(extra="allow")
 
@@ -1581,6 +1616,45 @@ class TableSourceFacts(BaseModel):
     single_engine_table_count: int = Field(0, ge=0)
 
 
+class TableOwnershipRow(BaseModel):
+    """One mapped source table's owner line (#212)."""
+
+    table: str = Field(..., description="Source table ID")
+    owner: str | None = Field(None, description="Its owner (the wave plan's); None when none")
+    owner_basis: Literal["writes", "split_writes", "most_queries", "retained", "design"] | None = (
+        Field(None)
+    )
+    also_read_by: list[str] = Field(default_factory=list, description="Most queries first")
+    cached_by: str | None = Field(None)
+    target_engine: str | None = Field(
+        None, description="The schema design target_table comes from: the owner's when it maps it"
+    )
+    target_table: str | None = Field(None)
+    aggregate_pattern: str | None = Field(None)
+    confidence_score: float | None = Field(None, description="target_engine's fit for the table")
+
+
+class TableOwnershipFacts(BaseModel):
+    """Each mapped source table's owner, the engines that also read it and its cache
+    (#212, ADR-031 Amendment 9), from ``table_mappings``."""
+
+    table_count: int = Field(0, ge=0, description="Mapped source tables")
+    owned_table_counts: dict[str, int] = Field(
+        default_factory=dict, description="engine -> mapped tables it owns, most first"
+    )
+    no_owner_table_count: int = Field(0, ge=0, description="Tables with no owner engine")
+    also_read_table_count: int = Field(
+        0, ge=0, description="Tables another engine also reads through a CDC replica"
+    )
+    cached_table_count: int = Field(0, ge=0, description="Tables a cache engine fronts")
+    cache_engines: list[str] = Field(
+        default_factory=list, description="The cache engines named in cached_by, sorted"
+    )
+    table_lines: list[TableOwnershipRow] = Field(
+        default_factory=list, description="Sorted by table"
+    )
+
+
 class PendingChoicePair(BaseModel):
     """The pending engine choices that tie between the same engines (#1003)."""
 
@@ -1802,6 +1876,13 @@ class ReportFacts(BaseModel):
             "eventual-consistency risk (#992); None when the report has no table_sources"
         ),
     )
+    table_owner_lines: TableOwnershipFacts | None = Field(
+        None,
+        description=(
+            "Each mapped table's owner, the engines that also read it and its cache (#212); "
+            "None when the report has no table_mappings"
+        ),
+    )
     relational_gaps: RelationalGapFacts | None = Field(
         None,
         description=(
@@ -1869,7 +1950,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.53",
+        default="1.54",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

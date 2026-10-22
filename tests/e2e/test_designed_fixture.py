@@ -55,8 +55,19 @@ def _mapped(report: dict[str, Any]) -> list[str]:
 
 
 def _map_rows(md: str) -> list[str]:
+    """The Migration map rows whose target table is DynamoDB's design's: the owner is
+    DynamoDB and the Target names no other design, or the Target says "(DynamoDB
+    design)" (#212: the second column is the owner, not the design's engine)."""
     section = md.split("## Migration map", 1)[1].split("\n## ", 1)[0]
-    return sorted(re.findall(r"^\| `([^`]+)` \| DynamoDB \|", section, flags=re.M))
+    out = []
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+        target = cells[4]
+        if (cells[1] == "DynamoDB" and "design)" not in target) or "(DynamoDB design)" in target:
+            out.append(cells[0].strip("`"))
+    return sorted(out)
 
 
 def _moving(report: dict[str, Any]) -> set[str]:

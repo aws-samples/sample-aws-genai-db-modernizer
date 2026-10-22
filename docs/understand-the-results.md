@@ -43,12 +43,19 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
 6. **Banners**, when they apply: queries on a fallback engine, and close calls (queries whose engine scored less than 5 points above another engine the plan keeps).
 7. **Query routing**, collapsed: every query and its engine, with search and filters; open a query to see its history and why it ended on its engine.
 8. **Access pattern explorer**: the target data model, by access pattern or by source table, filtered by engine, operation or table (on a run with access patterns).
-9. **Sources of truth and replicas**, collapsed: each written table's source of truth, its replicas, the CDC direction and the reads a replica serves.
-10. **Risk assessment** (the open risks by severity, and the risks the assignment already resolved in a collapsed list), **Trade-offs and design decisions**, and **Table design**: the Aurora design (its tables, DDL, optimizations and the queries routed to it), each part in a collapsed section; each tab names the tables in that engine's design, which is not the roadmap's count of source tables and views (wave 1 counts every source table, including those no query reads); it appears once schema design has run. The other engines' designs are in the access pattern explorer.
+9. **Table owners**, collapsed: each mapped table's owner, the engines that also read it and the cache in front of it, as in the engineering report's Migration map.
+10. **Sources of truth and replicas**, collapsed: each written table's source of truth, its replicas, the CDC direction and the reads a replica serves.
+11. **Risk assessment** (the open risks by severity, and the risks the assignment already resolved in a collapsed list), **Trade-offs and design decisions**, and **Table design**: the Aurora design (its tables, DDL, optimizations and the queries routed to it), each part in a collapsed section; each tab names the tables in that engine's design, which is not the roadmap's count of source tables and views (wave 1 counts every source table, including those no query reads); it appears once schema design has run. The other engines' designs are in the access pattern explorer.
 
 ## How to read an assignment
 
-Assignments map **queries** to engines, not tables. Several engines can serve the same table. The "recommended engine" in a `table_mappings` entry does not by itself make that engine the owner of the table; what counts is which queries are routed to each engine. Each engine's confidence score is the mean fit of the queries actually routed to it, not every table it was evaluated against; a score with no table-level evidence behind it is labelled "signal only."
+Assignments map **queries** to engines, not tables. Several engines can serve the same table. The deliverables state one line per source table, computed from the final assignment:
+
+- **Owner**: the same owner the migration waves name. It is the engine that takes the table's writes (a table has one writer). A table no query writes is owned by the engine that serves most of its queries; a tie goes to the source-compatible Aurora engine the plan keeps. When a table's writes still sit on more than one engine, the map says "no single writer" next to the owner the waves name, and Sources of truth lists the table with no source of truth. A cache or search engine never owns a table, so a table the cache design keys still has its system-of-record owner and counts where that owner's tables count.
+- **Also read by**: every other engine whose queries read the table. It reads a copy kept in sync from the owner via CDC.
+- **Cached by**: the cache in front of the table's reads (ElastiCache), when one is.
+
+The "recommended engine" in a `table_mappings` entry is the schema design that maps the table with the highest fit; it does not make that engine the owner. Each entry also carries `owner`, `owner_basis`, `also_read_by` and `cached_by`, and `facts.table_owner_lines` has the same lines and their counts. Each engine's confidence score is the mean fit of the queries actually routed to it, not every table it was evaluated against; a score with no table-level evidence behind it is labelled "signal only."
 
 ## The cache layer
 

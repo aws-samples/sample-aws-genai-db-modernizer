@@ -654,6 +654,7 @@ FACTS_UNCUT_LISTS: frozenset[str] = frozenset(
         "engines",
         "engines[].tables_served",
         "engines[].primary_tables",
+        "engines[].owned_tables",
         "eliminated_engines",
         "tco.cost_breakdown",
         "reality_check.moves",

@@ -27,7 +27,7 @@ from src.agents.referee.migration_risks import (
     build_migration_risks,
     last_risk_number,
 )
-from src.agents.referee.migration_waves import build_migration_waves
+from src.agents.referee.migration_waves import build_migration_waves, wave_table_owners
 from src.agents.referee.query_pattern import (
     ACCESS_PATTERNS_FILE,
     fixable_findings,
@@ -85,7 +85,12 @@ from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
-from src.shared.report_facts import retired_in_use_engine_facts
+from src.shared.report_facts import (
+    assignment_table_usage,
+    retired_in_use_engine_facts,
+    table_owner_fields,
+    wave_retained_engine,
+)
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from src.tools.sql.query_facts import source_engine_of
@@ -509,6 +514,16 @@ def run_synthesis_deterministic(
         "engines_in_use": sorted(running),
         "cache_overlay": cache_overlay,
         "migration_waves": migration_waves,
+        # #212: each table's owner as the wave plan states it, for the map's owner lines.
+        "wave_table_owners": wave_table_owners(
+            ranking=ranking,
+            table_assignments=raw_table_assignments,
+            query_assignments=assignment.get("query_assignments") or [],
+            source_engine=source_database_engine(data.collector),
+            known_tables=wave_known_tables,
+            aurora_engine_choice=assignment.get("aurora_engine_choice"),
+            source=SourceScope.from_collector(data.collector),
+        ),
         "query_traces": query_traces,
         "table_sources": sources,
         "unresolved_names": unresolved_names,
@@ -1061,7 +1076,14 @@ def _write_synthesis_report(
         "summary_llm": result.get("summary_llm"),
         "summary_validation_warnings": result.get("summary_validation_warnings", []),
         "recommended_architecture": result["architecture"],
-        "table_mappings": result["table_mappings"],
+        # #212: each row's owner line (the writer, the engines that also read it, the
+        # cache), from the final assignment, for the facts layer and the deliverables.
+        "table_mappings": table_owner_fields(
+            result["table_mappings"],
+            assignment_table_usage(data.assignment),
+            owners=result.get("wave_table_owners"),
+            retained_engine=wave_retained_engine(result.get("migration_waves")),
+        ),
         "query_groups": result["query_groups"],
         "tco_analysis": result["tco_analysis"],
         "risk_assessment": result["risk_assessment"],

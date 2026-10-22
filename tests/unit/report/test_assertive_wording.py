@@ -73,7 +73,8 @@ def test_close_calls_keep_the_group_mean_column_when_a_pair_has_one() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Migration map: the recommended engine, not the owner
+# Migration map: each table's owner, never the recommended engine (#212, which
+# replaced #951's "summary label": the owner is the engine that takes the writes)
 # ---------------------------------------------------------------------------
 
 
@@ -101,17 +102,21 @@ def _map_intro(md: str) -> str:
     return md.split("## Migration map", 1)[1].split("| Source table", 1)[0]
 
 
-def test_the_migration_map_labels_the_recommended_engine() -> None:
+def test_the_migration_map_names_each_tables_owner() -> None:
     md = render_engineering_report_md(_mapping_report(written=2))
-    assert "| Source table | Recommended engine | Target |" in md
-    assert "| Source table | Target engine |" not in md
-    assert "summary label" in _map_intro(md)
-    assert "source of truth, listed under Sources of truth and replicas" in _map_intro(md)
+    assert (
+        "| Source table | Owner | Also read by | Cached by | Target | Pattern | Workload fit |"
+        in md
+    )
+    assert "Recommended engine" not in md
+    assert "summary label" not in _map_intro(md)
+    assert "the engine that takes its writes" in _map_intro(md)
+    assert "Sources of truth and replicas below" in _map_intro(md)
 
 
 def test_the_migration_map_points_at_no_section_the_report_leaves_out() -> None:
     md = render_engineering_report_md(_mapping_report())
-    assert "summary label" in _map_intro(md)
+    assert "the engine that takes its writes" in _map_intro(md)
     assert "Sources of truth" not in _map_intro(md)
 
 

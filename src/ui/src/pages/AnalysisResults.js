@@ -51,6 +51,7 @@ import EngineChoicesNote from "../components/EngineChoicesNote";
 import MigrationWavePlan from "../components/MigrationWavePlan";
 import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
+import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import { buildQueryRoutingRows } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
@@ -2387,6 +2388,11 @@ const AnalysisResultsPage = memo(() => {
                 replica, its CDC direction and its replica reads, with the
                 eventual-consistency risk stated once. #1232: collapsed, after
                 the access pattern explorer. */}
+            {/* Table owners (#212): each mapped table's owner, the engines that
+                also read it through CDC replicas and its cache, as the
+                engineering report's Migration map states them. Collapsed. */}
+            <TableOwnersCallout synthesis={synthesis} t={t} />
+
             <SourcesOfTruthCallout synthesis={synthesis} t={t} />
 
             {/* Risk Assessment (#373): synthesis.risk_assessment, including

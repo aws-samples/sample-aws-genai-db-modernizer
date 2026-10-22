@@ -183,6 +183,18 @@ ID_FIELD_PATHS = frozenset(
         ("resolved_risks", "engine"),  # synthesis_report._resolved_risk's own "engine" (extra)
         ("trade_offs", "engine"),  # TradeOff.engine (extra field)
         ("table_owners", "owner"),  # TableOwner.owner (synthesis_output.py:429)
+        # #212: each table's owner line, engine ids and a basis code, never prose; the
+        # deliverables name the engines through display_engine.
+        ("table_mappings", "owner"),  # TableMapping.owner
+        ("table_mappings", "owner_basis"),  # TableMapping.owner_basis
+        ("table_mappings", "also_read_by"),  # TableMapping.also_read_by
+        ("table_mappings", "cached_by"),  # TableMapping.cached_by
+        ("table_lines", "owner"),  # TableOwnershipRow.owner
+        ("table_lines", "owner_basis"),  # TableOwnershipRow.owner_basis
+        ("table_lines", "also_read_by"),  # TableOwnershipRow.also_read_by
+        ("table_lines", "cached_by"),  # TableOwnershipRow.cached_by
+        ("table_lines", "target_engine"),  # TableOwnershipRow.target_engine
+        ("table_owner_lines", "cache_engines"),  # TableOwnershipFacts.cache_engines
         ("replicas", "engine"),  # TableSource.replicas[].engine (#992)
         ("table_sources", "table"),  # TableSource.table / ReplicatedTableFact.table (#992)
         ("replicated_tables", "table"),  # ReplicatedTableFact.table (#992)

@@ -293,13 +293,28 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     _BACKFILLED[figure](older["facts"])
     assert older["facts"] != report["facts"]  # the figure really was removed
     # The recorded run's own block, read through the same reader: a figure added after
-    # the run was recorded (#1284's waves[].moved_by_later_waves) is filled in for both,
-    # every figure the run stored is read as stored.
+    # the run was recorded (#1284's waves[].moved_by_later_waves, #212's
+    # table_owner_lines) is filled in for both, every figure the run stored is read as
+    # stored. #212 is the one deliberate exception: the Migration map split counts each
+    # row under its owner now, never on the cache layer, so it is read anew (same total).
     assert report_facts(older) == report_facts(report)
     read = copy.deepcopy(report_facts(report))
     for row in read["waves"]:
         row.pop("moved_by_later_waves")
-    assert read == report["facts"]
+    assert read.pop("table_owner_lines")["table_count"] == len(report["table_mappings"])
+    split = read["table_basis"].pop("mapped_tables_by_move")
+    stored = copy.deepcopy(report["facts"])
+    stored_split = stored["table_basis"].pop("mapped_tables_by_move")
+    assert sum(split.values()) == sum(stored_split.values())
+    assert "cache_layer" in stored_split and "cache_layer" not in split
+    # The recorded sample's 22 rows: the one table the cache layer had joins the 3
+    # that stay on the source engine (its owner is Aurora MySQL).
+    assert split == {"migrate": 15, "kept_in_sync": 3, "stays": 4}
+    # And the by-role count, by owner the same way (the cache layer owns none).
+    by_role = read["table_basis"].pop("mapped_tables_by_role")
+    stored["table_basis"].pop("mapped_tables_by_role")
+    assert by_role == {"Migration target": 15, "Retained": 7}
+    assert read == stored
 
 
 def test_committed_run_is_only_what_the_renderers_read() -> None:

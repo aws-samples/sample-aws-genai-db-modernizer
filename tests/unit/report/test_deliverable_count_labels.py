@@ -260,9 +260,12 @@ class TestUnlabelledCounts:
         assert "co-dependency groups (29)" not in md
         assert "assignment's 1 co-dependency group" in md
 
-    def test_migration_map_heading_splits_migrating_and_cache_tables(self) -> None:
+    def test_migration_map_heading_counts_a_cache_mapped_table_under_its_owner(self) -> None:
         md = renderers.render_engineering_report_md(_mapped_report())
-        assert "## Migration map (22 tables: 21 migrate, 1 to the cache layer)" in md
+        # #212: the row the cache design maps counts under its owner, never the cache:
+        # here Aurora MySQL, a migration target, so every mapped table migrates.
+        assert "## Migration map (22 tables)" in md
+        assert "cache layer)" not in md
 
     def test_migration_map_heading_plain_when_every_table_migrates(self) -> None:
         rep = _mapped_report()

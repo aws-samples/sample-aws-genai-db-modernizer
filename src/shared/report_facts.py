@@ -44,6 +44,7 @@ from src.shared.engine_names import (
     SOURCE_ENGINE_DISPLAY_NAMES,
     display_engine,
 )
+from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
 from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.target_databases import engine_scope_display_order
@@ -708,6 +709,12 @@ def wave_one_moved_by_later_waves(waves: list[dict[str, Any]]) -> int | None:
     return len({str(t) for t in first.get("tables") or [] if t} & moving)
 
 
+def _map_engine(row: Mapping[str, Any]) -> str:
+    """The engine a ``table_mappings`` row counts under: its owner (#212), or, for a
+    row with no owner line or no owner, its recommended engine."""
+    return str(row.get("owner") or row.get("recommended_database") or "")
+
+
 def map_split_facts(
     mappings: list[dict[str, Any]], roles: Mapping[str, str], waves: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -716,9 +723,11 @@ def map_split_facts(
     ``mapped_tables_by_move``: ``migrate`` counts a mapped table a migrating wave moves
     (one of the wave's engines owns it), the tables behind "N tables migrate";
     ``kept_in_sync`` one a migrating wave serves while an engine outside that wave
-    owns it (the wave plan's rule, #581). The rest follow the role of their
-    recommended engine: ``cache_layer``, ``search_read_model``, ``stays`` (on the
-    source engine) and ``other``. A row mapped to a migration target whose wave does
+    owns it (the wave plan's rule, #581). The rest follow the role of their owner
+    (#212: the engine that takes the table's writes, never a cache; a row with no owner
+    line, the recommended engine): ``search_read_model``, ``stays`` (on the source
+    engine) and ``other``, and ``cache_layer`` only for a table no engine but the cache
+    design maps. A row mapped to a migration target whose wave does
     not serve it stays, and is named in ``mapped_tables_not_served`` (engine -> tables).
     A migration target with no migrating wave that lists its tables (a report written
     before waves did) counts its mapped tables as ``migrate``, as ``tables_migrate``
@@ -732,15 +741,16 @@ def map_split_facts(
     not_served: dict[str, list[str]] = {}
     for m in mappings:
         table = str(m.get("source_table") or "")
-        engine = str(m.get("recommended_database") or "")
-        role = roles.get(engine, OTHER_ROLE)
+        label = str(m.get("recommended_database") or "")
+        role = roles.get(_map_engine(m), OTHER_ROLE)
         if table in moving:
             kind = MAP_MIGRATE
         elif table in synced:
             kind = MAP_KEPT_IN_SYNC
-        elif role == MIGRATION_TARGET and engine in waved:
+        elif roles.get(label) == MIGRATION_TARGET and label in waved:
+            # The design maps it to a migration target no routed query reads it on.
             kind = MAP_STAYS
-            not_served.setdefault(engine, []).append(table)
+            not_served.setdefault(label, []).append(table)
         else:
             kind = _MAP_BY_ROLE.get(role, MAP_OTHER)
         by_move[kind] = by_move.get(kind, 0) + 1
@@ -753,6 +763,21 @@ def map_split_facts(
         "migrating_tables_not_mapped_names": missing,
         "mapped_tables_not_served": {e: sorted(t) for e, t in sorted(not_served.items())},
     }
+
+
+def mapped_tables_by_role(
+    mappings: Iterable[Mapping[str, Any]], roles: Mapping[str, str]
+) -> dict[str, int]:
+    """Mapped tables per role of their owner (#258, #212: never the cache layer for a
+    table with an owner). The migration map's heading reads ``mapped_tables_by_move``
+    instead (#1169)."""
+    by_role: dict[str, int] = {}
+    for m in mappings:
+        role = roles.get(_map_engine(m), OTHER_ROLE)
+        if role not in (MIGRATION_TARGET, CACHE_LAYER, RETAINED, SEARCH_READ_MODEL):
+            role = OTHER_ROLE
+        by_role[role] = by_role.get(role, 0) + 1
+    return by_role
 
 
 def table_basis(
@@ -775,16 +800,9 @@ def table_basis(
       (``source_table_count``, else the summary's own figure, else the
       union of the waves' tables).
     """
-    mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
+    mappings = owned_table_mappings(report, waves)
     roles = {e["engine"]: e["role"] for e in engines}
-    # Mapped tables per role of their recommended engine (#258). The migration map's
-    # heading reads ``mapped_tables_by_move`` instead (#1169).
-    by_role: dict[str, int] = {}
-    for m in mappings:
-        role = roles.get(str(m.get("recommended_database") or ""), OTHER_ROLE)
-        if role not in (MIGRATION_TARGET, CACHE_LAYER, RETAINED, SEARCH_READ_MODEL):
-            role = OTHER_ROLE
-        by_role[role] = by_role.get(role, 0) + 1
+    by_role = mapped_tables_by_role(mappings, roles)
     split = map_split_facts(mappings, roles, waves)
     schema_designs = report.get("schema_designs") or {}
     targets = [e["engine"] for e in engines if e["role"] == MIGRATION_TARGET]
@@ -2104,6 +2122,357 @@ def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Table owners (#212, ADR-031 Amendment 9)
+# ---------------------------------------------------------------------------
+
+# Why a table's owner is its owner. The owner itself is always the wave plan's
+# (``migration_waves.wave_table_owners``, ``_durable_owner``): its source of truth,
+# else its ``primary_engine`` (``migration_wave_engines.primary_owner_engine``), else
+# the retained engine; this only says which of those applied.
+OWNER_BY_WRITES = "writes"  # the one engine its in-scope writes sit on (source of truth)
+OWNER_BY_SPLIT_WRITES = "split_writes"  # writes on several engines: no single writer
+OWNER_BY_MOST_QUERIES = "most_queries"  # no write: the engine serving most of its queries
+OWNER_BY_RETAINED = "retained"  # no owner engine queries it: wave 1's retained engine
+# A report written before #212 that carries no query of the table: its design's engine.
+OWNER_BY_DESIGN = "design"
+OWNER_BASES = (
+    OWNER_BY_WRITES,
+    OWNER_BY_SPLIT_WRITES,
+    OWNER_BY_MOST_QUERIES,
+    OWNER_BY_RETAINED,
+    OWNER_BY_DESIGN,
+)
+
+
+def table_owner_line(
+    writes: Mapping[str, int],
+    queries: Mapping[str, int],
+    cached_by: Iterable[str],
+    design_engines: Iterable[str],
+    owner: str | None = None,
+    retained_engine: str | None = None,
+    design_fallback: bool = False,
+) -> dict[str, Any]:
+    """One source table's owner, the engines that also read it and its cache (#212).
+
+    ``writes`` and ``queries`` count the table's in-scope write statements and all its
+    in-scope queries per assigned engine; ``cached_by`` names the cache engines in front
+    of a read of it; ``design_engines`` are the schema designs that map it (its
+    ``table_mappings`` row). ``owner`` is the wave plan's owner of the table
+    (``migration_waves.wave_table_owners``), when the caller has it; ``retained_engine``
+    is wave 1's retained engine.
+
+    The owner is the wave plan's, so the Migration map, the wave plan's owner lines and
+    kept-in-sync counts and Sources of truth never disagree (ADR-031 Amendment 9). With
+    no ``owner`` given (a report written before #212) the same rule is applied here:
+    the one engine its writes sit on, else the owner engine serving most of its queries
+    (``primary_owner_engine``: a tie to the retained engine), else the retained engine.
+    A cache or search engine (``NON_OWNER_ENGINES``) never owns a table.
+    ``design_fallback`` is for such an older report only: a table it carries no query
+    of (so the rule has nothing to count) takes its design's engine before the
+    retained one (``design``).
+
+    - **owner_basis**: ``writes`` (one writer), ``split_writes`` (writes on several
+      engines: no single writer, as Sources of truth says; the owner is still the wave
+      plan's), ``most_queries`` (no write), ``retained`` (no owner engine queries it).
+    - **also_read_by**: every other engine with an in-scope query on the table, which
+      reads a copy kept in sync from the owner via CDC; most queries first, then by id.
+    - **cached_by**: the cache engine fronting one of its reads, or whose schema design
+      keys it; None when neither.
+    """
+    w = [str(e) for e, n in writes.items() if e and n]
+    q = {str(e): int(n) for e, n in queries.items() if e and n and e not in CACHE_ENGINES}
+    retained = retained_engine if retained_engine not in NON_OWNER_ENGINES else None
+    designs = [str(e) for e in design_engines if e]
+    by_design = False
+    if not owner or owner in NON_OWNER_ENGINES:
+        design = next((e for e in designs if e not in NON_OWNER_ENGINES), None)
+        if len(w) == 1 and w[0] not in NON_OWNER_ENGINES:
+            owner = w[0]
+        elif (counted := primary_owner_engine(q, retained)) is not None:
+            owner = counted
+        elif design_fallback and not w and not q and design:
+            owner, by_design = design, True
+        else:
+            owner = retained
+    if by_design:
+        basis: str | None = OWNER_BY_DESIGN
+    elif len(w) > 1:
+        basis = OWNER_BY_SPLIT_WRITES
+    elif w:
+        basis = OWNER_BY_WRITES
+    elif any(e not in NON_OWNER_ENGINES for e in q):
+        basis = OWNER_BY_MOST_QUERIES
+    else:
+        basis = OWNER_BY_RETAINED if owner else None
+    caches = [str(e) for e in cached_by if e] + [e for e in designs if e in CACHE_ENGINES]
+    return {
+        "owner": owner or None,
+        "owner_basis": basis,
+        "also_read_by": sorted((e for e in q if e != owner), key=lambda e: (-q[e], e)),
+        "cached_by": caches[0] if caches else None,
+    }
+
+
+def wave_listed_owners(waves: Iterable[Mapping[str, Any]] | None) -> dict[str, str]:
+    """``{table: owner}`` from the waves' own owner lines (``table_owners``: a table a
+    wave serves and another engine owns), the wave plan's owner as it recorded it; the
+    owner lines of a report written before #212."""
+    out: dict[str, str] = {}
+    for w in waves or []:
+        for o in w.get("table_owners") or []:
+            if isinstance(o, Mapping) and o.get("table") and o.get("owner"):
+                out.setdefault(str(o["table"]), str(o["owner"]))
+    return out
+
+
+def wave_retained_engine(waves: Iterable[Mapping[str, Any]] | None) -> str | None:
+    """Wave 1's retained Aurora engine (the wave builder's ``retained_engine``), or None
+    when there is no wave 1 or it names no engine."""
+    first = next((w for w in waves or [] if w.get("homogeneity") is not None), None)
+    engines = [str(e) for e in (first or {}).get("engines") or [] if e]
+    return engines[0] if engines else None
+
+
+def assignment_table_usage(assignment: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    """``{table: {"writes", "queries", "cached_by"}}`` from an assignment artifact: per
+    table, its in-scope write statements per engine (its ``write_groups``), all its
+    in-scope queries per engine, and the cache engines of the in-scope reads of it a
+    cache still fronts (``cache_engine`` set, ``cache_dropped`` not)."""
+    assignment = assignment or {}
+    out: dict[str, dict[str, Any]] = {}
+
+    def usage(table: str) -> dict[str, Any]:
+        return out.setdefault(table, {"writes": {}, "queries": {}, "cached_by": []})
+
+    engine_of: dict[str, str] = {}
+    for qa in assignment.get("query_assignments") or []:
+        if not isinstance(qa, Mapping) or not qa.get("in_scope", True):
+            continue
+        engine = str(qa.get("assigned_engine") or "")
+        engine_of[str(qa.get("query_id"))] = engine
+        cache = str(qa.get("cache_engine") or "") if not qa.get("cache_dropped") else ""
+        for table in dict.fromkeys(str(t) for t in qa.get("source_tables") or [] if t):
+            u = usage(table)
+            if engine:
+                u["queries"][engine] = u["queries"].get(engine, 0) + 1
+            if cache and cache not in u["cached_by"]:
+                u["cached_by"].append(cache)
+    for table, members in sorted((assignment.get("write_groups") or {}).items()):
+        for qid in members or []:
+            writer = engine_of.get(str(qid))
+            if writer:
+                writes = usage(str(table))["writes"]
+                writes[writer] = writes.get(writer, 0) + 1
+    for u in out.values():
+        u["cached_by"].sort()
+    return out
+
+
+def _design_engines(row: Mapping[str, Any]) -> list[str]:
+    engines = [str(row.get("recommended_database") or "")]
+    engines += [
+        str(a.get("database") or "") for a in row.get("alternatives") or [] if isinstance(a, dict)
+    ]
+    return [e for e in dict.fromkeys(engines) if e]
+
+
+def table_owner_fields(
+    mappings: Iterable[Mapping[str, Any]],
+    usage: Mapping[str, Mapping[str, Any]],
+    owners: Mapping[str, str] | None = None,
+    retained_engine: str | None = None,
+    design_fallback: bool = False,
+) -> list[dict[str, Any]]:
+    """Each ``table_mappings`` row with its owner line (``owner``, ``owner_basis``,
+    ``also_read_by``, ``cached_by``, :func:`table_owner_line`), from ``usage``
+    (:func:`assignment_table_usage`), the wave plan's ``owners`` and wave 1's
+    ``retained_engine``. New dicts; the input rows are not changed."""
+    out: list[dict[str, Any]] = []
+    for row in mappings:
+        if not isinstance(row, Mapping):
+            continue
+        table = str(row.get("source_table") or "")
+        u = usage.get(table) or {}
+        line = table_owner_line(
+            u.get("writes") or {},
+            u.get("queries") or {},
+            u.get("cached_by") or [],
+            _design_engines(row),
+            owner=(owners or {}).get(table),
+            retained_engine=retained_engine,
+            design_fallback=design_fallback,
+        )
+        out.append({**row, **line})
+    return out
+
+
+def report_table_usage(report: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """:func:`assignment_table_usage`'s shape, from what a report written before #212
+    carries. A written table's writers and readers come from ``table_sources`` (its
+    writes, and the reads each replica serves); any other table's from
+    ``query_pattern_groups`` (every in-scope query's engine and its pattern's tables,
+    bare names resolved against the mapped tables; a bare name two mapped tables share
+    is skipped). A table's cache is the cache engine of a ``query_groups`` access
+    pattern whose queries read it. A report with none of them gives each row its
+    design owner (:func:`table_owner_line`)."""
+    mapped = [
+        str(m.get("source_table") or "")
+        for m in report.get("table_mappings") or []
+        if isinstance(m, Mapping)
+    ]
+    by_bare: dict[str, list[str]] = {}
+    for table in dict.fromkeys(t for t in mapped if t):
+        by_bare.setdefault(table.rsplit(".", 1)[-1], []).append(table)
+    out: dict[str, dict[str, Any]] = {}
+
+    def usage(table: str) -> dict[str, Any]:
+        return out.setdefault(table, {"writes": {}, "queries": {}, "cached_by": []})
+
+    groups = report.get("query_pattern_groups")
+    for g in groups if isinstance(groups, list) else []:
+        if not isinstance(g, Mapping):
+            continue
+        tables = {
+            by_bare[b][0]
+            for b in (str(t).rsplit(".", 1)[-1] for t in g.get("tables") or [] if t)
+            if len(by_bare.get(b, [])) == 1
+        }
+        for member in g.get("members") or []:
+            engine = str(member.get("engine") or "") if isinstance(member, Mapping) else ""
+            for table in sorted(tables) if engine else []:
+                queries = usage(table)["queries"]
+                queries[engine] = queries.get(engine, 0) + 1
+    for row in report.get("table_sources") or []:
+        if not isinstance(row, Mapping) or not row.get("table"):
+            continue
+        u = usage(str(row["table"]))
+        source = str(row.get("source_of_truth") or "")
+        n_writes = len(row.get("write_query_ids") or []) or 1
+        writers = [source] if source else [str(e) for e in row.get("write_engines") or [] if e]
+        u["writes"] = {e: n_writes if source else 1 for e in writers}
+        u["queries"] = dict(u["writes"])
+        for replica in row.get("replicas") or []:
+            if isinstance(replica, Mapping) and replica.get("engine"):
+                engine = str(replica["engine"])
+                reads = len(replica.get("read_query_ids") or []) or 1
+                u["queries"][engine] = u["queries"].get(engine, 0) + reads
+    for g in report.get("query_groups") or []:
+        if not isinstance(g, Mapping):
+            continue
+        tables_of = {
+            str(q.get("query_id")): [str(t) for t in q.get("tables_accessed") or [] if t]
+            for q in g.get("source_queries") or []
+            if isinstance(q, Mapping)
+        }
+        for ap in g.get("access_patterns") or []:
+            engine = str(ap.get("engine") or "") if isinstance(ap, Mapping) else ""
+            if engine not in CACHE_ENGINES or not ap.get("in_scope", True):
+                continue
+            for qid in ap.get("query_ids") or []:
+                for table in tables_of.get(str(qid)) or []:
+                    cached = usage(table)["cached_by"]
+                    if engine not in cached:
+                        cached.append(engine)
+    for u in out.values():
+        u["cached_by"].sort()
+    return out
+
+
+def owned_table_mappings(
+    report: Mapping[str, Any], waves: Iterable[Mapping[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """``table_mappings`` with every row's owner line: as synthesis stored it, or, for a
+    report written before #212, from :func:`report_table_usage`. A stored line always
+    has an ``also_read_by`` list; a row an older report re-dumped through the contract
+    has None there, and is filled in like one with no field at all."""
+    usage: dict[str, dict[str, Any]] | None = None
+    retained: str | None = None
+    listed: dict[str, str] = {}
+    out: list[dict[str, Any]] = []
+    for m in report.get("table_mappings") or []:
+        if not isinstance(m, Mapping):
+            continue
+        if isinstance(m.get("also_read_by"), list):
+            out.append(dict(m))
+            continue
+        if usage is None:
+            usage = report_table_usage(report)
+            if waves is None:
+                waves = [w for w in report.get("migration_waves") or [] if isinstance(w, Mapping)]
+            retained = wave_retained_engine(waves)
+            listed = wave_listed_owners(waves)
+        out += table_owner_fields(
+            [m], usage, listed, retained_engine=retained, design_fallback=True
+        )
+    return out
+
+
+def _owner_target(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The target table the owner's schema design gives the table (its row's own when
+    the owner is the recommended engine, else the owner's alternative), or the row's
+    own when the owner's design does not map it."""
+    owner = row.get("owner")
+    for alt in row.get("alternatives") or []:
+        if (
+            isinstance(alt, dict)
+            and owner
+            and alt.get("database") == owner
+            and row.get("recommended_database") != owner
+        ):
+            return {
+                "target_engine": owner,
+                "target_table": alt.get("target_table"),
+                "aggregate_pattern": None,
+                "confidence_score": alt.get("confidence_score"),
+            }
+    return {
+        "target_engine": row.get("recommended_database"),
+        "target_table": row.get("target_table"),
+        "aggregate_pattern": row.get("aggregate_pattern"),
+        "confidence_score": row.get("confidence_score"),
+    }
+
+
+def table_ownership_facts(
+    report: Mapping[str, Any], waves: Iterable[Mapping[str, Any]] | None = None
+) -> dict[str, Any] | None:
+    """One line per mapped source table (``TableOwnershipFacts``, #212): its owner, the
+    engines that also read it, its cache and the owner's target table, plus the counts
+    every deliverable states. None for a report with no ``table_mappings``."""
+    rows = owned_table_mappings(report, waves)
+    if not rows:
+        return None
+    tables = sorted(
+        (
+            {
+                "table": str(m.get("source_table") or ""),
+                "owner": m.get("owner"),
+                "owner_basis": m.get("owner_basis"),
+                "also_read_by": [str(e) for e in m.get("also_read_by") or []],
+                "cached_by": m.get("cached_by"),
+                **_owner_target(m),
+            }
+            for m in rows
+        ),
+        key=lambda r: r["table"],
+    )
+    owned: dict[str, int] = {}
+    for r in tables:
+        if r["owner"]:
+            owned[r["owner"]] = owned.get(r["owner"], 0) + 1
+    return {
+        "table_count": len(tables),
+        "owned_table_counts": dict(sorted(owned.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "no_owner_table_count": sum(1 for r in tables if not r["owner"]),
+        "also_read_table_count": sum(1 for r in tables if r["also_read_by"]),
+        "cached_table_count": sum(1 for r in tables if r["cached_by"]),
+        "cache_engines": sorted({str(r["cached_by"]) for r in tables if r["cached_by"]}),
+        "table_lines": tables,
+    }
+
+
 def _unrounded(x: float) -> float:
     """A sum of percentages, kept at full precision: each renderer rounds it
     once, to the places it prints (``99.45`` prints "99%", never a second
@@ -2286,6 +2655,8 @@ def compute_report_facts(
         "access_pattern_totals": access_pattern_facts(report),
         # #992: each written table's source of truth, replicas and CDC risk.
         "table_sources": table_source_facts(report),
+        # #212: each mapped table's owner, the engines that also read it, its cache.
+        "table_owner_lines": table_ownership_facts(report, waves),
         # #471: the relational move's version and feature gaps.
         "relational_gaps": dict(relational_gaps) if relational_gaps is not None else None,
         # #1146: the queries and the distinct query patterns they make.

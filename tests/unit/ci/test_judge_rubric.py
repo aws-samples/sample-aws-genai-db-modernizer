@@ -375,18 +375,21 @@ def test_risk_and_close_call_sections_are_cut_last() -> None:
 # --- rubric_version 3 clarifications (first e2e-llm run on #1075) ----------
 
 
-def test_the_migration_map_target_engine_is_not_ownership() -> None:
-    """The judge read the Migration map's "Target engine" as the owner and
-    called it a contradiction of "Sources of truth and replicas"."""
+def test_the_migration_map_owner_is_ownership_and_the_recommended_engine_is_not() -> None:
+    """#212 (rubric 4): the Migration map states each table's Owner, Also read by and
+    Cached by. Its Owner must agree with Sources of truth and the wave owner lines
+    (a disagreement is a contradiction); the recommended engine is only a label."""
     rules = RUBRIC[: RUBRIC.index("## 1. grounded")]
     assert "**Ownership.**" in rules
     ownership = rules[rules.index("**Ownership.**") :].split("\n- ", 1)[0]
-    assert '"Target engine"' in ownership
-    assert "recommended engine" in ownership
+    for phrase in ("Owner", "Also read by", "Cached by", "owned_tables", "no single\n  writer"):
+        assert phrase in ownership, phrase
+    assert "is a contradiction" in ownership
+    assert "recommended_database" in ownership and "not a contradiction" in ownership
+    assert '"Target engine"' not in RUBRIC
     assert "Sources of truth" in ownership
-    assert "kept in sync from their" in ownership
-    assert "Sources of truth" in _section("contradictions")
-    assert "the ownership\nrule above" in _section("contradictions")
+    assert "kept in\n  sync from their owner" in ownership
+    assert "the Migration map's Owner (the\nownership rule above)" in _section("contradictions")
 
 
 def test_a_sentence_with_a_stated_bound_is_not_a_hedge() -> None:
@@ -399,9 +402,9 @@ def test_a_sentence_with_a_stated_bound_is_not_a_hedge() -> None:
     assert '"a moment"' in hedging[: hedging.index("Not a hedge:")]
 
 
-def test_the_clarified_rubric_is_version_3() -> None:
+def test_the_clarified_rubric_is_version_4() -> None:
     meta = judge.rubric_identity(judge.DEFAULT_RUBRIC_PATH)
-    assert meta["rubric_version"] == 3
+    assert meta["rubric_version"] == 4
 
 
 def test_wave_figures_come_from_the_facts_layer() -> None:

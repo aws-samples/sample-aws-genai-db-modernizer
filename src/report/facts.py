@@ -20,12 +20,15 @@ from src.shared.report_facts import (
     engine_served_split,
     engine_table_split_facts,
     map_split_facts,
+    mapped_tables_by_role,
+    owned_table_mappings,
     query_move_facts,
     query_pattern_facts,
     query_trace_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
     shares_replica_risk,
+    table_ownership_facts,
     unservable_query_facts,
     wave_one_moved_by_later_waves,
 )
@@ -43,7 +46,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     the contract has them empty while queries have a full trace), one written before
     1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), one
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
-    no ``waves[].moved_by_later_waves``, and one written before
+    no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
+    (and a map split by recommended engine), and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -61,16 +65,26 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "resolved_risks_by_severity" not in facts:
             missing.update(resolved_risk_severity_facts(report))
         basis = facts.get("table_basis")
-        if isinstance(basis, dict) and "mapped_tables_by_move" not in basis:
-            # A block written before 1.42 (#1169): the map's split, from the same function.
+        if isinstance(basis, dict) and (
+            "mapped_tables_by_move" not in basis or "table_owner_lines" not in facts
+        ):
+            # A block written before 1.42 (#1169): the map's split, from the same function;
+            # and one written before #212, whose split counted a table by its recommended
+            # engine (a cache too): each table now counts under its owner.
+            resolved = resolve_migration_waves(report)
+            owned = owned_table_mappings(report, resolved)
+            roles = {str(e.get("engine")): str(e.get("role")) for e in facts["engines"]}
             missing["table_basis"] = {
                 **basis,
-                **map_split_facts(
-                    [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)],
-                    {str(e.get("engine")): str(e.get("role")) for e in facts["engines"]},
-                    resolve_migration_waves(report),
-                ),
+                "mapped_tables_by_role": mapped_tables_by_role(owned, roles),
+                **map_split_facts(owned, roles, resolved),
             }
+        if "table_owner_lines" not in facts:
+            # A block written before #212: each mapped table's owner line, from the
+            # report's table_sources and query_pattern_groups (the same function).
+            missing["table_owner_lines"] = table_ownership_facts(
+                report, resolve_migration_waves(report)
+            )
         if any(isinstance(e, dict) and "kept_in_sync_tables" not in e for e in facts["engines"]):
             # And each migration target's split of its served tables (#1169).
             split = engine_served_split(resolve_migration_waves(report))

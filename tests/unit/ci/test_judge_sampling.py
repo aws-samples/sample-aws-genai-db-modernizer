@@ -272,7 +272,7 @@ def _baseline(tmp_path: Path, scores: dict, version: object = "current") -> Path
 def test_rubric_version_and_hash_are_recorded(tmp_path: Path) -> None:
     result, code = _run(tmp_path, [_record(_reply(_scores()))])
     assert code == 0, result
-    assert result["rubric_version"] == CURRENT == 3
+    assert result["rubric_version"] == CURRENT == 4
     assert len(result["rubric_sha256"]) == 64
 
 

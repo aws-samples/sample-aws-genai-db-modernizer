@@ -14,7 +14,10 @@ rubric criteria are checked against, as one compact JSON-serialisable dict:
 * ``engines`` -- per selected engine: workload, confidence (the routed fit the
   deliverables show, #152; ``analysis_confidence`` is the all-tables average), monthly cost,
   schema counts, assignment reasons, the tables its assigned queries touch
-  (``tables_served``) and its ``primary_tables`` from ``table_mappings``.
+  (``tables_served``), its ``primary_tables`` from ``table_mappings`` (the design's
+  recommended engine) and its ``owned_tables``, the mapped tables it owns as the
+  Migration map's Owner column states them (``facts.table_owner_lines``, #212; None for
+  a report written before).
 * ``eliminated_engines`` -- engines dropped by reality-check, with the engine
   that absorbed their queries.
 * ``reality_check`` -- before/after query distribution and each move.
@@ -540,6 +543,9 @@ def build_facts(
         c.get("database"): c.get("monthly_cost_usd") for c in tco.get("cost_breakdown") or []
     }
     table_mappings = report.get("table_mappings") or []
+    # #212: each mapped table's owner (the engine that takes its writes, never a cache),
+    # as the Migration map's Owner column states it; None for a report written before.
+    owner_lines = ((report.get("facts") or {}).get("table_owner_lines") or {}).get("table_lines")
     rec_arch = report.get("recommended_architecture") or {}
     rec_tables = {d.get("service"): d.get("table_count") for d in rec_arch.get("databases") or []}
 
@@ -612,6 +618,15 @@ def build_facts(
                     for m in table_mappings
                     if m.get("recommended_database") == engine
                 ],
+                "owned_tables": (
+                    sorted(
+                        _strip_db(str(r.get("table", "")), db)
+                        for r in owner_lines
+                        if isinstance(r, dict) and r.get("owner") == engine
+                    )
+                    if isinstance(owner_lines, list)
+                    else None
+                ),
                 "recommended_architecture_table_count": rec_tables.get(engine),
                 "schema": {
                     "target_tables": entry.get("target_tables"),
