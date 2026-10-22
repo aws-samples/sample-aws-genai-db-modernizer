@@ -206,6 +206,17 @@ jobs:
           cache-suffix: e2e
       - name: Install dependencies
         run: uv sync --locked --extra dev --extra e2e --extra docs
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(awk '/^name = "playwright"$/ {getline; print $3; exit}' uv.lock | tr -d '"')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        # Most runs then never download (#1346). The ui shard installs chromium
+        # only, the others chromium and webkit, so they keep separate caches.
+        if: matrix.shard != 'hashseed'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.shard == 'ui' && 'chromium' || 'chromium-webkit' }}
       - name: End-to-end
         env:
           E2E_SHARD: ${{ matrix.shard }}

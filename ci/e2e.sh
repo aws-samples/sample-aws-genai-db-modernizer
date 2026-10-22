@@ -7,8 +7,12 @@
 # Env vars read:
 #   E2E_OUTPUT       - where Playwright artifacts (screenshots, traces, junit) and
 #                       the copied-out deliverables land. Defaults to test-results/.
+#   E2E_INSTALL_ATTEMPTS, E2E_INSTALL_BACKOFF, PLAYWRIGHT_FALLBACK_HOST - the browser
+#                       download retry (playwright_install_with_retry in lib.sh, #1346).
 #   E2E_REPORT_ARGS  - extra pytest args for the first invocation ONLY (below).
 #   E2E_UI_ARGS      - extra pytest args for the second invocation ONLY (below).
+#   E2E_INSTALL_ATTEMPTS, E2E_INSTALL_BACKOFF, PLAYWRIGHT_FALLBACK_HOST - the browser
+#                       download retry (see playwright_install_with_retry in lib.sh).
 #   E2E_SHARD        - run one CI shard instead of everything (#956): `wordpress`,
 #                       `discourse` or `trailgear` (the report checks whose test id
 #                       names that sample), `hashseed` (test_hashseed_determinism.py),
@@ -98,9 +102,9 @@ if [ ${#browsers[@]} -gt 0 ]; then
     # --with-deps installs OS-level browser dependencies via apt and needs root/sudo.
     # Fine on GitHub's Linux runners (CI=true is set automatically); on a developer's
     # macOS machine it has nothing to install and fails looking for apt-get.
-    uv run playwright install --with-deps "${browsers[@]}"
+    playwright_install_with_retry --with-deps "${browsers[@]}"
   else
-    uv run playwright install "${browsers[@]}"
+    playwright_install_with_retry "${browsers[@]}"
   fi
 fi
 

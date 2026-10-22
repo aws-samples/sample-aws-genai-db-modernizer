@@ -179,7 +179,12 @@ Installing browsers: `uv run playwright install --with-deps chromium webkit`
 in CI (`CI=true`, set automatically by GitHub Actions) — `--with-deps` pulls
 OS-level dependencies via `apt` and needs root, which Linux CI runners have.
 Locally (including macOS, where there is no `apt`) it drops `--with-deps` and
-installs just the browser binaries.
+installs just the browser binaries. Both go through `playwright_install_with_retry`
+in `ci/lib.sh` (#1346): 3 attempts with backoff (`E2E_INSTALL_ATTEMPTS`,
+`E2E_INSTALL_BACKOFF`), the last from Playwright's other official download host
+(`PLAYWRIGHT_FALLBACK_HOST`); TLS verification is never relaxed. The GitHub
+workflow also caches `~/.cache/ms-playwright`, keyed on the Playwright version in
+`uv.lock`.
 
 ## `needs_llm_run.sh`
 
