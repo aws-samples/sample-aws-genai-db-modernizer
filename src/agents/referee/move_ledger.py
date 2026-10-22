@@ -23,6 +23,14 @@ reverse Moves, ``rollback.redesign_failed``, #770) in
 ``LocalOrchestrator._rerouted_assignment`` / ``_rollback_moves``. No writer is
 left outside the ledger.
 
+A query no engine in the customer's engine scope can serve (#1329, ADR-031 Decision 2
+Amendment 15) is a Move to ``UNSERVABLE`` (``apply_unservable``), never onto an engine:
+the first assignment records one for each query only an engine outside the scope could
+take, and the cache owner normalisation for a legacy owner whose fallback is outside it
+(``unservable_in_assignment``, which also takes the record out of
+``query_assignments``). ``state_of`` gives such a query the ``UNSERVABLE`` state, so a
+version's Moves replay to it.
+
 The helpers below only read values a pass already computed (the scores it
 compared, the gates it applied); none of them scores anything or decides an
 engine.
@@ -36,6 +44,7 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any
 
 from src.agents.referee.query_scoring import GATE_KIND_WRITE
+from src.contracts.move_ledger import UNSERVABLE as UNSERVABLE
 from src.contracts.move_ledger import (
     CandidateScore,
     EngineScore,
@@ -52,6 +61,8 @@ __all__ = [
     "MoveLedger",
     "apply",
     "apply_to_assignment",
+    "apply_unservable",
+    "unservable_in_assignment",
     "best_other",
     "candidate_ladder",
     "check_replay",
@@ -177,6 +188,13 @@ def apply_to_assignment(
     ``evidence.previous_tied_engines``.
     """
     qid = _get(qa, "query_id")
+    if to_engine == UNSERVABLE:
+        # A query with no engine leaves query_assignments (#1329): never an engine id
+        # written into ``assigned_engine``.
+        raise ValueError(
+            f"move_ledger.apply_to_assignment: {qid!r} is unservable; use "
+            "unservable_in_assignment, which takes it out of query_assignments"
+        )
     if ledger.engine_of(qid) != _get(qa, "assigned_engine"):
         logger.warning(
             "move_ledger: query %r is on %r but the ledger has %r (an engine set without a Move)",
@@ -217,6 +235,62 @@ def apply_to_assignment(
         if tied_engines is not None:
             qa.tied_engines = list(move.tied_engines)
     return move
+
+
+def apply_unservable(
+    ledger: MoveLedger,
+    query_id: str,
+    *,
+    reason_code: ReasonCode,
+    closest_engine: str | None,
+    evidence: MoveEvidence | None = None,
+    group_key: str | None = None,
+    actor: MoveActor = MoveActor.RULE,
+) -> Move:
+    """Record that no engine in the customer's engine scope can serve ``query_id``.
+
+    A Move to ``UNSERVABLE`` (pass ``unservable``, #1329, ADR-031 Decision 2 Amendment
+    15): the query is never forced onto an engine. ``reason_code`` is the fallback rule
+    that found no engine (``fallback.no_score``, ``fallback.no_group_owner``,
+    ``fallback.no_owner``); ``closest_engine``, the engine that rule names, which the
+    scope leaves out, is recorded in ``evidence.closest_engine`` for context only. The
+    Move clears any tie: an unservable query never joins one.
+    """
+    recorded = (evidence or MoveEvidence()).model_copy(update={"closest_engine": closest_engine})
+    return apply(
+        ledger,
+        query_id,
+        UNSERVABLE,
+        pass_=MovePass.UNSERVABLE,
+        reason_code=reason_code,
+        evidence=recorded,
+        group_key=group_key,
+        actor=actor,
+    )
+
+
+def unservable_in_assignment(
+    ledger: MoveLedger,
+    assignment: MutableMapping[str, Any],
+    qa: Mapping[str, Any],
+    record: Mapping[str, Any],
+    **move: Any,
+) -> Move:
+    """:func:`apply_unservable` for a query-assignment dict of ``assignment`` (#1329).
+
+    Records the Move, then takes ``qa`` out of ``assignment["query_assignments"]`` and
+    adds ``record`` (an ``UnservableQueryAssignment`` as JSON) to
+    ``assignment["unservable_queries"]``: the one place a query leaves
+    ``query_assignments`` for the unservable state.
+    """
+    qid = str(_get(qa, "query_id"))
+    made = apply_unservable(ledger, qid, **move)
+    assignment["query_assignments"] = [
+        q for q in assignment.get("query_assignments") or [] if _get(q, "query_id") != qid
+    ]
+    kept = [u for u in assignment.get("unservable_queries") or [] if _get(u, "query_id") != qid]
+    assignment["unservable_queries"] = [*kept, dict(record)]
+    return made
 
 
 def _get(qa: Any, key: str) -> Any:
@@ -262,15 +336,24 @@ def ledger_continuing(assignment: Mapping) -> MoveLedger:
     )
 
 
-def state_of(query_assignments: Iterable[Any]) -> dict[str, tuple[str, list[str]]]:
-    """Each query's ``(engine, tied_engines)``, the shape :func:`replay` returns."""
-    return {
+def state_of(
+    query_assignments: Iterable[Any], unservable: Iterable[Any] = ()
+) -> dict[str, tuple[str, list[str]]]:
+    """Each query's ``(engine, tied_engines)``, the shape :func:`replay` returns.
+
+    ``unservable`` (``Assignment.unservable_queries``, #1329) adds each such query as
+    ``(UNSERVABLE, [])``, the state its Move to ``UNSERVABLE`` replays to.
+    """
+    state = {
         _get(qa, "query_id"): (
             _get(qa, "assigned_engine"),
             sorted(_get(qa, "tied_engines") or []),
         )
         for qa in query_assignments
     }
+    for u in unservable:
+        state[_get(u, "query_id")] = (UNSERVABLE, [])
+    return state
 
 
 def unexplained(

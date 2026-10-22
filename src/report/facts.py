@@ -24,6 +24,7 @@ from src.shared.report_facts import (
     owned_table_mappings,
     query_move_facts,
     query_pattern_facts,
+    query_total_facts,
     query_trace_facts,
     resolved_risk_severity_facts,
     retired_in_use_engine_facts,
@@ -47,7 +48,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     1.42 no Migration map split and no per-engine kept-in-sync counts (#1169), one
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
     no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
-    (and a map split by recommended engine), and one written before
+    (and a map split by recommended engine), one written before #1329 no
+    ``unservable.no_engine_in_scope_query_count``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -59,7 +61,13 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "access_pattern_totals" not in facts:
             missing["access_pattern_totals"] = access_pattern_facts(report)
         if "moving_query_count" not in facts:
-            missing.update(query_move_facts(report, facts["engines"]))
+            moves = query_move_facts(report, facts["engines"])
+            missing.update(moves)
+            missing.update(query_total_facts(report, moves["in_scope_query_count"]))
+        elif "query_total_count" not in facts:
+            # A block written before #1329: the no-engine count and the total, from the
+            # same function (no scope_unservable before it, so 0 and the stored count).
+            missing.update(query_total_facts(report, int(facts.get("in_scope_query_count") or 0)))
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:
@@ -126,6 +134,19 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if isinstance(unservable, dict) and "no_fit_query_count" not in unservable:
             # A block written before 1.38 (#888): its kinds, from the same function.
             missing["unservable"] = unservable_query_facts(report)
+        elif isinstance(unservable, dict) and "no_engine_in_scope_query_count" not in unservable:
+            # A block written before #1329: the no-engine-in-scope count, from the same
+            # function (0, since such a report lists no scope_unservable queries).
+            computed = unservable_query_facts(report) or {}
+            missing["unservable"] = {
+                **unservable,
+                "no_engine_in_scope_query_count": int(
+                    computed.get("no_engine_in_scope_query_count") or 0
+                ),
+                "no_engine_in_scope_closest_engines": list(
+                    computed.get("no_engine_in_scope_closest_engines") or []
+                ),
+            }
         trace = facts.get("query_trace")
         if (
             isinstance(trace, dict)

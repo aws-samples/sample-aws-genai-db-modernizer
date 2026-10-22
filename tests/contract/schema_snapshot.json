@@ -1902,6 +1902,22 @@
                         "kind": "object"
                       }
                     },
+                    "closest_engine": {
+                      "required": false,
+                      "schema": {
+                        "kind": "anyOf",
+                        "members": [
+                          {
+                            "kind": "scalar",
+                            "type": "null"
+                          },
+                          {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
                     "group_gates": {
                       "required": false,
                       "schema": {
@@ -2104,6 +2120,7 @@
                     "signal_override",
                     "sweep",
                     "tie",
+                    "unservable",
                     "utility_pin"
                   ]
                 }
@@ -2715,6 +2732,128 @@
           }
         }
       },
+      "unservable_queries": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "closest_engine": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "gates": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "object",
+                    "properties": {
+                      "engine": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "gate": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "gate_text": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "query_id": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "kind": "array"
+                }
+              },
+              "group_key": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "rule": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "source_tables": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
       "validation_warnings": {
         "required": true,
         "schema": {
@@ -2747,8 +2886,8 @@
         }
       }
     },
-    "schema_hash": "2c1168017806fbf918c540c69a3db9b3e3db291fc7847c0300df4f11c5b23696",
-    "version": "1.22"
+    "schema_hash": "909f0b32fd1d3e9763e0a41b595a33ed5d84f6439d333c32894af0cf366fccfc",
+    "version": "1.23"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -16923,6 +17062,22 @@
                             "kind": "object"
                           }
                         },
+                        "closest_engine": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
                         "group_gates": {
                           "required": false,
                           "schema": {
@@ -17310,8 +17465,8 @@
         }
       }
     },
-    "schema_hash": "4f4b5164cd96fffe05c97ade7b29c6cbf4798ee51be93d2aaa756d70491818f5",
-    "version": "1.6"
+    "schema_hash": "dabad23315f976e41df9c91a739b6ae56c3f179808921df76cc7a07836117f5a",
+    "version": "1.7"
   },
   "reality_check_marker.RealityCheckMarker": {
     "fields": {
@@ -21663,6 +21818,14 @@
                     "type": "integer"
                   }
                 },
+                "no_engine_in_scope_query_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "scalar",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
                 "no_migration": {
                   "required": false,
                   "schema": {
@@ -21861,6 +22024,23 @@
                             }
                           }
                         }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "query_total_count": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "minimum": 0,
+                        "type": "integer"
                       },
                       {
                         "kind": "scalar",
@@ -23136,6 +23316,14 @@
                               "kind": "array"
                             }
                           },
+                          "source_database_table_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
                           "split_write_table_count": {
                             "required": false,
                             "schema": {
@@ -23241,6 +23429,24 @@
                               "type": "integer"
                             }
                           },
+                          "no_engine_in_scope_closest_engines": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "no_engine_in_scope_query_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
                           "no_fit_query_count": {
                             "required": false,
                             "schema": {
@@ -23295,6 +23501,13 @@
                                         "type": "string"
                                       },
                                       "kind": "array"
+                                    }
+                                  },
+                                  "closest_engine": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
                                     }
                                   },
                                   "engine": {
@@ -25013,6 +25226,7 @@
                                         "signal_override",
                                         "sweep",
                                         "tie",
+                                        "unservable",
                                         "utility_pin"
                                       ]
                                     }
@@ -25378,6 +25592,7 @@
                                       "signal_override",
                                       "sweep",
                                       "tie",
+                                      "unservable",
                                       "utility_pin"
                                     ]
                                   }
@@ -26544,6 +26759,138 @@
           "kind": "object"
         }
       },
+      "scope_unservable": {
+        "required": false,
+        "schema": {
+          "items": {
+            "kind": "object",
+            "properties": {
+              "closest_engine": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "gates": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "object",
+                    "properties": {
+                      "engine": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "gate": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "gate_text": {
+                        "required": false,
+                        "schema": {
+                          "kind": "scalar",
+                          "type": "string"
+                        }
+                      },
+                      "query_id": {
+                        "required": false,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "kind": "array"
+                }
+              },
+              "group_key": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "query_id": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "reason": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "required_capabilities": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
+              "rule": {
+                "required": true,
+                "schema": {
+                  "kind": "scalar",
+                  "type": "string"
+                }
+              },
+              "source_tables": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              }
+            }
+          },
+          "kind": "array"
+        }
+      },
       "source_table_count": {
         "required": false,
         "schema": {
@@ -27258,8 +27605,8 @@
         }
       }
     },
-    "schema_hash": "f3c96e6c2754dcba88b8b4f9346924afea2f9da1b46e09bc5f807dbeee79d6f5",
-    "version": "1.54"
+    "schema_hash": "0b4114cdd49259a160d3422d93c1bbf684ffb84f12c227e6fdaad13323de70bc",
+    "version": "1.55"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

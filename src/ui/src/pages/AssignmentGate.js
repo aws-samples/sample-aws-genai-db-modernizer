@@ -32,6 +32,7 @@ import { SideNavigationConfigurations } from "../config/GlobalConfigurations";
 import AppHeader from "../components/AppHeader";
 import SummaryFallbackNotice from "../components/SummaryFallbackNotice";
 import PendingEngineChoices from "../components/PendingEngineChoices";
+import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import ApiManager from "../classes/ApiManager";
 import ChartSankey from "../components/ChartSankey";
 import {
@@ -926,6 +927,12 @@ const AssignmentGatePage = memo(() => {
           </SpaceBetween>
         </ExpandableSection>
       )}
+
+      {/* #1329: the queries no engine in the scope can serve, before approval */}
+      <UnservableAssignmentNotice
+        unservable={assignmentData?.assignment?.unservable_queries}
+        t={t}
+      />
 
       {/* #1003: one engine choice per table */}
       <PendingEngineChoices

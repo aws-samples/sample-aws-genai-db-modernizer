@@ -72,9 +72,11 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
 
     Returns HTTP 409 if phase prerequisites are not met, or if the job was
     cancelled (#518 round 1): cancelling blocks any further API-driven phase,
-    since the API only ever runs a phase synchronously inside this request. Also 409
-    when the job's engine scope would place a query outside it (#1328), naming the
-    queries; nothing is written.
+    since the API only ever runs a phase synchronously inside this request. A query no
+    engine in the job's engine scope can serve is unservable (#1329): the phase completes
+    and the deliverables list it as a blocking risk. A 409 remains only for a pass that
+    would still place a query outside the scope (a defect, never an unservable query),
+    naming the queries; nothing is written.
     """
     orch = _require_orchestrator()
 
@@ -97,9 +99,9 @@ async def resume_phase(body: ResumeRequest, job_id: str = Depends(job_id_param))
     except TaskTokenNotFoundError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except OutOfScopeAssignment as exc:
-        # #1328: the customer's engine scope leaves some query no in-scope engine can
-        # serve. Nothing was written; the message names each query (until #1329 gives
-        # those queries their own state).
+        # #1328: a pass placed a query outside the customer's engine scope. Since #1329
+        # a query no in-scope engine can serve is unservable instead and never reaches
+        # here; this guards a defect. Nothing was written; the message names each query.
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return ResumeResponse(job_id=job_id, phase=body.phase.value)

@@ -927,6 +927,8 @@ class TestTheSourceOfTruth:
             "more_replicated_count": 0,
             "single_engine_tables": ["db.other"],
             "single_engine_table_count": 1,
+            # #1329: no table's writes lack an engine here.
+            "source_database_table_count": 0,
         }
         assert table_source_facts({}) is None
 

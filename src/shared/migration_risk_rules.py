@@ -25,6 +25,11 @@ rule                       severity  raised when
                            MEDIUM    every such query on the engine is held there by a pin the
                                      customer set on its table's writes (kind ``held``):
                                      changing the pin is the way to move it
+``routing.no_engine_in_scope``
+                           HIGH      no engine in the customer's engine scope can serve queries
+                                     (``scope_unservable``, #1329): they have no engine, no wave
+                                     and no design, and are never forced onto one; one risk,
+                                     at cutover (no wave)
 ``relational.gaps``        HIGH      the relational gap check (``facts.relational_gaps``, #1079)
                                      finds gaps that block the move to wave 1's engine
                            MEDIUM    gaps that need a rewrite before cutover
@@ -47,7 +52,11 @@ from src.contracts.synthesis_output import Risk
 from src.shared.capability_labels import FLAG_REDESIGN_HINTS
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.flag_reasons import flag_reason_text
-from src.shared.report_facts import flagged_unservable_rows, refresh_risk_facts
+from src.shared.report_facts import (
+    flagged_unservable_rows,
+    refresh_risk_facts,
+    scope_unservable_rows,
+)
 from src.shared.risk_severity import overall_risk_level, severity_rank
 
 # A wave-gate strategy line names its risk ids up to this many, else counts them.
@@ -74,6 +83,9 @@ RULES: dict[str, RiskRule] = {
     "routing.unservable": RiskRule("HIGH", "MIGRATION_COMPLEXITY", "queries no engine fits"),
     "routing.flagged": RiskRule(
         "HIGH", "MIGRATION_COMPLEXITY", "flagged queries no other engine takes"
+    ),
+    "routing.no_engine_in_scope": RiskRule(
+        "HIGH", "MIGRATION_COMPLEXITY", "queries no engine in the scope can serve"
     ),
     "relational.gaps": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "relational gaps"),
     "cache.dropped": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "dropped cache reads"),
@@ -492,6 +504,53 @@ def report_query_tables(report: Mapping[str, Any]) -> dict[str, set[str]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Queries no engine in the customer's engine scope can serve (#1329)
+# ---------------------------------------------------------------------------
+
+
+def scope_unservable_risks(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One ``routing.no_engine_in_scope`` risk for the queries ``facts.unservable``
+    counts as ``no_engine_in_scope`` (``report_facts.scope_unservable_rows``), so the
+    two agree: a blocking risk with no wave, since no wave holds them. ``report``
+    needs ``scope_unservable``."""
+    rows = scope_unservable_rows(dict(report))
+    if not rows:
+        return []
+    k = len(rows)
+    closest = sorted({str(r["closest_engine"]) for r in rows if r.get("closest_engine")})
+    names = join_words([display_engine(e) for e in closest])
+    description = (
+        f"{n_of(k, 'query has', 'queries have')} no engine: no engine in the customer's "
+        f"engine scope can serve {them(k)}, so {'it is' if k == 1 else 'they are'} in no "
+        "migration wave and no schema design, and never forced onto an engine outside the "
+        "scope."
+    )
+    if closest:
+        description += (
+            f" {names}, the {'engine' if len(closest) == 1 else 'engines'} "
+            f"{'it' if k == 1 else 'they'} would fall back to, "
+            f"{'is' if len(closest) == 1 else 'are'} outside the scope."
+        )
+    adds = f"adds {names}" if closest else "adds an engine that can serve them"
+    mitigation = (
+        f"Before cutover, decide how to serve {these(k, 'query', 'queries')}: start a new "
+        f"assessment whose engine scope {adds}, or keep {them(k)} on the source database. "
+        "An assessment's scope is fixed once it starts."
+    )
+    return [
+        make_risk(
+            "routing.no_engine_in_scope",
+            None,
+            description,
+            mitigation,
+            {t for r in rows for t in r.get("source_tables") or []},
+            [str(r["query_id"]) for r in rows],
+            None,
+        )
+    ]
+
+
 def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """rule -> the unnumbered risks the rules here raise from ``report`` alone."""
     waves = wave_of_engine(report.get("migration_waves"))
@@ -501,6 +560,7 @@ def report_fact_risks(report: Mapping[str, Any]) -> dict[str, list[dict[str, Any
     return {
         "routing.flagged": flagged_unservable_risks(report, waves, tables),
         "relational.gaps": relational_gap_risks(gaps, report.get("migration_waves")),
+        "routing.no_engine_in_scope": scope_unservable_risks(report),
     }
 
 

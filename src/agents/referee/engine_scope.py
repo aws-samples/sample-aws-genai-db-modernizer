@@ -11,9 +11,14 @@ No engine outside the scope is ever assigned, tied or used as a query's cache: e
 writer of an assignment version calls :func:`check_in_scope` next to its
 ``move_ledger.check_replay`` (the first assignment, the reality check, the customer
 gate, the source-of-truth reroute, the post-schema reroute and its rollback), and
-refuses a version outside the scope (until #1329 gives a query no in-scope engine can
-serve its own unservable state). The customer gate refuses a pick or a cache pin onto
-an engine the scope leaves out before anything is applied.
+refuses a version outside the scope. A query no in-scope engine can serve is unservable
+(#1329): the first assignment records a Move to ``unservable`` for it
+(``move_ledger.apply_unservable``) instead of the Aurora fallback the scope leaves out,
+and it leaves ``query_assignments`` for ``Assignment.unservable_queries``
+(:func:`unservable_record`), which every later version carries; it has no engine, so
+:func:`check_in_scope` has nothing of it to refuse. The customer gate refuses a pick or
+a cache pin onto an engine the scope leaves out before anything is applied, and any
+edit of an unservable query.
 """
 
 from __future__ import annotations
@@ -247,3 +252,143 @@ def recorded_engine_scope(store: Any, database_name: str, job_id: str) -> list[s
         return None
     decision = load_contract(EngineScopeDecision, store.read_json(key), artifact=key)
     return list(decision.engines)
+
+
+# ---------------------------------------------------------------------------
+# Queries no engine in the scope can serve (#1329)
+# ---------------------------------------------------------------------------
+
+
+def _gate_phrase(gate: Mapping[str, Any], group: bool) -> str:
+    text = str(gate.get("gate_text") or "") or "not eligible for this query"
+    if group and gate.get("query_id"):
+        text = f"for one of its queries: {text}"
+    return f"{display_engine(str(gate.get('engine') or ''))} ({text})"
+
+
+def unservable_reason(
+    scope: Iterable[str],
+    closest_engine: str | None,
+    gates: Iterable[Mapping[str, Any]],
+    *,
+    group: str | None = None,
+) -> str:
+    """Why a query is unservable in ``scope``, in customer-facing words.
+
+    ``group`` names the unit it moves with ("write group", "co-dependency group") when
+    no in-scope engine can serve every member; ``gates`` are each in-scope engine's
+    gate (``UnservableGate`` as JSON). ``closest_engine`` is the engine the fallback
+    rule names, which the scope leaves out.
+    """
+    what = f"every query of its {group}, which moves as one" if group else "this query"
+    out = f"No engine in the customer's engine scope ({scope_text(scope)}) can serve {what}"
+    ruled = [_gate_phrase(g, bool(group)) for g in gates]
+    out += f": {'; '.join(ruled)}." if ruled else "."
+    if closest_engine:
+        name = display_engine(closest_engine)
+        out += (
+            f" {name}, the engine it would fall back to, is outside the scope, so it has "
+            f"no engine; a new assessment whose scope adds {name} can serve it."
+        )
+    else:
+        out += " It has no engine; a new assessment with a wider scope can serve it."
+    return out
+
+
+def unservable_gates(
+    candidates: Iterable[Any], group_gates: Iterable[Any] = ()
+) -> list[dict[str, Any]]:
+    """The in-scope engines that ruled a query out, by engine: a group's gates
+    (``MoveEvidence.group_gates``, naming the member) when it has them, else the
+    query's own gated candidates (``MoveEvidence.candidates``)."""
+
+    from src.shared.move_reasons import gate_text
+
+    def _field(item: Any, key: str) -> Any:
+        return item.get(key) if isinstance(item, Mapping) else getattr(item, key, None)
+
+    def _gate(item: Any, member: Any) -> dict[str, Any]:
+        gate = str(_field(item, "gate"))
+        return {
+            "engine": str(_field(item, "engine")),
+            "gate": gate,
+            "query_id": member,
+            "gate_text": gate_text(gate) or "",
+        }
+
+    by_group = [_gate(g, _field(g, "query_id")) for g in group_gates]
+    if by_group:
+        return sorted(by_group, key=lambda g: g["engine"])
+    return sorted(
+        (_gate(c, None) for c in candidates if _field(c, "gate")),
+        key=lambda g: g["engine"],
+    )
+
+
+def unservable_record(
+    query_id: str,
+    source_tables: Iterable[str],
+    *,
+    rule: str,
+    scope: Iterable[str],
+    closest_engine: str | None,
+    gates: list[dict[str, Any]],
+    group_key: str | None = None,
+    group: str | None = None,
+) -> dict[str, Any]:
+    """``Assignment.unservable_queries``' entry for ``query_id`` (as JSON)."""
+    from src.contracts.assignment_models import UnservableGate, UnservableQueryAssignment
+
+    return UnservableQueryAssignment(
+        query_id=query_id,
+        source_tables=[str(t) for t in source_tables],
+        rule=rule,
+        reason=unservable_reason(scope, closest_engine, gates, group=group),
+        closest_engine=closest_engine,
+        gates=[UnservableGate.model_validate(g) for g in gates],
+        group_key=group_key,
+    ).model_dump(mode="json")
+
+
+def scope_unservable_rows(
+    assignment: Mapping[str, Any] | None,
+    query_capabilities: Mapping[str, Iterable[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """``report.json``'s ``scope_unservable`` (#1329): the effective assignment's
+    ``unservable_queries``, by query id, each with the capabilities triage found it
+    needs (``ScopeUnservableQuery`` as JSON)."""
+    caps = query_capabilities or {}
+    rows = [
+        {
+            **dict(u),
+            "required_capabilities": sorted({str(c) for c in caps.get(str(u["query_id"])) or []}),
+        }
+        for u in (assignment or {}).get("unservable_queries") or []
+        if isinstance(u, Mapping) and u.get("query_id")
+    ]
+    return sorted(rows, key=lambda r: str(r["query_id"]))
+
+
+def without_unservable_groups(
+    co_dependency_groups: Iterable[Iterable[str]],
+    write_groups: Mapping[str, Iterable[str]],
+    unservable: Iterable[Any],
+) -> tuple[list[list[str]], dict[str, list[str]]]:
+    """The co-dependency groups and write groups of an assignment's assigned queries.
+
+    A group is unservable as one unit (#1329, ADR-031 Decision 4 and Amendment 9: it
+    falls back as one), so a group whose every member is unservable is left out and
+    every view of the groups reads assigned queries only. ``unservable`` is the
+    assignment's ``unservable_queries`` (records or query ids)."""
+    ids = {
+        str(u.get("query_id") if isinstance(u, Mapping) else getattr(u, "query_id", u))
+        for u in unservable
+    }
+    groups = [list(g) for g in co_dependency_groups]
+    writes = {str(t): list(m) for t, m in write_groups.items()}
+    if not ids:
+        return groups, writes
+    return (
+        [g for g in groups if not set(g) <= ids],
+        {t: m for t, m in writes.items() if not set(m) <= ids},
+    )

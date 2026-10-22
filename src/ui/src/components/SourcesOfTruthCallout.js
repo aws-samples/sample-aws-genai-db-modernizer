@@ -102,6 +102,11 @@ const SourcesOfTruthCallout = memo(({ synthesis, t }) => {
               })}
             </Box>
           )}
+          {ts.source_database_table_count > 0 && (
+            <Box data-figure="source-database-tables">
+              {t('analysis-results.sources-of-truth.source-database', { count: ts.source_database_table_count })}
+            </Box>
+          )}
           {ts.split_write_table_count > 0 && (
             <Box data-figure="split-write-tables">
               {t('analysis-results.sources-of-truth.split', { count: ts.split_write_table_count })}

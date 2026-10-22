@@ -24,10 +24,12 @@ group.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import Any
 
 from src.agents.referee.cache_overlay import is_locking_read, is_write_query
 from src.agents.referee.table_resolution import SourceScope, is_engine_system_object
 from src.agents.referee.utility_statements import is_utility_statement
+from src.shared.engine_names import SOURCE_DATABASE
 from src.tools.sql.query_facts import query_facts, source_engine_of
 
 __all__ = [
@@ -230,9 +232,37 @@ def assignment_sources_of_truth(assignment: Mapping | None) -> dict[str, str]:
     return sources_of_truth(assignment.get("write_groups") or {}, engine_of)
 
 
-def table_sources(assignment: Mapping | None) -> list[dict[str, object]]:
+def unservable_write_groups(
+    collector_output: Mapping | None, unservable: Iterable[Any]
+) -> dict[str, list[str]]:
+    """The write groups whose every write has no engine in the customer's engine scope
+    (#1329): ``{table: [query_id, ...]}`` from the collection, for the tables an
+    assignment's ``unservable_queries`` leave with no assigned write. A write group is
+    unservable as one unit, so a table's writes are all unservable or none is."""
+    ids = {
+        str(u.get("query_id") if isinstance(u, Mapping) else getattr(u, "query_id", u))
+        for u in unservable
+    }
+    if not ids:
+        return {}
+    return {
+        table: sorted(members)
+        for table, members in collector_write_groups(collector_output).items()
+        if members and set(members) <= ids
+    }
+
+
+def table_sources(
+    assignment: Mapping | None,
+    unservable_writes: Mapping[str, Iterable[str]] | None = None,
+) -> list[dict[str, object]]:
     """Each written table's source of truth and replicas, for ``report.json``
     (``SynthesisOutputContract.table_sources``, #992), sorted by table.
+
+    ``unservable_writes`` (:func:`unservable_write_groups`, #1329) are the tables whose
+    every write has no engine in the customer's engine scope: the source database stays
+    their writer (``source_of_truth`` is ``SOURCE_DATABASE``), and each in-scope engine
+    that reads the table is a replica kept in sync from it (ADR-031 Amendments 9, 15).
 
     Read from the assignment's ``write_groups`` and in-scope query assignments: a
     table's writes give its source of truth (the one engine they sit on;
@@ -245,7 +275,13 @@ def table_sources(assignment: Mapping | None) -> list[dict[str, object]]:
     qas = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
     engine_of = {str(qa.get("query_id")): str(qa.get("assigned_engine") or "") for qa in qas}
     readers: dict[str, dict[str, list[str]]] = {}
-    groups = assignment.get("write_groups") or {}
+    groups = dict(assignment.get("write_groups") or {})
+    kept_by_source = {
+        str(t): sorted(str(q) for q in m)
+        for t, m in (unservable_writes or {}).items()
+        if t not in groups
+    }
+    groups.update(kept_by_source)
     for qa in qas:
         qid = str(qa.get("query_id"))
         for table in qa.get("source_tables") or []:
@@ -253,6 +289,21 @@ def table_sources(assignment: Mapping | None) -> list[dict[str, object]]:
                 readers.setdefault(table, {}).setdefault(engine_of[qid], []).append(qid)
     out: list[dict[str, object]] = []
     for table in sorted(groups):
+        if table in kept_by_source:
+            # #1329: no engine in the scope takes these writes; the source keeps them.
+            out.append(
+                {
+                    "table": table,
+                    "source_of_truth": SOURCE_DATABASE,
+                    "write_engines": [],
+                    "write_query_ids": kept_by_source[table],
+                    "replicas": [
+                        {"engine": engine, "read_query_ids": sorted(qids)}
+                        for engine, qids in sorted(readers.get(table, {}).items())
+                    ],
+                }
+            )
+            continue
         writes = [q for q in groups[table] if q in engine_of]
         if not writes:
             continue

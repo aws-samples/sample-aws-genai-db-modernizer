@@ -26,7 +26,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.contracts.move_ledger import CandidateScore, Move, ReasonCode
+from src.contracts.move_ledger import UNSERVABLE, CandidateScore, Move, ReasonCode
 from src.contracts.query_trace import (
     CloseCall,
     QueryTraceDigest,
@@ -52,6 +52,7 @@ from src.shared.move_reasons import (
     render_runner_up,
     render_trace_summary,
     rule_label,
+    trace_engine_name,
 )
 from src.shared.report_facts import (
     TRACE_FULL_CAP,
@@ -137,7 +138,7 @@ def _step(version: int, move: Move, number: int) -> TraceStep:
         from_engine=move.from_engine,
         from_engine_name=display_engine(move.from_engine) if move.from_engine else None,
         to_engine=move.to_engine,
-        to_engine_name=display_engine(move.to_engine),
+        to_engine_name=trace_engine_name(move.to_engine),
         score_before=move.score_before,
         score_after=move.score_after,
         runner_up=(
@@ -381,15 +382,21 @@ def build_query_trace(
     last_version, last = moves[-1]
     final = final_engine or last.to_engine
     final_score = last.score_after if last.to_engine == final else None
-    runner_up, outscored = _runner_up(final, moves, plan or {final})
-    _, _, compared, group = _comparison(final, moves)
+    runner_up: TraceRunnerUp | None = None
+    outscored: list[TraceOutscored] = []
+    compared: float | None = None
+    group = False
+    # #1329: a query with no engine in the scope has no runner-up; its steps carry the gates.
+    if final != UNSERVABLE:
+        runner_up, outscored = _runner_up(final, moves, plan or {final})
+        _, _, compared, group = _comparison(final, moves)
     return QueryTraceResponse(
         query_id=query_id,
         has_ledger=True,
         first_assignment=steps[0],
         moves=steps[1:],
         final_engine=final,
-        final_engine_name=display_engine(final),
+        final_engine_name=trace_engine_name(final),
         final_version=last_version,
         effective_version=effective_version,
         final_score=final_score,

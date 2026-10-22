@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
-from src.agents.referee.engine_scope import scope_of
+from src.agents.referee.engine_scope import scope_of, scope_unservable_rows
 from src.agents.referee.flagged_unservable import flagged_unservable_records
 from src.agents.referee.migration_risks import (
     add_migration_risks,
@@ -72,7 +72,7 @@ from src.agents.referee.synthesis_report import (
 )
 from src.agents.referee.table_assignments import retained_engine_for
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
-from src.agents.referee.write_groups import table_sources
+from src.agents.referee.write_groups import table_sources, unservable_write_groups
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
     parse_executive_summary_response,
@@ -289,6 +289,8 @@ def run_synthesis_deterministic(
         # rationale (totals, deciding features). ``None`` for every other assignment,
         # including one written before this field existed.
         aurora_engine_choice=assignment.get("aurora_engine_choice"),
+        # #1329: a scope with no Aurora engine gives wave 1 no relational target.
+        engine_scope=scope_of(data.triage),
     )
     # #339: the per-query decision traces from the move ledger (the close calls
     # and the queries no engine fits), read before the risks that cite them.
@@ -307,7 +309,13 @@ def run_synthesis_deterministic(
     )
     # #992: each written table's source of truth and replicas, from the
     # assignment's write groups (None for an assignment written before them).
-    sources = table_sources(data.assignment) if "write_groups" in (data.assignment or {}) else None
+    # #1329: a table whose every write has no engine in the scope keeps the source
+    # database as its writer, with a replica on each engine that reads it.
+    sources = (
+        table_sources(data.assignment, _unservable_writes(data))
+        if "write_groups" in (data.assignment or {})
+        else None
+    )
     # #888: the flagged queries no kept engine can take (a reality-check flag
     # it kept, a post-schema router terminal query), which the ledger never sees;
     # read before the risks, which raise them (#1148).
@@ -319,6 +327,11 @@ def run_synthesis_deterministic(
         triage_query_capabilities(data.triage),
     )
 
+    # #1329: the queries no engine in the customer's engine scope can serve (no
+    # engine, no wave, no design), read before the risks, which raise them.
+    scope_unservable = scope_unservable_rows(
+        data.assignment, triage_query_capabilities(data.triage)
+    )
     # #471: the relational move's gaps, read before the risks, which raise them (#1149).
     relational_gaps = _relational_gaps(data)
     # #950: the risks the migration's shape carries (tables kept in sync, close
@@ -341,6 +354,7 @@ def run_synthesis_deterministic(
             table_sources=sources,
             flagged_unservable=flagged_unservable,
             relational_gaps=relational_gaps,
+            scope_unservable=scope_unservable,
             redesign_requirements=redesign_requirements,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
@@ -508,6 +522,7 @@ def run_synthesis_deterministic(
         "assignment_summary": assignment_summary,
         "reality_check_summary": reality_check_summary,
         "flagged_unservable": flagged_unservable,
+        "scope_unservable": scope_unservable,
         "relational_gaps": relational_gaps,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
@@ -523,6 +538,7 @@ def run_synthesis_deterministic(
             known_tables=wave_known_tables,
             aurora_engine_choice=assignment.get("aurora_engine_choice"),
             source=SourceScope.from_collector(data.collector),
+            engine_scope=scope_of(data.triage),
         ),
         "query_traces": query_traces,
         "table_sources": sources,
@@ -1124,13 +1140,15 @@ def _write_synthesis_report(
             result["table_sources"]
             if "table_sources" in result
             else (
-                table_sources(data.assignment)
+                table_sources(data.assignment, _unservable_writes(data))
                 if "write_groups" in (data.assignment or {})
                 else None
             )
         ),
         # #888: flagged queries no kept engine can take, for facts.unservable.
         "flagged_unservable": result.get("flagged_unservable") or [],
+        # #1329: queries no engine in the customer's engine scope can serve.
+        "scope_unservable": result.get("scope_unservable") or [],
         # #1146: the in-scope queries grouped by query pattern, for facts.query_pattern_counts.
         "query_pattern_groups": _query_pattern_groups(data),
     }
@@ -1551,3 +1569,9 @@ def _write_empty_report(store, database_name, job_id, assignment_version=0):
     else:
         key = f"{database_name}/{job_id}/referee-synthesis/report.json"
     store.write_json(key, output.model_dump(mode="json"))
+
+
+def _unservable_writes(data: SynthesisData) -> dict[str, list[str]]:
+    """The write groups with no engine in the customer's engine scope (#1329)."""
+    unservable = (data.assignment or {}).get("unservable_queries") or []
+    return unservable_write_groups(data.collector, unservable) if unservable else {}

@@ -509,18 +509,21 @@ def phase_assignment(store, job_id: str, db: str) -> dict:
     total = sum(distribution.values())
     artifact = _path(store, assignment_path)
     _log_artifact("assignment", artifact)
-    _output(
-        "assignment",
-        {
-            "status": "complete",
-            "assignment_version": version,
-            "distribution": distribution,
-            "total_queries": total,
-            # Queries the cache layer fronts (#296); never part of the distribution
-            "cache_overlay": assignment.get("cache_overlay"),
-            "artifact": artifact,
-        },
-    )
+    line = {
+        "status": "complete",
+        "assignment_version": version,
+        "distribution": distribution,
+        "total_queries": total,
+        # Queries the cache layer fronts (#296); never part of the distribution
+        "cache_overlay": assignment.get("cache_overlay"),
+        "artifact": artifact,
+    }
+    unservable = len(assignment.get("unservable_queries") or [])
+    if unservable:
+        # #1329: queries no engine in the customer's engine scope can serve (no engine,
+        # so never in the distribution or the total); the run goes on.
+        line["unservable_queries"] = unservable
+    _output("assignment", line)
     return distribution
 
 

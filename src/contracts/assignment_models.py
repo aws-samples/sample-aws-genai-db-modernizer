@@ -155,6 +155,12 @@ Version History:
 - 1.22 (2026-10-22, #1327): Added ``AuroraEngineChoice.basis`` (``workload`` or
   ``engine_scope``): a choice the customer's engine scope made, with empty totals
   (ADR-031 Decision 2 Amendment 14). A choice written before reads as ``workload``.
+- 1.23 (2026-10-23, #1329): Added ``unservable_queries`` (``UnservableQueryAssignment``,
+  ``UnservableGate``): a query no engine in the customer's engine scope can serve has no
+  engine and is kept out of ``query_assignments``, with its rule, reason, gates and the
+  out-of-scope ``closest_engine`` (ADR-031 Decision 2 Amendment 15). Move gained the
+  pass ``unservable`` and the evidence ``closest_engine`` (move ledger). Defaults to
+  empty, so an assignment written before still loads.
 """
 
 from datetime import datetime
@@ -306,6 +312,68 @@ class QueryAssignment(BaseModel):
             "ADR-031 rule -- not source-compatible, not stability -- decided between them, "
             "so assigned_engine is a deterministic placeholder, not a preference. Empty "
             "when there was no tie, or a real rule decided it. Sorted, length >= 2 when set."
+        ),
+    )
+
+
+class UnservableGate(BaseModel):
+    """Why one engine in the customer's engine scope cannot take an unservable query."""
+
+    engine: str = Field(..., description="The in-scope engine (id)")
+    gate: str = Field(
+        ...,
+        description=(
+            "The gate that ruled it out: the scorer's gate kind (hard_exclusion, capability, "
+            "model_flag) or write_gate (not a system of record)"
+        ),
+    )
+    query_id: str | None = Field(
+        None,
+        description=(
+            "For a group: the first member (by id) the engine could not take; None when the "
+            "gate is the query's own"
+        ),
+    )
+    gate_text: str = Field("", description="The gate in plain words")
+
+
+class UnservableQueryAssignment(BaseModel):
+    """A query no engine in the customer's engine scope can serve (#1329).
+
+    ADR-031 Decision 2 Amendment 15: such a query is never forced onto an engine. It
+    has no ``assigned_engine`` and is kept out of ``query_assignments``, so no wave,
+    schema design, cost, tie or engine count includes it; the deliverables list it as
+    a blocking risk. Written only through the move ledger, as a Move to
+    ``unservable`` (``move_ledger.apply_unservable``).
+    """
+
+    query_id: str = Field(..., description="Unique query identifier from collector output")
+    source_tables: list[str] = Field(default_factory=list, description="Tables it accesses")
+    rule: str = Field(
+        ...,
+        description=(
+            "Why no engine took it (a ReasonCode value): fallback.no_score (every in-scope "
+            "engine gated), fallback.no_group_owner (no in-scope engine serves every member of "
+            "its group, which moves as one) or fallback.no_owner (no owner candidate)"
+        ),
+    )
+    reason: str = Field(..., description="Why it is unservable, in customer-facing words")
+    closest_engine: str | None = Field(
+        None,
+        description=(
+            "The engine the fallback rule (ADR-031 Decision 2) names for it, which the scope "
+            "leaves out: context for widening the scope in a new job, never assigned"
+        ),
+    )
+    gates: list[UnservableGate] = Field(
+        default_factory=list,
+        description="Each in-scope engine that was ruled out, and why, by engine",
+    )
+    group_key: str | None = Field(
+        None,
+        description=(
+            "The co-dependency or write group it is unservable with (the Move's group_key); "
+            "None for a query on its own"
         ),
     )
 
@@ -574,7 +642,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.22", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.23", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")
@@ -685,6 +753,15 @@ class Assignment(BaseModel):
             "Pending engine choices --auto decided for the customer (#1003), one per "
             "table, carried forward while their queries stay on the decided engine. "
             "Empty for an artifact written before 1.18."
+        ),
+    )
+    unservable_queries: list[UnservableQueryAssignment] = Field(
+        default_factory=list,
+        description=(
+            "Queries no engine in the customer's engine scope can serve (#1329, ADR-031 "
+            "Decision 2 Amendment 15): no engine, kept out of query_assignments and so out "
+            "of every wave, design, cost and count; carried forward by every later version. "
+            "Empty with no scope, and for an artifact written before them."
         ),
     )
     moves: list[Move] = Field(

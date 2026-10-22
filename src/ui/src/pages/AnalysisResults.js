@@ -69,7 +69,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, designTableCountOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -1928,6 +1928,7 @@ const AnalysisResultsPage = memo(() => {
                   costBaseline={costBaseline}
                   retiredEngines={synthesis?.facts?.retired_in_use_engines}
                   engineScope={synthesis?.facts?.engine_scope}
+                  noEngineInScope={noEngineInScopeOf(synthesis)}
                   queryPatterns={queryPatternCountsOf(synthesis)}
                   targetEngines={(
                     <>

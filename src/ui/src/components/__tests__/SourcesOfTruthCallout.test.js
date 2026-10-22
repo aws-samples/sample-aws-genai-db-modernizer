@@ -189,6 +189,16 @@ describe('SourcesOfTruthCallout', () => {
     expect(container.textContent).toContain("2 tables have writes on more than one engine and no single source of truth; route each table's writes to one engine in the assignment review.");
   });
 
+  // #1329: tables whose writes have no engine in the customer's engine scope.
+  it('states the tables the source database keeps writing, like the reports', () => {
+    render({ ...facts, source_database_table_count: 24 });
+    expect(container.querySelector('[data-figure="source-database-tables"]').textContent).toBe(
+      "The source database stays the writer of 24 tables: no engine in the customer's engine scope can serve their writes. Each engine that reads one holds a replica kept in sync from the source database.",
+    );
+    render({ ...facts, source_database_table_count: 0 });
+    expect(container.querySelector('[data-figure="source-database-tables"]')).toBeNull();
+  });
+
   it('still states the single-engine tables when no table has a replica', () => {
     render({ ...facts, replicated_table_count: 0, replicated_tables: [], written_table_count: 1 });
     expect(container.textContent).toContain('Sources of truth and replicas (1 written table)');

@@ -41,6 +41,7 @@ from src.shared.capability_labels import capability_label, flag_redesign_hints, 
 from src.shared.catalog.gaps import GAP_IMPACTS
 from src.shared.engine_names import (
     ENGINE_DISPLAY_NAMES,
+    SOURCE_DATABASE,
     SOURCE_ENGINE_DISPLAY_NAMES,
     display_engine,
 )
@@ -1806,14 +1807,55 @@ def flagged_unservable_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+# The kind of a query no engine in the customer's engine scope can serve (#1329).
+NO_ENGINE_IN_SCOPE = "no_engine_in_scope"
+
+
+def scope_unservable_rows(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """``report.json``'s ``scope_unservable`` rows (#1329) as ``unservable`` rows of
+    kind ``no_engine_in_scope``: no engine (``engine`` empty), the engine the
+    fallback rule names in ``closest_engine``, each in-scope engine's gate, by query
+    id. The migration risk register raises them from this same list, so the two agree."""
+    rows: list[dict[str, Any]] = []
+    for r in report.get("scope_unservable") or []:
+        if not isinstance(r, dict) or not r.get("query_id"):
+            continue
+        gates = [g for g in r.get("gates") or [] if isinstance(g, dict)]
+        rows.append(
+            {
+                "query_id": str(r["query_id"]),
+                "engine": "",
+                "kind": NO_ENGINE_IN_SCOPE,
+                "rule": str(r.get("rule") or ""),
+                "explanation": str(r.get("reason") or ""),
+                "blocking_gates": [
+                    {
+                        "engine": str(g.get("engine") or ""),
+                        "gate": str(g.get("gate") or ""),
+                        "gate_text": str(g.get("gate_text") or ""),
+                    }
+                    for g in gates
+                ],
+                "required_capabilities": [str(c) for c in r.get("required_capabilities") or []],
+                "closest_engine": str(r.get("closest_engine") or ""),
+                "source_tables": [str(t) for t in r.get("source_tables") or [] if t],
+            }
+        )
+    rows.sort(key=lambda r: r["query_id"])
+    return rows
+
+
 def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     """The queries no kept engine can serve (``UnservableFacts``), or None.
 
-    Four kinds: ``fallback`` and ``gated_everywhere`` from
-    ``query_traces.unservable`` (#729), and ``flagged`` and ``held`` from
+    Five kinds: ``fallback`` and ``gated_everywhere`` from
+    ``query_traces.unservable`` (#729), ``flagged`` and ``held`` from
     ``flagged_unservable`` (#888: a review flagged it and no other kept engine
     can take it, so it stays; #1033: a review flagged it and a customer pin
-    keeps its table's writes there, so it stays). None for a report with neither list. Each
+    keeps its table's writes there, so it stays), and ``no_engine_in_scope`` from
+    ``scope_unservable`` (#1329: no engine in the customer's engine scope can serve
+    it, so it has no engine; ``closest_engine`` names the one the scope left out).
+    None for a report with none of these lists. Each
     query keeps its own sentence for why it sits where it does, the gate that
     ruled out each engine, the capabilities it needs and a redesign hint for
     each (``capability_labels.redesign_hints``; the flag's reason category,
@@ -1823,11 +1865,14 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     digest = report.get("query_traces")
     traced = isinstance(digest, dict) and isinstance(digest.get("unservable"), list)
     flagged_list = report.get("flagged_unservable")
-    if not traced and not (isinstance(flagged_list, list) and flagged_list):
+    # #1329: the queries no engine in the customer's scope can serve (no engine).
+    scoped = scope_unservable_rows(report)
+    if not traced and not (isinstance(flagged_list, list) and flagged_list) and not scoped:
         return None
     traced_rows = digest["unservable"] if traced else []  # type: ignore[index]
     rows = [r for r in traced_rows if isinstance(r, dict) and r.get("query_id")]
     rows += _flagged_unservable_rows(report, {str(r["query_id"]) for r in rows})
+    rows += scoped
     rows.sort(key=lambda r: (str(r.get("engine") or ""), str(r["query_id"])))
     out: list[dict[str, Any]] = []
     for r in rows[:UNSERVABLE_SHOWN]:
@@ -1859,6 +1904,7 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
                 "required_capabilities": sorted(set(caps)),
                 "capability_labels": [capability_label(c) for c in sorted(set(caps))],
                 "redesign_hints": hints,
+                "closest_engine": str(r.get("closest_engine") or ""),
             }
         )
     kinds = [str(r.get("kind") or "fallback") for r in rows]
@@ -1869,6 +1915,15 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "flagged_query_count": kinds.count("flagged"),
         "held_query_count": kinds.count("held"),
         "no_fit_query_count": kinds.count("fallback") + kinds.count("gated_everywhere"),
+        "no_engine_in_scope_query_count": kinds.count(NO_ENGINE_IN_SCOPE),
+        # #1329: the engines those queries would fall back to, which the scope leaves out.
+        "no_engine_in_scope_closest_engines": sorted(
+            {
+                str(r.get("closest_engine"))
+                for r in rows
+                if r.get("kind") == NO_ENGINE_IN_SCOPE and r.get("closest_engine")
+            }
+        ),
         "unservable_queries": out,
         "more_unservable_count": max(len(rows) - UNSERVABLE_SHOWN, 0),
     }
@@ -1960,6 +2015,17 @@ def query_move_facts(report: dict[str, Any], engines: list[dict[str, Any]]) -> d
     return {"in_scope_query_count": in_scope, "moving_query_count": moving}
 
 
+def query_total_facts(report: dict[str, Any], in_scope_query_count: int) -> dict[str, int]:
+    """The queries with no engine in the customer's engine scope (#1329), in no engine's
+    count, and the total the headline names with them ("65 of 107 queries move; 42 have
+    no engine in scope"): ``in_scope_query_count`` plus that count."""
+    no_engine = len(scope_unservable_rows(report))
+    return {
+        "no_engine_in_scope_query_count": no_engine,
+        "query_total_count": in_scope_query_count + no_engine,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Queries and the distinct query patterns they make (#1146)
 # ---------------------------------------------------------------------------
@@ -2024,7 +2090,8 @@ def replica_risk_text(source: str, replicas: list[str], read_count: int) -> str:
     bound and the mitigation (#951). The reads are counted, not listed: their
     ids are ``replica_read_query_ids``, next to this text."""
     noun = "read" if read_count == 1 else "reads"
-    source_name = display_engine(source)
+    # #1329: the source database, not an engine, when the scope left its writes no engine.
+    source_name = "the source database" if source == SOURCE_DATABASE else display_engine(source)
     return (
         f"Eventually consistent: {read_count} {noun} on "
         f"{', '.join(display_engine(e) for e in replicas)} read a copy kept in sync from "
@@ -2119,6 +2186,15 @@ def table_source_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "more_replicated_count": max(len(replicated) - TABLE_SOURCES_SHOWN, 0),
         "single_engine_tables": single,
         "single_engine_table_count": len(single),
+        # #1329: tables whose writes have no engine in the customer's scope, so the
+        # source database stays their writer.
+        "source_database_table_count": sum(
+            1
+            for r in rows
+            if isinstance(r, dict)
+            and r.get("table")
+            and r.get("source_of_truth") == SOURCE_DATABASE
+        ),
     }
 
 
@@ -2612,7 +2688,9 @@ def compute_report_facts(
         "engines": engines,
         "tables_migrate": tables_migrate,
         # #1020: the executive report's "Queries moved" total.
-        **query_move_facts(report, engines),
+        **(moves := query_move_facts(report, engines)),
+        # #1329: the queries with no engine in the scope, and the headline total.
+        **query_total_facts(report, moves["in_scope_query_count"]),
         "workload_total_percent": _unrounded(sum(e["workload_percent"] or 0.0 for e in engines)),
         "engine_cost_total_usd": round(sum(costs), 2),
         "table_basis": table_basis(report, engines, waves),

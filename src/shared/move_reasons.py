@@ -25,7 +25,7 @@ from src.agents.referee.query_scoring import (
     GATE_KIND_MODEL_FLAG,
     GATE_KIND_WRITE,
 )
-from src.contracts.move_ledger import GroupGate, Move, MoveActor, ReasonCode
+from src.contracts.move_ledger import UNSERVABLE, GroupGate, Move, MoveActor, ReasonCode
 from src.shared.engine_names import display_engine
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "render_outscored",
     "render_runner_up",
     "render_trace_summary",
+    "trace_engine_name",
     "rule_label",
 ]
 
@@ -426,6 +427,25 @@ def _utility_engine_kind(move: Move) -> str:
     return "source-compatible" if move.evidence.source_compatible is True else "chosen"
 
 
+# The name a trace gives a query's place when no engine in the customer's engine scope
+# can serve it (#1329): never the ``unservable`` placeholder as if it were an engine.
+NO_ENGINE_IN_SCOPE = "No engine in scope"
+
+
+def trace_engine_name(engine: str) -> str:
+    """An engine's display name, or ``No engine in scope`` for ``UNSERVABLE`` (#1329)."""
+    return NO_ENGINE_IN_SCOPE if engine == UNSERVABLE else display_engine(engine)
+
+
+def _unservable_reason(move: Move) -> str:
+    """The sentence of a Move to ``unservable`` (#1329): no engine in the scope can
+    serve the query (or its group), and the out-of-scope engine it would fall back to."""
+    what = "every query of its group" if move.group_key else "it"
+    closest = move.evidence.closest_engine
+    tail = f" (closest: {display_engine(closest)}, outside the scope)" if closest else ""
+    return f"No engine in the customer's engine scope can serve {what}{tail}."
+
+
 def render_move_reason(move: Move) -> str:
     """One short plain-English sentence for why ``move`` landed where it did.
 
@@ -434,6 +454,8 @@ def render_move_reason(move: Move) -> str:
     earlier tie, group scores), and names engines with ``display_engine``.
     A Move that leaves the query tied adds the tie and its placeholder.
     """
+    if move.to_engine == UNSERVABLE:
+        return _unservable_reason(move)
     if move.from_engine is None:
         sentence = _first_assignment(move)
     elif move.from_engine == move.to_engine:
@@ -542,6 +564,14 @@ def render_trace_summary(
     review's flag (no score): the line says the reroute was tried and undone.
     """
     steps = f"after {step_count} routing step{'' if step_count == 1 else 's'}"
+    if final_engine == UNSERVABLE:
+        # #1329: the query has no engine; say why instead of naming a placeholder.
+        closest = last_move.evidence.closest_engine if last_move is not None else None
+        tail = f" (closest: {display_engine(closest)}, outside the scope)" if closest else ""
+        return (
+            f"Has no engine {steps}: no engine in the customer's engine scope can serve "
+            f"it{tail}."
+        )
     if (
         last_move is not None
         and last_move.reason_code == ReasonCode.ROLLBACK_REDESIGN_FAILED

@@ -39,6 +39,8 @@ Version History:
   ``gate.key_scoped_count`` (move ledger).
 - 1.6 (2026-10-21, #1292): No field of its own. Each routing's evidence gained the
   optional source_compatible (move ledger).
+- 1.7 (2026-10-23, #1329): No field of its own. Move evidence gained the optional
+  ``closest_engine`` (move ledger).
 """
 
 from __future__ import annotations
@@ -127,7 +129,7 @@ class RouterOutput(BaseModel):
     """Output contract for the post-schema router."""
 
     contract_version: str = Field(
-        default="1.6", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.7", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Job ID for traceability")

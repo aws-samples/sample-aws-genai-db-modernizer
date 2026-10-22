@@ -216,3 +216,69 @@ test('#1033: a facts block written before held queries has no held sentence', ()
   render();
   expect(container.textContent).not.toContain('pinned to that engine');
 });
+
+// #1329: a query no engine in the customer's engine scope can serve has no engine; the
+// callout names the engine the scope left out and says to start a new job to add it.
+const scopeFacts = {
+  unservable_query_count: 1,
+  fallback_query_count: 0,
+  gated_everywhere_query_count: 0,
+  flagged_query_count: 0,
+  held_query_count: 0,
+  no_fit_query_count: 0,
+  no_engine_in_scope_query_count: 1,
+  unservable_queries: [
+    {
+      query_id: 'q9',
+      engine: '',
+      kind: 'no_engine_in_scope',
+      rule: 'fallback.no_score',
+      explanation: "No engine in the customer's engine scope (DynamoDB) can serve this query.",
+      blocking_gates: [{ engine: 'dynamodb', gate: 'capability', gate_text: 'missing a capability the query needs' }],
+      required_capabilities: ['sql_admin'],
+      capability_labels: ['database administration statements'],
+      redesign_hints: [],
+      closest_engine: 'aurora_mysql',
+    },
+  ],
+  more_unservable_count: 0,
+};
+
+test('a query with no engine in the scope names the engine the scope left out', () => {
+  render({ synthesis: { facts: { unservable: { ...scopeFacts, no_engine_in_scope_closest_engines: ['aurora_mysql'] } } } });
+  const text = container.textContent;
+  expect(text).toContain('1 query that cannot be served as designed');
+  // Only this kind: its own intro and way to serve them, never the assignment review,
+  // which refuses to edit these queries.
+  expect(text).toContain(en['analysis-results.unservable.scope_intro']);
+  expect(text).not.toContain(en['analysis-results.unservable.intro']);
+  expect(text).not.toContain(en['analysis-results.unservable.rerun']);
+  expect(text).not.toContain(en['analysis-results.unservable.assignment-link']);
+  expect(text).not.toContain("change a query's engine");
+  expect(text).toContain('To serve them, start a new assessment whose scope adds Aurora MySQL, or keep them on the source database.');
+  expect(container.querySelector('[data-figure="unservable-engine"]').textContent)
+    .toBe('no engine (Aurora MySQL is outside the scope)');
+  expect(text).toContain('Start a new assessment whose scope adds Aurora MySQL, or keep it on the source database.');
+  expect(text).not.toContain('Keep it on');
+  expect(text).not.toContain('on undefined');
+});
+
+test('the scope kind next to another kind uses the "Some" sentences', () => {
+  const both = {
+    ...scopeFacts,
+    unservable_query_count: 3,
+    no_fit_query_count: 2,
+    fallback_query_count: 2,
+    unservable_queries: [...facts.unservable_queries, ...scopeFacts.unservable_queries],
+  };
+  render({ synthesis: { facts: { unservable: both } } });
+  const text = container.textContent;
+  expect(text).toContain(en['analysis-results.unservable.scope_some']);
+  expect(text).toContain(en['analysis-results.unservable.fallback_some']);
+  expect(text).toContain('on Aurora MySQL');
+  // Both ways to act: the assignment review for the queries on an engine, a new
+  // assessment for the ones with no engine in the scope.
+  expect(text).toContain(en['analysis-results.unservable.intro']);
+  expect(text).toContain(en['analysis-results.unservable.rerun']);
+  expect(text).toContain(en['analysis-results.unservable.rerun_scope_wider']);
+});

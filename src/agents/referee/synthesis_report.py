@@ -3193,6 +3193,18 @@ def build_summary(
                 for r in with_workload
             ]
             parts.append(f"Workload split: {', '.join(engine_parts)}.")
+        # #1329: the queries no engine in the customer's engine scope can serve have no
+        # engine, so the split above leaves them out; say how many, and why.
+        unservable = len((data.assignment or {}).get("unservable_queries") or [])
+        if unservable:
+            parts.append(
+                f"{unservable} of the {total_queries} queries "
+                f"{'has' if unservable == 1 else 'have'} no engine: no engine in the "
+                "customer's engine scope can serve "
+                f"{'it' if unservable == 1 else 'them'}, so "
+                f"{'it is' if unservable == 1 else 'they are'} listed as a blocking risk "
+                "and left out of the waves and the schema designs."
+            )
         cache = [r for r in ranking if is_cache_layer(r) and r.get("cache_overlay_queries")]
         for r in cache:
             n = r["cache_overlay_queries"]

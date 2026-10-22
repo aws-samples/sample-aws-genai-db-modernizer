@@ -314,6 +314,14 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
     by_role = read["table_basis"].pop("mapped_tables_by_role")
     stored["table_basis"].pop("mapped_tables_by_role")
     assert by_role == {"Migration target": 15, "Retained": 7}
+    # #1329: filled in for a block recorded before the count (no scope, so 0).
+    if "no_engine_in_scope_query_count" not in stored["unservable"]:
+        assert read["unservable"].pop("no_engine_in_scope_query_count") == 0
+        assert read["unservable"].pop("no_engine_in_scope_closest_engines") == []
+    # #1329: and the headline total with the queries that have no engine (none here).
+    if "query_total_count" not in stored:
+        assert read.pop("no_engine_in_scope_query_count") == 0
+        assert read.pop("query_total_count") == stored["in_scope_query_count"]
     assert read == stored
 
 

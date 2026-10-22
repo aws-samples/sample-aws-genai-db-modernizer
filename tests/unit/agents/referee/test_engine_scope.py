@@ -266,14 +266,17 @@ class TestTheFirstAssignment:
         )
         assert not pin.evidence.source_compatible
 
-    def test_a_query_no_engine_in_scope_can_serve_stops_the_run_naming_it(self):
+    def test_a_query_no_engine_in_scope_can_serve_is_unservable_never_forced(self):
         # SHOW TABLES has no in-scope relational engine to be pinned to; the Aurora
-        # fallback would put it on Aurora MySQL, outside the scope.
-        with pytest.raises(OutOfScopeAssignment, match="q2") as raised:
-            self._resolve(
-                "mysql", ["dynamodb", "documentdb"], [_query("q1"), _query("q2", "SHOW TABLES")]
-            )
-        assert "q2: Aurora MySQL is outside the scope" in str(raised.value)
+        # fallback would put it on Aurora MySQL, outside the scope. Since #1329 it is
+        # unservable (tests/unit/agents/referee/test_unservable_in_scope.py) instead of
+        # stopping the run.
+        assignment = self._resolve(
+            "mysql", ["dynamodb", "documentdb"], [_query("q1"), _query("q2", "SHOW TABLES")]
+        )
+        assert [qa.query_id for qa in assignment.query_assignments] == ["q1"]
+        assert [u.query_id for u in assignment.unservable_queries] == ["q2"]
+        assert assignment.unservable_queries[0].closest_engine == "aurora_mysql"
 
     def test_the_same_query_without_a_scope_still_falls_back(self):
         assignment = self._resolve(None, None, [_query("q2", "SHOW TABLES")])

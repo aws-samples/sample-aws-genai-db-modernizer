@@ -30,10 +30,16 @@ import { displayEngine } from '../utils/engineNames';
  * already in the order the reports name them, shown under the target engines as
  * "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)"; nothing shows
  * for a job with no scope (null) or a report written before it.
+ *
+ * `noEngineInScope` (#1329) is `{ count, placed, total }` from facts
+ * (no_engine_in_scope_query_count, in_scope_query_count, query_total_count): "65 of
+ * 107 queries placed on an engine; 42 have no engine in scope", and the projected cost
+ * says it excludes them; nothing shows when count is 0 or absent.
  */
 const ExecutiveSummaryStats = memo(({
   t, databaseName, accessPatternCount, ownerQueryCount, cachePatternCount,
   targetEngines, projectedCost, costBaseline, retiredEngines, queryPatterns, engineScope,
+  noEngineInScope,
 }) => {
   let patterns = '—';
   if (accessPatternCount > 0) patterns = accessPatternCount;
@@ -94,11 +100,29 @@ const ExecutiveSummaryStats = memo(({
             </span>
           </Box>
         )}
+        {noEngineInScope && noEngineInScope.count > 0 && (
+          <Box fontSize="body-s" color="text-body-secondary" padding={{ top: 'xxs' }}>
+            <span data-figure="no-engine-in-scope">
+              {t('analysis-results.executive-summary.no-engine-in-scope', {
+                count: noEngineInScope.count,
+                placed: noEngineInScope.placed,
+                total: noEngineInScope.total,
+              })}
+            </span>
+          </Box>
+        )}
       </div>
       {hasProjectedCost && (
         <div data-tile="projected-cost">
           <Box variant="awsui-key-label">{t('analysis-results.executive-summary.projected-cost')}</Box>
           <Box fontSize="heading-m" fontWeight="bold">{`$${projectedCost.toFixed(2)}/mo`}</Box>
+          {noEngineInScope && noEngineInScope.count > 0 && (
+            <Box fontSize="body-s" color="text-body-secondary">
+              <span data-figure="cost-excludes-no-engine">
+                {t('analysis-results.executive-summary.cost-excludes-no-engine', { count: noEngineInScope.count })}
+              </span>
+            </Box>
+          )}
         </div>
       )}
       {retiredList.length > 0 && (

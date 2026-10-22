@@ -103,7 +103,17 @@ from .roadmap import _SUGGESTED_PATH_NOTE, _moves_from_label, _wave_headline_sta
 from .roadmap import resolve_migration_waves as _resolve_waves
 from .table_owners import OWNER_RULE_SHORT, ownership_facts, ownership_summary_text
 from .unreviewed import unreviewed_moves_line
-from .unservable import UNSERVABLE_INTRO, UNSERVABLE_RERUN_TEXT, unservable_title
+from .unservable import (
+    UNSERVABLE_SCOPE_SOME,
+    cost_exclusion_text,
+    headline_query_total,
+    no_engine_clause,
+    placed_share_note,
+    unservable_intro,
+    unservable_kind_text,
+    unservable_rerun_lines,
+    unservable_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -824,6 +834,9 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
     if facts.get("engine_scope"):
         # #1328: the customer's engine scope, stated with the recommendation.
         flow += [_para(engine_scope_statement(facts["engine_scope"]) + ".", st["small"]), _gap(8)]
+    if placed_share_note(facts):
+        # #1329: what the engine shares below are of.
+        flow += [_para(placed_share_note(facts), st["small"]), _gap(8)]
     segments = [
         (_engine_color(e["engine"]), float(e["workload"]), display_engine(e["engine"]))
         for e in engines
@@ -891,6 +904,8 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         else []
     )
     cost_lines += [f"Retired by this plan: {statement}" for statement, _, _ in retired]
+    # #1329: the projection leaves out the queries with no engine in the scope.
+    cost_lines += [cost_exclusion_text(facts)] if cost_exclusion_text(facts) else []
     engines = facts.get("engines") or []
     removed = facts.get("removed_engines") or []
     removed_names = ", ".join(display_engine(r["engine"]) for r in removed)
@@ -900,7 +915,7 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         for r in removed
         if r.get("moved_to")
     ]
-    n_in = int(facts.get("in_scope_query_count") or 0)
+    n_in = headline_query_total(facts)
     migrated = int(facts.get("tables_migrate") or 0)
     tiles = [
         _tile(st, _fmt_usd(facts.get("projected_monthly_cost_usd")), L_COST, BLUE, cost_lines),
@@ -918,6 +933,8 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
             f"of {n_in} {plural_noun(n_in, 'query', 'queries')} {L_MOVED}",
             GREEN,
             [
+                # #1329: "65 of 107 queries move; 42 have no engine in scope".
+                *([f"{no_engine_clause(facts)}."] if no_engine_clause(facts) else []),
                 f"{migrated} {plural_noun(migrated, 'table')} "
                 f"{plural_verb(migrated, 'migrates', 'migrate')}",
                 # #1146: the in-scope queries as the query patterns they make.
@@ -1199,8 +1216,15 @@ def _decisions(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any
             _Panel(
                 [
                     _para(unservable_title(unservable["unservable_query_count"]), st["card_title"]),
-                    _para(UNSERVABLE_INTRO, st["body"]),
-                    _para(UNSERVABLE_RERUN_TEXT, st["small"]),
+                    _para(unservable_intro(unservable), st["body"]),
+                    # #1329: the queries with no engine in the customer's scope, next to
+                    # the other kinds (the intro states them when they are the only kind).
+                    *(
+                        [_para(UNSERVABLE_SCOPE_SOME, st["body"])]
+                        if UNSERVABLE_SCOPE_SOME in unservable_kind_text(unservable)
+                        else []
+                    ),
+                    *(_para(line, st["small"]) for line in unservable_rerun_lines(unservable)),
                 ],
                 ORANGE,
             )

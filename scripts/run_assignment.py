@@ -6,6 +6,8 @@ Usage:
 
 Outputs JSON to stdout:
     {"status": "complete", "distribution": {...}, "total_queries": N}
+    (plus "unservable_queries": M when the customer's engine scope leaves M queries no
+    engine, #1329)
 """
 
 import argparse
@@ -106,15 +108,19 @@ def main() -> None:
         engine = a.get("assigned_engine", "unknown")
         distribution[engine] = distribution.get(engine, 0) + 1
 
-    _output(
-        {
-            "status": "complete",
-            "distribution": distribution,
-            "total_queries": len(assignments_list),
-            # Queries the cache layer fronts (#296); never part of the distribution
-            "cache_overlay": assignment.get("cache_overlay"),
-        }
-    )
+    status = {
+        "status": "complete",
+        "distribution": distribution,
+        "total_queries": len(assignments_list),
+        # Queries the cache layer fronts (#296); never part of the distribution
+        "cache_overlay": assignment.get("cache_overlay"),
+    }
+    unservable = len(assignment.get("unservable_queries") or [])
+    if unservable:
+        # #1329: queries no engine in the customer's engine scope can serve (no
+        # engine, so never in the distribution or the total).
+        status["unservable_queries"] = unservable
+    _output(status)
 
 
 def _job_ctx():

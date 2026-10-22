@@ -483,6 +483,13 @@ Version History:
   most of its queries; never a cache-only engine), the engines that also read it through
   CDC replicas and its cache, with their counts. The Migration map split counts each row
   under its owner. Filled in for older reports.
+- 1.55 (2026-10-23, #1329): Added ``scope_unservable`` (``ScopeUnservableQuery``): the
+  queries no engine in the customer's engine scope can serve, from the effective
+  assignment. ``facts.unservable`` states them as a fifth kind, ``no_engine_in_scope``
+  (``UnservableFacts.no_engine_in_scope_query_count``,
+  ``UnservableQueryFact.closest_engine``, an empty ``engine``), and the risk rule
+  ``routing.no_engine_in_scope`` raises one blocking risk for them. Defaults to empty
+  and 0, so a report written before still loads.
 """
 
 from datetime import datetime
@@ -496,6 +503,7 @@ from src.contracts.assignment_models import (  # re-exported, see docstring belo
     PendingEngineChoice,
     PostSchemaReroute,
     UnresolvedNames,
+    UnservableQueryAssignment,
 )
 
 from .query_trace import QueryTraceDigest, QueryTraceListing
@@ -1396,8 +1404,14 @@ class UnservableQueryFact(BaseModel):
     engine fit (#729), or flagged and kept where it is (#888)."""
 
     query_id: str
-    engine: str = Field(..., description="The engine it ends on (id)")
-    kind: str = Field(..., description="fallback, gated_everywhere, flagged (#888) or held (#1033)")
+    engine: str = Field(..., description="The engine it ends on (id); empty when it has none")
+    kind: str = Field(
+        ...,
+        description=(
+            "fallback, gated_everywhere, flagged (#888), held (#1033) or no_engine_in_scope "
+            "(#1329: no engine, so engine is empty)"
+        ),
+    )
     rule: str = Field("", description="The deciding step's rule (machine id)")
     explanation: str = Field("", description="Why it sits there, the trace's own sentence")
     blocking_gates: list[UnservableGateFact] = Field(default_factory=list)
@@ -1407,6 +1421,13 @@ class UnservableQueryFact(BaseModel):
     )
     redesign_hints: list[str] = Field(
         default_factory=list, description="How to redesign it, one sentence each"
+    )
+    closest_engine: str = Field(
+        "",
+        description=(
+            "For no_engine_in_scope (#1329): the engine it would fall back to, which the "
+            "customer's engine scope leaves out; empty otherwise"
+        ),
     )
 
 
@@ -1449,6 +1470,17 @@ class FlaggedUnservableQuery(BaseModel):
     )
 
 
+class ScopeUnservableQuery(UnservableQueryAssignment):
+    """A query no engine in the customer's engine scope can serve (#1329): the
+    assignment's ``unservable_queries`` entry, with the capabilities triage found it
+    needs. It has no engine, is in no wave or design, and is a blocking risk
+    (``routing.no_engine_in_scope``)."""
+
+    required_capabilities: list[str] = Field(
+        default_factory=list, description="The hard capabilities triage found it needs (ids)"
+    )
+
+
 class UnservableFacts(BaseModel):
     """Queries no kept engine can serve: the ones on a fallback engine (#729), from
     ``query_traces.unservable``, and the flagged ones that stay put (#888), from
@@ -1478,6 +1510,21 @@ class UnservableFacts(BaseModel):
         description=(
             "No analyzed engine fit it: placed by a fallback rule or gated everywhere "
             "(fallback_query_count + gated_everywhere_query_count, #888)"
+        ),
+    )
+    no_engine_in_scope_query_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "No engine in the customer's engine scope can serve it, so it has no engine "
+            "(#1329, scope_unservable): kept out of every engine's query count and cost"
+        ),
+    )
+    no_engine_in_scope_closest_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The engines those queries would fall back to, which the scope leaves out "
+            "(#1329), sorted; the deliverables name them in how to serve the queries"
         ),
     )
     unservable_queries: list[UnservableQueryFact] = Field(
@@ -1575,7 +1622,13 @@ class ReplicatedTableFact(BaseModel):
     """A written table whose reads run on a replica (#992)."""
 
     table: str
-    source_of_truth: str = Field(..., description="The engine its writes land on (id)")
+    source_of_truth: str = Field(
+        ...,
+        description=(
+            "The engine its writes land on (id), or ``source_database`` when no engine in "
+            "the customer's engine scope can serve them (#1329)"
+        ),
+    )
     replica_engines: list[str] = Field(
         default_factory=list, description="The replica engines (ids); CDC runs to each"
     )
@@ -1614,6 +1667,16 @@ class TableSourceFacts(BaseModel):
         description="Written tables every query of which runs on the source of truth",
     )
     single_engine_table_count: int = Field(0, ge=0)
+    source_database_table_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Written tables whose every write has no engine in the customer's engine scope "
+            "(#1329): the source database stays their writer (source_of_truth "
+            "``source_database``), and each engine that reads one holds a replica kept in "
+            "sync from it"
+        ),
+    )
 
 
 class TableOwnershipRow(BaseModel):
@@ -1762,6 +1825,23 @@ class ReportFacts(BaseModel):
         description=(
             "Of them, the queries on a migration target or a search read model: they leave "
             "the source engine (#1020)"
+        ),
+    )
+    no_engine_in_scope_query_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Queries no engine in the customer's engine scope can serve (#1329): in no "
+            "engine's count, workload share or cost"
+        ),
+    )
+    query_total_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "in_scope_query_count plus no_engine_in_scope_query_count: the denominator the "
+            "headline names when some queries have no engine (#1329). None in a report "
+            "written before it"
         ),
     )
     workload_total_percent: float = Field(0.0, ge=0)
@@ -1950,7 +2030,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.54",
+        default="1.55",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -2121,6 +2201,14 @@ class SynthesisOutputContract(BaseModel):
         description=(
             "Flagged queries no kept engine can take (#888): a reality-check flag it "
             "kept and a post-schema router terminal query, by engine and query id"
+        ),
+    )
+    scope_unservable: list[ScopeUnservableQuery] = Field(
+        default_factory=list,
+        description=(
+            "Queries no engine in the customer's engine scope can serve (#1329), from the "
+            "effective assignment's unservable_queries, by query id. Empty with no scope "
+            "and in a report written before them"
         ),
     )
     post_schema_reroutes: list[PostSchemaReroute] | None = Field(

@@ -136,6 +136,12 @@ Version History:
 - 1.10 (2026-10-21, #1292): Added the optional MoveEvidence.source_compatible: whether a
   utility pin's engine is the source's own dialect, so a heterogeneous source is never
   called source-compatible; records without it still load.
+- 1.11 (2026-10-23, #1329): Added ``MovePass.UNSERVABLE`` (``unservable``), the
+  ``UNSERVABLE`` destination and the optional ``MoveEvidence.closest_engine``: a query
+  no engine in the customer's engine scope can serve is a Move to ``unservable`` (rule:
+  the fallback rule that found no engine), never onto an engine; the engine that rule
+  names, outside the scope, is recorded for context. Additive; records without them
+  still load.
 """
 
 from __future__ import annotations
@@ -143,6 +149,11 @@ from __future__ import annotations
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# The ``to_engine`` of a Move whose query no engine in the customer's engine scope can
+# serve (#1329): not an engine. The query leaves ``query_assignments`` for
+# ``Assignment.unservable_queries``, and replaying the Moves gives it this state.
+UNSERVABLE = "unservable"
 
 
 class MovePass(str, Enum):
@@ -173,6 +184,9 @@ class MovePass(str, Enum):
     # --auto's "decide for me" pick for a pending engine choice (Decision 12
     # Amendment 10, #1003).
     AUTO_PICK = "auto_pick"
+    # No engine in the customer's engine scope can serve the query (Decision 2
+    # Amendment 15, #1329): it moves to ``UNSERVABLE``, never onto an engine.
+    UNSERVABLE = "unservable"
 
 
 class ReasonCode(str, Enum):
@@ -389,6 +403,13 @@ class MoveEvidence(BaseModel):
             "the destination engine, with the table and its source of truth. Empty otherwise"
         ),
     )
+    closest_engine: str | None = Field(
+        None,
+        description=(
+            "For an unservable Move (#1329): the engine the fallback rule names, which the "
+            "customer's engine scope leaves out; context only, never assigned. None otherwise"
+        ),
+    )
 
 
 class Move(BaseModel):
@@ -411,7 +432,13 @@ class Move(BaseModel):
     from_engine: str | None = Field(
         None, description="The engine the query left; None for its first assignment"
     )
-    to_engine: str = Field(..., description="The engine the query landed on")
+    to_engine: str = Field(
+        ...,
+        description=(
+            "The engine the query landed on; 'unservable' (UNSERVABLE) when no engine in "
+            "the customer's engine scope can serve it (#1329)"
+        ),
+    )
     score_before: float | None = Field(
         None, description="The query's score on from_engine; None for a first assignment"
     )

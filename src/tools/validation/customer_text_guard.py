@@ -126,6 +126,9 @@ ID_FIELDS = frozenset(
         "moved_to",  # ReportFacts.removed_engines[].moved_to (#615)
         "engines_in_use",  # SynthesisOutputContract.engines_in_use: raw engine ids (#1076)
         "signal_overrides",  # ReportFacts.engines[].signal_overrides: raw signal ids (#584)
+        # #1329: the out-of-scope engine an unservable query would fall back to
+        # (MoveEvidence, UnservableQueryAssignment, ScopeUnservableQuery, UnservableQueryFact).
+        "closest_engine",
         # Rule/pattern ids (exclusion rule ids, generated pattern ids like
         # "relational-aurora_mysql-<query_id>"): internal identifiers, not prose.
         "rule_id",  # ExclusionResult.rule_id (decision-trace shape)
@@ -328,6 +331,16 @@ ID_FIELD_PATHS = frozenset(
         ("unservable_queries", "required_capabilities"),  # capability ids
         ("blocking_gates", "engine"),  # UnservableGate.engine / UnservableGateFact.engine
         ("blocking_gates", "gate"),  # gate kind code
+        # Assignment.unservable_queries (UnservableQueryAssignment, #1329) and report.json
+        # scope_unservable (ScopeUnservableQuery): the rule and group codes, each in-scope
+        # engine's gate and the capability ids. Their ``reason`` and ``gate_text`` (built
+        # with display_engine) are scanned.
+        ("unservable_queries", "group_key"),  # the group's 12-hex hash
+        ("scope_unservable", "rule"),  # ReasonCode rule id
+        ("scope_unservable", "group_key"),
+        ("scope_unservable", "required_capabilities"),  # capability ids
+        ("gates", "engine"),  # UnservableGate.engine
+        ("gates", "gate"),  # UnservableGate.gate (gate kind code)
         # facts.relational_gaps (RelationalGapFacts, #471): the target engine id and
         # each gap's evidence ids (tables, queries, objects). feature, reason and docs
         # are the catalog's sentences and are scanned.

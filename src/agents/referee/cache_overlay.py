@@ -715,7 +715,12 @@ def normalize_cache_owners(
     appended to ``assignment["moves"]``, after the version's own, so it still
     replays from its input.
     """
-    from src.agents.referee.move_ledger import apply_to_assignment, ledger_continuing
+    from src.agents.referee.engine_scope import scope_of, unservable_gates, unservable_record
+    from src.agents.referee.move_ledger import (
+        apply_to_assignment,
+        ledger_continuing,
+        unservable_in_assignment,
+    )
 
     qas = assignment.get("query_assignments") or []
     legacy = [qa for qa in qas if qa.get("assigned_engine") in CACHE_OVERLAY_ENGINES]
@@ -741,12 +746,37 @@ def normalize_cache_owners(
     moved: Counter = Counter()
     kept = 0
     cache = legacy[0]["assigned_engine"]
+    scope = scope_of(triage)
+    unservable = 0
     for qa in legacy:
         q = by_id.get(qa.get("query_id"))
         decision = owner_decision(
             q, engines, source_engine, counts, triage=triage, collector=collector, ctx=ctx
         )
         owner, fallback_reason = decision.owner, decision.fallback_reason
+        if scope is not None and owner not in scope:
+            # #1329 (the #1331 review's note): the fallback owner is outside the
+            # customer's engine scope, so no engine in it can own the query; it is
+            # unservable, never forced onto that engine.
+            fields = owner_move_fields(decision)
+            unservable_in_assignment(
+                ledger,
+                assignment,
+                qa,
+                unservable_record(
+                    str(qa.get("query_id")),
+                    qa.get("source_tables") or [],
+                    rule=fields["reason_code"].value,
+                    scope=scope,
+                    closest_engine=owner,
+                    gates=unservable_gates(fields["evidence"].candidates),
+                ),
+                reason_code=fields["reason_code"],
+                closest_engine=owner,
+                evidence=fields["evidence"],
+            )
+            unservable += 1
+            continue
         # #572: owned by {display_engine(owner)}, never the raw id -- fallback_reason
         # (the no-serviceable-candidate sentence) already names its engine this way.
         owner_clause = fallback_reason or f"owned by {display_engine(owner)}"
@@ -774,10 +804,20 @@ def normalize_cache_owners(
     note = (
         f"{len(legacy)} {'query' if len(legacy) == 1 else 'queries'} owned by "
         f"{display_engine(cache)} in an assignment written before the cache overlay moved to "
-        "a system-of-record engine ("
-        + ", ".join(f"{display_engine(e)} {n}" for e, n in sorted(moved.items()))
-        + f"); {kept} stay cached as hot reads, the rest are no longer cached."
+        "a system-of-record engine"
+        + (
+            " (" + ", ".join(f"{display_engine(e)} {n}" for e, n in sorted(moved.items())) + ")"
+            if moved
+            else ""
+        )
+        + f"; {kept} stay cached as hot reads, the rest are no longer cached."
     )
+    if unservable:
+        note += (
+            f" {unservable} {'has' if unservable == 1 else 'have'} no engine in the "
+            "customer's engine scope and no engine is assigned."
+        )
+    qas = assignment.get("query_assignments") or []
     notes = assignment.setdefault("cache_notes", [])
     if note not in notes:
         notes.append(note)

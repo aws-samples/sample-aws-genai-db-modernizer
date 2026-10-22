@@ -62,10 +62,19 @@ from src.agents.referee.co_dependency import (
     group_engine_scores,
     is_significant_join,
 )
-from src.agents.referee.engine_scope import check_in_scope, scope_aurora_choice, scope_of
+from src.agents.referee.engine_scope import (
+    check_in_scope,
+    scope_aurora_choice,
+    scope_of,
+    unservable_gates,
+    unservable_record,
+    without_unservable_groups,
+)
 from src.agents.referee.move_ledger import (
+    UNSERVABLE,
     MoveLedger,
     apply,
+    apply_unservable,
     best_other,
     candidate_ladder,
     check_replay,
@@ -109,6 +118,7 @@ from src.contracts.assignment_models import (
     AuroraEngineChoice,
     CacheOverlaySummary,
     QueryAssignment,
+    UnservableQueryAssignment,
 )
 from src.contracts.move_ledger import (
     CapabilityWaiver,
@@ -767,6 +777,24 @@ class AssignmentResolver:
                 tie_key=",".join(sorted(fallback_qids)),
             )
             fallback_tied = sorted(AURORA_ENGINES & fallback_pool)
+            # #1329 (ADR-031 Decision 2 Amendment 15): the fallback engine is outside
+            # the customer's engine scope, so no engine in it can serve these queries.
+            # Each is a Move to ``unservable``, never forced onto that engine, and
+            # leaves the assignment's queries; a group goes as one, as it would have
+            # fallen back as one (Decision 4, Amendment 9).
+            if scope is not None and aurora_fallback not in scope:
+                for qid in fallback_qids:
+                    apply_unservable(
+                        ledger,
+                        qid,
+                        reason_code=fallback_reason[qid],
+                        closest_engine=aurora_fallback,
+                        evidence=_evidence(
+                            query_by_id[qid], group_gates=fallback_group_gates.get(qid, ())
+                        ),
+                        group_key=fallback_group.get(qid),
+                    )
+                fallback_qids = []
             for qid in fallback_qids:
                 apply(
                     ledger,
@@ -1042,12 +1070,15 @@ class AssignmentResolver:
 
         # Step 8: Cache overlay (#296): hot bounded reads get cache_engine; the
         # owner stays the engine assigned above.
+        # #1329: a query with no engine in the scope is not assigned, so it is left
+        # out of the overlay and of every view below.
+        servable = [q for q in queries if ledger.engines[q["query_id"]] != UNSERVABLE]
         overlay_dicts = apply_cache_overlay(
             [
                 {"query_id": q["query_id"], "assigned_engine": ledger.engines[q["query_id"]]}
-                for q in queries
+                for q in servable
             ],
-            queries,
+            servable,
             analysis_outputs.keys(),
             source_database_engine(collector_output),
         )
@@ -1061,9 +1092,35 @@ class AssignmentResolver:
 
         # Build query assignments
         query_assignments: list[QueryAssignment] = []
+        unservable: list[UnservableQueryAssignment] = []
         for query in queries:
             qid = query["query_id"]
             engine = ledger.engines[qid]
+            if engine == UNSERVABLE:
+                # #1329: no engine in the scope; its record names the gates and the
+                # out-of-scope engine the fallback rule would have used.
+                move = next(m for m in reversed(ledger.moves) if m.query_id == qid)
+                unservable.append(
+                    UnservableQueryAssignment.model_validate(
+                        unservable_record(
+                            qid,
+                            query_tables.get(qid, []),
+                            rule=move.reason_code.value,
+                            scope=scope or (),
+                            closest_engine=move.evidence.closest_engine,
+                            gates=unservable_gates(
+                                move.evidence.candidates, move.evidence.group_gates
+                            ),
+                            group_key=move.group_key,
+                            group=(
+                                ("write group" if qid in write_members else "co-dependency group")
+                                if move.group_key
+                                else None
+                            ),
+                        )
+                    )
+                )
+                continue
             confidence = assigned_confidence.get(qid, 0)
             reason = assigned_reason.get(qid, f"highest fit for {display_engine(engine)}")
 
@@ -1102,15 +1159,20 @@ class AssignmentResolver:
             write_groups=write_groups,
         )
 
-        # Flatten co-dep groups to list of lists of query_ids
-        co_dep_lists = [list(g) for g in co_dep_groups]
+        # Flatten co-dep groups to list of lists of query_ids. A group (and a table's
+        # write group) is unservable as one unit (#1329), so a group with no assigned
+        # member is left out: every view of the groups reads assigned queries only.
+        co_dep_lists, write_groups = without_unservable_groups(
+            co_dep_groups, write_groups, unservable
+        )
 
         # #616 (ADR-031 Amendment 3): v1 must replay from its own Moves, the same
-        # write-time check every later version passes.
-        check_replay(ledger.moves, {}, state_of(query_assignments), "first assignment")
+        # write-time check every later version passes; an unservable query replays to
+        # ``unservable`` (#1329).
+        check_replay(ledger.moves, {}, state_of(query_assignments, unservable), "first assignment")
         # #1327: no engine outside the customer's engine scope is ever assigned; a
-        # query only an out-of-scope engine (the Aurora fallback) would take stops the
-        # run, named, instead of being forced onto it.
+        # query only an out-of-scope engine (the Aurora fallback) would take is
+        # unservable (#1329), with no engine for this check to refuse.
         check_in_scope(query_assignments, scope, "first assignment")
 
         return Assignment(
@@ -1127,6 +1189,7 @@ class AssignmentResolver:
             cache_overlay=_overlay_model(overlay_summary(overlay_dicts, queries)),
             unresolved_table_names=unresolved_table_names,
             aurora_engine_choice=aurora_engine_choice,
+            unservable_queries=unservable,
             moves=ledger.moves,
         )
 

@@ -70,7 +70,13 @@ from .table_owners import (
     target_cell,
 )
 from .unreviewed import unreviewed_moves_md
-from .unservable import unservable_md
+from .unservable import (
+    cost_exclusion_text,
+    headline_query_total,
+    no_engine_clause,
+    placed_share_note,
+    unservable_md,
+)
 
 # Stated once, after the summary: the retired decision report's closing words (#987).
 NO_MODEL_DECIDES_NOTE = (
@@ -593,13 +599,19 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
         out.append("")
         # #1020: the executive report's "Queries moved" tile, the same stored fact.
         moving = int(facts.get("moving_query_count") or 0)
-        n_in = int(facts.get("in_scope_query_count") or 0)
+        n_in = headline_query_total(facts)
+        # #1329: the queries with no engine in the scope, named in the same headline.
+        no_engine = no_engine_clause(facts)
         out += [
             f"Queries moved: {moving} of {n_in} {plural_noun(n_in, 'query', 'queries')} "
             f"{plural_verb(moving, 'moves', 'move')} to a new engine (a migration target or "
-            "a search read model); the rest stay on the engine that runs them today.",
+            "a search read model)"
+            + (f"; {no_engine}" if no_engine else "")
+            + "; the rest stay on the engine that runs them today.",
             "",
         ]
+        if placed_share_note(facts):
+            out += [placed_share_note(facts), ""]
         # #1146: the same in-scope queries, as the query patterns they make.
         out += query_patterns_md(report)
         notes = _engine_role_notes_md(
@@ -840,6 +852,8 @@ def render_engineering_report_md(
         )
         if known:
             out.append(f"- Savings: {escaping.md_text(savings_text)}")
+        if cost_exclusion_text(facts):
+            out.append(f"- {cost_exclusion_text(facts)}")
         # #1076: an engine the source runs today that the plan retires, stated once.
         for statement, reason, _name in _retired_in_use_lines(facts):
             line = f"Retired by this plan: {statement}."

@@ -11,4 +11,8 @@ import { ENGINE_LABELS } from './engineCatalog.generated';
 
 export { ENGINE_LABELS };
 
-export const displayEngine = (engine) => ENGINE_LABELS[engine] || engine;
+// #1329: the writer of a table whose writes have no engine in the customer's scope;
+// not an engine, only a source_of_truth value (src/shared/engine_names.py SOURCE_DATABASE).
+const SOURCE_DATABASE_LABEL = { source_database: 'Source database' };
+
+export const displayEngine = (engine) => ENGINE_LABELS[engine] || SOURCE_DATABASE_LABEL[engine] || engine;

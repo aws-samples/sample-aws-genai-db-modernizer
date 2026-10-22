@@ -196,3 +196,25 @@ describe('the engine scope line', () => {
     });
   });
 });
+
+// #1329: the queries with no engine in the customer's engine scope, in the headline
+// and next to the projected cost, from the facts the reports print.
+describe('the no-engine-in-scope line', () => {
+  test('names the placed, total and no-engine counts and the cost exclusion', () => {
+    render({ projectedCost: 98.41, noEngineInScope: { count: 42, placed: 65, total: 107 } });
+    expect(container.querySelector('[data-figure="no-engine-in-scope"]').textContent).toBe(
+      "65 of 107 queries placed on an engine; 42 have no engine in the customer's engine scope",
+    );
+    expect(container.querySelector('[data-figure="cost-excludes-no-engine"]').textContent).toBe(
+      "Excludes the 42 queries with no engine in the customer's engine scope, which keep running on the source database.",
+    );
+  });
+
+  test('shows nothing when every query has an engine', () => {
+    [null, undefined, { count: 0, placed: 107, total: 107 }].forEach((noEngineInScope) => {
+      render({ projectedCost: 98.41, noEngineInScope });
+      expect(container.querySelector('[data-figure="no-engine-in-scope"]')).toBeNull();
+      expect(container.querySelector('[data-figure="cost-excludes-no-engine"]')).toBeNull();
+    });
+  });
+});

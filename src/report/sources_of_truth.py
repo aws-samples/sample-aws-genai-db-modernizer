@@ -117,6 +117,10 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
             + ".",
             "",
         ]
+    kept = facts.get("source_database_table_count") or 0
+    if kept:
+        # #1329: their writes have no engine in the customer's engine scope.
+        out += [source_database_text(kept), ""]
     split = facts.get("split_write_table_count") or 0
     if split:
         out += [
@@ -126,3 +130,14 @@ def sources_of_truth_md(report: dict[str, Any]) -> list[str]:
             "",
         ]
     return out
+
+
+def source_database_text(n: int) -> str:
+    """The sentence for the tables the source database keeps writing (#1329); the
+    same sentence as the UI (analysis-results.sources-of-truth.source-database)."""
+    return (
+        f"The source database stays the writer of {n} {plural_noun(n, 'table')}: no engine "
+        f"in the customer's engine scope can serve {plural_noun(n, 'its', 'their')} writes. "
+        f"Each engine that reads {plural_noun(n, 'it', 'one')} holds a replica kept in sync "
+        "from the source database."
+    )

@@ -226,3 +226,16 @@ export function engineChoiceCountsOf(synthesis) {
     decidedQueries: n('auto_decided_query_count'),
   };
 }
+
+// #1329: the queries with no engine in the customer's engine scope, with the placed
+// and total counts the headline names (facts.no_engine_in_scope_query_count,
+// in_scope_query_count, query_total_count), or null when none or a report predates them.
+export function noEngineInScopeOf(synthesis) {
+  const f = factsOf(synthesis);
+  if (!f || !f.no_engine_in_scope_query_count) return null;
+  return {
+    count: f.no_engine_in_scope_query_count,
+    placed: f.in_scope_query_count,
+    total: f.query_total_count,
+  };
+}

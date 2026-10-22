@@ -38,6 +38,14 @@ def without_placeholder_engines(analysis_outputs: dict[str, dict]) -> dict[str, 
     return {e: a for e, a in analysis_outputs.items() if e not in PLACEHOLDER_ENGINES}
 
 
+# A table's writer when no engine in the customer's engine scope can serve any of its
+# writes (#1329, ADR-031 Amendment 15): the source database keeps them, and each
+# engine that reads the table holds a replica kept in sync from it. Not an engine:
+# never assigned, never in the catalog, only a ``source_of_truth`` value.
+SOURCE_DATABASE = "source_database"
+SOURCE_DATABASE_NAME = "Source database"
+
+
 def display_engine(engine: str) -> str:
     """Display name for ``engine``, or a title-cased fallback if it is not known.
 
@@ -48,6 +56,8 @@ def display_engine(engine: str) -> str:
     """
     if engine in ENGINE_DISPLAY_NAMES:
         return ENGINE_DISPLAY_NAMES[engine]
+    if engine == SOURCE_DATABASE:
+        return SOURCE_DATABASE_NAME
     return engine.replace("_", " ").title() if engine else engine
 
 

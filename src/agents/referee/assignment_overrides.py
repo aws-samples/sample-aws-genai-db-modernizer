@@ -47,6 +47,7 @@ from src.agents.referee.engine_scope import (
     check_in_scope,
     scope_of,
     scope_text,
+    without_unservable_groups,
 )
 from src.agents.referee.move_ledger import (
     MoveLedger,
@@ -336,6 +337,30 @@ class OutOfScopeOverride(AssignmentOverrideError):
             f"Query {query_id}: {display_engine(engine)} is not in the customer's engine "
             f"scope ({scope_text(self.scope)}), and a job's scope is fixed once it starts. "
             f"Start a new job whose scope adds {display_engine(engine)} to {what}."
+        )
+
+
+class UnservableQueryOverride(AssignmentOverrideError):
+    """An edit of a query no engine in the customer's engine scope can serve (#1329).
+
+    It has no engine, and every engine the scope lists was ruled out for it, so a pick,
+    a cache pin or a scope toggle has nothing to act on; an engine outside the scope is
+    never forced on it. Refused before anything is applied, naming the engine it would
+    fall back to and how to widen the scope (a new job, since a job's scope is fixed)."""
+
+    def __init__(self, query_id: str, closest_engine: str | None, scope: Iterable[str]) -> None:
+        self.query_id = query_id
+        self.closest_engine = closest_engine
+        self.scope = sorted(scope)
+        widen = (
+            f"start a new job whose scope adds {display_engine(closest_engine)}"
+            if closest_engine
+            else "start a new job with a wider scope"
+        )
+        super().__init__(
+            f"Query {query_id} has no engine: no engine in the customer's engine scope "
+            f"({scope_text(self.scope)}) can serve it, so it cannot be edited here. A job's "
+            f"scope is fixed once it starts: to serve it, {widen}."
         )
 
 
@@ -691,8 +716,16 @@ def apply_assignment_overrides(
     # engine is never an owner (#296): naming it, or ``cached``, pins the cache
     # overlay and keeps the owner.
     scope = scope_of(triage)
+    # #1329: the queries no engine in the scope can serve have no engine to edit.
+    unservable = {u.query_id: u for u in current.unservable_queries}
     for override in overrides:
         qa = qa_map.get(override.query_id)
+        if qa is None and override.query_id in unservable:
+            raise UnservableQueryOverride(
+                override.query_id,
+                unservable[override.query_id].closest_engine,
+                scope or (),
+            )
         if qa is None:
             raise UnknownQuery(override.query_id)
         # #1327: a pick or a cache pin never leaves the customer's engine scope.
@@ -1364,13 +1397,17 @@ def _recompute_derived_views(assignment: Assignment, collector_output: dict) -> 
         ),
         write_groups=write_groups,
     )
-    assignment.write_groups = write_groups
+    # #1329: a group with no assigned member (unservable as one unit) is left out.
+    assignment.co_dependency_groups, assignment.write_groups = without_unservable_groups(
+        build_co_dependency_groups(
+            collector_output.get("queries", {}).get("query_patterns", []),
+            collector_output.get("database_schema", {}).get("tables", []),
+        ),
+        write_groups,
+        assignment.unservable_queries,
+    )
     assignment.table_assignments = table_assignments
     assignment.unresolved_table_names = unresolved_table_names
-    assignment.co_dependency_groups = build_co_dependency_groups(
-        collector_output.get("queries", {}).get("query_patterns", []),
-        collector_output.get("database_schema", {}).get("tables", []),
-    )
 
 
 def refresh_consolidated_assignment(
@@ -1442,8 +1479,10 @@ def refresh_consolidated_assignment(
 
     out = dict(raw)
     out["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
-    out["co_dependency_groups"] = co_dependency_groups
-    out["write_groups"] = write_groups
+    # #1329: a group with no assigned member (unservable as one unit) is left out.
+    out["co_dependency_groups"], out["write_groups"] = without_unservable_groups(
+        co_dependency_groups, write_groups, raw.get("unservable_queries") or []
+    )
     out["validation_warnings"] = validation.warnings
     out["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
     query_patterns = collector_output.get("queries", {}).get("query_patterns", [])

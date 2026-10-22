@@ -41,6 +41,11 @@ rule                       severity  raised when
                                      engine can take (``flagged_unservable``, #1148); one risk
                                      per engine
                            MEDIUM    every such query is held there by a customer pin
+``routing.no_engine_in_scope``
+                           HIGH      no engine in the customer's engine scope can serve queries
+                                     (``scope_unservable``, #1329): they have no engine, no wave
+                                     and no design, and are never forced onto one; one risk,
+                                     at cutover (no wave)
 ``cache.dropped``          MEDIUM    the cache safety net dropped reads the plan cached
 ``cache.unsupported``      MEDIUM    the cache layer's design lists unsupported patterns (an
                                      engine that only fronts reads is never raised by the
@@ -113,6 +118,7 @@ from src.shared.migration_risk_rules import (
     make_risk,
     number_risks,
     relational_gap_risks,
+    scope_unservable_risks,
     wave_gate_strategies,
     wave_of_engine,
 )
@@ -887,6 +893,7 @@ def build_migration_risks(
     table_sources: list[dict[str, Any]] | None = None,
     flagged_unservable: list[dict[str, Any]] | None = None,
     relational_gaps: Mapping[str, Any] | None = None,
+    scope_unservable: list[dict[str, Any]] | None = None,
     redesign_requirements: Iterable[Mapping[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
@@ -901,7 +908,8 @@ def build_migration_risks(
     ``table_sources`` is report.json's ``table_sources`` (None for an
     assignment written before write groups); ``flagged_unservable`` its
     ``flagged_unservable`` rows (#888, #1148); ``relational_gaps`` the gap check
-    ``facts.relational_gaps`` stores (#1079, #1149); ``redesign_requirements``
+    ``facts.relational_gaps`` stores (#1079, #1149); ``scope_unservable`` report.json's
+    ``scope_unservable`` rows (#1329); ``redesign_requirements``
     the queries routing scored after redesign, each with its engine (#1231); ``source_engine`` is the
     dialect the queries' text is read in.
     """
@@ -931,6 +939,9 @@ def build_migration_risks(
             ctx.tables_of,
         ),
         *relational_gap_risks(relational_gaps, ctx.waves),
+        # #1329: the queries no engine in the customer's scope can serve, last, as the
+        # render-time backfill (``report_fact_risks``) orders them.
+        *scope_unservable_risks({"scope_unservable": scope_unservable or []}),
     ]
     return number_risks(risks, start_id)
 

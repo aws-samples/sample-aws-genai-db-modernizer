@@ -90,7 +90,7 @@
       "reality_check",
       "source_of_truth_reroute"
     ],
-    "version": "1.22"
+    "version": "1.23"
   },
   "assignment_models.AssignmentStatus": {
     "module": "assignment_models",
@@ -102,7 +102,7 @@
       "reroute_rolled_back",
       "rerouted_after_approval"
     ],
-    "version": "1.22"
+    "version": "1.23"
   },
   "capability_ids": {
     "module": "triage_output",
@@ -603,7 +603,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "1.22"
+    "version": "1.23"
   },
   "feasibility_models.FindingKind": {
     "module": "feasibility_models",
@@ -653,7 +653,7 @@
       "model_flag",
       "rule"
     ],
-    "version": "1.10"
+    "version": "1.11"
   },
   "move_ledger.MovePass": {
     "module": "move_ledger",
@@ -676,9 +676,10 @@
       "signal_override",
       "sweep",
       "tie",
+      "unservable",
       "utility_pin"
     ],
-    "version": "1.10"
+    "version": "1.11"
   },
   "move_ledger.ReasonCode": {
     "module": "move_ledger",
@@ -711,7 +712,7 @@
       "tie.source_compatible",
       "tie.stability"
     ],
-    "version": "1.10"
+    "version": "1.11"
   },
   "opensearch_decision_trace.OpenSearchWorkloadType": {
     "module": "opensearch_decision_trace",
@@ -755,7 +756,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.54"
+    "version": "1.55"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -910,6 +911,6 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.54"
+    "version": "1.55"
   }
 }

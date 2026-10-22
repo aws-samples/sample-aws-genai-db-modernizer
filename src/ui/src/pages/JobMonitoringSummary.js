@@ -23,6 +23,7 @@ import Alert from "@cloudscape-design/components/alert";
 
 //##-- Custom Objects
 import { SideNavigationConfigurations, ApiConfigurations } from "../config/GlobalConfigurations";
+import UnservableAssignmentNotice from "../components/UnservableAssignmentNotice";
 import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import ProgressState from "../components/ProgressState";
@@ -71,6 +72,8 @@ const JobMonitoringSummaryPage = memo(() => {
   const [collectorInsights, setCollectorInsights] = useState(null);
   const [triageInsights, setTriageInsights] = useState(null);
   const [assignmentDistribution, setAssignmentDistribution] = useState(null);
+  // #1329: the queries no engine in the customer's engine scope can serve.
+  const [unservableQueries, setUnservableQueries] = useState([]);
   // #330: the cache_overlay off the same assignment fetch, so the Sankey can
   // show ElastiCache as a node fed by its owner engines' flows.
   const [cacheOverlay, setCacheOverlay] = useState(null);
@@ -298,6 +301,7 @@ const JobMonitoringSummaryPage = memo(() => {
               dist[q.assigned_engine] = (dist[q.assigned_engine] || 0) + 1;
             });
             setAssignmentDistribution(dist);
+            setUnservableQueries(res.assignments.assignment?.unservable_queries || []);
             setCacheOverlay(getCacheOverlay(res.assignments.assignment));
           }
         });
@@ -783,6 +787,9 @@ const JobMonitoringSummaryPage = memo(() => {
                 </Container>
               </div>
             )}
+
+            {/* #1329: the queries with no engine in the scope, next to the query flow */}
+            <UnservableAssignmentNotice unservable={unservableQueries} t={t} />
 
             {/* Query Flow — appears once assignment data is available, stays */}
             {ranking.length > 0 && (

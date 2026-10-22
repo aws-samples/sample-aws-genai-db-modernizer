@@ -124,6 +124,7 @@ union to both engines at once.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from src.agents.referee.assignment_resolver import retained_engine_for
@@ -273,6 +274,7 @@ def wave_table_owners(
     known_tables: set[str] | list[str] | None = None,
     aurora_engine_choice: dict[str, Any] | None = None,
     source: SourceScope | None = None,
+    engine_scope: Iterable[str] | None = None,
 ) -> dict[str, str]:
     """``{table_id: owner}``: each table's owner as the wave plan states it (#212), the
     same ``_durable_owner`` call over the same rows and retained engine
@@ -285,6 +287,8 @@ def wave_table_owners(
     retained, _ = _retained_engine(
         by_engine, (source_engine or "").lower(), query_assignments, aurora_engine_choice
     )
+    if engine_scope is not None and retained not in set(engine_scope):
+        retained = None  # #1329: as build_migration_waves, no engine the scope left out
     _, rows = _canonical_table_assignments(table_assignments, known_tables, source)
     return {str(t["table_id"]): _durable_owner(t, retained) for t in rows if t.get("table_id")}
 
@@ -302,6 +306,7 @@ def build_migration_waves(
     mapped_tables: set[str] | list[str] | None = None,
     aurora_engine_choice: dict[str, Any] | None = None,
     source: SourceScope | None = None,
+    engine_scope: Iterable[str] | None = None,
 ) -> list[dict[str, Any]] | None:
     """The incremental migration roadmap for this report, or ``None`` with no assignment.
 
@@ -352,6 +357,11 @@ def build_migration_waves(
     ``aurora_engine_choice`` (#381) is ``Assignment.aurora_engine_choice`` (as a
     dict), when the caller has it, used only for wave 1's cross-engine rationale --
     see :func:`_aurora_wave`.
+
+    ``engine_scope`` is the customer's engine scope (``triage.json``'s, #1327), or
+    ``None`` with no scope. A scope that leaves out every Aurora engine has no
+    relational target, so wave 1 names none (#1329): never the source-compatible
+    engine the scope left out.
     """
     if not ranking:
         return None
@@ -360,6 +370,12 @@ def build_migration_waves(
     retained_engine, cross_engine = _retained_engine(
         by_engine, source_engine, query_assignments, aurora_engine_choice
     )
+    if engine_scope is not None and retained_engine not in set(engine_scope):
+        # #1329 (ADR-031 Decision 2 Amendment 15): no Aurora engine in the scope, so
+        # wave 1 converts to no engine the customer left out.
+        retained_engine = None
+        cross_engine = False
+
     known, table_assignments = _canonical_table_assignments(table_assignments, known_tables, source)
     mapped: set[str] | None = None if mapped_tables is None else {str(t) for t in mapped_tables}
     waves: list[dict[str, Any]] = []
