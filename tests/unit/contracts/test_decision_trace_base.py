@@ -44,8 +44,8 @@ TYPED_ENGINES = frozenset({"documentdb", "dynamodb", "elasticache"})
 # other registered trace contract must extend it.
 OFF_BASE_TRACE_CONTRACTS: dict[str, str] = {
     "elasticache": (
-        "run counts and the timestamp-column reading only: none of the base's core "
-        "sections; typed as it is (#1191), aligning it is a later MINOR (#1276)"
+        "the base's core sections are required and a saved 1.0 trace has none of them; "
+        "the shared sections are optional fields of its own since 1.1 (#1276)"
     ),
 }
 
