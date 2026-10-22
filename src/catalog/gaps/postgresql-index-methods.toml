@@ -1,0 +1,13 @@
+# Gap rule postgresql-index-methods (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: PostgreSQL documentation, Index Types; MySQL 8.0 Reference Manual, The Physical Structure of an InnoDB Index.
+id = "postgresql-index-methods"
+feature = "GIN, GiST and other non-B-tree indexes"
+source_engines = ["postgresql"]
+targets = ["aurora_mysql"]
+impact = "needs_rewrite"
+reason = "InnoDB builds B-tree, FULLTEXT and SPATIAL indexes only, so GIN, GiST, BRIN and SP-GiST indexes are replaced by one of those (or an index on a generated column) or dropped."
+docs = "PostgreSQL documentation, Index Types; MySQL 8.0 Reference Manual, The Physical Structure of an InnoDB Index"
+
+# Looks for: Index types gin, gist and other.
+[match]
+index_types = ["gin", "gist", "other"]

@@ -1,0 +1,13 @@
+# Gap rule mysql-stored-routines-to-postgresql (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, PL/pgSQL and Triggers.
+id = "mysql-stored-routines-to-postgresql"
+feature = "Stored procedures, functions and triggers"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "MySQL stored routines and triggers are rewritten in PL/pgSQL: handlers, cursors and variables use another syntax, and a PostgreSQL trigger calls a trigger function instead of holding its body."
+docs = "AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, PL/pgSQL and Triggers"
+
+# Looks for: Every procedure, function and trigger.
+[match]
+routines = true

@@ -1,0 +1,13 @@
+# Gap rule mysql-show-and-admin-statements (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, SHOW Statements and Table Maintenance Statements; PostgreSQL documentation, The Information Schema.
+id = "mysql-show-and-admin-statements"
+feature = "SHOW, DESCRIBE and other MySQL-only statements"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "needs_rewrite"
+reason = "SHOW, DESCRIBE, USE, LOCK and UNLOCK TABLES, FLUSH, KILL and the table maintenance statements are MySQL-only: catalog reads move to information_schema or pg_catalog, and the rest become PostgreSQL statements (LOCK TABLE ... IN ... MODE, VACUUM and ANALYZE, pg_terminate_backend) or are dropped."
+docs = "MySQL 8.0 Reference Manual, SHOW Statements and Table Maintenance Statements; PostgreSQL documentation, The Information Schema"
+
+# Looks for: Statements that start with SHOW, DESCRIBE, USE, LOCK TABLES, FLUSH, KILL and similar.
+[match]
+statement_starts = ["SHOW", "DESCRIBE", "DESC", "USE", "LOCK TABLES", "LOCK TABLE", "UNLOCK TABLES", "UNLOCK TABLE", "FLUSH", "KILL", "HANDLER", "OPTIMIZE TABLE", "REPAIR TABLE", "CHECK TABLE", "CHECKSUM TABLE", "ANALYZE TABLE"]

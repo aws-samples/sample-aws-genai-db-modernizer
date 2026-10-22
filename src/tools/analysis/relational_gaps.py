@@ -10,12 +10,16 @@ them:
 
 - a ``version`` rule compares the source's major version line with the target's lines
   in ``src/catalog/aurora_versions.toml`` (homogeneous sources only);
-- text rules (``calls``, ``words``, ``syntax``, ``statement_endings``) read every query and every view,
+- text rules (``calls``, ``words``, ``syntax``, ``statement_endings``,
+  ``statement_starts``, ``word_prefixes``) read every query and every view,
   procedure and trigger definition through the SQL facade's tokens, in the source
   engine's dialect (:func:`src.tools.sql.facade.sql_tokens`), so a literal, a quoted
-  identifier or a comment never matches;
-- schema rules read column data types, table storage engines and collations, and
-  procedure languages; ``routines`` lists every procedure, function and trigger;
+  identifier or a comment never matches; ``quoted_with`` reads which quote characters
+  open the text's quoted spans, by the same dialect scan;
+- schema rules read column data types, defaults and auto-increment flags, table and
+  column names, table storage engines and collations, index types and predicates,
+  object schemas and procedure languages; ``routines`` lists every procedure,
+  function and trigger;
   ``always`` applies to every source of the rule's engines.
 
 Each gap carries its rule's impact, plain reason and documentation, and the evidence:
@@ -38,12 +42,14 @@ from src.shared.catalog.gaps import (
     GAP_IMPACTS,
     SOURCE_ENGINES,
     AuroraVersionLines,
+    GapMatch,
     GapRule,
     aurora_version_lines,
     gap_rules,
     parse_version_line,
 )
 from src.tools.sql.facade import SqlTokens, sql_tokens
+from src.tools.sql.normalize import quoted_mask
 
 __all__ = ["detect_relational_gaps", "normalized_data_type"]
 
@@ -64,6 +70,9 @@ class _Text:
     id: str
     tokens: SqlTokens
     tables: tuple[str, ...] = ()
+    # The characters that open the text's quoted spans (strings, quoted identifiers,
+    # comments), as the source dialect reads them.
+    quotes: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -83,33 +92,84 @@ class _Evidence:
         return bool(self.tables or self.queries or self.objects)
 
 
+# A ``{value}`` slot in a ``syntax`` entry (see GapMatch.syntax).
+_VALUE = "{value}"
+
+
 def _phrase(text: str) -> tuple[str, ...]:
-    """A rule's ``syntax`` entry as tokens, split the way the facade splits SQL."""
-    return sql_tokens(text, "").tokens
+    """A rule's ``syntax`` entry as tokens, split the way the facade splits SQL; a
+    ``{value}`` part stays one slot."""
+    out: list[str] = []
+    for part in text.split():
+        out.extend((_VALUE,) if part == _VALUE else sql_tokens(part, "").tokens)
+    return tuple(out)
+
+
+def _is_value(word: str) -> bool:
+    """A ``?`` placeholder, a number or an @variable: what a ``{value}`` slot takes."""
+    return word == "?" or word.isdigit() or (word.startswith("@") and word[1:2].isalpha())
+
+
+def _matches_at(tokens: tuple[str, ...], i: int, phrase: tuple[str, ...]) -> bool:
+    if i + len(phrase) > len(tokens):
+        return False
+    return all(
+        _is_value(tokens[i + k]) if want == _VALUE else tokens[i + k] == want
+        for k, want in enumerate(phrase)
+    )
 
 
 def _has_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
-    n = len(phrase)
-    first = phrase[0]
-    return any(
-        tokens[i] == first and tokens[i : i + n] == phrase for i in range(len(tokens) - n + 1)
-    )
+    return any(_matches_at(tokens, i, phrase) for i in range(len(tokens) - len(phrase) + 1))
 
 
 def _ends_a_statement(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
     n = len(phrase)
     return any(
-        tokens[i : i + n] == phrase and (i + n == len(tokens) or tokens[i + n] == ";")
+        _matches_at(tokens, i, phrase) and (i + n == len(tokens) or tokens[i + n] == ";")
         for i in range(len(tokens) - n + 1)
     )
 
 
-def _word_hit(tokens: tuple[str, ...], word: str, unless: frozenset[str]) -> bool:
-    """``word`` appears, and (when ``unless`` names tokens) not directly before one."""
-    if not unless:
+def _starts_a_statement(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    return any(
+        (i == 0 or tokens[i - 1] == ";") and _matches_at(tokens, i, phrase)
+        for i in range(len(tokens) - len(phrase) + 1)
+    )
+
+
+def _has_prefixed_word(tokens: tuple[str, ...], prefix: str) -> bool:
+    """A token that is ``prefix`` and then a letter or "_" (``@total`` for "@", never
+    ``@@autocommit``)."""
+    n = len(prefix)
+    return any(
+        tok.startswith(prefix) and len(tok) > n and (tok[n].isalpha() or tok[n] == "_")
+        for tok in tokens
+    )
+
+
+def _quote_openers(text: str, engine: str) -> frozenset[str]:
+    """The first character of every quoted span of ``text`` in ``engine``'s dialect."""
+    mask = quoted_mask(text, engine)
+    return frozenset(
+        text[i] for i, hidden in enumerate(mask) if hidden and (i == 0 or not mask[i - 1])
+    )
+
+
+def _word_hit(
+    tokens: tuple[str, ...],
+    word: str,
+    unless: frozenset[str],
+    unless_after: frozenset[str] = frozenset(),
+) -> bool:
+    """``word`` appears, and (when ``unless`` names tokens) not directly before one, and
+    (when ``unless_after`` does) not directly after one."""
+    if not unless and not unless_after:
         return word in tokens
     return any(
-        tok == word and (i + 1 == len(tokens) or tokens[i + 1] not in unless)
+        tok == word
+        and (i + 1 == len(tokens) or tokens[i + 1] not in unless)
+        and (i == 0 or tokens[i - 1] not in unless_after)
         for i, tok in enumerate(tokens)
     )
 
@@ -163,20 +223,38 @@ def _text_hit(
     if any(c.upper() in text.tokens.calls for c in match.calls):
         return True
     unless = frozenset(u.upper() for u in match.unless_followed_by)
+    after = frozenset(u.upper() for u in match.unless_preceded_by)
     if any(
-        w.upper() in words and _word_hit(text.tokens.tokens, w.upper(), unless) for w in match.words
+        w.upper() in words and _word_hit(text.tokens.tokens, w.upper(), unless, after)
+        for w in match.words
     ):
         return True
     if _extension_hit(rule, text, user_routines):
         return True
-    if any(_ends_a_statement(text.tokens.tokens, _phrase(s)) for s in match.statement_endings):
+    tokens = text.tokens.tokens
+    if any(_ends_a_statement(tokens, _phrase(s)) for s in match.statement_endings):
         return True
-    return any(_has_phrase(text.tokens.tokens, _phrase(s)) for s in match.syntax)
+    if any(_starts_a_statement(tokens, _phrase(s)) for s in match.statement_starts):
+        return True
+    if any(_has_prefixed_word(tokens, p) for p in match.word_prefixes):
+        return True
+    if any(q in text.quotes for q in match.quoted_with):
+        return True
+    return any(_has_phrase(tokens, _phrase(s)) for s in match.syntax)
 
 
 def _reads_text(rule: GapRule) -> bool:
     m = rule.match
-    return bool(m.calls or m.words or m.syntax or m.statement_endings or m.extension_calls)
+    return bool(
+        m.calls
+        or m.words
+        or m.syntax
+        or m.statement_endings
+        or m.statement_starts
+        or m.word_prefixes
+        or m.quoted_with
+        or m.extension_calls
+    )
 
 
 def _routine_kind(procedure: Mapping[str, Any]) -> str:
@@ -214,8 +292,21 @@ def _collected_tables(names: Iterable[Any], resolver: TableNameResolver | None) 
     return tuple(sorted(out))
 
 
-def _texts(collector: Mapping[str, Any], engine: str) -> list[_Text]:
-    """Every query and definition of the collection, tokenized once."""
+def _text(
+    kind: str,
+    text_id: str,
+    sql: str,
+    engine: str,
+    quotes: bool,
+    tables: tuple[str, ...] = (),
+) -> _Text:
+    openers = _quote_openers(sql, engine) if quotes else frozenset()
+    return _Text(kind, text_id, sql_tokens(sql, engine), tables, openers)
+
+
+def _texts(collector: Mapping[str, Any], engine: str, quotes: bool = False) -> list[_Text]:
+    """Every query and definition of the collection, tokenized once (and, with
+    ``quotes``, its quote openers read)."""
     schema = collector.get("database_schema") or {}
     resolver = TableNameResolver.from_collector(collector)
     out: list[_Text] = []
@@ -223,30 +314,23 @@ def _texts(collector: Mapping[str, Any], engine: str) -> list[_Text]:
         if isinstance(q, Mapping) and q.get("query_id") and q.get("query_text"):
             tables = _collected_tables(_as_list(q.get("tables_accessed")), resolver)
             out.append(
-                _Text("query", str(q["query_id"]), sql_tokens(str(q["query_text"]), engine), tables)
+                _text("query", str(q["query_id"]), str(q["query_text"]), engine, quotes, tables)
             )
     for v in _as_list(schema.get("views")):
         if isinstance(v, Mapping) and v.get("view_id") and v.get("definition"):
-            out.append(_Text("view", str(v["view_id"]), sql_tokens(str(v["definition"]), engine)))
+            out.append(_text("view", str(v["view_id"]), str(v["definition"]), engine, quotes))
     for p in _as_list(schema.get("procedures")):
         if isinstance(p, Mapping) and p.get("procedure_id") and p.get("definition"):
             out.append(
-                _Text(
-                    _routine_kind(p),
-                    str(p["procedure_id"]),
-                    sql_tokens(str(p["definition"]), engine),
+                _text(
+                    _routine_kind(p), str(p["procedure_id"]), str(p["definition"]), engine, quotes
                 )
             )
     for t in _as_list(schema.get("triggers")):
         if isinstance(t, Mapping) and t.get("trigger_id") and t.get("definition"):
             tables = _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
             out.append(
-                _Text(
-                    "trigger",
-                    str(t["trigger_id"]),
-                    sql_tokens(str(t["definition"]), engine),
-                    tables,
-                )
+                _text("trigger", str(t["trigger_id"]), str(t["definition"]), engine, quotes, tables)
             )
     return out
 
@@ -261,20 +345,38 @@ def _schema_evidence(
     schema = collector.get("database_schema") or {}
     # Evidence from the schema itself: its table ids are collected ids, nothing to resolve.
     types = {t.lower() for t in match.data_types}
+    type_globs = [g.lower() for g in match.data_type_globs]
+    defaults = [g.lower() for g in match.default_values]
     engines = {e.lower() for e in match.storage_engines}
+    index_types = {t.lower() for t in match.index_types}
     languages = {lang.lower() for lang in match.routine_languages}
+    reads_columns = bool(
+        types or type_globs or defaults or match.auto_increment or match.uppercase_names
+    )
     for table in _as_list(schema.get("tables")):
         if not isinstance(table, Mapping) or not table.get("table_id"):
             continue
         table_id = str(table["table_id"])
-        if types:
+        if match.uppercase_names and _has_upper(table.get("table_name")):
+            evidence.tables.add(table_id)
+        if reads_columns:
             for column in _as_list(table.get("columns")):
-                if (
-                    isinstance(column, Mapping)
-                    and normalized_data_type(column.get("data_type")) in types
+                if isinstance(column, Mapping) and _column_hit(
+                    match, column, types, type_globs, defaults
                 ):
                     evidence.tables.add(table_id)
                     evidence.objects.add(("column", f"{table_id}.{column.get('column_name')}"))
+        if index_types or match.partial_indexes:
+            for index in _as_list(table.get("indexes")):
+                if not isinstance(index, Mapping):
+                    continue
+                kind = str(index.get("index_type") or "").lower()
+                if (kind and kind in index_types) or (
+                    match.partial_indexes and str(index.get("predicate") or "").strip()
+                ):
+                    evidence.tables.add(table_id)
+        if _outside_schemas(match, table):
+            evidence.tables.add(table_id)
         storage = str(table.get("storage_engine") or "").lower()
         if storage and storage in engines:
             evidence.tables.add(table_id)
@@ -295,8 +397,15 @@ def _schema_evidence(
         ):
             # The extension's own compiled function is installed.
             evidence.objects.add((_routine_kind(p), str(p["procedure_id"])))
-        if match.routines or (language and language in languages):
+        if match.routines or (language and language in languages) or _outside_schemas(match, p):
             evidence.objects.add((_routine_kind(p), str(p["procedure_id"])))
+    if match.schemas_other_than:
+        for v in _as_list(schema.get("views")):
+            if isinstance(v, Mapping) and v.get("view_id") and _outside_schemas(match, v):
+                evidence.objects.add(("view", str(v["view_id"])))
+        for t in _as_list(schema.get("triggers")):
+            if isinstance(t, Mapping) and t.get("trigger_id") and _outside_schemas(match, t):
+                evidence.objects.add(("trigger", str(t["trigger_id"])))
     if match.routines:
         for t in _as_list(schema.get("triggers")):
             if isinstance(t, Mapping) and t.get("trigger_id"):
@@ -304,6 +413,39 @@ def _schema_evidence(
                 evidence.tables.update(
                     _collected_tables([t["table_id"]] if t.get("table_id") else [], resolver)
                 )
+
+
+def _has_upper(name: Any) -> bool:
+    return any(ch.isupper() for ch in str(name or ""))
+
+
+def _column_hit(
+    match: GapMatch,
+    column: Mapping[str, Any],
+    types: set[str],
+    type_globs: list[str],
+    defaults: list[str],
+) -> bool:
+    """Whether one collected column shows what the rule's column matchers look for."""
+    data_type = normalized_data_type(column.get("data_type"))
+    if data_type in types or any(fnmatch.fnmatchcase(data_type, g) for g in type_globs):
+        return True
+    default = column.get("default_value")
+    if defaults and default is not None and not isinstance(default, bool):
+        text = str(default).strip().lower()
+        if any(fnmatch.fnmatchcase(text, g) for g in defaults):
+            return True
+    if match.auto_increment and column.get("is_auto_increment") is True:
+        return True
+    return match.uppercase_names and _has_upper(column.get("column_name"))
+
+
+def _outside_schemas(match: GapMatch, obj: Mapping[str, Any]) -> bool:
+    """A collected object whose schema is set and not one of ``schemas_other_than``."""
+    if not match.schemas_other_than:
+        return False
+    schema = str(obj.get("schema_name") or "").strip().lower()
+    return bool(schema) and schema not in {s.lower() for s in match.schemas_other_than}
 
 
 def _line_text(line: tuple[int, ...] | None) -> str | None:
@@ -364,7 +506,8 @@ def detect_relational_gaps(
         if engine in r.source_engines and target_engine in r.targets
     ]
     needs_text = any(_reads_text(r) for r in applicable)
-    texts = _texts(collector, engine) if needs_text else []
+    needs_quotes = any(r.match.quoted_with for r in applicable)
+    texts = _texts(collector, engine, needs_quotes) if needs_text else []
     word_sets = [frozenset(t.tokens.tokens) for t in texts]
 
     resolver = TableNameResolver.from_collector(collector)
@@ -406,8 +549,8 @@ def detect_relational_gaps(
         "version_checked": version_checked,
         "rules_checked": len(applicable),
         # #1327: the rules that look at what the source uses, not at its version. A
-        # conversion the catalog has none for (MySQL to Aurora PostgreSQL, #1330) is
-        # not checked for feature gaps, which the wave note says.
+        # conversion the catalog has none for is not checked for feature gaps, which
+        # the wave note says (every conversion has some since #1330).
         "feature_rules_checked": sum(1 for r in applicable if r.match.version is None),
         "gaps": gaps,
         "gaps_by_impact": {

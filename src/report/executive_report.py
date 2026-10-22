@@ -88,7 +88,7 @@ from .formatting import (
     plural_verb,
 )
 from .query_patterns import query_pattern_count_text
-from .relational_gaps import heterogeneous_wave, impact_label, wave_gaps
+from .relational_gaps import heterogeneous_wave, wave_gap_groups
 from .risks import (
     NO_OPEN_RISKS_CAVEAT,
     _repeats,
@@ -1021,15 +1021,18 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             # name target functions (jsonb_to_recordset, gen_random_uuid): they stay in
             # the engineering report, like every identifier.
             content.append(_para(wf["heterogeneous_note"], st["body"]))
-            gaps = wave_gaps(report, n)
-            if gaps:
+            # #1330: grouped by impact ("22 need a rewrite: A; B; ..."), so a long
+            # conversion's list stays readable; the counts are the facts layer's.
+            groups = wave_gap_groups(report, n)
+            if groups:
                 content.append(
                     _labelled(
                         "Relational gaps",
-                        "; ".join(
-                            f"{g.get('feature') or g.get('rule_id')} "
-                            f"({impact_label(g.get('impact'))})"
-                            for g in gaps
+                        " ".join(
+                            f"{phrase}: "
+                            + "; ".join(str(g.get("feature") or g.get("rule_id")) for g in members)
+                            + "."
+                            for phrase, members in groups
                         ),
                         st["small"],
                     )

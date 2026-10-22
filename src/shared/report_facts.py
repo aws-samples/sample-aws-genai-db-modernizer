@@ -311,6 +311,14 @@ _IMPACT_VERBS: dict[str, tuple[str, str]] = {
 }
 
 
+def gap_count_phrase(impact: str, count: int) -> str:
+    """ "22 need a rewrite", "1 is informational": one impact's count, as the wave-1 note
+    and the executive report's grouped gap list say it (#1330). ``count`` is the gap
+    check's own ``gaps_by_impact`` figure."""
+    singular, plural = _IMPACT_VERBS.get(impact, (impact, impact))
+    return f"{count} {singular if count == 1 else plural}"
+
+
 def _gap_sentence(relational_gaps: Mapping[str, Any] | None) -> str:
     """ " The relational gap check found 11 gaps in this conversion: 5 need a rewrite,
     ..." for the heterogeneous wave-1 note; empty with no gap check (#1120).
@@ -320,9 +328,9 @@ def _gap_sentence(relational_gaps: Mapping[str, Any] | None) -> str:
     if relational_gaps is None:
         return ""
     if relational_gaps.get("feature_rules_checked") == 0:
-        # #1327: a conversion the gap catalog has no feature rules for (a customer's
-        # engine scope sending MySQL to Aurora PostgreSQL, #1330) was not checked, so
-        # "no gaps" would claim a check that did not run.
+        # #1327: a conversion the gap catalog has no feature rules for was not
+        # checked, so "no gaps" would claim a check that did not run (since #1330 the
+        # catalog has feature rules for every source and Aurora engine).
         return (
             " The relational gap check has no feature rules for this conversion yet, so "
             "its feature gaps were not checked."

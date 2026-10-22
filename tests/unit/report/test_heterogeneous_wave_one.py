@@ -27,6 +27,7 @@ import pytest
 
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.engineering_report import render_engineering_report_md
+from src.report.escaping import md_text
 from src.report.facts import report_facts
 from src.shared.catalog.gaps import GAP_IMPACTS
 from src.shared.prose_style import find_style_hits
@@ -296,9 +297,10 @@ def test_engineering_report_lists_the_gaps_under_wave_1() -> None:
 def test_executive_report_states_the_note_and_the_gaps_without_identifiers() -> None:
     text = normalize(executive_text(_with_facts(_report(), _gaps())))
     assert f"{NOT_OPTIMIZED}: it converts all 5 source tables" in text
+    # #1330: grouped by impact, with the gap check's own counts.
     assert (
-        "Relational gaps: TOP row limits (needs a rewrite); "
-        "Babelfish for Aurora PostgreSQL (informational)" in text
+        "Relational gaps: 1 needs a rewrite: TOP row limits. "
+        "1 is informational: Babelfish for Aurora PostgreSQL." in text
     )
     # The reasons name target functions; they stay in the engineering report.
     assert "becomes LIMIT n" not in text
@@ -463,3 +465,53 @@ def test_a_gap_the_risk_register_explains_is_stated_once() -> None:
     assert "  - Babelfish for Aurora PostgreSQL (informational): Babelfish accepts T-SQL." in wave1
     assert md.count("TOP \\(n\\) becomes LIMIT n") == 1
     assert "becomes LIMIT n" not in wave1
+
+
+@pytest.mark.parametrize("feature", ["Type casts: ::", "TOP: row limits", "TOP"])
+def test_a_feature_with_a_colon_in_its_name_is_still_stated_once(feature: str) -> None:
+    """#1330: the register lookup matches a gap's whole ``feature: reason`` opening, so
+    a feature named with ": " (the first catalog name for PostgreSQL's :: casts) is
+    found, and a feature that is only the first part of another one is not."""
+    from src.shared.migration_risk_rules import relational_gap_risks
+
+    gaps = _gaps()
+    top = next(g for g in gaps["gaps"] if g["feature"] == "TOP row limits")
+    top["feature"] = feature
+    report = _report()
+    report["risk_assessment"]["risks"] = relational_gap_risks(gaps, report["migration_waves"])
+    wave1 = _wave_section(render_engineering_report_md(_with_facts(report, gaps)), 1)
+    assert "becomes LIMIT n" not in wave1
+    assert f"  - {md_text(feature)} (needs a rewrite). Found in: `db.t1`, `db.t2`" in wave1
+
+
+def test_a_feature_that_opens_another_gaps_line_is_not_taken_for_it() -> None:
+    """Two gaps, "TOP" (informational, no risk) and "TOP: row limits" (in the register):
+    only the second is the register's, so the first keeps its reason."""
+    from src.shared.migration_risk_rules import relational_gap_risks
+
+    gaps = _gaps()
+    top = next(g for g in gaps["gaps"] if g["feature"] == "TOP row limits")
+    top["feature"] = "TOP: row limits"
+    babelfish = next(g for g in gaps["gaps"] if g["impact"] == "informational")
+    babelfish["feature"] = "TOP"
+    report = _report()
+    report["risk_assessment"]["risks"] = relational_gap_risks(gaps, report["migration_waves"])
+    wave1 = _wave_section(render_engineering_report_md(_with_facts(report, gaps)), 1)
+    assert "  - TOP (informational): Babelfish accepts T-SQL." in wave1
+
+
+def test_the_executive_report_groups_the_gaps_by_impact_with_the_stored_counts() -> None:
+    """#1330: discourse's 27 gaps read as one group per impact, most severe first; each
+    count is ``gaps_by_impact`` as stored (here deliberately not the list's length), so
+    the renderer only formats."""
+    gaps = _gaps(
+        [{**_gaps()["gaps"][0], "rule_id": f"r{i}", "feature": f"Feature {i}"} for i in range(3)]
+        + [{**_gaps()["gaps"][1], "impact": "behaves_differently", "feature": "Odd one"}]
+    )
+    gaps["gaps_by_impact"] = {"needs_rewrite": 7, "behaves_differently": 1}
+    text = normalize(executive_text(_with_facts(_report(), gaps)))
+    assert (
+        "Relational gaps: 7 need a rewrite: Feature 0; Feature 1; Feature 2. "
+        "1 behaves differently: Odd one." in text
+    )
+    assert "(needs a rewrite)" not in text

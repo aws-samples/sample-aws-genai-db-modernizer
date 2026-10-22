@@ -294,10 +294,23 @@ _MATCH_LABELS = (
     ("words", "words"),
     ("syntax", "syntax"),
     ("statement_endings", "statement endings"),
+    ("statement_starts", "statement starts"),
+    ("word_prefixes", "words starting with"),
+    ("quoted_with", "text quoted with"),
     ("data_types", "column types"),
+    ("data_type_globs", "column types like"),
+    ("default_values", "column defaults like"),
     ("storage_engines", "storage engines"),
     ("collations", "collations"),
+    ("index_types", "index types"),
+    ("schemas_other_than", "objects in a schema other than"),
     ("routine_languages", "routine languages"),
+)
+
+_MATCH_FLAGS = (
+    ("auto_increment", "auto-increment (serial, identity) columns"),
+    ("uppercase_names", "table and column names with a capital letter"),
+    ("partial_indexes", "partial indexes (with a WHERE predicate)"),
 )
 
 
@@ -315,6 +328,8 @@ def _match_text(rule: GapRule) -> str:
     ]
     if match.unless_followed_by:
         parts.append("not before " + ", ".join(f"`{v}`" for v in match.unless_followed_by))
+    if match.unless_preceded_by:
+        parts.append("not after " + ", ".join(f"`{v}`" for v in match.unless_preceded_by))
     if match.extension:
         parts.append(
             f"the `{match.extension}` extension: CREATE EXTENSION, its installed C functions, "
@@ -324,6 +339,7 @@ def _match_text(rule: GapRule) -> str:
             + ", ".join(f"`{v}`" for v in match.extension_schemas)
             + " (not a user's same-named function)"
         )
+    parts += [label for name, label in _MATCH_FLAGS if getattr(match, name)]
     if match.routines:
         parts.append("every procedure, function and trigger")
     return "; ".join(parts)

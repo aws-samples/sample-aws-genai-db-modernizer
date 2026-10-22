@@ -54,6 +54,7 @@ __all__ = [
     "GapImpact",
     "GapMatch",
     "GapRule",
+    "INDEX_TYPES",
     "aurora_version_lines",
     "gap_rules",
     "load_aurora_versions",
@@ -88,6 +89,8 @@ SOURCE_ENGINES = frozenset({"mysql", "mariadb", "postgresql", "sqlserver", "orac
 AURORA_TARGETS = frozenset({"aurora_mysql", "aurora_postgresql"})
 
 _ONE_LINE = r"^[^\n]+$"
+# The collector's index types (src.contracts.collector_output.IndexType).
+INDEX_TYPES = frozenset({"btree", "hash", "gist", "gin", "fulltext", "spatial", "other"})
 
 VersionCheck = Literal["older_than_target", "newer_than_target", "unknown"]
 
@@ -126,11 +129,26 @@ class GapMatch(BaseModel):
     # A ``words`` hit does not count when the next token is one of these: T-SQL's
     # MERGE statement, not its MERGE JOIN / MERGE UNION hints.
     unless_followed_by: tuple[str, ...] = ()
-    # Token sequences, space-separated: "CONNECT BY", "( + )", ". NEXTVAL".
+    # Nor when the token before it is one of these: PostgreSQL's ~ between two
+    # operands, not bitwise NOT after an operator or a keyword (SELECT ~ a).
+    unless_preceded_by: tuple[str, ...] = ()
+    # Token sequences, space-separated: "CONNECT BY", "( + )", ". NEXTVAL". The
+    # token ``{value}`` stands for one value: a ``?`` placeholder, a number or an
+    # @variable ("LIMIT {value} ," is MySQL's LIMIT offset, count).
     syntax: tuple[str, ...] = ()
     # Token sequences that count only where they end a statement (before ";" or the
     # end of the text): Db2's "WITH UR" isolation clause, not a CTE named ur.
     statement_endings: tuple[str, ...] = ()
+    # Token sequences that count only where they begin a statement (at the start of
+    # the text or after ";"): MySQL's SHOW statements, not a column named show.
+    statement_starts: tuple[str, ...] = ()
+    # Words that begin with one of these sigils and then a letter or "_": "@" is a
+    # MySQL user variable (@total, not @@autocommit), "@@" a system variable.
+    word_prefixes: tuple[str, ...] = ()
+    # Quote characters: the text holds a quoted span (a string literal or a quoted
+    # identifier, as the source dialect reads it) that opens with one of them. A
+    # PostgreSQL "name" is an identifier; a MySQL "text" is a string.
+    quoted_with: tuple[str, ...] = ()
     # An extension's own functions (``extension_calls``): a call counts when it is
     # unqualified (or quoted) or qualified with one of ``extension_schemas``, and the
     # collection defines no routine of that name in another schema (a user function).
@@ -141,6 +159,21 @@ class GapMatch(BaseModel):
     extension_schemas: tuple[str, ...] = ()
     # Column data types, without length or precision ("nvarchar", "long raw").
     data_types: tuple[str, ...] = ()
+    # Column data types as shell-style globs ("* unsigned"; "_*" and "*[[]]" are
+    # PostgreSQL array types, _int4 and integer[]).
+    data_type_globs: tuple[str, ...] = ()
+    # Column defaults as shell-style globs, compared as text ("0000-00-00*").
+    default_values: tuple[str, ...] = ()
+    # Columns the collector marks auto-incrementing (AUTO_INCREMENT, serial, identity).
+    auto_increment: bool = False
+    # Table and column names with an upper-case letter (``ID``, ``comment_post_ID``).
+    uppercase_names: bool = False
+    # Index types (Index.index_type: "gin", "gist", "fulltext", ...).
+    index_types: tuple[str, ...] = ()
+    # Indexes with a predicate (Index.predicate: a partial index).
+    partial_indexes: bool = False
+    # Tables, views, routines and triggers in a schema other than these (lower case).
+    schemas_other_than: tuple[str, ...] = ()
     # MySQL-family table storage engines (Table.storage_engine).
     storage_engines: tuple[str, ...] = ()
     # Table collations, as shell-style globs ("utf8mb3_*").
@@ -161,15 +194,23 @@ class GapMatch(BaseModel):
             self.words,
             self.syntax,
             self.statement_endings,
+            self.statement_starts,
+            self.word_prefixes,
+            self.quoted_with,
             self.extension_calls,
             self.data_types,
+            self.data_type_globs,
+            self.default_values,
+            self.index_types,
+            self.schemas_other_than,
             self.storage_engines,
             self.collations,
             self.routine_languages,
         )
-        if not (any(lists) or self.routines or self.version or self.always):
+        flags = (self.routines, self.auto_increment, self.uppercase_names, self.partial_indexes)
+        if not (any(lists) or any(flags) or self.version or self.always):
             raise ValueError("[match] needs at least one matcher")
-        if (self.always or self.version) and (any(lists) or self.routines):
+        if (self.always or self.version) and (any(lists) or any(flags)):
             raise ValueError("an 'always' or 'version' rule takes no other matcher")
         if self.always and self.version:
             raise ValueError("a rule is 'always' or 'version', not both")
@@ -177,11 +218,32 @@ class GapMatch(BaseModel):
             raise ValueError("extension and extension_calls go together")
         if self.extension_schemas and not self.extension:
             raise ValueError("extension_schemas needs an extension")
-        if self.unless_followed_by and not self.words:
-            raise ValueError("unless_followed_by qualifies words")
+        if (self.unless_followed_by or self.unless_preceded_by) and not self.words:
+            raise ValueError("unless_followed_by and unless_preceded_by qualify words")
         for name in self.syntax:
             if len(name.split()) < 2:
                 raise ValueError(f"syntax {name!r} is one token: list it under words")
+            if all(part in ("{value}", ",", "(", ")") for part in name.split()):
+                raise ValueError(f"syntax {name!r} has no word to anchor it")
+        for field in ("data_type_globs", "default_values", "schemas_other_than", "index_types"):
+            if any(not entry.strip() or entry != entry.strip() for entry in getattr(self, field)):
+                raise ValueError(f"{field} holds an empty or padded entry")
+        if unknown := sorted(set(self.index_types) - INDEX_TYPES):
+            raise ValueError(
+                f"unknown index types {unknown} (Index.index_type: {sorted(INDEX_TYPES)})"
+            )
+        for name in (*self.syntax, *self.statement_starts):
+            if any(("{" in part or "}" in part) and part != "{value}" for part in name.split()):
+                raise ValueError(f"{name!r}: the only placeholder is {{value}}")
+        for name in self.statement_starts:
+            if "{value}" in name.split():
+                raise ValueError(f"statement start {name!r} takes no placeholder")
+        for prefix in self.word_prefixes:
+            if not prefix or any(ch.isalnum() or ch == "_" or ch.isspace() for ch in prefix):
+                raise ValueError(f"word prefix {prefix!r} is not a sigil")
+        for quote in self.quoted_with:
+            if len(quote) != 1 or quote.isalnum() or quote.isspace():
+                raise ValueError(f"quoted_with {quote!r} is not one quote character")
         return self
 
 

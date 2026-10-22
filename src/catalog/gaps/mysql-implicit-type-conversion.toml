@@ -1,0 +1,13 @@
+# Gap rule mysql-implicit-type-conversion (#1330). Fields: src/shared/catalog/gaps.py.
+# Source: MySQL 8.0 Reference Manual, Type Conversion in Expression Evaluation; PostgreSQL documentation, Type Conversion.
+id = "mysql-implicit-type-conversion"
+feature = "Implicit type conversion"
+source_engines = ["mysql", "mariadb"]
+targets = ["aurora_postgresql"]
+impact = "behaves_differently"
+reason = "MySQL converts between typed values implicitly (a text column compared with a number, a number passed to a string function), where PostgreSQL raises an error unless the statement casts, so queries that rely on it can fail on the target; test the application's queries against it."
+docs = "MySQL 8.0 Reference Manual, Type Conversion in Expression Evaluation; PostgreSQL documentation, Type Conversion"
+
+# Looks for: Every MySQL and MariaDB source moving to Aurora PostgreSQL (the collection holds the statements with their values replaced by placeholders).
+[match]
+always = true

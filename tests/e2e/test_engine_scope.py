@@ -134,6 +134,43 @@ def test_wave_one_is_the_cross_engine_move_to_the_scope_choice(scoped: dict) -> 
     assert "competed on the collected workload" not in scoped["report"]["summary_deterministic"]
 
 
+# #1330: rules the scoped sample's wave 1 must raise (the samples' own features).
+SCOPED_GAPS = {
+    "wordpress": {
+        "mysql-on-duplicate-key-update",
+        "mysql-replace-into",
+        "mysql-limit-offset-comma",
+        "mysql-zero-dates",
+        "mysql-case-insensitive-collations",
+    },
+    "trailgear": {"sqlserver-top-clause"},
+}
+
+
+@pytest.mark.deterministic
+def test_wave_one_lists_the_conversions_gaps_in_every_deliverable(scoped: dict) -> None:
+    """#1330: the cross-engine wave 1 the scope causes is checked for feature gaps, and
+    report.json, the engineering report and the executive PDF list them under wave 1."""
+    from pypdf import PdfReader
+
+    from src.report.escaping import md_text
+
+    gaps = scoped["report"]["facts"]["relational_gaps"]
+    assert gaps["feature_rules_checked"] > 0
+    assert SCOPED_GAPS[scoped["db"]] <= {g["rule_id"] for g in gaps["gaps"]}
+    note = scoped["report"]["facts"]["waves"][0]["heterogeneous_note"]
+    found = f"The relational gap check found {len(gaps['gaps'])} gaps in this conversion"
+    pdf = scoped["root"] / scoped["db"] / JOB / "deliverables" / "executive-report.pdf"
+    pdf_text = " ".join(
+        " ".join((page.extract_text() or "").split()) for page in PdfReader(str(pdf)).pages
+    )
+    for text in (note, scoped["engineering"], pdf_text):
+        assert found in text
+        assert "no feature rules" not in text
+    for gap in gaps["gaps"]:
+        assert md_text(gap["feature"]) in scoped["engineering"], gap["rule_id"]
+
+
 def _refused(scoped: dict, override) -> str:
     """Apply one customer override to the scoped job; return the refusal's message."""
     from src.agents.referee.assignment_overrides import (

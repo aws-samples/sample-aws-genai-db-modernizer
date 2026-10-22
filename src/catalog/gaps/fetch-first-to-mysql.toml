@@ -1,8 +1,8 @@
-# Gap rule fetch-first-to-mysql (#471). Fields: src/shared/catalog/gaps.py.
+# Gap rule fetch-first-to-mysql (#471, PostgreSQL source #1330). Fields: src/shared/catalog/gaps.py.
 # Source: MySQL 8.0 Reference Manual, SELECT Statement (LIMIT).
 id = "fetch-first-to-mysql"
 feature = "FETCH FIRST and OFFSET ... FETCH row limits"
-source_engines = ["sqlserver", "oracle", "db2"]
+source_engines = ["sqlserver", "oracle", "db2", "postgresql"]
 targets = ["aurora_mysql"]
 impact = "needs_rewrite"
 reason = "Aurora MySQL has no FETCH FIRST or FETCH NEXT clause, so these row limits become LIMIT (Aurora PostgreSQL runs them as they are)."

@@ -352,16 +352,24 @@ def _evidence_md(gap: dict[str, Any], cap: int = 8) -> str:
     return f" Found in: {'; '.join(parts)}" if parts else ""
 
 
-def _register_gap_features(report: dict[str, Any]) -> set[str]:
-    """The gap features whose reason the Risk register states: each detail line of a
-    ``relational.gaps`` risk opens with its gap's feature (#1149)."""
-    return {
-        str(d).split(": ", 1)[0]
+def _register_gap_features(report: dict[str, Any], gaps: list[dict[str, Any]]) -> set[str]:
+    """The features of ``gaps`` whose reason the Risk register states: each detail line
+    of a ``relational.gaps`` risk is its gap's ``feature: reason`` (#1149). The whole
+    ``feature: reason`` opening is matched, so a feature with ": " in its own name
+    still reads as itself, never as its first part (#1330)."""
+    details = [
+        str(d)
         for r in filtered_risks(report)
         if r.get("rule") == "relational.gaps"
         for d in r.get("details") or []
-        if ": " in str(d)
-    }
+    ]
+    out: set[str] = set()
+    for g in gaps:
+        feature = str(g.get("feature") or "")
+        opening = f"{feature}: {str(g.get('reason') or '').strip()}"
+        if feature and any(d.startswith(opening) for d in details):
+            out.add(feature)
+    return out
 
 
 def _heterogeneous_lines_md(report: dict[str, Any], wf: dict[str, Any]) -> list[str]:
@@ -376,7 +384,7 @@ def _heterogeneous_lines_md(report: dict[str, Any], wf: dict[str, Any]) -> list[
     out = [f"- {escaping.md_text(note)}"]
     gaps = wave_gaps(report, int(wf.get("wave") or 0))
     if gaps:
-        in_register = _register_gap_features(report)
+        in_register = _register_gap_features(report, gaps)
         out.append(
             "- Relational gaps (the Risk register gives the reason and documentation of "
             "each one it lists):"

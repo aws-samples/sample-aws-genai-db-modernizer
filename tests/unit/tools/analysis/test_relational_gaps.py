@@ -58,6 +58,19 @@ def _table(table_id: str, *, types: tuple[str, ...] = ("int",), **extra: Any) ->
     }
 
 
+def _column_table(table_id: str = "db.t", **column: Any) -> dict[str, Any]:
+    """A table with one column: ``column`` overrides its name, type and flags."""
+    return {
+        "table_id": table_id,
+        "table_name": table_id.split(".")[-1],
+        "columns": [{"column_name": "c0", "data_type": "int", **column}],
+    }
+
+
+def _index(**fields: Any) -> dict[str, Any]:
+    return {"index_name": "ix", "columns": ["c0"], "is_unique": False, **fields}
+
+
 def _ids(result: dict[str, Any] | None) -> set[str]:
     return {g["rule_id"] for g in (result or {}).get("gaps", [])}
 
@@ -375,6 +388,396 @@ CASES: dict[str, tuple[str, str, dict[str, Any], dict[str, Any] | None]] = {
         {"queries": ["SELECT id FROM orders ORDER BY created FETCH FIRST 10 ROWS ONLY"]},
         {"queries": ["SELECT id FROM orders ORDER BY created OFFSET 0 ROWS"]},
     ),
+    # MySQL and MariaDB to Aurora PostgreSQL (#1330)
+    "mysql-on-duplicate-key-update": (
+        "mysql",
+        "aurora_postgresql",
+        {
+            "queries": [
+                "INSERT INTO `t` (`a`) VALUES (?) ON DUPLICATE KEY UPDATE `a` = VALUES (`a`)"
+            ]
+        },
+        {"queries": ["INSERT INTO `t` (`a`, `key`) VALUES ('ON DUPLICATE KEY', ?)"]},
+    ),
+    "mysql-replace-into": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["REPLACE INTO `wp_lookup` (`id`, `sku`) VALUES (...)"]},
+        {"queries": ["SELECT REPLACE(`sku`, ?, ?) INTO @x FROM `wp_lookup`"]},
+    ),
+    "mysql-insert-ignore": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["INSERT IGNORE INTO `t` (`a`) VALUES (?)"]},
+        {"queries": ["SELECT `a` FROM `t` IGNORE INDEX (`k`) WHERE `a` = ?"]},
+    ),
+    "mysql-auto-increment-columns": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_column_table(is_auto_increment=True)]},
+        {"tables": [_column_table(is_auto_increment=False)]},
+    ),
+    "mysql-last-insert-id": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT LAST_INSERT_ID ( )"]},
+        {"queries": ["SELECT `last_insert_id` FROM `t`"]},
+    ),
+    "mysql-unsigned-integers": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_table("db.t", types=("bigint(20) unsigned", "int(10) unsigned zerofill"))]},
+        {"tables": [_table("db.t", types=("bigint(20)",))]},
+    ),
+    "mysql-enum-and-set-types": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_table("db.t", types=("enum('draft','publish')", "set('a','b')"))]},
+        {"tables": [_table("db.t", types=("varchar(20)",))]},
+    ),
+    "mysql-zero-dates": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_column_table(data_type="datetime", default_value="0000-00-00 00:00:00")]},
+        {"tables": [_column_table(data_type="datetime", default_value="1970-01-01 00:00:01")]},
+    ),
+    "mysql-case-insensitive-collations": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_table("db.t", collation="utf8mb4_unicode_520_ci")]},
+        {"tables": [_table("db.t", collation="utf8mb4_bin")]},
+    ),
+    "mysql-mixed-case-identifiers": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_column_table(column_name="comment_post_ID")]},
+        {"tables": [_column_table(column_name="comment_post_id")]},
+    ),
+    "mysql-limit-offset-comma": (
+        "mysql",
+        "aurora_postgresql",
+        {
+            "queries": [
+                "SELECT `id` FROM `t` ORDER BY `id` LIMIT ?, ...",
+                "SELECT id FROM t LIMIT 10, 20",
+            ]
+        },
+        {"queries": ["SELECT `id` FROM `t` ORDER BY `id` LIMIT 20 OFFSET 10"]},
+    ),
+    "mysql-builtin-functions": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT IFNULL(`a`, 0), GROUP_CONCAT(`b`) FROM `t`"]},
+        {"queries": ["SELECT COALESCE(`a`, 0), `group_concat` FROM `t`"]},
+    ),
+    "mysql-date-functions": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT COUNT(*) FROM `p` GROUP BY YEAR ( `d` ) , `SQL_TSI_MONTH` ( `d` )"]},
+        {"queries": ["SELECT EXTRACT(YEAR FROM `d`) FROM `p` WHERE `d` > NOW() - INTERVAL 1 DAY"]},
+    ),
+    "mysql-json-functions": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT JSON_EXTRACT(`doc`, '$.a'), `doc` ->> '$.b' FROM `t`"]},
+        {"queries": ["SELECT `doc` FROM `t` WHERE `n` - 1 > 0 AND `doc` = '->'"]},
+    ),
+    "mysql-functions-behave-differently": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT LENGTH(`name`) FROM `t`"]},
+        {"queries": ["SELECT CHAR_LENGTH(`name`), `length` FROM `t`"]},
+    ),
+    "mysql-fulltext-search": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT `id` FROM `t` WHERE MATCH (`body`) AGAINST (? IN BOOLEAN MODE)"]},
+        {"queries": ["SELECT `id` FROM `t` WHERE `body` LIKE ?"]},
+    ),
+    "mysql-spatial-types": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_table("db.t", types=("point",))]},
+        {"tables": [_table("db.t", types=("varchar(20)",))]},
+    ),
+    "mysql-regexp-operators": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT `id` FROM `t` WHERE `name` REGEXP ?"]},
+        {"queries": ["SELECT `id` FROM `t` WHERE `name` LIKE 'REGEXP'"]},
+    ),
+    "mysql-only-operators": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT `id` FROM `t` WHERE `a` <=> ?"]},
+        {"queries": ["SELECT `id` FROM `t` WHERE `a` <= ? AND `b` >= ? OR `c` | ?"]},
+    ),
+    "mysql-select-modifiers-and-hints": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT DISTINCTROW `id` FROM `t` FORCE INDEX (`k`)"]},
+        {"queries": ["SELECT DISTINCT `id` FROM `t` WHERE `dual` = ?"]},
+    ),
+    "mysql-found-rows-to-postgresql": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SELECT SQL_CALC_FOUND_ROWS `id` FROM `t` LIMIT ?", "SELECT FOUND_ROWS ( )"]},
+        {"queries": ["SELECT COUNT(*) FROM `t` -- SQL_CALC_FOUND_ROWS"]},
+    ),
+    "mysql-user-variables": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SET @total = ?", "SELECT @rank := @rank + 1 FROM `t`"]},
+        {"queries": ["SELECT @@autocommit, '@x' FROM `t`"]},
+    ),
+    "mysql-system-variables": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SET SESSION `SQL_BIG_SELECTS` = ?", "SELECT @@SESSION.sql_mode"]},
+        {"queries": ["UPDATE t SET session = ?", "SELECT @total"]},
+    ),
+    "mysql-show-and-admin-statements": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["SHOW FULL FIELDS FROM `wp_options`"]},
+        {"queries": ["SELECT `id` FROM `t` ORDER BY `id` DESC"]},
+    ),
+    "mysql-load-data-and-outfile": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ["LOAD DATA LOCAL INFILE ? INTO TABLE `t`"]},
+        {"queries": ["SELECT `id` FROM `t` WHERE `note` = 'LOAD DATA'"]},
+    ),
+    "mysql-double-quoted-strings": (
+        "mysql",
+        "aurora_postgresql",
+        {"queries": ['SELECT `id` FROM `t` WHERE `status` = "publish"']},
+        {"queries": ["SELECT `id` FROM `t` WHERE `status` = 'say \"hi\"'"]},
+    ),
+    "mysql-stored-routines-to-postgresql": (
+        "mysql",
+        "aurora_postgresql",
+        {
+            "procedures": [{"procedure_id": "p", "procedure_type": "PROCEDURE"}],
+            "triggers": [{"trigger_id": "trg", "table_id": "db.t"}],
+        },
+        None,
+    ),
+    "mysql-types-mapped-to-postgresql": (
+        "mysql",
+        "aurora_postgresql",
+        {"tables": [_table("db.t", types=("datetime", "longtext"))]},
+        {"tables": [_table("db.t", types=("int", "varchar(20)"))]},
+    ),
+    "mysql-implicit-type-conversion": ("mysql", "aurora_postgresql", {}, None),
+    # PostgreSQL to Aurora MySQL (#1330)
+    "postgresql-returning-clause": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["INSERT INTO t (a) VALUES ($1) RETURNING id"]},
+        {"queries": ["INSERT INTO t (a, returning_id) VALUES ('RETURNING', $1)"]},
+    ),
+    "postgresql-on-conflict": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["INSERT INTO t (a) VALUES ($1) ON CONFLICT (a) DO NOTHING"]},
+        {"queries": ["INSERT INTO t (on_conflict) VALUES ($1)"]},
+    ),
+    "postgresql-merge-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a"]},
+        {"queries": ["SELECT merge FROM t"]},
+    ),
+    "postgresql-data-modifying-ctes": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["WITH w AS (INSERT INTO t (a) VALUES ($1) RETURNING a) SELECT * FROM w"]},
+        {"queries": ["WITH w AS (SELECT a FROM t) INSERT INTO u SELECT * FROM w"]},
+    ),
+    "postgresql-distinct-on": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT DISTINCT ON (user_id) * FROM t ORDER BY user_id"]},
+        {"queries": ["SELECT DISTINCT user_id FROM t"]},
+    ),
+    "postgresql-ilike": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT id FROM t WHERE name ILIKE $1"]},
+        {"queries": ["SELECT id FROM t WHERE name LIKE $1"]},
+    ),
+    "postgresql-regex-operators": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT id FROM t WHERE name ~ $1"]},
+        {"queries": ["SELECT id FROM t WHERE name = '~'"]},
+    ),
+    "postgresql-sequences-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT nextval('orders_id_seq')"]},
+        {"queries": ["SELECT next_val FROM t"]},
+    ),
+    "postgresql-serial-columns-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_column_table(is_auto_increment=True)]},
+        {"tables": [_column_table(is_auto_increment=None)]},
+    ),
+    "postgresql-arrays": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.t", types=("_int4", "text[]"))]},
+        {"tables": [_table("db.t", types=("int4", "text"))]},
+    ),
+    "postgresql-json-operators-and-functions": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT data ->> $1 FROM t WHERE data @> $2"]},
+        {"queries": ["SELECT id FROM t WHERE a - 1 > $1 AND b >= $2"]},
+    ),
+    "postgresql-full-text-search": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT id FROM t WHERE search @@ to_tsquery($1)"]},
+        {"queries": ["SELECT id FROM t WHERE body LIKE $1"]},
+    ),
+    "postgresql-index-methods": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.t", indexes=[_index(index_type="gin")])]},
+        {"tables": [_table("db.t", indexes=[_index(index_type="btree")])]},
+    ),
+    "postgresql-partial-indexes": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.t", indexes=[_index(predicate="(deleted_at IS NULL)")])]},
+        {"tables": [_table("db.t", indexes=[_index(predicate=None)])]},
+    ),
+    "postgresql-cast-operator": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT $1::int"]},
+        {"queries": ["SELECT a[1:2] FROM t"]},
+    ),
+    "postgresql-concatenation-operator": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT a || b FROM t"]},
+        {"queries": ["SELECT a | b FROM t"]},
+    ),
+    "postgresql-only-clauses": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT id FROM t WHERE a IS DISTINCT FROM b ORDER BY a DESC NULLS LAST"]},
+        {"queries": ["SELECT DISTINCT id FROM t ORDER BY a DESC"]},
+    ),
+    "postgresql-aggregate-filter-and-window-frames": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT COUNT(*) FILTER (WHERE a > 0) FROM t"]},
+        {"queries": ["SELECT COUNT(*) FROM t WHERE a > 0"]},
+    ),
+    "postgresql-builtin-functions": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT string_agg(name, ',') FROM t"]},
+        {"queries": ["SELECT COALESCE(name, 'string_agg(x)') FROM t"]},
+    ),
+    "postgresql-date-functions": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT date_trunc('day', a) FROM t WHERE a > NOW() - INTERVAL $1"]},
+        {"queries": ["SELECT EXTRACT(YEAR FROM a) FROM t"]},
+    ),
+    "postgresql-functions-behave-differently": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT length(name) FROM t"]},
+        {"queries": ["SELECT char_length(name) FROM t"]},
+    ),
+    "postgresql-system-catalog": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT relname FROM pg_class WHERE relkind = $1"]},
+        {"queries": ["SELECT table_name FROM information_schema.tables"]},
+    ),
+    "postgresql-session-settings": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SET SESSION timezone TO 'UTC'", "SHOW search_path"]},
+        {"queries": ["UPDATE t SET session = $1"]},
+    ),
+    "postgresql-materialized-views": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard"]},
+        {"queries": ["SELECT * FROM leaderboard_view"]},
+    ),
+    "postgresql-listen-notify": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["NOTIFY jobs, 'ready'", "SELECT pg_notify($1, $2)"]},
+        {"queries": ["SELECT notify FROM t"]},
+    ),
+    "postgresql-copy-statements": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["COPY t (a, b) FROM STDIN"]},
+        {"queries": ["SELECT copy FROM t"]},
+    ),
+    "postgresql-plpgsql-routines-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {
+            "procedures": [
+                {"procedure_id": "f", "procedure_type": "FUNCTION", "language": "plpgsql"}
+            ]
+        },
+        {"procedures": [{"procedure_id": "f", "procedure_type": "FUNCTION", "language": "c"}]},
+    ),
+    "postgresql-extensions-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"procedures": [{"procedure_id": "f", "procedure_type": "FUNCTION", "language": "C"}]},
+        {
+            "procedures": [
+                {"procedure_id": "f", "procedure_type": "FUNCTION", "language": "plpgsql"}
+            ]
+        },
+    ),
+    "postgresql-types-no-mysql-equivalent": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.t", types=("inet", "int4range"))]},
+        {"tables": [_table("db.t", types=("integer",))]},
+    ),
+    "postgresql-types-mapped-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.t", types=("boolean", "jsonb"))]},
+        {"tables": [_table("db.t", types=("integer", "character varying(20)"))]},
+    ),
+    "postgresql-double-quoted-identifiers": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ['SELECT "users".* FROM "users"']},
+        {"queries": ["SELECT id FROM users WHERE note = 'say \"hi\"'"]},
+    ),
+    "postgresql-schemas-to-mysql": (
+        "postgresql",
+        "aurora_mysql",
+        {"tables": [_table("db.app.t", schema_name="app")]},
+        {"tables": [_table("db.public.t", schema_name="public")]},
+    ),
+    "postgresql-lateral-joins": (
+        "postgresql",
+        "aurora_mysql",
+        {"queries": ["SELECT * FROM t, LATERAL (SELECT 1) x"]},
+        {"queries": ["SELECT lateral_id FROM t"]},
+    ),
+    "postgresql-case-sensitive-comparison": ("postgresql", "aurora_mysql", {}, None),
 }
 
 
@@ -439,12 +842,34 @@ def test_every_text_matcher_entry_matches_and_a_literal_does_not(
 ) -> None:
     rule = _rule(rule_id)
     engine, target = rule.source_engines[0], rule.targets[0]
-    code = entry.lower() + ("(x)" if kind in ("calls", "extension_calls") else "")
-    hit = _collector(engine, queries=[f"SELECT a FROM t WHERE b = {code}"])
+    code = entry.lower().replace("{value}", "10")
+    code += "(x)" if kind in ("calls", "extension_calls") else ""
+    # A word the rule reads only after an operand (PostgreSQL's infix ~) gets one.
+    before = "b" if kind == "words" and rule.match.unless_preceded_by else "b ="
+    hit = _collector(engine, queries=[f"SELECT a FROM t WHERE {before} {code}"])
     assert rule_id in _ids(detect_relational_gaps(hit, target))
     literal = code.replace("'", "''")
     miss = _collector(engine, queries=[f"SELECT a FROM t WHERE b = '{literal}'"])
     assert rule_id not in _ids(detect_relational_gaps(miss, target))
+
+
+def _statement_starts() -> list[tuple[str, str]]:
+    return [(r.id, entry) for r in gap_rules() for entry in r.match.statement_starts]
+
+
+@pytest.mark.parametrize(("rule_id", "entry"), _statement_starts())
+def test_every_statement_start_counts_only_where_a_statement_begins(
+    rule_id: str, entry: str
+) -> None:
+    """#1330: ``SHOW`` begins a MySQL statement; a column named show, or the same words
+    inside a statement, are not one."""
+    rule = _rule(rule_id)
+    engine, target = rule.source_engines[0], rule.targets[0]
+    for text in (f"{entry.lower()} x", f"SELECT 1; {entry.lower()} x"):
+        assert rule_id in _ids(detect_relational_gaps(_collector(engine, queries=[text]), target))
+    for text in (f"SELECT a FROM t WHERE b = {entry.lower()}", f"SELECT '{entry.lower()}'"):
+        miss = _collector(engine, queries=[text])
+        assert rule_id not in _ids(detect_relational_gaps(miss, target)), text
 
 
 def test_a_routine_or_view_definition_is_read_too() -> None:
@@ -827,3 +1252,306 @@ def test_a_mariadb_server_collected_as_mysql_reads_as_mariadb() -> None:
     assert result is not None and result["source_engine"] == "mariadb"
     assert "mysql-newer-major-version" not in _ids(result)
     assert {"mariadb-to-aurora-mysql", "mysql-query-cache-hint"} <= _ids(result)
+
+
+# --- #1330: the matchers the MySQL <-> PostgreSQL rules use ----------------------------
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("SELECT id FROM t LIMIT ?, ...", True),  # a statement digest
+        ("SELECT id FROM t LIMIT 10, 20", True),
+        ("SELECT id FROM t LIMIT @off, @n", True),
+        ("SELECT id FROM t LIMIT 20 OFFSET 10", False),
+        ("SELECT id FROM t LIMIT 20", False),
+        ("SELECT id FROM t LIMIT (SELECT 1), 2", False),
+        ("SELECT id FROM t WHERE note = 'LIMIT 1, 2'", False),
+    ],
+)
+def test_a_value_slot_takes_one_value(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("mysql", queries=[sql]), "aurora_postgresql")
+    assert ("mysql-limit-offset-comma" in _ids(result)) is hit
+
+
+@pytest.mark.parametrize(
+    ("sql", "user", "system"),
+    [
+        ("SET @total = 0", True, False),
+        ("SELECT @_x", True, False),
+        ("SELECT @@autocommit", False, True),
+        ("SELECT @@SESSION.sql_mode", False, True),
+        ("SELECT 'a@b.c', '@@x'", False, False),
+        ("SELECT a FROM t -- @x @@y", False, False),
+    ],
+)
+def test_word_prefixes_tell_user_from_system_variables(sql: str, user: bool, system: bool) -> None:
+    ids = _ids(detect_relational_gaps(_collector("mysql", queries=[sql]), "aurora_postgresql"))
+    assert ("mysql-user-variables" in ids, "mysql-system-variables" in ids) == (user, system)
+
+
+@pytest.mark.parametrize(
+    ("engine", "sql", "rule_id", "hit"),
+    [
+        (
+            "postgresql",
+            'SELECT "u"."id" FROM "users" "u"',
+            "postgresql-double-quoted-identifiers",
+            True,
+        ),
+        (
+            "postgresql",
+            "SELECT id FROM users WHERE a = 'x\"y'",
+            "postgresql-double-quoted-identifiers",
+            False,
+        ),
+        (
+            "postgresql",
+            'SELECT id FROM users -- "quoted"',
+            "postgresql-double-quoted-identifiers",
+            False,
+        ),
+        ("postgresql", 'SELECT $$ "x" $$', "postgresql-double-quoted-identifiers", False),
+        ("mysql", 'SELECT `id` FROM `t` WHERE a = "x"', "mysql-double-quoted-strings", True),
+        ("mysql", "SELECT `id` FROM `t` WHERE a = ?", "mysql-double-quoted-strings", False),
+        ("mysql", "SELECT `id` FROM `t` WHERE a = 'x\"y'", "mysql-double-quoted-strings", False),
+    ],
+)
+def test_quoted_with_reads_the_spans_the_source_dialect_quotes(
+    engine: str, sql: str, rule_id: str, hit: bool
+) -> None:
+    target = "aurora_mysql" if engine == "postgresql" else "aurora_postgresql"
+    result = detect_relational_gaps(_collector(engine, queries=[sql]), target)
+    assert (rule_id in _ids(result)) is hit
+
+
+def test_a_quoted_span_in_a_routine_counts_as_its_evidence() -> None:
+    body = 'CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$; SELECT "f"()'
+    collector = _collector(
+        "postgresql",
+        procedures=[{"procedure_id": "f", "procedure_type": "FUNCTION", "definition": body}],
+    )
+    gap = _gap(
+        detect_relational_gaps(collector, "aurora_mysql"), "postgresql-double-quoted-identifiers"
+    )
+    assert gap["objects"] == [{"kind": "function", "id": "f"}]
+
+
+@pytest.mark.parametrize(
+    ("data_type", "rule_id", "hit"),
+    [
+        ("bigint(20) unsigned", "mysql-unsigned-integers", True),
+        ("INT UNSIGNED", "mysql-unsigned-integers", True),
+        ("int(4) zerofill", "mysql-unsigned-integers", True),
+        ("bigint(20)", "mysql-unsigned-integers", False),
+        ("_varchar", "postgresql-arrays", True),
+        ("integer[]", "postgresql-arrays", True),
+        ("ARRAY", "postgresql-arrays", True),
+        ("integer", "postgresql-arrays", False),
+        ("varchar", "postgresql-arrays", False),
+    ],
+)
+def test_data_type_globs(data_type: str, rule_id: str, hit: bool) -> None:
+    engine = "postgresql" if rule_id.startswith("postgresql") else "mysql"
+    target = "aurora_mysql" if engine == "postgresql" else "aurora_postgresql"
+    collector = _collector(engine, tables=[_table("db.t", types=(data_type,))])
+    assert (rule_id in _ids(detect_relational_gaps(collector, target))) is hit
+
+
+@pytest.mark.parametrize(
+    ("default", "hit"),
+    [
+        ("0000-00-00 00:00:00", True),
+        ("0000-00-00", True),
+        (" 0000-00-00 ", True),
+        ("2000-01-01 00:00:00", False),
+        ("", False),
+        (None, False),
+        (0, False),
+        (False, False),
+    ],
+)
+def test_zero_date_defaults(default: Any, hit: bool) -> None:
+    table = _column_table(data_type="datetime", default_value=default)
+    result = detect_relational_gaps(_collector("mysql", tables=[table]), "aurora_postgresql")
+    assert ("mysql-zero-dates" in _ids(result)) is hit
+
+
+def test_column_rules_name_the_column_and_its_table() -> None:
+    tables = [
+        _column_table("db.a", column_name="ID", is_auto_increment=True),
+        _column_table("db.b", column_name="id", is_auto_increment=False),
+    ]
+    result = detect_relational_gaps(_collector("mysql", tables=tables), "aurora_postgresql")
+    for rule_id in ("mysql-auto-increment-columns", "mysql-mixed-case-identifiers"):
+        gap = _gap(result, rule_id)
+        assert (gap["tables"], gap["objects"]) == (["db.a"], [{"kind": "column", "id": "db.a.ID"}])
+
+
+def test_a_table_name_with_capitals_is_evidence_with_no_column() -> None:
+    table = _table("db.Orders")
+    gap = _gap(
+        detect_relational_gaps(_collector("mysql", tables=[table]), "aurora_postgresql"),
+        "mysql-mixed-case-identifiers",
+    )
+    assert (gap["tables"], gap["objects"]) == (["db.Orders"], [])
+
+
+def test_index_rules_name_the_table() -> None:
+    tables = [
+        _table("db.a", indexes=[_index(index_type="gin"), _index(index_type="btree")]),
+        _table("db.b", indexes=[_index(index_type="btree", predicate="(x > 0)")]),
+        _table("db.c", indexes=[_index(index_type="btree", predicate="  ")]),
+        _table("db.d"),
+    ]
+    result = detect_relational_gaps(_collector("postgresql", tables=tables), "aurora_mysql")
+    assert _gap(result, "postgresql-index-methods")["tables"] == ["db.a"]
+    assert _gap(result, "postgresql-partial-indexes")["tables"] == ["db.b"]
+
+
+def test_a_mysql_fulltext_index_is_evidence() -> None:
+    table = _table("db.t", indexes=[_index(index_type="fulltext")])
+    result = detect_relational_gaps(_collector("mysql", tables=[table]), "aurora_postgresql")
+    assert _gap(result, "mysql-fulltext-search")["tables"] == ["db.t"]
+
+
+def test_objects_outside_the_public_schema_are_evidence() -> None:
+    collector = _collector(
+        "postgresql",
+        tables=[
+            _table("db.app.t", schema_name="App"),
+            _table("db.public.u", schema_name="public"),
+            _table("db.v"),
+        ],
+        procedures=[
+            {"procedure_id": "fn.f", "procedure_type": "FUNCTION", "schema_name": "fn"},
+            {"procedure_id": "g", "procedure_type": "FUNCTION", "schema_name": "PUBLIC"},
+            {"procedure_id": "h", "procedure_type": "FUNCTION"},
+        ],
+        views=[{"view_id": "rpt.v", "schema_name": "rpt", "definition": "SELECT 1"}],
+        triggers=[{"trigger_id": "trg", "table_id": "db.app.t", "schema_name": "app"}],
+    )
+    gap = _gap(detect_relational_gaps(collector, "aurora_mysql"), "postgresql-schemas-to-mysql")
+    assert gap["tables"] == ["db.app.t"]
+    assert gap["objects"] == [
+        {"kind": "function", "id": "fn.f"},
+        {"kind": "trigger", "id": "trg"},
+        {"kind": "view", "id": "rpt.v"},
+    ]
+
+
+def test_every_conversion_has_feature_rules() -> None:
+    """#1330: every source engine has feature rules for both Aurora engines, so no wave 1
+    says its feature gaps were not checked (#1327)."""
+    for engine in sorted(SOURCE_ENGINES):
+        for target in ("aurora_mysql", "aurora_postgresql"):
+            result = detect_relational_gaps(_collector(engine), target)
+            assert result is not None and result["feature_rules_checked"] > 0, (engine, target)
+
+
+# --- #1330 review round 1 ---------------------------------------------------------------
+
+
+def _pg_fn(name: str, language: str) -> dict[str, Any]:
+    return {
+        "procedure_id": name,
+        "procedure_name": name,
+        "procedure_type": "FUNCTION",
+        "language": language,
+    }
+
+
+def test_an_extensions_sql_wrapper_is_not_an_application_routine() -> None:
+    """citext installs SQL-language wrappers named like built-ins (regexp_replace,
+    strpos) with no schema in the collection: they are not the application's routines."""
+    collector = _collector(
+        "postgresql", procedures=[_pg_fn("regexp_replace", "sql"), _pg_fn("strpos", "SQL")]
+    )
+    result = detect_relational_gaps(collector, "aurora_mysql")
+    assert "postgresql-plpgsql-routines-to-mysql" not in _ids(result)
+
+
+@pytest.mark.parametrize("language", ["plpgsql", "plpython3u", "plperl", "plv8", "PLPGSQL"])
+def test_procedural_language_routines_count(language: str) -> None:
+    collector = _collector("postgresql", procedures=[_pg_fn("f", language)])
+    gap = _gap(
+        detect_relational_gaps(collector, "aurora_mysql"), "postgresql-plpgsql-routines-to-mysql"
+    )
+    assert gap["objects"] == [{"kind": "function", "id": "f"}]
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("REPLACE INTO `t` (`a`) VALUES (?)", True),
+        ("REPLACE `t` (`a`) VALUES (?)", True),  # INTO is optional in MySQL
+        ("REPLACE t SET a = ?", True),
+        ("SELECT REPLACE(`a`, ?, ?) FROM `t`", False),
+        ("UPDATE `t` SET `a` = REPLACE(`a`, ?, ?)", False),
+    ],
+)
+def test_replace_statements_with_or_without_into(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("mysql", queries=[sql]), "aurora_postgresql")
+    assert ("mysql-replace-into" in _ids(result)) is hit
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("SELECT IF(`a` > ?, ?, ?) FROM `t`", True),
+        ("SELECT `if` FROM `t`", False),
+        ("SELECT `a` FROM `t` WHERE `b` = 'IF(x)'", False),
+    ],
+)
+def test_the_if_function(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("mysql", queries=[sql]), "aurora_postgresql")
+    assert ("mysql-builtin-functions" in _ids(result)) is hit
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("SET sql_mode = ?", True),
+        ("SET autocommit = 0", True),
+        ("SET `sql_mode` = ?", True),  # a digest quotes the variable name
+        ("SET SESSION `SQL_BIG_SELECTS` = ?", True),
+        ("SET @total = ?", False),
+        ("SET NAMES utf8mb4", False),
+        ("UPDATE `t` SET `sql_mode` = ?", False),
+    ],
+)
+def test_mysql_server_variables_set_plainly(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("mysql", queries=[sql]), "aurora_postgresql")
+    assert ("mysql-system-variables" in _ids(result)) is hit
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("SET client_min_messages TO warning", True),
+        ("SET standard_conforming_strings = on", True),
+        ("UPDATE t SET client_min_messages = $1", False),
+    ],
+)
+def test_postgresql_session_settings_set_plainly(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("postgresql", queries=[sql]), "aurora_mysql")
+    assert ("postgresql-session-settings" in _ids(result)) is hit
+
+
+@pytest.mark.parametrize(
+    ("sql", "hit"),
+    [
+        ("SELECT id FROM t WHERE name ~ $1", True),
+        ("SELECT id FROM t WHERE name ~* $1", True),
+        ("SELECT id FROM t WHERE name !~ $1", True),
+        ("SELECT id FROM t WHERE (name) ~ $1", True),
+        ("SELECT ~ a FROM t", False),  # bitwise NOT, which MySQL has too
+        ("SELECT a FROM t WHERE b = ~ c", False),
+        ("SELECT a, ~b FROM t", False),
+        ("SELECT id FROM t WHERE name ~~ $1", False),  # LIKE
+        ("SELECT id FROM t WHERE name !~~ $1", False),  # NOT LIKE
+    ],
+)
+def test_the_regex_operator_only_between_operands(sql: str, hit: bool) -> None:
+    result = detect_relational_gaps(_collector("postgresql", queries=[sql]), "aurora_mysql")
+    assert ("postgresql-regex-operators" in _ids(result)) is hit

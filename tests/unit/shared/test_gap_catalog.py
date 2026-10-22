@@ -93,6 +93,25 @@ def test_a_valid_file_loads(tmp_path: Path) -> None:
         ('version = "older_than_target"\nwords = ["X"]', "no other matcher"),
         ('syntax = ["CONNECT"]', "one token"),
         ('version = "sideways"', "version"),
+        # #1330
+        ("always = true\nauto_increment = true", "no other matcher"),
+        ('version = "unknown"\nuppercase_names = true', "no other matcher"),
+        ('syntax = ["LIMIT {n} ,"]', "placeholder"),
+        ('statement_starts = ["SHOW {value}"]', "no placeholder"),
+        ('word_prefixes = ["a"]', "sigil"),
+        ('word_prefixes = [""]', "sigil"),
+        ('quoted_with = ["ab"]', "quote character"),
+        ('quoted_with = ["x"]', "quote character"),
+        ("partial_indexes = false", "needs at least one matcher"),
+        # #1330 review round 1
+        ('index_types = ["brin"]', "unknown index types"),
+        ('index_types = ["GIN "]', "empty or padded"),
+        ('data_type_globs = [""]', "empty or padded"),
+        ('default_values = [" "]', "empty or padded"),
+        ('schemas_other_than = [""]', "empty or padded"),
+        ('syntax = ["{value} ,"]', "no word to anchor"),
+        ('syntax = ["( {value} )"]', "no word to anchor"),
+        ('calls = ["X"]\nunless_preceded_by = ["Y"]', "qualify words"),
     ],
 )
 def test_a_bad_match_fails_to_load(tmp_path: Path, match: str, message: str) -> None:
@@ -178,6 +197,56 @@ def test_version_lines(engine: str, version: str | None, line: tuple[int, ...] |
     assert parse_version_line(engine, version) == line
 
 
+@pytest.mark.parametrize(
+    "match",
+    [
+        "auto_increment = true",
+        "uppercase_names = true",
+        "partial_indexes = true",
+        'statement_starts = ["SHOW"]',
+        'word_prefixes = ["@@"]',
+        "quoted_with = ['\"']",
+        'data_type_globs = ["* unsigned"]',
+        'default_values = ["0000-00-00*"]',
+        'index_types = ["gin"]',
+        'schemas_other_than = ["public"]',
+        'syntax = ["LIMIT {value} ,"]',
+    ],
+)
+def test_each_new_matcher_loads_on_its_own(tmp_path: Path, match: str) -> None:
+    """#1330: every matcher the MySQL and PostgreSQL conversion rules use is a rule."""
+    _write(tmp_path, match=match)
+    (rule,) = load_gap_rules(tmp_path, versions=aurora_version_lines())
+    assert rule.id == "a-rule"
+
+
+def test_every_source_has_feature_rules_for_both_aurora_engines() -> None:
+    """#1330: no conversion is left with version rules only."""
+    for source in sorted(SOURCE_ENGINES):
+        for target in sorted(AURORA_TARGETS):
+            assert any(
+                r.match.version is None and source in r.source_engines and target in r.targets
+                for r in gap_rules()
+            ), (source, target)
+
+
+def test_the_rule_catalog_page_says_what_each_new_matcher_looks_for() -> None:
+    page = "\n".join(render_gaps_md(gap_rules(), aurora_version_lines(), {}))
+    for text in (
+        "auto-increment (serial, identity) columns",
+        "table and column names with a capital letter",
+        "partial indexes (with a WHERE predicate)",
+        "statement starts `SHOW`",
+        "words starting with `@`",
+        'text quoted with `"`',
+        "column types like `* unsigned`",
+        "column defaults like `0000-00-00*`",
+        "index types `gin`",
+        "objects in a schema other than `public`",
+    ):
+        assert text in page, text
+
+
 def test_the_rule_catalog_page_lists_every_rule() -> None:
     page = "\n".join(render_gaps_md(gap_rules(), aurora_version_lines(), {}))
     for rule in gap_rules():
@@ -195,3 +264,11 @@ def test_the_results_page_names_each_impact_as_the_reports_do() -> None:
     shown = {k[len(prefix) :]: v for k, v in en.items() if k.startswith(prefix)}
     assert shown == dict(GAP_IMPACT_LABELS)
     assert set(GAP_IMPACT_LABELS) == set(GAP_IMPACTS)
+
+
+def test_the_index_types_are_the_collectors() -> None:
+    """``index_types`` is checked against the collector's own list (#1330)."""
+    from src.contracts.collector_output import IndexType
+    from src.shared.catalog.gaps import INDEX_TYPES
+
+    assert INDEX_TYPES == {t.value for t in IndexType}

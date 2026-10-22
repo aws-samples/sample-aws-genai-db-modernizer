@@ -955,12 +955,34 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`postgresql-untrusted-language`](#postgresql-untrusted-language) | postgresql | Aurora PostgreSQL | Blocks the move | routine languages `plperlu`, `plpythonu`, `plpython2u`, `plpython3u`, `pltclu` |
 | [`db2-special-registers`](#db2-special-registers) | db2 | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | words `SYSDUMMY1`; syntax `CURRENT DATE`, `CURRENT TIMESTAMP`, `CURRENT TIME` |
 | [`db2-sql-pl-routines`](#db2-sql-pl-routines) | db2 | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | every procedure, function and trigger |
-| [`fetch-first-to-mysql`](#fetch-first-to-mysql) | sqlserver, oracle, db2 | Aurora MySQL | Needs a rewrite | syntax `ROWS ONLY`, `ROW ONLY` |
+| [`fetch-first-to-mysql`](#fetch-first-to-mysql) | sqlserver, oracle, db2, postgresql | Aurora MySQL | Needs a rewrite | syntax `ROWS ONLY`, `ROW ONLY` |
 | [`mariadb-sequences`](#mariadb-sequences) | mariadb | Aurora MySQL | Needs a rewrite | calls `NEXTVAL`, `LASTVAL`, `SETVAL`; syntax `NEXT VALUE FOR`, `PREVIOUS VALUE FOR` |
+| [`mysql-builtin-functions`](#mysql-builtin-functions) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `IF`, `IFNULL`, `ISNULL`, `GROUP_CONCAT`, `FIND_IN_SET`, `FIELD`, `ELT`, `INSTR`, `LOCATE`, `SUBSTRING_INDEX`, `LCASE`, `UCASE`, `MID`, `SPACE`, `STRCMP`, `FORMAT`, `CONVERT`, `HEX`, `UNHEX`, `CONV`, `BIN`, `OCT`, `SOUNDEX`, `MAKE_SET`, `EXPORT_SET`, `QUOTE`, `TRUNCATE`, `RAND`, `UUID`, `UUID_SHORT`, `SHA1`, `SHA2`, `AES_ENCRYPT`, `AES_DECRYPT`, `COMPRESS`, `UNCOMPRESS`, `INET_ATON`, `INET_NTOA`, `INET6_ATON`, `INET6_NTOA`, `DATABASE`, `CONNECTION_ID`, `SLEEP`, `GET_LOCK`, `RELEASE_LOCK`, `RELEASE_ALL_LOCKS`, `IS_FREE_LOCK`, `IS_USED_LOCK`, `LOAD_FILE` |
+| [`mysql-date-functions`](#mysql-date-functions) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `DATE_FORMAT`, `STR_TO_DATE`, `TIME_FORMAT`, `GET_FORMAT`, `DATE_ADD`, `DATE_SUB`, `ADDDATE`, `SUBDATE`, `ADDTIME`, `SUBTIME`, `DATEDIFF`, `TIMEDIFF`, `TIMESTAMPDIFF`, `TIMESTAMPADD`, `UNIX_TIMESTAMP`, `FROM_UNIXTIME`, `CURDATE`, `CURTIME`, `SYSDATE`, `UTC_TIMESTAMP`, `UTC_DATE`, `UTC_TIME`, `CONVERT_TZ`, `YEAR`, `QUARTER`, `MONTH`, `WEEK`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `MICROSECOND`, `DAYOFMONTH`, `DAYOFWEEK`, `DAYOFYEAR`, `DAYNAME`, `MONTHNAME`, `WEEKDAY`, `WEEKOFYEAR`, `YEARWEEK`, `LAST_DAY`, `MAKEDATE`, `MAKETIME`, `PERIOD_ADD`, `PERIOD_DIFF`, `TO_DAYS`, `FROM_DAYS`, `TO_SECONDS`, `SEC_TO_TIME`, `TIME_TO_SEC`, `SQL_TSI_YEAR`, `SQL_TSI_QUARTER`, `SQL_TSI_MONTH`, `SQL_TSI_WEEK`, `SQL_TSI_DAY`, `SQL_TSI_HOUR`, `SQL_TSI_MINUTE`, `SQL_TSI_SECOND` |
+| [`mysql-double-quoted-strings`](#mysql-double-quoted-strings) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | text quoted with `"` |
+| [`mysql-enum-and-set-types`](#mysql-enum-and-set-types) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | column types `enum`, `set` |
+| [`mysql-found-rows-to-postgresql`](#mysql-found-rows-to-postgresql) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `FOUND_ROWS`, `ROW_COUNT`; words `SQL_CALC_FOUND_ROWS` |
+| [`mysql-fulltext-search`](#mysql-fulltext-search) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words `AGAINST`; index types `fulltext` |
+| [`mysql-insert-ignore`](#mysql-insert-ignore) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `INSERT IGNORE`, `INSERT LOW_PRIORITY IGNORE`, `INSERT DELAYED IGNORE`, `INSERT HIGH_PRIORITY IGNORE`, `UPDATE IGNORE`, `UPDATE LOW_PRIORITY IGNORE`, `DELETE IGNORE`, `DELETE LOW_PRIORITY IGNORE`, `DELETE QUICK IGNORE` |
+| [`mysql-json-functions`](#mysql-json-functions) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `JSON_EXTRACT`, `JSON_UNQUOTE`, `JSON_CONTAINS`, `JSON_CONTAINS_PATH`, `JSON_SET`, `JSON_INSERT`, `JSON_REPLACE`, `JSON_REMOVE`, `JSON_SEARCH`, `JSON_KEYS`, `JSON_LENGTH`, `JSON_DEPTH`, `JSON_TYPE`, `JSON_VALID`, `JSON_QUOTE`, `JSON_MERGE`, `JSON_MERGE_PATCH`, `JSON_MERGE_PRESERVE`, `JSON_ARRAY_APPEND`, `JSON_ARRAY_INSERT`, `JSON_OVERLAPS`, `JSON_PRETTY`, `JSON_STORAGE_SIZE`; syntax `- &gt;` |
+| [`mysql-last-insert-id`](#mysql-last-insert-id) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | calls `LAST_INSERT_ID` |
+| [`mysql-limit-offset-comma`](#mysql-limit-offset-comma) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `LIMIT {value} ,` |
+| [`mysql-load-data-and-outfile`](#mysql-load-data-and-outfile) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `LOAD DATA`, `LOAD XML`, `INTO OUTFILE`, `INTO DUMPFILE` |
 | [`mysql-newer-major-version`](#mysql-newer-major-version) | mysql | Aurora MySQL | Needs a rewrite | version: newer than target |
 | [`mysql-non-innodb-storage-engine`](#mysql-non-innodb-storage-engine) | mysql, mariadb | Aurora MySQL | Needs a rewrite | storage engines `MyISAM`, `MRG_MYISAM`, `MERGE`, `ARCHIVE`, `CSV`, `FEDERATED`, `BLACKHOLE`, `Aria`, `TokuDB`, `ROCKSDB` |
+| [`mysql-on-duplicate-key-update`](#mysql-on-duplicate-key-update) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `ON DUPLICATE KEY` |
+| [`mysql-only-operators`](#mysql-only-operators) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words `DIV`, `XOR`; syntax `&lt; = &gt;`, `\| \|`, `& &` |
 | [`mysql-query-cache-hint`](#mysql-query-cache-hint) | mysql, mariadb | Aurora MySQL | Needs a rewrite | words `SQL_CACHE` |
+| [`mysql-regexp-operators`](#mysql-regexp-operators) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words `REGEXP`, `RLIKE` |
 | [`mysql-removed-functions`](#mysql-removed-functions) | mysql, mariadb | Aurora MySQL | Needs a rewrite | calls `PASSWORD`, `OLD_PASSWORD`, `ENCODE`, `DECODE`, `ENCRYPT`, `DES_ENCRYPT`, `DES_DECRYPT` |
+| [`mysql-replace-into`](#mysql-replace-into) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | syntax `REPLACE INTO`, `REPLACE LOW_PRIORITY`, `REPLACE DELAYED`; statement starts `REPLACE` |
+| [`mysql-select-modifiers-and-hints`](#mysql-select-modifiers-and-hints) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words `DISTINCTROW`, `STRAIGHT_JOIN`, `SQL_SMALL_RESULT`, `SQL_BIG_RESULT`, `SQL_BUFFER_RESULT`, `SQL_NO_CACHE`, `SQL_CACHE`, `HIGH_PRIORITY`, `LOW_PRIORITY`, `DELAYED`; syntax `FROM DUAL`, `USE INDEX`, `FORCE INDEX`, `IGNORE INDEX`, `USE KEY`, `FORCE KEY`, `IGNORE KEY` |
+| [`mysql-show-and-admin-statements`](#mysql-show-and-admin-statements) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | statement starts `SHOW`, `DESCRIBE`, `DESC`, `USE`, `LOCK TABLES`, `LOCK TABLE`, `UNLOCK TABLES`, `UNLOCK TABLE`, `FLUSH`, `KILL`, `HANDLER`, `OPTIMIZE TABLE`, `REPAIR TABLE`, `CHECK TABLE`, `CHECKSUM TABLE`, `ANALYZE TABLE` |
+| [`mysql-spatial-types`](#mysql-spatial-types) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | column types `geometry`, `point`, `linestring`, `polygon`, `multipoint`, `multilinestring`, `multipolygon`, `geometrycollection`, `geomcollection`; index types `spatial` |
+| [`mysql-stored-routines-to-postgresql`](#mysql-stored-routines-to-postgresql) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | every procedure, function and trigger |
+| [`mysql-system-variables`](#mysql-system-variables) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | statement starts `SET SESSION`, `SET GLOBAL`, `SET PERSIST`, `SET PERSIST_ONLY`, `SET =`, `SET SQL_MODE`, `SET AUTOCOMMIT`, `SET TIME_ZONE`, `SET SQL_BIG_SELECTS`, `SET SQL_SAFE_UPDATES`, `SET FOREIGN_KEY_CHECKS`, `SET UNIQUE_CHECKS`, `SET GROUP_CONCAT_MAX_LEN`, `SET MAX_EXECUTION_TIME`, `SET WAIT_TIMEOUT`, `SET INNODB_LOCK_WAIT_TIMEOUT`, `SET CHARACTER_SET_CLIENT`; words starting with `@@` |
+| [`mysql-user-variables`](#mysql-user-variables) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | words starting with `@` |
+| [`mysql-zero-dates`](#mysql-zero-dates) | mysql, mariadb | Aurora PostgreSQL | Needs a rewrite | column defaults like `0000-00-00*` |
 | [`oracle-builtin-functions`](#oracle-builtin-functions) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `NVL`, `NVL2`, `DECODE`, `ADD_MONTHS`, `MONTHS_BETWEEN`, `SYS_GUID`, `LISTAGG`; words `SYSDATE`, `SYSTIMESTAMP` |
 | [`oracle-connect-by`](#oracle-connect-by) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `SYS_CONNECT_BY_PATH`; words `CONNECT_BY_ROOT`; syntax `CONNECT BY` |
 | [`oracle-outer-join-operator`](#oracle-outer-join-operator) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | syntax `( + )` |
@@ -968,8 +990,35 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`oracle-rownum-rowid`](#oracle-rownum-rowid) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | words `ROWNUM`, `ROWID` |
 | [`oracle-sequences`](#oracle-sequences) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | syntax `. NEXTVAL`, `. CURRVAL` |
 | [`oracle-types-no-equivalent`](#oracle-types-no-equivalent) | oracle | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | column types `long`, `long raw`, `bfile`, `rowid`, `urowid`, `xmltype`, `anydata`, `sdo_geometry` |
+| [`postgresql-aggregate-filter-and-window-frames`](#postgresql-aggregate-filter-and-window-frames) | postgresql | Aurora MySQL | Needs a rewrite | calls `PERCENTILE_CONT`, `PERCENTILE_DISC`; syntax `FILTER ( WHERE`, `WITHIN GROUP`, `GROUPS BETWEEN`, `EXCLUDE CURRENT`, `EXCLUDE TIES`, `EXCLUDE GROUP`, `EXCLUDE NO OTHERS` |
+| [`postgresql-arrays`](#postgresql-arrays) | postgresql | Aurora MySQL | Needs a rewrite | calls `ARRAY`, `ARRAY_AGG`, `UNNEST`, `ARRAY_LENGTH`, `ARRAY_POSITION`, `ARRAY_POSITIONS`, `ARRAY_REMOVE`, `ARRAY_REPLACE`, `ARRAY_APPEND`, `ARRAY_PREPEND`, `ARRAY_CAT`, `ARRAY_TO_STRING`, `STRING_TO_ARRAY`, `ARRAY_UPPER`, `ARRAY_LOWER`, `ARRAY_DIMS`, `ARRAY_FILL`, `CARDINALITY`, `GENERATE_SUBSCRIPTS`; syntax `ARRAY [`, `ANY ( $`, `ALL ( $`; column types `array`; column types like `_*`, `*[[]]` |
+| [`postgresql-builtin-functions`](#postgresql-builtin-functions) | postgresql | Aurora MySQL | Needs a rewrite | calls `STRING_AGG`, `BOOL_AND`, `BOOL_OR`, `EVERY`, `GENERATE_SERIES`, `SPLIT_PART`, `STRPOS`, `INITCAP`, `TRANSLATE`, `BTRIM`, `CHR`, `OVERLAY`, `STARTS_WITH`, `STRING_TO_TABLE`, `QUOTE_IDENT`, `QUOTE_LITERAL`, `QUOTE_NULLABLE`, `FORMAT`, `TO_HEX`, `ENCODE`, `DECODE`, `SHA224`, `SHA256`, `SHA384`, `SHA512`, `RANDOM`, `SETSEED`, `TRUNC`, `DIV`, `CBRT`, `FACTORIAL`, `GCD`, `LCM`, `WIDTH_BUCKET`, `GEN_RANDOM_UUID`, `UUID_GENERATE_V4`, `PG_SLEEP`, `PG_ADVISORY_LOCK`, `PG_ADVISORY_XACT_LOCK`, `PG_TRY_ADVISORY_LOCK`, `PG_TRY_ADVISORY_XACT_LOCK`, `PG_ADVISORY_UNLOCK`, `PG_ADVISORY_UNLOCK_ALL`, `TXID_CURRENT`, `PG_CURRENT_XACT_ID` |
+| [`postgresql-cast-operator`](#postgresql-cast-operator) | postgresql | Aurora MySQL | Needs a rewrite | syntax `: :` |
+| [`postgresql-concatenation-operator`](#postgresql-concatenation-operator) | postgresql | Aurora MySQL | Needs a rewrite | syntax `\| \|` |
+| [`postgresql-copy-statements`](#postgresql-copy-statements) | postgresql | Aurora MySQL | Needs a rewrite | statement starts `COPY` |
+| [`postgresql-data-modifying-ctes`](#postgresql-data-modifying-ctes) | postgresql | Aurora MySQL | Needs a rewrite | syntax `AS ( INSERT`, `AS ( UPDATE`, `AS ( DELETE`, `MATERIALIZED ( INSERT`, `MATERIALIZED ( UPDATE`, `MATERIALIZED ( DELETE` |
+| [`postgresql-date-functions`](#postgresql-date-functions) | postgresql | Aurora MySQL | Needs a rewrite | calls `DATE_TRUNC`, `DATE_PART`, `DATE_BIN`, `AGE`, `TO_CHAR`, `TO_DATE`, `TO_TIMESTAMP`, `TO_NUMBER`, `CLOCK_TIMESTAMP`, `STATEMENT_TIMESTAMP`, `TRANSACTION_TIMESTAMP`, `TIMEOFDAY`, `MAKE_DATE`, `MAKE_TIME`, `MAKE_TIMESTAMP`, `MAKE_TIMESTAMPTZ`, `MAKE_INTERVAL`, `JUSTIFY_DAYS`, `JUSTIFY_HOURS`, `JUSTIFY_INTERVAL`, `ISFINITE`; syntax `AT TIME ZONE`, `EXTRACT ( EPOCH`, `INTERVAL $` |
+| [`postgresql-distinct-on`](#postgresql-distinct-on) | postgresql | Aurora MySQL | Needs a rewrite | syntax `DISTINCT ON` |
+| [`postgresql-extensions-to-mysql`](#postgresql-extensions-to-mysql) | postgresql | Aurora MySQL | Needs a rewrite | syntax `CREATE EXTENSION`; routine languages `c`, `internal` |
+| [`postgresql-full-text-search`](#postgresql-full-text-search) | postgresql | Aurora MySQL | Needs a rewrite | calls `TO_TSVECTOR`, `TO_TSQUERY`, `PLAINTO_TSQUERY`, `PHRASETO_TSQUERY`, `WEBSEARCH_TO_TSQUERY`, `TS_RANK`, `TS_RANK_CD`, `TS_HEADLINE`, `SETWEIGHT`, `TS_REWRITE`, `TSVECTOR_UPDATE_TRIGGER`; syntax `@ @`; column types `tsvector`, `tsquery` |
+| [`postgresql-ilike`](#postgresql-ilike) | postgresql | Aurora MySQL | Needs a rewrite | words `ILIKE`; syntax `~ ~ *` |
+| [`postgresql-index-methods`](#postgresql-index-methods) | postgresql | Aurora MySQL | Needs a rewrite | index types `gin`, `gist`, `other` |
+| [`postgresql-json-operators-and-functions`](#postgresql-json-operators-and-functions) | postgresql | Aurora MySQL | Needs a rewrite | calls `JSONB_BUILD_OBJECT`, `JSON_BUILD_OBJECT`, `JSONB_BUILD_ARRAY`, `JSON_BUILD_ARRAY`, `JSONB_AGG`, `JSON_AGG`, `JSONB_OBJECT_AGG`, `JSON_OBJECT_AGG`, `JSONB_SET`, `JSONB_INSERT`, `JSONB_ARRAY_ELEMENTS`, `JSON_ARRAY_ELEMENTS`, `JSONB_ARRAY_ELEMENTS_TEXT`, `JSON_ARRAY_ELEMENTS_TEXT`, `JSONB_EACH`, `JSON_EACH`, `JSONB_EACH_TEXT`, `JSON_EACH_TEXT`, `JSONB_OBJECT_KEYS`, `JSON_OBJECT_KEYS`, `JSONB_EXTRACT_PATH`, `JSON_EXTRACT_PATH`, `JSONB_EXTRACT_PATH_TEXT`, `JSON_EXTRACT_PATH_TEXT`, `JSONB_TYPEOF`, `JSON_TYPEOF`, `JSONB_ARRAY_LENGTH`, `JSON_ARRAY_LENGTH`, `JSONB_STRIP_NULLS`, `JSON_STRIP_NULLS`, `JSONB_PRETTY`, `TO_JSONB`, `TO_JSON`, `ROW_TO_JSON`, `ARRAY_TO_JSON`, `JSONB_PATH_QUERY`, `JSONB_PATH_EXISTS`, `JSONB_POPULATE_RECORD`, `JSON_POPULATE_RECORD`, `JSONB_TO_RECORD`, `JSON_TO_RECORD`, `JSONB_TO_RECORDSET`, `JSON_TO_RECORDSET`; syntax `- &gt;`, `# &gt;`, `@ &gt;`, `&lt; @`, `? \|`, `? &` |
+| [`postgresql-listen-notify`](#postgresql-listen-notify) | postgresql | Aurora MySQL | Needs a rewrite | calls `PG_NOTIFY`; statement starts `LISTEN`, `NOTIFY`, `UNLISTEN` |
+| [`postgresql-materialized-views`](#postgresql-materialized-views) | postgresql | Aurora MySQL | Needs a rewrite | syntax `MATERIALIZED VIEW` |
+| [`postgresql-merge-to-mysql`](#postgresql-merge-to-mysql) | postgresql | Aurora MySQL | Needs a rewrite | syntax `MERGE INTO` |
 | [`postgresql-newer-major-version`](#postgresql-newer-major-version) | postgresql | Aurora PostgreSQL | Needs a rewrite | version: newer than target |
+| [`postgresql-on-conflict`](#postgresql-on-conflict) | postgresql | Aurora MySQL | Needs a rewrite | syntax `ON CONFLICT` |
+| [`postgresql-only-clauses`](#postgresql-only-clauses) | postgresql | Aurora MySQL | Needs a rewrite | syntax `NULLS FIRST`, `NULLS LAST`, `IS DISTINCT FROM`, `IS NOT DISTINCT FROM`, `AS MATERIALIZED`, `AS NOT MATERIALIZED`, `FOR NO KEY UPDATE`, `FOR KEY SHARE` |
+| [`postgresql-partial-indexes`](#postgresql-partial-indexes) | postgresql | Aurora MySQL | Needs a rewrite | partial indexes (with a WHERE predicate) |
+| [`postgresql-plpgsql-routines-to-mysql`](#postgresql-plpgsql-routines-to-mysql) | postgresql | Aurora MySQL | Needs a rewrite | syntax `EXECUTE FUNCTION`, `EXECUTE PROCEDURE`; statement starts `DO`; routine languages `plpgsql`, `plperl`, `plperlu`, `plpythonu`, `plpython2u`, `plpython3u`, `pltcl`, `pltclu`, `plv8`, `plr`, `pljava` |
+| [`postgresql-regex-operators`](#postgresql-regex-operators) | postgresql | Aurora MySQL | Needs a rewrite | calls `REGEXP_MATCHES`, `REGEXP_MATCH`, `REGEXP_SPLIT_TO_TABLE`, `REGEXP_SPLIT_TO_ARRAY`, `REGEXP_REPLACE`, `REGEXP_COUNT`; words `~`; syntax `SIMILAR TO`; not before `~`; not after `~`, `(`, `,`, `=`, `&lt;`, `&gt;`, `+`, `-`, `*`, `/`, `%`, `\|`, `&`, `^`, `SELECT`, `WHERE`, `AND`, `OR`, `NOT`, `ON`, `WHEN`, `THEN`, `ELSE`, `BY`, `HAVING`, `SET`, `RETURN`, `VALUES` |
+| [`postgresql-returning-clause`](#postgresql-returning-clause) | postgresql | Aurora MySQL | Needs a rewrite | words `RETURNING` |
+| [`postgresql-sequences-to-mysql`](#postgresql-sequences-to-mysql) | postgresql | Aurora MySQL | Needs a rewrite | calls `NEXTVAL`, `CURRVAL`, `SETVAL`, `LASTVAL`, `PG_GET_SERIAL_SEQUENCE` |
 | [`postgresql-server-file-access`](#postgresql-server-file-access) | postgresql | Aurora PostgreSQL | Needs a rewrite | calls `PG_READ_FILE`, `PG_READ_BINARY_FILE`, `PG_LS_DIR`, `PG_STAT_FILE`, `LO_IMPORT`, `LO_EXPORT`; syntax `FROM PROGRAM`, `TO PROGRAM` |
+| [`postgresql-session-settings`](#postgresql-session-settings) | postgresql | Aurora MySQL | Needs a rewrite | calls `CURRENT_SETTING`, `SET_CONFIG`; statement starts `SHOW`, `RESET`, `DISCARD`, `SET LOCAL`, `SET SESSION`, `SET TIME ZONE`, `SET SEARCH_PATH`, `SET STATEMENT_TIMEOUT`, `SET LOCK_TIMEOUT`, `SET ROLE`, `SET APPLICATION_NAME`, `SET CLIENT_MIN_MESSAGES`, `SET CLIENT_ENCODING`, `SET STANDARD_CONFORMING_STRINGS`, `SET DATESTYLE`, `SET INTERVALSTYLE`, `SET TIMEZONE`, `SET WORK_MEM`, `SET IDLE_IN_TRANSACTION_SESSION_TIMEOUT` |
+| [`postgresql-system-catalog`](#postgresql-system-catalog) | postgresql | Aurora MySQL | Needs a rewrite | calls `CURRENT_SCHEMA`, `CURRENT_SCHEMAS`, `OBJ_DESCRIPTION`, `COL_DESCRIPTION`, `FORMAT_TYPE`, `PG_GET_EXPR`, `PG_GET_INDEXDEF`, `PG_GET_CONSTRAINTDEF`, `PG_GET_VIEWDEF`, `PG_GET_FUNCTIONDEF`, `PG_GET_TRIGGERDEF`, `PG_TABLE_SIZE`, `PG_RELATION_SIZE`, `PG_TOTAL_RELATION_SIZE`, `PG_INDEXES_SIZE`, `PG_DATABASE_SIZE`, `PG_BACKEND_PID`, `PG_IS_IN_RECOVERY`, `PG_POSTMASTER_START_TIME`, `PG_TABLE_IS_VISIBLE`, `HAS_TABLE_PRIVILEGE`, `PG_CANCEL_BACKEND`, `PG_TERMINATE_BACKEND`; words `PG_CLASS`, `PG_ATTRIBUTE`, `PG_ATTRDEF`, `PG_NAMESPACE`, `PG_TYPE`, `PG_INDEX`, `PG_CONSTRAINT`, `PG_PROC`, `PG_TRIGGER`, `PG_DESCRIPTION`, `PG_ENUM`, `PG_INHERITS`, `PG_DEPEND`, `PG_AM`, `PG_COLLATION`, `PG_EXTENSION`, `PG_DATABASE`, `PG_ROLES`, `PG_USER`, `PG_TABLES`, `PG_INDEXES`, `PG_VIEWS`, `PG_MATVIEWS`, `PG_SEQUENCES`, `PG_SETTINGS`, `PG_LOCKS`, `PG_STAT_ACTIVITY`, `PG_STAT_USER_TABLES`, `PG_STAT_USER_INDEXES`, `PG_STAT_DATABASE`, `PG_STAT_STATEMENTS`, `PG_TABLESPACE` |
+| [`postgresql-types-no-mysql-equivalent`](#postgresql-types-no-mysql-equivalent) | postgresql | Aurora MySQL | Needs a rewrite | calls `HOST`, `MASKLEN`, `NETWORK`, `FAMILY`, `BROADCAST`, `NETMASK`, `HOSTMASK`; column types `inet`, `cidr`, `macaddr`, `macaddr8`, `interval`, `money`, `int4range`, `int8range`, `numrange`, `tsrange`, `tstzrange`, `daterange`, `int4multirange`, `int8multirange`, `nummultirange`, `tsmultirange`, `tstzmultirange`, `datemultirange`, `hstore`, `ltree`, `vector`, `halfvec`, `sparsevec`, `xml`, `point`, `line`, `lseg`, `box`, `path`, `polygon`, `circle`, `oid`, `regclass`, `pg_lsn`, `txid_snapshot` |
 | [`sqlserver-apply-and-openjson`](#sqlserver-apply-and-openjson) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `OPENJSON`, `OPENXML`; syntax `CROSS APPLY`, `OUTER APPLY` |
 | [`sqlserver-builtin-functions`](#sqlserver-builtin-functions) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `ISNULL`, `LEN`, `CHARINDEX`, `STUFF`, `DATALENGTH`, `IIF`, `CHOOSE`, `COUNT_BIG`, `NEWID`, `NEWSEQUENTIALID` |
 | [`sqlserver-date-functions`](#sqlserver-date-functions) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Needs a rewrite | calls `GETDATE`, `GETUTCDATE`, `SYSDATETIME`, `SYSUTCDATETIME`, `SYSDATETIMEOFFSET`, `DATEADD`, `DATEDIFF`, `DATEDIFF_BIG`, `DATEPART`, `DATENAME`, `EOMONTH`, `DATEFROMPARTS` |
@@ -982,17 +1031,31 @@ Generated from `src/catalog/gaps/*.toml` and `src/catalog/aurora_versions.toml` 
 | [`db2-isolation-clause`](#db2-isolation-clause) | db2 | Aurora MySQL, Aurora PostgreSQL | Behaves differently | statement endings `WITH UR`, `WITH CS`, `WITH RS`, `WITH RR` |
 | [`db2-types-behave-differently`](#db2-types-behave-differently) | db2 | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `decfloat`, `graphic`, `vargraphic`, `dbclob` |
 | [`mariadb-to-aurora-mysql`](#mariadb-to-aurora-mysql) | mariadb | Aurora MySQL | Behaves differently | every source of these engines |
+| [`mysql-auto-increment-columns`](#mysql-auto-increment-columns) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | auto-increment (serial, identity) columns |
+| [`mysql-case-insensitive-collations`](#mysql-case-insensitive-collations) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | collations `*_ci` |
+| [`mysql-functions-behave-differently`](#mysql-functions-behave-differently) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | calls `LENGTH`, `LOG`, `CONCAT`, `GREATEST`, `LEAST` |
+| [`mysql-implicit-type-conversion`](#mysql-implicit-type-conversion) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | every source of these engines |
+| [`mysql-mixed-case-identifiers`](#mysql-mixed-case-identifiers) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | table and column names with a capital letter |
 | [`mysql-older-major-version`](#mysql-older-major-version) | mysql | Aurora MySQL | Behaves differently | version: older than target |
+| [`mysql-unsigned-integers`](#mysql-unsigned-integers) | mysql, mariadb | Aurora PostgreSQL | Behaves differently | column types like `* unsigned`, `* unsigned zerofill`, `* zerofill` |
 | [`oracle-date-type`](#oracle-date-type) | oracle | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `date` |
 | [`oracle-empty-string-is-null`](#oracle-empty-string-is-null) | oracle | Aurora MySQL, Aurora PostgreSQL | Behaves differently | every source of these engines |
+| [`postgresql-case-sensitive-comparison`](#postgresql-case-sensitive-comparison) | postgresql | Aurora MySQL | Behaves differently | every source of these engines |
+| [`postgresql-functions-behave-differently`](#postgresql-functions-behave-differently) | postgresql | Aurora MySQL | Behaves differently | calls `LENGTH`, `LOG`, `CONCAT`, `GREATEST`, `LEAST` |
+| [`postgresql-lateral-joins`](#postgresql-lateral-joins) | postgresql | Aurora MySQL | Behaves differently | words `LATERAL` |
 | [`postgresql-older-major-version`](#postgresql-older-major-version) | postgresql | Aurora PostgreSQL | Behaves differently | version: older than target |
 | [`sqlserver-case-insensitive-comparison`](#sqlserver-case-insensitive-comparison) | sqlserver | Aurora PostgreSQL | Behaves differently | every source of these engines |
 | [`sqlserver-table-and-query-hints`](#sqlserver-table-and-query-hints) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | calls `OPTION`; words `NOLOCK`, `READPAST`, `UPDLOCK`, `HOLDLOCK`, `ROWLOCK`, `PAGLOCK`, `TABLOCK`, `TABLOCKX`, `READUNCOMMITTED`, `NOEXPAND` |
 | [`sqlserver-types-behave-differently`](#sqlserver-types-behave-differently) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Behaves differently | column types `datetimeoffset`, `money`, `smallmoney`, `bit` |
 | [`mysql-sql-calc-found-rows`](#mysql-sql-calc-found-rows) | mysql, mariadb | Aurora MySQL | Informational | calls `FOUND_ROWS`; words `SQL_CALC_FOUND_ROWS` |
+| [`mysql-types-mapped-to-postgresql`](#mysql-types-mapped-to-postgresql) | mysql, mariadb | Aurora PostgreSQL | Informational | column types `tinyint`, `mediumint`, `datetime`, `year`, `tinytext`, `mediumtext`, `longtext`, `tinyblob`, `blob`, `mediumblob`, `longblob`, `binary`, `varbinary`, `double`, `bit`, `json` |
 | [`mysql-utf8mb3-character-set`](#mysql-utf8mb3-character-set) | mysql, mariadb | Aurora MySQL | Informational | collations `utf8_*`, `utf8mb3_*` |
 | [`oracle-types-mapped`](#oracle-types-mapped) | oracle | Aurora MySQL, Aurora PostgreSQL | Informational | column types `number`, `varchar2`, `nvarchar2`, `clob`, `nclob`, `blob`, `raw`, `binary_float`, `binary_double` |
+| [`postgresql-double-quoted-identifiers`](#postgresql-double-quoted-identifiers) | postgresql | Aurora MySQL | Informational | text quoted with `"` |
 | [`postgresql-pgvector-half-sparse`](#postgresql-pgvector-half-sparse) | postgresql | Aurora PostgreSQL | Informational | column types `halfvec`, `sparsevec` |
+| [`postgresql-schemas-to-mysql`](#postgresql-schemas-to-mysql) | postgresql | Aurora MySQL | Informational | syntax `CREATE SCHEMA`; objects in a schema other than `public` |
+| [`postgresql-serial-columns-to-mysql`](#postgresql-serial-columns-to-mysql) | postgresql | Aurora MySQL | Informational | auto-increment (serial, identity) columns |
+| [`postgresql-types-mapped-to-mysql`](#postgresql-types-mapped-to-mysql) | postgresql | Aurora MySQL | Informational | column types `boolean`, `bool`, `bytea`, `uuid`, `jsonb`, `timestamp with time zone`, `timestamptz`, `time with time zone`, `timetz`, `text`, `citext`, `double precision`, `real`, `bit varying`, `varbit` |
 | [`source-version-unknown`](#source-version-unknown) | mysql, postgresql | Aurora MySQL, Aurora PostgreSQL | Informational | version: unknown |
 | [`sqlserver-babelfish-option`](#sqlserver-babelfish-option) | sqlserver | Aurora PostgreSQL | Informational | every source of these engines |
 | [`sqlserver-types-mapped`](#sqlserver-types-mapped) | sqlserver | Aurora MySQL, Aurora PostgreSQL | Informational | column types `datetime2`, `datetime`, `smalldatetime`, `nvarchar`, `nchar`, `ntext`, `text`, `image`, `tinyint`, `varbinary`, `uniqueidentifier`, `xml` |
@@ -1039,6 +1102,72 @@ MariaDB sequences: needs a rewrite. MariaDB sequence objects have no MySQL equiv
 
 Documentation: MariaDB documentation, CREATE SEQUENCE; MySQL 8.0 Reference Manual, Using AUTO\_INCREMENT.
 
+### mysql-builtin-functions
+
+MySQL-only functions: needs a rewrite. These functions have no PostgreSQL function of the same name and behaviour, so each call is rewritten \(for example IF\(\) to CASE, IFNULL to COALESCE, GROUP\_CONCAT to string\_agg, FIND\_IN\_SET and FIELD to array\_position, RAND to random, GET\_LOCK to pg\_advisory\_lock\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Functions and Operators.
+
+### mysql-date-functions
+
+MySQL date and time functions: needs a rewrite. These date and time functions have no PostgreSQL function of the same name, so each call is rewritten with PostgreSQL's \(DATE\_FORMAT to to\_char, DATE\_ADD to + interval, YEAR\(\) and MONTH\(\) to extract, UNIX\_TIMESTAMP to extract\(epoch from ...\)\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Date and Time Functions.
+
+### mysql-double-quoted-strings
+
+Double-quoted string literals: needs a rewrite. MySQL reads "text" as a string literal, and PostgreSQL reads it as a name, so double-quoted strings become single-quoted.
+
+Documentation: MySQL 8.0 Reference Manual, String Literals; PostgreSQL documentation, Lexical Structure.
+
+### mysql-enum-and-set-types
+
+ENUM and SET columns: needs a rewrite. An ENUM column becomes a PostgreSQL enum type \(CREATE TYPE ... AS ENUM\) or a text column with a CHECK constraint, and a SET column, which PostgreSQL has no type for, becomes an array or a separate table.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, The ENUM Type and The SET Type.
+
+### mysql-found-rows-to-postgresql
+
+SQL\_CALC\_FOUND\_ROWS, FOUND\_ROWS\(\) and ROW\_COUNT\(\): needs a rewrite. PostgreSQL has no SQL\_CALC\_FOUND\_ROWS, FOUND\_ROWS\(\) or ROW\_COUNT\(\): the total row count becomes count\(\*\) OVER \(\) or a separate COUNT\(\*\) query, and the affected-row count comes from the driver or GET DIAGNOSTICS.
+
+Documentation: MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, Window Functions.
+
+### mysql-fulltext-search
+
+Full-text search \(MATCH ... AGAINST\): needs a rewrite. MATCH ... AGAINST and FULLTEXT indexes become PostgreSQL full-text search \(a tsvector column or expression with a GIN index, queried with @@ and to\_tsquery\), whose parsing, stop words and ranking differ.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Full-Text Search Functions; PostgreSQL documentation, Full Text Search.
+
+### mysql-insert-ignore
+
+INSERT IGNORE and the IGNORE modifier: needs a rewrite. PostgreSQL has no IGNORE modifier: INSERT IGNORE becomes INSERT ... ON CONFLICT DO NOTHING, which skips only unique-key conflicts, so the other errors IGNORE turned into warnings \(bad values, foreign keys\) now fail the statement.
+
+Documentation: MySQL 8.0 Reference Manual, The Effect of IGNORE on Statement Execution; PostgreSQL documentation, INSERT \(ON CONFLICT clause\).
+
+### mysql-json-functions
+
+MySQL JSON functions and path operators: needs a rewrite. MySQL's JSON functions and its -&gt; and -&gt;&gt; operators take JSON path strings \('$.key'\), and PostgreSQL's jsonb operators take keys and text arrays, so each call becomes the jsonb operator or function \(-&gt;, -&gt;&gt;, #&gt;, @&gt;, jsonb\_set, jsonb\_path\_query\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, JSON Functions; PostgreSQL documentation, JSON Functions and Operators.
+
+### mysql-last-insert-id
+
+LAST\_INSERT\_ID\(\): needs a rewrite. PostgreSQL has no LAST\_INSERT\_ID\(\), so the new id comes from INSERT ... RETURNING id \(or currval\(\) on the column's sequence\).
+
+Documentation: MySQL 8.0 Reference Manual, Information Functions; PostgreSQL documentation, INSERT \(RETURNING clause\).
+
+### mysql-limit-offset-comma
+
+LIMIT offset, count: needs a rewrite. PostgreSQL has no LIMIT offset, count form, so it becomes LIMIT count OFFSET offset \(the two values swap places\).
+
+Documentation: MySQL 8.0 Reference Manual, SELECT Statement \(LIMIT\); PostgreSQL documentation, LIMIT and OFFSET.
+
+### mysql-load-data-and-outfile
+
+LOAD DATA and SELECT ... INTO OUTFILE: needs a rewrite. LOAD DATA and SELECT ... INTO OUTFILE become COPY through the client, or the aws\_s3 extension's table\_import\_from\_s3 and query\_export\_to\_s3 on Aurora PostgreSQL.
+
+Documentation: MySQL 8.0 Reference Manual, LOAD DATA Statement; Amazon Aurora User Guide, Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster.
+
 ### mysql-newer-major-version
 
 Source MySQL major version newer than Aurora MySQL: needs a rewrite. The source runs a MySQL major version newer than every Aurora MySQL line, so the move goes to an older major version: replace any feature added since that line, and replicate with a tool that supports the downgrade.
@@ -1051,17 +1180,83 @@ Tables on a storage engine other than InnoDB: needs a rewrite. Aurora MySQL stor
 
 Documentation: Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster \(convert MyISAM tables to InnoDB\).
 
+### mysql-on-duplicate-key-update
+
+INSERT ... ON DUPLICATE KEY UPDATE: needs a rewrite. INSERT ... ON DUPLICATE KEY UPDATE becomes INSERT ... ON CONFLICT \(key columns\) DO UPDATE, which names the unique key it resolves and reads the new row as EXCLUDED instead of VALUES\(\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, INSERT \(ON CONFLICT clause\).
+
+### mysql-only-operators
+
+MySQL-only operators: needs a rewrite. &lt;=&gt; becomes IS NOT DISTINCT FROM, DIV becomes div\(\) and XOR and && become boolean expressions, and || is a logical OR in MySQL's default SQL mode but string concatenation in PostgreSQL, so each is rewritten.
+
+Documentation: MySQL 8.0 Reference Manual, Operators and Server SQL Modes \(PIPES\_AS\_CONCAT\); PostgreSQL documentation, Comparison Functions and Operators.
+
 ### mysql-query-cache-hint
 
 Query cache hint SQL\_CACHE: needs a rewrite. MySQL 8.0 removed the query cache and its SQL\_CACHE modifier \(MariaDB keeps both, Aurora MySQL has neither\), so these queries must drop the hint.
 
 Documentation: MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0 \(query cache\).
 
+### mysql-regexp-operators
+
+REGEXP and RLIKE: needs a rewrite. REGEXP and RLIKE become PostgreSQL's ~ operator \(or ~\* to ignore case\), and MySQL's ICU regular expressions, which follow the column's collation for case, differ in places from PostgreSQL's POSIX ones.
+
+Documentation: MySQL 8.0 Reference Manual, Regular Expressions; PostgreSQL documentation, Pattern Matching.
+
 ### mysql-removed-functions
 
 Functions removed in MySQL 8.0: needs a rewrite. These functions were removed in MySQL 8.0, which Aurora MySQL version 3 is compatible with: replace PASSWORD\(\) with the server's own authentication and ENCODE/ENCRYPT/DES\_\* with AES\_ENCRYPT\(\) or SHA2\(\).
 
 Documentation: MySQL 8.0 Reference Manual, Features Removed in MySQL 8.0.
+
+### mysql-replace-into
+
+REPLACE statements: needs a rewrite. PostgreSQL has no REPLACE statement, so each becomes INSERT ... ON CONFLICT DO UPDATE, which updates the row in place: the delete triggers and cascades that REPLACE fires no longer run.
+
+Documentation: MySQL 8.0 Reference Manual, REPLACE Statement; PostgreSQL documentation, INSERT \(ON CONFLICT clause\).
+
+### mysql-select-modifiers-and-hints
+
+MySQL statement modifiers, index hints and DUAL: needs a rewrite. PostgreSQL rejects MySQL's statement modifiers \(DISTINCTROW, STRAIGHT\_JOIN, SQL\_SMALL\_RESULT, LOW\_PRIORITY, ...\) and index hints \(USE, FORCE and IGNORE INDEX\) and has no DUAL table, so they are removed \(DISTINCTROW becomes DISTINCT; FROM DUAL is dropped\).
+
+Documentation: MySQL 8.0 Reference Manual, SELECT Statement and Index Hints.
+
+### mysql-show-and-admin-statements
+
+SHOW, DESCRIBE and other MySQL-only statements: needs a rewrite. SHOW, DESCRIBE, USE, LOCK and UNLOCK TABLES, FLUSH, KILL and the table maintenance statements are MySQL-only: catalog reads move to information\_schema or pg\_catalog, and the rest become PostgreSQL statements \(LOCK TABLE ... IN ... MODE, VACUUM and ANALYZE, pg\_terminate\_backend\) or are dropped.
+
+Documentation: MySQL 8.0 Reference Manual, SHOW Statements and Table Maintenance Statements; PostgreSQL documentation, The Information Schema.
+
+### mysql-spatial-types
+
+Spatial columns and indexes: needs a rewrite. Spatial columns and SPATIAL indexes move to the PostGIS extension on Aurora PostgreSQL \(geometry columns with GiST indexes\), where function names mostly match but SRID handling and axis order differ.
+
+Documentation: MySQL 8.0 Reference Manual, Spatial Data Types; Amazon Aurora User Guide, Managing spatial data with the PostGIS extension.
+
+### mysql-stored-routines-to-postgresql
+
+Stored procedures, functions and triggers: needs a rewrite. MySQL stored routines and triggers are rewritten in PL/pgSQL: handlers, cursors and variables use another syntax, and a PostgreSQL trigger calls a trigger function instead of holding its body.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, PL/pgSQL and Triggers.
+
+### mysql-system-variables
+
+MySQL system variables and SET SESSION/GLOBAL: needs a rewrite. @@ variables and SET SESSION or SET GLOBAL name MySQL server variables \(sql\_mode, autocommit, sql\_big\_selects, ...\) that PostgreSQL does not have, so each maps to a PostgreSQL setting or a DB cluster parameter group change, or is dropped.
+
+Documentation: MySQL 8.0 Reference Manual, Server System Variables; Amazon Aurora User Guide, Working with parameter groups.
+
+### mysql-user-variables
+
+User variables \(@name\): needs a rewrite. PostgreSQL has no session user variables, so SET @x = ... and SELECT @x := ... become PL/pgSQL variables, a CTE or window function, or a custom setting read with current\_setting\(\).
+
+Documentation: MySQL 8.0 Reference Manual, User-Defined Variables; PostgreSQL documentation, System Administration Functions \(current\_setting\).
+
+### mysql-zero-dates
+
+Zero dates \(0000-00-00\): needs a rewrite. PostgreSQL rejects the zero date 0000-00-00, so these defaults change to NULL or a real date, the zero values already stored are converted during the load, and queries that compare against the zero date change with them.
+
+Documentation: MySQL 8.0 Reference Manual, The DATE, DATETIME, and TIMESTAMP Types; PostgreSQL documentation, Date/Time Types.
 
 ### oracle-builtin-functions
 
@@ -1105,17 +1300,179 @@ Data types with no direct equivalent: needs a rewrite. LONG, LONG RAW, BFILE, RO
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Data types; AWS Schema Conversion Tool User Guide.
 
+### postgresql-aggregate-filter-and-window-frames
+
+Aggregate FILTER, ordered-set aggregates and window frame options: needs a rewrite. MySQL has no aggregate FILTER \(WHERE ...\) clause, no ordered-set aggregates \(WITHIN GROUP, percentile\_cont\) and no GROUPS or EXCLUDE window frames, so FILTER becomes COUNT or SUM over a CASE, and percentiles and these frames become window-function subqueries.
+
+Documentation: PostgreSQL documentation, Aggregate Expressions and Window Function Calls; MySQL 8.0 Reference Manual, Window Function Frame Specification.
+
+### postgresql-arrays
+
+Array columns and array expressions: needs a rewrite. Aurora MySQL has no array type: array columns become a JSON array or a child table, and ARRAY\[...\], = ANY\(array\) and functions such as unnest and array\_agg become JSON functions \(JSON\_TABLE, MEMBER OF, JSON\_ARRAYAGG\) or joins.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Arrays and Array Functions and Operators.
+
+### postgresql-builtin-functions
+
+PostgreSQL-only functions: needs a rewrite. These functions have no MySQL function of the same name and behaviour, so each call is rewritten \(for example string\_agg to GROUP\_CONCAT, bool\_or to MAX over a boolean, random to RAND, split\_part to SUBSTRING\_INDEX, pg\_advisory\_lock to GET\_LOCK, generate\_series to a recursive CTE\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Functions and Operators.
+
+### postgresql-cast-operator
+
+Type casts with the :: operator: needs a rewrite. MySQL has no :: cast operator, so each cast becomes CAST\(x AS type\) with a type MySQL's CAST accepts \(CHAR, SIGNED, DECIMAL, DATETIME, JSON, ...\); casts to regclass, interval or arrays have no equivalent.
+
+Documentation: PostgreSQL documentation, Type Casts; MySQL 8.0 Reference Manual, Cast Functions and Operators.
+
+### postgresql-concatenation-operator
+
+|| string concatenation: needs a rewrite. || concatenates in PostgreSQL but is a logical OR in MySQL's default SQL mode, so each becomes CONCAT\(\) \(or the session turns on PIPES\_AS\_CONCAT\); note that CONCAT returns NULL for a NULL argument.
+
+Documentation: PostgreSQL documentation, String Functions and Operators; MySQL 8.0 Reference Manual, Server SQL Modes \(PIPES\_AS\_CONCAT\).
+
+### postgresql-copy-statements
+
+COPY statements: needs a rewrite. MySQL has no COPY statement, so bulk loads become LOAD DATA LOCAL INFILE or LOAD DATA FROM S3 on Aurora MySQL, and exports SELECT ... INTO OUTFILE S3.
+
+Documentation: PostgreSQL documentation, COPY; Amazon Aurora User Guide, Loading data into an Amazon Aurora MySQL DB cluster from text files in an Amazon S3 bucket.
+
+### postgresql-data-modifying-ctes
+
+INSERT, UPDATE or DELETE inside WITH: needs a rewrite. A MySQL WITH clause holds only queries, so a CTE that inserts, updates or deletes rows \(often with RETURNING\) is split into separate statements in one transaction.
+
+Documentation: PostgreSQL documentation, WITH Queries \(data-modifying statements in WITH\); MySQL 8.0 Reference Manual, WITH \(Common Table Expressions\).
+
+### postgresql-date-functions
+
+PostgreSQL date and time functions and intervals: needs a rewrite. These date and time functions and forms have no MySQL equivalent of the same name, so each is rewritten \(date\_trunc and to\_char to DATE\_FORMAT, age and date\_part to TIMESTAMPDIFF and EXTRACT, AT TIME ZONE to CONVERT\_TZ, EXTRACT\(EPOCH FROM ...\) to UNIX\_TIMESTAMP, and a text interval to INTERVAL n unit\).
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Date/Time Functions and Operators; MySQL 8.0 Reference Manual, Date and Time Functions.
+
+### postgresql-distinct-on
+
+SELECT DISTINCT ON: needs a rewrite. MySQL has no DISTINCT ON, so each becomes a ROW\_NUMBER\(\) OVER \(PARTITION BY ... ORDER BY ...\) subquery that keeps the first row of each group.
+
+Documentation: PostgreSQL documentation, SELECT \(DISTINCT clause\); MySQL 8.0 Reference Manual, Window Functions.
+
+### postgresql-extensions-to-mysql
+
+PostgreSQL extensions and their functions: needs a rewrite. Aurora MySQL runs no PostgreSQL extensions, so what these installed extension functions provide \(for example pgvector, citext, hstore, pg\_trgm\) is replaced by MySQL types and functions or moved out of the database.
+
+Documentation: PostgreSQL documentation, CREATE EXTENSION; Extension versions for Amazon Aurora PostgreSQL.
+
+### postgresql-full-text-search
+
+Full-text search \(tsvector, tsquery\): needs a rewrite. tsvector columns, @@ matches and the ts functions become FULLTEXT indexes queried with MATCH ... AGAINST, which has no weights \(setweight\), ranking functions \(ts\_rank\) or text search configurations of the same kind.
+
+Documentation: PostgreSQL documentation, Full Text Search; MySQL 8.0 Reference Manual, Full-Text Search Functions.
+
+### postgresql-ilike
+
+ILIKE: needs a rewrite. MySQL has no ILIKE, so it becomes LIKE, which is already case-insensitive under a \_ci collation, or LIKE on LOWER\(\) of both sides under a case-sensitive one.
+
+Documentation: PostgreSQL documentation, Pattern Matching \(LIKE\); MySQL 8.0 Reference Manual, String Comparison Functions and Operators.
+
+### postgresql-index-methods
+
+GIN, GiST and other non-B-tree indexes: needs a rewrite. InnoDB builds B-tree, FULLTEXT and SPATIAL indexes only, so GIN, GiST, BRIN and SP-GiST indexes are replaced by one of those \(or an index on a generated column\) or dropped.
+
+Documentation: PostgreSQL documentation, Index Types; MySQL 8.0 Reference Manual, The Physical Structure of an InnoDB Index.
+
+### postgresql-json-operators-and-functions
+
+jsonb operators and JSON functions: needs a rewrite. PostgreSQL's JSON operators \(-&gt;&gt; on a key, #&gt;, @&gt;, &lt;@, ?|\) and functions \(jsonb\_build\_object, jsonb\_agg, jsonb\_set, ...\) become MySQL JSON functions with JSON path strings \('$.key'\), and containment and key-exists tests become JSON\_CONTAINS and JSON\_CONTAINS\_PATH.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, JSON Functions and Operators; MySQL 8.0 Reference Manual, JSON Functions.
+
+### postgresql-listen-notify
+
+LISTEN and NOTIFY: needs a rewrite. MySQL has no LISTEN or NOTIFY, so these notifications move to a message service \(for example Amazon SNS or Amazon SQS\) or to polling.
+
+Documentation: PostgreSQL documentation, NOTIFY and LISTEN.
+
+### postgresql-materialized-views
+
+Materialized views: needs a rewrite. MySQL has no materialized views, so each becomes a summary table that a scheduled event, a trigger or the application refreshes \(REFRESH MATERIALIZED VIEW becomes that refresh\).
+
+Documentation: PostgreSQL documentation, Materialized Views; MySQL 8.0 Reference Manual, Using the Event Scheduler.
+
+### postgresql-merge-to-mysql
+
+MERGE statements on Aurora MySQL: needs a rewrite. Aurora MySQL has no MERGE statement, so each becomes INSERT ... ON DUPLICATE KEY UPDATE, or separate UPDATE, INSERT and DELETE statements in one transaction.
+
+Documentation: PostgreSQL documentation, MERGE; MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement.
+
 ### postgresql-newer-major-version
 
 Source PostgreSQL major version newer than Aurora PostgreSQL: needs a rewrite. The source runs a PostgreSQL major version newer than every Aurora PostgreSQL version, so the move goes to an older major version: replace any feature added since, and move the data with logical replication or a dump.
 
 Documentation: Amazon Aurora PostgreSQL release calendar.
 
+### postgresql-on-conflict
+
+INSERT ... ON CONFLICT: needs a rewrite. ON CONFLICT DO UPDATE becomes INSERT ... ON DUPLICATE KEY UPDATE and ON CONFLICT DO NOTHING becomes INSERT IGNORE; MySQL resolves a conflict on any unique key, not the named one, and INSERT IGNORE also hides other errors.
+
+Documentation: PostgreSQL documentation, INSERT \(ON CONFLICT clause\); MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement.
+
+### postgresql-only-clauses
+
+NULLS FIRST/LAST, IS DISTINCT FROM and other PostgreSQL-only clauses: needs a rewrite. MySQL has no NULLS FIRST or NULLS LAST \(sort on col IS NULL first\), no IS \[NOT\] DISTINCT FROM \(use &lt;=&gt;\), no MATERIALIZED hint on a CTE and no FOR NO KEY UPDATE or FOR KEY SHARE locks, so these clauses are rewritten.
+
+Documentation: PostgreSQL documentation, SELECT; MySQL 8.0 Reference Manual, SELECT Statement and Comparison Functions and Operators.
+
+### postgresql-partial-indexes
+
+Partial indexes: needs a rewrite. MySQL has no partial \(WHERE\) indexes, so each becomes a full index or an index on a generated column, and a partial UNIQUE index \(unique only among the rows it covers\) needs a generated column that is NULL outside them.
+
+Documentation: PostgreSQL documentation, Partial Indexes; MySQL 8.0 Reference Manual, CREATE INDEX Statement.
+
+### postgresql-plpgsql-routines-to-mysql
+
+PL/pgSQL and other procedural-language routines and trigger functions: needs a rewrite. PL/pgSQL, PL/Perl, PL/Python, PL/Tcl and PL/v8 functions and procedures are rewritten as MySQL stored routines, which have no set-returning functions, overloading or exception blocks of the same form and no other procedural languages, and a trigger's function body moves into the MySQL trigger itself.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, PL/pgSQL; MySQL 8.0 Reference Manual, Stored Objects.
+
+### postgresql-regex-operators
+
+POSIX regular expressions \(~, SIMILAR TO, regexp functions\): needs a rewrite. The ~, ~\*, \!~ and SIMILAR TO operators become REGEXP or REGEXP\_LIKE\(\) on MySQL's ICU regular expressions, regexp\_matches and regexp\_split\_to\_table have no MySQL function, and regexp\_replace takes other arguments \(MySQL replaces every match by default, PostgreSQL only the first without 'g'\).
+
+Documentation: PostgreSQL documentation, Pattern Matching; MySQL 8.0 Reference Manual, Regular Expressions.
+
+### postgresql-returning-clause
+
+RETURNING clauses: needs a rewrite. Aurora MySQL has no RETURNING clause, so the values come from LAST\_INSERT\_ID\(\) or a SELECT in the same transaction.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Information Functions \(LAST\_INSERT\_ID\).
+
+### postgresql-sequences-to-mysql
+
+Sequence functions: needs a rewrite. Aurora MySQL has no sequences, so nextval\(\), currval\(\), setval\(\) and lastval\(\) become AUTO\_INCREMENT columns with LAST\_INSERT\_ID\(\), or a counter table updated in the same transaction.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Sequence Manipulation Functions.
+
 ### postgresql-server-file-access
 
 Server file system and shell access: needs a rewrite. Aurora PostgreSQL gives no superuser and no access to the database server's file system or shell, so reads and writes of server files move to Amazon S3 \(the aws\_s3 extension\).
 
 Documentation: Amazon Aurora User Guide, Understanding PostgreSQL roles and permissions; Importing data from Amazon S3 into an Aurora PostgreSQL DB cluster.
+
+### postgresql-session-settings
+
+PostgreSQL session settings \(SET, SHOW, RESET\): needs a rewrite. SHOW, RESET and SET name PostgreSQL settings \(search\_path, statement\_timeout, client\_min\_messages, ...\) that MySQL does not have under those names, so each maps to a MySQL system variable \(time\_zone, max\_execution\_time, ...\) or a DB cluster parameter group change, or is dropped; these may be an ORM's connection setup, which its MySQL adapter issues on its own.
+
+Documentation: PostgreSQL documentation, SET, SHOW and System Administration Functions; MySQL 8.0 Reference Manual, Server System Variables.
+
+### postgresql-system-catalog
+
+PostgreSQL system catalog reads: needs a rewrite. pg\_catalog tables and views and the catalog functions \(pg\_get\_indexdef, format\_type, current\_schemas, obj\_description, ...\) do not exist on MySQL, so these reads move to information\_schema and performance\_schema; they may be an ORM's schema introspection, which its MySQL adapter issues on its own.
+
+Documentation: PostgreSQL documentation, System Catalogs and System Information Functions; MySQL 8.0 Reference Manual, INFORMATION\_SCHEMA Tables.
+
+### postgresql-types-no-mysql-equivalent
+
+Data types with no MySQL equivalent: needs a rewrite. MySQL has no network address, interval, range, money, hstore, ltree, vector or geometric types of PostgreSQL's kind, so these columns become strings, numbers, JSON or separate columns, and the functions on them \(host\(\), masklen\(\), range operators\) are rewritten.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Network Address Types, Range Types and Geometric Types.
 
 ### sqlserver-apply-and-openjson
 
@@ -1189,11 +1546,47 @@ MariaDB source on a MySQL-compatible target: behaves differently. Aurora MySQL i
 
 Documentation: Amazon Aurora User Guide, Migrating data to an Amazon Aurora MySQL DB cluster; AWS DMS User Guide, Using a MySQL-compatible database as a source.
 
+### mysql-auto-increment-columns
+
+AUTO\_INCREMENT columns: behaves differently. AUTO\_INCREMENT columns become identity columns backed by a sequence, which an insert with an explicit id does not advance: reset each sequence past the highest loaded id \(setval\) after the data load.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, CREATE TABLE \(identity columns\) and Sequence Manipulation Functions.
+
+### mysql-case-insensitive-collations
+
+Case-insensitive collations: behaves differently. These tables compare text case-insensitively \(a \_ci collation\), and Aurora PostgreSQL compares case-sensitively unless a column uses citext or a nondeterministic ICU collation, so lookups, sorts and unique keys on text can change.
+
+Documentation: MySQL 8.0 Reference Manual, Character Sets and Collations; PostgreSQL documentation, Collation Support \(nondeterministic collations\).
+
+### mysql-functions-behave-differently
+
+Functions that return different results on PostgreSQL: behaves differently. These functions exist on PostgreSQL with other results: LENGTH counts bytes in MySQL and characters in PostgreSQL, LOG\(x\) is the natural logarithm in MySQL and base 10 in PostgreSQL, and CONCAT, GREATEST and LEAST return NULL for a NULL argument in MySQL while PostgreSQL skips it; check each call.
+
+Documentation: MySQL 8.0 Reference Manual, String Functions and Mathematical Functions; PostgreSQL documentation, String Functions and Operators, Mathematical Functions and Conditional Expressions.
+
+### mysql-implicit-type-conversion
+
+Implicit type conversion: behaves differently. MySQL converts between typed values implicitly \(a text column compared with a number, a number passed to a string function\), where PostgreSQL raises an error unless the statement casts, so queries that rely on it can fail on the target; test the application's queries against it.
+
+Documentation: MySQL 8.0 Reference Manual, Type Conversion in Expression Evaluation; PostgreSQL documentation, Type Conversion.
+
+### mysql-mixed-case-identifiers
+
+Mixed-case table and column names: behaves differently. PostgreSQL folds unquoted names to lower case, so a name with capitals \(such as ID\) is either lower-cased by the conversion or kept in double quotes in every statement, and backtick quoting becomes double quotes.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; PostgreSQL documentation, Lexical Structure \(identifiers and key words\).
+
 ### mysql-older-major-version
 
 Source MySQL major version older than Aurora MySQL: behaves differently. The source runs a MySQL major version older than every Aurora MySQL line with standard support, so the move is also a major version upgrade: review the removed features, new reserved words and changed defaults in the upgrade notes.
 
 Documentation: Amazon Aurora MySQL release notes; MySQL 8.0 Reference Manual, Changes in MySQL 8.0.
+
+### mysql-unsigned-integers
+
+UNSIGNED and ZEROFILL numeric columns: behaves differently. PostgreSQL has no unsigned types: an unsigned column becomes the next wider signed type \(bigint unsigned becomes numeric\(20\)\) or keeps its type with a CHECK \(col &gt;= 0\), and ZEROFILL padding is dropped.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source; MySQL 8.0 Reference Manual, Numeric Data Type Syntax.
 
 ### oracle-date-type
 
@@ -1206,6 +1599,24 @@ Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS document
 Empty strings stored as NULL: behaves differently. Oracle stores an empty string as NULL, and both targets keep '' and NULL apart, so filters, joins and constraints on text columns can change.
 
 Documentation: Oracle to Aurora PostgreSQL Migration Playbook \(AWS DMS documentation\), Null handling.
+
+### postgresql-case-sensitive-comparison
+
+Case-sensitive text comparison: behaves differently. PostgreSQL compares text case-sensitively, and Aurora MySQL's default collation \(utf8mb4\_0900\_ai\_ci\) ignores case and accents, so lookups, GROUP BY, DISTINCT and unique keys on text can change unless the columns use a \_bin or \_as\_cs collation.
+
+Documentation: PostgreSQL documentation, Collation Support; MySQL 8.0 Reference Manual, Character Sets and Collations.
+
+### postgresql-functions-behave-differently
+
+Functions that return different results on MySQL: behaves differently. These functions exist on MySQL with other results: LENGTH counts characters in PostgreSQL and bytes in MySQL, LOG\(x\) is base 10 in PostgreSQL and the natural logarithm in MySQL, and concat\(\), GREATEST and LEAST skip a NULL argument in PostgreSQL while MySQL returns NULL; check each call.
+
+Documentation: PostgreSQL documentation, String Functions and Operators, Mathematical Functions and Conditional Expressions; MySQL 8.0 Reference Manual, String Functions and Mathematical Functions.
+
+### postgresql-lateral-joins
+
+LATERAL joins: behaves differently. Aurora MySQL 3 runs LATERAL derived tables, but not LATERAL over a function \(unnest, generate\_series, jsonb\_array\_elements\), which becomes JSON\_TABLE or a join; test each one.
+
+Documentation: PostgreSQL documentation, LATERAL Subqueries; MySQL 8.0 Reference Manual, Lateral Derived Tables.
 
 ### postgresql-older-major-version
 
@@ -1237,6 +1648,12 @@ SQL\_CALC\_FOUND\_ROWS and FOUND\_ROWS\(\): informational. SQL\_CALC\_FOUND\_ROW
 
 Documentation: MySQL 8.0 Reference Manual, Information Functions \(FOUND\_ROWS deprecation\).
 
+### mysql-types-mapped-to-postgresql
+
+Data types the conversion maps: informational. These types are converted to the target's matching type \(for example tinyint to smallint, datetime to timestamp, longtext to text, the blob types to bytea, json to jsonb\): check precision and range in the conversion report.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using MySQL as a source, data type mappings.
+
 ### mysql-utf8mb3-character-set
 
 Tables in the utf8mb3 character set: informational. utf8mb3 \(also spelled utf8\) is deprecated in MySQL 8.0 and stores no 4-byte characters such as emoji: plan the conversion to utf8mb4.
@@ -1249,11 +1666,35 @@ Data types the conversion maps: informational. These types are converted to the 
 
 Documentation: AWS Schema Conversion Tool User Guide, data type mappings.
 
+### postgresql-double-quoted-identifiers
+
+Double-quoted identifiers: informational. When an ORM writes these double quotes, its MySQL adapter quotes names with backticks on its own; hand-written SQL that quotes names with double quotes becomes backtick-quoted, or the session adds ANSI\_QUOTES to sql\_mode, because MySQL otherwise reads "name" as a string.
+
+Documentation: PostgreSQL documentation, Lexical Structure; MySQL 8.0 Reference Manual, Schema Object Names and Server SQL Modes \(ANSI\_QUOTES\).
+
 ### postgresql-pgvector-half-sparse
 
 pgvector halfvec and sparsevec columns: informational. halfvec and sparsevec columns need pgvector 0.7.0 or later: pick an Aurora PostgreSQL minor version whose pgvector is at least that.
 
 Documentation: Extension versions for Amazon Aurora PostgreSQL \(pgvector\).
+
+### postgresql-schemas-to-mysql
+
+Objects outside the public schema: informational. MySQL has no schemas inside a database, so each PostgreSQL schema becomes its own MySQL database: names outside it are written database.name, and search\_path has no equivalent.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; PostgreSQL documentation, Schemas.
+
+### postgresql-serial-columns-to-mysql
+
+Serial and identity columns: informational. Serial and identity columns become AUTO\_INCREMENT columns: MySQL allows one per table, it must lead an index, and a sequence shared between tables, a custom increment or a cycling sequence does not carry over.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source; MySQL 8.0 Reference Manual, Using AUTO\_INCREMENT.
+
+### postgresql-types-mapped-to-mysql
+
+Data types the conversion maps: informational. These types are converted to MySQL's matching type \(boolean to tinyint\(1\), bytea to longblob, uuid to char\(36\) or binary\(16\), jsonb to json, timestamp with time zone to a UTC datetime, text to longtext, citext to a varchar with a \_ci collation\): check precision, range and time zones in the conversion report.
+
+Documentation: AWS Schema Conversion Tool User Guide, Using PostgreSQL as a source, data type mappings.
 
 ### source-version-unknown
 

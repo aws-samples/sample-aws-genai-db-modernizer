@@ -28,6 +28,7 @@ from src.agents.referee.triage import ANALYSIS_AGENTS, triage
 from src.agents.referee.triage_handler import run_triage
 from src.contracts.assignment_models import Assignment, AuroraEngineChoice
 from src.contracts.triage_output import TriageOutputContract
+from src.shared.catalog.gaps import gap_rules
 from src.shared.report_facts import heterogeneous_wave_note
 from src.storage.local_store import LocalArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
@@ -352,15 +353,18 @@ class TestTheDiscourseCollection:
         assert retained_engine_for(discourse_collector, [], choice) == "aurora_mysql"
         assert retained_engine_for(discourse_collector, [], None) == "aurora_postgresql"
 
-    def test_wave_one_warns_that_the_feature_gaps_were_not_checked(self, discourse_collector):
-        # #1330: the gap catalog has no PostgreSQL to Aurora MySQL feature rules yet.
+    def test_wave_one_lists_the_conversions_feature_gaps(self, discourse_collector):
+        # #1330: the gap catalog checks PostgreSQL to Aurora MySQL, so wave 1 lists the
+        # gaps it found instead of saying they were not checked.
         gaps = detect_relational_gaps(discourse_collector, "aurora_mysql")
-        assert gaps is not None and gaps["feature_rules_checked"] == 0
+        assert gaps is not None and gaps["feature_rules_checked"] > 0
+        found = {g["rule_id"] for g in gaps["gaps"]}
+        assert {"postgresql-returning-clause", "postgresql-on-conflict"} <= found
         wave = {"engines": ["aurora_mysql"], "moves_from": ["postgresql"]}
         note = heterogeneous_wave_note(wave, 311, gaps)
         assert "from PostgreSQL to Aurora MySQL" in note
-        assert "has no feature rules for this conversion yet" in note
-        assert "found no gaps" not in note
+        assert f"The relational gap check found {len(gaps['gaps'])} gaps" in note
+        assert "no feature rules" not in note
 
 
 class TestTheGuard:
@@ -527,14 +531,26 @@ class TestWaveOne:
 
 
 class TestTheGapCheck:
+    @pytest.mark.passes_on_main  # #1327's note, kept working on a catalog without rules
     def test_a_conversion_the_catalog_has_no_feature_rules_for_says_so(self):
-        gaps = detect_relational_gaps(_collector("mysql", []), "aurora_postgresql")
+        # Every conversion has feature rules since #1330: a catalog of version rules
+        # only stands in for one that has none.
+        version_only = [r for r in gap_rules() if r.match.version is not None]
+        gaps = detect_relational_gaps(
+            _collector("mysql", []), "aurora_postgresql", rules=version_only
+        )
         assert gaps is not None
         assert gaps["feature_rules_checked"] == 0
         wave = {"engines": ["aurora_postgresql"], "moves_from": ["mysql"]}
         note = heterogeneous_wave_note(wave, 2, gaps)
         assert "no feature rules" in note
         assert "found no gaps" not in note
+
+    def test_mysql_to_aurora_postgresql_is_checked_for_feature_gaps(self):
+        gaps = detect_relational_gaps(_collector("mysql", []), "aurora_postgresql")
+        assert gaps is not None and gaps["feature_rules_checked"] > 0
+        wave = {"engines": ["aurora_postgresql"], "moves_from": ["mysql"]}
+        assert "no feature rules" not in heterogeneous_wave_note(wave, 2, gaps)
 
     def test_a_conversion_with_feature_rules_keeps_its_sentence(self):
         gaps = detect_relational_gaps(_collector("sqlserver", []), "aurora_postgresql")

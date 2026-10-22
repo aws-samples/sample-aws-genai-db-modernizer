@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.shared.catalog.gaps import GAP_IMPACT_LABELS
+from src.shared.catalog.gaps import GAP_IMPACT_LABELS, GAP_IMPACTS
+from src.shared.report_facts import gap_count_phrase
 
 from .facts import report_facts
 
@@ -43,3 +44,18 @@ _LABELS: dict[str, str] = {str(k): v for k, v in GAP_IMPACT_LABELS.items()}
 def impact_label(impact: Any) -> str:
     """ "needs a rewrite" for ``needs_rewrite``."""
     return _LABELS.get(str(impact), str(impact).replace("_", " "))
+
+
+def wave_gap_groups(report: dict[str, Any], wave: int) -> list[tuple[str, list[dict[str, Any]]]]:
+    """``wave_gaps`` grouped by impact, most severe first, each with its count phrase
+    ("22 need a rewrite") from the gap check's own ``gaps_by_impact`` (#1330): a long
+    list reads by impact, and the count is the facts layer's figure, not a recount."""
+    gaps = wave_gaps(report, wave)
+    stored = (report_facts(report).get("relational_gaps") or {}).get("gaps_by_impact") or {}
+    out: list[tuple[str, list[dict[str, Any]]]] = []
+    for impact in GAP_IMPACTS:
+        members = [g for g in gaps if g.get("impact") == impact]
+        count = stored.get(impact)
+        if members and isinstance(count, int) and not isinstance(count, bool):
+            out.append((gap_count_phrase(impact, count), members))
+    return out
