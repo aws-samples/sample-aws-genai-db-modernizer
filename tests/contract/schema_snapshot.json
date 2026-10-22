@@ -497,6 +497,111 @@
           ]
         }
       },
+      "carried_writes": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "approach": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "docs": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "engine": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "floor": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  },
+                  "group_size": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 2,
+                      "type": "integer"
+                    }
+                  },
+                  "intent": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "intent_name": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "intent_summary": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "query_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "score": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  },
+                  "statement": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "table_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "contract_version": {
         "required": false,
         "schema": {
@@ -1330,8 +1435,8 @@
         }
       }
     },
-    "schema_hash": "8c1ecc0c622bfd993303ab57f1d29e610da44433d22f97d398111fad5448a611",
-    "version": "2.4"
+    "schema_hash": "d48735d9bff42efe0ada6b538e3dd1da29e0f2dfcb626bdef3c1739916f14219",
+    "version": "2.5"
   },
   "assignment_models.Assignment": {
     "fields": {

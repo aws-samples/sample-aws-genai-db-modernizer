@@ -94,6 +94,9 @@ RULES: dict[str, RiskRule] = {
     "design.hot_partition": RiskRule("MEDIUM", "PERFORMANCE_DEGRADATION", "hot partitions"),
     "design.trade_offs": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "design trade-offs"),
     "design.redesign": RiskRule("MEDIUM", "MIGRATION_COMPLEXITY", "redesigns routing relies on"),
+    "design.carried_writes": RiskRule(
+        "MEDIUM", "MIGRATION_COMPLEXITY", "write-group members the engine fits poorly"
+    ),
 }
 
 # A flagged query held on its engine by a customer pin (#1033): the pin, not a

@@ -25,7 +25,12 @@ from datetime import UTC, datetime
 from src.agents.interaction import read_answers, read_partial_output
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
-from src.agents.referee.query_pattern import ACCESS_PATTERNS_FILE, redesign_requirements
+from src.agents.referee.carried_writes import carried_write_records
+from src.agents.referee.query_pattern import (
+    ACCESS_PATTERNS_FILE,
+    read_analysis_outputs,
+    redesign_requirements,
+)
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
 from src.agents.schema_design.design_trace import write_design_trace
@@ -38,6 +43,7 @@ from src.agents.schema_design.scope import (
     assess_schema_scope,
 )
 from src.contracts.analysis_output import (
+    carried_writes_in_scope,
     key_scoped_counts_in_scope,
     key_scoped_writes_in_scope,
     redesign_requirements_in_scope,
@@ -101,7 +107,9 @@ def _design_analysis_output(
 ) -> dict:
     """The engine's ``analysis.json``, with ``redesign_requirements``: the queries routing
     scored after redesign and the keys each one needs, read from the assignment version's
-    access-pattern record (ADR-031 Decision 2 Amendment 13, #1231). Every redesigned
+    access-pattern record (ADR-031 Decision 2 Amendment 13, #1231), and ``carried_writes``:
+    the write-group members the engine serves poorly, with their intent and approach
+    (#1362). Every redesigned
     query is listed here; each design path keeps only its own queries'
     (``redesign_requirements_in_scope``, the Bedrock projection). A legacy version 0, or a
     record written before the redesign existed, adds none."""
@@ -112,9 +120,41 @@ def _design_analysis_output(
     record_key = f"{database_name}/{job_id}/assignment/v{assignment_version}/{ACCESS_PATTERNS_FILE}"
     record = store.read_json(record_key) if store.exists(record_key) else None
     requirements = redesign_requirements(record, target_type)
-    if not requirements:
-        return analysis_output
-    return {**analysis_output, "redesign_requirements": requirements}
+    if requirements:
+        analysis_output = {**analysis_output, "redesign_requirements": requirements}
+    carried = _carried_writes(store, database_name, job_id, target_type, assignment_version)
+    if carried:
+        analysis_output = {**analysis_output, "carried_writes": carried}
+    return analysis_output
+
+
+def _carried_writes(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    target_type: str,
+    assignment_version: int,
+) -> list[dict]:
+    """The write-group members ``target_type`` serves poorly in the assignment version,
+    each with its intent and the engine's target-native approach (#1362,
+    ``carried_writes.carried_write_records``, the function synthesis's risk reads too).
+    None without the version's assignment or the collection."""
+    prefix = f"{database_name}/{job_id}"
+    assignment_key = f"{prefix}/assignment/v{assignment_version}/assignment.json"
+    if not store.exists(assignment_key):
+        return []
+    assignment = store.read_json(assignment_key)
+    collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+    if not (assignment.get("write_groups") or {}) or not collector:
+        return []
+    triage_key = f"{prefix}/referee-triage/triage.json"
+    return carried_write_records(
+        assignment,
+        collector,
+        read_analysis_outputs(store, database_name, job_id),
+        store.read_json(triage_key) if store.exists(triage_key) else None,
+        engine=target_type,
+    )
 
 
 def _group_concurrency() -> int:
@@ -323,11 +363,12 @@ def prepare_schema_design_input(
         "key_scoped_writes": key_scoped_writes_in_scope,
         "key_scoped_counts": key_scoped_counts_in_scope,
         "redesign_requirements": redesign_requirements_in_scope,
+        "carried_writes": carried_writes_in_scope,
     }
     if any(analysis_output.get(key) for key in scoped):
         # Only this call's own key-scoped writes, naming only its own queries (#1104),
-        # the key-scoped counts this call's engine serves (#377) and the redesign
-        # findings on its own queries (#1231).
+        # the key-scoped counts this call's engine serves (#377), the redesign
+        # findings on its own queries (#1231) and its own carried writes (#1362).
         query_ids = {
             str(q.get("query_id"))
             for q in (collector_output.get("queries") or {}).get("query_patterns") or []

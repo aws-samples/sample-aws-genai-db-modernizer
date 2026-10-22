@@ -69,6 +69,12 @@ E2E_LLM: tuple[str, ...] = (
     # analysis_output.redesign_findings' evidence text (#1231), read from the
     # access-pattern record through query_pattern.fixable_findings.
     "src/agents/referee/redesign_findings.py",
+    # analysis_output.carried_writes (#1362): which statements, their intent and the
+    # engine's approach, worded by the write-intent catalog.
+    "src/agents/referee/carried_writes.py",
+    "src/catalog/write_intents/*",
+    "src/catalog/carried_writes.toml",
+    "src/shared/catalog/write_intents.py",
     "src/agents/referee/table_resolution.py",
     "src/storage/assignment_versioning.py",
     "src/contracts/*_model_output.py",

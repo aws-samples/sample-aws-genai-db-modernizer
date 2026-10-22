@@ -11,8 +11,9 @@ of the engine and pattern facts every consumer must agree on. Python reads them 
 - ``docs/architecture/rule-catalog.md``: the pattern x engine matrix (support, score,
   penalty, why) next to the engine properties, the routing thresholds, the hard gates
   and the triage signals (``src/catalog/routing.toml``, ``gates.toml``,
-  ``triage_signals.toml``), and the relational-move gap rules
-  (``src/catalog/gaps/*.toml``, #471), for review.
+  ``triage_signals.toml``), the relational-move gap rules
+  (``src/catalog/gaps/*.toml``, #471) and the write intents
+  (``src/catalog/write_intents/*.toml``, ``carried_writes.toml``, #1362), for review.
 
 Usage:
     uv run python scripts/render_catalog.py            # write both files
@@ -55,6 +56,12 @@ from src.shared.catalog.patterns import (  # noqa: E402
     patterns,
 )
 from src.shared.catalog.routing import gates_file, routing_file, triage_signals_file  # noqa: E402
+from src.shared.catalog.write_intents import (  # noqa: E402
+    CarriedWriteSettings,
+    WriteIntent,
+    carried_write_settings,
+    write_intents,
+)
 
 JS_OUT = REPO_ROOT / "src" / "ui" / "src" / "utils" / "engineCatalog.generated.js"
 MD_OUT = REPO_ROOT / "docs" / "architecture" / "rule-catalog.md"
@@ -284,7 +291,58 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
     out += render_gaps_md(
         gap_rules(), aurora_version_lines(), {e.id: e.display_name for e in entries}
     )
+    out += render_write_intents_md(
+        write_intents(),
+        carried_write_settings(),
+        [e.id for e in _engine_columns(entries)],
+        {e.id: e.display_name for e in entries},
+    )
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+def render_write_intents_md(
+    intents: tuple[WriteIntent, ...],
+    settings: CarriedWriteSettings,
+    engine_order: list[str],
+    labels: dict[str, str],
+) -> list[str]:
+    """The write-intent section of the rule-catalog page (#1362)."""
+    floor = settings.thresholds["carried_write_fit_floor"]
+    out = [
+        "## Write intents: serving a carried write the target's way",
+        "",
+        "Generated from `src/catalog/write_intents/*.toml` and `src/catalog/carried_writes.toml` "
+        "(#1362; field definitions: `src/shared/catalog/write_intents.py`). A write group "
+        "moves as one unit (ADR-031 Decision 1 Amendment 9), so it can carry a member whose "
+        "own score on the group's engine is low. Below the floor, the member's intent is read "
+        "from its parsed facts (`src/agents/referee/carried_writes.py`) and the designer input "
+        "and the risk register name the engine's approach below; routing never reads it.",
+        "",
+        f"- `carried_write_fit_floor` = {floor.value}: {md_text(floor.why)}",
+        "",
+        "| Intent | What it is for |",
+        "|---|---|",
+    ]
+    for intent in intents:
+        out.append(f"| [`{intent.id}`](#{intent.id}) | {md_cell(intent.summary)} |")
+    out.append("")
+    for intent in intents:
+        out += [
+            f"### {intent.id}",
+            "",
+            f"{md_text(intent.name)}: {md_text(intent.summary)}",
+            "",
+            "| Engine | Approach | Documentation |",
+            "|---|---|---|",
+        ]
+        for engine in [e for e in engine_order if e in intent.engines]:
+            entry = intent.engines[engine]
+            out.append(
+                f"| {md_cell(labels.get(engine, engine))} | {md_cell(entry.approach)} | "
+                f"{md_cell(entry.docs)} |"
+            )
+        out.append("")
+    return out
 
 
 _IMPACT_LABELS = {k: v[:1].upper() + v[1:] for k, v in GAP_IMPACT_LABELS.items()}

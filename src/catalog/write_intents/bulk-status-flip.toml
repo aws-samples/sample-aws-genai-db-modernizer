@@ -1,0 +1,28 @@
+# Write intent bulk-status-flip (#1362). Fields: src/shared/catalog/write_intents.py.
+id = "bulk-status-flip"
+name = "Bulk status flip"
+summary = "Sets one column (a status, a flag) to one value on every row a predicate picks, no full key value addressing them."
+
+[engines.dynamodb]
+approach = "Make the change at the event that causes it, with an UpdateItem on that item; for a time-based flip, store the deadline and read the status from it, or index the pending items in a sparse GSI and have a scheduled job update each with a conditional UpdateItem."
+docs = "Amazon DynamoDB Developer Guide, Take advantage of sparse indexes; section on condition expressions"
+
+[engines.documentdb]
+approach = "Run an updateMany over an index on the predicate fields (a partial index of the pending documents), in batches, or make the change where the event happens."
+docs = "Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes"
+
+[engines.elasticache]
+approach = "Update the key at the event that changes it; a cached status expires with its source."
+docs = "Valkey documentation, EXPIRE command reference"
+
+[engines.opensearch]
+approach = "Index the status from the source's change events, or run an update by query in batches."
+docs = "OpenSearch documentation, Update by query API"
+
+[engines.aurora_postgresql]
+approach = "Keep the UPDATE, in batches over an index on the predicate (a partial index of the pending rows)."
+docs = "PostgreSQL documentation, Partial Indexes"
+
+[engines.aurora_mysql]
+approach = "Keep the UPDATE, in batches (UPDATE ... LIMIT) over an index on the predicate columns."
+docs = "MySQL 8.0 Reference Manual, UPDATE Statement"

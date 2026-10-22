@@ -23,7 +23,8 @@ contract shape but holds only what the group's design uses (issue #272):
   tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
   aggregates and table recommendations for the group's tables, and the group's own
   ``key_scoped_writes`` (DynamoDB, #1061), ``key_scoped_counts`` (DynamoDB, #377) and
-  ``redesign_requirements`` (every engine, #1231);
+  ``redesign_requirements`` (every engine, #1231) and ``carried_writes`` (every
+  engine, #1362);
 - no null or empty optional fields;
 - ``design_metrics`` for DynamoDB, DocumentDB and OpenSearch: the group's
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
@@ -55,6 +56,7 @@ from src.contracts.analysis_output import (
     AntiPattern,
     Pattern,
     TableRecommendation,
+    carried_writes_in_scope,
     key_scoped_counts_in_scope,
     key_scoped_writes_in_scope,
     redesign_requirements_in_scope,
@@ -330,6 +332,7 @@ def build_group_input(
             "key_scoped_writes",
             "key_scoped_counts",
             "redesign_requirements",
+            "carried_writes",
         )
         and not _empty(v)
     }
@@ -360,6 +363,10 @@ def build_group_input(
     )
     if redesign:
         group_analysis["redesign_requirements"] = redesign
+    # The group's own carried writes, with their intent and approach (#1362).
+    carried = carried_writes_in_scope(analysis_output.get("carried_writes"), query_ids)
+    if carried:
+        group_analysis["carried_writes"] = carried
 
     group_input: dict[str, Any] = {
         "job_id": job_id,

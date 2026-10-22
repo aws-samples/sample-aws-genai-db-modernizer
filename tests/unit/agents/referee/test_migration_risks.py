@@ -629,6 +629,97 @@ class TestRedesignRisk:
 
 
 # ---------------------------------------------------------------------------
+# design.carried_writes (#1362)
+# ---------------------------------------------------------------------------
+
+
+def _carried(qid: str, table: str, engine: str, score: float, intent: str, name: str) -> dict:
+    return {
+        "query_id": qid,
+        "table_id": table,
+        "engine": engine,
+        "score": score,
+        "floor": 50.0,
+        "group_size": 4,
+        "statement": "DELETE" if intent == "retention-delete" else "UPDATE",
+        "intent": intent,
+        "intent_name": name,
+        "intent_summary": "what it is for",
+        "approach": f"the {name.lower()} approach.",
+        "docs": "a guide",
+    }
+
+
+class TestCarriedWriteRisk:
+    """One MEDIUM risk per engine for the write-group members it serves poorly: the
+    description counts them by intent, each one's statement, intent and approach is a
+    detail."""
+
+    def _risks(self, carried: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return _build(
+            migration_waves=[WAVE_1, WAVE_2, _wave_3([], ["db.c", "db.d"])],
+            query_assignments=[
+                _qa("p1", DDB, ["db.c"]),
+                _qa("p2", DDB, ["db.c"]),
+                _qa("s1", DDB, ["db.d", "db.a"]),
+                _qa("a1", AURORA, ["db.a"]),
+            ],
+            source_queries=[
+                _q("p1", "DELETE", ["db.c"]),
+                _q("p2", "UPDATE", ["db.c"]),
+                _q("s1", "UPDATE", ["db.d", "db.a"]),
+                _q("a1", "SELECT", ["db.a"]),
+            ],
+            carried_writes=carried,
+        )
+
+    def test_one_risk_per_engine_with_each_statements_intent_and_approach(self) -> None:
+        risk = _one(
+            self._risks(
+                [
+                    _carried("p1", "db.c", DDB, 20, "retention-delete", "Retention delete"),
+                    _carried(
+                        "p2", "db.c", DDB, 14, "consistency-repair", "Consistency repair sweep"
+                    ),
+                    _carried(
+                        "s1", "db.d", DDB, 11, "consistency-repair", "Consistency repair sweep"
+                    ),
+                ]
+            ),
+            "design.carried_writes",
+        )
+        assert risk["severity"] == "MEDIUM" and risk["wave"] == 3
+        assert risk["query_ids"] == ["p1", "p2", "s1"]
+        assert risk["affected_tables"] == ["db.c", "db.d"]
+        assert risk["description"] == (
+            "[dynamodb] DynamoDB serves 3 statements on 2 tables poorly (scores 11 to 20, "
+            "below 50): consistency repair sweep (2) and retention delete (1). A table has one "
+            "writer, so each moves with the other statements that write its table."
+        )
+        assert "Wave 3 gate" in risk["mitigation"]
+        assert "not as a copy of the source's set-based SQL" in risk["mitigation"]
+        assert risk["details"] == [
+            "DELETE of c, retention delete (score 20): the retention delete approach",
+            "UPDATE of c, consistency repair sweep (score 14): the consistency repair sweep "
+            "approach",
+            "UPDATE of d, consistency repair sweep (score 11): the consistency repair sweep "
+            "approach",
+        ]
+
+    def test_one_statement_reads_in_the_singular(self) -> None:
+        one = _carried("p1", "db.c", DDB, 20, "retention-delete", "Retention delete")
+        risk = _one(self._risks([one]), "design.carried_writes")
+        assert "serves 1 statement on 1 table poorly (score 20, below 50)" in risk["description"]
+        assert "this statement" in risk["mitigation"] and "what it is for" in risk["mitigation"]
+
+    def test_a_statement_the_plan_places_elsewhere_raises_nothing(self) -> None:
+        moved = _carried("a1", "db.a", DDB, 10, "retention-delete", "Retention delete")
+        assert "design.carried_writes" not in _rules(self._risks([moved]))
+        assert "design.carried_writes" not in _rules(self._risks([]))
+        assert "design.carried_writes" not in _rules(_build())
+
+
+# ---------------------------------------------------------------------------
 # Numbering, strategies, wording
 # ---------------------------------------------------------------------------
 
@@ -696,6 +787,7 @@ def _all_kinds() -> list[dict[str, Any]]:
                 "gates": [{"engine": DDB, "gate": "capability", "gate_text": "missing"}],
             }
         ],
+        carried_writes=[_carried("w1", "db.a", DDB, 20, "retention-delete", "Retention delete")],
         start_id=7,
     )
 

@@ -27,6 +27,9 @@ this payload.
 - A risk, resolved risk or trade-off carries ``query_count`` (how many
   queries) instead of the ``query_ids`` list; the IDs mean nothing to a
   reader of a 3-4 sentence summary.
+- A ``design.carried_writes`` risk (#1362) carries ``detail_count`` instead of its
+  ``details`` (one long approach per statement); its description already counts the
+  statements by intent. Every other risk keeps its ``details``.
 - A trade-off's ``target_tables`` is dropped when it only repeats the bare
   names of its ``source_tables``.
 - A table mapping's alternatives are the engine names, without scores.
@@ -49,6 +52,8 @@ RANKING_KEEP = (
     "pattern_groups",
 )
 WAVE_DROP = ("rationale", "gate", "gate_parts")
+# Risks whose details are one long text per statement: the summary gets their count.
+SUMMARISED_DETAIL_RULES = frozenset({"design.carried_writes"})
 
 
 def _bare(table: object) -> str:
@@ -79,6 +84,8 @@ def slim_summary_input(payload: dict) -> dict:
     for section in ("risks", "resolved_risks"):
         for r in risk.get(section) or []:
             _ids_to_count(r)
+            if r.get("rule") in SUMMARISED_DETAIL_RULES and isinstance(r.get("details"), list):
+                r["detail_count"] = len(r.pop("details"))
 
     for t in out.get("trade_offs") or []:
         _ids_to_count(t)

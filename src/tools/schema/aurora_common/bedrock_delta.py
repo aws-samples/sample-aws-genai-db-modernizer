@@ -50,7 +50,8 @@ def designer_prompt(engine: str, view: dict) -> str:
         'AuroraDesignDeltaContract (delta_version "1.0"): type_rules for the residual '
         "source types listed in residual_types, per-table column_types only where one "
         "column needs a different type (plain SQL types only, e.g. BIGINT, VARCHAR(255)), "
-        "index changes only where a hot query needs it (structured entries "
+        "index changes only where a hot query or a carried write's approach "
+        "(design_view.analysis.carried_writes) needs it (structured entries "
         "{index_name, columns, unique}; remove_indexes by name), plus optimizations, "
         "app_layer_notes and at least one trade-off. Never repeat unchanged tables, "
         "columns or DDL."

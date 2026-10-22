@@ -232,6 +232,16 @@ def _analysis_summary(analysis: AgentAnalysisInput | None) -> dict:
             }
             for r in analysis.redesign_requirements or []
         ],
+        # The write-group members this engine serves poorly, with their intent and the
+        # target-native approach (#1362).
+        "carried_writes": [
+            {
+                "query_id": c.query_id,
+                "intent": c.intent_name,
+                "approach": c.approach,
+            }
+            for c in analysis.carried_writes or []
+        ],
     }
 
 

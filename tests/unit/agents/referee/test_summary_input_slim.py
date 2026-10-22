@@ -124,6 +124,27 @@ def test_query_ids_become_a_count_everywhere():
     assert not any("query_ids" in t for t in out["trade_offs"])
 
 
+def test_only_a_carried_write_risk_sends_a_count_of_its_details():
+    """#1362: the carried-write risk's details are one approach per statement, so the
+    summary gets their count (its description counts them by intent); every other risk
+    keeps its details as they are."""
+    payload = _payload()
+    risks = payload["risk_assessment"]["risks"]
+    risks[0]["details"] = ["a design trade-off"]
+    risks.append(
+        {
+            "severity": "MEDIUM",
+            "rule": "design.carried_writes",
+            "description": "d",
+            "details": ["one long approach", "another"],
+        }
+    )
+    out = slim_summary_input(payload)["risk_assessment"]["risks"]
+    assert out[0]["details"] == ["a design trade-off"] and "detail_count" not in out[0]
+    assert out[1]["detail_count"] == 2 and "details" not in out[1]
+    assert risks[1]["details"] == ["one long approach", "another"]
+
+
 def test_every_risk_and_its_severity_stay():
     out = slim_summary_input(_payload())["risk_assessment"]
     assert [r["severity"] for r in out["risks"]] == ["HIGH"]

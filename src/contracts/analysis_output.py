@@ -2,6 +2,10 @@
 Analysis Output Contract Models
 
 Version History:
+- 2.5 (2026-10-23, #1362): Added the optional carried_writes (CarriedWrite): the
+  write-group members a design call serves that fit its engine poorly, each with its
+  intent and the engine's target-native approach, filled by the schema-design step,
+  never by an analysis
 - 2.4 (2026-10-21, #1231): Added the optional ``redesign_requirements``
   (``RedesignRequirement``, ``AssumedKey``): the queries a design call serves that
   routing scored after redesign, with the keys each needs, filled by the schema-design
@@ -371,11 +375,50 @@ def redesign_requirements_in_scope(
     return out
 
 
+class CarriedWrite(BaseModel):
+    """A write-group member its group's engine serves poorly (#1362): routing keeps it on
+    ``engine``, its table's source of truth, with the table's other writes (ADR-031
+    Decision 1 Amendment 9), though its own ``score`` there is below ``floor``. ``intent``
+    is what the statement is for (a write-intent catalog id, with its ``intent_name`` and
+    ``intent_summary``) and ``approach`` the target-native way ``engine`` serves that
+    intent, with the public ``docs`` it rests on (``src/catalog/write_intents/``). The
+    design models the intent, not the source statement's shape."""
+
+    query_id: str
+    table_id: str
+    engine: str
+    score: float
+    floor: float
+    group_size: int = Field(..., ge=2, description="The write group's statements")
+    statement: str = Field("", description="The statement's kind: DELETE, UPDATE, ...")
+    intent: str
+    intent_name: str
+    intent_summary: str
+    approach: str
+    docs: str = ""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+def carried_writes_in_scope(
+    carried: Iterable[Mapping[str, Any]] | None, query_ids: Collection[str]
+) -> list[dict[str, Any]]:
+    """The raw ``carried_writes`` one design call sees: the ones among ``query_ids`` (the
+    engine's or the group's queries), so a designer is never told about a statement
+    another engine serves (#1362)."""
+    out = []
+    for raw in carried or []:
+        entry = CarriedWrite.model_validate(raw)
+        if entry.query_id in query_ids:
+            out.append(entry.model_dump(mode="json"))
+    return out
+
+
 class AnalysisOutputContract(BaseModel):
     """Output contract for all Analysis agents"""
 
     contract_version: str = Field(
-        default="2.4",
+        default="2.5",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -417,6 +460,14 @@ class AnalysisOutputContract(BaseModel):
             "Never written by an analysis: the schema-design step fills it from the "
             "assignment's access-pattern record with the queries the design call serves "
             "that routing scored after redesign, and the keys each one needs (#1231)"
+        ),
+    )
+    carried_writes: list[CarriedWrite] | None = Field(
+        None,
+        description=(
+            "Never written by an analysis: the schema-design step fills it with the "
+            "write-group members the design call serves that fit its engine poorly, each "
+            "with its intent and the engine's target-native approach (#1362)"
         ),
     )
 

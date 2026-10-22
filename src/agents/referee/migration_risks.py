@@ -61,6 +61,10 @@ rule                       severity  raised when
                                      redesigned one (ADR-031 Decision 2 Amendment 13, #1231):
                                      the target design must add the keys routing assumed;
                                      one risk per engine
+``design.carried_writes``  MEDIUM    write groups keep members on their table's source of truth
+                                     that score below the catalog's floor there (#1362): the
+                                     design must serve each one's intent the target's way;
+                                     one risk per engine, each statement in its details
 ``relational.gaps``        HIGH      the relational gap check finds gaps that block the move to
                                      wave 1's engine (``facts.relational_gaps``, #1149)
                            MEDIUM    gaps that need a rewrite before cutover
@@ -863,6 +867,81 @@ def _redesign_risks(
     return out
 
 
+def _score_text(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
+
+
+def _carried_write_risks(
+    ctx: _Context, carried_writes: Iterable[Mapping[str, Any]] | None
+) -> list[dict]:
+    """One ``design.carried_writes`` risk per engine: the write-group members it serves
+    poorly (#1362, ``carried_writes.carried_write_records``), counted in the description
+    by intent, each one in full in ``details`` (its statement, table, intent, score and
+    the target-native approach). A table has one writer (ADR-031 Decision 1 Amendment 9),
+    so routing keeps them there; the design must not replay their set-based SQL. A record
+    whose query the plan no longer places on that engine raises nothing."""
+    by_engine: dict[str, list[Mapping[str, Any]]] = {}
+    for r in carried_writes or []:
+        if not isinstance(r, Mapping):
+            continue
+        qid = str(r.get("query_id") or "")
+        engine = canonical_engine_id(str(r.get("engine") or ""))
+        if not qid or not engine or ctx.engine_of.get(qid) != engine:
+            continue
+        by_engine.setdefault(engine, []).append(r)
+    out: list[dict[str, Any]] = []
+    for engine in sorted(by_engine):
+        rows = sorted(
+            by_engine[engine], key=lambda r: (str(r.get("table_id")), str(r.get("query_id")))
+        )
+        name = display_engine(engine)
+        wave = ctx.wave_of_engine.get(engine)
+        k = len(rows)
+        tables = sorted({str(r.get("table_id") or "") for r in rows} - {""})
+        scores = [float(r.get("score") or 0) for r in rows]
+        floor = _score_text(min(float(r.get("floor") or 0) for r in rows))
+        low, high = _score_text(min(scores)), _score_text(max(scores))
+        scored = f"score {low}" if low == high else f"scores {low} to {high}"
+        counts: dict[str, int] = {}
+        for r in rows:
+            intent = str(r.get("intent_name") or "").lower()
+            if intent:
+                counts[intent] = counts.get(intent, 0) + 1
+        intents = [f"{i} ({n})" for i, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+        description = (
+            f"{name} serves {_n(k, 'statement', 'statements')} on "
+            f"{_n(len(tables), 'table', 'tables')} poorly ({scored}, below {floor}): "
+            f"{_join(intents)}. A table has one writer, so each moves with the other "
+            "statements that write its table."
+        )
+        mitigation = (
+            f"Before the {_gate(wave)}, design {_these(k, 'statement', 'statements')} in "
+            f"{name} for what {'it is' if k == 1 else 'they are'} for, the target's own way, "
+            "not as a copy of the source's set-based SQL; each statement's detail names the "
+            "approach."
+        )
+        details = [
+            f"{str(r.get('statement') or 'Statement').upper()} of "
+            f"{str(r.get('table_id') or '').rsplit('.', 1)[-1]}, "
+            f"{str(r.get('intent_name') or '').lower()} (score "
+            f"{_score_text(float(r.get('score') or 0))}): {_item(str(r.get('approach') or ''))}"
+            for r in rows
+        ]
+        out.append(
+            _risk(
+                "design.carried_writes",
+                engine,
+                description,
+                mitigation,
+                tables,
+                [str(r["query_id"]) for r in rows],
+                wave,
+                details=details,
+            )
+        )
+    return out
+
+
 # A leading review marker a designer puts on a line: "[PE note] ...", "PE note: ...".
 _MARKER_RE = re.compile(r"^(?:\[[^\]]{1,30}\]\s*|(?:PE|review) note:\s*)+", re.IGNORECASE)
 
@@ -895,6 +974,7 @@ def build_migration_risks(
     relational_gaps: Mapping[str, Any] | None = None,
     scope_unservable: list[dict[str, Any]] | None = None,
     redesign_requirements: Iterable[Mapping[str, Any]] | None = None,
+    carried_writes: Iterable[Mapping[str, Any]] | None = None,
     start_id: int = 0,
     source_engine: str,
 ) -> list[dict[str, Any]]:
@@ -910,7 +990,9 @@ def build_migration_risks(
     ``flagged_unservable`` rows (#888, #1148); ``relational_gaps`` the gap check
     ``facts.relational_gaps`` stores (#1079, #1149); ``scope_unservable`` report.json's
     ``scope_unservable`` rows (#1329); ``redesign_requirements``
-    the queries routing scored after redesign, each with its engine (#1231); ``source_engine`` is the
+    the queries routing scored after redesign, each with its engine (#1231);
+    ``carried_writes`` the write-group members their engine serves poorly (#1362);
+    ``source_engine`` is the
     dialect the queries' text is read in.
     """
     norm = normalise or (lambda names: {str(n) for n in names if n})
@@ -931,6 +1013,7 @@ def build_migration_risks(
         *_hot_partition_risks(ctx, designs, norm),
         *_trade_off_risks(ctx, trade_offs, norm),
         *_redesign_risks(ctx, redesign_requirements),
+        *_carried_write_risks(ctx, carried_writes),
         # Last: a report written before this rule gets it appended at render time
         # (``backfill_report_risks``), so both number and order it the same way.
         *flagged_unservable_risks(

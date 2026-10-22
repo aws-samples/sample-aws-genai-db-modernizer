@@ -1713,3 +1713,110 @@ Documentation: Amazon Aurora User Guide, Working with Babelfish for Aurora Postg
 Data types the conversion maps: informational. These types are converted to the target's matching type \(for example nvarchar to varchar in UTF-8, datetime2 to timestamp, tinyint to smallint on Aurora PostgreSQL\): check precision and range in the conversion report.
 
 Documentation: AWS Schema Conversion Tool User Guide, data type mappings.
+
+## Write intents: serving a carried write the target's way
+
+Generated from `src/catalog/write_intents/*.toml` and `src/catalog/carried_writes.toml` (#1362; field definitions: `src/shared/catalog/write_intents.py`). A write group moves as one unit (ADR-031 Decision 1 Amendment 9), so it can carry a member whose own score on the group's engine is low. Below the floor, the member's intent is read from its parsed facts (`src/agents/referee/carried_writes.py`) and the designer input and the risk register name the engine's approach below; routing never reads it.
+
+- `carried_write_fit_floor` = 50: A write-group member whose own score on the group's engine is below this is carried there by its table's other writes, not by its own fit: the designer is told the statement's intent and the target-native way to serve it, and the risk register raises it \(#1362\). On the bundled samples every carried member below 50 scores 26 or less, so 30 would list the same 14 statements \(#1359\).
+
+| Intent | What it is for |
+|---|---|
+| [`bulk-status-flip`](#bulk-status-flip) | Sets one column (a status, a flag) to one value on every row a predicate picks, no full key value addressing them. |
+| [`consistency-repair`](#consistency-repair) | Re-aligns a value kept in step with another table wherever the two disagree. |
+| [`duplicate-cleanup`](#duplicate-cleanup) | Removes rows that repeat another row's natural key, keeping one. |
+| [`multi-reference-delete`](#multi-reference-delete) | Removes every row that refers to one entity through any of several columns, for example when the entity is deleted. |
+| [`orphan-cleanup`](#orphan-cleanup) | Removes rows, or clears references, whose parent row no longer exists. |
+| [`retention-delete`](#retention-delete) | Removes rows once they pass an age or expiry cut-off, run on a schedule. |
+| [`set-based-write`](#set-based-write) | Any other maintenance write: model what it is for, the target's way, not its SQL. |
+
+### bulk-status-flip
+
+Bulk status flip: Sets one column \(a status, a flag\) to one value on every row a predicate picks, no full key value addressing them.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Make the change at the event that causes it, with an UpdateItem on that item; for a time-based flip, store the deadline and read the status from it, or index the pending items in a sparse GSI and have a scheduled job update each with a conditional UpdateItem. | Amazon DynamoDB Developer Guide, Take advantage of sparse indexes; section on condition expressions |
+| DocumentDB | Run an updateMany over an index on the predicate fields (a partial index of the pending documents), in batches, or make the change where the event happens. | Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes |
+| OpenSearch | Index the status from the source's change events, or run an update by query in batches. | OpenSearch documentation, Update by query API |
+| ElastiCache | Update the key at the event that changes it; a cached status expires with its source. | Valkey documentation, EXPIRE command reference |
+| Aurora PostgreSQL | Keep the UPDATE, in batches over an index on the predicate (a partial index of the pending rows). | PostgreSQL documentation, Partial Indexes |
+| Aurora MySQL | Keep the UPDATE, in batches (UPDATE ... LIMIT) over an index on the predicate columns. | MySQL 8.0 Reference Manual, UPDATE Statement |
+
+### consistency-repair
+
+Consistency repair sweep: Re-aligns a value kept in step with another table wherever the two disagree.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Enforce the rule at write time: the write that changes the source value also updates each copy, in the same UpdateItem when both are on one item or in a TransactWriteItems over the items (up to 100); collocate one-to-one entities in one item collection so the join disappears. For a wider fan-out, a DynamoDB Streams consumer on the source item updates the copies with a conditional UpdateItem; a sweep kept as a safety net is a scheduled batch job over a sparse GSI, one conditional UpdateItem per item. | Amazon DynamoDB Developer Guide, Managing complex workflows with DynamoDB transactions; Change data capture for DynamoDB Streams |
+| DocumentDB | Embed the value so there is one copy, or update the copies where the source changes, in a multi-document transaction or from a change stream consumer; a sweep kept as a safety net runs in batches over an index on the copied field. | Amazon DocumentDB Developer Guide, Transactions; Using change streams with Amazon DocumentDB |
+| OpenSearch | Re-index the documents that carry the copy from the source's change events, or look the value up at query time; never sweep the index. | Amazon OpenSearch Service Developer Guide, Overview of Amazon OpenSearch Ingestion |
+| ElastiCache | Rewrite or invalidate the cached copy where the source value changes (write-through), instead of sweeping. | Amazon ElastiCache User Guide, section on caching strategies |
+| Aurora PostgreSQL | Keep the rule in one place: a constraint where it can express the rule, a trigger on the source table that updates the copy, or the rule enforced in the write path that changes the source value; a view can derive the value instead of storing a copy. The sweep stays only as a scheduled safety net. | PostgreSQL documentation, Triggers; Constraints |
+| Aurora MySQL | Keep the rule in one place: a constraint where it can express the rule, a trigger on the source table that updates the copy, or the rule enforced in the write path that changes the source value; a view can derive the value instead of storing a copy. The sweep stays only as a scheduled safety net. | MySQL 8.0 Reference Manual, Using Triggers; CHECK Constraints |
+
+### duplicate-cleanup
+
+Duplicate clean-up: Removes rows that repeat another row's natural key, keeping one.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Make the natural key the item's primary key (or write a uniqueness item for it in the same TransactWriteItems) and put with a ConditionExpression of attribute_not_exists, so a duplicate is never stored and nothing needs cleaning up. | Amazon DynamoDB Developer Guide, section on condition expressions |
+| DocumentDB | Remove the existing duplicates once, then create a unique index on the natural key fields and upsert on that key, so a duplicate insert fails instead of being cleaned up later. | Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes |
+| OpenSearch | Use the natural key as the document _id, so indexing the same entity again overwrites one document. | OpenSearch documentation, Index document API |
+| ElastiCache | Key the entry by its natural key and write it with SET NX, so writing it twice keeps one. | Valkey documentation, SET command reference |
+| Aurora PostgreSQL | Remove the existing duplicates once, then add a unique constraint on the natural key and write with INSERT ... ON CONFLICT DO NOTHING, so duplicates cannot be written. | PostgreSQL documentation, INSERT (ON CONFLICT clause) |
+| Aurora MySQL | Remove the existing duplicates once, then add a unique index on the natural key and write with INSERT ... ON DUPLICATE KEY UPDATE, so duplicates cannot be written. | MySQL 8.0 Reference Manual, INSERT ... ON DUPLICATE KEY UPDATE Statement |
+
+### multi-reference-delete
+
+Delete by any of several references: Removes every row that refers to one entity through any of several columns, for example when the entity is deleted.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Give each reference a GSI (or keep the rows in the entity's item collection), Query each one for the entity and delete what it returns with BatchWriteItem; run it where the entity is deleted, or from a DynamoDB Streams consumer on that delete, never as a Scan. | Amazon DynamoDB Developer Guide, Using Global Secondary Indexes in DynamoDB; Change data capture for DynamoDB Streams |
+| DocumentDB | Index each reference field and run one deleteMany per field (or one $or over the indexed fields) where the entity is deleted, or from a change stream consumer. | Amazon DocumentDB Developer Guide, Managing Amazon DocumentDB indexes; Using change streams with Amazon DocumentDB |
+| OpenSearch | Map the reference fields as keyword and delete by query on them from the pipeline that handles the entity's delete. | OpenSearch documentation, Delete by query API |
+| ElastiCache | Keep a set of the entity's dependent keys and remove them with the entity (UNLINK). | Valkey documentation, UNLINK command reference |
+| Aurora PostgreSQL | Index each reference column, so the OR reads the indexes (a bitmap OR) instead of the table, or declare the foreign keys with ON DELETE CASCADE. | PostgreSQL documentation, Combining Multiple Indexes |
+| Aurora MySQL | Index each reference column, so the OR reads the indexes (an index merge union) instead of the table, or declare the foreign keys with ON DELETE CASCADE. | MySQL 8.0 Reference Manual, Index Merge Optimization |
+
+### orphan-cleanup
+
+Orphan clean-up: Removes rows, or clears references, whose parent row no longer exists.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Enforce the rule where the parent is deleted: delete or update its dependents in the same TransactWriteItems (up to 100 items), or, for a wider fan-out, from a DynamoDB Streams consumer on the parent's REMOVE events; keep the dependents in the parent's item collection (the same partition key) so one Query finds them. A sweep that must stay is a scheduled batch job over a sparse GSI of the reference attribute. | Amazon DynamoDB Developer Guide, Managing complex workflows with DynamoDB transactions; Change data capture for DynamoDB Streams |
+| DocumentDB | Embed dependents the parent owns in the parent document, so they go with it; otherwise remove or update them where the parent is deleted, in a multi-document transaction or from a change stream consumer. | Amazon DocumentDB Developer Guide, Transactions; Using change streams with Amazon DocumentDB |
+| OpenSearch | Delete the dependents with the parent from the pipeline that indexes them (a delete by query on the parent id), or denormalize the parent's fields into each dependent so nothing is left dangling. | OpenSearch documentation, Delete by query API |
+| ElastiCache | Delete the dependent keys with the parent (in one MULTI/EXEC, or keep them in one hash under the parent's key), or give them the parent's expiry. | Valkey documentation, Transactions |
+| Aurora PostgreSQL | Declare the foreign key with ON DELETE CASCADE or ON DELETE SET NULL, so the database keeps the rule at write time; keep the sweep only for rows written before the constraint. | PostgreSQL documentation, Constraints chapter, Foreign Keys section |
+| Aurora MySQL | Declare the InnoDB foreign key with ON DELETE CASCADE or ON DELETE SET NULL, so the database keeps the rule at write time; keep the sweep only for rows written before the constraint. | MySQL 8.0 Reference Manual, FOREIGN KEY Constraints |
+
+### retention-delete
+
+Retention delete: Removes rows once they pass an age or expiry cut-off, run on a schedule.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Use Time to Live: write an epoch-seconds expiry attribute (the item's date plus the retention period) only on the items the cut-off applies to, the statement's other conditions included, remove it when those conditions stop holding, and enable TTL on it, so DynamoDB deletes expired items in the background with no write cost; TTL deletes within days, not at the second, so a read that must not see an expired item filters on the attribute, and a DynamoDB Streams consumer can archive what TTL removes. | Amazon DynamoDB Developer Guide, Using time to live (TTL) in DynamoDB |
+| DocumentDB | Create a TTL index on a date field set only on the documents the cut-off applies to, the statement's other conditions included (a document without the field never expires), and remove the field when those conditions stop holding; DocumentDB deletes expired documents in the background, not at the exact time, and the deletes consume I/O like any write, so a read that must not see an expired document filters on the field. | Amazon DocumentDB Developer Guide, section on time to live (TTL) indexes |
+| OpenSearch | Write to time-based indexes behind a rollover alias and let an Index State Management policy delete each index once it passes the retention period, instead of deleting documents one by one. | Amazon OpenSearch Service Developer Guide, Index State Management in Amazon OpenSearch Service |
+| ElastiCache | Set the expiry when the key is written (SET with EX, or EXPIRE), so the cache drops it at the cut-off with no sweep. | Valkey documentation, EXPIRE command reference |
+| Aurora PostgreSQL | Keep the scheduled DELETE, in small batches over an index on the date column, or range-partition the table on that column and drop whole old partitions (the pg_partman extension can schedule it). | Amazon Aurora User Guide, Managing PostgreSQL partitions with the pg_partman extension |
+| Aurora MySQL | Keep the scheduled DELETE, in small batches (DELETE ... LIMIT) over an index on the date column, or range-partition the table on that column and drop old partitions with ALTER TABLE ... DROP PARTITION. | MySQL 8.0 Reference Manual, Partitioning |
+
+### set-based-write
+
+Set-based maintenance write: Any other maintenance write: model what it is for, the target's way, not its SQL.
+
+| Engine | Approach | Documentation |
+|---|---|---|
+| DynamoDB | Model what the statement is for, not its SQL: enforce the rule where the data is written (UpdateItem or TransactWriteItems), react to the change with a DynamoDB Streams consumer, or run a scheduled batch job over a sparse GSI of the rows it picks; never a Scan of the table. | Amazon DynamoDB Developer Guide, Best practices for designing and architecting with DynamoDB |
+| DocumentDB | Model what the statement is for: make the change where the data is written, from a change stream consumer, or in batches over an index that selects the rows; never a collection scan. | Amazon DocumentDB Developer Guide, Using change streams with Amazon DocumentDB |
+| OpenSearch | Re-index the affected documents from the source's change events, or run an update or delete by query in batches. | OpenSearch documentation, Update by query API |
+| ElastiCache | Make the change where the source is written, or let the keys expire; a cache holds no set to sweep. | Amazon ElastiCache User Guide, section on caching strategies |
+| Aurora PostgreSQL | Keep the statement, in batches over an index on its predicate. | PostgreSQL documentation, Indexes chapter |
+| Aurora MySQL | Keep the statement, in batches over an index on its predicate. | MySQL 8.0 Reference Manual, Optimization and Indexes |

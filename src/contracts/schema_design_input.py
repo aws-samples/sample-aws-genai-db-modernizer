@@ -310,6 +310,20 @@ class AgentRedesignRequirement(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class AgentCarriedWrite(BaseModel):
+    """A write-group member its engine serves poorly (``analysis_output.CarriedWrite``,
+    #1362): what the statement is for, and the target-native way to serve it."""
+
+    query_id: str
+    table_id: str
+    score: float
+    floor: float
+    intent: str
+    intent_name: str
+    intent_summary: str
+    approach: str
+
+
 class AgentKeyAnchor(BaseModel):
     """A key-scoped write's key column (``analysis_output.KeyAnchor``, #1061): its
     cardinality (``"unknown"`` with no statistics) and the other queries that look the table
@@ -363,6 +377,9 @@ class AgentAnalysisInput(BaseModel):
     key_scoped_counts: list[AgentKeyScopedCount] | None = None
     # The queries routed on a redesign, and the keys each needs, of this call (#1231).
     redesign_requirements: list[AgentRedesignRequirement] | None = None
+    # The write-group members of this call its engine serves poorly, each with its
+    # intent and the target-native approach (#1362).
+    carried_writes: list[AgentCarriedWrite] | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -726,6 +743,21 @@ def project_schema_design_input(
             )
             for r in analysis_output.redesign_requirements or []
             if r.query_id in {q.query_id for q in collector_output.queries.query_patterns}
+        ]
+        or None,
+        carried_writes=[
+            AgentCarriedWrite(
+                query_id=c.query_id,
+                table_id=c.table_id,
+                score=c.score,
+                floor=c.floor,
+                intent=c.intent,
+                intent_name=c.intent_name,
+                intent_summary=c.intent_summary,
+                approach=c.approach,
+            )
+            for c in analysis_output.carried_writes or []
+            if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
         ]
         or None,
     )

@@ -416,6 +416,7 @@ def run_synthesis_deterministic(
             relational_gaps=relational_gaps,
             scope_unservable=scope_unservable,
             redesign_requirements=redesign_requirements,
+            carried_writes=_carried_writes(store, database_name, job_id, data),
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -1051,6 +1052,25 @@ def _redesign_requirements(
             if engine_of.get(requirement["query_id"]) == engine:
                 out.append({**requirement, "engine": engine})
     return out
+
+
+def _carried_writes(
+    store: ArtifactStore, database_name: str, job_id: str, data: SynthesisData
+) -> list[dict]:
+    """The write-group members of the effective assignment that their engine serves
+    poorly, each with its intent and the engine's approach (#1362): the same function
+    the schema-design step gives each designer (``carried_write_records``)."""
+    from src.agents.referee.carried_writes import carried_write_records
+    from src.agents.referee.query_pattern import read_analysis_outputs
+
+    if not data.assignment or not data.collector:
+        return []
+    return carried_write_records(
+        data.assignment,
+        data.collector,
+        read_analysis_outputs(store, database_name, job_id),
+        data.triage,
+    )
 
 
 def _relational_gaps(data: SynthesisData) -> dict | None:

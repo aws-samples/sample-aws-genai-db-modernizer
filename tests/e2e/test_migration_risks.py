@@ -21,6 +21,7 @@ import pytest
 from src.agents.referee.migration_risks import RULES
 from src.report.escaping import md_text
 from src.report.executive_report import RISK_DETAILS_POINTER
+from src.shared.migration_risk_rules import GATE_IDS_NAMED
 from src.shared.report_facts import risk_engine_and_body
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
 from src.storage.local_store import LocalArtifactStore
@@ -46,6 +47,9 @@ EXPECTED_RULES: dict[str, list[str]] = {
         "routing.close_calls",
         "design.redesign",
         "design.redesign",
+        # #1362: ten tables' write groups keep 13 statements DynamoDB serves poorly
+        # (scores 11 to 26): one design.carried_writes risk for DynamoDB.
+        "design.carried_writes",
     ],
     # #1149: trailgear's SQL Server to Aurora PostgreSQL wave 1 has 6 gaps that need a
     # rewrite and 3 that behave differently, one MEDIUM risk each (wordpress and discourse have one
@@ -55,12 +59,14 @@ EXPECTED_RULES: dict[str, list[str]] = {
         "sync.wave",
         "routing.close_calls",
         "design.redesign",
+        # #1362: the UserSession expiry delete DynamoDB serves poorly (22).
+        "design.carried_writes",
         "relational.gaps",
         "relational.gaps",
     ],
 }
 # The open risks each sample lists (analysis risks and migration risks).
-EXPECTED_OPEN = {"wordpress": 4, "discourse": 13, "trailgear": 12}
+EXPECTED_OPEN = {"wordpress": 4, "discourse": 14, "trailgear": 13}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -93,8 +99,14 @@ def test_each_sample_raises_its_migration_risks(run: PipelineResult) -> None:
         assert r["affected_tables"] and r["query_ids"], r["risk_id"]
         assert r["wave"] and f"Wave {r['wave']}" in r["mitigation"], r["risk_id"]
     strategies = " ".join(report["risk_assessment"]["mitigation_strategies"])
+    per_wave = {w: sum(1 for r in risks if r["wave"] == w) for w in {r["wave"] for r in risks}}
     for r in risks:
-        assert r["risk_id"] in strategies, r["risk_id"]
+        # A wave with more risks than a strategy line names is counted (the cards carry
+        # the ids, ``GATE_IDS_NAMED``): discourse's Wave 3 (6 risks) since #1362.
+        if per_wave[r["wave"]] > GATE_IDS_NAMED:
+            assert f"the {per_wave[r['wave']]} Wave {r['wave']} risks" in strategies, r["risk_id"]
+        else:
+            assert r["risk_id"] in strategies, r["risk_id"]
 
 
 def test_the_sync_risk_agrees_with_the_wave_and_source_facts(run: PipelineResult) -> None:
