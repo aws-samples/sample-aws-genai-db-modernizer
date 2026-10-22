@@ -112,6 +112,10 @@ EXTRA_POLICY: dict[str, tuple[str, str]] = {
             "DocumentDBCompatibilityTrace",
         )
     },
+    "decision_record.DecisionRecord": (
+        "allow",
+        "a recorded approval: a hand-written record keeps its other keys (#1257)",
+    ),
     "elasticache_decision_trace.ElastiCacheDecisionTrace": (
         "allow",
         "the ElastiCache decision trace: unknown keys kept (#1191)",

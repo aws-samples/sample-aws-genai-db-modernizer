@@ -26,7 +26,7 @@ Maps each query pattern to the best-fit target engine based on analysis results.
 
 4. **Decision gate**
    Run `uv run python scripts/start_local_ui.py --page assignments --job-id {job_id}` and ask user: "Review assignments in the UI at <ui_url> or approve here.", with the `ui_url` it printed, verbatim.
-   - Poll for decision: `uv run python scripts/check_decision.py --job-id {job_id} --db {database_name} --decision assignment_approval`
+   - Poll for decision: `uv run python scripts/check_decision.py --job-id {job_id} --db {database_name} --decision assignment_approval`. Exit 0: the record is printed, the user approved. Exit 1: nothing recorded yet, keep polling. Exit 2: the record or an argument is bad (the output is `{"status": "error", "message": ...}`): stop, report the message to the user, and never keep polling.
    - Or accept "approve" from terminal
 
 5. **Update state**

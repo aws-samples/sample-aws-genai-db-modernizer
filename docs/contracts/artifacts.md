@@ -20,6 +20,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `assignment/v\d+/assignment\.json` | `Assignment` (`src.contracts.assignment_models`) |
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
+| `decisions/[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
 | `reality-check/output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
 | `synthesis/(?:v\d+/)?report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `referee-synthesis/report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
@@ -65,7 +66,6 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `analysis-[^/]+/er-diagram\.json` | the ER diagram's Mermaid text in a JSON wrapper, rebuilt from the analysis |
 | `analysis-[^/]+/partial\.json` | external-mode analysis held for the model's advisor pass, replaced at finalize |
 | `assignment/v\d+/access_patterns\.json` | each query's access-pattern class and scores as routing scored them (#728, #936): an audit record written with its assignment version |
-| `decisions/assignment_(?:review|approval)\.json` | recorded approvals (the assignment review and approval): typed by #1257 |
 | `assignment/review/pending_hitl\.json` | AWS Transform transport state: the pending review task to resume |
 | `schema-[^/]+/(?:v\d+/)?design_trace\.json` | the schema design trace (model calls, merge notes, PE review): typed by #1258 |
 | `schema-[^/]+/v\d+/design_trace_group_\d+\.json` | one DynamoDB group's design trace, merged into design_trace.json: typed by #1258 |

@@ -7800,6 +7800,76 @@
     "schema_hash": "b4eb5af93c742369f3045cc7affbb0532a0d1dd9223d333ee20c33738ef7f870",
     "version": "3.5"
   },
+  "decision_record.DecisionRecord": {
+    "fields": {
+      "contract_version": {
+        "required": false,
+        "schema": {
+          "kind": "scalar",
+          "pattern": "^\\d+\\.\\d+$",
+          "type": "string"
+        }
+      },
+      "inferred_from": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "type": "null"
+            },
+            {
+              "kind": "scalar",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "recorded_at": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "type": "null"
+            },
+            {
+              "kind": "scalar",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "source": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "kind": "scalar",
+              "type": "null"
+            },
+            {
+              "kind": "scalar",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "status": {
+        "required": true,
+        "schema": {
+          "kind": "scalar",
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    "schema_hash": "875e89e4718303b32a23ef82de6002970d0298c23c16f57817b42b1591f74d4b",
+    "version": "1.0"
+  },
   "design_metrics.DesignMetricsContract": {
     "fields": {
       "contract_version": {

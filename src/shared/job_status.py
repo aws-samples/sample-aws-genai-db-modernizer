@@ -73,7 +73,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+from src.contracts.decision_record import DecisionRecord
 from src.shared.contract_versioning import stamp_artifact_version
+from src.shared.decision_records import has_valid_decision
 
 logger = logging.getLogger(__name__)
 
@@ -274,9 +276,8 @@ def is_assignment_reviewed(store, db_name: str, job_id: str) -> bool:
     False, the same safe default as ``_job_is_real``.
     """
     try:
-        return bool(
-            store.exists(_decision_path(db_name, job_id))
-            or store.exists(_approval_decision_path(db_name, job_id))
+        return has_valid_decision(store, _decision_path(db_name, job_id)) or has_valid_decision(
+            store, _approval_decision_path(db_name, job_id)
         )
     except Exception:
         logger.debug("job_status: could not read assignment-review decision for %s", job_id)
@@ -338,12 +339,12 @@ def mark_assignment_reviewed(store, db_name: str, job_id: str, inferred_from: st
             return
         store.write_json(
             _decision_path(db_name, job_id),
-            {
-                "status": "completed",
-                "recorded_at": datetime.now(UTC).isoformat(),
-                "source": "inferred",
-                "inferred_from": inferred_from,
-            },
+            DecisionRecord(
+                status="completed",
+                recorded_at=datetime.now(UTC).isoformat(),
+                source="inferred",
+                inferred_from=inferred_from,
+            ).model_dump(mode="json", exclude_none=True),
         )
     except Exception:
         logger.debug("job_status: failed to record assignment review for %s", job_id)

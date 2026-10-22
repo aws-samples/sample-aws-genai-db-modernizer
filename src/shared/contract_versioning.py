@@ -287,10 +287,6 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         "#936): an audit record written with its assignment version",
     ),
     (
-        r"decisions/assignment_(?:review|approval)\.json",
-        "recorded approvals (the assignment review and approval): typed by #1257",
-    ),
-    (
         r"assignment/review/pending_hitl\.json",
         "AWS Transform transport state: the pending review task to resume",
     ),
@@ -421,6 +417,7 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
     (r"assignment/v\d+/assignment\.json", "src.contracts.assignment_models:Assignment"),
     (r"assignment/v\d+/validation\.json", "src.contracts.assignment_models:ValidationResult"),
     (r"reality-check/awaiting_llm\.json", "src.contracts.reality_check_marker:RealityCheckMarker"),
+    (r"decisions/[^/]+\.json", "src.contracts.decision_record:DecisionRecord"),
     (
         r"reality-check/output\.json",
         "src.contracts.reality_check_output:RealityCheckOutputContract",

@@ -336,7 +336,7 @@ def either_path(store, db, job, version, output):
     store.write_json(key, output)
 
 def not_a_contract(store, db, job, data):
-    store.write_json(f"{db}/{job}/decisions/assignment_review.json", data)
+    store.write_json(f"{db}/{job}/collector/sql_shadow.json", data)
 
 def unknown_path(store, key, data):
     store.write_json(key, data)

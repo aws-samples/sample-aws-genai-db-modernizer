@@ -3,7 +3,9 @@
 Exits 0 and prints JSON content if the decision file exists.
 Exits 1 silently if it does not exist yet.
 Exits 2 with ``{"status": "error", "message": ...}`` if an argument is refused
-under MODERNIZER_CI_SANDBOX=1 (see scripts/_sandbox.py).
+under MODERNIZER_CI_SANDBOX=1 (see scripts/_sandbox.py), or if the file is not a
+valid decision record (``DecisionRecord``: not JSON, no ``status``, or another MAJOR).
+Exit 2 means a bad record, not "not yet": stop and report it, do not poll again.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts._sandbox import NAME_ARGS, sandbox_violation  # noqa: E402
 from src.shared.database_name import validate_database_name  # noqa: E402
+from src.shared.decision_records import DecisionRecordError, read_decision  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
 from src.storage.local_store import LocalArtifactStore  # noqa: E402
 
@@ -60,7 +63,11 @@ def main() -> None:
     path = f"{args.db}/{args.job_id}/decisions/{args.decision}.json"
 
     if store.exists(path):
-        data = store.read_json(path)
+        try:
+            data, _ = read_decision(store, path)
+        except DecisionRecordError as exc:
+            print(json.dumps({"status": "error", "message": str(exc)}))
+            sys.exit(2)
         print(json.dumps(data, indent=2))
         sys.exit(0)
     else:
