@@ -67,7 +67,7 @@ from src.tools.sql.normalize import (
     NormalizedQuery,
     normalize_digest_text,
     quoted_mask,
-    without_comments_after_terminator,
+    without_comments_between_statements,
 )
 from src.tools.sql.refs import ColumnUse, TableRef
 from src.tools.sql.regex_facts import (
@@ -539,8 +539,8 @@ def _cut_short(sql: str, normalized: NormalizedQuery, source_engine: str) -> boo
 
 def _parse(sql: str, source_engine: str) -> _Parsed:
     """Parse ``sql`` once, or say why the regex fallback answers instead."""
-    # A comment after the closing ';' is no part of the statement (#1335).
-    sql = without_comments_after_terminator(sql or "", source_engine)
+    # A comment after a ';' is no statement and no part of one (#1335, #1340).
+    sql = without_comments_between_statements(sql or "", source_engine)
     dialect = sqlglot_dialect(source_engine)
     if len(sql) > MAX_SQL_CHARS:
         return _Parsed(sql, dialect, truncated=False, fallback_reason="too_long")

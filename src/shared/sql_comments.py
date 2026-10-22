@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 
 __all__ = [
+    "block_comment_end",
     "block_comments_nest",
     "leading_comments",
     "strip_comments",
@@ -66,7 +67,7 @@ def block_comments_nest(dialect: str | None) -> bool:
     return (dialect or "").strip().lower() in _NESTING_DIALECTS
 
 
-def _block_end(text: str, start: int, nested: bool) -> int:
+def block_comment_end(text: str, start: int, nested: bool) -> int:
     """The index just past the ``*/`` closing the block comment opened at
     ``start``, or ``-1`` when it is unterminated.
 
@@ -117,7 +118,7 @@ def _leading_comment_run(
         elif mysql_executable and _EXECUTABLE_COMMENT_OPEN_RE.match(text, i):
             break
         elif text.startswith("/*", i):
-            end = _block_end(text, i, nested)
+            end = block_comment_end(text, i, nested)
             if end < 0:
                 break
             bodies.append((i + 2, end - 2))
@@ -196,7 +197,7 @@ def strip_trailing_comments(text: str, *, nested: bool = False) -> str:
             i = n if newline < 0 else newline
             comment_after_code = True
         elif any_close_left and text.startswith("/*", i):
-            end = _block_end(text, i, nested)
+            end = block_comment_end(text, i, nested)
             if end < 0:  # unterminated: not a comment
                 any_close_left = False
                 continue
@@ -276,7 +277,7 @@ def trailing_comments(
                 i = n if close < 0 else close + 2
                 pending, seen_code = [], True
                 continue
-            end = _block_end(text, i, nested) if any_close_left else -1
+            end = block_comment_end(text, i, nested) if any_close_left else -1
             if end < 0:
                 any_close_left = False
                 pending, seen_code = [], True
@@ -350,7 +351,7 @@ def strip_comments(text: str, *, nested: bool = False, hash_comments: bool = Fal
             out.append(" ")
             i = start = end
         elif any_close_left and text.startswith("/*", i):
-            end = _block_end(text, i, nested)
+            end = block_comment_end(text, i, nested)
             if end < 0:
                 any_close_left = False
                 i += 2

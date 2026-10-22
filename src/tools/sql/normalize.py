@@ -66,7 +66,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from src.shared.sql_comments import block_comments_nest
+from src.shared.sql_comments import block_comment_end, block_comments_nest
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -147,6 +147,56 @@ def without_comments_after_terminator(text: str, source_engine: str | None) -> s
     if engine in _MYSQL_FAMILY_DIALECTS and _EXECUTABLE_OPEN_RE.search(text, last):
         return text
     return text[:last]
+
+
+def without_comments_between_statements(text: str, source_engine: str | None) -> str:
+    """``text`` without the comments that stand alone after a statement-ending ``;``.
+
+    ``SELECT 1; /* x */ SELECT 2`` becomes ``SELECT 1; SELECT 2`` and
+    ``a; /* x */ ; /* y */`` becomes ``a; ;``: a parser reads such a comment as a
+    statement of its own (#1340), so it must not reach one. Comments after the last
+    ``;`` are cut with :func:`without_comments_after_terminator`. The text is read
+    with the same dialect-aware scan, so a ``;`` or a comment marker inside a string,
+    a quoted name, a dollar quote, ``E'...'``, ``q'{...}'`` or a ``[name]`` is data
+    and stays. Only comments are removed, never code: a comment that sits inside a
+    statement, or before the first one, is left alone, and so is a MySQL executable
+    comment (``/*! ... */``), which is code. Text with an unterminated quote or
+    comment is returned unchanged.
+    """
+    text = without_comments_after_terminator(text, source_engine)
+    if ";" not in text:
+        return text
+    engine = (source_engine or "").strip().lower()
+    scan = _scan(text, engine, brackets=engine in _BRACKET_DIALECTS)
+    if scan.unterminated_quote or scan.unterminated_comment:
+        return text
+    comments = scan.comment_mask
+    mysql = engine in _MYSQL_FAMILY_DIALECTS
+    nested = block_comments_nest(engine)
+    out: list[str] = []
+    after_terminator = False
+    i, n = 0, len(text)
+    while i < n:
+        if comments[i]:
+            # One comment at a time: a run of adjacent comments can mix a plain one
+            # with a MySQL executable one.
+            if text.startswith("--", i) or (mysql and text[i] == "#"):
+                newline = text.find("\n", i)
+                end = n if newline < 0 else newline + 1
+            else:
+                end = block_comment_end(text, i, nested)
+            executable = mysql and _EXECUTABLE_OPEN_RE.match(text, i) is not None
+            if not (after_terminator and not executable):
+                out.append(text[i:end])
+                after_terminator = False
+            i = end
+            continue
+        ch = text[i]
+        if not ch.isspace():
+            after_terminator = ch == ";"  # a quoted ";" is followed by its closing quote
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
