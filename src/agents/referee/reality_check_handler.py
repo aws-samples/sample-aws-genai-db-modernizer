@@ -86,7 +86,9 @@ from src.shared.query_citations import QueryCitations, collector_query_ids, name
 from src.shared.skill_sections import skill_sections
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
+    keep_completed_reality_check_output,
     next_assignment_version,
+    reality_check_output_path,
     reality_check_run_for_lineage,
     resolve_reality_check_input_version,
 )
@@ -388,7 +390,8 @@ def run_reality_check_handler(
 
     Reads assignment, triage, analysis, and collector artifacts.
     Writes:
-      - reality-check/output.json (contract-validated)
+      - reality-check/output.json (contract-validated), and for a completed run
+        reality-check/v{N}/output.json too (#193)
       - assignment/v{next}/assignment.json (revised, if consolidation occurred),
         where ``next`` is ``next_assignment_version()`` so an existing version is
         never overwritten (issue #189)
@@ -454,6 +457,9 @@ def run_reality_check_handler(
         llm_input_key = f"{database_name}/{job_id}/reality-check/llm_input.json"
         # One record per line, so the Read pages in its header stay small (#285)
         store.write_bytes(llm_input_key, render_reality_check_request(llm_input).encode())
+        # The marker below makes output.json read as a preview: keep the completed
+        # run it holds under its version first (#193).
+        keep_completed_reality_check_output(store, database_name, job_id)
         awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
         marker = RealityCheckMarker(status=MarkerStatus.AWAITING_LLM, input_key=llm_input_key)
         store.write_json(awaiting_key, marker.model_dump(mode="json", exclude_none=True))
@@ -565,8 +571,18 @@ def write_reality_check_result(
             "model_flags_rejected": result.get("model_flags_rejected", 0),
         }
     )
-    output_key = f"{database_name}/{job_id}/reality-check/output.json"
-    store.write_json(output_key, output.model_dump(mode="json"))
+    # #193: output.json is the latest run; a completed run is also kept under the
+    # version it stands for (the one it wrote, else the one it checked), so a forced
+    # run never replaces the record of the run before it.
+    keep_completed_reality_check_output(store, database_name, job_id)
+    record = output.model_dump(mode="json")
+    store.write_json(reality_check_output_path(database_name, job_id), record)
+    versioned = reality_check_output_path(database_name, job_id, new_version or assignment_version)
+    # A versioned record is never replaced: an existing one is an earlier run that
+    # checked the same version and changed nothing (a consolidation always writes a
+    # new version, so its key is new).
+    if write_revision and not store.exists(versioned):
+        store.write_json(versioned, record)
     awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
     if write_revision and store.exists(awaiting_key):
         # A completed run supersedes any external-mode preview; from here on the

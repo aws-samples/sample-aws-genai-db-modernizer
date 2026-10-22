@@ -19,7 +19,7 @@ policy themselves; this module reports the raw truth (0 when nothing exists).
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from typing import NamedTuple, Protocol
 
 from src.contracts.reality_check_marker import MarkerStatus, RealityCheckMarker
@@ -209,6 +209,50 @@ class RealityCheckRun(NamedTuple):
     """The version it wrote, or None when it consolidated nothing."""
 
 
+def reality_check_output_path(database_name: str, job_id: str, version: int | None = None) -> str:
+    """Return the key of a reality-check output (#193).
+
+    ``version`` None is ``reality-check/output.json``, the latest run's output (a
+    preview while an external-mode run awaits its model). A version is
+    ``reality-check/v<N>/output.json``, the completed run kept under the assignment
+    version it stands for (:func:`reality_check_record_version`).
+    """
+    prefix = f"{database_name}/{job_id}/reality-check"
+    return f"{prefix}/output.json" if version is None else f"{prefix}/v{version}/output.json"
+
+
+def reality_check_record_version(output: Mapping) -> int | None:
+    """Return the assignment version a completed reality-check output is kept under (#193).
+
+    A run that consolidated is kept under the version it wrote
+    (``output_assignment_version``), one that changed nothing under the version it
+    checked (``source_assignment_version``). Versions are never overwritten, so two
+    runs share a key only when both checked the same version and changed nothing.
+
+    An output written before #192 has no ``output_assignment_version`` key; that
+    writer always put a consolidation at ``source_assignment_version + 1``.
+    """
+    source = output.get("source_assignment_version")
+    if not isinstance(source, int):
+        return None
+    if predates_reality_check_preview(output):
+        return source + 1 if output.get("consolidations") else source
+    wrote = output.get("output_assignment_version")
+    return wrote if isinstance(wrote, int) else source
+
+
+def predates_reality_check_preview(output: Mapping) -> bool:
+    """Return True when a reality-check output was written before #192 (#193).
+
+    Since #192 every output, a preview included, records ``output_assignment_version``
+    (null for a preview, which writes no revision). The writer before #192 left the key
+    out, wrote the revision with the output in every mode and never cleared the
+    ``awaiting_llm`` marker, so such an output is a completed run whatever the marker
+    says.
+    """
+    return "output_assignment_version" not in output
+
+
 def _completed_reality_check_output(
     store: _Reader, database_name: str, job_id: str, *, marker_fails_open: bool = False
 ) -> dict:
@@ -219,14 +263,21 @@ def _completed_reality_check_output(
     ``status = awaiting_llm`` until the finalize step completes. That preview does
     not count as a run.
 
+    A marker at ``awaiting_llm`` next to an output with no
+    ``output_assignment_version`` key is the exception (#193): that output was
+    written before #192, whose writer wrote the revision with the output in every
+    mode and never cleared the marker, so it is a completed run. A preview written
+    since #192 always carries the key (null, because a preview never writes a
+    revision), so it never reads as completed.
+
     A marker that cannot be read (invalid JSON, another MAJOR, no valid ``status``)
     raises. With ``marker_fails_open`` its state is unknown: it is logged and the job
     is treated as awaiting, so no ``output.json`` (possibly a preview) counts as a
     run, and the reality check, which rewrites both files itself, can run again
     (#1267).
     """
-    prefix = f"{database_name}/{job_id}/reality-check"
-    awaiting_key = f"{prefix}/awaiting_llm.json"
+    output_key = reality_check_output_path(database_name, job_id)
+    awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
     if store.exists(awaiting_key):
         try:
             marker = load_contract(
@@ -243,9 +294,69 @@ def _completed_reality_check_output(
             return {}
         else:
             if marker.status is MarkerStatus.AWAITING_LLM:
+                output = store.read_json(output_key) if store.exists(output_key) else {}
+                if output and predates_reality_check_preview(output):
+                    logger.info(
+                        "%s: marker still says awaiting_llm, but %s was written before #192 "
+                        "(no output_assignment_version), so it is read as a completed run",
+                        awaiting_key,
+                        output_key,
+                    )
+                    return output
                 return {}
-    output_key = f"{prefix}/output.json"
     return store.read_json(output_key) if store.exists(output_key) else {}
+
+
+def _lineage(
+    store: _Reader, database_name: str, job_id: str, start: int
+) -> Iterator[tuple[int, dict]]:
+    """Yield ``(version, assignment)`` from ``start`` back through override edits.
+
+    Follows ``previous_version`` while the version is an edit
+    (:func:`_is_override_edit`) and stops after the first version that is not (a
+    Reality Check output or a fresh resolution). A corrupt lineage (a cycle, an edit
+    with no ``previous_version``, or one naming a version that does not exist) ends
+    the walk with a warning (#193), so callers treat it as "no run found": the
+    reality check may then run, which writes a new version and never moves a
+    customer-pinned query, so the corruption costs a recompute, never a routing.
+    """
+    seen: set[int] = set()
+    version = start
+    while True:
+        path = assignment_artifact_path(database_name, job_id, version)
+        if not store.exists(path):
+            if seen:
+                logger.warning(
+                    "%s/%s: assignment lineage names v%d, which does not exist",
+                    database_name,
+                    job_id,
+                    version,
+                )
+            return
+        seen.add(version)
+        assignment = store.read_json(path)
+        yield version, assignment
+        if not _is_override_edit(assignment):
+            return
+        previous = assignment.get("previous_version")
+        if not isinstance(previous, int):
+            logger.warning(
+                "%s/%s: assignment v%d is an edit with no previous_version",
+                database_name,
+                job_id,
+                version,
+            )
+            return
+        if previous in seen:
+            logger.warning(
+                "%s/%s: assignment lineage has a cycle (v%d -> v%d)",
+                database_name,
+                job_id,
+                version,
+                previous,
+            )
+            return
+        version = previous
 
 
 def reality_check_run_for_lineage(
@@ -260,12 +371,12 @@ def reality_check_run_for_lineage(
     - a version Reality Check produced: that run consolidated its
       ``previous_version`` into it; or
     - the version a completed ``reality-check/output.json`` records as its
-      ``source_assignment_version`` with no output version: that run found
-      nothing to consolidate.
+      ``source_assignment_version`` with no output version and no consolidation:
+      that run found nothing to consolidate.
 
     It returns None when it reaches a version that is neither and is not an edit
-    (a fresh assignment resolution, which starts a new lineage), or a missing
-    version.
+    (a fresh assignment resolution, which starts a new lineage), or when the
+    lineage is corrupt (logged, see :func:`_lineage`).
 
     The pipeline order is Reality Check -> customer review gate -> schema design
     (ADR-028), and ADR-029 re-entry reopens the gate, not Reality Check. So a
@@ -285,26 +396,104 @@ def reality_check_run_for_lineage(
     rc_source = rc_output.get("source_assignment_version")
     rc_wrote = rc_output.get("output_assignment_version")
 
-    version: int | None = newest[0]
-    seen: set[int] = set()
-    while version is not None and version not in seen:
-        seen.add(version)
-        path = assignment_artifact_path(database_name, job_id, version)
-        if not store.exists(path):
-            return None
-        assignment = store.read_json(path)
+    for version, assignment in _lineage(store, database_name, job_id, newest[0]):
         if is_reality_check_produced(assignment):
             previous = assignment.get("previous_version")
             if not isinstance(previous, int):
                 # Legacy Reality Check output: its input is the one the output records.
                 previous = rc_source if isinstance(rc_source, int) else version - 1
             return RealityCheckRun(input_version=previous, output_version=version)
-        if rc_output and version == rc_source and rc_wrote is None:
+        # A run that changed nothing wrote no version and no consolidation (#193):
+        # an output with consolidations but no version is not one.
+        if (
+            rc_output
+            and version == rc_source
+            and rc_wrote is None
+            and not rc_output.get("consolidations")
+        ):
             return RealityCheckRun(input_version=version, output_version=None)
-        if not _is_override_edit(assignment):
-            return None
-        previous = assignment.get("previous_version")
-        version = previous if isinstance(previous, int) else None
+    return None
+
+
+def keep_completed_reality_check_output(
+    store: _ListReadWriter, database_name: str, job_id: str
+) -> None:
+    """Keep the completed run in ``reality-check/output.json`` under its version (#193).
+
+    Called before anything replaces ``output.json`` (a new run's output or an
+    external-mode preview), so a forced run never loses the record of the run
+    before it. Every completed run is written to its versioned key as well; this
+    copies an output written before that existed. A preview is never kept, and an
+    existing versioned record is never overwritten.
+    """
+    previous = _completed_reality_check_output(store, database_name, job_id, marker_fails_open=True)
+    version = reality_check_record_version(previous) if previous else None
+    if version is None:
+        return
+    key = reality_check_output_path(database_name, job_id, version)
+    if not store.exists(key):
+        store.write_json(key, previous)
+
+
+def reality_check_output_candidates(
+    store: _ListReader, database_name: str, job_id: str, assignment_version: int | None = None
+) -> list[str]:
+    """Return the reality-check output keys for an assignment, most authoritative first.
+
+    A deliverable shows the record of the run the assignment descends from (#193),
+    and none from another lineage (#215). Walking back from ``assignment_version``
+    through override edits (:func:`_lineage`), the first version Reality Check
+    produced has its record at ``reality-check/v<N>/output.json``; with none, a run
+    that checked a version on the walk and changed nothing has its record under that
+    version.
+
+    ``reality-check/output.json`` (the latest run) follows, for jobs written before
+    versioned records, only when it belongs to the walk: its
+    :func:`reality_check_record_version` is a version the walk reached. An output
+    written before #192 records no ``output_assignment_version``, so it cannot be
+    checked and is used as before, as it is when there is no versioned assignment
+    (``assignment_version`` 0). An empty list means no reality check belongs to this
+    assignment: readers then rely on the assignment alone. ``assignment_version``
+    defaults to the effective version. Readers take the first key that exists.
+
+    The flat file is not checked against ``awaiting_llm.json``: while an external run
+    awaits its model, its preview can be read here, as it always could. No phase reads
+    a reality-check output while one is pending.
+    """
+    flat = reality_check_output_path(database_name, job_id)
+    if assignment_version is None:
+        assignment_version = resolve_effective_assignment_version(store, database_name, job_id)
+    if assignment_version <= 0:
+        return [flat]
+    keys: list[str] = []
+    walked: set[int] = set()
+    for version, assignment in _lineage(store, database_name, job_id, assignment_version):
+        walked.add(version)
+        key = reality_check_output_path(database_name, job_id, version)
+        if is_reality_check_produced(assignment):
+            keys = [key]
+            break
+        if not keys and store.exists(key):
+            keys = [key]
+    latest = store.read_json(flat) if store.exists(flat) else None
+    if isinstance(latest, dict) and (
+        predates_reality_check_preview(latest) or reality_check_record_version(latest) in walked
+    ):
+        keys.append(flat)
+    return keys
+
+
+def read_reality_check_output(
+    store: _ListReader, database_name: str, job_id: str, assignment_version: int | None = None
+) -> dict | None:
+    """Return the reality-check output for an assignment (#193), or None when none exists.
+
+    The first existing key of :func:`reality_check_output_candidates`.
+    """
+    for key in reality_check_output_candidates(store, database_name, job_id, assignment_version):
+        if store.exists(key):
+            output = store.read_json(key)
+            return output if isinstance(output, dict) else None
     return None
 
 
@@ -375,6 +564,12 @@ class _Reader(Protocol):
 
 class _ListReader(_Lister, _Reader, Protocol):
     """A store that can both list keys and read artifacts."""
+
+
+class _ListReadWriter(_ListReader, Protocol):
+    """A store that can list, read and write artifacts."""
+
+    def write_json(self, path: str, data: dict) -> None: ...
 
 
 def read_assignment(store: _Reader, database_name: str, job_id: str, version: int) -> dict | None:

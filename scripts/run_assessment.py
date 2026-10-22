@@ -677,13 +677,19 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
     """
     from src.storage.assignment_versioning import (
         assignment_artifact_path,
+        reality_check_output_candidates,
         resolve_downstream_assignment_version,
     )
 
     version = resolve_downstream_assignment_version(store, db, job_id)
     out: dict = {"assignment_version": version}
-    key = f"{db}/{job_id}/reality-check/output.json"
-    if store.exists(key):
+    # The record of the run this version descends from (#193, #215), as synthesis,
+    # the UI and the graph read it.
+    key = next(
+        (k for k in reality_check_output_candidates(store, db, job_id, version) if store.exists(k)),
+        None,
+    )
+    if key is not None:
         out["artifact"] = _path(store, key)
         _log_artifact("reality-check", out["artifact"])
         rc = store.read_json(key)

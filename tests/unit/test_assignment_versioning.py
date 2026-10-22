@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
+import pytest
+
 from src.contracts.assignment_models import Assignment, AssignmentSource, AssignmentStatus
 from src.storage.assignment_versioning import (
     RealityCheckRun,
@@ -297,9 +299,15 @@ class TestRealityCheckRunForLineage:
         }
         assert reality_check_run_for_lineage(store, "db", "job") == RealityCheckRun(1, None)
 
+    @pytest.mark.passes_on_main
     def test_pending_external_preview_is_not_a_run(self) -> None:
         store = _versioned(_RESOLUTION)
-        store.artifacts[_RC_OUTPUT_KEY] = {"source_assignment_version": 1}
+        # A preview always records output_assignment_version (null): it writes no
+        # revision. Without the key it would read as a pre-#192 output (#193).
+        store.artifacts[_RC_OUTPUT_KEY] = {
+            "source_assignment_version": 1,
+            "output_assignment_version": None,
+        }
         store.artifacts["db/job/reality-check/awaiting_llm.json"] = {"status": "awaiting_llm"}
         assert reality_check_is_current(store, "db", "job") is False
 

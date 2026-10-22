@@ -24,7 +24,7 @@ Versioned (`contract_version`, MAJOR.MINOR), written through their model and che
 | `assignment/v\d+/validation\.json` | `ValidationResult` (`src.contracts.assignment_models`) |
 | `reality-check/awaiting_llm\.json` | `RealityCheckMarker` (`src.contracts.reality_check_marker`) |
 | `decisions/(?!engine_scope\.json$)[^/]+\.json` | `DecisionRecord` (`src.contracts.decision_record`) |
-| `reality-check/output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
+| `reality-check/(?:v\d+/)?output\.json` | `RealityCheckOutputContract` (`src.contracts.reality_check_output`) |
 | `synthesis/(?:v\d+/)?report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `referee-synthesis/report\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |
 | `deliverables/assessment-data\.json` | `SynthesisOutputContract` (`src.contracts.synthesis_output`) |

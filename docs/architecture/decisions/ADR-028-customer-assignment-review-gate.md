@@ -154,7 +154,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | D. Two-step gate | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestGateBlocksSchemaDesign::test_present_offers_choice_without_approving`<br>`tests/unit/atx_orchestrator/test_assignment_gate.py::TestApproveAsIs`<br>`tests/unit/test_assignment_review.py::TestSummary` |
 | E. HITL editable `TableComponent` transport (raise-and-resume) | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewHitl`<br>`tests/unit/atx_orchestrator/test_hitl.py`<br>`tests/unit/test_assignment_review.py::TestStructuredTable` |
 | F. Chat fallback retained | `tests/unit/atx_orchestrator/test_assignment_gate.py::TestDetailedReviewChatFallback` |
-| Amendment 2026-10-02: Reality Check input/output versions | `tests/unit/test_assignment_versioning.py::TestIsRealityCheckProduced`<br>`tests/unit/test_assignment_versioning.py::TestResolveRealityCheckInputVersion`<br>`tests/unit/test_assignment_versioning.py::TestRealityCheckRunForLineage` |
+| Amendment 2026-10-02: Reality Check input/output versions | `tests/unit/test_assignment_versioning.py::TestIsRealityCheckProduced`<br>`tests/unit/test_assignment_versioning.py::TestResolveRealityCheckInputVersion`<br>`tests/unit/test_assignment_versioning.py::TestRealityCheckRunForLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestForcedRunKeepsTheRecord`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestNoSameVersionOverwrite`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestRealityCheckBelongsToTheLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestEveryReaderTakesTheLineageRecord`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestStaleAwaitingMarker`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestJobStatusWithAStaleMarker`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestCorruptLineage`<br>`tests/unit/agents/referee/test_reality_check_versioning_followups.py::TestChangedNothingGuard`<br>`tests/contract/test_reality_check_output_readers.py::test_no_reader_spells_out_the_flat_output_path` |
 
 ## Implementation surface
 
@@ -383,11 +383,18 @@ Reality Check is deliberate and must never be consolidated again.
   counts as done if the walk reaches either of these:
   - a Reality Check output;
   - the version a completed `reality-check/output.json` checked without
-    consolidating anything (`output_assignment_version` null).
+    consolidating anything (`output_assignment_version` null and no
+    consolidations, #193).
 
   An external-mode preview (`awaiting_llm.json` still `awaiting_llm`) does not
-  count. A fresh assignment resolution, for example after the assignment phase
-  is re-run, starts a new lineage.
+  count. An output with no `output_assignment_version` key next to such a marker
+  was written before #192 (whose writer wrote the revision in every mode and
+  never cleared the marker), so it counts as completed, with a logged note
+  (#193); a preview since #192 always carries the key. A fresh assignment
+  resolution, for example after the assignment phase is re-run, starts a new
+  lineage. A corrupt lineage (a cycle, an edit with no `previous_version`, or
+  one naming a missing version) ends the walk with a warning (#193): the run
+  then goes ahead, writing a new version and never moving a customer override.
 - **Default runs** (no explicit version) skip when the run is already done. This
   also makes repeated finalize calls and container retries no-ops. Otherwise the
   input is `resolve_reality_check_input_version()`, the highest version Reality
@@ -396,7 +403,22 @@ Reality Check is deliberate and must never be consolidated again.
 - **Output:** always `next_assignment_version()`, stamped
   `previous_version = <input>`. `reality-check/output.json` records it as
   `output_assignment_version` (contract 1.2), next to `source_assignment_version`.
-  A run that consolidates nothing writes no version.
+  A run that consolidates nothing writes no version. `output.json` is the
+  latest run's; each completed run is also kept as
+  `reality-check/v<N>/output.json`, keyed on the version it wrote, or the
+  version it checked when it changed nothing (#193), so a forced run never
+  replaces the record of an earlier one (an existing versioned record is never
+  rewritten). Synthesis, the UI, the context graph, the `/modernize` gate
+  status line and the AWS Transform core read the record of the run the
+  assignment descends from (`reality_check_output_candidates()`;
+  `tests/contract/test_reality_check_output_readers.py` fails on any other
+  read of `output.json`), falling back to `output.json` for
+  older jobs only when its versions place it in that lineage (#215). An output
+  from another lineage is not read: synthesis then relies on the assignment
+  alone. An output written before #192 records no output version, so it is
+  read as before. An engine a later customer edit emptied (one the run kept)
+  is described by where the edit put its queries, never by a reality-check
+  consolidation target.
 - **Customer overrides are never moved**, not even by an explicit-version run.
   Queries with `customer_override` are left out of the consolidation candidates.
   The writer then puts any that the LLM corrections or the sanity sweep moved

@@ -174,7 +174,11 @@ Local runs write under `artifacts/<db>/<job>/` (`ARTIFACT_DIR`, default
   class, class scores and parity-anchor notes, as routing scored it (#728, #936),
   its redesigned class and the keys routing assumed when a redesign applies, and its
   anti-pattern findings, each fixable by redesign or intrinsic (#1231)
-- `reality-check/` (`llm_input.json`, `output.json`)
+- `reality-check/` (`llm_input.json`, `output.json` for the latest run, and
+  `v<N>/output.json` for each completed run, keyed on the assignment version it
+  wrote or, when it changed nothing, checked; readers take the record of the run
+  the effective assignment descends from, never one from another lineage, #193,
+  #215)
 - `schema-<engine>/v<N>/schema_output.json`, `synthesis/v<N>/report.json`
   plus a per-version copy of the rendered files, keyed on the assignment version
 - `deliverables/`: the customer folder `scripts/run_report.py` fills for the

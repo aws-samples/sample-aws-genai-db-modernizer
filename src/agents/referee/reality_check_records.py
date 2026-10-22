@@ -177,7 +177,10 @@ def _fit_records(
     - ``action`` is ``full`` only when the source engine had an in-scope query in the
       input and ends with none, and only then are savings claimed, once per engine;
     - a record whose count, action or retained queries changed gets a reason that
-      states the final move.
+      states the final move;
+    - a partial record lists the customer-pinned queries its source engine keeps in
+      ``queries_retained`` and says so in its reason (#193), so it never reads as if
+      the engine kept only queries the check chose to leave.
 
     ``unique_value_assessment`` (optional) carries each engine's
     ``cost_justification`` (#326, #167) and ``cost_justification_query_ids``:
@@ -208,6 +211,13 @@ def _fit_records(
     """
     before = {qa["query_id"]: qa["assigned_engine"] for qa in before_assignments}
     after_engine = {qid: engine for qid, engine, _ in after}
+    # Customer-pinned in-scope queries (#193): the check never moves them, so an
+    # engine that keeps one is only partly consolidated, and its records say which.
+    pinned = [
+        qa["query_id"]
+        for qa in before_assignments
+        if qa.get("customer_override") and qa.get("in_scope", True)
+    ]
     running = set(engines_in_use)
     # The single rule ("no in-scope query remains") lives in one place
     # (src.shared.engine_elimination, #235); ``had_in_scope`` and ``remaining``
@@ -256,6 +266,22 @@ def _fit_records(
         )
         prior_retained = list(record.get("queries_retained") or [])
         retained = [] if full else [q for q in prior_retained if after_engine.get(q) == src]
+        kept_by_customer = (
+            []
+            if full
+            else [
+                q
+                for q in pinned
+                if before.get(q) == src and after_engine.get(q) == src and q not in retained
+            ]
+        )
+        retention_reason = record.get("retention_reason") if retained else None
+        if kept_by_customer:
+            pin_note = f"customer chose {display_engine(src)} for {', '.join(kept_by_customer)}"
+            retention_reason = (
+                f"{retention_reason}; the {pin_note}" if retention_reason else f"The {pin_note}"
+            )
+            retained = retained + kept_by_customer
         if (
             record.get("query_count") != count
             or record.get("action", "full") != action
@@ -277,6 +303,11 @@ def _fit_records(
                 record["reason"] = (
                     f"Partial consolidation: {moved}; {src_name} stays for "
                     f"{_queries(remaining[src])}"
+                    + (
+                        f", {len(kept_by_customer)} of them the customer's choice"
+                        if kept_by_customer
+                        else ""
+                    )
                 )
             engine_assessment = (unique_value_assessment or {}).get(src, {})
             justification = engine_assessment.get("cost_justification")
@@ -318,7 +349,7 @@ def _fit_records(
                 "saved_cost_estimate": saved,
                 "removal_saving_claimed": claimed,
                 "queries_retained": retained,
-                "retention_reason": record.get("retention_reason") if retained else None,
+                "retention_reason": retention_reason,
                 # Copied from the engine-level verdict, not just whatever
                 # ``first_record`` happened to carry (#475 review round 2,
                 # finding A): a (src, dst) pair this function synthesizes

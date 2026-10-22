@@ -1122,7 +1122,9 @@ class LocalExecutionService:
                     self._store.read_json(awaiting_path),
                     artifact=awaiting_path,
                 )
-                if awaiting.status is MarkerStatus.AWAITING_LLM:
+                if awaiting.status is MarkerStatus.AWAITING_LLM and not self._pre_192_output(
+                    job_prefix
+                ):
                     return ("WAITING", None, None)
             except Exception as exc:
                 # An unreadable marker is not a wait: fall through to RUNNING, but say why.
@@ -1134,6 +1136,21 @@ class LocalExecutionService:
                 )
 
         return ("RUNNING", None, None)
+
+    def _pre_192_output(self, job_prefix: str) -> bool:
+        """An ``awaiting_llm`` marker next to a pre-#192 output is not a wait (#193).
+
+        The rule the assignment lineage reads (``predates_reality_check_preview``): that
+        writer finished the run and never cleared the marker. A marker that cannot be
+        read never reaches here (#1349).
+        """
+        from src.storage.assignment_versioning import predates_reality_check_preview
+
+        key = f"{job_prefix}reality-check/output.json"
+        if not self._store.exists(key):
+            return False
+        output = self._store.read_json(key)
+        return isinstance(output, dict) and predates_reality_check_preview(output)
 
     def _dir_mtime_iso(self, path: Path) -> str | None:
         """Return ISO timestamp from directory mtime, or None."""

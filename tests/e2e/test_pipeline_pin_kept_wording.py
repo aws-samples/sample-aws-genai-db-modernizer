@@ -239,11 +239,23 @@ def _undo(flow: dict, tmp: Path, pick: str) -> dict | None:
     lines = [
         c for c in flow["report"]["reality_check"]["consolidations"] if c.get("moved_query_ids")
     ]
-    lines = [c for c in lines if pick == "all" or len(c["moved_query_ids"]) >= 2]
+    # #193: the flow's report shows the consolidation its assignment descends from,
+    # even when a later forced check changed nothing. In the after_check flow (check
+    # v1 -> v2, pin v3, forced check on v3) that line exists now, and the v3 pin may
+    # already have moved some of its queries back. So a partial undo picks a line by
+    # what is still moved (its trade-off row), and moves one of those back.
+    still = {
+        id(c): [
+            q for q in c["moved_query_ids"] if q not in set(c.get("moved_back_query_ids") or [])
+        ]
+        for c in lines
+    }
+    lines = [c for c in lines if pick == "all" or len(still[id(c)]) >= 2]
     if not lines:
         return None
     line = max(lines, key=lambda c: (len(c["moved_query_ids"]), c["to_engine"]))
-    ids = line["moved_query_ids"] if pick == "all" else line["moved_query_ids"][:1]
+    before = _row(flow["report"], line)
+    ids = line["moved_query_ids"] if pick == "all" else still[id(line)][:1]
     root = tmp / "artifacts"
     shutil.copytree(flow["root"] / flow["db"] / JOB, root / flow["db"] / JOB)
     apply_assignment_overrides(
@@ -258,6 +270,7 @@ def _undo(flow: dict, tmp: Path, pick: str) -> dict | None:
     report = _json(root / step["report"])
     return {
         "line": line,
+        "before": before,
         "moved_back": len(ids),
         "report": report,
         "paths": [Path(p) for p in step["deliverables"]],
@@ -308,11 +321,17 @@ def test_an_edit_that_undoes_part_of_a_line_states_what_stayed_moved(
     undone_flows = _undone_flows(plain_of(sample), flows_of(sample), tmp_path, "one")
     for name, undone in undone_flows.items():
         row = _row(undone["report"], undone["line"])
-        moved = len(undone["line"]["moved_query_ids"])
+        before = undone["before"]
         assert not row["reversed"], name
-        assert (row["queries_moved_back"], row["queries_still_moved"]) == (1, moved - 1), name
+        # One more back than before the edit: an earlier pin (after_check) may
+        # already have moved some back, so "2 moved back" there is correct.
+        back = before["queries_moved_back"] + 1
+        assert (row["queries_moved_back"], row["queries_still_moved"]) == (
+            back,
+            before["queries_still_moved"] - 1,
+        ), name
         now = row["description_now"]
-        assert now and "a later assignment edit moved 1 back to" in now, name
+        assert now and f"a later assignment edit moved {back} back to" in now, name
         title = now.split(":", 1)[0]
         md = next(p for p in undone["paths"] if p.name == "engineering-report.md")
         assert title in md.read_text(), name

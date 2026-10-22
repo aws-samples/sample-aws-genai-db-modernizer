@@ -77,6 +77,16 @@ NOT_THROUGH_MODEL: dict[tuple[str, str, str, str], str] = {
         "json.loads(offline_input.read_text())",
         "discourse/atxtool1/uploads/collector-output.json",
     ): _UPLOAD,
+    (
+        "src/storage/assignment_versioning.py",
+        "keep_completed_reality_check_output",
+        "previous",
+        "1/1/reality-check/output.json | 1/1/reality-check/v1/output.json",
+    ): (
+        "a verbatim copy of the completed reality-check/output.json (as read, an older "
+        "MAJOR through its adapter) kept under its version before a new run replaces it "
+        "(#193): the copy keeps the version its content was written at"
+    ),
 }
 
 # (file, function, data expression, "") -> what the write stores, for a write whose

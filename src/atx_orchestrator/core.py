@@ -993,19 +993,30 @@ def run_reality_check_core(
         llm_mode=llm_mode,
     )
 
-    output_key = f"{prefix}/reality-check/output.json"
-    before_distribution: dict = {}
-    after_distribution: dict = {}
-    consolidations = 0
-    if store.exists(output_key):
-        rc = store.read_json(output_key)
-        before_distribution = rc.get("before_distribution", {})
-        after_distribution = rc.get("after_distribution", {})
-        consolidations = len(rc.get("consolidations", []))
+    from src.storage.assignment_versioning import (
+        reality_check_output_candidates,
+        reality_check_output_path,
+    )
 
     effective_version = (
         _resolve_assignment_version(store, job_id, database_name) or assignment_version
     )
+    # The record of the run the effective version descends from (#193, #215), as
+    # synthesis, the UI and the graph read it.
+    output_key = next(
+        (
+            k
+            for k in reality_check_output_candidates(
+                store, database_name, job_id, effective_version
+            )
+            if store.exists(k)
+        ),
+        reality_check_output_path(database_name, job_id),
+    )
+    rc = store.read_json(output_key) if store.exists(output_key) else {}
+    before_distribution: dict = rc.get("before_distribution", {})
+    after_distribution: dict = rc.get("after_distribution", {})
+    consolidations = len(rc.get("consolidations", []))
 
     return {
         "job_id": job_id,

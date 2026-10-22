@@ -221,9 +221,14 @@ class LocalS3Service:
         return None
 
     def read_reality_check(self, database_name: str, job_id: str) -> dict | None:
-        data = self.read_artifact(database_name, job_id, "reality-check", "output.json")
-        if data is not None:
-            return data
+        # The run the effective assignment descends from (#193), as synthesis reads it.
+        from src.storage.assignment_versioning import reality_check_output_candidates
+
+        for key in reality_check_output_candidates(self._store, database_name, job_id):
+            agent, _, filename = key.removeprefix(f"{database_name}/{job_id}/").partition("/")
+            data = self.read_artifact(database_name, job_id, agent, filename)
+            if data is not None:
+                return data
 
         # Fallback: synthesize distribution from latest assignment artifact
         # so the UI can render the assignment gate before reality-check runs.

@@ -266,9 +266,11 @@ def main():
     orch.resume(job_id, Phase.REALITY_CHECK)
 
     # Show reality check results
-    rc_path = f"{db_name}/{job_id}/reality-check/output.json"
-    if store.exists(rc_path):
-        rc = store.read_json(rc_path)
+    # The record of the run the effective assignment descends from (#193, #215).
+    from src.storage.assignment_versioning import read_reality_check_output
+
+    rc = read_reality_check_output(store, db_name, job_id)
+    if rc:
         before = rc.get("before_distribution", {})
         after = rc.get("after_distribution", {})
         cons = rc.get("consolidations", [])
@@ -315,7 +317,7 @@ def main():
             for r in recs:
                 print(f"    - {r}")
 
-        print(f"\n  Artifact: ./artifacts/{rc_path}")
+        print(f"\n  Artifacts: ./artifacts/{db_name}/{job_id}/reality-check/")
 
     # Check if assignment version was bumped
     av = orch._get_assignment_version(job_id, db_name)

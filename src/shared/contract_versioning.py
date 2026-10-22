@@ -412,7 +412,8 @@ _ARTIFACT_CONTRACTS: tuple[tuple[str, str], ...] = (
         "src.contracts.decision_record:DecisionRecord",
     ),
     (
-        r"reality-check/output\.json",
+        # The latest run's, and each completed run's under its version (#193).
+        r"reality-check/(?:v\d+/)?output\.json",
         "src.contracts.reality_check_output:RealityCheckOutputContract",
     ),
     (r"synthesis/(?:v\d+/)?report\.json", _SYNTHESIS),

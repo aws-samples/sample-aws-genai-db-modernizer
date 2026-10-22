@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from types import SimpleNamespace
 
 from pydantic import ValidationError
 
@@ -699,6 +700,7 @@ def rebuild_graph(
     # 4. Assignment (effective version — ADR-028 shared resolver)
     from src.storage.assignment_versioning import (
         assignment_artifact_path,
+        reality_check_output_candidates,
         resolve_effective_assignment_version,
     )
 
@@ -715,7 +717,23 @@ def rebuild_graph(
             populate_from_moves(version, graph_store)
 
     # 5. Reality check
-    reality = _read_safe(f"{prefix}/reality-check/output.json")
+    # The run the effective assignment descends from (#193). The lineage is read
+    # through _read_safe, so a failing read is recorded like every other here.
+    safe_store = SimpleNamespace(
+        list_prefix=artifact_store.list_prefix,
+        exists=artifact_store.exists,
+        read_json=lambda path: _read_safe(path) or {},
+    )
+    reality = next(
+        (
+            r
+            for key in reality_check_output_candidates(
+                safe_store, db_name, job_id, assignment_version
+            )
+            if (r := _read_safe(key))
+        ),
+        None,
+    )
     if reality:
         populate_from_reality_check(reality, graph_store)
 

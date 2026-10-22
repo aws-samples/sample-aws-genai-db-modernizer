@@ -100,6 +100,45 @@ from src.tools.sql.query_facts import source_engine_of
 # ---------------------------------------------------------------------------
 
 
+def _moves_since_reality_check(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    reality_check_output: dict | None,
+    assignment: dict | None,
+) -> dict[str, dict[str, int]]:
+    """Where ``assignment`` put each engine's in-scope queries since the reality check (#215).
+
+    ``{from_engine: {to_engine: count}}``: the queries on each engine in the version the
+    reality check left (``reality_check_record_version``: the version it wrote, else
+    the one it checked unchanged), against their engine in ``assignment``. A later customer edit's moves,
+    so an engine it emptied is described by where the edit put its queries. Empty when
+    either version cannot be read.
+    """
+    from src.storage.assignment_versioning import read_assignment, reality_check_record_version
+
+    rc = reality_check_output or {}
+    # A pre-#192 consolidation recorded no output version (source + 1, #193).
+    version = reality_check_record_version(rc)
+    checked = (
+        read_assignment(store, database_name, job_id, version) if isinstance(version, int) else None
+    )
+    if not checked or not assignment:
+        return {}
+    now = {
+        qa.get("query_id"): qa.get("assigned_engine")
+        for qa in assignment.get("query_assignments") or []
+        if qa.get("in_scope", True)
+    }
+    moves: dict[str, dict[str, int]] = {}
+    for qa in checked.get("query_assignments") or []:
+        src, dst = qa.get("assigned_engine"), now.get(qa.get("query_id"))
+        if qa.get("in_scope", True) and src and dst and src != dst:
+            moves.setdefault(src, {})
+            moves[src][dst] = moves[src].get(dst, 0) + 1
+    return moves
+
+
 def _eliminated_engine_costs(
     store: ArtifactStore,
     database_name: str,
@@ -161,10 +200,14 @@ def run_synthesis_deterministic(
     )
 
     # Load reality check output if available (optional — may not exist)
-    reality_check_key = f"{database_name}/{job_id}/reality-check/output.json"
-    reality_check_output: dict | None = None
-    if store.exists(reality_check_key):
-        reality_check_output = store.read_json(reality_check_key)
+    # The run this assignment descends from (#193): a forced run that changed
+    # nothing never replaces the consolidation the assignment carries.
+    from src.storage.assignment_versioning import read_reality_check_output
+
+    reality_check_output = read_reality_check_output(
+        store, database_name, job_id, assignment_version
+    )
+    if reality_check_output is not None:
         print(
             f"[synthesis] Reality check loaded: "
             f"{len(reality_check_output.get('consolidations', []))} consolidations, "
@@ -188,7 +231,13 @@ def run_synthesis_deterministic(
         for engine in (qa.get("assigned_engine"), qa.get("cache_engine"))
         if engine
     } or set(data.engines)
-    eliminated = eliminated_engines(effective, reality_check_output)
+    eliminated = eliminated_engines(
+        effective,
+        reality_check_output,
+        _moves_since_reality_check(
+            store, database_name, job_id, reality_check_output, data.assignment
+        ),
+    )
     print("[synthesis] Building TCO analysis...")
     # #380: a retired engine's own analysed cost, read directly -- ``data.engines``
     # has already dropped it (ADR-029 Layer E, #202) by this point, so a dollar figure

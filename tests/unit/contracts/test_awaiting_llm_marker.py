@@ -104,8 +104,13 @@ def test_the_store_reads_a_marker_at_a_newer_minor(tmp_path: Path) -> None:
 # --- the readers --------------------------------------------------------------
 
 
+# A preview always carries output_assignment_version (null: a preview writes no
+# revision); an output without the key was written before #192 (#193).
+PREVIEW = {"source_assignment_version": 1, "output_assignment_version": None}
+
+
 def _preview(store: LocalArtifactStore) -> None:
-    store.write_json(f"{DB}/{JOB}/reality-check/output.json", {"source_assignment_version": 1})
+    store.write_json(f"{DB}/{JOB}/reality-check/output.json", PREVIEW)
 
 
 def test_the_lineage_reader_ignores_the_preview_while_awaiting(tmp_path: Path) -> None:
@@ -114,10 +119,11 @@ def test_the_lineage_reader_ignores_the_preview_while_awaiting(tmp_path: Path) -
     assert _completed_reality_check_output(store, DB, JOB) == {}
 
 
+@pytest.mark.passes_on_main
 def test_the_lineage_reader_counts_the_output_once_finalized(tmp_path: Path) -> None:
     store = _put(tmp_path, {"contract_version": CURRENT, "status": "finalized"})
     _preview(store)
-    assert _completed_reality_check_output(store, DB, JOB) == {"source_assignment_version": 1}
+    assert _completed_reality_check_output(store, DB, JOB) == PREVIEW
 
 
 def test_the_lineage_reader_still_reads_a_legacy_awaiting_marker(tmp_path: Path) -> None:

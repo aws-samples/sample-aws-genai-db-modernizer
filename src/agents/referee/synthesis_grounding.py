@@ -27,7 +27,7 @@ risk's queries are actually assigned to it. Every rewritten risk carries a
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from src.agents.referee.schema_fields import field_list
 from src.agents.referee.summary_input_budget import TOTAL_FIELD_NAMES
@@ -150,6 +150,7 @@ def reality_check_settled_engines(reality_check: dict | None) -> set[str]:
 def eliminated_engines(
     effective: Iterable[str],
     reality_check: dict | None,
+    later_moves: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict[str, str | None]:
     """Map each engine no longer effective to the engine that absorbed it.
 
@@ -172,18 +173,38 @@ def eliminated_engines(
     - direction B: the reality check kept an engine, a later edit emptied it of
       in-scope queries -- reported, even though it is not in
       ``reality_check_settled_engines`` (only in ``before_distribution``).
+
+    ``later_moves`` (#215) maps each engine to where the effective assignment put the
+    in-scope queries it held once the reality check ran (``{to_engine: count}``). For a
+    direction-B engine the absorber is the effective engine that took most of them
+    (none on a tie), not a reality-check consolidation target: the edit, not the check,
+    moved them. Without it, or for an engine the check settled, the absorber is the
+    consolidation's.
     """
     if not reality_check:
         return {}
-    # Assumes reality_check belongs to the same lineage as the effective assignment;
-    # the lineage check (reality-check output versioning) is tracked in #215.
+    # ``reality_check`` belongs to the effective assignment's lineage: synthesis reads
+    # it with ``read_reality_check_output``, which returns none from another (#215).
     effective_set = set(effective)
     consolidations = reality_check.get("consolidations") or []
     candidates = reality_check_settled_engines(reality_check) | set(
         reality_check.get("before_distribution") or {}
     )
     out: dict[str, str | None] = {}
+    settled = reality_check_settled_engines(reality_check)
     for engine in sorted(e for e in candidates if e and e not in effective_set):
+        edited = {
+            dst: n
+            for dst, n in ((later_moves or {}).get(engine) or {}).items()
+            if dst in effective_set and n > 0
+        }
+        if engine not in settled and edited:
+            # A tie names no absorber: no one engine took most of them, and no
+            # order (name or otherwise) may pick one (test_no_engine_bias.py).
+            most = max(edited.values())
+            leaders = [dst for dst, n in edited.items() if n == most]
+            out[engine] = leaders[0] if len(leaders) == 1 else None
+            continue
         moves = [
             c
             for c in consolidations
