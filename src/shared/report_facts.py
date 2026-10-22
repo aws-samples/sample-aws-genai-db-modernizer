@@ -2365,3 +2365,26 @@ def analysis_overview_facts(
             s["query_count"] for s in mine if isinstance(s.get("query_count"), (int, float))
         )
     return facts
+
+
+def triage_signal_facts(triage: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The triage insight figures of the job summary page (#1319, ADR-032).
+
+    ``signal_count`` is how many workload signals the triage found; ``top_signals`` lists the
+    first five with the number of queries each names and its first target engine. An entry that
+    is not a record is not counted (the page used to count every entry). The page formats them
+    and counts nothing.
+    """
+    raw = triage.get("signals") if isinstance(triage, Mapping) else None
+    signals = [s for s in raw if isinstance(s, Mapping)] if isinstance(raw, list) else []
+    return {
+        "signal_count": len(signals),
+        "top_signals": [
+            {
+                "name": s.get("signal"),
+                "query_count": len(s.get("query_ids") or []),
+                "primary_target": (s.get("targets") or [None])[0],
+            }
+            for s in signals[:5]
+        ],
+    }

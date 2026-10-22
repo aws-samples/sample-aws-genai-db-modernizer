@@ -261,15 +261,15 @@ const JobMonitoringSummaryPage = memo(() => {
       api.execute([{ id: 'triage', path: `assessments/${jobId}/triage`, method: 'GET', params: {} }])
         .then(res => {
           if (res.triage?.success) {
-            const signals = res.triage.signals || [];
+            const triageFacts = res.triage.facts || {};
             const selected = res.triage.selected_agents || [];
             const skipped = res.triage.skipped_agents || [];
             setTriageInsights({
-              signalCount: signals.length, // facts: presentation (raw triage signal count, tracked in #1319)
-              topSignals: signals.slice(0, 5).map(s => ({
-                name: s.signal,
-                queryCount: s.query_ids?.length || 0,
-                primaryTarget: s.targets?.[0] || null,
+              signalCount: triageFacts.signal_count ?? 0,
+              topSignals: (triageFacts.top_signals || []).map(s => ({
+                name: s.name,
+                queryCount: s.query_count ?? 0,
+                primaryTarget: s.primary_target ?? null,
               })),
               selectedEngines: selected.map(a => a.agent_type),
               skippedEngines: skipped.map(a => a.agent_type),

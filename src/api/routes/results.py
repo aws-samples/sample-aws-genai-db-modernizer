@@ -19,7 +19,11 @@ from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
-from src.shared.report_facts import analysis_overview_facts, routed_cache_fit_facts
+from src.shared.report_facts import (
+    analysis_overview_facts,
+    routed_cache_fit_facts,
+    triage_signal_facts,
+)
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["results"])
 
@@ -211,7 +215,8 @@ async def get_triage_output(job_id: str = Depends(job_id_param)):
     data = s3_service.read_triage(db_name, job_id)
     if not data:
         raise HTTPException(status_code=404, detail="Triage output not available")
-    return data
+    # The signal figures the job summary page shows are computed here, once (#1319, ADR-032).
+    return {**data, "facts": triage_signal_facts(data)}
 
 
 @router.get("/{job_id}/analysis/{agent_type}")

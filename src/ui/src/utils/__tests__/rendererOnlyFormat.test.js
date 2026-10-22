@@ -93,7 +93,6 @@ const PRAGMA = /\/\/\s*facts:\s*presentation\b(?:\s*\(([^)]*)\))?/;
 const PINNED_EXEMPTIONS = new Set([
   'src/ui/src/pages/PatternAnalysis.js|sort order of the signals, no figure shown',
   'src/ui/src/pages/PatternAnalysis.js|chart colour hue, not a figure',
-  'src/ui/src/pages/JobMonitoringSummary.js|raw triage signal count, tracked in #1319',
 ]);
 
 // The files the guard covers: every non-test UI source file that renders or
@@ -393,15 +392,35 @@ class Analysis {
     }
   }
 
-  isEmptinessCheck(len, parent) {
+  // True when `node` (a count, or a logical expression holding one) is only tested for being
+  // empty: `!xs.length`, `if (xs.length)`, `xs.length ? a : b`, `Boolean(xs.length)`,
+  // `xs.length && <List/>`, `xs.length || <Empty/>` (the right side is not a number), a
+  // comparison with a number, or any of these around `ok && xs.length`. `xs.length || 0`,
+  // `xs.length ?? 0` and a count used as a value yield the figure and are not checks.
+  isEmptinessCheck(node) {
+    const parent = this.parents.get(node);
     if (!parent) return false;
+    if (t.isParenthesizedExpression(parent)) return this.isEmptinessCheck(parent);
     if (t.isUnaryExpression(parent) && parent.operator === '!') return true;
-    if (t.isIfStatement(parent) && parent.test === len) return true;
-    if (t.isConditionalExpression(parent) && parent.test === len) return true;
-    if (t.isLogicalExpression(parent)) return true;
+    if (t.isIfStatement(parent) && parent.test === node) return true;
+    if (t.isConditionalExpression(parent) && parent.test === node) return true;
+    if (t.isCallExpression(parent) && t.isIdentifier(parent.callee, { name: 'Boolean' })
+      && parent.arguments[0] === node) return true;
     // A comparison with a number (`xs.length === 0`, `rs.length > 3`) shows no figure.
     if (t.isBinaryExpression(parent) && COMPARISONS.has(parent.operator)) {
-      return t.isNumericLiteral(parent.left === len ? parent.right : parent.left);
+      return t.isNumericLiteral(parent.left === node ? parent.right : parent.left);
+    }
+    if (t.isLogicalExpression(parent)) {
+      if (parent.operator === '&&' && parent.left === node) return true;
+      if (parent.operator === '||' && parent.left === node) {
+        const r = parent.right;
+        const numeric = t.isNumericLiteral(r)
+          || (t.isUnaryExpression(r) && t.isNumericLiteral(r.argument));
+        if (!numeric) return true;
+      }
+      // `ok && xs.length`, `xs.length ?? 0`, `xs.length || 0`: the value, unless the whole
+      // expression is itself only a test.
+      return this.isEmptinessCheck(parent);
     }
     return false;
   }
@@ -435,7 +454,7 @@ class Analysis {
 
     for (const n of this.nodes) {
       if (isMember(n) && ['length', 'size'].includes(propName(n)) && this.contains(n.object)
-        && !this.isEmptinessCheck(n, parents.get(n))) {
+        && !this.isEmptinessCheck(n)) {
         hits.push(n);
       } else if (t.isVariableDeclarator(n) && t.isObjectPattern(n.id) && n.init && this.contains(n.init)
         && n.id.properties.some(p => t.isObjectProperty(p) && ['length', 'size'].includes(
@@ -683,6 +702,40 @@ function render(synthesis, facts) {
         expect([text, flagged.has(lineIn(caught, text))]).toEqual([text, true]));
     });
 
+    test('an emptiness test is allowed; a count used as a value is a figure (#1319)', () => {
+      const allowed = `
+function render(synthesis, loaded) {
+  const rs = synthesis.risk_assessment.risks;
+  const a = loaded && rs.length && <List/>;
+  if (loaded && rs.length) { go(); }
+  const b = (loaded && rs.length) ? 1 : 2;
+  const c = Boolean(loaded && rs.length);
+  const d = rs.length || <Empty/>;
+  const e = rs.length && <List/>;
+  const f = !rs.length || rs.length === 0;
+  const g = rs.length ? <List/> : null;
+  if (rs.length) { go(); }
+  const h = !(loaded && rs.length);
+  const i = (rs.length || loaded) ? 1 : 2;
+  return [a, b, c, d, e, f, g, h, i];
+}`;
+      expect(violationsIn(allowed, 'probe')).toEqual([]);
+      const caught = `
+function render(synthesis, loaded) {
+  const rs = synthesis.risk_assessment.risks;
+  const a = rs.length || 0;
+  const b = rs.length ?? 0;
+  const c = loaded && rs.length;
+  const d = rs.length || -1;
+  const e = { n: rs.length };
+  const f = (loaded && rs.length) || 0;
+  return [a, b, c, d, e, f];
+}`;
+      const flagged = flaggedLines(caught);
+      ['const a =', 'const b =', 'const c =', 'const d =', 'const e =', 'const f ='].forEach(text =>
+        expect([text, flagged.has(lineIn(caught, text))]).toEqual([text, true]));
+    });
+
     // Each real file passes as shipped; putting back the count the facts layer
     // owns makes the guard fail, so the passing run above is not vacuous.
     test.each([
@@ -694,6 +747,9 @@ function render(synthesis, facts) {
       ['src/ui/src/pages/PatternAnalysis.js', 'tablesAnalyzed: facts.tables_analyzed ?? 0,', 'tablesAnalyzed: (analysisData.table_recommendations || []).length,'],
       ['src/ui/src/pages/PatternAnalysis.js', 'count: engineMetrics?.signalCount ?? 0, target })', 'count: filteredSignals.length, target })'],
       ['src/ui/src/pages/PatternAnalysis.js', 'innerMetricValue={engineMetrics.signalQueryTotal.toString()}', 'innerMetricValue={filteredSignals.reduce((sum, s) => sum + (s.query_count || 0), 0).toString()}'],
+      ['src/ui/src/pages/PatternAnalysis.js', '{analysisData?.facts?.anti_pattern_query_counts?.[index] ?? 0}', '{antiPattern.query_ids?.length || 0}'],
+      ['src/ui/src/pages/JobMonitoringSummary.js', 'queryCount: s.query_count ?? 0,', 'queryCount: s.query_ids?.length || 0,'],
+      ['src/ui/src/pages/JobMonitoringSummary.js', 'signalCount: triageFacts.signal_count ?? 0,', 'signalCount: (res.triage.signals || []).length,'],
       ['src/ui/src/utils/cacheLayer.js', 'finite(facts?.projected_monthly_cost_usd);', 'finite(facts?.projected_monthly_cost_usd) ?? items.reduce((s, cb) => s + cb.monthly_cost_usd, 0);'],
     ])('%s: %s is caught when it is a recomputation', (file, fact, recomputed) => {
       const real = fs.readFileSync(`${REPO}/${file}`, 'utf8');
