@@ -47,7 +47,6 @@ class TableProfile:
 
 
 _READ_QUERY_TYPES = frozenset({"SELECT"})
-_WRITE_QUERY_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE"})
 
 
 def build_table_profiles(
@@ -66,17 +65,17 @@ def build_table_profiles(
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
 
-    # A write counts against the tables it writes, never a table it only reads in a
-    # CTE or a FROM (ADR-031 Amendment 9, #1287), by the write group's target helper
-    # (``written_tables``). Only statements typed as writes are counted here, so a
-    # write typed ``OTHER`` or ``SELECT`` (a data-modifying CTE that ends in SELECT)
-    # still counts none; the write group counts it (a known gap, #1348).
+    # A statement counts as a write of a table exactly when the write group's target
+    # helper (``written_tables``) names it (ADR-031 Amendment 9, #1287, #1348), read in
+    # the source dialect: never a table it only reads in a CTE or a FROM, and whatever
+    # its ``query_type`` (a data-modifying CTE that ends in SELECT is collected as
+    # ``OTHER``). A locking read is in its tables' write groups, so it counts there too.
+    # A table's write count is then the size of its write group.
     source_engine = source_engine_of(collector_output)
     source_scope = SourceScope.from_collector(collector_output)
-    written: dict[int, set[str]] = {}
-    for q in queries:
-        if str(q.get("query_type") or "").upper() in _WRITE_QUERY_TYPES:
-            written[id(q)] = set(written_tables(q, source_engine, source_scope))
+    written: dict[int, set[str]] = {
+        id(q): set(written_tables(q, source_engine, source_scope)) for q in queries
+    }
 
     # --- Group queries by table ---
     table_queries: dict[str, list[dict]] = {}
@@ -130,11 +129,10 @@ def build_table_profiles(
             max_joins = 0
 
             for q in tq:
-                qt = q.get("query_type", "").upper()
-                if qt in _READ_QUERY_TYPES:
-                    reads += 1
-                elif qt in _WRITE_QUERY_TYPES and tid in written.get(id(q), ()):
+                if tid in written[id(q)]:
                     writes += 1
+                elif str(q.get("query_type") or "").upper() in _READ_QUERY_TYPES:
+                    reads += 1
 
                 cps = q.get("calls_per_second") or 0.0
                 total_cps += cps

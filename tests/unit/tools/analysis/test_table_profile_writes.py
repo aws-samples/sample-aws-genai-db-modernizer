@@ -151,3 +151,77 @@ def test_an_administration_statement_still_writes_no_table(engine: str) -> None:
     for qtype, text in (("OTHER", "TRUNCATE TABLE stats"), ("OTHER", "ANALYZE stats")):
         profiles = _profiles(engine, _query("w", qtype, text, ["stats"]))
         assert profiles["stats"].write_query_count == 0
+
+
+# #1348: the profile counts a write exactly when the write group's target helper
+# (``written_tables``) names the table, whatever the statement's ``query_type``.
+
+_CTE_INSERT = (
+    "WITH w AS (INSERT INTO groups (id) SELECT group_id FROM group_users RETURNING id) "
+    "SELECT id FROM w"
+)
+_CTE_DELETE = "WITH d AS (DELETE FROM stats WHERE n < 0 RETURNING n) SELECT count(*) FROM d"
+
+
+@pytest.mark.parametrize(
+    ("text", "target", "read_only"),
+    [
+        (_CTE_INSERT, "groups", ["group_users"]),
+        (_CTE_DELETE, "stats", []),
+    ],
+)
+def test_a_data_modifying_cte_ending_in_select_writes_its_target(
+    text: str, target: str, read_only: list[str]
+) -> None:
+    """Collected as ``OTHER`` (the facade reads it as a select): one write of its target,
+    no write of a table it only reads, and no read counted for it."""
+    profiles = _profiles("postgresql", _query("w", "OTHER", text, [target, *read_only]))
+    assert profiles[target].write_query_count == 1
+    assert profiles[target].read_query_count == 0
+    for table in read_only:
+        assert profiles[table].write_query_count == 0, table
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("qtype", ["SELECT", "OTHER"])
+def test_a_plain_select_writes_no_table(qtype: str) -> None:
+    text = "WITH a AS (SELECT id FROM group_users) SELECT g.id FROM groups g JOIN a USING (id)"
+    profiles = _profiles("postgresql", _query("r", qtype, text, ["groups", "group_users"]))
+    for table in ("groups", "group_users"):
+        assert profiles[table].write_query_count == 0, (qtype, table)
+
+
+@pytest.mark.passes_on_main
+def test_a_dml_keyword_in_a_mysql_comment_is_no_write() -> None:
+    """The text is read in the source dialect: ``#`` opens a MySQL comment."""
+    text = "SELECT n FROM stats # DELETE FROM stats"
+    profiles = _profiles("mysql", _query("r", "OTHER", text, ["stats"]))
+    assert profiles["stats"].write_query_count == 0
+
+
+def test_a_locking_read_counts_as_a_write_of_the_tables_it_locks() -> None:
+    """A locking read is in its tables' write groups (ADR-031 Amendment 9), so the
+    profile counts it with their writes, once, not also as a read."""
+    text = "SELECT id FROM groups WHERE id = 1 FOR UPDATE"
+    profiles = _profiles("postgresql", _query("l", "SELECT", text, ["groups"]))
+    assert profiles["groups"].write_query_count == 1
+    assert profiles["groups"].read_query_count == 0
+
+
+def test_every_profile_write_count_equals_its_write_group() -> None:
+    from src.agents.referee.write_groups import collector_write_groups
+
+    queries = [
+        _query("cte", "OTHER", _CTE_INSERT, ["groups", "group_users"]),
+        _query("del", "OTHER", _CTE_DELETE, ["stats"]),
+        _query("upd", "UPDATE", "UPDATE groups SET a = 1 WHERE id = 2", ["groups"]),
+        _query("sel", "SELECT", "SELECT 1 FROM group_users", ["group_users"]),
+        _query("trunc", "OTHER", "TRUNCATE TABLE audit_log", ["audit_log"]),
+    ]
+    collector = _collector("postgresql", *queries)
+    groups = collector_write_groups(collector)
+    profiles = build_table_profiles(collector, WorkloadAnalysis(patterns_detected=[]))
+    assert {t: p.write_query_count for t, p in profiles.items() if p.write_query_count} == {
+        t: len(m) for t, m in groups.items()
+    }
+    assert profiles["groups"].write_query_count == 2
