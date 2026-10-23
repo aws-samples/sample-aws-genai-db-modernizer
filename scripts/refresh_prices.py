@@ -16,6 +16,7 @@ fails loudly instead of leaving a stale price in place.
 Usage:
     uv run python scripts/refresh_prices.py                       # download and write
     uv run python scripts/refresh_prices.py --source-dir DIR      # read DIR/<ServiceCode>.csv
+                                                                  # (DMS and MSK files optional)
     uv run python scripts/refresh_prices.py --check-age           # warn when the table is old
 
 ``--check-age`` runs in lint. It only warns (exit 0): a price list ages slowly, and a
@@ -32,7 +33,7 @@ import datetime as dt
 import http.client
 import ssl
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -243,6 +244,60 @@ SPECS: dict[str, dict[str, object]] = {
 }
 
 
+def _data_movement() -> dict[str, dict[str, object]]:
+    """DMS, MSK and MSK Connect (#1424), priced for the data movement plan's cost.
+
+    These selectors are written from the price list's column conventions and have not been
+    run against the downloaded files: the first online refresh checks them, and a selector
+    that matches no row (or rows with different figures) stops it with the section named,
+    never a guess. Until the offer files are in ``tests/fixtures/price_list/`` and the table
+    holds the sections, the plan states no data movement cost."""
+    return {
+        "dms.replication": {
+            "instance_hourly": {
+                "dms.r6i.large": Selector(
+                    "AWSDatabaseMigrationSvc",
+                    {
+                        "Instance Type": "dms.r6i.large",
+                        "Deployment Option": "Single-AZ",
+                        "usageType": "^USE1-InstanceUsg:",
+                    },
+                    "Hrs",
+                )
+            },
+            # Replication instance storage is billed per GB-month beyond the included amount.
+            "storage_price_per_gb_month": Selector(
+                "AWSDatabaseMigrationSvc",
+                {"Deployment Option": "Single-AZ", "usageType": "USE1-Storage:GP2"},
+                "GB-Mo",
+            ),
+        },
+        "msk.provisioned": {
+            "instance_hourly": {
+                "kafka.m5.large": Selector(
+                    "AmazonMSK",
+                    {"Instance Type": "kafka.m5.large", "usageType": "^USE1-Kafka.m5.large"},
+                    "Hrs",
+                )
+            },
+            "storage_price_per_gb_month": Selector(
+                "AmazonMSK", {"usageType": "USE1-Kafka.Storage.GP2"}, "GB-Mo"
+            ),
+        },
+        "msk_connect.workers": {
+            "mcu_price_per_hour": Selector(
+                "AmazonMSK", {"usageType": "USE1-Connect-MCU-Hours"}, "Hrs"
+            ),
+        },
+    }
+
+
+# The data movement sections are read only when their offer files are available: a refresh
+# from --source-dir without them leaves them out, an online refresh needs them all.
+OPTIONAL_SERVICES = frozenset({"AWSDatabaseMigrationSvc", "AmazonMSK"})
+SPECS.update(_data_movement())
+
+
 @dataclass
 class OfferFile:
     """One service's price list file: its publication date and its price rows."""
@@ -294,20 +349,21 @@ def extract_prices(offers: Mapping[str, OfferFile]) -> dict[str, dict[str, objec
     return {
         path: {k: _resolve(v, offers, f"{path}.{k}") for k, v in spec.items()}
         for path, spec in SPECS.items()
+        if _services_of(spec) <= set(offers)
     }
+
+
+def _services_of(spec: object) -> set[str]:
+    if isinstance(spec, Selector):
+        return {spec.service}
+    if isinstance(spec, dict):
+        return {s for v in spec.values() for s in _services_of(v)}
+    return set()
 
 
 def services() -> list[str]:
     """The offer files the specs read, sorted."""
-
-    def walk(spec: object) -> Iterator[str]:
-        if isinstance(spec, Selector):
-            yield spec.service
-        elif isinstance(spec, dict):
-            for v in spec.values():
-                yield from walk(v)
-
-    return sorted({s for spec in SPECS.values() for s in walk(spec)})
+    return sorted(_services_of(SPECS))
 
 
 def _toml_value(value: object) -> str:
@@ -331,7 +387,7 @@ def render_table(offers: Mapping[str, OfferFile], retrieved_on: dt.date) -> str:
         "# Each offer file's own publication date.",
         "[published]",
     ]
-    out += [f"{s} = {offers[s].published.isoformat()}" for s in services()]
+    out += [f"{s} = {offers[s].published.isoformat()}" for s in sorted(offers)]
     for path, section in extract_prices(offers).items():
         out += ["", f"[{path}]"]
         nested = {k: v for k, v in section.items() if isinstance(v, dict)}
@@ -364,7 +420,10 @@ def load_offers(source_dir: Path | None) -> dict[str, OfferFile]:
         if source_dir is None:
             lines = _download(service)
         else:
-            lines = (source_dir / f"{service}.csv").read_text(encoding="utf-8").splitlines()
+            path = source_dir / f"{service}.csv"
+            if service in OPTIONAL_SERVICES and not path.exists():
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
         offers[service] = read_offer(service, lines)
     return offers
 

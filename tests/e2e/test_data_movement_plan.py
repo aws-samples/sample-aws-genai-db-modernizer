@@ -149,6 +149,63 @@ def test_the_plans_ignore_the_hash_seed(run: PipelineResult, tmp_path: Path) -> 
     assert all(o == outputs[0] for o in outputs[1:])
 
 
+def test_priced_plans_state_each_waves_monthly_cost(run: PipelineResult, tmp_path: Path) -> None:
+    """With DMS, MSK and MSK Connect prices in the table every wave states a cost: the
+    committed table has none yet (they arrive with the first online refresh, #1424), so
+    the prices here are round test inputs, not AWS prices."""
+    import datetime as dt
+
+    from src.shared.catalog.prices import PriceTable
+    from src.storage.local_store import LocalArtifactStore
+    from src.tools.data_movement.plan import build_plans, load_inputs
+
+    root = _copy_job(run, tmp_path)
+    table = PriceTable(
+        region="us-east-1",
+        retrieved_on=dt.date(2026, 11, 2),
+        published={"AmazonMSK": dt.date(2026, 11, 1)},
+        sections={
+            "dms": {
+                "replication": {
+                    "instance_hourly": {"dms.r6i.large": 0.5},
+                    "storage_price_per_gb_month": 0.1,
+                }
+            },
+            "msk": {
+                "provisioned": {
+                    "instance_hourly": {"kafka.m5.large": 0.2},
+                    "storage_price_per_gb_month": 0.1,
+                }
+            },
+            "msk_connect": {"workers": {"mcu_price_per_hour": 0.1}},
+        },
+    )
+    inputs = load_inputs(LocalArtifactStore(base_dir=str(root)), run.db, run.job_id)
+    plans = build_plans(inputs, prices=table)
+    assert plans[0].monthly_cost_usd == 375.0
+    for plan in plans:
+        costs = [u for u in plan.unsupported if u.kind == "cost"]
+        assert plan.monthly_cost_usd is not None, (plan.wave, costs)
+        assert not costs
+    # Only the first Debezium wave carries the brokers (0.2 x 3 x 730 = 438).
+    free = table.model_copy(
+        update={
+            "sections": {
+                **table.sections,
+                "msk": {
+                    "provisioned": {
+                        **table.sections["msk"]["provisioned"],
+                        "instance_hourly": {"kafka.m5.large": 0.0},
+                    }
+                },
+            }
+        }
+    )
+    unbrokered = build_plans(inputs, prices=free)
+    assert round(plans[1].monthly_cost_usd - unbrokered[1].monthly_cost_usd, 2) == 438.0
+    assert [p.monthly_cost_usd for p in plans[2:]] == [p.monthly_cost_usd for p in unbrokered[2:]]
+
+
 @pytest.mark.deterministic
 def test_the_designed_wordpress_job_points_each_writer_at_its_design(
     designed_run: PipelineResult, tmp_path: Path

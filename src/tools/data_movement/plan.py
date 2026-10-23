@@ -32,10 +32,18 @@ Rules, per wave of the report's ``migration_waves`` (same count, same order):
   engine with no schema design, a replica or cache that would have to be fed from a
   non-relational owner once the wave cuts over, a dialect with no Debezium connector,
   and the cost when the price table has no price for a component.
+- **Cost** (#1424), computed here once and read by the deliverables through the facts
+  layer (ADR-032). Wave 1: one DMS replication instance and its storage for a month.
+  A Debezium wave: topic storage on each of three MSK brokers (the hub tables' collected
+  size), MSK Connect workers (one connector for the source and one per target), and,
+  for the first Debezium wave only, the brokers' hours. Each component reads the dated
+  price table; a missing price or an unmeasured table leaves the cost null and says why.
+  The targets' own cost stays in the TCO.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -59,8 +67,26 @@ from src.contracts.data_movement_plan import (
     UnsupportedItem,
 )
 from src.shared import catalog
+from src.shared.catalog.prices import HOURS_PER_MONTH, PriceTable
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES, RELATIONAL_ENGINES, SEARCH_ENGINES
+
+# The cost model's components (#1424); each is stated in the plan's cost_assumptions.
+DMS_PRICE_SECTION = "dms.replication"
+DMS_INSTANCE_CLASS = "dms.r6i.large"
+DMS_STORAGE_GB = 100
+MSK_PRICE_SECTION = "msk.provisioned"
+MSK_BROKER_TYPE = "kafka.m5.large"
+MSK_BROKERS = 3
+MSK_CONNECT_PRICE_SECTION = "msk_connect.workers"
+MSK_CONNECT_MCU_PER_CONNECTOR = 1
+
+
+class _Default:
+    """The default for ``build_plans(prices=...)``: the committed price table."""
+
+
+_DEFAULT = _Default()
 
 # Defaults the plan states in its notes; nothing measured them for the job.
 HUB_PARTITIONS = 3
@@ -522,44 +548,132 @@ def _design_gaps(
     return gaps
 
 
-def _monthly_cost(
-    sections: Iterable[str], tool: str
-) -> tuple[float | None, list[str], list[UnsupportedItem]]:
-    """The cost figure, its assumptions, and an unsupported entry when unpriced."""
-    have = set(sections)
-    if tool == "dms":
-        needed = {"dms": "the DMS replication instance"}
-        assumptions = [
-            "One DMS replication instance runs the full load and ongoing replication for "
-            "the wave, and is removed once the wave cuts over",
-        ]
-    else:
-        needed = {
-            "msk": "the MSK cluster that holds the hub topics",
-            "msk_connect": "the MSK Connect workers that run the source connector and writers",
-        }
-        assumptions = [
-            "One provisioned MSK cluster across three Availability Zones holds the hub "
-            "topics; later waves reuse it",
-            "MSK Connect runs one Debezium source connector per source database and one "
-            "writer per target",
-            "Topic storage grows with the source tables' size, since compacted topics keep "
-            "each key's latest row",
-        ]
-    missing = sorted(k for k in needed if k not in have)
-    if missing:
-        reason = (
-            "The price table (src/catalog/prices.toml) has no price for "
-            + "; ".join(needed[k] for k in missing)
-            + ", so the monthly cost is not stated"
+def _section(sections: Mapping[str, Mapping[str, Mapping[str, Any]]], path: str) -> dict[str, Any]:
+    engine, _, config = path.partition(".")
+    return dict(sections.get(engine, {}).get(config, {}))
+
+
+def _cost_gap(item: str, reason: str) -> UnsupportedItem:
+    return UnsupportedItem(kind="cost", item=item, reason=reason)
+
+
+def _no_price(what: str) -> str:
+    return f"The price table (src/catalog/prices.toml) has no price for {what}, so the cost is not stated"
+
+
+def _dms_cost(
+    sections: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> tuple[float | None, list[UnsupportedItem]]:
+    """One replication instance for a month, plus its allocated storage."""
+    prices = _section(sections, DMS_PRICE_SECTION)
+    hourly = (prices.get("instance_hourly") or {}).get(DMS_INSTANCE_CLASS)
+    storage = prices.get("storage_price_per_gb_month")
+    gaps = []
+    if hourly is None:
+        gaps.append(
+            _cost_gap("dms", _no_price(f"the DMS replication instance {DMS_INSTANCE_CLASS}"))
         )
+    if storage is None:
+        gaps.append(_cost_gap("dms_storage", _no_price("DMS replication instance storage")))
+    if gaps:
+        return None, gaps
+    # Both prices exist here: a missing one returned above.
+    return float(hourly or 0) * HOURS_PER_MONTH + float(storage or 0) * DMS_STORAGE_GB, []
+
+
+def _hub_gigabytes(job: _JobView, hub: list[HubTopic]) -> float | None:
+    """The hub topics' size: each table's collected size (a compacted topic keeps each
+    key's latest row, so about the table's size); None when a table's size is unknown."""
+    total_mb = 0.0
+    for topic in hub:
+        size = job.schema.tables[topic.table].get("size_mb")
+        if size is None:
+            return None
+        total_mb += float(size)
+    return total_mb / 1024
+
+
+def _debezium_cost(
+    sections: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    job: _JobView,
+    hub: list[HubTopic],
+    targets: list[Target],
+    carries_cluster: bool,
+) -> tuple[float | None, list[UnsupportedItem]]:
+    """Broker hours (the first Debezium wave only), topic storage and MSK Connect workers."""
+    msk = _section(sections, MSK_PRICE_SECTION)
+    connect = _section(sections, MSK_CONNECT_PRICE_SECTION)
+    gaps: list[UnsupportedItem] = []
+    hourly = (msk.get("instance_hourly") or {}).get(MSK_BROKER_TYPE)
+    storage = msk.get("storage_price_per_gb_month")
+    mcu = connect.get("mcu_price_per_hour")
+    if carries_cluster and hourly is None:
+        gaps.append(_cost_gap("msk", _no_price(f"MSK brokers of type {MSK_BROKER_TYPE}")))
+    if storage is None:
+        gaps.append(_cost_gap("msk_storage", _no_price("MSK broker storage")))
+    if mcu is None:
+        gaps.append(_cost_gap("msk_connect", _no_price("MSK Connect workers (per MCU-hour)")))
+    gigabytes = _hub_gigabytes(job, hub)
+    if gigabytes is None:
+        gaps.append(
+            _cost_gap(
+                "hub_storage",
+                "The collector did not measure the size of every hub table (size_mb), so the "
+                "topic storage and the cost are not stated",
+            )
+        )
+    if gaps:
+        return None, gaps
+    # Every price and the size exist here: a missing one returned above.
+    # Each of the three brokers holds one copy of every partition, so every broker
+    # provisions the topics' size, rounded up to a whole GiB (at least 1 GiB with a topic).
+    per_broker = math.ceil(gigabytes or 0) if hub else 0
+    total = float(storage or 0) * per_broker * MSK_BROKERS
+    total += float(mcu or 0) * MSK_CONNECT_MCU_PER_CONNECTOR * (1 + len(targets)) * HOURS_PER_MONTH
+    if carries_cluster:
+        total += float(hourly or 0) * MSK_BROKERS * HOURS_PER_MONTH
+    return total, []
+
+
+def _monthly_cost(
+    prices: PriceTable | None,
+    job: _JobView,
+    tool: str,
+    hub: list[HubTopic],
+    targets: list[Target],
+    carries_cluster: bool,
+) -> tuple[float | None, list[str], list[UnsupportedItem]]:
+    """The wave's monthly cost, computed once here (ADR-032), its assumptions, and an
+    unsupported entry for each component the price table cannot price."""
+    sections: Mapping[str, Mapping[str, Mapping[str, Any]]] = prices.sections if prices else {}
+    if tool == "dms":
+        assumptions = [
+            f"One DMS replication instance ({DMS_INSTANCE_CLASS}, Single-AZ) with "
+            f"{DMS_STORAGE_GB} GB of allocated storage runs the full load and ongoing "
+            "replication for the wave",
+            f"The migration is billed as one month ({HOURS_PER_MONTH} hours); the instance is removed "
+            "once the wave cuts over",
+        ]
+        cost, gaps = _dms_cost(sections)
     else:
-        # Every component has a price section, but nothing prices a wave from them yet:
-        # stating a figure would be inventing one.
-        missing = sorted(needed)
-        reason = "No formula prices the wave's components yet, so the monthly cost is not stated"
-    item = UnsupportedItem(kind="cost", item=", ".join(missing), reason=reason)
-    return None, assumptions, [item]
+        assumptions = [
+            f"One provisioned MSK cluster of {MSK_BROKERS} {MSK_BROKER_TYPE} brokers, one per "
+            "Availability Zone, holds the hub topics; later waves reuse it, so its broker "
+            "hours are charged to the first Debezium wave only",
+            "Topic storage is each hub table's collected size (a compacted topic keeps each "
+            f"key's latest row), provisioned on each of the {MSK_BROKERS} brokers and rounded "
+            "up to a whole GiB",
+            f"MSK Connect runs one Debezium source connector and one writer per target, each "
+            f"at {MSK_CONNECT_MCU_PER_CONNECTOR} MCU for {HOURS_PER_MONTH} hours",
+        ]
+        cost, gaps = _debezium_cost(sections, job, hub, targets, carries_cluster)
+    assumptions.append("The targets' own cost is in the total cost of ownership, not repeated here")
+    if prices is not None:
+        assumptions.append(
+            f"Prices: AWS Price List, {prices.region}, on-demand, retrieved on "
+            f"{prices.retrieved_on.isoformat()}"
+        )
+    return (None if cost is None else round(cost, 2)), assumptions, gaps
 
 
 def _owner_of(
@@ -634,10 +748,10 @@ class _JobView:
     # engine -> table -> the engine's in-scope reads of it (its writes left out), sorted
     reads: dict[str, dict[str, list[str]]]
     deployment_type: str | None
-    price_sections: frozenset[str]
+    prices: PriceTable | None
 
     @classmethod
-    def build(cls, inputs: JobInputs, price_sections: Iterable[str]) -> _JobView:
+    def build(cls, inputs: JobInputs, prices: PriceTable | None) -> _JobView:
         schema = _Schema.from_collector(inputs.collector)
         source_db = (inputs.collector.get("metadata") or {}).get("source_database") or {}
         query_assignments = [
@@ -665,7 +779,7 @@ class _JobView:
             },
             reads=_engine_reads(query_assignments, schema, sources),
             deployment_type=str(deployment) if deployment else None,
-            price_sections=frozenset(price_sections),
+            prices=prices,
         )
 
 
@@ -989,7 +1103,11 @@ def _gates(
 
 
 def _plan_wave(
-    job: _JobView, wave: Mapping[str, Any], is_first: bool, wave_count: int
+    job: _JobView,
+    wave: Mapping[str, Any],
+    is_first: bool,
+    wave_count: int,
+    carries_cluster: bool,
 ) -> DataMovementPlan:
     engines = _wave_engines(wave)
     tool = "dms" if is_first else "debezium"
@@ -1030,7 +1148,7 @@ def _plan_wave(
         f"The lag gate is {MAX_LAG_SECONDS} seconds of capture lag, a default to tune against "
         "the lagging reads' tolerance"
     )
-    cost, assumptions, gaps = _monthly_cost(job.price_sections, tool)
+    cost, assumptions, gaps = _monthly_cost(job.prices, job, tool, hub, targets, carries_cluster)
     unsupported.extend(gaps)
     unique = {_unsupported_key(u): u for u in unsupported}
     return DataMovementPlan(
@@ -1055,22 +1173,26 @@ def _plan_wave(
 
 
 def build_plans(
-    inputs: JobInputs, *, price_sections: Iterable[str] | None = None
+    inputs: JobInputs, *, prices: PriceTable | None | _Default = _DEFAULT
 ) -> list[DataMovementPlan]:
-    """One plan per wave of the report's ``migration_waves``, in wave order."""
-    if price_sections is None:
+    """One plan per wave of the report's ``migration_waves``, in wave order.
+
+    ``prices`` is the dated price table (the committed one by default); ``None`` prices
+    nothing, so every wave's cost is null with a reason."""
+    if isinstance(prices, _Default):
         from src.shared.catalog.prices import price_table
 
-        price_sections = list(price_table().sections)
+        prices = price_table()
     waves = sorted(
         (w for w in inputs.report.get("migration_waves") or [] if isinstance(w, Mapping)),
         key=lambda w: int(w["wave"]),
     )
     if not waves:
         return []
-    job = _JobView.build(inputs, price_sections)
+    job = _JobView.build(inputs, prices)
     aurora = _aurora_wave(waves)
-    return [_plan_wave(job, wave, wave is aurora, len(waves)) for wave in waves]
+    first_hub = next((w for w in waves if w is not aurora), None)
+    return [_plan_wave(job, w, w is aurora, len(waves), w is first_hub) for w in waves]
 
 
 def _aurora_wave(waves: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:

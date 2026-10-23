@@ -10,13 +10,18 @@ the contract registry. The sample jobs are covered end to end in
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+import datetime as dt
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.contracts.data_movement_plan import DataMovementPlan
+from src.shared.catalog.prices import PriceTable
 from src.shared.contract_versioning import contract_for_artifact, current_version, load_contract
 from src.storage.local_store import LocalArtifactStore
 from src.tools.data_movement.plan import JobInputs, build_plans, write_plans
@@ -188,7 +193,7 @@ def _ec_design(key_pattern: str, fields: list[str] | None = None) -> tuple[str, 
 
 
 def _plans(**kwargs: Any) -> list[DataMovementPlan]:
-    return build_plans(_job(**kwargs), price_sections=[])
+    return build_plans(_job(**kwargs), prices=None)
 
 
 def _kinds(plan: DataMovementPlan, kind: str) -> list[tuple[str | None, str | None]]:
@@ -339,7 +344,7 @@ def test_a_dynamodb_attribute_with_no_source_column_is_unsupported() -> None:
 
 def test_a_wave_one_with_no_aurora_engine_names_no_target() -> None:
     waves = _waves(first_engines=[])
-    wave1 = build_plans(_job(waves=waves, source_engine="sqlserver"), price_sections=[])[0]
+    wave1 = build_plans(_job(waves=waves, source_engine="sqlserver"), prices=None)[0]
     assert wave1.targets == []
     assert wave1.cdc.tool == "dms"
     assert _kinds(wave1, "no_target") == [(None, None)]
@@ -368,33 +373,121 @@ def test_a_job_with_no_waves_has_no_plans() -> None:
     assert _plans(waves=[]) == []
 
 
-@pytest.mark.parametrize(
-    ("sections", "item"),
-    [([], "dms"), (["aurora_mysql"], "dms"), (["dms"], "dms")],
+def _table_of(sections: dict[str, dict[str, dict[str, Any]]]) -> PriceTable:
+    return PriceTable(
+        region="us-east-1",
+        retrieved_on=dt.date(2026, 11, 2),
+        published={"AmazonMSK": dt.date(2026, 11, 1)},
+        sections=sections,
+    )
+
+
+# Round numbers chosen so each component's arithmetic is checked by hand; they are test
+# inputs, not AWS prices.
+PRICES = _table_of(
+    {
+        "dms": {
+            "replication": {
+                "instance_hourly": {"dms.r6i.large": 0.5},
+                "storage_price_per_gb_month": 0.1,
+            }
+        },
+        "msk": {
+            "provisioned": {
+                "instance_hourly": {"kafka.m5.large": 0.2},
+                "storage_price_per_gb_month": 0.1,
+            }
+        },
+        "msk_connect": {"workers": {"mcu_price_per_hour": 0.1}},
+    }
 )
-def test_the_dms_cost_is_null_with_a_reason(sections: list[str], item: str) -> None:
-    wave1 = build_plans(_job(), price_sections=sections)[0]
+
+
+def _sized(size_mb: float | None) -> JobInputs:
+    """The default job with every table measured at ``size_mb`` (None: not measured)."""
+    job = _job()
+    tables = copy.deepcopy(job.collector["database_schema"]["tables"])
+    for t in tables:
+        t["size_mb"] = size_mb
+    collector = {
+        **job.collector,
+        "database_schema": {**job.collector["database_schema"], "tables": tables},
+    }
+    return dataclasses.replace(job, collector=collector)
+
+
+def test_the_dms_wave_costs_one_instance_month_and_its_storage() -> None:
+    wave1 = build_plans(_job(), prices=PRICES)[0]
+    # 0.5 x 730 hours + 0.1 x 100 GB
+    assert wave1.monthly_cost_usd == 375.0
+    assert not [u for u in wave1.unsupported if u.kind == "cost"]
+    text = " ".join(wave1.cost_assumptions)
+    assert "dms.r6i.large" in text and "retrieved on 2026-11-02" in text
+
+
+def test_the_first_debezium_wave_carries_the_brokers_and_later_waves_do_not() -> None:
+    # 100 MiB per table: 1 GiB per broker.
+    plans = build_plans(_sized(100.0), prices=PRICES)
+    first, later = plans[1], plans[2]
+    for plan in (first, later):
+        connectors = 1 + len(plan.targets)
+        storage = 0.1 * 3 * math.ceil(sum(100.0 for _ in plan.hub) / 1024)
+        connect = 0.1 * connectors * 730
+        brokers = 0.2 * 3 * 730 if plan is first else 0.0
+        assert plan.monthly_cost_usd == pytest.approx(round(brokers + storage + connect, 2))
+        assert not [u for u in plan.unsupported if u.kind == "cost"]
+    assert later.monthly_cost_usd < first.monthly_cost_usd
+
+
+def test_topic_storage_is_each_brokers_copy_rounded_up_to_a_gib() -> None:
+    small = build_plans(_sized(1.0), prices=PRICES)[2]
+    big = build_plans(_sized(2048.0), prices=PRICES)[2]
+    hub = len(small.hub)
+    assert hub and len(big.hub) == hub
+    difference = big.monthly_cost_usd - small.monthly_cost_usd
+    # small: 1 GiB per broker; big: ceil(hub x 2 GiB) per broker.
+    assert difference == pytest.approx(0.1 * 3 * (2 * hub - 1), abs=0.01)
+
+
+def test_an_unmeasured_table_leaves_the_debezium_cost_null_with_a_reason() -> None:
+    plan = build_plans(_sized(None), prices=PRICES)[2]
+    assert plan.monthly_cost_usd is None
+    cost = [u for u in plan.unsupported if u.kind == "cost"]
+    assert [u.item for u in cost] == ["hub_storage"]
+    assert "size_mb" in cost[0].reason
+
+
+@pytest.mark.parametrize(
+    ("sections", "items"),
+    [
+        ({}, ["dms", "dms_storage"]),
+        ({"dms": {"replication": {"storage_price_per_gb_month": 0.1}}}, ["dms"]),
+        ({"dms": {"replication": {"instance_hourly": {"dms.r6i.large": 0.5}}}}, ["dms_storage"]),
+    ],
+)
+def test_a_missing_dms_price_leaves_the_cost_null_with_a_reason(
+    sections: dict[str, dict[str, dict[str, Any]]], items: list[str]
+) -> None:
+    wave1 = build_plans(_job(), prices=_table_of(sections or {"aurora_mysql": {"standard": {}}}))[0]
     assert wave1.monthly_cost_usd is None
     assert wave1.cost_assumptions
     cost = [u for u in wave1.unsupported if u.kind == "cost"]
-    assert [u.item for u in cost] == [item]
-    if "dms" in sections:
-        assert "No formula" in cost[0].reason
-    else:
-        assert "has no price for the DMS replication instance" in cost[0].reason
+    assert [u.item for u in cost] == items
+    assert all("has no price for" in u.reason for u in cost)
 
 
-def test_the_debezium_cost_names_each_unpriced_component() -> None:
-    wave3 = build_plans(_job(), price_sections=["msk"])[2]
-    assert wave3.monthly_cost_usd is None
-    assert [u.item for u in wave3.unsupported if u.kind == "cost"] == ["msk_connect"]
+def test_a_missing_msk_connect_price_names_that_component() -> None:
+    sections = {k: v for k, v in PRICES.sections.items() if k != "msk_connect"}
+    plan = build_plans(_sized(1.0), prices=_table_of(sections))[2]
+    assert plan.monthly_cost_usd is None
+    assert [u.item for u in plan.unsupported if u.kind == "cost"] == ["msk_connect"]
 
 
-def test_the_real_price_table_has_no_data_movement_prices_yet() -> None:
-    # The price table (#1208) has no MSK, MSK Connect or DMS section: no figure is stated.
-    plans = build_plans(_job())
+def test_without_a_price_table_no_wave_states_a_cost() -> None:
+    plans = build_plans(_job(), prices=None)
     assert all(p.monthly_cost_usd is None for p in plans)
     assert all(any(u.kind == "cost" for u in p.unsupported) for p in plans)
+    assert not any("retrieved on" in a for p in plans for a in p.cost_assumptions)
 
 
 def test_written_plans_are_the_registered_contract_and_read_back(tmp_path: Path) -> None:
@@ -443,9 +536,7 @@ def test_each_debezium_wave_has_its_own_topic_prefix_and_names_a_signal_table() 
 def test_wave_one_settings_follow_the_source_deployment(
     engine: str, deployment: str | None, expected: str, absent: str
 ) -> None:
-    wave1 = build_plans(_job(source_engine=engine, deployment_type=deployment), price_sections=[])[
-        0
-    ]
+    wave1 = build_plans(_job(source_engine=engine, deployment_type=deployment), prices=None)[0]
     names = {s.name for s in wave1.cdc.required_source_settings}
     assert expected in names and absent not in names
 
@@ -453,14 +544,14 @@ def test_wave_one_settings_follow_the_source_deployment(
 def test_an_rds_sql_server_source_enables_capture_through_the_rds_procedure() -> None:
     waves = _waves(first_engines=[])
     job = _job(waves=waves, source_engine="sqlserver", deployment_type="rds_instance")
-    cdc = build_plans(job, price_sections=[])[0].cdc
+    cdc = build_plans(job, prices=None)[0].cdc
     capture = [s for s in cdc.required_source_settings if s.name == "change data capture"]
     assert "msdb.dbo.rds_cdc_enable_db" in capture[0].note
     assert "recovery model" not in {s.name for s in cdc.required_source_settings}
 
 
 def test_later_waves_read_the_retained_engine_as_managed_whatever_the_source() -> None:
-    wave3 = build_plans(_job(deployment_type="on_premises"), price_sections=[])[2]
+    wave3 = build_plans(_job(deployment_type="on_premises"), prices=None)[2]
     names = {s.name for s in wave3.cdc.required_source_settings}
     assert "binlog retention hours" in names
 
@@ -473,7 +564,7 @@ def test_a_replica_of_a_table_nothing_writes_still_lists_its_lagging_reads() -> 
     )
     job = _job(waves=waves)
     job.assignment["query_assignments"].append(_qa("r6", "dynamodb", ["shop.settings"]))
-    wave3 = build_plans(job, price_sections=[])[2]
+    wave3 = build_plans(job, prices=None)[2]
     replica = [t for t in wave3.targets if t.role == "replica"]
     assert replica[0].tables == ["shop.order_tags", "shop.settings"]
     assert ("shop.settings", "dynamodb", ["r6"]) in [
@@ -494,7 +585,7 @@ def test_a_replica_of_a_non_relational_owner_is_a_reverse_feed_even_if_nothing_w
     job.assignment["query_assignments"].extend(
         [_qa("r7", "documentdb", ["shop.settings"]), _qa("r8", "dynamodb", ["shop.settings"])]
     )
-    wave3 = build_plans(job, price_sections=[])[2]
+    wave3 = build_plans(job, prices=None)[2]
     roles = {(t.engine, t.role, t.source_of_truth): t.tables for t in wave3.targets}
     assert roles[("documentdb", "replica", "dynamodb")] == ["shop.settings"]
     assert ("shop.settings", "documentdb", ["r7"]) in [
@@ -596,3 +687,12 @@ def test_a_job_with_no_assignment_is_refused(tmp_path: Path) -> None:
     store.write_json("shop/job-1/collector/output.json", dict(job.collector))
     with pytest.raises(FileNotFoundError, match="no assignment v2"):
         write_plans(store, "shop", "job-1")
+
+
+@pytest.mark.passes_on_main
+def test_the_committed_price_table_has_no_data_movement_prices_until_a_refresh_adds_them() -> None:
+    # #1424: the sections come with the first online run of scripts/refresh_prices.py, so
+    # no plan states a cost from the committed table and each says which price is missing.
+    plans = build_plans(_job())
+    assert all(p.monthly_cost_usd is None for p in plans)
+    assert all(any(u.kind == "cost" for u in p.unsupported) for p in plans)
