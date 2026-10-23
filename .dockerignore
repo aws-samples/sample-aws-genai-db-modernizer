@@ -42,3 +42,6 @@ tests/
 
 # Node (UI has its own Dockerfile)
 node_modules/
+
+# Quarantined third-party snapshot (#1412): never built into an image
+contrib/

@@ -5,3 +5,6 @@
 # package.json version ranges are covered by the committed package-lock.json.
 # The package-dependencies-check rule is a false positive when lock files exist.
 src/ui/package.json
+
+# Quarantined third-party snapshot (#1412): never built, imported or run.
+contrib/

@@ -1,2 +1,2 @@
 [bandit]
-exclude = */tests/*,*/scripts/ci-database/*
+exclude = */tests/*,*/scripts/ci-database/*,*/contrib/*

@@ -1,6 +1,11 @@
 # Pre-commit hooks for Database Modernizer Assessment
 # See https://pre-commit.com for more information
 
+# contrib/ holds a quarantined third-party snapshot (#1412): never built, imported
+# or tested, so the format, lint, type and schema hooks skip it (each hook's
+# `exclude: ^contrib/`). Secret, private-key, large-file and merge-conflict
+# checks still scan it.
+
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -8,16 +13,19 @@ repos:
     hooks:
       - id: trailing-whitespace
         name: Trim trailing whitespace
+        exclude: ^contrib/
       - id: end-of-file-fixer
         name: Fix end of files
         # .test_durations is written by pytest-split (./ci/test.sh --store-durations),
         # which ends it without a newline; leave it exactly as the tool writes it.
-        exclude: ^\.test_durations$
+        exclude: (^\.test_durations$|^contrib/)
       - id: check-yaml
         name: Check YAML syntax
+        exclude: ^contrib/
         args: ['--unsafe']  # Allow custom tags in docker-compose
       - id: check-json
         name: Check JSON syntax
+        exclude: ^contrib/
       - id: check-added-large-files
         name: Check for large files
         args: ['--maxkb=1000']
@@ -32,6 +40,7 @@ repos:
       - id: mixed-line-ending
         name: Check line endings
         args: ['--fix=lf']
+        exclude: ^contrib/
       - id: detect-private-key
         name: Detect private keys
 
@@ -64,6 +73,7 @@ repos:
     hooks:
       - id: black
         name: Format Python code with Black
+        exclude: ^contrib/
         args: ['--line-length=100']
 
   # Python import sorting
@@ -72,6 +82,7 @@ repos:
     hooks:
       - id: isort
         name: Sort Python imports
+        exclude: ^contrib/
         args: ['--profile=black', '--line-length=100']
         stages: [pre-commit]
 
@@ -81,6 +92,7 @@ repos:
     hooks:
       - id: ruff
         name: Lint Python code with Ruff
+        exclude: ^contrib/
         args: ['--fix', '--exit-non-zero-on-fix']
 
   # Python type checking
@@ -89,6 +101,7 @@ repos:
     hooks:
       - id: mypy
         name: Type check with mypy
+        exclude: ^contrib/
         args: ['--ignore-missing-imports', '--no-strict-optional']
         additional_dependencies: ['pydantic>=2.7.2']
 
@@ -98,6 +111,7 @@ repos:
     hooks:
       - id: bandit
         name: Security check with Bandit
+        exclude: ^contrib/
         args: ['-c', 'pyproject.toml']
         additional_dependencies: ['bandit[toml]']
 
@@ -117,6 +131,7 @@ repos:
     hooks:
       - id: markdownlint
         name: Lint Markdown files
+        exclude: ^contrib/
         args: ['--fix', '--config', '.markdownlint.yaml']
 
   # Commit message validation
@@ -157,6 +172,7 @@ repos:
         entry: uv run python scripts/validate_schemas.py
         language: system
         files: \.json$
+        exclude: ^contrib/
         pass_filenames: true
 
   # Pydantic contract validation

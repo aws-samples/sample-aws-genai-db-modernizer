@@ -107,6 +107,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+# contrib/ is a quarantined snapshot (#1412): never packaged.
+[tool.hatch.build.targets.sdist]
+exclude = ["/contrib"]
+
 # The version is derived from the git tag (e.g. "v0.2.0-beta.1" -> "0.2.0b1";
 # untagged commits -> "0.2.0b2.devN+g<sha>"), never hand-edited.
 # `fallback-version` only applies when there is no .git directory at all (e.g.
@@ -123,10 +127,15 @@ fallback-version = "0.0.0"
 [tool.black]
 line-length = 100
 target-version = ['py312']
+extend-exclude = '^/contrib/'
+
+[tool.isort]
+extend_skip_glob = ["contrib/*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["contrib"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP"]
@@ -138,7 +147,7 @@ ignore = ["E501", "B008", "C901", "UP042", "C420"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --strict-markers"
+addopts = "-v --strict-markers --ignore=contrib"
 markers = [
     "slow: marks tests as slow",
     "integration: marks tests as integration tests",
@@ -157,6 +166,7 @@ filterwarnings = [
 
 [tool.mypy]
 python_version = "3.12"
+exclude = ["^contrib/"]
 ignore_missing_imports = true
 warn_return_any = true
 warn_unused_configs = true
@@ -168,7 +178,7 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [tool.bandit]
-exclude_dirs = ["tests", "scripts/ci-database"]
+exclude_dirs = ["tests", "scripts/ci-database", "contrib"]
 # B608: SQL injection — suppressed inline with nosec B608 where applicable
 
 [tool.hypothesis]
