@@ -504,6 +504,8 @@ Version History:
   from each analysis estimate (``engine_dates``; ``retrieved_on`` when they agree), so
   each deliverable states the price date. Backward compatible: defaults to None, the
   value an older report reads back as (its price date is unknown).
+- 1.57 (2026-10-23, #1369): MigrationWave.homogeneity description: a wave 1 with no
+  Aurora engine also covers a customer engine scope with no relational engine
 """
 
 from datetime import datetime
@@ -957,7 +959,10 @@ class MigrationWave(BaseModel):
             "no Aurora dialect of its own but the assignment resolver still picked one of "
             "the two competing Aurora engines (named, with a share, same as 'homogeneous', "
             "but stated as a dialect-and-schema conversion, not a 1:1 carry-over), and "
-            "'heterogeneous' when no Aurora engine was picked at all. A heterogeneous wave "
+            "'heterogeneous' when no Aurora engine was picked at all (#1369: also when the "
+            "customer's engine scope has no Aurora engine or its Aurora engine serves no "
+            "query, where the wave says no Aurora move is planned and the source is not "
+            "necessarily heterogeneous). A heterogeneous wave "
             "1 still runs -- it is not skipped -- it just names no Aurora engine (engines "
             "is then empty, the title says what the source moves off instead of to, and "
             "the gate flags it as a risk). None for every other wave, and for a wave "
@@ -2137,7 +2142,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.56",
+        default="1.57",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

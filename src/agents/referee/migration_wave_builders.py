@@ -45,6 +45,11 @@ _ALREADY_AURORA = RELATIONAL_ENGINES | {"aurora"}
 _MYSQL_COMPATIBLE_SOURCES = {"mariadb"}
 
 
+def _join_names(names: list[str]) -> str:
+    """``[a]`` -> ``a``; ``[a, b]`` -> ``a and b``; ``[a, b, c]`` -> ``a, b and c``."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def _aurora_wave(
     by_engine: dict[str, dict[str, Any]],
     retained_engine: str | None,
@@ -54,6 +59,7 @@ def _aurora_wave(
     source_version: Any,
     cross_engine: bool = False,
     aurora_engine_choice: dict[str, Any] | None = None,
+    no_target: str | None = None,
 ) -> dict[str, Any] | None:
     """Wave 1 (#321): the whole source database moves to Aurora first.
 
@@ -84,6 +90,16 @@ def _aurora_wave(
     ``deciding_features``, ``reason``) for a ``cross_engine`` wave's rationale, naming
     both engines' totals and whatever tipped the choice. ``None`` (homogeneous, no
     Aurora at all, or a legacy assignment with no such field) drops that sentence.
+
+    ``no_target`` (#1369) is why the customer's engine scope leaves wave 1 without an
+    Aurora engine, when it does: ``"no_relational_in_scope"`` (the scope has no Aurora
+    engine) or ``"scope_choice_serves_nothing"`` (the scope's Aurora choice serves no
+    query, #1327). Either way the source is not converted to Aurora in this plan, which
+    is no heterogeneous move and no Aurora pick to ask for: the title, rationale and gate
+    say that, and the gate names the engines the plan moves to instead (never an engine
+    the scope leaves out). ``homogeneity`` stays ``"heterogeneous"``, the contract's
+    marker for a wave 1 with no Aurora engine named (no new contract value). ``None``
+    (no scope, or a scope with an Aurora engine) keeps the wording above.
 
     The rationale states only what the collector actually reports for
     homogeneity: engine and version. The collector never reports feature or
@@ -206,6 +222,45 @@ def _aurora_wave(
         title = f"Move off {source_name} to {target_name} (cross-engine)"
         engines = [retained_engine]
         homogeneity = "cross_engine"
+    elif no_target:
+        instead = [
+            display_engine(e)
+            for e, row in sorted(
+                by_engine.items(),
+                key=lambda kv: (-float(kv[1].get("workload_percent") or 0.0), kv[0]),
+            )
+            if e not in RELATIONAL_ENGINES
+            and e not in CACHE_ENGINES
+            and int(row.get("assigned_queries") or 0) > 0
+        ]
+        if no_target == "scope_choice_serves_nothing":
+            title = "No move to Aurora: the scope's Aurora engine serves no query"
+            why = (
+                "The customer's engine scope has an Aurora engine, but it serves no query in "
+                "this assessment"
+            )
+        else:
+            title = "No move to Aurora: the engine scope has no relational engine"
+            why = "The customer's engine scope has no relational engine"
+        rationale = (
+            f"{why}, so the source database ({source_desc}) is not converted to Aurora in "
+            "this plan."
+        )
+        if instead:
+            gate = (
+                f"No Aurora move is planned; the queries {_join_names(instead)} serve move there "
+                "instead. A query no engine in the scope serves is listed as unservable and "
+                "stays on the source database. Validate those moves in their own waves."
+            )
+        else:
+            gate = (
+                "No Aurora move is planned, and no other engine in the scope takes a query in "
+                "this plan."
+            )
+        engines = []
+        n = 0
+        share = 0.0
+        homogeneity = "heterogeneous"
     else:
         rationale = (
             f"The source database ({source_desc}) has no source-compatible Aurora engine in "

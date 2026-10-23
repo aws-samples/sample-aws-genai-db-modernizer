@@ -27862,7 +27862,7 @@
       }
     },
     "schema_hash": "538d0783ed82b348a7fda9d766736a4164d9d96e8ed567dc715053d0d5cf430f",
-    "version": "1.56"
+    "version": "1.57"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

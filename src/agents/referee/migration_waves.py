@@ -23,7 +23,13 @@ decides the sequence:
    (SQL Server, Oracle, DB2) but the assignment resolver still picked one of
    the two competing Aurora engines, and ``heterogeneous`` (titled "Move off
    <source> (heterogeneous)", flagged as a risk in the gate, no Aurora engine
-   named and no share claimed) when no Aurora engine was picked at all.
+   named and no share claimed) when no Aurora engine was picked at all. When the
+   customer's engine scope is why (#1369: it has no Aurora engine, or its Aurora
+   engine serves no query, including one with no analysis), the wave is titled "No
+   move to Aurora: ..." instead: the source is not converted to Aurora in this plan,
+   no Aurora pick is asked for, and the gate names the engines the plan moves to
+   (``homogeneity`` stays ``heterogeneous``, the marker of a wave 1 with no Aurora
+   engine).
    Skipped when there is no source engine to report at all, or the source is
    already an Aurora engine. For a homogeneous or cross-engine move, ``query_count`` and
    ``workload_share_percent`` are the share still assigned to Aurora once
@@ -370,11 +376,34 @@ def build_migration_waves(
     retained_engine, cross_engine = _retained_engine(
         by_engine, source_engine, query_assignments, aurora_engine_choice
     )
+    no_target: str | None = None  # #1369: why the scope leaves wave 1 no Aurora engine
+    choice = aurora_engine_choice or {}
+    if (
+        choice.get("basis") == SCOPE_BASIS
+        and choice.get("engine") in AURORA_ENGINES
+        and retained_engine is None
+    ):
+        # The scope's chosen engine serves no query: wave 1 names no target.
+        no_target = "scope_choice_serves_nothing"
     if engine_scope is not None and retained_engine not in set(engine_scope):
         # #1329 (ADR-031 Decision 2 Amendment 15): no Aurora engine in the scope, so
         # wave 1 converts to no engine the customer left out.
         retained_engine = None
         cross_engine = False
+        scope_aurora = set(engine_scope) & set(AURORA_ENGINES)
+        if not scope_aurora:
+            no_target = "no_relational_in_scope"
+        elif (
+            no_target is None
+            and source_engine in SOURCE_ENGINE_TO_AURORA
+            and not any(
+                int((by_engine.get(e) or {}).get("assigned_queries") or 0) for e in scope_aurora
+            )
+        ):
+            # #1369: the scope names an Aurora engine but no analysis ran for it, so no
+            # choice was recorded and no query ends on it: the same case as a recorded
+            # choice that serves nothing, never a heterogeneous source to pick for.
+            no_target = "scope_choice_serves_nothing"
 
     known, table_assignments = _canonical_table_assignments(table_assignments, known_tables, source)
     mapped: set[str] | None = None if mapped_tables is None else {str(t) for t in mapped_tables}
@@ -389,6 +418,7 @@ def build_migration_waves(
         source_version,
         cross_engine=cross_engine,
         aurora_engine_choice=aurora_engine_choice,
+        no_target=no_target,
     )
     if aurora:
         waves.append(aurora)
