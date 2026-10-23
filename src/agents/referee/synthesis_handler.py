@@ -84,6 +84,7 @@ from src.shared.catalog.prices import estimates_price_basis
 from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
+from src.shared.executive_brief import check_summary_brief, executive_brief_text
 from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.shared.report_facts import (
@@ -565,7 +566,7 @@ def run_synthesis_deterministic(
                 }
             )
 
-    return {
+    result = {
         "job_id": job_id,
         "database_name": database_name,
         # The job's own source engine, as the executive summary names it (#628):
@@ -614,6 +615,14 @@ def run_synthesis_deterministic(
         # Internal — holds the SynthesisData object for schema summaries in the writer
         "data": data,
     }
+    # #1403: the facts the report will carry, computed now so the executive summary
+    # (deterministic, the model's input and its checks) words them, never recomputes them.
+    # The writer computes them again from the same fields.
+    result["facts"] = _report_output_data(store, result, assignment_version)["facts"]
+    result["executive_summary"] = (
+        executive_brief_text(result["facts"], database_name) or deterministic_summary
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -675,13 +684,51 @@ def _compact_query_groups_for_llm(query_groups: list[dict]) -> list[dict]:
     return compact
 
 
+# The engine figures the executive summary states (#1403): its share, its cache reads,
+# its cost. The rest of each engine's facts is engineering detail.
+_BRIEF_ENGINE_KEEP = (
+    "engine",
+    "role",
+    "workload_percent",
+    "cached_queries",
+    "cached_call_share_percent",
+    "monthly_cost_usd",
+)
+
+
+def _executive_brief_input(facts: dict) -> dict:
+    """The facts the executive summary's three parts state (#1403), copied as is:
+    the projected cost with its price basis, each engine's share, the waves, the risk
+    level and its drivers, the wave to approve, whether any saving may be claimed."""
+    return {
+        "projected_monthly_cost_usd": facts.get("projected_monthly_cost_usd"),
+        "price_list": facts.get("price_list"),
+        "engine_count": facts.get("engine_count"),
+        "engines": [
+            {k: e.get(k) for k in _BRIEF_ENGINE_KEEP}
+            for e in facts.get("engines") or []
+            if isinstance(e, dict)
+        ],
+        "retired_in_use_engines": facts.get("retired_in_use_engines") or [],
+        "open_risk_count": facts.get("open_risk_count"),
+        "open_risks_by_severity": facts.get("open_risks_by_severity"),
+        **(facts.get("executive_brief") or {}),
+    }
+
+
 def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     """Return the payload that should be sent to the executive-summary LLM.
 
     Keys returned:
-        effective_architecture, deterministic_summary, ranking, query_groups,
-        tco_analysis, risk_assessment, table_mappings, trade_offs, migration_waves,
-        source_database, schema_design_status
+        executive_brief, effective_architecture, deterministic_summary, ranking,
+        query_groups, tco_analysis, risk_assessment, table_mappings, trade_offs,
+        migration_waves, source_database, schema_design_status
+
+    ``executive_brief`` (#1403) is the facts the summary's three parts state, copied
+    from the result's ``facts``: the projected cost and its price basis, each engine's
+    share, what each wave does, the overall risk level and the risks driving it, the
+    wave to approve, and whether any saving may be claimed. ``deterministic_summary``
+    is the deterministic summary in that structure (``executive_brief_text``).
 
     ``effective_architecture`` comes first: the compact per-engine table list, top
     query groups and capabilities, plus the eliminated engines, together with the
@@ -711,9 +758,15 @@ def prepare_synthesis_llm_input(deterministic_result: dict) -> dict:
     are never cut.
     """
     designed, not_designed = designed_and_not_designed_engines(deterministic_result["ranking"])
+    facts = deterministic_result.get("facts")
     payload = {
+        # #1403: the facts the summary's recommendation, risk and decision state.
+        **({"executive_brief": _executive_brief_input(facts)} if facts else {}),
         "effective_architecture": deterministic_result["effective_architecture"],
-        "deterministic_summary": deterministic_result["summary"],
+        "deterministic_summary": (
+            executive_brief_text(facts, deterministic_result.get("database_name", ""))
+            or deterministic_result["summary"]
+        ),
         "ranking": deterministic_result["ranking"],
         "query_groups": _compact_query_groups_for_llm(deterministic_result["query_groups"]),
         "tco_analysis": deterministic_result["tco_analysis"],
@@ -817,16 +870,23 @@ def apply_synthesis_llm_output(
     # left after the dash replacement (filler, hedges, "not just ... but",
     # all-caps severity labels) sends the summary back to the deterministic text.
     findings = findings + check_summary_style(summary_text, identifiers)
+    # #1403: a sixth -- the executive structure: the projected cost as the facts state it,
+    # the overall risk level, a decision sentence, no saving claimed without a source
+    # cost, and the word budget.
+    facts = deterministic_result.get("facts")
+    findings = findings + check_summary_brief(summary_text, facts)
     deterministic_result["summary_llm"] = raw_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:
         print(f"[synthesis] WARNING: {f['message']}")
     if any(f["high_confidence"] for f in findings):
-        # The customer sees a short narrative built from the effective architecture
-        # (display names, no cost or confidence figures), not the raw deterministic
-        # summary, which stays in summary_deterministic.
+        # The customer sees the deterministic executive summary (#1403), worded from the
+        # facts; a result with no facts (an older caller) gets the short narrative built
+        # from the effective architecture. The raw deterministic note stays in
+        # summary_deterministic.
         deterministic_result["executive_summary"] = (
-            build_fallback_summary(deterministic_result.get("effective_architecture"))
+            executive_brief_text(facts, deterministic_result.get("database_name", ""))
+            or build_fallback_summary(deterministic_result.get("effective_architecture"))
             or deterministic_result["summary"]
         )
         deterministic_result["summary_source"] = "deterministic_fallback"
@@ -1172,16 +1232,10 @@ def _write_prose_style_rejections(
     )
 
 
-def _write_synthesis_report(
-    store: ArtifactStore,
-    result: dict,
-    assignment_version: int,
-) -> None:
-    """Validate against SynthesisOutputContract and write the report JSON."""
+def _report_output_data(store: ArtifactStore, result: dict, assignment_version: int) -> dict:
+    """The ``report.json`` fields synthesis writes for ``result``, ``facts`` included
+    (ADR-032); the summary fields are the ones ``result`` holds now."""
     data = result["data"]
-    _write_prose_style_rejections(
-        store, result, getattr(data, "prose_style_rejections", None), assignment_version
-    )
     output_data: dict = {
         "job_id": result["job_id"],
         "database_name": result["database_name"],
@@ -1312,6 +1366,20 @@ def _write_synthesis_report(
         ),
     )
 
+    return output_data
+
+
+def _write_synthesis_report(
+    store: ArtifactStore,
+    result: dict,
+    assignment_version: int,
+) -> None:
+    """Validate against SynthesisOutputContract and write the report JSON."""
+    data = result["data"]
+    _write_prose_style_rejections(
+        store, result, getattr(data, "prose_style_rejections", None), assignment_version
+    )
+    output_data = _report_output_data(store, result, assignment_version)
     output = SynthesisOutputContract.model_validate(output_data)
     job_id = result["job_id"]
     database_name = result["database_name"]

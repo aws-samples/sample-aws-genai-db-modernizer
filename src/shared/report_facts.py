@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from src.shared import catalog
@@ -46,7 +47,13 @@ from src.shared.engine_names import (
     display_engine,
 )
 from src.shared.migration_wave_engines import NON_OWNER_ENGINES, primary_owner_engine
-from src.shared.risk_severity import SEVERITY_ORDER, count_by_severity, severity_of
+from src.shared.risk_severity import (
+    SEVERITY_ORDER,
+    count_by_severity,
+    overall_risk_level,
+    severity_of,
+    severity_rank,
+)
 from src.shared.signal_labels import SIGNAL_NOUNS
 from src.shared.target_databases import engine_scope_display_order
 
@@ -964,6 +971,14 @@ def refresh_risk_facts(facts: dict[str, Any], report: dict[str, Any]) -> dict[st
             **no_migration,
             "critical_high_risks": high(no_migration.get("engines")),
         }
+    if isinstance(facts.get("executive_brief"), dict):
+        # #1403: the overall level and the risks driving it, from the same risks.
+        out["executive_brief"] = executive_brief_facts(
+            report,
+            [w for w in report.get("migration_waves") or [] if isinstance(w, dict)],
+            [r for r in facts.get("retired_in_use_engines") or [] if isinstance(r, dict)],
+            facts.get("query_total_count"),
+        )
     return out
 
 
@@ -2677,6 +2692,178 @@ def projected_monthly_cost(report: dict[str, Any]) -> float:
     return round(sum(c for e, c in engine_costs(report).items() if e in kept), 2)
 
 
+def cost_baseline_known(tco: Mapping[str, Any]) -> bool:
+    """Whether ``tco`` has a real current-cost baseline (#380, #334).
+
+    ``current_cost_known`` false, or missing with a falsy ``current_monthly_cost`` (a
+    report written before the field existed, whose ``0`` is the "no instance metadata"
+    placeholder), is unknown. The one rule every deliverable and the executive summary
+    share (``src.report.formatting.cost_baseline_known`` is this function)."""
+    known = tco.get("current_cost_known")
+    return not (known is False or (known is None and not tco.get("current_monthly_cost")))
+
+
+def whole_dollars(x: float) -> int:
+    """``x`` rounded half up to the nearest dollar (#1403): 504.5 is 505, 504.49 is 504."""
+    return int(Decimal(str(x)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+# #1403: what each wave does, as the executive summary's recommendation words it.
+BRIEF_WAVE_KINDS = (
+    "homogeneous",
+    "cross_engine",
+    "heterogeneous",
+    "cache",
+    "migration",
+    "read_model",
+)
+# The open risks the executive summary names as driving the overall level.
+BRIEF_EXPOSURE_LIMIT = 2
+
+
+def _brief_wave_kind(wave: Mapping[str, Any]) -> str:
+    homogeneity = wave.get("homogeneity")
+    if homogeneity in ("homogeneous", "cross_engine", "heterogeneous"):
+        return str(homogeneity)
+    if wave.get("fronts") or any(str(e) in CACHE_ENGINES for e in wave.get("engines") or []):
+        return "cache"
+    return "migration" if is_migrating_wave(dict(wave)) else "read_model"
+
+
+def _source_engine(report: Mapping[str, Any], waves: list[dict[str, Any]]) -> str | None:
+    """The source engine the plan moves off: wave 1's ``moves_from``, else the one engine
+    the collection says runs today; None when neither names one."""
+    for w in waves:
+        if w.get("homogeneity") is not None:
+            moves = [str(e) for e in w.get("moves_from") or [] if e]
+            if moves:
+                return moves[0]
+    in_use = [str(e) for e in report.get("engines_in_use") or [] if e]
+    return in_use[0] if len(in_use) == 1 else None
+
+
+def _exposure_wave(
+    risk: Mapping[str, Any], engine: str | None, waves: list[dict[str, Any]]
+) -> int | None:
+    """The wave a risk belongs to: its own ``wave``, else the first wave of its engine."""
+    wave = risk.get("wave")
+    if isinstance(wave, int) and not isinstance(wave, bool):
+        return wave
+    if engine:
+        for w in waves:
+            if engine in (w.get("engines") or []):
+                return int(w.get("wave") or 0) or None
+    return None
+
+
+def _share_of_all_queries(report: dict[str, Any], query_total: int | None) -> dict[str, float]:
+    """Each owner engine's share of every collected query, in scope or not (#1403): with
+    queries no engine in the scope can serve, an engine's workload share (of the served
+    queries) would read as more of the workload than it takes. Empty with none."""
+    unservable = len(scope_unservable_rows(report))
+    if not unservable or not query_total:
+        return {}
+    out: dict[str, float] = {}
+    for r in report.get("ranking") or []:
+        n = r.get("assigned_queries") if isinstance(r, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool) and n > 0 and r.get("target"):
+            out[str(r["target"])] = round(100 * n / query_total, 1)
+    return out
+
+
+def executive_brief_facts(
+    report: dict[str, Any],
+    waves: list[dict[str, Any]],
+    retired_in_use: list[dict[str, Any]],
+    query_total: int | None = None,
+) -> dict[str, Any]:
+    """What the executive summary states beyond the headline figures (#1403).
+
+    The summary leads with the recommendation, the risk and the decision. Its cost and
+    shares are the facts' own (``projected_monthly_cost_usd``, ``price_list``,
+    ``engines``); this block adds what it needs on top: the source engine, whether a
+    current cost was collected (and its saving), what each wave does, the overall risk
+    level (the highest open severity, ``risk_severity.overall_risk_level``), the one or
+    two open risks at that level that drive it (first in register order), each with the
+    wave to act before, and the wave the reader is asked to approve next.
+
+    ``saving_counted`` is true only when a deliverable states a saving: a known
+    current cost, or an engine the customer runs today that the plan retires with a
+    counted saving (#1076). With neither, the summary claims no saving.
+    """
+    tco = report.get("tco_analysis") or {}
+    known = cost_baseline_known(tco)
+    current = tco.get("current_monthly_cost") if known else None
+    savings = tco.get("savings_percent") if known else None
+    risks = open_risks(report)
+    level = overall_risk_level(risks)
+    ranked = sorted(range(len(risks)), key=lambda i: (-severity_rank(severity_of(risks[i])), i))
+    # The risks at the overall level are the ones driving it: the most severe, in order.
+    top = [i for i in ranked if severity_of(risks[i]) == level] or ranked
+    exposures = []
+    for i in top[:BRIEF_EXPOSURE_LIMIT]:
+        r = risks[i]
+        engine, _ = risk_engine_and_body(r.get("description"))
+        eng = None if engine == "(general)" else engine
+        exposures.append(
+            {
+                "risk_id": r.get("risk_id"),
+                "severity": severity_of(r),
+                "risk_type": str(r.get("risk_type") or "") or None,
+                "rule": r.get("rule"),
+                "engine": eng,
+                "wave": _exposure_wave(r, eng, waves),
+            }
+        )
+    brief_waves = [
+        {
+            "wave": int(w.get("wave") or 0),
+            "engines": [str(e) for e in w.get("engines") or [] if e],
+            "kind": _brief_wave_kind(w),
+        }
+        for w in waves
+    ]
+    return {
+        # The executive summary states the projected cost in whole dollars (maintainer
+        # decision on #1403); cost tables and the engineering report keep the cents.
+        "projected_monthly_cost_whole_usd": whole_dollars(projected_monthly_cost(report)),
+        "source_engine": _source_engine(report, waves),
+        "source_cost_known": known,
+        "source_monthly_cost_usd": (
+            float(current)
+            if isinstance(current, (int, float)) and not isinstance(current, bool)
+            else None
+        ),
+        "source_monthly_cost_whole_usd": (
+            whole_dollars(float(current))
+            if isinstance(current, (int, float)) and not isinstance(current, bool)
+            else None
+        ),
+        "savings_percent": (
+            float(savings)
+            if isinstance(savings, (int, float)) and not isinstance(savings, bool)
+            else None
+        ),
+        "saving_counted": known
+        or any(isinstance(row.get("monthly_cost_usd"), (int, float)) for row in retired_in_use),
+        # Each retired engine's counted saving in whole dollars, as the summary states it.
+        "retired_saving_whole_usd": {
+            str(row["engine"]): whole_dollars(float(row["monthly_cost_usd"]))
+            for row in retired_in_use
+            if row.get("engine")
+            and isinstance(row.get("monthly_cost_usd"), (int, float))
+            and not isinstance(row.get("monthly_cost_usd"), bool)
+        },
+        "waves": brief_waves,
+        # #1329: with queries no engine in the scope serves, each engine's share of all
+        # the queries, so the summary never reads 100% for an engine that takes 65 of 107.
+        "share_of_all_queries_percent": _share_of_all_queries(report, query_total),
+        "overall_risk_level": level,
+        "exposures": exposures,
+        "decision_wave": brief_waves[0]["wave"] if brief_waves else None,
+    }
+
+
 def unreviewed_move_count(report: dict[str, Any]) -> int:
     """How many reality-check moves no model reviewed (#746).
 
@@ -2803,7 +2990,7 @@ def compute_report_facts(
         "no_migration": no_migration,
         "removed_engines": removed,
         # #1076: the removed engines the customer runs today, stated once with their saving.
-        "retired_in_use_engines": retired_in_use_engine_facts(report, removed),
+        "retired_in_use_engines": (retired := retired_in_use_engine_facts(report, removed)),
         "reality_check_decisions": reality_check_decision_facts(report, rc_trade_offs, removed),
         "reality_check_trade_offs": rc_trade_offs,
         "trade_off_count": n_trade_offs - sum(1 for t in rc_trade_offs if t["reversed"]),
@@ -2852,6 +3039,13 @@ def compute_report_facts(
         "price_list": dict(price_list) if price_list is not None else None,
         # #1195: the TCO's assumptions, stated once for every deliverable's cost section.
         "cost_assumptions": cost_assumptions(report),
+        # #1403: what the executive summary states: the risk level, its drivers, the decision.
+        "executive_brief": executive_brief_facts(
+            report,
+            waves,
+            retired,
+            query_total_facts(report, moves["in_scope_query_count"])["query_total_count"],
+        ),
     }
 
 

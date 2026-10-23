@@ -227,4 +227,5 @@ app.include_router(graph.router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)  # nosec B104 — local dev only
+    # Loopback by default, as `make local` (API_HOST); set API_HOST to listen wider.
+    uvicorn.run(app, host=os.environ.get("API_HOST", "127.0.0.1"), port=8000)

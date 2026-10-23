@@ -448,6 +448,13 @@ class TestExecutiveSummarySameAnswerSameResult:
         ],
     )
     def test_the_same_summary_gives_identical_reports(self, synthesis_store, summary, source):
+        if summary == SUMMARY:
+            # #1403: an accepted summary keeps the executive structure.
+            from src.agents.referee.synthesis_handler import run_synthesis_deterministic
+            from src.shared.executive_brief import executive_brief_text
+
+            det = run_synthesis_deterministic(SYN_JOB, SYN_DB, synthesis_store("brief"), 2)
+            summary = f"{SUMMARY}\n\n{executive_brief_text(det['facts'], SYN_DB)}"
         bedrock_report, headless_report, _, _ = self._run_both(synthesis_store, summary)
         assert bedrock_report == headless_report
         assert bedrock_report["summary_source"] == source

@@ -65,6 +65,9 @@ from src.contracts.synthesis_output import ReportFacts
 REPO = Path(__file__).resolve().parents[3]
 REPORT = REPO / "src" / "report"
 FACTS_LAYER = REPO / "src" / "shared" / "report_facts.py"
+# Renderer helpers outside src/report: they word facts for a deliverable, so they only
+# format too (#1403: the executive summary's text, shown by every deliverable).
+SHARED_RENDERERS = (REPO / "src" / "shared" / "executive_brief.py",)
 
 # Modules that compute data rather than format it.
 EXEMPT = {"facts.py", "waves.py"}
@@ -173,6 +176,8 @@ PINNED_EXEMPTIONS: frozenset[tuple[str, str]] = frozenset(
         # #1020: the executive report's architecture bar, one segment per owner
         # engine as wide as its stored workload share.
         ("src/report/executive_report.py", "chart geometry"),
+        # #1403: "the main exposure is" / "exposures are".
+        ("src/shared/executive_brief.py", "verb agreement"),
     }
 )
 
@@ -515,7 +520,7 @@ def _imports(path: Path) -> set[str]:
 
 
 def _renderer_modules() -> list[Path]:
-    return sorted(p for p in REPORT.rglob("*.py") if p.name not in EXEMPT)
+    return sorted([*(p for p in REPORT.rglob("*.py") if p.name not in EXEMPT), *SHARED_RENDERERS])
 
 
 def test_report_imports_nothing_from_agents() -> None:
@@ -574,7 +579,7 @@ def test_presentation_exemptions_carry_a_reason_and_are_pinned() -> None:
     """A ``# facts: presentation`` line needs its reason, and a new one is
     reviewed: add it to PINNED_EXEMPTIONS together with the code."""
     found: set[tuple[str, str]] = set()
-    for p in sorted(REPORT.rglob("*.py")):
+    for p in sorted([*REPORT.rglob("*.py"), *SHARED_RENDERERS]):
         for i, line in enumerate(p.read_text().splitlines(), start=1):
             m = PRAGMA.search(line)
             if m:
@@ -768,3 +773,18 @@ def test_the_javascript_guard_owns_what_the_python_guard_owns() -> None:
     assert _js_set("INPUT_KEYS") == set(INPUT_KEYS)
     assert _js_set("NOT_A_FIGURE") == set(NOT_A_FIGURE) | {"index"}
     assert "../../../../.." in JS_GUARD.read_text()  # reads tests/contract/schema_snapshot.json
+
+
+def test_the_shared_renderer_helpers_are_scanned(tmp_path: Path) -> None:
+    """#1403: the executive summary's text is worded outside src/report; the guard
+    reaches it, and counting a fact there (``len(engines)`` for the engine count) fails."""
+    assert all(p.is_file() for p in SHARED_RENDERERS), SHARED_RENDERERS
+    assert set(SHARED_RENDERERS) <= set(_renderer_modules())
+    assert not [v for p in SHARED_RENDERERS for v in _violations(p)]
+    probe = tmp_path / "executive_brief.py"
+    probe.write_text(
+        "def render(facts):\n"
+        "    engines = facts.get('engines') or []\n"
+        "    return len(engines)\n"
+    )
+    assert _violations(probe)

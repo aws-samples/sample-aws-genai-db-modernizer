@@ -204,6 +204,7 @@ ID_FIELD_PATHS = frozenset(
         ("kept_in_sync", "owner"),  # ReportFacts.waves[].kept_in_sync: TableOwner (#615)
         ("shared_in_wave", "owner"),  # ReportFacts.waves[].shared_in_wave: TableOwner (#615)
         ("retired_in_use_engines", "engine"),  # ReportFacts.retired_in_use_engines (#1076)
+        ("exposures", "engine"),  # ReportFacts.executive_brief.exposures[].engine (#1403)
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)

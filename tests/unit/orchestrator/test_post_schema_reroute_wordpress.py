@@ -178,9 +178,17 @@ class TestEveryDeliverableAgreesWithTheNewVersion:
         # The summary is the engineering report's since #1020 (the executive report
         # prints no summary: it names tables).
         text = " ".join(re.sub(r"\\(.)", r"\1", rerouted["engineering"]).split())
-        assert f"DynamoDB handles {expected} queries" in text
-        assert f"{expected} in-scope access patterns)" in text
-        assert f"DynamoDB: {_in_scope(rerouted['v2'], 'dynamodb')}" not in text
+        # #1403: the summary states each engine's share of the queries from the facts;
+        # the per-engine counts stay in the deterministic engineering note.
+        note = rerouted["report"]["summary_deterministic"]
+        assert f"DynamoDB handles {expected} queries" in note
+        assert f"{expected} in-scope access patterns)" in note
+        share = next(
+            e["workload_percent"]
+            for e in rerouted["report"]["facts"]["engines"]
+            if e["engine"] == "dynamodb"
+        )
+        assert f"{share}% of the queries to DynamoDB" in text
 
     def test_the_reroute_records_pass_the_customer_text_guard(self, rerouted):
         from src.tools.validation.customer_text_guard import scan_json

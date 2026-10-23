@@ -191,3 +191,16 @@ test('the check takes a ProseText render for a wrapped one', () => {
   expect(wrapped).toEqual(['synthesis.summary']);
   expect(raw).not.toContain('synthesis.summary');
 });
+
+test('paragraphs renders one paragraph per line, each with its code spans (#1403)', () => {
+  act(() => root.render(
+    <ProseText text={'Recommendation: move `x`.\n\nRisk: low.\nDecision: approve wave 1.'} paragraphs />,
+  ));
+  const ps = container.querySelectorAll('p');
+  expect([...ps].map((p) => p.textContent)).toEqual([
+    'Recommendation: move x.',
+    'Risk: low.',
+    'Decision: approve wave 1.',
+  ]);
+  expect(ps[0].querySelector('code').textContent).toBe('x');
+});

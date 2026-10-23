@@ -9,6 +9,7 @@ from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
+from src.shared.report_facts import cost_baseline_known  # noqa: F401  (#1403: one rule)
 
 
 def artifact_stem(
@@ -162,17 +163,6 @@ def _fmt_usd(x: Any) -> str:
 # ``current_cost_known: False``. This is the one rule every deliverable
 # (the engineering and executive reports here and the React UI's ``tcoAnalysis.js``)
 # must share, so they can't disagree on the same report.
-def cost_baseline_known(tco: dict[str, Any]) -> bool:
-    """Whether ``tco`` has a real current-cost baseline (``_cost_baseline_text``'s rule).
-
-    #949 (the #1028 direction): a deliverable leaves the current-cost and savings
-    lines out when it is unknown, instead of printing "source cost not provided" and
-    "not available", as the results page already does.
-    """
-    known = tco.get("current_cost_known")
-    return not (known is False or (known is None and not tco.get("current_monthly_cost")))
-
-
 def _cost_baseline_text(tco: dict[str, Any]) -> tuple[str, str]:
     """(current monthly cost, savings) display text for ``tco``.
 
@@ -411,10 +401,10 @@ def label_summary_counts(text: str, report: dict[str, Any] | None = None) -> str
     )
 
 
-# #393/#536/#1034: five independent high-confidence checks can reject the generated
+# #393/#536/#1034/#1403: six independent high-confidence checks can reject the generated
 # executive summary (``apply_synthesis_llm_output``: ``check_summary_grounding``,
 # ``check_summary_internal_leaks``, ``check_summary_wave_order``,
-# ``check_summary_risk_counts``, ``check_summary_style``), each stamping its own
+# ``check_summary_risk_counts``, ``check_summary_style``, ``check_summary_brief``), each stamping its own
 # ``[high confidence] ...`` message onto ``summary_validation_warnings`` with its
 # own wording -- read here
 # instead of hard-coding the table-attribution reason, which used to show even
@@ -431,6 +421,14 @@ _FALLBACK_REASONS: tuple[tuple[str, str], ...] = (
         "but the risk register has",
         "stated a risk count or severity that doesn't match the risk assessment",
     ),
+    # #1403: src.shared.executive_brief.check_summary_brief.
+    (
+        "the summary leaves out the",
+        "left out the projected cost, the overall risk level or the decision",
+    ),
+    ("states a cost the facts do not", "stated a cost that doesn't match the report's figures"),
+    ("claims a saving", "claimed a saving with no source cost to compare against"),
+    ("over the word budget", "ran over the summary's word budget"),
     (
         "no in-scope query of that engine touches it",
         "named a table under an engine that does not serve it",

@@ -3,11 +3,11 @@
  * (#393, ported for #269; #536 added the risk-count reason).
  *
  * Mirrors ``_FALLBACK_REASONS`` / ``fallback_withheld_reason`` in
- * src/report/formatting.py. Five independent high-confidence checks can
+ * src/report/formatting.py. Six independent high-confidence checks can
  * reject the generated summary (``apply_synthesis_llm_output``:
  * ``check_summary_grounding``, ``check_summary_internal_leaks``,
  * ``check_summary_wave_order``, ``check_summary_risk_counts``,
- * ``check_summary_style``), each stamping
+ * ``check_summary_style``, ``check_summary_brief``), each stamping
  * its own "[high confidence] ..." message onto `summary_validation_warnings`
  * with its own wording -- read here instead of hard-coding the
  * table-attribution reason, which used to show even when a different check
@@ -28,6 +28,14 @@ export const FALLBACK_REASONS = [
     'but the risk register has',
     "stated a risk count or severity that doesn't match the risk assessment",
   ],
+  // #1403: check_summary_brief (src/shared/executive_brief.py).
+  [
+    'the summary leaves out the',
+    'left out the projected cost, the overall risk level or the decision',
+  ],
+  ['states a cost the facts do not', "stated a cost that doesn't match the report's figures"],
+  ['claims a saving', 'claimed a saving with no source cost to compare against'],
+  ['over the word budget', "ran over the summary's word budget"],
   [
     'no in-scope query of that engine touches it',
     'named a table under an engine that does not serve it',

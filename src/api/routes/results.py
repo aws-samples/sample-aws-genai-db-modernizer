@@ -10,6 +10,7 @@ from src.api.dependencies import job_id_param, validated_filename
 from src.api.services.local_execution import LocalExecutionService
 from src.api.services.local_s3 import LocalS3Service
 from src.report.deliverables import FOLDER_ENTRIES, INDEX_FILENAME
+from src.report.engineering_report import brief_summary, summary_paragraphs
 from src.report.facts import report_facts
 from src.report.formatting import label_summary_counts
 from src.report.renderers import resolve_migration_waves
@@ -56,6 +57,9 @@ async def get_results(job_id: str = Depends(job_id_param)):
     # #1148: the risks a report-only rule raises, for a report synthesized before
     # the rule existed, the same ones the deliverables show (before its facts).
     synthesis = backfill_report_risks(synthesis)
+    # #1403: a report whose facts carry the executive summary's own (read before an
+    # older report's facts are computed here, which would add them).
+    brief_era = brief_summary(synthesis) is not None
     # One wave source (#225): the UI reads this same payload, so a
     # report written before #225 must show the same fallback roadmap the
     # executive report and engineering report already derive, not an empty one.
@@ -90,9 +94,15 @@ async def get_results(job_id: str = Depends(job_id_param)):
     # engineering report relabels it at render time with ``label_summary_counts``, only
     # when the summary is the deterministic one; this payload does the same, so the UI
     # only prints the text and the two agree. A generated summary is left as written.
-    summary = synthesis.get("summary")
-    if isinstance(summary, str) and summary == synthesis.get("summary_deterministic"):
-        synthesis["summary"] = label_summary_counts(summary, synthesis)
+    # #1403: the summary the engineering report shows, paragraph for paragraph, so the
+    # results page and the report state the same recommendation, risk and decision.
+    if brief_era:
+        paragraphs, _ = summary_paragraphs(synthesis)
+        synthesis["summary"] = "\n\n".join(paragraphs)
+    else:
+        summary = synthesis.get("summary")
+        if isinstance(summary, str) and summary == synthesis.get("summary_deterministic"):
+            synthesis["summary"] = label_summary_counts(summary, synthesis)
 
     triage = s3_service.read_triage(db_name, job_id)
 

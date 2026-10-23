@@ -28,6 +28,7 @@ from src.agents.referee.synthesis_handler import (
     run_synthesis_deterministic,
 )
 from src.contracts.executive_summary_response import ExecutiveSummaryResponse
+from src.shared.executive_brief import executive_brief_text
 from src.storage.local_store import LocalArtifactStore
 from tests.unit.agents.referee.test_synthesis_effective_risks import DB, JOB, _seed
 
@@ -276,12 +277,25 @@ class TestLlmInput:
         assert len(json.dumps(eff)) < 2000
 
 
+def _brief(det: dict) -> str:
+    """The deterministic executive summary a rejected one falls back to (#1403)."""
+    text = executive_brief_text(det["facts"], det["database_name"])
+    assert text
+    return text
+
+
+def _structured(det: dict, text: str) -> str:
+    """``text`` inside a summary that keeps the executive structure (#1403), so only the
+    check a test is about can reject it."""
+    return text + "\n\n" + _brief(det).replace(" against it.", ".")
+
+
 class TestFinalize:
     def test_wrong_attribution_falls_back_to_deterministic(self, det) -> None:
         llm = "Aurora MySQL serves the shop.orders table and the product lookups."
-        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
-        assert out["summary_llm"] == llm
+        out = apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
+        assert out["executive_summary"] == _brief(det)
+        assert out["summary_llm"] == _structured(det, llm)
         assert out["summary_source"] == "deterministic_fallback"
         assert out["summary_validation_warnings"]
 
@@ -289,8 +303,8 @@ class TestFinalize:
         llm = (
             "DynamoDB serves the order and product lookups; Aurora MySQL keeps the products table."
         )
-        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == llm
+        out = apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
+        assert out["executive_summary"] == _structured(det, llm)
         assert out["summary_source"] == "llm"
         assert out["summary_validation_warnings"] == []
 
@@ -304,8 +318,8 @@ class TestFinalize:
             "DynamoDB serves the order and product lookups; see tco_analysis's "
             "cost_breakdown for the figure."
         )
-        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
+        out = apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
+        assert out["executive_summary"] == _brief(det)
         assert out["summary_source"] == "deterministic_fallback"
         assert any("tco_analysis" in w for w in out["summary_validation_warnings"])
 
@@ -318,15 +332,15 @@ class TestFinalize:
             "risks": [{"severity": "HIGH", "description": "r1"}],
         }
         llm = "DynamoDB serves the order and product lookups; there are two HIGH-severity risks."
-        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == build_fallback_summary(det["effective_architecture"])
+        out = apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
+        assert out["executive_summary"] == _brief(det)
         assert out["summary_source"] == "deterministic_fallback"
         assert any("the risk register has" in w for w in out["summary_validation_warnings"])
 
     def test_low_confidence_finding_keeps_the_llm_text(self, det) -> None:
         llm = "Aurora MySQL keeps the orders table hot."  # one-word stem: warning only
-        out = apply_synthesis_llm_output(det, {"executive_summary": llm})
-        assert out["executive_summary"] == llm
+        out = apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
+        assert out["executive_summary"] == _structured(det, llm)
         assert out["summary_source"] == "llm"
         assert out["summary_validation_warnings"][0].startswith("[low confidence]")
 
@@ -337,7 +351,9 @@ class TestFinalize:
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
             return_value=ExecutiveSummaryResponse(
-                executive_summary="Aurora MySQL serves the shop.orders table for every order lookup."
+                executive_summary=_structured(
+                    det, "Aurora MySQL serves the shop.orders table for every order lookup."
+                )
             ),
         ):
             run_synthesis(JOB, DB, store, assignment_version=2, llm_mode="bedrock")
@@ -349,13 +365,13 @@ class TestFinalize:
 
     def test_report_keeps_llm_text_for_audit(self, det) -> None:
         llm = "Aurora MySQL serves the shop.orders table."
-        apply_synthesis_llm_output(det, {"executive_summary": llm})
+        apply_synthesis_llm_output(det, {"executive_summary": _structured(det, llm)})
         store = det["_store"]
         _write_synthesis_report(store, det, 2)
         report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
-        assert report["summary"] == build_fallback_summary(det["effective_architecture"])
+        assert report["summary"] == _brief(det)
         assert report["summary_deterministic"] == det["summary"]
-        assert report["summary_llm"] == llm
+        assert report["summary_llm"] == _structured(det, llm)
         assert report["summary_source"] == "deterministic_fallback"
         assert report["summary_validation_warnings"]
 
@@ -414,6 +430,7 @@ def test_finalize_script_reports_the_post_check(
 
     from scripts import run_synthesis
 
+    summary = _structured(det, summary)
     det["_store"].write_json(
         f"{DB}/{JOB}/synthesis/v2/llm_response.json", {"executive_summary": summary}
     )
@@ -537,13 +554,15 @@ class TestFallbackSummary:
 def test_the_md_notes_the_withheld_narrative(det) -> None:
     from tests.executive_pdf import engineering_text
 
-    apply_synthesis_llm_output(det, {"executive_summary": "Aurora MySQL serves shop.orders."})
+    apply_synthesis_llm_output(
+        det, {"executive_summary": _structured(det, "Aurora MySQL serves shop.orders.")}
+    )
     store = det["_store"]
     _write_synthesis_report(store, det, 2)
     report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
     text = engineering_text(report, trust_generated_summary=True)
     assert "named a table under an engine that does not serve it" in text
-    assert "The target architecture combines" in text
+    assert "Recommendation: move the shop database" in text
 
     report["summary_source"] = "llm"
     assert "named a table under an engine" not in engineering_text(

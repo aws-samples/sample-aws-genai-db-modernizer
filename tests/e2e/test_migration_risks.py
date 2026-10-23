@@ -318,7 +318,9 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     sentence = f"{n} open migration risks (overall: HIGH)"
     assert sentence in data["summary"]
     fresh_n = len(report["risk_assessment"]["risks"])
-    assert f"{fresh_n} open migration risks (overall: HIGH)" in report["summary"]
+    assert f"{fresh_n} open migration risks (overall: HIGH)" in report["summary_deterministic"]
+    # #1403: a new report's executive summary states the same level.
+    assert "Risk: overall risk is high." in report["summary"]
     md = again.deliverable("engineering-report.md").read_text(encoding="utf-8")
     assert md_text(sentence) in md and "overall: MEDIUM" not in md
     for r in backfilled:

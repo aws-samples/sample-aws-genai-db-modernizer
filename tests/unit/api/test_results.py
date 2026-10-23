@@ -1,5 +1,6 @@
 """Unit tests for results routes."""
 
+import copy
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -408,6 +409,20 @@ class TestGetSchemaDesigns:
 
 class TestResultsPageWording:
     """#996: wording the retired HTML report showed, now carried by the /results payload."""
+
+    def test_the_summary_is_the_engineering_reports(self, mock_services):
+        """#1403: the results page shows the summary the engineering report shows, one
+        paragraph per part, worded from the report's facts."""
+        from src.report.engineering_report import summary_paragraphs
+        from tests.unit.report.test_executive_summary_paragraphs import _report
+
+        report = _report()
+        expected, _ = summary_paragraphs(copy.deepcopy(report))
+        mock_services["s3"].read_synthesis.return_value = report
+        mock_services["s3"].read_triage.return_value = None
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["synthesis"]["summary"] == "\n\n".join(expected)
+        assert body["synthesis"]["summary"].startswith("Recommendation: ")
 
     def test_older_summary_names_other_targets_by_display_name(self, mock_services):
         text = (

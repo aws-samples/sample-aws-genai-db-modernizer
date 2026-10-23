@@ -513,6 +513,13 @@ Version History:
 - 1.59 (2026-10-24, #1373): Added optional ``routed_pinned_queries`` on a ranking entry
   and ``pinned`` on a query trace (#1373): pins are left out of the mean fit and shown
   as 'pinned (utility)'.
+- 1.60 (2026-10-24, #1403): Added optional ``facts.executive_brief``
+  (``ExecutiveBriefFacts``): the source engine, whether a current cost was collected,
+  what each wave does, the overall risk level, the one or two open risks driving it, the
+  wave to approve, the whole-dollar figures the summary states (projected cost, source
+  cost, retired savings) and each engine's share of all queries when some have no engine
+  in the scope, so the executive summary leads with the recommendation, the risk and the
+  decision from facts. Backward compatible: None for an older report.
 """
 
 from datetime import datetime
@@ -1909,6 +1916,98 @@ class RelationalGapFacts(BaseModel):
     )
 
 
+class BriefExposure(BaseModel):
+    """One open risk the executive summary names as driving the overall risk (#1403)."""
+
+    risk_id: str | None = Field(None, description="The risk register entry it is")
+    severity: str = Field(..., description="CRITICAL, HIGH, MEDIUM, LOW or UNRATED")
+    risk_type: str | None = Field(None)
+    rule: str | None = Field(None, description="The migration-risk rule that raised it, if any")
+    engine: str | None = Field(None, description="The engine it is raised for")
+    wave: int | None = Field(None, ge=0, description="The wave to act before; None if none")
+
+
+class BriefWave(BaseModel):
+    """What one wave does, as the executive summary's recommendation words it (#1403)."""
+
+    wave: int = Field(..., ge=0)
+    engines: list[str] = Field(default_factory=list)
+    kind: Literal[
+        "homogeneous", "cross_engine", "heterogeneous", "cache", "migration", "read_model"
+    ] = Field(
+        ...,
+        description=(
+            "Wave 1's homogeneity (homogeneous, cross_engine, heterogeneous), a cache wave, "
+            "a migration wave (moves tables off Aurora) or a read-model wave"
+        ),
+    )
+
+
+class ExecutiveBriefFacts(BaseModel):
+    """What the executive summary states beyond the headline figures (#1403).
+
+    Built by ``src.shared.report_facts.executive_brief_facts``: the summary leads with
+    the recommendation (engines, query shares, wave order, projected cost with its price
+    basis), the risk (the overall level and the one or two exposures driving it) and the
+    decision (the wave to approve next). Its cost, shares and price basis are the facts'
+    own fields; this block adds the rest.
+    """
+
+    projected_monthly_cost_whole_usd: int = Field(
+        0,
+        ge=0,
+        description=(
+            "projected_monthly_cost_usd rounded half up to the nearest dollar: the figure "
+            "the executive summary states ($505); cost tables keep the cents"
+        ),
+    )
+    source_engine: str | None = Field(None, description="The source engine the plan moves off")
+    source_cost_known: bool = Field(
+        False, description="Whether a current cost was collected for the source database"
+    )
+    source_monthly_cost_usd: float | None = Field(
+        None, description="The source's estimated monthly cost; None when not collected"
+    )
+    source_monthly_cost_whole_usd: int | None = Field(
+        None, ge=0, description="source_monthly_cost_usd rounded half up, as the summary states it"
+    )
+    savings_percent: float | None = Field(
+        None, description="The saving against it; None when no current cost was collected"
+    )
+    saving_counted: bool = Field(
+        False,
+        description=(
+            "Whether a deliverable states any saving: a known current cost, or a retired "
+            "engine the customer runs today with a counted saving. False: claim none"
+        ),
+    )
+    retired_saving_whole_usd: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Each retired engine the customer runs today with a counted saving, that saving "
+            "rounded half up to whole dollars, as the summary states it"
+        ),
+    )
+    waves: list[BriefWave] = Field(default_factory=list)
+    share_of_all_queries_percent: dict[str, float] = Field(
+        default_factory=dict,
+        description=(
+            "With queries no engine in the customer's engine scope serves (#1329): each owner "
+            "engine's share of every collected query, which the summary states instead of "
+            "its workload share. Empty when every query has an engine"
+        ),
+    )
+    overall_risk_level: str = Field(
+        "LOW", description="The highest open severity (CRITICAL, HIGH, MEDIUM, LOW)"
+    )
+    exposures: list[BriefExposure] = Field(
+        default_factory=list, description="The one or two open risks driving the level"
+    )
+    decision_wave: int | None = Field(
+        None, ge=0, description="The wave the reader is asked to approve next"
+    )
+
+
 class ReportFacts(BaseModel):
     """Every customer-facing figure, computed once at synthesis (#615, ADR-032).
 
@@ -2114,6 +2213,14 @@ class ReportFacts(BaseModel):
             "(#1196); None for a report written before it"
         ),
     )
+    executive_brief: ExecutiveBriefFacts | None = Field(
+        None,
+        description=(
+            "What the executive summary states beyond the headline figures: the risk "
+            "level and its drivers, the wave to approve (#1403); None for a report "
+            "written before it"
+        ),
+    )
 
 
 class CappedList(BaseModel):
@@ -2158,7 +2265,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.59",
+        default="1.60",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

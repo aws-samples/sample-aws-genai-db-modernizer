@@ -1908,8 +1908,10 @@ const AnalysisResultsPage = memo(() => {
                 the database name; a cost tile with no figure is left out. */}
             <Container id="executive-summary-section" header={<Header variant="h2">{t('analysis-results.executive-summary.title')}</Header>}>
               <SpaceBetween size="m">
-                <Box variant="p" fontSize="body-m">
-                  {synthesis?.summary ? <ProseText text={synthesis.summary} /> : 'No summary available.'}
+                {/* #1403: one paragraph per part (recommendation, risk, decision), as
+                    the engineering report prints them. */}
+                <Box variant="div" fontSize="body-m">
+                  {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
                 </Box>
                 {summaryFallback.isFallback && (
                   <SummaryFallbackNotice

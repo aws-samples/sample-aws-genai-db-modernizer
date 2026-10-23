@@ -153,9 +153,11 @@ def test_a_declared_and_retired_engine_has_its_own_statement_everywhere(
     assert retired["opensearch"]["monthly_cost_usd"] is None
     assert report["considered_not_recommended"] == []
     summary = report["summary"]
+    # #1403: the executive summary states the saving in whole dollars; the PDF and the
+    # engineering report keep the cents.
+    assert report["facts"]["executive_brief"]["retired_saving_whole_usd"] == {"documentdb": 307}
     assert (
-        "Retired by this plan: DocumentDB (runs today), $307.03/mo; OpenSearch (runs today)"
-        in summary
+        "Retired by this plan: DocumentDB (runs today), $307/mo; OpenSearch (runs today)" in summary
     )
     assert "Other targets evaluated" not in summary
     texts = _texts(both_in_use_run)

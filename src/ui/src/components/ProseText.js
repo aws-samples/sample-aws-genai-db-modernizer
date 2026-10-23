@@ -17,6 +17,10 @@ export function proseNodes(text) {
     .filter((node) => node !== '');
 }
 
-export default function ProseText({ text }) {
-  return <>{proseNodes(text)}</>;
+// ``paragraphs`` (#1403): one <p> per line of ``text``, for prose written as
+// paragraphs (the executive summary's recommendation, risk and decision).
+export default function ProseText({ text, paragraphs = false }) {
+  if (!paragraphs) return <>{proseNodes(text)}</>;
+  const parts = String(text ?? '').split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  return <>{parts.map((p, i) => <p key={i}>{proseNodes(p)}</p>)}</>;
 }

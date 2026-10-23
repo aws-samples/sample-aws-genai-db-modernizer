@@ -183,7 +183,9 @@ def test_every_deliverable_source_carries_the_same_choice(trailgear_run: Pipelin
     assert wave1["homogeneity"] == "cross_engine"
     assert "15.0.4322.2" in wave1["rationale"]
     assert "Microsoft" not in wave1["rationale"]
-    assert "has no Aurora engine of its own dialect" in report["summary"]
+    assert "has no Aurora engine of its own dialect" in report["summary_deterministic"]
+    # #1403: the executive summary states the conversion to the chosen engine.
+    assert "Wave 1 converts it to Aurora PostgreSQL" in report["summary"]
     # #920 catalog PR C: recursive CTEs no longer tip the choice (MySQL 8.0 has them).
     sentence = (
         "Aurora MySQL scored {aurora_mysql:.1f} and Aurora PostgreSQL {aurora_postgresql:.1f} "

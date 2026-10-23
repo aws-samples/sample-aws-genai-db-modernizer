@@ -36,7 +36,7 @@ All of them are rendered from one `report.json` by `src/report`, so a changed fa
 `/modernize` links each job's results page at the end of the run (`http://localhost:3000/analysis/results/<job_id>`). It leads with the headline and keeps the detail one click away. From the top:
 
 1. **Three download buttons** for the files above: Executive Summary (`executive-report.pdf`), Engineering Report (`engineering-report.md`) and Assessment Detail (`assessment-data.json`).
-2. **Executive summary**: the recommendation, the number of queries, the current and projected cost and the saving.
+2. **Executive summary**: three short paragraphs, the same text the engineering report opens with. **Recommendation** names the target services, the share of queries each takes, the wave order and the projected monthly cost with its price basis (with no current cost collected for the source, it says so and claims no saving); **Risk** gives the overall risk level and the one or two risks driving it, with the wave to act before; **Decision** says what to approve next (normally wave 1) and why it is safe. Below it: the number of queries, the current and projected cost and the saving.
 3. **Query flow**: a Sankey diagram of the queries from the source to their engines.
 4. **Cost breakdown**: the projected monthly cost per engine.
 5. **Migration roadmap**: the waves, each with its gate; a table list in a gate opens in place.

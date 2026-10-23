@@ -22740,6 +22740,296 @@
                     "kind": "array"
                   }
                 },
+                "executive_brief": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "decision_wave": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "exposures": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "engine": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "risk_id": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "risk_type": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "rule": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "severity": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "wave": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "anyOf",
+                                      "members": [
+                                        {
+                                          "kind": "scalar",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        {
+                                          "kind": "scalar",
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "overall_risk_level": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "projected_monthly_cost_whole_usd": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "retired_saving_whole_usd": {
+                            "required": false,
+                            "schema": {
+                              "additional": {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              "kind": "object"
+                            }
+                          },
+                          "saving_counted": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "boolean"
+                            }
+                          },
+                          "savings_percent": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          },
+                          "share_of_all_queries_percent": {
+                            "required": false,
+                            "schema": {
+                              "additional": {
+                                "kind": "scalar",
+                                "type": "number"
+                              },
+                              "kind": "object"
+                            }
+                          },
+                          "source_cost_known": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "boolean"
+                            }
+                          },
+                          "source_engine": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "source_monthly_cost_usd": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          },
+                          "source_monthly_cost_whole_usd": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "waves": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "engines": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "kind": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "enum",
+                                      "values": [
+                                        "cache",
+                                        "cross_engine",
+                                        "heterogeneous",
+                                        "homogeneous",
+                                        "migration",
+                                        "read_model"
+                                      ]
+                                    }
+                                  },
+                                  "wave": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "in_scope_query_count": {
                   "required": false,
                   "schema": {
@@ -28826,8 +29116,8 @@
         }
       }
     },
-    "schema_hash": "052bbbe78b7e0e2ab92694f7dd52e760dbc40ccfef65b9302d9e318206e3a09e",
-    "version": "1.59"
+    "schema_hash": "81db8b315be70192fe110ce3ee1fe9d1bf0a7dc6959a2dfe8705026181909fb3",
+    "version": "1.60"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

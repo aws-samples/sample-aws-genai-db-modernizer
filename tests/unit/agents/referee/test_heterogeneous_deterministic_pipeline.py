@@ -121,8 +121,13 @@ class TestAdventureWorksSynthesisContract:
         _, report, _ = pipeline_report
         assert (
             "The source SQL Server database has no Aurora engine of its own dialect"
-            in report["summary"]
+            in report["summary_deterministic"]
         )
+        # #1403: the executive summary states the conversion in its recommendation and
+        # in why wave 1 is safe to approve.
+        assert "SQL Server database to" in report["summary"]
+        assert "Wave 1 converts it to Aurora" in report["summary"]
+        assert "converts the SQL dialect and data types from SQL Server" in report["summary"]
 
 
 class TestAdventureWorksDeliverablesRender:

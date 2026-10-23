@@ -413,6 +413,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _BUDGET,
     ),
     "src/shared/query_trace.py": (frozenset({"_PLACES", "EXCERPT_CHARS"}), _BUDGET),
+    "src/shared/executive_brief.py": (
+        frozenset({"SUMMARY_WORD_BUDGET"}),
+        "the executive summary's length budget (#1403), a wording limit, not a routing rule",
+    ),
     "src/shared/report_facts.py": (
         frozenset(
             {
@@ -423,6 +427,7 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
                 "UNSERVABLE_SHOWN",
                 "REPLICA_READS_NAMED",
                 "TABLE_SOURCES_SHOWN",
+                "BRIEF_EXPOSURE_LIMIT",
             }
         ),
         _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",

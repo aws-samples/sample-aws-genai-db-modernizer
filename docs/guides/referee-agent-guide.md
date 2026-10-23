@@ -223,7 +223,13 @@ from the assignment; `src/agents/referee/synthesis_grounding.py` checks that
 any LLM-written summary text is actually grounded in those deterministic
 numbers before accepting it (falling back to a deterministic summary if
 not). With `--llm-mode none`, synthesis keeps the deterministic executive
-summary. The executive summary is one decision in both LLM modes: Bedrock
+summary. Both follow the same three parts, worded from the report's `facts`
+(`src/shared/executive_brief.py`, #1403): the recommendation (engines, query
+shares, wave order, projected cost and its price basis), the risk (the overall
+level and the risks driving it) and the decision (the wave to approve and why
+it is safe); `check_summary_brief` rejects a model summary that leaves out the
+cost, the risk level or the decision, claims a saving with no source cost, or
+runs over the word budget. The executive summary is one decision in both LLM modes: Bedrock
 (`generate_executive_summary`) reasons over exactly the
 `prepare_synthesis_llm_input` payload that `/synthesize` hands Claude Code,
 both read the instruction in `src/skills/executive-summary.md`, and both

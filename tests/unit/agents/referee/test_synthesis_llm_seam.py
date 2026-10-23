@@ -23,6 +23,7 @@ from src.agents.referee.synthesis_handler import (
 )
 from src.agents.referee.synthesis_report import build_risk_assessment
 from src.contracts.executive_summary_response import ExecutiveSummaryResponse
+from src.shared.executive_brief import executive_brief_text
 from src.storage.artifact_store import ArtifactStore
 
 # ---------------------------------------------------------------------------
@@ -202,6 +203,14 @@ def _mock_store(
 # ---------------------------------------------------------------------------
 
 
+def _structured_summary(det: dict, lead: str = "") -> str:
+    """A model summary that keeps the executive structure (#1403): the deterministic
+    one's three parts, worded a little differently, so every check accepts it."""
+    text = executive_brief_text(det["facts"], det["database_name"])
+    assert text
+    return (lead + " " if lead else "") + text.replace(" against it.", ".")
+
+
 class TestRunSynthesisDeterministicProducesFullReport:
     """run_synthesis_deterministic must return a complete report dict without calling any LLM."""
 
@@ -291,11 +300,14 @@ class TestRunSynthesisDeterministicProducesFullReport:
         assert isinstance(result["summary"], str)
         assert len(result["summary"]) > 0
 
-    def test_executive_summary_equals_deterministic_summary(self):
-        """executive_summary must default to the deterministic summary (no LLM)."""
+    def test_executive_summary_is_the_facts_brief(self):
+        """executive_summary defaults to the deterministic one (no LLM): the facts'
+        recommendation, risk and decision (#1403); ``summary`` keeps the engineering note."""
         store = _mock_store()
         result = run_synthesis_deterministic("job-1", "mydb", store)
-        assert result["executive_summary"] == result["summary"]
+        assert result["executive_summary"] == executive_brief_text(result["facts"], "mydb")
+        assert result["executive_summary"].startswith("Recommendation: ")
+        assert result["executive_summary"] != result["summary"]
 
     def test_trade_offs_is_list(self):
         store = _mock_store()
@@ -452,14 +464,14 @@ class TestPrepareSynthesisLlmInputHasCorrectKeys:
         assert set(status) == {"case", "designed", "not_designed"}
         assert status["case"] in {"all_designed", "some_designed", "none_designed"}
 
-    def test_exactly_eleven_keys(self):
+    def test_exactly_twelve_keys(self):
         payload = prepare_synthesis_llm_input(self._det())
-        assert len(payload) == 11
+        assert len(payload) == 12
 
     def test_deterministic_summary_matches_result(self):
         det = self._det()
         payload = prepare_synthesis_llm_input(det)
-        assert payload["deterministic_summary"] == det["summary"]
+        assert payload["deterministic_summary"] == det["executive_summary"]
 
     def test_ranking_matches_result(self):
         det = self._det()
@@ -580,14 +592,14 @@ class TestApplySynthesisLlmOutput:
 
     def test_executive_summary_set_from_llm_output(self):
         det = self._det()
-        new_summary = "DynamoDB is the clear fit for this workload."
+        new_summary = _structured_summary(det)
         result = apply_synthesis_llm_output(det, {"executive_summary": new_summary})
         assert result["executive_summary"] == new_summary
 
     def test_executive_summary_replaces_deterministic_fallback(self):
         det = self._det()
         original_summary = det["summary"]
-        llm_summary = "Our analysis points squarely at DynamoDB."
+        llm_summary = _structured_summary(det, "Our analysis points squarely at DynamoDB.")
         result = apply_synthesis_llm_output(det, {"executive_summary": llm_summary})
         # summary (deterministic) is unchanged; only executive_summary changes
         assert result["summary"] == original_summary
@@ -669,7 +681,9 @@ class TestRunSynthesisBackwardCompatible:
         run_synthesis("job-1", "mydb", store, llm_mode="none")
         output_key = next(k for k in store._written if "report.json" in k)
         output = store._written[output_key]
-        assert output["summary"] == output["summary_deterministic"]
+        # #1403: the facts' three parts; summary_deterministic keeps the engineering note.
+        assert output["summary"] == executive_brief_text(output["facts"], "mydb")
+        assert output["summary_source"] == "deterministic"
 
     def test_llm_mode_external_writes_llm_input(self):
         """llm_mode='external' must write llm_input.json."""
@@ -725,14 +739,17 @@ class TestRunSynthesisBackwardCompatible:
     def test_llm_mode_bedrock_summary_set_in_report(self):
         """The report written with bedrock mode uses the LLM-generated summary."""
         store = _mock_store()
+        text = _structured_summary(
+            run_synthesis_deterministic("job-1", "mydb", _mock_store()), "CTO-ready summary."
+        )
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value=ExecutiveSummaryResponse(executive_summary="CTO-ready summary from LLM."),
+            return_value=ExecutiveSummaryResponse(executive_summary=text),
         ):
             run_synthesis("job-1", "mydb", store, llm_mode="bedrock")
         output_key = next(k for k in store._written if "report.json" in k)
         output = store._written[output_key]
-        assert output["summary"] == "CTO-ready summary from LLM."
+        assert output["summary"] == text
 
     def test_versioned_report_key_with_assignment_version(self):
         """When assignment_version > 0 the report is written under synthesis/vN/."""

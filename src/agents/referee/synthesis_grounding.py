@@ -957,6 +957,7 @@ _INTERNAL_FIELD_NAMES = (
     "migration_waves",
     "assignment_summary",
     "effective_architecture",
+    "executive_brief",
     "input_budget",
     # The ``<field>_total`` keys a budget cut adds next to a cut list (#762).
     *TOTAL_FIELD_NAMES,

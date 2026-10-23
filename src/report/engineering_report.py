@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.engine_names import display_engine
+from src.shared.executive_brief import executive_brief_text
 from src.shared.report_facts import CACHE_LAYER
 from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
@@ -131,12 +132,37 @@ def summary_paragraphs(
     generated one was withheld (None when nothing was). ``/modernize``'s printed summary
     (#1307) reads the same function, so the two cannot differ."""
     trust = summary_trusted(report) if trust is None else trust
+    brief = brief_summary(report)
+    if brief is not None:
+        # #1403: the deterministic summary is the facts' recommendation, risk and
+        # decision, so it is shown whether or not a schema design ran; only a generated
+        # one with no schema design behind it is withheld, for the same text.
+        # A deterministic one is worded again from the facts the report holds now, so a
+        # risk a report-only rule backfilled (#1148) is in its level too.
+        generated = report.get("summary_source") == "llm"
+        summary = (report.get("summary") if trust and generated else None) or brief
+        note = WITHHELD_UNTRUSTED_NOTE if generated and not trust else None
+        if report.get("summary_source") == "deterministic_fallback":
+            note = _withheld_note(report, True, summary)
+        return _paragraphs(summary), note
     summary = report.get("summary") if trust else report.get("summary_deterministic")
     summary = summary or report.get("summary_deterministic")
     if summary and summary == report.get("summary_deterministic"):
         summary = label_summary_counts(summary, report)
-    paragraphs = [c.strip() for c in str(summary or "").strip().split("\n") if c.strip()]
-    return paragraphs, _withheld_note(report, trust, summary)
+    return _paragraphs(summary), _withheld_note(report, trust, summary)
+
+
+def _paragraphs(summary: Any) -> list[str]:
+    return [c.strip() for c in str(summary or "").strip().split("\n") if c.strip()]
+
+
+def brief_summary(report: dict[str, Any]) -> str | None:
+    """The deterministic executive summary (#1403), worded from the stored
+    ``facts.executive_brief``; None for a report written before it."""
+    facts = report.get("facts")
+    if not isinstance(facts, dict):
+        return None
+    return executive_brief_text(facts, str(report.get("database_name") or ""))
 
 
 def _summary_md(report: dict[str, Any], trust: bool) -> list[str]:
