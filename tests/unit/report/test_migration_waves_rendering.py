@@ -469,3 +469,31 @@ class TestJudgeFactsPassthrough:
         rep = _legacy_report()
         facts = judge_facts.build_facts(rep)
         assert facts["migration_waves"] == judge_facts.MIGRATION_WAVES_ABSENT
+
+
+def test_a_wave_one_that_moves_nothing_shows_no_engines_or_table_count() -> None:
+    """#1383: no empty Engines line, no carried-table count, in the engineering report."""
+    from src.agents.referee.migration_waves import build_migration_waves
+
+    waves = build_migration_waves(
+        ranking=[{"target": "dynamodb", "assigned_queries": 1, "workload_percent": 100.0}],
+        table_assignments=[{"table_id": "app.orders", "primary_engine": "dynamodb"}],
+        query_assignments=[
+            {"query_id": "r1", "assigned_engine": "dynamodb", "source_tables": ["app.orders"]}
+        ],
+        co_dependency_groups=[],
+        cache_overlay=None,
+        source_engine="mysql",
+        source_version="8.0.45",
+        known_tables={"app.orders", "app.users"},
+        engine_scope=["dynamodb"],
+    )
+    report = _report_with_waves()
+    report["migration_waves"] = waves
+    md = render_engineering_report_md(report)
+    wave_one = md.split("### Wave 1:")[1].split("### Wave 2:")[0]
+    assert "No move to Aurora" in wave_one
+    assert "- Engines:" not in wave_one
+    assert "source table" not in wave_one
+    assert "queries (0.0%" not in wave_one
+    assert "- Engines: DynamoDB" in md.split("### Wave 2:")[1]

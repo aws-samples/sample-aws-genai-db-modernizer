@@ -523,6 +523,8 @@ Version History:
 - 1.61 (2026-10-24, #1252): Added optional facts.cache_layer (CacheLayerFacts): the
   cache layer's cache candidates, designed cached reads and the candidates that stay on
   their owner engine
+- 1.62 (2026-10-24, #1383): Added MigrationWave.no_move_reason and WaveFacts.no_move: a
+  wave 1 that moves nothing reads as no step
 """
 
 from datetime import datetime
@@ -995,6 +997,18 @@ class MigrationWave(BaseModel):
             "written before this field existed"
         ),
     )
+    no_move_reason: Literal["no_relational_in_scope", "scope_choice_serves_nothing"] | None = Field(
+        None,
+        description=(
+            "Wave 1 only (#1383): set when the wave moves nothing to Aurora, because the "
+            "customer's engine scope has no Aurora engine ('no_relational_in_scope') or its "
+            "Aurora engine serves no query ('scope_choice_serves_nothing', #1369). The wave "
+            "moves nothing and names no engine; table_count and tables still hold the "
+            "collected schema, but the renderers hide the wave's engine line, table count "
+            "and tables, and no latency step follows it. None for every other wave, and "
+            "for a wave written before this field existed"
+        ),
+    )
     tables: list[str] = Field(default_factory=list, description="Source tables this wave covers")
     table_count: int = Field(
         ...,
@@ -1166,6 +1180,14 @@ class WaveFacts(BaseModel):
         description=(
             "Moves tables off Aurora to a purpose-built engine (counts towards Tables "
             "migrate); wave 1, the cache and read-model waves do not"
+        ),
+    )
+    no_move: bool = Field(
+        False,
+        description=(
+            "The wave moves nothing to Aurora (its no_move_reason is set, #1383): renderers "
+            "show no engine line or table count for it. False for a report written before "
+            "this field existed"
         ),
     )
     served_tables: int = Field(..., ge=0, description="The wave's table_count")
@@ -2297,7 +2319,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.61",
+        default="1.62",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

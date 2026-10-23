@@ -42,6 +42,7 @@ from src.agents.referee.synthesis_grounding import (
     build_fallback_summary,
     check_summary_grounding,
     check_summary_internal_leaks,
+    check_summary_no_move_wave,
     check_summary_risk_counts,
     check_summary_style,
     check_summary_wave_order,
@@ -857,6 +858,10 @@ def apply_synthesis_llm_output(
     # is always high-confidence, the same way the wave order itself is never a model's
     # choice (``prepare_synthesis_llm_input``'s own docstring).
     findings = findings + check_summary_wave_order(
+        summary_text, deterministic_result.get("migration_waves")
+    )
+    # #1383: a homogeneous source is never heterogeneous when wave 1 moves nothing.
+    findings = findings + check_summary_no_move_wave(
         summary_text, deterministic_result.get("migration_waves")
     )
     # #536: a fourth, independent check -- a stated risk count or severity

@@ -33,6 +33,7 @@ A summary that breaks any of these is rejected at finalize, and the report shows
 - Never name an internal field name of the input: `tco_analysis`, `cost_breakdown`, `table_mappings`, `risk_assessment`, `query_groups`, `schema_designs`, `recommended_architecture`, `migration_waves`, `assignment_summary`, `effective_architecture`, `executive_brief`, `input_budget`, or a `_total` field a shortened list carries (`tables_total`, `affected_tables_total`, `table_owners_total`, `table_groups_total`, `source_tables_total`, `target_tables_total`, `recommended_engine_by_table_total`, `trade_offs_total`).
 - A risk count or severity you state must match the risks in the input (open risks and resolved risks counted separately). When the input lists only some risks, do not state a total.
 - A migration order you state must match the input's migration waves.
+- A migration wave marked `no_move` moves nothing to Aurora. Do not describe it as a migration step, and do not call the source database heterogeneous because of it.
 - Use the deterministic summary in the input for factual grounding.
 
 ## Structure

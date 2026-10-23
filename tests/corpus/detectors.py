@@ -346,6 +346,8 @@ _WAVES = [
     {"wave": 2, "engines": ["opensearch"]},
 ]
 _RISKS = {"risks": [{"severity": "high"}]}
+# A homogeneous MySQL source whose wave 1 moves nothing (#1383).
+_NO_MOVE_WAVES = [{"wave": 1, "no_move_reason": "no_aurora_move", "moves_from": ["mysql"]}]
 _ENGINE_TABLES = {"aurora_postgresql": ["db.wp_postmeta"], "elasticache": ["db.wp_options"]}
 
 
@@ -499,6 +501,18 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "quoted_engine_id": False,
             # "There are 9 high risks." against one high risk.
             "risk_and_wave_claims": True,
+            "negated_attribution": False,
+        },
+    ),
+    ProseDetector(
+        f"{_GROUNDING}:check_summary_no_move_wave",
+        lambda text: _flagged(synthesis_grounding.check_summary_no_move_wave(text, _NO_MOVE_WAVES)),
+        expect={
+            "negation": False,
+            "numeric_ranges": False,
+            "identifier_colon": False,
+            "quoted_engine_id": False,
+            "risk_and_wave_claims": False,
             "negated_attribution": False,
         },
     ),

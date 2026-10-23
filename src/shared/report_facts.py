@@ -309,6 +309,7 @@ def wave_facts(wave: dict[str, Any], view_ids: Iterable[str] | None = None) -> d
         "wave": int(wave.get("wave") or 0),
         "engines": engines,
         "migrating": is_migrating_wave(wave),
+        "no_move": bool(wave.get("no_move_reason")),
         "served_tables": served,
         "moving_tables": None,
         "kept_in_sync_tables": None,

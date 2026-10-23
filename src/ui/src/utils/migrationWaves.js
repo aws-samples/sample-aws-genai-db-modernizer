@@ -82,7 +82,15 @@ function tablePhrase(t, synthesis, wave) {
 // 50 source tables and views", "20 queries (83.4% of calls)",
 // "1 query (0.9% of query patterns), 4 source tables: 3 to move, 1 kept in sync from its owner".
 export function waveHeadline(t, synthesis, wave) {
+  // #1383: a wave that moves nothing states no query share and no carried-table count.
+  if (waveMovesNothing(synthesis, wave)) return '';
   return countPhrase(t, wave) + tablePhrase(t, synthesis, wave);
+}
+
+// #1383: facts.waves[].no_move, read as stored (a report from before it has none).
+export function waveMovesNothing(synthesis, wave) {
+  const wf = waveFacts(synthesis, wave);
+  return Boolean(wf && wf.no_move);
 }
 
 export function waveTitle(wave) {

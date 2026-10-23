@@ -1273,6 +1273,43 @@ def check_summary_wave_order(summary: str, migration_waves: list[dict] | None) -
     return findings
 
 
+_HETEROGENEOUS = re.compile(r"\bheterogeneous\b", re.IGNORECASE)
+
+
+def check_summary_no_move_wave(summary: str, migration_waves: list[dict] | None) -> list[dict]:
+    """Find "heterogeneous" in a summary of a homogeneous source whose wave 1 moves nothing.
+
+    A wave 1 with ``no_move_reason`` (#1383: the engine scope leaves no Aurora move)
+    says nothing about how alike the source and any Aurora engine are. When the source
+    has an Aurora dialect of its own (``moves_from`` names MySQL, MariaDB or PostgreSQL)
+    it is not heterogeneous, so the word is a wrong fact, always high-confidence like the
+    wave order. A source with no Aurora dialect (SQL Server, Oracle) may be called so;
+    no wave 1 mark, no finding. The match is the bare word, so it fails safe: even
+    "not a heterogeneous migration" is rejected and the deterministic summary is used.
+    Findings are shaped like :func:`check_summary_grounding`'s.
+    """
+    from src.shared import catalog
+
+    if not summary or not migration_waves:
+        return []
+    wave_one = next((w for w in migration_waves if w.get("no_move_reason")), None)
+    sources = [str(e) for e in (wave_one or {}).get("moves_from") or []]
+    if not sources or not all(e in catalog.source_engine_dialects() for e in sources):
+        return []
+    if not _HETEROGENEOUS.search(summary):
+        return []
+    return [
+        {
+            "table": None,
+            "high_confidence": True,
+            "message": (
+                f"Summary calls the {display_name(sources[0])} source heterogeneous, but it "
+                "has an Aurora engine of its own and wave 1 moves nothing to Aurora"
+            ),
+        }
+    ]
+
+
 # #536: the executive summary's risk counts and severities must match
 # ``risk_assessment.risks`` (open) or ``resolved_risks`` (resolved). Checked only
 # against a small, fixed set of unambiguous sentence shapes below: matching

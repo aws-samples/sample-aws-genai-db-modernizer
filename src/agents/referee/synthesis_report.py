@@ -2574,6 +2574,9 @@ def build_wave_checks(
     cache_engines |= {str(overlay["engine"])} if overlay.get("engine") else set()
     checks: list[str] = []
     for i, wave in enumerate(waves):
+        if wave.get("no_move_reason"):
+            # #1383: a wave that moves nothing has no latency to compare after it.
+            continue
         gate = f" before starting wave {waves[i + 1]['wave']}" if i + 1 < len(waves) else ""
         label = _wave_label(wave)
         if wave.get("fronts"):

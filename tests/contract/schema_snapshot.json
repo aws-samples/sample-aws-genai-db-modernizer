@@ -25142,6 +25142,13 @@
                             ]
                           }
                         },
+                        "no_move": {
+                          "required": false,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        },
                         "served_by_engine": {
                           "required": false,
                           "schema": {
@@ -25507,6 +25514,25 @@
                         "type": "string"
                       },
                       "kind": "array"
+                    }
+                  },
+                  "no_move_reason": {
+                    "required": false,
+                    "schema": {
+                      "kind": "anyOf",
+                      "members": [
+                        {
+                          "kind": "enum",
+                          "values": [
+                            "no_relational_in_scope",
+                            "scope_choice_serves_nothing"
+                          ]
+                        },
+                        {
+                          "kind": "scalar",
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "owned_counts_by_engine": {
@@ -29200,8 +29226,8 @@
         }
       }
     },
-    "schema_hash": "750f57b7d0e370c4ac6bc35515e969dbc118e0a59b5f62e5be503b8307881139",
-    "version": "1.61"
+    "schema_hash": "fd34e89d30b93bfba67dbe89a768c0b2ad4f71d48ddf2a2d3f978986a43b28e1",
+    "version": "1.62"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

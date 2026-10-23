@@ -6,7 +6,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import EngineBadge from "./EngineBadge";
 import {
-  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveTitle,
+  heterogeneousNote, migrationWaves, waveCount, waveGaps, waveHeadline, waveMovesNothing, waveTitle,
 } from "../utils/migrationWaves";
 
 /**
@@ -143,7 +143,9 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                     <span key={engine} data-engine={engine}><EngineBadge engine={engine} /></span>
                   ))}
                 </SpaceBetween>
-                <div data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</div>
+                {!waveMovesNothing(synthesis, wave) && (
+                  <div data-figure="wave-stats">{waveHeadline(t, synthesis, wave)}</div>
+                )}
                 {wave.rationale && <Box color="text-body-secondary">{wave.rationale}</Box>}
                 {wave.gate && (
                   <div data-figure="wave-gate"><GateText wave={wave} t={t} /></div>
@@ -167,7 +169,7 @@ const MigrationWavePlan = memo(({ synthesis, t }) => {
                     </ul>
                   </div>
                 )}
-                {(wave.tables || []).length > 0 && (
+                {!waveMovesNothing(synthesis, wave) && (wave.tables || []).length > 0 && (
                   <ExpandableSection headerText={t('analysis-results.waves.tables')} variant="footer">
                     <Box fontSize="body-s"><span data-figure="wave-tables">{wave.tables.join(', ')}</span></Box>
                   </ExpandableSection>

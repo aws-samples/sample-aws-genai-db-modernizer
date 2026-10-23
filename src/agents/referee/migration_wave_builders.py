@@ -288,6 +288,7 @@ def _aurora_wave(
         "table_count": len(tables),
         "table_groups": None,
         "homogeneity": homogeneity,
+        "no_move_reason": no_target,
         "query_count": n,
         "workload_share_percent": share,
         "share_basis": "queries",

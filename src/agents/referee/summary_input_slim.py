@@ -40,6 +40,11 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+NO_MOVE_STATEMENT = (
+    "This wave moves nothing to Aurora: the customer's engine scope leaves no Aurora move. "
+    "The source database stays as it is."
+)
+
 RANKING_KEEP = (
     "target",
     "role",
@@ -79,6 +84,11 @@ def slim_summary_input(payload: dict) -> dict:
     for w in out.get("migration_waves") or []:
         for name in WAVE_DROP:
             w.pop(name, None)
+        if w.get("no_move_reason"):
+            # #1383: say plainly that the wave moves nothing and hide the
+            # "heterogeneous" marker, which here only means no Aurora engine was named.
+            w.pop("homogeneity", None)
+            w["no_move"] = NO_MOVE_STATEMENT
 
     risk = out.get("risk_assessment") or {}
     for section in ("risks", "resolved_risks"):

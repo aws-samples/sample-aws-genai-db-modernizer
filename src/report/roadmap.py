@@ -265,10 +265,14 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
         out += [
             f"### Wave {w.get('wave')}: {escaping.md_text(w.get('title') or names)}",
             "",
-            f"- Engines: {escaping.md_text(names)}",
-            f"- {escaping.md_text(count_phrase)}",
         ]
-        tables = w.get("tables") or []
+        if not wf.get("no_move"):
+            # #1383: a wave that moves nothing names no engine and carries no tables.
+            out += [
+                f"- Engines: {escaping.md_text(names)}",
+                f"- {escaping.md_text(count_phrase)}",
+            ]
+        tables = [] if wf.get("no_move") else w.get("tables") or []
         if tables:
             served = int(wf.get("served_tables") or 0)
             # #321 review (finding 4): wave 1 carries the whole collected
@@ -307,7 +311,7 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
                 out.append(
                     f"  - {g_n} {plural_noun(g_n, 'query', 'queries')}{kind}: {g_tables}{more}"
                 )
-        if w.get("moves_from"):
+        if w.get("moves_from") and not wf.get("no_move"):
             out.append(
                 "- Moves from: "
                 + ", ".join(escaping.md_text(_moves_from_label(e)) for e in w["moves_from"])

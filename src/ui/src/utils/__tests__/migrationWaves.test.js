@@ -9,7 +9,7 @@
 import { createInstance } from 'i18next';
 import en from '../../locales/en.json';
 import fixture from './fixtures/waveHeadlines.json';
-import { formatShare, migrationWaves, waveCount, waveHeadline } from '../migrationWaves';
+import { formatShare, migrationWaves, waveCount, waveHeadline, waveMovesNothing } from '../migrationWaves';
 
 let t;
 
@@ -73,4 +73,18 @@ test('waveCount is the facts layer figure, never a count of the list', () => {
   expect(waveCount({ migration_waves: [{ wave: 1 }], facts: { migration_wave_count: 3 } })).toBe(3);
   expect(waveCount({ migration_waves: [{ wave: 1 }], facts: {} })).toBeNull();
   expect(waveCount({})).toBeNull();
+});
+
+test('a wave that moves nothing states no headline (#1383)', () => {
+  const wave = { wave: 1, title: 'No move to Aurora', engines: [], query_count: 0, workload_share_percent: 0, table_count: 50 };
+  const synthesis = { migration_waves: [wave], facts: { waves: [{ wave: 1, no_move: true, served_tables: 50 }] } };
+  expect(waveMovesNothing(synthesis, wave)).toBe(true);
+  expect(waveHeadline(t, synthesis, wave)).toBe('');
+});
+
+test('a wave without the no_move fact keeps its headline (#1383)', () => {
+  const wave = { wave: 9, engines: ['dynamodb'], query_count: 3, workload_share_percent: 5, table_count: 2 };
+  const synthesis = { migration_waves: [wave], facts: { waves: [{ wave: 9, served_tables: 2 }] } };
+  expect(waveMovesNothing(synthesis, wave)).toBe(false);
+  expect(waveHeadline(t, synthesis, wave)).toBe('3 queries (5% of query patterns), 2 source tables');
 });

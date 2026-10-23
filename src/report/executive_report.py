@@ -1040,10 +1040,14 @@ def _waves(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
         content: list[Flowable] = [
             _para(f"WAVE {n}", st["kicker"]),
             _para(without_table_names(w.get("title"), names) or names_text, st["card_title"]),
-            _para(f"{count_phrase}{table_phrase}", st["body"]),
-            _labelled("Engines", names_text, st["small"]),
         ]
-        if w.get("moves_from"):
+        if not (wf or {}).get("no_move"):
+            # #1383: a wave that moves nothing names no engine and carries no tables.
+            content += [
+                _para(f"{count_phrase}{table_phrase}", st["body"]),
+                _labelled("Engines", names_text, st["small"]),
+            ]
+        if w.get("moves_from") and not (wf or {}).get("no_move"):
             content.append(
                 _labelled(
                     "Moves from",

@@ -307,3 +307,19 @@ test('a gap check for another engine is not listed under wave 1', () => {
   expect(container.querySelector('[data-figure="wave-heterogeneous-note"]').textContent).toBe(NOTE);
   expect(container.querySelector('[data-figure="wave-gap"]')).toBeNull();
 });
+
+test('a wave that moves nothing shows no stats line and no tables section (#1383)', () => {
+  const wave = {
+    wave: 1, title: 'No move to Aurora', engines: [], query_count: 0, workload_share_percent: 0,
+    table_count: 50, tables: ['wp.a', 'wp.b'], gate: 'No Aurora move is planned.',
+  };
+  render({
+    migration_waves: [wave],
+    facts: { waves: [{ wave: 1, no_move: true, served_tables: 50 }], migration_wave_count: 1 },
+  });
+  const card = container.querySelector('[data-wave="1"]');
+  expect(card.textContent).toContain('No move to Aurora');
+  expect(card.querySelector('[data-figure="wave-stats"]')).toBeNull();
+  expect(card.querySelector('[data-figure="wave-tables"]')).toBeNull();
+  expect(card.querySelector('[data-engine]')).toBeNull();
+});

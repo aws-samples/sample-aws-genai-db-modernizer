@@ -38,7 +38,13 @@ def dynamodb_only(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempP
     _script("scripts/run_reality_check.py", *common, "--llm-mode", "none")
     _script("scripts/run_synthesis.py", *common, "--llm-mode", "none")
     report_step = _script("scripts/run_report.py", *common)
+    from pypdf import PdfReader
+
+    pdf = job / "deliverables" / "executive-report.pdf"
     return {
+        "pdf": " ".join(
+            " ".join((page.extract_text() or "").split()) for page in PdfReader(str(pdf)).pages
+        ),
         "report": json.loads((root / report_step["report"]).read_text()),
         "engineering": (job / "deliverables" / "engineering-report.md").read_text(),
     }
@@ -82,3 +88,26 @@ def test_the_gate_is_true_for_the_queries_no_engine_in_the_scope_serves(
     assert f"{unservable} have no engine in the customer's engine scope" in (
         dynamodb_only["engineering"]
     )
+
+
+@pytest.mark.deterministic
+def test_a_wave_that_moves_nothing_shows_no_engines_table_count_or_latency_step(
+    dynamodb_only: dict,
+) -> None:
+    """#1383: wave 1 is marked once in the facts; no deliverable gives it an engine line,
+    a carried-table count or a "compare the latency after wave 1" step."""
+    report = dynamodb_only["report"]
+    assert report["migration_waves"][0]["no_move_reason"] == "no_relational_in_scope"
+    assert report["facts"]["waves"][0]["no_move"] is True
+    assert report["facts"]["waves"][1]["no_move"] is False
+    md = dynamodb_only["engineering"]
+    wave_one = md.split("### Wave 1:")[1].split("### Wave 2:")[0]
+    assert "- Engines:" not in wave_one and "source table" not in wave_one
+    pdf = dynamodb_only["pdf"]
+    card = pdf.split("WAVE 1")[1].split("WAVE 2")[0]
+    assert "Engines" not in card and "source table" not in card
+    assert "Moves from" not in card
+    steps = report["risk_assessment"]["mitigation_strategies"]
+    assert any(m.startswith("After wave 2") for m in steps)
+    for text in (md, pdf, " ".join(steps)):
+        assert "After wave 1" not in text
