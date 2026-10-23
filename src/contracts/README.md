@@ -29,6 +29,7 @@ Pydantic model definitions for all agent contracts in the Database Modernizer As
 | `move_ledger.py` | The move ledger: one `Move` per engine change of a query (pass, rule, scores, runner-up, evidence), carried on `Assignment.moves` (#616) |
 | `schema_design_output.py` | Base class for schema design output (`SchemaDesignOutputBase`) |
 | `synthesis_output.py` | Final synthesis report with weighted rankings |
+| `data_movement_plan.py` | One migration wave's data movement plan: source, capture, hub topics, targets, gates, stacks, cost, unsupported (#1413) |
 | `referee_output.py` | Legacy referee output (pre-split into triage/synthesis) |
 
 ### Engine-Specific Schema Outputs
