@@ -28,6 +28,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `.claude/settings.ci.json` | Permission allowlist for headless runs |
 | `ci/` | CI-agnostic entry points (`lint.sh`, `test.sh`, `e2e.sh`, `e2e-llm.sh`) and the quality judge (`ci/llm/`) |
 | `tests/` | `unit/`, `contract/`, `property/`, `graph/` (gated), `e2e/` (deterministic end-to-end), `integration/` (live stack, not gated) |
+| `contrib/` | Quarantined third-party snapshot (`cdc-elasticache-prototype/`, #1412): never built, imported or tested; ported piece by piece; `tests/unit/test_contrib_quarantine.py` guards it |
 | `benchmarks/` | Assessment quality benchmark: scores pipeline output against reviewed answer keys (ADR-030); how to run it: `benchmarks/README.md` |
 | `docs/examples/` | Sample fixtures: `wordpress/` and `discourse/` |
 | `mkdocs.yml`, `docs/` (minus `exclude_docs`) | Help site sources (`scripts/build_docs_sample.py` renders the sample report into it; `.github/workflows/docs.yml` builds and deploys it) |

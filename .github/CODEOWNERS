@@ -12,3 +12,7 @@
 # on every run (not just the first), so a workflow edit is seen before it
 # ever runs, and merging still needs one approving review either way.
 /.github/workflows/ @tebanieo
+
+# contrib/ holds a quarantined third-party snapshot (#1412), never built,
+# imported or tested; its ElastiCache prototype is reviewed by its domain owner.
+/contrib/ @tebanieo @nfunke

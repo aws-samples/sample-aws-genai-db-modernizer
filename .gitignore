@@ -93,3 +93,6 @@ CLAUDE.local.md
 
 # scripts/start_local_ui.py pid file and server logs
 .local-ui/
+
+# Quarantined prototype snapshot (#1412): its demo env file stays local
+contrib/**/demo.env
