@@ -97,9 +97,7 @@ def test_run_standard_prints_the_safety_net_note_in_the_status_line(tmp_path, ca
     status = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert status["status"] == "complete"
     (note,) = status["cache_safety_net_notes"]
-    assert note.startswith("2 hot reads")
-    assert "assigned at the assignment gate" in note
-    assert "ElastiCache schema design covers 1 of them" in note
+    assert note == "2 cache candidates, 1 designed; it stays on its owner engine."
 
 
 def test_run_finalize_prints_the_safety_net_note_in_the_status_line(tmp_path, capsys):
@@ -116,7 +114,43 @@ def test_run_finalize_prints_the_safety_net_note_in_the_status_line(tmp_path, ca
     status = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert status["status"] == "complete"
     (note,) = status["cache_safety_net_notes"]
-    assert "assigned at the assignment gate" in note
+    assert "2 cache candidates, 1 designed" in note
+
+
+def test_the_gate_still_shows_the_candidates_after_synthesis_drops_some(tmp_path, capsys):
+    """#1252: synthesis rewrites the assignment's cache overlay in place; the gate (print_summary
+    --gate, the assignment page) must keep showing the cache candidates, not the designed count."""
+    from scripts.run_assessment import _CACHE_OVERLAY_FIELDS
+    from src.report.printed_summary import render_gate_block
+    from src.shared.gate_facts import gate_block_facts
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _seed(store)
+    key = f"{DB}/{JOB}/assignment/v2/assignment.json"
+    gate_overlay = {
+        "engine": "elasticache",
+        "query_count": 2,
+        "calls_per_second": 8.0,
+        "call_share_percent": 100.0,
+        "owners": {},
+        "patterns": {},
+        "min_calls_per_second": 1.0,
+        "max_rows_avg": 100.0,
+    }
+    store.write_json(key, {**ASSIGNMENT, "cache_overlay": gate_overlay})
+
+    run_synthesis.run_standard(store, JOB, DB, assignment_version=2, llm_mode="none")
+
+    overlay = store.read_json(key)["cache_overlay"]
+    assert (overlay["query_count"], overlay["candidate_query_count"]) == (1, 2)
+    assert overlay["candidate_call_share_percent"] == 100.0
+    gate = {"cache_overlay": {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}}
+    assert gate_block_facts(gate)["cache_candidates"]["read_count"] == 2
+    text = render_gate_block(gate, database_name=DB, job_id=JOB)
+    assert "has 2 cache candidates (100% of calls)" in text
+    # A second run (the overlay already reduced) never overwrites the stored candidates.
+    run_synthesis.run_standard(store, JOB, DB, assignment_version=2, llm_mode="none")
+    assert store.read_json(key)["cache_overlay"]["candidate_query_count"] == 2
 
 
 def test_no_notes_when_nothing_was_dropped(tmp_path, capsys):

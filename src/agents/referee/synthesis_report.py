@@ -29,7 +29,12 @@ from src.agents.referee.assigned_cost import (
 )
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
-from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, PATTERN_LABELS, overlay_summary
+from src.agents.referee.cache_overlay import (
+    CACHE_OVERLAY_ENGINES,
+    PATTERN_LABELS,
+    candidate_summary,
+    overlay_summary,
+)
 from src.agents.referee.engine_scope import SCOPE_BASIS
 from src.agents.referee.routed_confidence import RoutedFit, routed_fits
 from src.agents.referee.schema_fields import field_list
@@ -374,6 +379,11 @@ def build_cache_overlay(data: SynthesisData) -> dict | None:
     if summary is None and not notes and not dropped:
         return None
     out = dict(summary or {})
+    # #1252: the reads routing put under the cache (the gate's figure), apart from
+    # ``query_count``, the reads the cache's design covers.
+    out["candidate_query_count"], out["candidate_call_share_percent"] = candidate_summary(
+        qas, data.source_queries
+    )
     out["dropped_query_ids"] = dropped
     out["notes"] = notes
     out["safety_net_notes"] = safety_net_notes
@@ -2857,7 +2867,7 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         lead = r.get("routed_lead")
         shape = f", mostly {PATTERN_LABELS.get(lead, lead.replace('_', ' '))}s" if lead else ""
         head = (
-            f"Cache layer for {n} hot {'read' if n == 1 else 'reads'} "
+            f"Cache layer for {n} designed cached {'read' if n == 1 else 'reads'} "
             f"({r.get('cache_call_share_percent', 0)}% of calls){shape}, cache-aside in front "
             f"of {owners}; it owns no queries"
         )
@@ -3273,7 +3283,7 @@ def build_summary(
         for r in cache:
             n = r["cache_overlay_queries"]
             parts.append(
-                f"Cache layer: {display_name(r['target'])} fronts {n} hot "
+                f"Cache layer: {display_name(r['target'])} fronts {n} designed cached "
                 f"{'read' if n == 1 else 'reads'} ({r.get('cache_call_share_percent', 0)}% of "
                 "calls) cache-aside and owns no queries."
             )

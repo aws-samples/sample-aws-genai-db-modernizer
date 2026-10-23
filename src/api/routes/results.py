@@ -83,6 +83,7 @@ async def get_results(job_id: str = Depends(job_id_param)):
         or "resolved_risks_by_severity" not in facts
         or "retired_in_use_engines" not in facts
         or "query_pattern_counts" not in facts
+        or "cache_layer" not in facts
         or (isinstance(unservable, dict) and "no_fit_query_count" not in unservable)
         # #1329: and one written before it, its no-engine-in-scope count.
         or (isinstance(unservable, dict) and "no_engine_in_scope_query_count" not in unservable)

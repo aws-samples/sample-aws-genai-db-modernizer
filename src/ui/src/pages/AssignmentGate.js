@@ -354,7 +354,7 @@ const AssignmentGatePage = memo(() => {
     () => ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay),
     [realityCheck, cacheOverlay],
   );
-  const cacheLayerLine = useMemo(() => formatCacheLayerLine(cacheOverlay, { t }), [cacheOverlay, t]);
+  const cacheLayerLine = useMemo(() => formatCacheLayerLine(cacheOverlay, { t, kind: 'candidates' }), [cacheOverlay, t]);
 
   // The current assignment's own in-scope engines (#235) -- a later customer
   // edit can be newer than the reality check's own before/after snapshot, so

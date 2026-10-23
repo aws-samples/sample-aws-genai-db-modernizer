@@ -348,6 +348,12 @@ class TestScanJsonIdFieldPaths:
         findings = scan_json({"other_list": [{"target": "dynamodb"}]})
         assert [f.kind for f in findings] == ["engine_id"]
 
+    def test_cache_layer_engine_is_an_id_field_but_prose_beside_it_is_scanned(self) -> None:
+        """#1252: facts.cache_layer.engine is the cache engine id."""
+        assert scan_json({"facts": {"cache_layer": {"engine": "elasticache"}}}) == []
+        findings = scan_json({"facts": {"other": {"engine": "elasticache"}}})
+        assert [f.kind for f in findings] == ["engine_id"]
+
     def test_cost_breakdown_database_is_excluded(self) -> None:
         report = {"tco_analysis": {"cost_breakdown": [{"database": "elasticache"}]}}
         assert scan_json(report) == []

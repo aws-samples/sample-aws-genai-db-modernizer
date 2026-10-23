@@ -16,6 +16,7 @@ from typing import Any
 from src.shared.report_facts import (
     access_pattern_facts,
     apply_cross_engine_wave_one,
+    cache_layer_facts,
     compute_report_facts,
     cost_assumptions,
     engine_served_split,
@@ -72,6 +73,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "cost_assumptions" not in facts:
             # A block written before #1195: the TCO's own assumption lines.
             missing["cost_assumptions"] = cost_assumptions(report)
+        if "cache_layer" not in facts:
+            # A block written before #1252.
+            missing["cache_layer"] = cache_layer_facts(report)
         if "query_pattern_counts" not in facts:
             missing["query_pattern_counts"] = query_pattern_facts(report, facts["engines"])
         if "resolved_risks_by_severity" not in facts:

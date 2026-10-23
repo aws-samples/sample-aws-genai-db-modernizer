@@ -520,6 +520,9 @@ Version History:
   cost, retired savings) and each engine's share of all queries when some have no engine
   in the scope, so the executive summary leads with the recommendation, the risk and the
   decision from facts. Backward compatible: None for an older report.
+- 1.61 (2026-10-24, #1252): Added optional facts.cache_layer (CacheLayerFacts): the
+  cache layer's cache candidates, designed cached reads and the candidates that stay on
+  their owner engine
 """
 
 from datetime import datetime
@@ -1644,6 +1647,28 @@ class AccessPatternFacts(BaseModel):
     )
 
 
+class CacheLayerFacts(BaseModel):
+    """The cache layer's read figures, each labelled for what it counts (#1252)."""
+
+    engine: str | None = Field(None, description="The cache engine; None once nothing is cached")
+    candidate_read_count: int = Field(
+        0, ge=0, description="Cache candidates: reads routing put under the cache overlay"
+    )
+    candidate_call_share_percent: float | None = Field(
+        None,
+        ge=0,
+        le=100,
+        description="None when a report that recorded a drop did not store the candidates' share",
+    )
+    designed_read_count: int = Field(
+        0, ge=0, description="Designed cached reads: what the cache engine's design covers"
+    )
+    designed_call_share_percent: float = Field(0.0, ge=0, le=100)
+    owner_only_read_count: int = Field(
+        0, ge=0, description="Candidates the design does not cover: they stay on their owner"
+    )
+
+
 class QueryPatternMember(BaseModel):
     """One query of a query pattern (#1146): its id, frequency and engine, as routed."""
 
@@ -2155,6 +2180,13 @@ class ReportFacts(BaseModel):
             "when query_traces predates unservable"
         ),
     )
+    cache_layer: CacheLayerFacts | None = Field(
+        None,
+        description=(
+            "The cache layer's cache candidates and designed cached reads (#1252); None "
+            "when the report has no cache_overlay"
+        ),
+    )
     access_pattern_totals: AccessPatternFacts | None = Field(
         None,
         description=(
@@ -2265,7 +2297,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.60",
+        default="1.61",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

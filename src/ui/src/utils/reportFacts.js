@@ -196,6 +196,22 @@ export function accessPatternTotals(synthesis, shownOwned, shownCacheLayer) {
   return { owned: shownOwned || 0, cacheLayer: shownCacheLayer || 0, listed: (shownOwned || 0) + (shownCacheLayer || 0) };
 }
 
+// #1252: the cache layer's read figures, each labelled for what it counts
+// (facts.cache_layer): the cache candidates routing put under the overlay and the
+// designed cached reads the cache engine's design covers. Null for a report with no
+// cache overlay. Shaped like a cache_overlay so formatCacheLayerLine can print it.
+export function cacheLayerFactsOf(synthesis) {
+  const c = factsOf(synthesis) && factsOf(synthesis).cache_layer;
+  if (!c || typeof c.designed_read_count !== 'number') return null;
+  return {
+    candidates: c.candidate_read_count,
+    candidateCallShare: c.candidate_call_share_percent,
+    designed: c.designed_read_count,
+    designedCallShare: c.designed_call_share_percent,
+    ownerOnly: c.owner_only_read_count || 0,
+  };
+}
+
 // #1146: the in-scope queries and the distinct query patterns they make
 // (facts.query_pattern_counts), or null for a report written before the figure.
 // Not the designers' access patterns (accessPatternTotals above).

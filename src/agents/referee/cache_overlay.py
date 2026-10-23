@@ -46,6 +46,7 @@ from src.agents.referee.query_shape import locking_clause
 from src.agents.referee.tie_break import break_tie, settled_counts
 from src.agents.referee.utility_statements import is_sequence_fetch
 from src.contracts.move_ledger import MoveEvidence, MovePass, ReasonCode
+from src.shared.cache_change import cache_change_sentence
 from src.shared.cache_engines import CACHE_ENGINES, HOT_READ_MIN_CALLS_PER_SECOND, cache_threshold
 from src.shared.cache_pattern_labels import CACHE_PATTERN_LABELS
 from src.shared.engine_names import display_engine
@@ -923,12 +924,6 @@ def apply_schema_safety_net(
     return dropped
 
 
-def _call_share(summary: Mapping | None) -> float:
-    """``call_share_percent`` off an :func:`overlay_summary` dict, 0.0 when absent."""
-    value = (summary or {}).get("call_share_percent")
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
-
-
 def safety_net_note(
     engine: str,
     dropped: list[str],
@@ -938,12 +933,11 @@ def safety_net_note(
     """The safety net's own note, shown to customers (#296, #424, #459).
 
     With ``before`` and ``after`` -- the :func:`overlay_summary` taken just
-    before and just after the drop -- the note states how many hot reads were
-    assigned at the assignment gate, how many the engine's schema design
-    covers (and so stay cached), how many no longer are, and the after share
-    of calls. Named with :func:`src.shared.engine_names.display_engine`,
-    never the raw engine id, so the assignment gate's own ``cache_overlay``
-    and this report's never disagree without saying why.
+    before and just after the drop -- the note is one short sentence with both
+    figures, labelled as every deliverable labels them (#1252): the cache
+    candidates routing put under the overlay at the gate, the designed cached
+    reads, and how many stay on their owner engine alone. The shares of calls
+    are facts (``facts.cache_layer``), not part of the sentence.
 
     This is the customer-facing summary (``cache_overlay.safety_net_notes``,
     #459 review): never the full ``cache_notes`` audit trail, which also
@@ -982,30 +976,23 @@ def safety_net_note(
         )
     before_count = int(before.get("query_count") or 0)
     after_count = int((after or {}).get("query_count") or 0)
-    before_share = _call_share(before)
-    after_share = _call_share(after)
-    name = display_engine(engine)
-    # #459 round 2/3: a full drop (after_count == 0) states it plainly
-    # ("covers none of them", "all N", "None remain") instead of the
-    # numerically-correct but easy-to-miss "covers 0 of them", "the other N",
-    # "0 hot reads (0.0% of calls) remain." -- this is exactly the shape
-    # #424's own report described (the cache engine leaves the engine list
-    # entirely).
-    if after_count == 0:
-        covers = "covers none of them"
-        no_longer_cached = "it is no longer cached" if n == 1 else f"all {n} are no longer cached"
-        remaining = "None remain"
-    else:
-        covers = f"covers {after_count} of them"
-        no_longer_cached = f"the other {n} {'is' if n == 1 else 'are'} no longer cached"
-        remaining = (
-            f"{after_count} hot {'read' if after_count == 1 else 'reads'} "
-            f"({after_share:.1f}% of calls) {'remains' if after_count == 1 else 'remain'}"
-        )
-    return (
-        f"{before_count} hot {'read' if before_count == 1 else 'reads'} "
-        f"({before_share:.1f}% of calls) {'was' if before_count == 1 else 'were'} "
-        f"assigned at the assignment gate. The {name} schema design {covers}; "
-        f"{no_longer_cached} and {'stays' if n == 1 else 'stay'} served by "
-        f"{'its' if n == 1 else 'their'} owner engine. {remaining}."
-    )
+    # #1252: the same sentence every deliverable states from ``facts.cache_layer``.
+    sentence = cache_change_sentence(before_count, after_count)
+    if sentence:
+        return sentence
+    return f"{n} cache {'candidate' if n == 1 else 'candidates'} dropped; owner unchanged."
+
+
+def candidate_summary(
+    query_assignments: Iterable[Mapping], queries: Iterable[Mapping]
+) -> tuple[int, float]:
+    """``(cache candidates, % of calls)``: the in-scope reads routing put under the cache
+    overlay, the ones the schema design later covers plus the ones the safety net dropped
+    (``cache_dropped``). Equal to :func:`overlay_summary`'s figures until a drop (#1252)."""
+    cps = {q.get("query_id"): float(q.get("calls_per_second") or 0) for q in queries}
+    in_scope = [qa for qa in query_assignments if qa.get("in_scope", True)]
+    candidates = [qa for qa in in_scope if qa.get("cache_engine") or qa.get("cache_dropped")]
+    total = sum(cps.get(qa.get("query_id"), 0.0) for qa in in_scope)
+    cand_cps = sum(cps.get(qa.get("query_id"), 0.0) for qa in candidates)
+    share = round(min(100.0, cand_cps / total * 100), 1) if total else 0.0
+    return len(candidates), share

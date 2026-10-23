@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared.cache_change import cache_change_sentence
 from src.shared.cache_pattern_labels import cache_pattern_label
 from src.shared.engine_names import display_engine
 from src.shared.migration_wave_engines import CACHE_ENGINES as _WAVE_CACHE_ENGINES
 
 from . import escaping
+from .facts import report_facts
 from .formatting import fmt_num, plural_noun
 from .roadmap import _moves_from_label, resolve_migration_waves
 
@@ -29,8 +31,20 @@ def cache_wave_note(front: str) -> str:
 
 
 def cache_layer_text(n: int, share: float) -> str:
-    """``20 cached reads · 83.4% of calls`` (#296)."""
-    return f"{n} cached {plural_noun(n, 'read')} \u00b7 {fmt_num(share, 1)}% of calls"
+    """``14 designed cached reads · 76.1% of calls``: what the cache's design covers (#296, #1252)."""
+    return f"{n} designed cached {plural_noun(n, 'read')} \u00b7 {fmt_num(share, 1)}% of calls"
+
+
+def cache_change_notes(report: dict[str, Any]) -> list[str]:
+    """The one sentence that says the design covers fewer reads than the gate's candidates,
+    from ``facts.cache_layer`` (#1252, ADR-032); empty when it covers every candidate."""
+    cache = report_facts(report).get("cache_layer")
+    if not isinstance(cache, dict):
+        return []
+    sentence = cache_change_sentence(
+        int(cache.get("candidate_read_count") or 0), int(cache.get("designed_read_count") or 0)
+    )
+    return [sentence] if sentence else []
 
 
 def _cache_layer_md(report: dict[str, Any]) -> list[str]:
@@ -58,8 +72,10 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
     engine = overlay.get("engine")
     n = int(overlay.get("query_count") or 0)
     full_notes = [x for x in (overlay.get("notes") or []) if x]
+    # Superseded wording of the change stays out of "Earlier assignment versions" too.
     safety_net_notes = [x for x in (overlay.get("safety_net_notes") or []) if x]
-    if not engine and not safety_net_notes and not full_notes:
+    changes = cache_change_notes(report)
+    if not engine and not changes and not full_notes:
         return []
     name = display_engine(engine) if engine else None
     out = [f"## Cache layer ({escaping.md_text(name)})" if name else "## Cache layer", ""]
@@ -92,7 +108,7 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             else ("the current source database")
         )
         out += [
-            f"{escaping.md_text(name)} fronts {n} hot {plural_noun(n, 'read')} "
+            f"{escaping.md_text(name)} fronts {n} designed cached {plural_noun(n, 'read')} "
             f"({fmt_num(overlay.get('call_share_percent', 0), 1)}% of calls, "
             f"{fmt_num(overlay.get('calls_per_second', 0), 1)} calls/s) cache-aside. It owns "
             "none of the workload: each cached read stays with its owner engine, which "
@@ -106,7 +122,7 @@ def _cache_layer_md(report: dict[str, Any]) -> list[str]:
             "top-N, session or small reference-read shape, on tables that are not "
             "write-heavy.",
         ]
-    out += [f"- {escaping.md_text(x)}" for x in safety_net_notes]
+    out += [f"- {escaping.md_text(x)}" for x in changes]
     earlier = [x for x in full_notes if x not in safety_net_notes]
     if earlier:
         out += ["", "### Earlier assignment versions", ""]

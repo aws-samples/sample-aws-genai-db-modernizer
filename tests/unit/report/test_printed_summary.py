@@ -94,7 +94,10 @@ def test_the_gate_block_follows_the_assignment_page() -> None:
     assert "- DocumentDB to Aurora MySQL: 7 queries. No unique features" in text
     assert "- DocumentDB to DynamoDB: 1 query" in text
     assert "- OpenSearch: Full-text search stays" in text
-    assert "Cache layer: ElastiCache fronts 20 cached reads, 83.4% of calls" in text
+    assert (
+        "Cache layer: ElastiCache has 20 cache candidates (83.4% of calls) and owns no queries."
+        in text
+    )
     assert "- Event-Driven Sync\n  - When: Several engines need the same data" in text
     assert "Schema design runs next for: Aurora MySQL, DynamoDB, ElastiCache." in text
     assert "changed nothing" not in text
@@ -199,7 +202,13 @@ def _report(**changes: Any) -> dict[str, Any]:
             "savings_percent": 0.0,
         },
         "risk_assessment": {"risks": risks, "overall_risk_level": "HIGH"},
-        "cache_overlay": {"safety_net_notes": ["The cache layer shrank to 12 reads."]},
+        "cache_overlay": {
+            "engine": "elasticache",
+            "query_count": 12,
+            "call_share_percent": 70.0,
+            "candidate_query_count": 15,
+            "candidate_call_share_percent": 75.0,
+        },
     }
     report.update(changes)
     return report
@@ -235,7 +244,10 @@ def test_the_final_summary_follows_the_results_page() -> None:
     assert "- Target engines: Aurora MySQL, ElastiCache (cache layer)" in text
     assert "- Projected monthly cost: $582.76" in text
     assert "- Migration: 3 waves" in text
-    assert "- Cache layer note: The cache layer shrank to 12 reads." in text
+    assert (
+        "- Cache layer note: 15 cache candidates, 12 designed; 3 stay on their owner engine."
+        in text
+    )
     assert "Overall risk: HIGH" in text
     assert "Open risks: 7 (2 high, 5 medium)" in text
     assert "Resolved by the assignment: 2 (2 medium)" in text
@@ -261,7 +273,7 @@ def test_one_line_per_engine_with_why_and_the_cache_layer_never_a_workload_share
     )
     cache = next(line for line in lines if line.startswith("- ElastiCache ("))
     assert cache.startswith(
-        "- ElastiCache (Cache layer, 20 cached reads · 83.4% of calls, $165.55/mo)"
+        "- ElastiCache (Cache layer, 20 designed cached reads · 83.4% of calls, $165.55/mo)"
     )
     assert "of queries" not in cache
 

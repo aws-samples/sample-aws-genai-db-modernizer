@@ -50,7 +50,7 @@ export function buildAssignmentSummary({
   const narrative = typeof llmSummary === 'string' ? llmSummary.trim() : '';
   const afterDist = ownerDistribution(rawAfterDist, !!cacheOverlay);
   const engines = Object.keys(afterDist);
-  const cacheLine = formatCacheLayerLine(cacheOverlay, { t });
+  const cacheLine = formatCacheLayerLine(cacheOverlay, { t, kind: 'candidates' });
   if (engines.length === 0) return [narrative, cacheLine].filter(Boolean).join(' ');
 
   const totalQueries = Object.values(afterDist).reduce((a, b) => a + b, 0);

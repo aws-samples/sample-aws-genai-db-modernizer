@@ -19,7 +19,7 @@ Consolidations:
 Small engines kept:
 - OpenSearch: Full-text search stays
 
-Cache layer: ElastiCache fronts 20 cached reads, 83.4% of calls, and owns no queries.
+Cache layer: ElastiCache has 20 cache candidates (83.4% of calls) and owns no queries. Schema design then confirms which ones it covers.
 
 Architectural patterns:
 - Event-Driven Sync

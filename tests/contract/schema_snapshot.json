@@ -22233,6 +22233,90 @@
                     "type": "integer"
                   }
                 },
+                "cache_layer": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "candidate_call_share_percent": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "maximum": 100,
+                                  "minimum": 0,
+                                  "type": "number"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "candidate_read_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "designed_call_share_percent": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "maximum": 100,
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          },
+                          "designed_read_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "engine": {
+                            "required": false,
+                            "schema": {
+                              "kind": "anyOf",
+                              "members": [
+                                {
+                                  "kind": "scalar",
+                                  "type": "null"
+                                },
+                                {
+                                  "kind": "scalar",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "owner_only_read_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "close_calls": {
                   "required": false,
                   "schema": {
@@ -29116,8 +29200,8 @@
         }
       }
     },
-    "schema_hash": "81db8b315be70192fe110ce3ee1fe9d1bf0a7dc6959a2dfe8705026181909fb3",
-    "version": "1.60"
+    "schema_hash": "750f57b7d0e370c4ac6bc35515e969dbc118e0a59b5f62e5be503b8307881139",
+    "version": "1.61"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

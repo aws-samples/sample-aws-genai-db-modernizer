@@ -196,3 +196,32 @@ def test_the_gate_block_shows_the_distribution_the_gate_decides_on(job: Pipeline
 def test_both_blocks_are_stable_across_calls(job: PipelineResult) -> None:
     for flag in ("--gate", "--final"):
         assert _print(job, flag) == _print(job, flag)
+
+
+def test_the_gate_and_final_label_each_cache_figure(job: PipelineResult) -> None:
+    """#1252: the gate states the cache candidates, the final summary the designed cached
+    reads, both from the facts; the change between them is one sentence, once, or none."""
+    report = _report(job)
+    cache = report_facts(report)["cache_layer"]
+    gate = _print(job, "--gate")
+    final = _print(job, "--final")
+    if cache is None:
+        assert "cache candidate" not in gate and "designed cached read" not in final
+        return
+    # The gate states the candidates routing put under the cache, even after synthesis has
+    # rewritten the assignment's overlay to the designed count (#1252).
+    assert f"has {cache['candidate_read_count']} cache candidate" in gate
+    assert "cached reads" not in gate
+    assert f"{cache['designed_read_count']} designed cached read" in final
+    assert cache["candidate_read_count"] >= cache["designed_read_count"]
+    assignments = sorted((job.job_dir() / "assignment").glob("v*/assignment.json"))
+    stored = json.loads(assignments[-1].read_text())["cache_overlay"]
+    assert stored["query_count"] == cache["designed_read_count"]
+    assert (
+        stored.get("candidate_query_count", stored["query_count"]) == cache["candidate_read_count"]
+    )
+    sentences = [s for s in final.splitlines() if "stay on their owner engine" in s]
+    assert len(sentences) == (1 if cache["owner_only_read_count"] else 0)
+    if sentences:
+        assert f"{cache['candidate_read_count']} cache candidates" in sentences[0]
+        assert f"{cache['designed_read_count']} designed" in sentences[0]

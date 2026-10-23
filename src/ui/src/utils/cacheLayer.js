@@ -274,24 +274,41 @@ function defaultT(key, options = {}) {
 
 /**
  * Format a cache_overlay as the compact stat line used everywhere the cache
- * layer needs a label: "Cache layer · 20 cached reads · 83.4% of calls".
+ * layer needs a label: "Cache layer · 14 designed cached reads · 76.1% of calls", or at the
+ * gate (`kind: 'candidates'`) "Cache layer · 20 cache candidates · 83.4% of calls".
  * Accepts a `cache_overlay` object or a `role: "cache_layer"` ranking entry
  * (`cache_overlay_queries` / `cache_call_share_percent`).
  * Returns null when there is no overlay to describe.
  */
-export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true } = {}) {
+export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true, kind } = {}) {
+  if (kind !== 'candidates' && kind !== 'designed') {
+    // #1252: every caller says which figure it shows; there is no default to drift to.
+    throw new Error(`formatCacheLayerLine needs kind 'candidates' or 'designed', got ${kind}`);
+  }
   if (!overlay) return null;
 
-  const count = overlay.query_count ?? overlay.cache_overlay_queries ?? 0;
-  const reads = t('cache-layer.cached-reads', {
-    count,
-    defaultValue: count === 1 ? '{{count}} cached read' : '{{count}} cached reads',
-  });
+  // #1252: each figure says what it counts. The approval gate shows `candidates`
+  // (the hot reads routing put under the cache overlay; once synthesis has rewritten the
+  // overlay, the candidate fields it stored); after schema design the figure is `designed`
+  // (what the cache engine's design covers).
+  const candidates = kind === 'candidates';
+  const count = (candidates ? overlay.candidate_query_count : undefined)
+    ?? overlay.query_count ?? overlay.cache_overlay_queries ?? 0;
+  const reads = candidates
+    ? t('cache-layer.candidates', {
+      count,
+      defaultValue: count === 1 ? '{{count}} cache candidate' : '{{count}} cache candidates',
+    })
+    : t('cache-layer.cached-reads', {
+      count,
+      defaultValue: count === 1 ? '{{count}} designed cached read' : '{{count}} designed cached reads',
+    });
 
   const parts = withLabel ? [t('cache-layer.badge-label', { defaultValue: 'Cache layer' })] : [];
   parts.push(reads);
 
-  const share = overlay.call_share_percent ?? overlay.cache_call_share_percent;
+  const share = (candidates ? overlay.candidate_call_share_percent : undefined)
+    ?? overlay.call_share_percent ?? overlay.cache_call_share_percent;
   if (typeof share === 'number' && Number.isFinite(share)) {
     parts.push(t('cache-layer.call-share-percent', {
       percent: share.toFixed(1),
@@ -313,25 +330,32 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true }
 }
 
 /**
- * The cache overlay's safety-net notes only (#296, #424, #459): recorded when
- * the post-schema-design safety net drops cached reads the cache's design
- * doesn't cover, each one carrying its own before/after counts (how many were
- * assigned at the assignment gate, how many the schema design covers, how
- * many no longer are, how many remain). The number on the stat line
- * (`formatCacheLayerLine`) is the *after* number -- without these, a page
- * showing it has no way to say it changed since the gate.
- *
- * Reads `safety_net_notes` only, never the full `notes` (#459 review): that
- * field also carries customer-edit notes (full query hashes) and the
- * legacy-migration note, neither of which is customer-facing -- those stay in
- * the engineering report only (`src.report.cache_layer._cache_layer_md`).
- *
- * `Array.isArray` guarded (not a truthy check): a malformed or missing field
- * must render nothing, not throw on `.map()`. Always an array, never null, so
- * callers can map it directly.
+ * The one sentence that says the cache design covers fewer reads than the gate's candidates
+ * (#1252, ADR-032), from `facts.cache_layer` (`cacheLayerFactsOf`): "20 cache candidates,
+ * 14 designed; 6 stay on their owner engine." Null when the design covers every candidate.
+ * Same wording as `src/shared/cache_change.py`.
  */
-export function cacheOverlayNotes(overlay) {
-  return Array.isArray(overlay?.safety_net_notes) ? overlay.safety_net_notes : [];
+export function cacheChangeSentence(cacheFacts, { t = defaultT } = {}) {
+  if (!cacheFacts) return null;
+  const { candidates, designed } = cacheFacts;
+  const stay = candidates - designed;
+  if (!(stay > 0)) return null;
+  const done = designed === 0
+    ? t('cache-layer.none-designed', { defaultValue: 'none designed' })
+    : t('cache-layer.n-designed', { count: designed, defaultValue: '{{count}} designed' });
+  const stays = designed === 0 && stay > 1
+    ? t('cache-layer.all-stay-on-owner', {
+      count: stay, defaultValue: 'all {{count}} stay on their owner engine',
+    })
+    : t('cache-layer.stay-on-owner', {
+      count: stay,
+      defaultValue: stay === 1 ? 'it stays on its owner engine' : '{{count}} stay on their owner engine',
+    });
+  const head = t('cache-layer.candidates', {
+    count: candidates,
+    defaultValue: candidates === 1 ? '{{count}} cache candidate' : '{{count}} cache candidates',
+  });
+  return `${head}, ${done}; ${stays}.`;
 }
 
 /** "cached by ElastiCache" indicator text for a single cached query row. */

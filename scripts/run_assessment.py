@@ -586,7 +586,13 @@ def _truncate(text: str, limit: int = _REASON_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-_CACHE_OVERLAY_FIELDS = ("query_count", "calls_per_second", "call_share_percent")
+_CACHE_OVERLAY_FIELDS = (
+    "query_count",
+    "calls_per_second",
+    "call_share_percent",
+    "candidate_query_count",
+    "candidate_call_share_percent",
+)
 
 
 def _compact_consolidations(consolidations: list[dict]) -> list[dict]:

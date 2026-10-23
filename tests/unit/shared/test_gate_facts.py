@@ -77,6 +77,7 @@ def test_ties_sort_by_engine_id_and_an_empty_gate_has_no_rows_and_zero_shares() 
         "rows": [],
         "surviving": [],
         "cache_engine": None,
+        "cache_candidates": None,
         "total_before": 0,
         "total_after": 0,
         "unchanged": True,

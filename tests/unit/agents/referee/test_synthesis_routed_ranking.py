@@ -165,7 +165,7 @@ class TestRationale:
             for d in build_architecture_recommendation(_data(ASSIGNMENT), ranking, [])["databases"]
         }
         text = dbs["elasticache"]["rationale"]
-        assert text.startswith("Cache layer for 2 hot reads")
+        assert text.startswith("Cache layer for 2 designed cached reads")
         assert "mostly point lookups" in text
         assert "95% mean cache fit across 2 cached reads (1 rated table)" in text
 

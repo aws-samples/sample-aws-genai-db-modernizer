@@ -1429,7 +1429,7 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     """
     if not data.cache_overlay_dropped or assignment_version <= 0:
         return
-    from src.agents.referee.cache_overlay import overlay_summary
+    from src.agents.referee.cache_overlay import candidate_summary, overlay_summary
 
     key = f"{data.database_name}/{data.job_id}/assignment/v{assignment_version}/assignment.json"
     if not store.exists(key):
@@ -1450,7 +1450,20 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     for note in data.cache_overlay_notes:
         if note not in safety_net_notes:
             safety_net_notes.append(note)
-    raw["cache_overlay"] = overlay_summary(raw.get("query_assignments", []), data.source_queries)
+    # #1252: the gate's figure survives the rewrite. The candidates are stored once, from the
+    # overlay as the gate showed it (or the flagged queries), and never overwritten.
+    prior = raw.get("cache_overlay") or {}
+    summary = overlay_summary(raw.get("query_assignments", []), data.source_queries)
+    if summary is not None:
+        if "candidate_query_count" in prior:
+            summary["candidate_query_count"] = prior["candidate_query_count"]
+            summary["candidate_call_share_percent"] = prior.get("candidate_call_share_percent")
+        else:
+            (
+                summary["candidate_query_count"],
+                summary["candidate_call_share_percent"],
+            ) = candidate_summary(raw.get("query_assignments", []), data.source_queries)
+    raw["cache_overlay"] = summary
     # A rewrite in place, at today's version, not the one read (#1018).
     store.write_json(key, stamp_artifact_version(key, raw))
     print(f"[synthesis] Cache overlay dropped for {len(dropped)} queries, written to {key}")

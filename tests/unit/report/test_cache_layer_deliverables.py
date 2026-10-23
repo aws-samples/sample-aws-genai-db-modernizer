@@ -61,6 +61,7 @@ def _report() -> dict[str, Any]:
             "patterns": {"point_lookup": 19, "reference_read": 1},
             "min_calls_per_second": 1.0,
             "max_rows_avg": 100.0,
+            "candidate_query_count": 21,
             "dropped_query_ids": ["q9"],
             # #459 review: the full audit trail (engineering report only) also
             # carries customer-edit/legacy-migration notes -- here it happens to
@@ -89,7 +90,8 @@ class TestCacheRow:
     def test_engine_table_shows_cached_reads_and_call_share(self):
         md = render_engineering_report_md(_report())
         assert (
-            "| ElastiCache | Cache layer | 20 cached reads · 83.4% of calls | cache-aside |" in md
+            "| ElastiCache | Cache layer | 20 designed cached reads · 83.4% of calls | cache-aside |"
+            in md
         )
         total = next(x for x in md.splitlines() if x.startswith("| Total |"))
         assert "| 100% |" in total  # owner shares still add up
@@ -108,11 +110,14 @@ class TestEngineeringReport:
         md = render_engineering_report_md(_report())
         # #459 round 3: display_engine, not the raw engine id.
         assert "## Cache layer (ElastiCache)" in md
-        assert "ElastiCache fronts 20 hot reads (83.4% of calls, 185.1 calls/s) cache-aside" in md
+        assert (
+            "ElastiCache fronts 20 designed cached reads (83.4% of calls, 185.1 calls/s) cache-aside"
+            in md
+        )
         # #572: display_engine here too, same as the heading and fronts line above.
         assert "- Owner engines: DynamoDB 20" in md
         assert "≥ 1 calls/s" in md and "≤ 100 rows" in md
-        assert "owner unchanged" in md
+        assert "21 cache candidates, 20 designed; it stays on its owner engine." in md
 
     def test_md_escapes_a_hostile_note(self):
         # #459: markdown-escaped (escaping.md_text), not HTML-escaped -- the
@@ -152,25 +157,27 @@ class TestEngineeringReport:
         rep = _report()
         rep["cache_overlay"] = {
             **rep["cache_overlay"],
+            "query_count": 9,
+            "candidate_query_count": 11,
             "notes": [v2_note, v3_note],
             "safety_net_notes": [v3_note],
         }
         md = render_engineering_report_md(rep)
         current_section, _, rest = md.partition("### Earlier assignment versions")
-        # Markdown-escaped parentheses (escaping.md_text): compare on each
-        # note's own distinctive, non-overlapping number (not "20 hot reads"
-        # or "83.4%", which the base fixture's own stat paragraph also uses).
-        assert "73.7% of calls" in current_section and "68.1% of calls" in current_section
+        # #1252: the current explanation is the facts' sentence for this version's own
+        # numbers; the v2 note stays an earlier version's, and the v3 note's old wording is
+        # not repeated beside it.
+        assert "11 cache candidates, 9 designed; 2 stay on their owner engine." in current_section
         assert "72.3% of calls" not in current_section
         assert "### Earlier assignment versions" in md
         assert "72.3% of calls" in rest
-        assert "73.7% of calls" not in rest and "68.1% of calls" not in rest
+        assert "73.7% of calls" not in md
 
 
 def _shrink_report() -> dict[str, Any]:
-    """Reproduces #424's own WordPress numbers: 20 hot reads (83.4% of
-    calls) were assigned at the assignment gate; the post-schema-design
-    safety net dropped 10, leaving 10 (61.3% of calls). The note is the real
+    """Reproduces #424's and #1252's WordPress numbers: 20 cache candidates (83.4% of
+    calls) at the assignment gate; the post-schema-design safety net dropped 6, leaving
+    14 designed cached reads (76.1% of calls). The note is the real
     generator's output, not a hand-written stand-in, so these tests fail if
     the renderers stop reading it.
 
@@ -181,18 +188,20 @@ def _shrink_report() -> dict[str, Any]:
     """
     note = safety_net_note(
         "elasticache",
-        [f"q{i}" for i in range(10)],
+        [f"q{i}" for i in range(6)],
         before={"query_count": 20, "call_share_percent": 83.4},
-        after={"query_count": 10, "call_share_percent": 61.3},
+        after={"query_count": 14, "call_share_percent": 76.1},
     )
     rep = _report()
-    rep["ranking"][2]["cache_overlay_queries"] = 10
-    rep["ranking"][2]["cache_call_share_percent"] = 61.3
+    rep["ranking"][2]["cache_overlay_queries"] = 14
+    rep["ranking"][2]["cache_call_share_percent"] = 76.1
     rep["cache_overlay"] = {
         **rep["cache_overlay"],
-        "query_count": 10,
-        "call_share_percent": 61.3,
-        "dropped_query_ids": [f"q{i}" for i in range(10)],
+        "query_count": 14,
+        "call_share_percent": 76.1,
+        "candidate_query_count": 20,
+        "candidate_call_share_percent": 83.4,
+        "dropped_query_ids": [f"q{i}" for i in range(6)],
         "notes": [note],
         "safety_net_notes": [note],
     }
@@ -209,12 +218,11 @@ class TestCacheOverlayShrinkExplained:
 
     def test_engineering_report_states_before_and_after_numbers(self):
         md = render_engineering_report_md(_shrink_report())
-        assert "| 10 cached reads · 61.3% of calls |" in md
-        assert "ElastiCache schema design covers 10 of them" in md
-        assert "fronts 10 hot reads (61.3% of calls" in md
-        # Markdown-escaped parentheses (escaping.md_text): still the same note.
-        assert "20 hot reads \\(83.4% of calls\\) were assigned at the assignment gate" in md
-        assert "10 hot reads \\(61.3% of calls\\) remain." in md
+        assert "| 14 designed cached reads · 76.1% of calls |" in md
+        assert "fronts 14 designed cached reads (76.1% of calls" in md
+        # #1252: the change is one short sentence with both labelled numbers, once.
+        sentence = "20 cache candidates, 14 designed; 6 stay on their owner engine."
+        assert md.count(sentence) == 1
 
 
 def _full_drop_report() -> dict[str, Any]:
@@ -257,11 +265,7 @@ class TestCacheOverlayFullDropExplained:
             before={"query_count": 1, "call_share_percent": 10.0},
             after={"query_count": 0, "call_share_percent": 0.0},
         )
-        assert note == (
-            "1 hot read (10.0% of calls) was assigned at the assignment gate. "
-            "The ElastiCache schema design covers none of them; it is no "
-            "longer cached and stays served by its owner engine. None remain."
-        )
+        assert note == "1 cache candidate, none designed; it stays on its owner engine."
 
     def test_engineering_report_still_shows_the_note_with_no_engine_in_the_heading(self):
         # #459 round 3: a full drop clears `engine`, so the heading cannot
@@ -272,8 +276,7 @@ class TestCacheOverlayFullDropExplained:
         md = render_engineering_report_md(rep)
         assert "## Cache layer\n" in md
         assert "## Cache layer (" not in md
-        assert "was assigned at the assignment gate" in md
-        assert "None remain." in md
+        assert "1 cache candidate, none designed; it stays on its owner engine." in md
 
 
 class TestJudgeFacts:

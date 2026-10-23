@@ -54,7 +54,7 @@ import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
 import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
-import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheChangeSentence, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
 import { buildAuroraDesigns, isAuroraEngine, reasonTextFor } from "../utils/auroraDesign";
@@ -69,7 +69,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, costAssumptionsOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -384,7 +384,15 @@ const AnalysisResultsPage = memo(() => {
   // useMemo) to match realityCheck/synthesis above, which are the same.
   const cacheOverlay = getCacheOverlay(synthesis);
   const afterDist = ownerDistribution(realityCheck?.after_distribution, !!cacheOverlay);
-  const cacheLayerLine = formatCacheLayerLine(cacheOverlay, { t });
+  // #1252: the designed cached reads, from the facts (the reads the ElastiCache design covers).
+  const cacheFacts = cacheLayerFactsOf(synthesis);
+  const cacheChange = cacheChangeSentence(cacheFacts, { t });
+  const cacheLayerLine = formatCacheLayerLine(
+    cacheFacts
+      ? { query_count: cacheFacts.designed, call_share_percent: cacheFacts.designedCallShare }
+      : cacheOverlay,
+    { t, kind: 'designed' },
+  );
 
   // #269: whether this synthesis summary was replaced by its deterministic
   // fallback (a grounding check rejected the generated text against the final
@@ -1956,26 +1964,19 @@ const AnalysisResultsPage = memo(() => {
                           {cacheLayerLine}
                         </Box>
                       )}
-                      {/* #424: the gate's cache_overlay (assigned at the
-                          assignment gate) and this one (after schema design)
-                          can disagree -- the post-schema-design safety net
-                          drops cached reads the design doesn't cover. Each
-                          note already states its own before/after numbers and
-                          the reason, so it is shown verbatim, not summarized.
-                          #459: cacheOverlayNotes reads safety_net_notes only --
-                          never the full notes field, which also carries
-                          customer-edit notes (full query hashes) and the
-                          legacy-migration note. */}
-                      {cacheOverlayNotes(cacheOverlay).map((note, idx) => (
+                      {/* #1252: the gate's cache candidates and the design's cached reads
+                          can differ (the post-schema-design safety net drops reads the
+                          design does not cover). The sentence comes from facts.cache_layer,
+                          once, as a plain text child. */}
+                      {cacheChange && (
                         <Box
-                          key={idx}
                           fontSize="body-s"
                           color="text-status-warning"
                           padding={{ top: 'xxs' }}
                         >
-                          {note}
+                          {cacheChange}
                         </Box>
-                      ))}
+                      )}
                     </>
                   )}
                 />

@@ -27,7 +27,7 @@ from src.shared.gate_facts import gate_block_facts
 from src.shared.risk_severity import severity_of, severity_rank
 
 from . import escaping
-from .cache_layer import cache_layer_text
+from .cache_layer import cache_change_notes, cache_layer_text
 from .deliverables import FOLDER_ENTRIES, FolderEntry
 from .engineering_report import summary_paragraphs
 from .executive_report import _names_pattern, table_names, without_table_names
@@ -141,13 +141,15 @@ def render_gate_block(
         for s in kept:
             lines.append(f"- {display_engine(str(s.get('engine')))}: {prose(s.get('reason'))}")
         lines.append("")
-    overlay = gate.get("cache_overlay")
-    if isinstance(overlay, Mapping):
+    candidates = facts["cache_candidates"]
+    if candidates:
         name = display_engine(facts["cache_engine"]) if facts["cache_engine"] else "The cache layer"
+        # #1252: at the gate these are candidates; the schema design confirms the ones it covers.
+        count = candidates["read_count"]
         lines += [
-            f"Cache layer: {name} fronts {overlay.get('query_count')} cached "
-            f"{plural_noun(overlay.get('query_count'), 'read')}, "
-            f"{_percent(overlay.get('call_share_percent'))} of calls, and owns no queries.",
+            f"Cache layer: {name} has {count} cache {plural_noun(count, 'candidate')} "
+            f"({_percent(candidates['call_share_percent'])} of calls) and owns no queries. "
+            "Schema design then confirms which ones it covers.",
             "",
         ]
     patterns = [p for p in gate.get("architectural_patterns") or [] if isinstance(p, Mapping)]
@@ -309,8 +311,7 @@ def render_final_summary(
             lines.append(f"- Retired by this plan: {retired_in_use_statement(row)}")
     waves = facts.get("migration_wave_count", 0)
     lines.append(f"- Migration: {waves} {plural_noun(waves, 'wave')}")
-    notes = [str(n) for n in (report.get("cache_overlay") or {}).get("safety_net_notes") or [] if n]
-    lines += [f"- Cache layer note: {prose(n)}" for n in notes]
+    lines += [f"- Cache layer note: {prose(n)}" for n in cache_change_notes(dict(report))]
 
     lines += ["", "### Engines", ""] + _engine_lines(report, facts, names)
     lines += ["", "### Risks", ""] + _risk_lines(report, facts)

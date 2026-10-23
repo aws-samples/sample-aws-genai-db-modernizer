@@ -70,7 +70,7 @@ from src.shared.target_databases import engine_scope_statement
 from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DEFINITION
 
 from .architecture import _architecture_engines
-from .cache_layer import cache_layer_text
+from .cache_layer import cache_change_notes, cache_layer_text
 from .engine_choices import (
     AUTO_DECIDED_NOTE,
     PENDING_CHOICES_NOTE,
@@ -883,6 +883,10 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
         )
         if notes:
             flow += [_gap(8), Paragraph(_md_markup(notes), st["small"])]
+        # #1252: the one sentence that says the design covers fewer reads than the gate's
+        # cache candidates, read from the report like the engineering report's.
+        for change in cache_change_notes(report):
+            flow += [_gap(4), _para(change, st["small"])]
     ownership = ownership_facts(report)
     if ownership:
         # #212: who owns the mapped tables, in counts (this report names no table).

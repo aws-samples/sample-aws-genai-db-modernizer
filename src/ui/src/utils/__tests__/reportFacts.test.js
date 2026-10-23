@@ -4,6 +4,7 @@
  * for a report synthesized before them.
  */
 import {
+  cacheLayerFactsOf,
   accessPatternTotals,
   closeCallsOf,
   currentTradeOffs,
@@ -258,5 +259,31 @@ describe('designTableCountOf (#1248)', () => {
     const label = enMessages['analysis-results.aurora-design.tab-label_other'];
     expect(label).toBe('{{name}} · {{count}} tables in its design');
     expect(enMessages['analysis-results.aurora-design.tab-label']).toBe('{{name}} · {{count}} table in its design');
+  });
+});
+
+// #1252: the cache layer's two read figures are stored facts, each labelled for what it counts.
+describe('cache layer facts (#1252)', () => {
+  const facts = {
+    cache_layer: {
+      engine: 'elasticache',
+      candidate_read_count: 20,
+      candidate_call_share_percent: 83.4,
+      designed_read_count: 14,
+      designed_call_share_percent: 76.1,
+      owner_only_read_count: 6,
+    },
+  };
+
+  test('read the candidates and the designed cached reads as stored', () => {
+    expect(cacheLayerFactsOf({ facts })).toEqual({
+      candidates: 20, candidateCallShare: 83.4, designed: 14, designedCallShare: 76.1, ownerOnly: 6,
+    });
+  });
+
+  test('a report with no cache layer, or written before the fact, has none', () => {
+    expect(cacheLayerFactsOf({ facts: { cache_layer: null } })).toBeNull();
+    expect(cacheLayerFactsOf({ facts: {} })).toBeNull();
+    expect(cacheLayerFactsOf(undefined)).toBeNull();
   });
 });

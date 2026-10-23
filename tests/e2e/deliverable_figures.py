@@ -843,7 +843,7 @@ def engineering_figures(md_text: str) -> Figures:
         eng = engine_id(md_plain(row[0]))
         targets.add(eng)
         f.name(eng, "Target engines table")
-        m = re.match(r"^([\d,]+) cached reads?\b", md_plain(row[2]))
+        m = re.match(r"^([\d,]+) (?:designed )?cached reads?\b", md_plain(row[2]))
         if m:
             f.add(f"cached_reads:{eng}", _int(m.group(1)), "Target engines Workload")
         scope_split(f, eng, md_plain(row[3]), "Target engines Scope")
@@ -871,7 +871,7 @@ def engineering_figures(md_text: str) -> Figures:
     for heading, body in _md_sections(md, 2):
         m = re.match(r"^Cache layer \((.+)\)$", heading)
         if m:
-            k = re.search(r"fronts ([\d,]+) hot reads?", md_plain(body))
+            k = re.search(r"fronts ([\d,]+) (?:hot|designed cached) reads?", md_plain(body))
             if k:
                 f.add(
                     f"cached_reads:{engine_id(m.group(1))}", _int(k.group(1)), "Cache layer section"

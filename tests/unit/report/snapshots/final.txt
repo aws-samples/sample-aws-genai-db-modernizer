@@ -12,12 +12,12 @@ A second paragraph.
 - Target engines: Aurora MySQL, ElastiCache (cache layer)
 - Projected monthly cost: $582.76
 - Migration: 3 waves
-- Cache layer note: The cache layer shrank to 12 reads.
+- Cache layer note: 15 cache candidates, 12 designed; 3 stay on their owner engine.
 
 ### Engines
 
 - Aurora MySQL (Retained, 62.6% of queries, $318.80/mo): 73% mean fit across 67 queries \(2 queries without table-level evidence\).
-- ElastiCache (Cache layer, 20 cached reads · 83.4% of calls, $165.55/mo): Cache layer for 20 hot reads.
+- ElastiCache (Cache layer, 20 designed cached reads · 83.4% of calls, $165.55/mo): Cache layer for 20 hot reads.
 
 ### Risks
 

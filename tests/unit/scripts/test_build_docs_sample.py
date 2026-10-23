@@ -324,6 +324,16 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
         assert read.pop("query_total_count") == stored["in_scope_query_count"]
     # #1195: facts.cost_assumptions, also added after the run was recorded.
     read.pop("cost_assumptions")
+    # #1252: facts.cache_layer, likewise added after the run was recorded.
+    if "cache_layer" not in stored:
+        cache = read.pop("cache_layer")
+        # The recorded run predates the stored candidates: its dropped reads are counted back in.
+        overlay = report["cache_overlay"]
+        dropped = len(overlay["dropped_query_ids"])
+        assert dropped > 0  # the recorded run did drop some, so this backfill is exercised
+        assert cache["candidate_read_count"] == overlay["query_count"] + dropped
+        assert cache["owner_only_read_count"] == dropped
+        assert cache["candidate_call_share_percent"] is None
     assert read == stored
 
 

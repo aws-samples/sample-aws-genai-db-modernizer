@@ -704,12 +704,8 @@ class TestSafetyNet:
         before = {"query_count": 20, "call_share_percent": 83.4}
         after = {"query_count": 10, "call_share_percent": 61.3}
         note = safety_net_note("elasticache", [f"q{i}" for i in range(10)], before, after)
-        assert note == (
-            "20 hot reads (83.4% of calls) were assigned at the assignment gate. "
-            "The ElastiCache schema design covers 10 of them; the other 10 are no "
-            "longer cached and stay served by their owner engine. 10 hot reads "
-            "(61.3% of calls) remain."
-        )
+        # #1252: one short sentence, both figures labelled.
+        assert note == "20 cache candidates, 10 designed; 10 stay on their owner engine."
 
     def test_note_with_before_and_after_dropping_everything(self):
         # #459 round 2/3: a full drop says "covers none of them", "all N",
@@ -719,10 +715,7 @@ class TestSafetyNet:
         before = {"query_count": 2, "call_share_percent": 10.0}
         after = {"query_count": 0, "call_share_percent": 0.0}
         note = safety_net_note("elasticache", ["a", "b"], before, after)
-        assert note.endswith(
-            "covers none of them; all 2 are no longer cached and stay served by "
-            "their owner engine. None remain."
-        )
+        assert note == "2 cache candidates, none designed; all 2 stay on their owner engine."
 
     def test_note_with_before_only_treats_the_missing_after_as_a_full_drop(self):
         # #459 round 2/3: the branch is keyed on `before` alone (a caller
@@ -732,10 +725,14 @@ class TestSafetyNet:
         # of "no after snapshot given").
         before = {"query_count": 20, "call_share_percent": 83.4}
         note = safety_net_note("elasticache", ["a", "b"], before)
-        assert note.startswith("20 hot reads (83.4% of calls) were assigned at the assignment gate")
-        assert "covers none of them" in note
-        assert "all 2 are no longer cached" in note
-        assert note.endswith("None remain.")
+        assert note == "20 cache candidates, none designed; all 20 stay on their owner engine."
+
+    def test_note_singular(self):
+        before = {"query_count": 3, "call_share_percent": 10.0}
+        after = {"query_count": 2, "call_share_percent": 8.0}
+        assert safety_net_note("elasticache", ["a"], before, after) == (
+            "3 cache candidates, 2 designed; it stays on its owner engine."
+        )
 
 
 # ---------------------------------------------------------------------------

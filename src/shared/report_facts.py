@@ -176,6 +176,46 @@ def cache_layer_counts(report: dict[str, Any], engine: str) -> tuple[int, float]
     return int(n or 0), float(share or 0.0)
 
 
+def cache_layer_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The cache layer's two read figures, each labelled for what it counts (#1252, ADR-032).
+
+    ``candidate_*`` is what routing put under the cache overlay (the assignment gate's
+    figure); ``designed_*`` is what the cache engine's schema design covers (the figure
+    after schema design); ``owner_only_read_count`` is the candidates the design does not
+    cover, which stay on their owner engine alone. This is the one source of the cache
+    figures and of the change sentence (:func:`src.shared.cache_change.cache_change_sentence`).
+
+    A report written before ``candidate_query_count`` has its candidates as the designed reads
+    plus the reads it recorded as dropped (``dropped_query_ids``); their call share is then
+    unknown (None) when anything was dropped. None for a report with no ``cache_overlay``.
+    """
+    overlay = report.get("cache_overlay")
+    if not isinstance(overlay, dict):
+        return None
+    designed = int(overlay.get("query_count") or 0)
+    designed_share = float(overlay.get("call_share_percent") or 0.0)
+    candidates = overlay.get("candidate_query_count")
+    share = overlay.get("candidate_call_share_percent")
+    if isinstance(candidates, int) and not isinstance(candidates, bool):
+        candidates = max(candidates, designed)
+    else:
+        dropped = overlay.get("dropped_query_ids")
+        candidates = designed + (len(dropped) if isinstance(dropped, list) else 0)
+        share = None
+    if isinstance(share, (int, float)) and not isinstance(share, bool):
+        candidate_share: float | None = float(share)
+    else:
+        candidate_share = designed_share if candidates == designed else None
+    return {
+        "engine": overlay.get("engine"),
+        "candidate_read_count": candidates,
+        "candidate_call_share_percent": candidate_share,
+        "designed_read_count": designed,
+        "designed_call_share_percent": designed_share,
+        "owner_only_read_count": candidates - designed,
+    }
+
+
 def rationale_text(value: Any) -> str:
     """A rationale as text; legacy reports may carry a list of reasons or nothing."""
     if isinstance(value, str):
@@ -3046,6 +3086,8 @@ def compute_report_facts(
             retired,
             query_total_facts(report, moves["in_scope_query_count"])["query_total_count"],
         ),
+        # #1252: the cache layer's candidate and designed read figures.
+        "cache_layer": cache_layer_facts(report),
     }
 
 

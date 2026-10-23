@@ -11,7 +11,7 @@ import {
   splitRankingByRole,
   getQueryCacheInfo,
   formatCacheLayerLine,
-  cacheOverlayNotes,
+  cacheChangeSentence,
   formatCachedByLine,
   targetEngineEntries,
   resolveCostBreakdown,
@@ -180,76 +180,76 @@ describe('getQueryCacheInfo', () => {
 describe('formatCacheLayerLine', () => {
   const overlay = { engine: 'elasticache', query_count: 20, calls_per_second: 120.4, call_share_percent: 83.4 };
 
-  test('matches the spec example exactly: "Cache layer · 20 cached reads · 83.4% of calls"', () => {
-    expect(formatCacheLayerLine(overlay, { t })).toBe('Cache layer · 20 cached reads · 83.4% of calls');
+  test('matches the spec example exactly: "Cache layer · 20 designed cached reads · 83.4% of calls"', () => {
+    expect(formatCacheLayerLine(overlay, { t, kind: 'designed' })).toBe('Cache layer · 20 designed cached reads · 83.4% of calls');
   });
 
   test('accepts a role: "cache_layer" ranking entry (the report results card)', () => {
     const entry = {
       target: 'elasticache', role: 'cache_layer', cache_overlay_queries: 20, cache_call_share_percent: 83.4,
     };
-    expect(formatCacheLayerLine(entry, { t, withLabel: false })).toBe('20 cached reads · 83.4% of calls');
+    expect(formatCacheLayerLine(entry, { t, withLabel: false, kind: 'designed' })).toBe('20 designed cached reads · 83.4% of calls');
   });
 
   test('withLabel: false omits the leading "Cache layer" label (for use next to an explicit badge)', () => {
-    expect(formatCacheLayerLine(overlay, { t, withLabel: false })).toBe('20 cached reads · 83.4% of calls');
+    expect(formatCacheLayerLine(overlay, { t, withLabel: false, kind: 'designed' })).toBe('20 designed cached reads · 83.4% of calls');
   });
 
   test('pluralises a single cached read', () => {
-    expect(formatCacheLayerLine({ ...overlay, query_count: 1 }, { t })).toBe('Cache layer · 1 cached read · 83.4% of calls');
+    expect(formatCacheLayerLine({ ...overlay, query_count: 1 }, { t, kind: 'designed' })).toBe('Cache layer · 1 designed cached read · 83.4% of calls');
   });
 
   test('omits the call-share fragment when call_share_percent is not a finite number', () => {
-    expect(formatCacheLayerLine({ engine: 'elasticache', query_count: 5 }, { t })).toBe('Cache layer · 5 cached reads');
+    expect(formatCacheLayerLine({ engine: 'elasticache', query_count: 5 }, { t, kind: 'designed' })).toBe('Cache layer · 5 designed cached reads');
+  });
+
+  test('the gate labels the same figure as cache candidates, not cached reads (#1252)', () => {
+    expect(formatCacheLayerLine(overlay, { t, kind: 'candidates' })).toBe('Cache layer · 20 cache candidates · 83.4% of calls');
+    expect(formatCacheLayerLine({ ...overlay, query_count: 1 }, { t, kind: 'candidates' })).toBe('Cache layer · 1 cache candidate · 83.4% of calls');
+    expect(formatCacheLayerLine(overlay, { kind: 'candidates' })).toBe('Cache layer · 20 cache candidates · 83.4% of calls');
+  });
+
+  test('requires a kind: there is no default figure to drift to', () => {
+    expect(() => formatCacheLayerLine(overlay, { t })).toThrow(/kind/);
+    expect(() => formatCacheLayerLine(null)).toThrow(/kind/);
+  });
+
+  test('the gate reads the stored candidate fields once synthesis has rewritten the overlay', () => {
+    const rewritten = { ...overlay, query_count: 14, call_share_percent: 76.1, candidate_query_count: 20, candidate_call_share_percent: 83.4 };
+    expect(formatCacheLayerLine(rewritten, { t, kind: 'candidates' })).toBe('Cache layer · 20 cache candidates · 83.4% of calls');
+    expect(formatCacheLayerLine(rewritten, { t, kind: 'designed' })).toBe('Cache layer · 14 designed cached reads · 76.1% of calls');
   });
 
   test('null overlay (no cache fields) yields null, not a dangling "Cache layer" line', () => {
-    expect(formatCacheLayerLine(null, { t })).toBeNull();
-    expect(formatCacheLayerLine(undefined, { t })).toBeNull();
+    expect(formatCacheLayerLine(null, { t, kind: 'designed' })).toBeNull();
+    expect(formatCacheLayerLine(undefined, { t, kind: 'designed' })).toBeNull();
   });
 
   test('falls back to sane English when no translation function is supplied', () => {
-    expect(formatCacheLayerLine(overlay)).toBe('Cache layer · 20 cached reads · 83.4% of calls');
+    expect(formatCacheLayerLine(overlay, { kind: 'designed' })).toBe('Cache layer · 20 designed cached reads · 83.4% of calls');
   });
 });
 
-describe('cacheOverlayNotes (#424, #459)', () => {
-  test('returns the safety_net_notes array when present', () => {
-    const overlay = {
-      engine: 'elasticache',
-      query_count: 10,
-      safety_net_notes: [
-        '20 hot reads (83.4% of calls) were assigned at the assignment gate. '
-        + 'The ElastiCache schema design covers 10 of them; the other 10 are no '
-        + 'longer cached and stay served by their owner engine. 10 cached reads '
-        + '(61.3% of calls) remain.',
-      ],
-    };
-    expect(cacheOverlayNotes(overlay)).toEqual(overlay.safety_net_notes);
+describe('cacheChangeSentence (#1252)', () => {
+  const facts = (candidates, designed) => ({ candidates, designed });
+
+  test('states both numbers and how many stay on their owner', () => {
+    expect(cacheChangeSentence(facts(20, 14), { t })).toBe('20 cache candidates, 14 designed; 6 stay on their owner engine.');
   });
 
-  test('works without an engine key (#459 round 2: a full drop has no engine on the overlay)', () => {
-    const overlay = {
-      dropped_query_ids: ['q9'],
-      safety_net_notes: ['1 hot read (10.0% of calls) was assigned ... None remain.'],
-    };
-    expect(cacheOverlayNotes(overlay)).toEqual(overlay.safety_net_notes);
+  test('singular and full-drop wording matches the Python sentence', () => {
+    expect(cacheChangeSentence(facts(3, 2), { t })).toBe('3 cache candidates, 2 designed; it stays on its owner engine.');
+    expect(cacheChangeSentence(facts(1, 0), { t })).toBe('1 cache candidate, none designed; it stays on its owner engine.');
+    expect(cacheChangeSentence(facts(4, 0), { t })).toBe('4 cache candidates, none designed; all 4 stay on their owner engine.');
   });
 
-  test('never reads the full notes field (#459: internal, engineering-report only)', () => {
-    const overlay = {
-      engine: 'elasticache',
-      query_count: 10,
-      notes: ['a customer-edit note with a full query hash, not for customers'],
-    };
-    expect(cacheOverlayNotes(overlay)).toEqual([]);
+  test('is null when the design covers every candidate, or there is no fact', () => {
+    expect(cacheChangeSentence(facts(20, 20), { t })).toBeNull();
+    expect(cacheChangeSentence(null, { t })).toBeNull();
   });
 
-  test('is always an array, never null, with a malformed, missing, or absent field', () => {
-    expect(cacheOverlayNotes({ engine: 'elasticache', query_count: 10 })).toEqual([]);
-    expect(cacheOverlayNotes({ safety_net_notes: 'not an array' })).toEqual([]);
-    expect(cacheOverlayNotes(null)).toEqual([]);
-    expect(cacheOverlayNotes(undefined)).toEqual([]);
+  test('falls back to the same English without a translation function', () => {
+    expect(cacheChangeSentence(facts(20, 14))).toBe('20 cache candidates, 14 designed; 6 stay on their owner engine.');
   });
 });
 
@@ -451,10 +451,10 @@ describe('Results page access-patterns captions pluralization (#361 review: _one
 
   test('"+N cache-layer pattern(s)" is singular for count 1, plural otherwise', () => {
     expect(t('analysis-results.executive-summary.cache-patterns-note', { count: 1 })).toBe(
-      '+1 cache-layer pattern (not counted above)',
+      '+1 cache-layer access pattern (separate from the cached reads)',
     );
     expect(t('analysis-results.executive-summary.cache-patterns-note', { count: 13 })).toBe(
-      '+13 cache-layer patterns (not counted above)',
+      '+13 cache-layer access patterns (separate from the cached reads)',
     );
   });
 });

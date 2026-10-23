@@ -54,8 +54,25 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
     )
     designed = [str(e) for e in gate.get("schema_design_engines") or []]
     cache = [e for e in designed if e in CACHE_ENGINES]
+    overlay = gate.get("cache_overlay")
     return {
         "rows": rows,
+        # #1252: the reads routing put under the cache overlay: cache candidates, not yet
+        # designed cached reads.
+        "cache_candidates": (
+            {
+                # The candidates synthesis stored when it rewrote the overlay (never the
+                # designed count), else the overlay's own: no drop has happened yet.
+                "read_count": _count(
+                    overlay.get("candidate_query_count", overlay.get("query_count"))
+                ),
+                "call_share_percent": overlay.get(
+                    "candidate_call_share_percent", overlay.get("call_share_percent")
+                ),
+            }
+            if isinstance(overlay, Mapping)
+            else None
+        ),
         # The engines the architecture keeps, largest first, then the cache layer (the page's
         # "Recommended architecture: A, B and C" headline).
         "surviving": [r["engine"] for r in rows if r["after"] and not r["dropped"]] + cache,

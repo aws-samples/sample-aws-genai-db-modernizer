@@ -119,6 +119,12 @@ test('the count notes: queries behind the patterns and cache-layer patterns', ()
   expect(db.textContent).toContain(t('analysis-results.executive-summary.cache-patterns-note', { count: 10 }));
 });
 
+test('the cache-layer pattern count says patterns, so it does not read as a second read count (#1252)', () => {
+  render({ accessPatternCount: 64, ownerQueryCount: 107, cachePatternCount: 11 });
+  const note = container.querySelector('[data-tile="database"]').textContent;
+  expect(note).toContain('+11 cache-layer access patterns (separate from the cached reads)');
+});
+
 test('without schema design the count is the queries, and with neither it is a dash', () => {
   render({ accessPatternCount: 0, ownerQueryCount: 107 });
   expect(container.querySelector('[data-figure="access-patterns"]').textContent).toBe('107');

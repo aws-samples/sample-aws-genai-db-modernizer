@@ -133,7 +133,7 @@ describe('#296 cache overlay', () => {
       'Your wordpress workload has 73 access patterns across 50 tables. '
       + 'We map 69 to DynamoDB, 4 to OpenSearch. '
       + 'Recommended integration pattern: Command Query Responsibility Segregation (CQRS). '
-      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+      + 'Cache layer · 20 cache candidates · 83.4% of calls.',
     );
     expect(summary).not.toContain('ElastiCache');
     expect(summary).not.toMatch(/\b0%/);
@@ -145,7 +145,7 @@ describe('#296 cache overlay', () => {
       'Your wordpress workload has 73 access patterns across 50 tables. '
       + 'We map 69 to DynamoDB, 4 to OpenSearch. '
       + 'Recommended integration pattern: Command Query Responsibility Segregation (CQRS). '
-      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+      + 'Cache layer · 20 cache candidates · 83.4% of calls.',
     );
   });
 
@@ -165,13 +165,13 @@ describe('#296 cache overlay', () => {
     });
     expect(summary).toBe(
       'Your wordpress workload has 12 access patterns. All access patterns map to DynamoDB. '
-      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+      + 'Cache layer · 20 cache candidates · 83.4% of calls.',
     );
   });
 
   test('no owners survive but a cache overlay exists: cache-layer line alone (no empty "We map" sentence)', () => {
     expect(build({ afterDist: {}, cacheOverlay: CACHE_OVERLAY })).toBe(
-      'Cache layer · 20 cached reads · 83.4% of calls',
+      'Cache layer · 20 cache candidates · 83.4% of calls',
     );
   });
 
@@ -182,7 +182,7 @@ describe('#296 cache overlay', () => {
       cacheOverlay: CACHE_OVERLAY,
     })).toBe(
       `Your wordpress workload has 73 access patterns across 50 tables. ${LLM} `
-      + 'Cache layer · 20 cached reads · 83.4% of calls.',
+      + 'Cache layer · 20 cache candidates · 83.4% of calls.',
     );
   });
 });

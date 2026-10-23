@@ -14,6 +14,7 @@ from src.agents.referee.post_schema_router import route_unsupported_queries
 from src.agents.referee.synthesis_data import load_synthesis_data
 from src.agents.referee.synthesis_grounding import build_fallback_summary
 from src.agents.referee.synthesis_handler import run_synthesis_deterministic
+from src.shared.report_facts import cache_layer_facts
 from src.storage.assignment_versioning import (
     engine_scope,
     engines_with_in_scope_queries,
@@ -177,12 +178,7 @@ class TestSynthesisData:
         # shrink between the gate (2 cached reads, 80.0% of calls) and the
         # report (1 remains) is traceable from the note text alone.
         note = data.cache_overlay_notes[0]
-        assert note == (
-            "2 hot reads (80.0% of calls) were assigned at the assignment gate. "
-            "The ElastiCache schema design covers 1 of them; the other 1 is no "
-            "longer cached and stays served by its owner engine. 1 hot read "
-            "(60.0% of calls) remains."
-        )
+        assert note == "2 cache candidates, 1 designed; it stays on its owner engine."
         # #459 review: the safety-net-only note is recorded separately from the
         # full (internal) audit trail -- both carry the same text here, since
         # nothing else wrote to cache_notes in this test.
@@ -218,14 +214,16 @@ class TestSynthesisReport:
         }
 
         summary = result["summary"]
-        assert "Cache layer: ElastiCache fronts 2 hot reads (80.0% of calls)" in summary
+        assert "Cache layer: ElastiCache fronts 2 designed cached reads (80.0% of calls)" in summary
         assert "elasticache handles" not in summary
         assert "elasticache (no queries assigned)" not in summary
 
         arch = result["architecture"]
         assert arch["architecture_type"] == "HYBRID_WITH_CACHE"
         cache_db = next(d for d in arch["databases"] if d["service"] == "elasticache")
-        assert cache_db["rationale"].startswith("Cache layer for 2 hot reads (80.0% of calls)")
+        assert cache_db["rationale"].startswith(
+            "Cache layer for 2 designed cached reads (80.0% of calls)"
+        )
 
         assert result["engine_tables"]["elasticache"] == ["orders", "users"]
         eff = next(
@@ -251,7 +249,12 @@ class TestSynthesisReport:
         assert "customer-edit note, full query hash: hot9" in overlay["notes"]
         assert "customer-edit note, full query hash: hot9" not in overlay["safety_net_notes"]
         (safety_net_note,) = overlay["safety_net_notes"]
-        assert safety_net_note.startswith("2 hot reads (80.0% of calls) were assigned")
+        assert safety_net_note.startswith("2 cache candidates, 1 designed;")
+        # #1252: the gate's figure and the design's figure are two facts, not one number.
+        assert (overlay["query_count"], overlay["candidate_query_count"]) == (1, 2)
+        assert overlay["candidate_call_share_percent"] == 80.0
+        assert overlay["call_share_percent"] == 60.0
+        assert cache_layer_facts(result)["owner_only_read_count"] == 1
         assert safety_net_note in overlay["notes"]
 
     def test_fallback_summary_describes_the_cache_layer(self):
