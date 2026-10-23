@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.shared.database_name import validate_database_name
 from src.shared.target_databases import normalize_target_databases
@@ -55,6 +55,29 @@ PublicReasonCode = Literal[
 
 #: How a table's owner was chosen (the facts layer's owner basis, ``src.shared.report_facts``).
 OwnerBasis = Literal["writes", "split_writes", "most_queries", "retained", "design"]
+
+#: What a result is, so a routing-only result is never read as a data model:
+#: ``analysis_only`` (scores, nothing placed), ``recommendation`` (engine placement, no
+#: data model) and ``designed`` (with a schema design's data model, which needs a model;
+#: no release produces it yet).
+ResultLabel = Literal["analysis_only", "recommendation", "designed"]
+
+#: The label each ``run_through_reached`` gives a result.
+LABEL_BY_PHASE: dict[str, str] = {
+    "analysis": "analysis_only",
+    "reality_check": "recommendation",
+    "schema_design": "designed",
+    "synthesis": "designed",
+}
+
+#: An analysed engine's part in the result: ``owner`` (statements are placed on it),
+#: ``cache_layer`` (a cache in front of other engines' reads; it owns no statement),
+#: ``consolidated`` (the reality check moved its statements to another engine) or
+#: ``not_selected`` (analysed, but no statement was placed on it).
+EngineRole = Literal["owner", "cache_layer", "consolidated", "not_selected"]
+
+#: A statement's type, as the library's parser reads it.
+StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "OTHER"]
 
 COMPATIBILITY_NOTE: Literal["none: internal contracts, may change in any release"] = (
     "none: internal contracts, may change in any release"
@@ -175,6 +198,57 @@ class RelationalEngine(_Strict):
     reason: str = Field(..., description="Customer-facing sentence; do not parse")
 
 
+class EngineLine(_Strict):
+    """One analysed engine, as the run left it."""
+
+    engine: str
+    role: EngineRole
+    statement_count: int = Field(
+        0, ge=0, description="Statements placed on it (`statements_per_engine`); 0 for a cache"
+    )
+    consolidated_into: str | None = Field(
+        None,
+        description=(
+            "Set when role is 'consolidated': the engine that took most of its statements "
+            "(`consolidations` lists every move)"
+        ),
+    )
+    unique_queries: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Reality check: of the statements it held when the check ran, those whose "
+            "score on it leads the best other engine by at least `unique_delta_threshold` "
+            "points; None when the reality check did not assess it"
+        ),
+    )
+    avg_delta: float | None = Field(
+        None,
+        description=(
+            "Reality check: its mean score lead over the best other engine on the "
+            "statements it held; None when the reality check did not assess it"
+        ),
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "Customer-facing sentence; do not parse. For an owner or the cache, the "
+            "executive report's 'why this engine' text; for a consolidated engine, the "
+            "reality check's reason"
+        ),
+    )
+
+
+class Consolidation(_Strict):
+    """One reality-check consolidation: statements moved off an engine that added no
+    unique value."""
+
+    from_engine: str
+    to_engine: str
+    query_count: int = Field(..., ge=0, description="Statements it moved")
+    reason: str = Field(..., description="Customer-facing sentence; do not parse")
+
+
 class TableLine(_Strict):
     """One source table: the engine that owns it and the engines that read copies of it."""
 
@@ -190,7 +264,8 @@ class TableLine(_Strict):
         None,
         description=(
             "writes: the engine of its writes; split_writes: writes on several engines, "
-            "the owner has most; most_queries: no writes, the engine serving most of its "
+            "the owner serves most of its queries; most_queries: no writes, the engine "
+            "serving most of its "
             "queries; retained: no owner engine queries it, the retained relational "
             "engine; design: no queries, from the schema design"
         ),
@@ -200,10 +275,28 @@ class TableLine(_Strict):
         description="Other engines whose statements read it (each needs a replica), most first",
     )
     cached_by: str | None = Field(None, description="The cache in front of its reads, if any")
+    reason: str | None = Field(
+        None,
+        description=(
+            "Customer-facing sentence on why the owner is the owner; do not parse. None "
+            "only when the table has no owner basis"
+        ),
+    )
 
 
 class Summary(_Strict):
     run_through_reached: RunThrough
+    source_engine: str = Field(
+        ..., description="The source database engine, as the collection states it"
+    )
+    assignment_version: int | None = Field(
+        None,
+        ge=1,
+        description=(
+            "The assignment version the result reflects (it rises when the reality check "
+            "or a customer edit writes a new one); None at 'analysis'"
+        ),
+    )
     statement_count: int = Field(..., ge=0, description="Placed statements plus unservable ones")
     statements_per_engine: dict[str, int] = Field(
         default_factory=dict, description="Placed statements per engine; empty at 'analysis'"
@@ -224,9 +317,24 @@ class Summary(_Strict):
             "Aurora engine of its own (the choice is made when statements are placed)"
         ),
     )
+    engines: list[EngineLine] = Field(
+        default_factory=list,
+        description="One line per analysed engine, in analysis order; empty at 'analysis'",
+    )
+    consolidations: list[Consolidation] = Field(
+        default_factory=list,
+        description="The reality check's consolidations, in its order; empty at 'analysis'",
+    )
     tables: list[TableLine] = Field(
         default_factory=list, description="One line per source table; empty at 'analysis'"
     )
+
+
+class PatternRef(_Strict):
+    """A pattern from the pattern catalog (``src/catalog/patterns``)."""
+
+    id: str = Field(..., description="The catalog's pattern id")
+    name: str = Field(..., description="The catalog's display name for it")
 
 
 class StatementResult(_Strict):
@@ -234,6 +342,8 @@ class StatementResult(_Strict):
     query_tags: list[str] = Field(
         default_factory=list, description="Leading or trailing comment tags; never read by routing"
     )
+    query_type: StatementType | None = Field(None, description="As the parser reads it")
+    join_count: int | None = Field(None, ge=0, description="As the parser reads it")
     tables: list[str] = Field(
         default_factory=list, description="The tables it touches, as the parser reads them"
     )
@@ -271,9 +381,12 @@ class StatementResult(_Strict):
         ),
     )
     signals: list[str] = Field(default_factory=list, description="Workload signals that name it")
-    matched_patterns: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description="Per analysed engine, the catalog access-pattern ids it matches",
+    matched_patterns: list[PatternRef] = Field(
+        default_factory=list,
+        description=(
+            "The catalog patterns it matches on its assigned engine, as that engine's "
+            "analysis found them; empty before 'reality_check' and when unservable"
+        ),
     )
     tied_engines: list[str] = Field(default_factory=list)
     reason_text: str | None = Field(
@@ -310,6 +423,14 @@ class Artifacts(BaseModel):
 
 class AssessmentResult(_Strict):
     contract_version: Literal["1.0"] = CONTRACT_VERSION
+    label: ResultLabel = Field(
+        ...,
+        description=(
+            "analysis_only: scores, nothing placed; recommendation: engine placement, not "
+            "a data model; designed: with a schema design's data model (not produced by "
+            "this release)"
+        ),
+    )
     library_version: str
     ruleset_version: str
     ruleset_hash: str
@@ -319,3 +440,13 @@ class AssessmentResult(_Strict):
     statements: list[StatementResult]
     groups: list[Group] = Field(default_factory=list)
     artifacts: Artifacts | None = None
+
+    @model_validator(mode="after")
+    def _label_matches_the_phase(self) -> AssessmentResult:
+        expected = LABEL_BY_PHASE[self.summary.run_through_reached]
+        if self.label != expected:
+            raise ValueError(
+                f"label must be {expected!r} for run_through_reached="
+                f"{self.summary.run_through_reached!r}, not {self.label!r}"
+            )
+        return self

@@ -1,5 +1,6 @@
 # Pattern unbounded-time-series-ingest. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "unbounded-time-series-ingest"
+name = "Unbounded time-series ingest"
 detectors = [
     "src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases",
 ]

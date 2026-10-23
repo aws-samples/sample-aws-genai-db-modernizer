@@ -1,5 +1,6 @@
 # Pattern faceted-analytics. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "faceted-analytics"
+name = "Faceted analytics"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

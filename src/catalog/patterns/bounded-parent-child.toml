@@ -1,5 +1,6 @@
 # Pattern bounded-parent-child. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "bounded-parent-child"
+name = "Bounded parent-child"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

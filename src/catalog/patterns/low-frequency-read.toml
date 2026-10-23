@@ -1,5 +1,6 @@
 # Pattern low-frequency-read. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "low-frequency-read"
+name = "Low-frequency read"
 detectors = []
 triage_signal = "low_frequency_reads"
 penalty = 0

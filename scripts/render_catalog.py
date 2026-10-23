@@ -230,7 +230,7 @@ def render_md(entries: tuple[EngineEntry, ...], pattern_entries: tuple[PatternEn
         )
     out += ["", "## Patterns", ""]
     for p in pattern_entries:
-        out += [f"### {p.id}", ""]
+        out += [f"### {p.id}", "", f"Name: {md_text(p.name)}."]
         if p.detectors:
             out.append("Detected by " + ", ".join(f"`{d}`" for d in p.detectors) + ".")
         else:

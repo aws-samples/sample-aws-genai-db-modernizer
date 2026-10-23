@@ -1,5 +1,6 @@
 # Pattern upsert-conflict. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "upsert-conflict"
+name = "Upsert on conflict"
 detectors = [
     "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",
 ]

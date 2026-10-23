@@ -1,5 +1,6 @@
 # Pattern unbounded-array-growth. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "unbounded-array-growth"
+name = "Unbounded array growth"
 detectors = []
 penalty = 10
 penalty_basis = "bounded_limit"

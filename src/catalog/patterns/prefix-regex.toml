@@ -6,6 +6,7 @@
 # fact (src/catalog/access_classes.toml), next to regex-search, which rates every regular
 # expression; the class score is the higher of the two. No analysis reports it.
 id = "prefix-regex"
+name = "Prefix regular expression"
 detectors = []
 penalty = 0
 

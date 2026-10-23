@@ -47,3 +47,24 @@ def test_summary_tables_match_the_reports_owner_lines(
         assert {k: built[line["table"]][k] for k in FIELDS} == {k: line[k] for k in FIELDS}
         compared += 1
     assert compared >= 10
+
+
+@pytest.mark.parametrize("job", ["designed_run", "designed_partial_run"])
+def test_engine_reasons_are_the_reports_why_text(job: str, request: pytest.FixtureRequest) -> None:
+    """``summary.engines[].reason`` for an owner or the cache is the executive report's
+    "why this engine" text (#1390): on the designed job, synthesis stated it in
+    ``facts.engines`` from the same assignment, with its schema designs."""
+    from src.assessment.models import AssessmentRequest
+    from src.assessment.result_builder import build_statements, build_summary
+
+    run: PipelineResult = request.getfixturevalue(job)
+    store = LocalArtifactStore(base_dir=str(run.artifact_root))
+    state = load_run_state(store, run.db, run.job_id, "reality_check")
+    request_ = AssessmentRequest(database_name=run.db, collection={"x": 1})
+    summary = build_summary(state, build_statements(state, request_))
+    report = json.loads(run.report_json().read_text(encoding="utf-8"))
+    why = {e["engine"]: e["rationale"] for e in report["facts"]["engines"]}
+    kept = [e for e in summary.engines if e.role in ("owner", "cache_layer")]
+    assert kept and {e.engine for e in kept} == set(why)
+    for e in kept:
+        assert e.reason == why[e.engine], e.engine

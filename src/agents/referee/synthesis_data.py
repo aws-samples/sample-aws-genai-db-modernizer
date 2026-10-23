@@ -87,6 +87,7 @@ def load_synthesis_data(
     job_id: str,
     database_name: str,
     assignment_version: int = 0,
+    schema_design_expected: bool = True,
 ) -> SynthesisData:
     """Load all pipeline artifacts from ArtifactStore into a unified structure.
 
@@ -98,6 +99,11 @@ def load_synthesis_data(
       - {db}/{job}/schema-{engine}/v{N}/schema_output.json (per selected engine, versioned)
       - {db}/{job}/schema-{engine}/design_trace.json (per selected engine)
       - {db}/{job}/assignment/v{N}/assignment.json (when assignment_version > 0)
+
+    ``schema_design_expected=False`` (a caller that stops before schema design, such as
+    ``assess()`` at ``run_through="reality_check"``) still reads any schema output and
+    design trace that exist, but logs a missing one at debug level: it cannot exist
+    yet, so its absence is no warning (#1390).
 
     Missing artifacts are logged as warnings, not errors — the synthesis
     handler must be resilient to partial data (e.g., schema design not
@@ -213,6 +219,7 @@ def load_synthesis_data(
         surviving_engines = (surviving | cache_engines) if surviving else None
 
     # Per-engine artifacts
+    design_missing = logging.WARNING if schema_design_expected else logging.DEBUG
     for agent_info in data.triage.get("selected_agents", []):
         engine = agent_info["agent_type"]
         if surviving_engines is not None and engine not in surviving_engines:
@@ -234,7 +241,7 @@ def load_synthesis_data(
 
         artifacts.schema_design, rejections = clean_schema_design_prose(
             engine,
-            _read_artifact(store, schema_key, required=False),
+            _read_artifact(store, schema_key, required=False, missing_level=design_missing),
             collector_identifiers(data.collector),
         )
         data.prose_style_rejections.extend(rejections)
@@ -247,7 +254,7 @@ def load_synthesis_data(
         else:
             trace_key = f"{database_name}/{job_id}/schema-{engine}/design_trace.json"
 
-        artifacts.design_trace = _read_design_trace(store, trace_key)
+        artifacts.design_trace = _read_design_trace(store, trace_key, design_missing)
 
         data.engines[engine] = artifacts
         logger.info(
@@ -335,25 +342,29 @@ def _apply_cache_safety_net(data: SynthesisData) -> None:
             del data.engines[engine]
 
 
-def _read_design_trace(store: ArtifactStore, path: str) -> DesignTrace | None:
+def _read_design_trace(
+    store: ArtifactStore, path: str, missing_level: int = logging.WARNING
+) -> DesignTrace | None:
     """The engine's design trace as its contract, or ``None`` when it is missing (optional,
     as every artifact here). A version or a shape the contract refuses raises, like every
     other reader of this trace (#1258)."""
     if not store.exists(path):
-        logger.warning("Optional artifact missing: %s", path)
+        logger.log(missing_level, "Optional artifact missing: %s", path)
         return None
     trace = read_design_trace(store, path)
     print(f"[synthesis] Read {path}")
     return trace
 
 
-def _read_artifact(store: ArtifactStore, path: str, required: bool = False) -> dict:  # type: ignore[type-arg]
+def _read_artifact(  # type: ignore[type-arg]
+    store: ArtifactStore, path: str, required: bool = False, missing_level: int = logging.WARNING
+) -> dict:
     """Read a JSON artifact via ArtifactStore. Returns empty dict on failure."""
     try:
         if not store.exists(path):
             if required:
                 raise RuntimeError(f"Required artifact missing: {path}")
-            logger.warning("Optional artifact missing: %s", path)
+            logger.log(missing_level, "Optional artifact missing: %s", path)
             return {}
         data: dict = store.read_json(path)  # type: ignore[type-arg]
         print(f"[synthesis] Read {path}")

@@ -328,6 +328,8 @@ class PatternEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    # The pattern's display name, as public results and the rule catalog state it (#1390).
+    name: str = Field(min_length=1, max_length=60, pattern=_ONE_LINE)
     detectors: tuple[str, ...]
     triage_signal: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
     capability: Capability | None = None
@@ -493,6 +495,9 @@ def _check_across_files(entries: Iterable[PatternEntry]) -> None:
     future = engine_ids(status="future")
     keys: dict[str, str] = {}
     by_catalog_id: dict[tuple[str, str], tuple[str, EngineSupport]] = {}
+    # (engine, catalog_id) -> pattern: the id an engine's analysis records names one
+    # pattern, so a result can name it (``engine_pattern``, #1390).
+    by_engine_id: dict[tuple[str, str], str] = {}
     capability_engines: dict[str, tuple[str, frozenset[str]]] = {}
     for entry in entries:
         for key in (entry.id, *entry.penalty_aliases):
@@ -508,16 +513,23 @@ def _check_across_files(entries: Iterable[PatternEntry]) -> None:
                     "engine only, and a future engine's entries are all 'future'"
                 )
         for engine, support in entry.engines.items():
-            if support.catalog_id is None or support.catalog is None:
+            if support.catalog_id is None:
                 continue
-            ref = (support.catalog, support.catalog_id)
-            seen = by_catalog_id.get(ref)
-            if seen is None:
-                by_catalog_id[ref] = (entry.id, support)
-            elif seen[0] != entry.id or seen[1] != support:
+            if support.catalog is not None:
+                ref = (support.catalog, support.catalog_id)
+                seen = by_catalog_id.get(ref)
+                if seen is None:
+                    by_catalog_id[ref] = (entry.id, support)
+                elif seen[0] != entry.id or seen[1] != support:
+                    raise CatalogError(
+                        f"{entry.id}.toml [engines.{engine}]: {support.catalog_id} is defined "
+                        f"differently in {seen[0]}.toml"
+                    )
+            owner = by_engine_id.setdefault((engine, support.catalog_id), entry.id)
+            if owner != entry.id:
                 raise CatalogError(
-                    f"{entry.id}.toml [engines.{engine}]: {support.catalog_id} is defined "
-                    f"differently in {seen[0]}.toml"
+                    f"{entry.id}.toml [engines.{engine}]: {support.catalog_id} already names "
+                    f"{owner}.toml for {engine}"
                 )
         if entry.capability:
             native = frozenset(e for e, s in entry.engines.items() if s.kind == "native")
@@ -541,6 +553,24 @@ def pattern(pattern_id: str) -> PatternEntry:
         if entry.id == pattern_id:
             return entry
     raise KeyError(f"no src/catalog/patterns/{pattern_id}.toml")
+
+
+def engine_pattern(engine: str, catalog_id: str) -> PatternEntry | None:
+    """The pattern whose entry for ``engine`` carries ``catalog_id`` (``dynamodb-01``,
+    the id the engine's analysis and decision trace record), or None when no pattern
+    file gives that engine that id."""
+    return _by_engine_catalog_id().get((engine, catalog_id))
+
+
+@cache
+def _by_engine_catalog_id() -> dict[tuple[str, str], PatternEntry]:
+    out: dict[tuple[str, str], PatternEntry] = {}
+    for entry in patterns():
+        for engine, support in entry.engines.items():
+            if support.catalog_id:
+                # Unique per engine: the loader refuses a second pattern for one id.
+                out[(engine, support.catalog_id)] = entry
+    return out
 
 
 def catalog_entries(

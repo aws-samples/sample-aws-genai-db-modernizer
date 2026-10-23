@@ -1,5 +1,6 @@
 # Pattern upsert-duplicate-key. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "upsert-duplicate-key"
+name = "Upsert on duplicate key"
 detectors = [
     "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
 ]

@@ -14,6 +14,7 @@
 # Aurora PostgreSQL (pg_trgm) and OpenSearch serve it natively; DocumentDB serves a prefix
 # regular expression with an index (prefix_regex_index), Aurora MySQL does not.
 id = "substring-match"
+name = "Substring match"
 detectors = [
     "src.agents.referee.substring_match:substring_matches",
 ]

@@ -1,5 +1,6 @@
 # Pattern write-heavy-ingestion. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "write-heavy-ingestion"
+name = "Write-heavy ingestion"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

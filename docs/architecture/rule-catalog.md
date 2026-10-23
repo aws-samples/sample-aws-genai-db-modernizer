@@ -238,6 +238,7 @@ Each cell is what a query showing the pattern gets on that engine: `fit N` (the 
 
 ### acid-transactions
 
+Name: ACID transactions.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
 - DynamoDB, native: TransactWriteItems/TransactGetItems are ACID across up to 100 items, and a conditional write is ACID on one item; a wider write is scored by its shape \(wide-transaction\).
@@ -250,6 +251,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 ### adjacency-list
 
+Name: Adjacency list.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 60 (dynamodb-07d): Hierarchical or graph-like relationship \(self-referential FK or multi-level hierarchy traversal\). Maps to DynamoDB adjacency list pattern with PK/SK design. Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
@@ -258,6 +260,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### aggregation-analytics
 
+Name: Aggregation analytics.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 85 (aurora-common-02): Aggregation queries with GROUP BY, HAVING, and aggregate functions \(SUM, COUNT, AVG\). Aurora handles analytical aggregations efficiently with parallel query execution.
@@ -267,6 +270,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### aggregation-pipeline
 
+Name: Aggregation pipeline.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 75 (documentdb-05): A grouped aggregate, or one over rows no key anchors, that maps to DocumentDB's aggregation pipeline \($group, $match, $project, $sort\). Table bonus: +8 pattern match.
@@ -275,6 +279,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### array-operations
 
+Name: Array operations.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
 - Aurora PostgreSQL, fit 80 (aurora-pg-04): Array operations \(ANY, array\_agg, unnest\) for multi-value attributes. Aurora PG handles array containment queries with GIN indexes, avoiding junction tables for simple multi-value cases. Counts toward the engine's feature complexity bonus.
@@ -283,6 +288,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 ### audit-columns-only
 
+Name: Audit columns only.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
 - OpenSearch, anti 0.1 (os-ap-03): Timestamp columns \(created\_at, updated\_at, event\_time, etc.\) used only in equality checks, not range queries. This is an audit/metadata pattern, not a time-series workload. Guard rail to prevent false time-series classification; guidance only, since no OpenSearch limit applies \(OpenSearch documentation, Date field type\).
@@ -291,6 +297,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 ### batch-in-list
 
+Name: Batch IN list.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 70 (aurora-common-11): Batch lookups using WHERE column IN \(...\) with multiple values: one index scan probes every listed value \(PostgreSQL documentation, Indexes, a ScalarArrayOpExpr on a B-tree; MySQL Reference Manual, Range Optimization, equality ranges for IN lists\), with no item limit, where DynamoDB's BatchGetItem takes at most 100 keys and 16 MB \(Amazon DynamoDB API Reference, BatchGetItem\). In the key-lookup class it raises no score: key-value-lookup rates the same read at 80.
@@ -300,6 +307,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### bounded-parent-child
 
+Name: Bounded parent-child.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 75 (dynamodb-07a): Parent-child relationship where the cardinality can be reasoned about at design time. A partition key value's item collection has no size limit unless the table has a local secondary index \(then 10 GB\). The bound is domain-driven \(e.g., order → items, user → addresses\) \(Amazon DynamoDB Developer Guide, Local secondary indexes\). Large item collections may need creative sort key design for efficient range queries. Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
@@ -308,6 +316,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### caching
 
+Name: Caching.
 Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (high) (redis-caching-001): Detected high-frequency SELECT queries suitable for caching
@@ -316,6 +325,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 ### co-accessed-tables
 
+Name: Co-accessed tables.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 70 (dynamodb-07c): Tables frequently accessed together in the same queries \(co-access frequency &gt; 50 calls/hour\). Strong signal for denormalization into one item collection that a single Query returns \(Amazon DynamoDB Developer Guide, Best practices for modeling relational data\). Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
@@ -324,6 +334,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### complex-aggregation
 
+Name: Complex aggregation.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, anti 0.7 (dynamodb-ap-02): GROUP BY, HAVING, or an aggregate over rows no key anchors or over a join \(one key's COUNT or SUM is a Query on that key, not this pattern\). DynamoDB has no server-side aggregation: a Query or Scan can only count the items it reads \(Select = COUNT\), so a grouped result needs the application layer, pre-computed aggregates or a separate analytics store \(Amazon DynamoDB API Reference, Query\).
@@ -332,6 +343,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### complex-join
 
+Name: Complex join.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 90 (aurora-common-01): Queries joining 3+ tables with multiple join conditions. Aurora's query optimizer excels at complex join planning: hash joins, merge joins, and nested loop selection are automatic and performant at scale.
@@ -341,6 +353,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### correlated-subquery-joins
 
+Name: Correlated subquery joins.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.7 (documentdb-anti-08): Queries with correlated subqueries. A correlated $lookup \(let/pipeline\) runs its sub-pipeline for each input document, and needs DocumentDB 8.0.2 or later on an instance-based cluster \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\); otherwise pre-denormalize.
@@ -349,6 +362,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### correlated-subquery
 
+Name: Correlated subquery.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 80 (aurora-common-06): Correlated subqueries using EXISTS, NOT EXISTS, or IN \(SELECT ...\). Aurora's optimizer can decorrelate and flatten these into efficient join plans.
@@ -358,6 +372,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### cte-recursive
 
+Name: Recursive CTE.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 
 - Aurora PostgreSQL, fit 95 (aurora-pg-01): Recursive CTEs \(WITH RECURSIVE\) for hierarchical data traversal: org charts, category trees, bills of materials, with the SEARCH and CYCLE clauses for traversal order and cycle detection and no default recursion limit \(PostgreSQL documentation, WITH Queries\). Table bonus: +15 pattern match. Counts toward the engine's feature complexity bonus.
@@ -367,6 +382,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 ### extended-reference
 
+Name: Extended reference.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 85 (documentdb-07): Queries joining large transactional tables with small reference/lookup tables \(country, merchant, payment\_type\) just to get display names. Embed the few referenced fields directly, especially valuable in DocumentDB, where every $lookup is a read-time join. Table bonus: +10 pattern match.
@@ -375,6 +391,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### faceted-analytics
 
+Name: Faceted analytics.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.5 (documentdb-anti-06): Several groupings of one row set in one statement \(GROUPING SETS, ROLLUP, CUBE\): $facet runs them in one pipeline on DocumentDB 8.0.2 or later on an instance-based cluster \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\). A GROUP BY over several columns is one $group with a compound \_id, native on every version, and is not this pattern.
@@ -383,6 +400,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### frequent-full-scan
 
+Name: Frequent full scan.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, anti 0.5 (dynamodb-ap-01): A read more frequent than once a minute that pins no column to a value, so no partition key value can address it whatever the key design. On DynamoDB that is a Scan, which reads every item and consumes read capacity for every item it reads, not only the ones it returns \(Amazon DynamoDB Developer Guide, Scanning tables\).
@@ -391,6 +409,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### full-text-native
 
+Name: PostgreSQL native full-text search.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
 - Aurora PostgreSQL, fit 75 (aurora-pg-05): Native full-text search using to\_tsvector, ts\_query, and @@ operator. Aurora PG provides built-in full-text with GIN indexes, suitable for moderate search workloads without a separate search engine. Table bonus: +10 pattern match.
@@ -399,6 +418,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 ### full-text-search-candidate
 
+Name: Full-text search with LIKE.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.6 (aurora-anti-03): Full-text search patterns using LIKE '%term%' or similar constructs. Guidance only: the scan an unindexed substring match needs is priced once, as its own pattern, and a word search is not penalised \(PostgreSQL documentation, pg\_trgm\).
@@ -408,6 +428,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### full-text-search
 
+Name: Full-text search.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
@@ -421,6 +442,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 ### fulltext-search
 
+Name: MySQL FULLTEXT search.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 
 - Aurora MySQL, fit 80 (aurora-mysql-02): Full-text search using MATCH ... AGAINST with FULLTEXT indexes. Aurora MySQL provides built-in boolean and natural language full-text modes suitable for moderate search workloads. Table bonus: +10 pattern match.
@@ -429,6 +451,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 ### fuzzy-search
 
+Name: Fuzzy search.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
@@ -442,6 +465,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 ### geospatial
 
+Name: Geospatial query.
 Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-geospatial-001): Detected geospatial query patterns
@@ -450,6 +474,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 ### graph-traversal-hierarchy
 
+Name: Graph traversal or hierarchy.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.8 (documentdb-anti-04): Self-referential FKs or recursive queries. $graphLookup runs on DocumentDB 8.0 instance-based clusters, not on 5.0 or earlier and not on elastic clusters \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
@@ -458,6 +483,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### group-concat-pivot
 
+Name: Group concatenation or pivot.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
 - Aurora PostgreSQL, fit 75 (aurora-pg-10): String aggregation with string\_agg \(a source's GROUP\_CONCAT, STRING\_AGG or LISTAGG\) for pivoting and denormalized output, server-side \(PostgreSQL documentation, Aggregate Functions\). Table bonus: +5 pattern match. Counts toward the engine's feature complexity bonus.
@@ -467,6 +493,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 ### heavy-cross-collection-joins
 
+Name: Heavy cross-collection joins.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.6 (documentdb-anti-01): Queries joining 3 or more tables. Each join becomes a $lookup stage that reads the joined collection for the documents flowing through it, one stage per collection, with a nested-loop, hash or sort-merge algorithm \(Amazon DocumentDB Developer Guide, Functional differences, $lookup\); correlated $lookup needs DocumentDB 8.0.2 or later.
@@ -475,6 +502,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### high-frequency-pk-lookup
 
+Name: High-frequency primary key lookup.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.8 (aurora-anti-01): Single-row SELECT by primary key at very high frequency \(more than 30 calls/second\). Aurora serves it natively with a B-tree point read and scales reads with up to 15 Aurora Replicas \(Amazon Aurora User Guide, Replication with Amazon Aurora\).
@@ -484,6 +512,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### high-frequency-small-updates
 
+Name: High-frequency small updates.
 No analysis reports this pattern today.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -493,6 +522,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### high-ingest
 
+Name: High ingest.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -502,6 +532,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### high-volume-text-search
 
+Name: High-volume text search.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.7 (aurora-anti-07): High-frequency text search patterns \(LIKE '%', tsvector, ILIKE\) on a text-heavy table \(&gt;40% text columns\). A B-tree serves no leading-wildcard LIKE, so without a text or trigram index the search reads every row \(MySQL Reference Manual, Comparison of B-Tree and Hash Indexes; PostgreSQL documentation, pg\_trgm\).
@@ -511,6 +542,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### json-document-query
 
+Name: JSON document query.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 80 (documentdb-06): A query that reads JSON paths \(JSON\_EXTRACT, -&gt;&gt;, JSON\_VALUE\): the data is already semi-structured, and each path maps to a document field. Table bonus: +8 pattern match.
@@ -521,6 +553,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 ### key-value-lookup
 
+Name: Key-value lookup.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`, `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - DynamoDB, fit 100 (dynamodb-01): Single-item reads by the full primary key: GetItem, or BatchGetItem for up to 100 keys and 16 MB, at single-digit-millisecond latency at any scale \(Amazon DynamoDB Developer Guide, Working with items; Amazon DynamoDB API Reference, BatchGetItem\). Table bonus: +15 pattern match.
@@ -532,6 +565,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### large-result-sets
 
+Name: Large result sets.
 Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, anti 0.5 (redis-large-results-001): Queries returning more than 10,000 rows: cached as one value, each read and write moves the whole result, and a value is at most 512 MB \(Valkey documentation, Strings\).
@@ -540,6 +574,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 ### lateral-join
 
+Name: Lateral join.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 
 - Aurora PostgreSQL, fit 85 (aurora-pg-06): LATERAL joins for correlated subqueries in the FROM clause, each row from the left side feeding the lateral subquery \(top-N per group\); LATERAL also precedes a set-returning function call \(PostgreSQL documentation, Table Expressions, LATERAL Subqueries\). Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
@@ -549,6 +584,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 ### leaderboard
 
+Name: Leaderboard.
 Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-leaderboard-001): Detected ranking/leaderboard query patterns \(ORDER BY + LIMIT\)
@@ -557,6 +593,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 ### low-frequency-read
 
+Name: Low-frequency read.
 No analysis reports this pattern today.
 
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
@@ -564,6 +601,7 @@ No analysis reports this pattern today.
 
 ### low-frequency-write
 
+Name: Low-frequency write.
 No analysis reports this pattern today.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -572,6 +610,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### many-to-many-junction
 
+Name: Many-to-many junction.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 65 (dynamodb-07b): Many-to-many relationship via a junction table with composite PK of two FK columns. Needs a GSI or the adjacency list pattern in DynamoDB, which takes more design work \(Amazon DynamoDB Developer Guide, Best practices for managing many-to-many relationships\). Table bonus: +5 pattern match, -10 complexity (once for the `denormalizable-join` group).
@@ -580,6 +619,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### metadata-config-store
 
+Name: Metadata or configuration store.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 90 (dynamodb-05): Small, rarely written reference tables read by key \(feature flags, config, lookup tables\): GetItem or BatchGetItem on the key, with DynamoDB Accelerator for microsecond reads at an extra node cost \(Amazon DynamoDB Developer Guide, Working with items; In-memory acceleration with DAX\). Table bonus: +10 pattern match.
@@ -588,6 +628,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### multi-index-joins
 
+Name: Multi-index joins.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
 - OpenSearch, anti 0.8 (os-ap-01): Queries joining multiple tables \(join\_count &gt;= 2\). OpenSearch has no join across indexes: nested documents and the join field type relate documents inside one index only, so the data must be denormalized into one index or joined in the application layer \(OpenSearch documentation, Joining queries\).
@@ -596,6 +637,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 ### multi-row-mutation
 
+Name: Multi-row mutation.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -606,6 +648,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### multi-table-update
 
+Name: Multi-table update.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:analyze_aurora_mysql_use_cases`, `src.tools.analysis.aurora_pg_analysis_tools:analyze_aurora_pg_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -616,6 +659,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### negation-heavy-queries
 
+Name: Negation-heavy queries.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.4 (documentdb-anti-05): Queries with NOT IN, &lt;&gt;, \!=, NOT EXISTS, which map to $ne/$nin/$nor. Query planner version 2 and later use indexes for $ne, $nin and $not, so a negation is no worse on DocumentDB than on an engine where it is rarely index-selective \(Amazon DocumentDB Developer Guide, Query planner\).
@@ -624,6 +668,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### nested-document
 
+Name: Nested document.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 85 (documentdb-04): Parent-child FK relationships with bounded child cardinality suitable for embedding as nested arrays. Eliminates JOINs entirely. Table bonus: +12 pattern match.
@@ -632,6 +677,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### no-relational-need
 
+Name: No relational need.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.6 (aurora-anti-05): Table with no foreign keys and no join participation: all queries are single-table CRUD. Aurora serves single-table CRUD natively and uses none of its relational features for it \(Amazon Aurora User Guide, What is Amazon Aurora\).
@@ -641,6 +687,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### ordered-scan
 
+Name: Ordered scan.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, anti 0.5 (dynamodb-ap-05): The first rows of a whole table in some order \(ORDER BY with a row limit and no key value\). A DynamoDB Scan returns items in no particular order, so the first rows by any order need every item read and sorted by the application \(Amazon DynamoDB Developer Guide, Scanning tables\).
@@ -649,6 +696,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### pagination
 
+Name: Pagination.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - DocumentDB, -, class score 85 (parity anchor, from `pagination`): An index range scan with sort, skip and limit \(find\(\).sort\(\).limit\(\), or a keyset filter on an indexed field\) is native; DocumentDB's analysis does not report the pattern and it adds no cross-engine penalty. Class score \(#728\): 85, parity anchor: no engine-specific evidence yet; the same index range scan Aurora's pagination is rated at \(pagination, 85\), until a measurement replaces it \(#936\).
@@ -659,6 +707,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### prefix-regex
 
+Name: Prefix regular expression.
 No analysis reports this pattern today.
 
 - DocumentDB, -, class score 75 (parity anchor, from `secondary-attribute-filter`): A prefix $regex without the i, m or o options uses an index on the field \(Amazon DocumentDB Developer Guide, Query planner\), an index range read rather than a collection scan. Class score \(#728\): 75, parity anchor: no engine-specific evidence yet; the secondary-index filter Aurora is rated at for this class \(secondary-attribute-filter, 75\), until a measurement replaces it.
@@ -667,6 +716,7 @@ No analysis reports this pattern today.
 
 ### range-query
 
+Name: Range query.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 90 (dynamodb-02): Queries that pin a partition key value and bound a sort key by a range: a DynamoDB Query with a KeyConditionExpression, returned in sort-key order, at most 1 MB per page; with a local secondary index an item collection is limited to 10 GB \(Amazon DynamoDB API Reference, Query; Amazon DynamoDB Developer Guide, Local secondary indexes\). Table bonus: +10 pattern match.
@@ -675,6 +725,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### referential-integrity
 
+Name: Referential integrity.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 85 (aurora-common-04): Tables with high foreign key density \(&gt;2 FKs\) and CASCADE operations. Relational engines enforce referential integrity at the database level; migrating to NoSQL would require application-level enforcement.
@@ -684,6 +735,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### regex-search
 
+Name: Regular expression search.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
@@ -697,6 +749,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 ### reporting-query
 
+Name: Reporting query.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 80 (aurora-common-05): Reporting queries with large result sets, date-range filters, and ordered/limited aggregate results. Aurora's read replicas can offload reporting workloads without impacting transactional performance.
@@ -706,6 +759,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### secondary-attribute-filter
 
+Name: Secondary attribute filter.
 No analysis reports this pattern today.
 
 - DocumentDB, -, class score 75 (parity anchor, from `secondary-attribute-filter`): Filters on any field, served by single-field and compound secondary indexes, are native queries. Class score \(#728\): 75, parity anchor: no engine-specific evidence yet; the secondary-index filter Aurora is rated at for this class \(secondary-attribute-filter, 75\), until a measurement replaces it \(#936\).
@@ -717,6 +771,7 @@ No analysis reports this pattern today.
 
 ### session-store
 
+Name: Session store.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`, `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - DynamoDB, fit 90 (dynamodb-06): User session data read and written by its session or user key at high throughput: GetItem and PutItem on the key, with Time to Live to expire old sessions, though manual or application-managed cleanup also works \(Amazon DynamoDB Developer Guide, Time to Live\). Table bonus: +12 pattern match.
@@ -726,6 +781,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### simple-cache-read
 
+Name: Simple cache read.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.7 (aurora-anti-02): High-frequency reads of small, rarely-changing data \(config, sessions, feature flags\). Aurora serves them natively from memory once read \(MySQL Reference Manual, Buffer Pool; PostgreSQL documentation, Resource Consumption, shared\_buffers\), so a cache in front is a latency choice.
@@ -735,6 +791,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### simple-join
 
+Name: Simple join.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, fit 70 (aurora-common-09): Queries joining 2 tables. While simpler than multi-table complex joins, these still require a relational engine with a query optimizer; NoSQL engines cannot perform server-side joins.
@@ -744,6 +801,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### single-access-pattern-table
 
+Name: Single access pattern table.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 
 - Aurora PostgreSQL, anti 0.5 (aurora-anti-06): Table accessed by at most 2 distinct query patterns, all single-table, all by primary key or single column filter. Aurora serves these reads natively and its query optimizer adds nothing to them \(Amazon Aurora User Guide, What is Amazon Aurora\).
@@ -753,6 +811,7 @@ Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_comm
 
 ### standard-crud
 
+Name: Standard CRUD.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Segment weighting: per table. A table's score weighs this pattern by the calls of the segment's queries that access that table, not the whole segment.
 
@@ -763,6 +822,7 @@ Segment weighting: per table. A table's score weighs this pattern by the calls o
 
 ### stored-routine
 
+Name: Stored routine.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`, `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 
 - Aurora PostgreSQL, fit 70 (aurora-pg-08): Functions and procedures in PL/pgSQL \(CALL, CREATE PROCEDURE, CREATE FUNCTION; a SQL Server EXEC of a procedure\) encapsulate business logic server-side, reducing network round trips for multi-step operations \(PostgreSQL documentation, User-Defined Procedures\). Counts toward the engine's feature complexity bonus.
@@ -772,6 +832,7 @@ Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specifi
 
 ### substring-match
 
+Name: Substring match.
 Detected by `src.agents.referee.substring_match:substring_matches`.
 Scan threshold: 1 calls per second and 100,000 table rows, both reached. A leading-wildcard LIKE, or a regular expression, reads every row of the table on an engine with no index for it \(MySQL Reference Manual, Comparison of B-Tree and Hash Indexes: a B-tree serves LIKE only for a constant pattern that does not start with a wildcard, and no REGEXP\). At 1 call per second on 100,000 rows that is 100,000 rows read every second, the point where the analysis cost bands \(src/tools/analysis/scoring.py\) stop calling a query rare and a table small; below either, the scan is cheap enough to keep.
 
@@ -784,6 +845,7 @@ Scan threshold: 1 calls per second and 100,000 table rows, both reached. A leadi
 
 ### text_search
 
+Name: Generic text search.
 No analysis reports this pattern today.
 
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.
@@ -791,6 +853,7 @@ No analysis reports this pattern today.
 
 ### time-aggregation
 
+Name: Time aggregation.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
 - OpenSearch, fit 90 (os-06): Time-based aggregations using DATE\_TRUNC, DATE\(\), HOUR\(\), or EXTRACT\(\). OpenSearch date histogram aggregations run against pre-sorted time fields, which is very efficient. Table bonus: +15 pattern match.
@@ -799,6 +862,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 ### time-range-query
 
+Name: Time range query.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 
 - OpenSearch, fit 85 (os-05): Range queries on timestamp columns \(created\_at, event\_time, etc.\). OpenSearch time-series indices with date histograms excel at this access pattern. Table bonus: +10 pattern match.
@@ -807,6 +871,7 @@ Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use
 
 ### time-series-event-log
 
+Name: Time-series event log.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, fit 85 (dynamodb-04): Time-ordered data with timestamp-based range reads. Maps to DynamoDB with entity ID as partition key and timestamp as sort key. TTL for automatic expiry \(Amazon DynamoDB Developer Guide, Time to Live\). Table bonus: +10 pattern match.
@@ -815,6 +880,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### time-series
 
+Name: Time series.
 Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 - ElastiCache, fit (medium) (redis-timeseries-001): Detected time series aggregation patterns
@@ -823,6 +889,7 @@ Detected by `src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases`.
 
 ### transactional-write
 
+Name: Transactional write.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -833,6 +900,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### unbounded-array-growth
 
+Name: Unbounded array growth.
 No analysis reports this pattern today.
 
 - DocumentDB, anti 0.7 (documentdb-anti-02): Embedded arrays that grow without limit hit the 16 MB document size limit \(Amazon DocumentDB Developer Guide, Quotas and limits\).
@@ -841,6 +909,7 @@ No analysis reports this pattern today.
 
 ### unbounded-result-set
 
+Name: Unbounded result set.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 
 - DynamoDB, anti 0.2 (dynamodb-ap-03): Queries returning more than 10,000 rows with no row limit. A DynamoDB Query or Scan returns at most 1 MB per call, so the result arrives in pages the application follows with LastEvaluatedKey \(Amazon DynamoDB Developer Guide, Paginating table query results\).
@@ -849,6 +918,7 @@ Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cas
 
 ### unbounded-time-series-ingest
 
+Name: Unbounded time-series ingest.
 Detected by `src.tools.analysis.aurora_common_analysis_tools:analyze_aurora_common_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -859,6 +929,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### upsert-conflict
 
+Name: Upsert on conflict.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -868,6 +939,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### upsert-duplicate-key
 
+Name: Upsert on duplicate key.
 Detected by `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -877,6 +949,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### variant-attributes
 
+Name: Variant attributes.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, fit 80 (documentdb-01): An entity whose attribute set varies \(by type or category, or as attribute rows\), read by its key: DocumentDB stores each entity as one document of up to 16 MB with only the fields it has; it has no wildcard index, so each queried attribute needs its own index \(Amazon DocumentDB Developer Guide, Quotas and limits; Functional differences\). Table bonus: +10 pattern match.
@@ -885,6 +958,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### wide-transaction
 
+Name: Wide transaction.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 Penalty: 10 (`bounded_limit`). DynamoDB runs every item of a wider write within a documented bound: one PartiQL DELETE or UPDATE changes one item \(its condition resolves to a single primary key\), and the documented way to change several is a transaction of up to 100 items or a batch \(Amazon DynamoDB Developer Guide, PartiQL delete statements; Amazon DynamoDB Transactions\), so the design splits the write into bounded calls, reads the keys of a predicate-picked set first, and gives up all-or-nothing atomicity across the calls; the data model needs no redesign \(needs\_redesign is for an access path no server-side operation serves\).
 Writes only: no parity anchor borrows from it and no access class lists it.
@@ -895,6 +969,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### wildcard-search
 
+Name: Wildcard search.
 Detected by `src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases`.
 Exemption note: {engine} runs this search pattern natively: not penalized. OpenSearch is worth the move only when traffic, data size or search depth justify a dedicated search engine
 
@@ -908,6 +983,7 @@ Exemption note: {engine} runs this search pattern natively: not penalized. OpenS
 
 ### window-function
 
+Name: Window function.
 Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features`, `src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features`.
 
 - Aurora PostgreSQL, fit 90 (aurora-pg-02): Window functions \(OVER, PARTITION BY, ROW\_NUMBER, RANK, LAG, LEAD\) for running totals, rankings and row-level analytics, in one pass without self-joins, with the ROWS, RANGE and GROUPS frame modes and frame exclusion \(PostgreSQL documentation, Window Function Calls\). Table bonus: +10 pattern match. Counts toward the engine's feature complexity bonus.
@@ -917,6 +993,7 @@ Detected by `src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_feat
 
 ### window-functions
 
+Name: Window functions in a document pipeline.
 Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases`.
 
 - DocumentDB, anti 0.5 (documentdb-anti-07): SQL window functions $setWindowFields serves \(ROW\_NUMBER, RANK, running totals\): DocumentDB 8.0.2 or later on an instance-based cluster. LAG and LEAD \($shift\) and NTILE \(no bucketing window operator\) run on no version, so they are a hard capability gap, not this entry \(Amazon DocumentDB Developer Guide, Supported MongoDB APIs, operations, and data types\).
@@ -925,6 +1002,7 @@ Detected by `src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use
 
 ### write-heavy-ingestion
 
+Name: Write-heavy ingestion.
 Detected by `src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases`.
 Writes only: no parity anchor borrows from it and no access class lists it.
 
@@ -934,6 +1012,7 @@ Writes only: no parity anchor borrows from it and no access class lists it.
 
 ### write-time-aggregation
 
+Name: Write-time aggregation.
 No analysis reports this pattern today.
 
 - No effect on: DynamoDB, DocumentDB, OpenSearch, ElastiCache, Aurora PostgreSQL, Aurora MySQL.

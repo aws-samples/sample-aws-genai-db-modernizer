@@ -1,5 +1,6 @@
 # Pattern complex-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "complex-aggregation"
+name = "Complex aggregation"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

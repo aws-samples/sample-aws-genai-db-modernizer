@@ -1,5 +1,6 @@
 # Pattern frequent-full-scan. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "frequent-full-scan"
+name = "Frequent full scan"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

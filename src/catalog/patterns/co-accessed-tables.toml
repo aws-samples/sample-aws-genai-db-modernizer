@@ -1,5 +1,6 @@
 # Pattern co-accessed-tables. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "co-accessed-tables"
+name = "Co-accessed tables"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

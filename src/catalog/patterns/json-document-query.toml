@@ -6,6 +6,7 @@
 # MySQL); an analysis saved before #967 may still name the two old ids, which no reader
 # looks up in the catalog.
 id = "json-document-query"
+name = "JSON document query"
 detectors = [
     "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
     "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",

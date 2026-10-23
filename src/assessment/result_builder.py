@@ -14,6 +14,12 @@ routing did not already decide:
   (``ScoringContext.from_pipeline`` and ``score_query_for_engine``);
 - ``summary.tables`` are the facts layer's table owner lines
   (``src.shared.report_facts``), from the same assignment usage synthesis reads;
+- ``summary.engines`` are the analysed engines with the facts layer's per-engine line
+  (the executive report's role and "why" text, from synthesis's own ranking of the
+  effective assignment) and the reality check's unique-value figures;
+  ``summary.consolidations`` are the reality check's consolidations;
+- a statement's ``matched_patterns`` are its assigned engine's decision-trace matches,
+  named by the pattern catalog (``src/catalog/patterns``);
 - ``groups`` are the assignment's co-dependency groups and write groups.
 
 The builder is pure over :class:`RunState`, so the next phases and fields are each a
@@ -27,10 +33,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.assessment.models import (
+    LABEL_BY_PHASE,
     Artifacts,
     AssessmentRequest,
     AssessmentResult,
+    Consolidation,
+    EngineLine,
     Group,
+    PatternRef,
     PublicReasonCode,
     RelationalEngine,
     StatementResult,
@@ -59,6 +69,10 @@ class RunState:
     # before ``reality_check``.
     lineage: list[dict[str, Any]] = field(default_factory=list)
     reality_check: dict[str, Any] | None = None
+    # The facts layer's per-engine lines (``report_facts.engine_facts``) for the
+    # effective assignment, by engine: the executive report's role and "why" text.
+    # Empty before ``reality_check``.
+    report_engines: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def assignment(self) -> dict[str, Any] | None:
@@ -121,7 +135,26 @@ def load_run_state(store: Any, database_name: str, job_id: str, run_through: str
     # The record of the reality-check run the effective assignment descends from, never
     # one from another lineage.
     state.reality_check = read_reality_check_output(store, database_name, job_id, effective)
+    if effective:
+        state.report_engines = report_engine_lines(store, database_name, job_id, effective)
     return state
+
+
+def report_engine_lines(
+    store: Any, database_name: str, job_id: str, version: int
+) -> dict[str, dict[str, Any]]:
+    """The executive report's per-engine lines for assignment ``version``: synthesis's
+    own ranking of it (``build_ranking`` over ``load_synthesis_data``, as the report
+    builds it) through the facts layer (``engine_facts``). Only the engines that keep
+    a part in the architecture are in it (an owner or the cache layer)."""
+    from src.agents.referee.synthesis_data import load_synthesis_data
+    from src.agents.referee.synthesis_report import build_ranking
+    from src.shared.report_facts import engine_facts
+
+    # Schema design has not run (it is after reality_check), so its outputs cannot exist.
+    data = load_synthesis_data(store, job_id, database_name, version, schema_design_expected=False)
+    rows = engine_facts({"ranking": build_ranking(data)}, [])
+    return {str(r["engine"]): r for r in rows}
 
 
 # --------------------------------------------------------------------------- statements
@@ -186,7 +219,7 @@ def _signals_by_query(triage: Mapping[str, Any]) -> dict[str, list[str]]:
 
 
 def _patterns_by_query(traces: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, list[str]]]:
-    """``{query_id: {engine: [pattern id, ...]}}`` from each engine's decision trace."""
+    """``{query_id: {engine: [catalog id, ...]}}`` from each engine's decision trace."""
     out: dict[str, dict[str, list[str]]] = {}
     for engine in sorted(traces):
         for match in traces[engine].get("query_matches") or []:
@@ -196,6 +229,22 @@ def _patterns_by_query(traces: Mapping[str, Mapping[str, Any]]) -> dict[str, dic
             if ids:
                 out.setdefault(str(match["query_id"]), {})[engine] = ids
     return out
+
+
+def _named_patterns(engine: str | None, catalog_ids: list[str]) -> list[PatternRef]:
+    """The catalog patterns behind ``engine``'s matched ``catalog_ids`` (each engine
+    catalog id belongs to one pattern file), once each, in the trace's order."""
+    from src.shared.catalog.patterns import engine_pattern
+
+    if not engine:
+        return []
+    out: dict[str, PatternRef] = {}
+    for cid in catalog_ids:
+        entry = engine_pattern(engine, cid)
+        if entry is None:
+            raise ValueError(f"{engine} decision trace names {cid!r}, which no pattern file has")
+        out.setdefault(entry.id, PatternRef(id=entry.id, name=entry.name))
+    return list(out.values())
 
 
 def _scope_excluded(triage: Mapping[str, Any]) -> set[str]:
@@ -279,20 +328,25 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
     ) -> StatementResult:
         q = patterns.get(qid) or {}
         fit, gated = scored
+        engine = placed.engine if placed else None
         return StatementResult(
             query_id=qid,
             query_tags=[str(t) for t in q.get("query_tags") or []],
+            query_type=q.get("query_type"),
+            join_count=q.get("join_count"),
             tables=[str(t) for t in tables],
             calls_per_second=q.get("calls_per_second"),
             rewritten_by_caller=qid in rewritten,
-            engine=placed.engine if placed else None,
+            engine=engine,
             confidence=placed.confidence if placed else None,
             reason_code=placed.reason_code if placed else None,
             consolidated_from=placed.consolidated_from if placed else None,
             excluded=sorted(gated | scope_out),
             fit=fit,
             signals=signals.get(qid, []),
-            matched_patterns=matched.get(qid, {}),
+            matched_patterns=_named_patterns(
+                engine, (matched.get(qid) or {}).get(engine or "", [])
+            ),
             unservable_reason=placed.unservable_reason if placed else None,
             tied_engines=placed.tied_engines if placed else [],
             reason_text=placed.reason_text if placed else None,
@@ -365,7 +419,11 @@ def build_table_lines(state: RunState, retained_engine: str | None) -> list[Tabl
     """Each source table the effective assignment derives a row for, with its owner
     line from the facts layer (``assignment_table_usage`` and ``table_owner_line``).
     Empty before ``reality_check``."""
-    from src.shared.report_facts import assignment_table_usage, table_owner_line
+    from src.shared.report_facts import (
+        assignment_table_usage,
+        table_owner_line,
+        table_owner_reason,
+    )
 
     assignment = state.assignment
     if assignment is None:
@@ -381,14 +439,115 @@ def build_table_lines(state: RunState, retained_engine: str | None) -> list[Tabl
     lines: list[TableLine] = []
     for table in tables:
         u = usage.get(table) or {}
+        writes, queries = u.get("writes") or {}, u.get("queries") or {}
         line = table_owner_line(
-            u.get("writes") or {},
-            u.get("queries") or {},
-            u.get("cached_by") or [],
-            (),
-            retained_engine=retained_engine,
+            writes, queries, u.get("cached_by") or [], (), retained_engine=retained_engine
         )
-        lines.append(TableLine(table_id=table, **line))
+        reason = table_owner_reason(line, writes, queries, retained_engine)
+        lines.append(TableLine(table_id=table, **line, reason=reason))
+    return lines
+
+
+def build_consolidations(state: RunState) -> list[Consolidation]:
+    """The reality check's consolidations, as it recorded them."""
+    return [
+        Consolidation(
+            from_engine=str(c["from_engine"]),
+            to_engine=str(c["to_engine"]),
+            query_count=int(c.get("query_count") or 0),
+            reason=str(c.get("reason") or ""),
+        )
+        for c in (state.reality_check or {}).get("consolidations") or []
+        if isinstance(c, dict) and c.get("from_engine") and c.get("to_engine")
+    ]
+
+
+def _not_selected_reason(engine: str, relational: RelationalEngine | None) -> str:
+    from src.agents.referee.aurora_choice import AURORA_ENGINES
+
+    if relational is not None and engine in AURORA_ENGINES and engine != relational.engine:
+        return (
+            f"Not the Aurora engine chosen for the source; {display_engine(relational.engine)} "
+            f"was chosen: {relational.reason.rstrip('.')}."
+        )
+    return f"Analysed; no statement was placed on {display_engine(engine)}."
+
+
+def build_engine_lines(
+    state: RunState,
+    per_engine: Mapping[str, int],
+    consolidations: list[Consolidation],
+    relational: RelationalEngine | None,
+) -> list[EngineLine]:
+    """One line per analysed engine (the analyses' order). Its role: ``owner`` when
+    statements are placed on it; ``cache_layer`` when the facts layer's line for it is
+    the cache layer; ``consolidated`` when synthesis's elimination rule
+    (``eliminated_engines``) names it, with the engine that absorbed it; else
+    ``not_selected``. Empty before ``reality_check``."""
+    from src.agents.referee.synthesis_grounding import eliminated_engines
+    from src.shared.engine_names import without_placeholder_engines
+    from src.shared.report_facts import CACHE_LAYER
+
+    assignment = state.assignment
+    if assignment is None:
+        return []
+    effective = {
+        str(e)
+        for qa in assignment.get("query_assignments") or []
+        if isinstance(qa, dict) and qa.get("in_scope", True)
+        for e in (qa.get("assigned_engine"), qa.get("cache_engine"))
+        if e
+    }
+    # No ``later_moves`` (synthesis passes the moves since the reality check): assess()
+    # applies no customer edit after it, so the check's own consolidations decide the
+    # absorber. A path that reads an edited lineage must pass them, as synthesis does.
+    absorbed_by = eliminated_engines(effective, state.reality_check)
+    unique = (state.reality_check or {}).get("unique_value_assessment") or {}
+    first_reason: dict[str, str] = {}
+    for c in consolidations:
+        first_reason.setdefault(c.from_engine, c.reason)
+    lines: list[EngineLine] = []
+    for engine in without_placeholder_engines(state.analyses):
+        count = int(per_engine.get(engine, 0))
+        report = state.report_engines.get(engine) or {}
+        uva = unique.get(engine) if isinstance(unique.get(engine), dict) else None
+        into: str | None = None
+        if count:
+            role = "owner"
+        elif report.get("role") == CACHE_LAYER:
+            role = "cache_layer"
+        elif engine in absorbed_by:
+            role, into = "consolidated", absorbed_by[engine]
+        else:
+            role = "not_selected"
+        if role in ("owner", "cache_layer"):
+            reason = str(report.get("rationale") or "")
+        elif role == "consolidated":
+            reason = first_reason.get(engine, "")
+        else:
+            reason = _not_selected_reason(engine, relational)
+        if not reason:
+            # Not reached on any sample: a line the report or the check left without text.
+            name = display_engine(engine)
+            reason = {
+                "owner": f"{name} serves {count} {'statement' if count == 1 else 'statements'}.",
+                "cache_layer": f"{name} is the cache in front of other engines' reads.",
+                "consolidated": "The reality check moved its statements to "
+                + (f"{display_engine(into)}." if into else "other engines."),
+            }[role]
+        lines.append(
+            EngineLine(
+                engine=engine,
+                role=role,  # type: ignore[arg-type]
+                statement_count=count,
+                consolidated_into=into,
+                unique_queries=len(uva.get("unique_queries") or []) if uva else None,
+                avg_delta=(
+                    float(uva["avg_delta"]) if uva and uva.get("avg_delta") is not None else None
+                ),
+                reason=reason,
+            )
+        )
     return lines
 
 
@@ -403,13 +562,19 @@ def build_summary(state: RunState, statements: list[StatementResult]) -> Summary
     # reports them; none are placed, so none is in ``statements_per_engine``).
     unservable = len((state.assignment or {}).get("unservable_queries") or [])
     relational = build_relational_engine(state)
+    consolidations = build_consolidations(state)
+    version = (state.assignment or {}).get("version")
     return Summary(
         run_through_reached=state.run_through,  # type: ignore[arg-type]
+        source_engine=state.source_engine,
+        assignment_version=int(version) if version else None,
         statement_count=len(statements),
         statements_per_engine=dict(sorted(per_engine.items())),
         unservable_count=unservable,
         unique_delta_threshold=int(UNIQUE_DELTA_THRESHOLD),
         relational_engine=relational,
+        engines=build_engine_lines(state, per_engine, consolidations, relational),
+        consolidations=consolidations,
         tables=build_table_lines(state, relational.engine if relational else None),
     )
 
@@ -518,6 +683,7 @@ def build_artifacts(state: RunState) -> Artifacts:
 def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResult:
     statements = build_statements(state, request)
     return AssessmentResult(
+        label=LABEL_BY_PHASE[state.run_through],  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),
         ruleset_hash=ruleset_hash(),

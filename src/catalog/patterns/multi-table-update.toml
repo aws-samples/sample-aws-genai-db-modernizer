@@ -1,5 +1,6 @@
 # Pattern multi-table-update. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "multi-table-update"
+name = "Multi-table update"
 detectors = [
     "src.tools.analysis.aurora_mysql_analysis_tools:analyze_aurora_mysql_use_cases",
     "src.tools.analysis.aurora_pg_analysis_tools:analyze_aurora_pg_use_cases",

@@ -1,5 +1,6 @@
 # Pattern aggregation-pipeline. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "aggregation-pipeline"
+name = "Aggregation pipeline"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

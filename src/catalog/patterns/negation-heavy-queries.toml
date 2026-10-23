@@ -1,5 +1,6 @@
 # Pattern negation-heavy-queries. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "negation-heavy-queries"
+name = "Negation-heavy queries"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

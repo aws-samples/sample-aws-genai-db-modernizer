@@ -5,6 +5,7 @@
 # analysis saved before #967 may still name the three old ids, which no reader looks up
 # in the catalog.
 id = "variant-attributes"
+name = "Variant attributes"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

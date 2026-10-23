@@ -1,5 +1,6 @@
 # Pattern correlated-subquery-joins. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "correlated-subquery-joins"
+name = "Correlated subquery joins"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

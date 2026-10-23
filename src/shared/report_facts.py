@@ -2321,6 +2321,76 @@ def table_owner_line(
     }
 
 
+def _statements(n: int) -> str:
+    return f"{n} {'statement' if n == 1 else 'statements'}"
+
+
+def _engine_list(engines: Iterable[str]) -> str:
+    names = [display_engine(str(e)) for e in engines]
+    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else "".join(names)
+
+
+def table_owner_reason(
+    line: Mapping[str, Any],
+    writes: Mapping[str, int],
+    queries: Mapping[str, int],
+    retained_engine: str | None = None,
+) -> str | None:
+    """Why a table's owner (:func:`table_owner_line`) is its owner, in one sentence (#1390).
+
+    ``writes`` and ``queries`` are the table's usage the line was built from
+    (:func:`assignment_table_usage`): its write statements and all its queries per
+    engine; ``retained_engine`` is the one the line was given. The sentence states the
+    owner basis with the counts behind it (and how a tie on queries was settled:
+    ``primary_owner_engine``), then the engines that read a copy. None when the line
+    has no owner basis.
+    """
+    owner = str(line.get("owner") or "")
+    basis = line.get("owner_basis")
+    if not basis or not owner:
+        return None
+    name = display_engine(owner)
+    served = {str(e): int(n) for e, n in queries.items() if e and n and e not in NON_OWNER_ENGINES}
+    total = sum(n for e, n in queries.items() if e and n and e not in CACHE_ENGINES)
+    on_owner = served.get(owner, 0)
+    tied = sorted(e for e, n in served.items() if e != owner and n == on_owner)
+    if total == on_owner == 1:
+        share = f"{name} serves its only query"
+    elif total == on_owner:
+        share = f"{name} serves all {total} of its queries"
+    else:
+        share = f"{name} serves {on_owner} of its {total} queries"
+    if tied:
+        # ``primary_owner_engine`` breaks the tie by engine id; the catalog's ids sort as
+        # their display names do (pinned by test_assess_additions.py).
+        rule = (
+            "a tie goes to the retained relational engine"
+            if owner == retained_engine
+            else "a tie goes to the engine first in alphabetical order"
+        )
+        share += f", tied with {_engine_list(tied)}; {rule}"
+    elif len(served) > 1:
+        share += ", more than any other engine that can own a table"
+    if basis == OWNER_BY_WRITES:
+        text = f"{name} takes every statement that writes it ({_statements(writes.get(owner, 0))})"
+    elif basis == OWNER_BY_RETAINED or not on_owner:
+        text = f"No engine that can own a table queries it, so it stays on {name}, the retained relational engine"
+    elif basis == OWNER_BY_SPLIT_WRITES:
+        writers = sorted(
+            (str(e) for e, n in writes.items() if e and n), key=lambda e: (-writes[e], e)
+        )
+        text = f"Its writes are on {_engine_list(writers)}, so the owner is the engine serving most of its queries: {share}"
+    elif basis == OWNER_BY_MOST_QUERIES:
+        text = f"No statement writes it; {share}"
+    else:
+        text = f"{name} owns it in the schema design; no statement in scope queries it"
+    readers = [str(e) for e in line.get("also_read_by") or []]
+    if readers:
+        verb = "reads" if len(readers) == 1 else "read"
+        text += f"; {_engine_list(readers)} {verb} a copy kept in sync from {name} via CDC"
+    return text + "."
+
+
 def wave_listed_owners(waves: Iterable[Mapping[str, Any]] | None) -> dict[str, str]:
     """``{table: owner}`` from the waves' own owner lines (``table_owners``: a table a
     wave serves and another engine owns), the wave plan's owner as it recorded it; the

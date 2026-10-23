@@ -1,5 +1,6 @@
 # Pattern acid-transactions. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "acid-transactions"
+name = "ACID transactions"
 detectors = [
     "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
 ]

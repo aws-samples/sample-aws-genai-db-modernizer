@@ -1,5 +1,6 @@
 # Pattern metadata-config-store. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "metadata-config-store"
+name = "Metadata or configuration store"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

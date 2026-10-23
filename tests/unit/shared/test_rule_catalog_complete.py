@@ -94,7 +94,7 @@ class TestEveryPatternCoversEveryEngine:
             for e in sorted(DECIDED)
         )
         for name in ("one", "two"):
-            text = f'id = "{name}"\ndetectors = []\npenalty = 0\n' + engines
+            text = f'id = "{name}"\nname = "{name}"\ndetectors = []\npenalty = 0\n' + engines
             (tmp_path / f"{name}.toml").write_text(text, encoding="utf-8")
         sample = load_pattern_catalog(tmp_path)
         assert missing_engine_entries(sample, DECIDED) == []
@@ -105,7 +105,7 @@ class TestEveryPatternCoversEveryEngine:
 
     def test_a_new_pattern_fails_with_the_exact_missing_entries(self, tmp_path: Path) -> None:
         text = (
-            'id = "new-pattern"\ndetectors = []\npenalty = 0\n\n'
+            'id = "new-pattern"\nname = "New pattern"\ndetectors = []\npenalty = 0\n\n'
             '[engines.dynamodb]\nkind = "unscored"\nsupported = true\nwhy = "No effect."\n'
         )
         (tmp_path / "new-pattern.toml").write_text(text, encoding="utf-8")

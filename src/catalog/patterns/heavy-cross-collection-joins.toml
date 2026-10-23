@@ -1,5 +1,6 @@
 # Pattern heavy-cross-collection-joins. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "heavy-cross-collection-joins"
+name = "Heavy cross-collection joins"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

@@ -15,22 +15,16 @@ from src.assessment import AssessmentResult, assess
 from src.assessment.result_builder import load_run_state
 from src.shared.report_facts import assignment_table_usage, table_owner_line
 from src.storage.local_store import LocalArtifactStore
-from tests.unit.assessment.conftest import SAMPLES, assessed, sample_collection
+from tests.unit.assessment.conftest import SAMPLES, assessed, placed_run, sample_collection
 
 JOB = "assess01"
 
 
-@pytest.fixture(scope="module", params=SAMPLES)
-def placed(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Any:
+@pytest.fixture(params=SAMPLES)
+def placed(request: pytest.FixtureRequest) -> Any:
     """A ``run_through="reality_check"`` run that keeps its artifacts, per sample."""
-    name = request.param
-    root: Path = tmp_path_factory.mktemp(f"assess-{name}")
-    store = LocalArtifactStore(str(root))
-    result = assess(
-        {"database_name": name, "collection": sample_collection(name)}, store=store, job_id=JOB
-    )
-    state = load_run_state(store, name, JOB, "reality_check")
-    return name, result, state
+    result, state, _ = placed_run(request.param)
+    return request.param, result, state
 
 
 @pytest.mark.parametrize("name", SAMPLES)
@@ -159,6 +153,7 @@ def test_group_reason_codes_name_a_group(placed: Any) -> None:
             assert s.query_id in members[s.reason_code], (s.query_id, s.reason_code)
 
 
+@pytest.mark.passes_on_main
 def test_summary_tables_are_the_facts_layer_lines(placed: Any) -> None:
     _, result, state = placed
     usage = assignment_table_usage(state.assignment)
@@ -174,7 +169,8 @@ def test_summary_tables_are_the_facts_layer_lines(placed: Any) -> None:
             retained_engine=retained,
         )
         expected.append({"table_id": table, **line})
-    assert [t.model_dump() for t in result.summary.tables] == expected
+    # The reason sentence is checked in test_assess_additions.py.
+    assert [t.model_dump(exclude={"reason"}) for t in result.summary.tables] == expected
     assert result.summary.tables
 
 
@@ -215,12 +211,15 @@ def test_signals_and_patterns_come_from_triage_and_traces(placed: Any) -> None:
         for qid in signal.get("query_ids") or []:
             if qid in by_id:
                 assert signal["signal"] in by_id[qid].signals
-    for engine, trace in state.decision_traces.items():
-        for match in trace["query_matches"]:
-            if match["query_id"] in by_id and match["matched_patterns"]:
-                assert by_id[match["query_id"]].matched_patterns[engine] == (
-                    match["matched_patterns"]
-                )
+    from src.shared.catalog.patterns import engine_pattern
+
+    for s in result.statements:
+        trace = state.decision_traces[s.engine]
+        match: dict[str, Any] = next(
+            (m for m in trace["query_matches"] if m["query_id"] == s.query_id), {}
+        )
+        expected = [engine_pattern(s.engine, cid).id for cid in match.get("matched_patterns") or []]
+        assert [p.id for p in s.matched_patterns] == list(dict.fromkeys(expected))
 
 
 def test_unique_delta_threshold_is_the_reality_checks(placed: Any) -> None:

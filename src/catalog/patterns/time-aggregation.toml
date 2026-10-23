@@ -1,5 +1,6 @@
 # Pattern time-aggregation. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "time-aggregation"
+name = "Time aggregation"
 detectors = [
     "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
 ]

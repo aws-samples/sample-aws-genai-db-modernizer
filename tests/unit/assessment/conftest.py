@@ -16,6 +16,11 @@ REPO = Path(__file__).resolve().parents[3]
 # sample (a heterogeneous source: the only one that reaches the Aurora engine choice).
 SAMPLES = ("wordpress", "discourse", "trailgear")
 
+# The trimmed AdventureWorks collection (SQL Server, a collector output): a second
+# heterogeneous source, beside the samples.
+ADVENTUREWORKS = "adventureworks"
+COLLECTIONS = (*SAMPLES, ADVENTUREWORKS)
+
 
 @cache
 def _sample_text(name: str) -> str:
@@ -29,6 +34,20 @@ def sample_collection(name: str) -> dict[str, Any]:
     return loaded
 
 
+def collection(name: str) -> dict[str, Any]:
+    """A fresh copy of one of :data:`COLLECTIONS`: a sample's raw collection, or the
+    AdventureWorks collector output (stamped with the collector contract's version,
+    which its fixture predates)."""
+    if name != ADVENTUREWORKS:
+        return sample_collection(name)
+    from src.contracts.collector_output import CollectorOutputContract
+
+    path = REPO / "tests" / "fixtures" / "adventureworks_trimmed_collection.json"
+    loaded: dict[str, Any] = json.loads(path.read_text())
+    loaded["contract_version"] = CollectorOutputContract.model_fields["contract_version"].default
+    return loaded
+
+
 @cache
 def _assessed(name: str, run_through: str) -> Any:
     from src.assessment import assess
@@ -36,10 +55,36 @@ def _assessed(name: str, run_through: str) -> Any:
     return assess(
         {
             "database_name": name,
-            "collection": sample_collection(name),
+            "collection": collection(name),
             "options": {"run_through": run_through},
         }
     )
+
+
+PLACED_JOB = "assess02"
+
+
+@cache
+def _placed(name: str) -> tuple[Any, Any, Any]:
+    import tempfile
+
+    from src.assessment import assess
+    from src.assessment.result_builder import load_run_state
+    from src.storage.local_store import LocalArtifactStore
+
+    # Kept for the test process, so a test can run a later phase on the same job.
+    store = LocalArtifactStore(tempfile.mkdtemp(prefix=f"assess-{name}-"))
+    result = assess(
+        {"database_name": name, "collection": collection(name)}, store=store, job_id=PLACED_JOB
+    )
+    return result, load_run_state(store, name, PLACED_JOB, "reality_check"), store
+
+
+def placed_run(name: str) -> tuple[Any, Any, Any]:
+    """``(result, run state, store)`` of one ``run_through="reality_check"`` run that
+    kept its artifacts (computed once per test process; the result is a copy)."""
+    result, state, store = _placed(name)
+    return result.model_copy(deep=True), state, store
 
 
 def assessed(name: str, run_through: str) -> Any:

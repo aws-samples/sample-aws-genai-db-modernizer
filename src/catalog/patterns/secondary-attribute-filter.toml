@@ -3,6 +3,7 @@
 # A read pattern: its Aurora ratings are the read evidence the DocumentDB and OpenSearch parity
 # anchors borrow (#936; they used to borrow multi-row-mutation, a write pattern).
 id = "secondary-attribute-filter"
+name = "Secondary attribute filter"
 detectors = []
 penalty = 0
 

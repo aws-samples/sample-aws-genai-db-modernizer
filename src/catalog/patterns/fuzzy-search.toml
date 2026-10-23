@@ -1,5 +1,6 @@
 # Pattern fuzzy-search. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "fuzzy-search"
+name = "Fuzzy search"
 detectors = [
     "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
 ]

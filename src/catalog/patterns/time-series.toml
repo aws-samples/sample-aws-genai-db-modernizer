@@ -1,5 +1,6 @@
 # Pattern time-series. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "time-series"
+name = "Time series"
 detectors = [
     "src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases",
 ]

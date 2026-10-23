@@ -1,5 +1,6 @@
 # Pattern group-concat-pivot. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "group-concat-pivot"
+name = "Group concatenation or pivot"
 detectors = [
     "src.tools.analysis.aurora_mysql_analysis_tools:detect_mysql_specific_features",
     "src.tools.analysis.aurora_pg_analysis_tools:detect_pg_specific_features",

@@ -39,24 +39,47 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions):
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, and `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns) did not bump it.
 
-- `contract_version`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
-- `summary`: `run_through_reached`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, and `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`);
-- `statements[]`: per statement, `query_id`, `query_tags`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
+- `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
+- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, and `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`);
+- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer).
 
-Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.tables` is empty and every group's `engine` is `null`.
+Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`.
+
+### The label
+
+`label` says what kind of result it is, so a routing-only result is never read as a data model:
+
+| `label` | When | What it holds |
+|---|---|---|
+| `analysis_only` | `run_through_reached` is `"analysis"` | Scores per statement; nothing placed |
+| `recommendation` | `run_through_reached` is `"reality_check"` | Engine placement: where each statement runs, which engine owns each table. No data model |
+| `designed` | `run_through_reached` is `"schema_design"` or `"synthesis"` | Placement plus a schema design's data model. Not produced by this release |
+
+### Summary additions
+
+- **`source_engine`**: the source database engine, as the collection states it (`mysql`, `postgresql`, `sqlserver`, ...).
+- **`assignment_version`**: the assignment version the result reflects. It rises when the reality check or a customer edit writes a new version.
+- **`engines[]`**: one line per analysed engine, in analysis order: `engine`, `role`, `statement_count` (statements placed on it), `consolidated_into`, `unique_queries`, `avg_delta` and `reason`. `role` is `owner` (statements are placed on it), `cache_layer` (a cache in front of other engines' reads; it owns no statement), `consolidated` (the reality check moved its statements to other engines; `consolidated_into` is the one that took most of them, the first in the reality check's `consolidations` order on a tie) or `not_selected` (analysed, but no statement was placed on it). `unique_queries` and `avg_delta` are the reality check's unique-value figures for the engine (the statements it held whose score leads the best other engine by at least `unique_delta_threshold` points, and its mean lead), `null` for an engine the check did not assess. `reason` is the executive report's "why this engine" text for an owner or the cache, and the reality check's reason for a consolidated engine.
+- **`consolidations[]`**: one line per reality-check consolidation: `from_engine`, `to_engine`, `query_count` and `reason`. Each moved statement names its `from_engine` in `statements[].consolidated_from`.
+- **`tables[].reason`**: one sentence on why the owner is the owner: the writes it takes, or the share of the table's queries it serves (and how a tie was settled), and the engines that read a copy.
+
+### Statement additions
+
+- **`query_type`** and **`join_count`**: the statement's type (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `OTHER`) and its number of joins, as the library's parser reads them.
+- **`matched_patterns`**: the pattern catalog's patterns the statement matches on its assigned engine, as `{"id", "name"}` (for example `{"id": "key-value-lookup", "name": "Key-value lookup"}`). Only the assigned engine's: read another engine's fit from `fit`. Empty at `"analysis"` and for an unservable statement.
 
 How to read it:
 
-- **The engine is decided once.** Read a statement's engine from `statements[].engine` and a table's owner from `summary.tables[].owner`. Do not re-decide engines from scores or table-level labels: ties are already settled, and `reason_code` says which rule decided.
+- **The engine is decided once.** Read a statement's engine from `statements[].engine` and a table's owner from `summary.tables[].owner`. Do not re-decide engines from scores or table-level labels: ties are already settled, and `reason_code` says which rule decided. To word an engine rationale, use `summary.engines[].reason` and `summary.tables[].reason`.
 - **`reason_code`** is one of a fixed list: `highest_score`, `tie_rule`, `co_dependency`, `write_group`, `override`, `fallback`, `consolidated`, `engine_floor`, `sweep`, `capability_flag`, `customer_choice`, `post_schema_reroute`, `unservable`. Routing's own rules are finer-grained; each maps onto one of these.
 - **Unservable statements.** With `target_engines` set, a statement no engine in the scope can serve is never forced onto one: its `engine` is `null`, its `reason_code` is `unservable` and `unservable_reason` says why (and which engine outside the scope could serve it). It counts in `statement_count` and `unservable_count`, never in `statements_per_engine`.
 - **`excluded`** lists the engines ruled out for a statement: a hard or capability gate, and the engine scope. From `"reality_check"` on it also lists the engines that cannot own the statement's writes (a cache or search engine for a write); routing still scored those, so they appear in `fit` too. An engine in both is scored but cannot take the statement.
 - **`confidence`** is the score the statement was placed with, as the assignment stores it. Until [#1373](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1373) is fixed, a statement the reality check consolidated keeps the removed engine's score there; read `fit[engine]` for its score on the engine it is on.
 - **`fit`** is the routing scorer's score for the statement on each engine it can be scored on: the same number routing compared. At `"analysis"` it is the score before anything is placed, so a capability that routing allows only once a table's writes are placed is not applied yet.
-- **`reason_text`** and every `reason` are customer-facing sentences. Show them or word your own from them; do not parse them. They can quote collection text (table names, for example), so escape them for the format you render them in.
+- **`reason_text`** and every `reason` (including `summary.engines[].reason`, `summary.consolidations[].reason` and `summary.tables[].reason`) are customer-facing sentences. Show them or word your own from them; do not parse them. They can quote collection text (table names, for example), so escape them for the format you render them in.
 - **`ruleset_hash`** names the rules that produced the result. Scores compare only within one hash. Asking for an older ruleset is not supported: pin the library version to reproduce a result.
 
 With `deterministic: true`, the same request on the same library version gives the same result.

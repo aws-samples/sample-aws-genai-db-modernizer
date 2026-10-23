@@ -1,5 +1,6 @@
 # Pattern ordered-scan. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "ordered-scan"
+name = "Ordered scan"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

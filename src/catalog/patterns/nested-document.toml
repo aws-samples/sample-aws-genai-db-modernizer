@@ -1,5 +1,6 @@
 # Pattern nested-document. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "nested-document"
+name = "Nested document"
 detectors = [
     "src.tools.analysis.documentdb_analysis_tools:analyze_documentdb_use_cases",
 ]

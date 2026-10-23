@@ -1,5 +1,6 @@
 # Pattern large-result-sets. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "large-result-sets"
+name = "Large result sets"
 detectors = [
     "src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases",
 ]

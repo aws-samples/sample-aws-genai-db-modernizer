@@ -1,5 +1,6 @@
 # Pattern audit-columns-only. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "audit-columns-only"
+name = "Audit columns only"
 detectors = [
     "src.tools.analysis.opensearch_analysis_tools:analyze_opensearch_use_cases",
 ]

@@ -83,6 +83,7 @@ def _unscored(engines=ENGINES, skip=()) -> str:
 
 FIT = textwrap.dedent("""\
     id = "example"
+    name = "Example"
     detectors = ["src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases"]
     penalty = 0
 
@@ -105,6 +106,7 @@ def _penalised(kind_for_documentdb: str, extra: str = "", top: str = "") -> str:
     return (
         textwrap.dedent(f"""\
             id = "example"
+            name = "Example"
             detectors = []
             penalty = 40
             penalty_basis = "cannot_run"
@@ -137,6 +139,14 @@ class TestLoaderIsStrict:
         (entry,) = load_pattern_catalog(tmp_path)
         assert entry.engines["dynamodb"].score == 80
         assert entry.engines["documentdb"].kind == "unscored"
+        assert entry.name == "Example"
+
+    @pytest.mark.parametrize("name_line", ["", 'name = ""\n', 'name = "two\\nlines"\n'])
+    def test_a_pattern_needs_a_one_line_name(self, tmp_path: Path, name_line: str) -> None:
+        # The display name public results show next to the id (#1390).
+        _write(tmp_path, "example", FIT.replace('name = "Example"\n', name_line))
+        with pytest.raises(CatalogError, match="name"):
+            load_pattern_catalog(tmp_path)
 
     @pytest.mark.parametrize(
         ("new", "error"),
@@ -284,6 +294,16 @@ class TestLoaderIsStrict:
         _write(tmp_path, "example", FIT)
         _write(tmp_path, "second", FIT.replace('id = "example"', 'id = "second"'))
         with pytest.raises(CatalogError, match="dynamodb-99 is defined differently"):
+            load_pattern_catalog(tmp_path)
+
+    def test_an_engine_catalog_id_names_one_pattern(self, tmp_path: Path) -> None:
+        # The same id for one engine under another catalog name still names one file (#1390).
+        _write(tmp_path, "example", FIT)
+        other = FIT.replace('id = "example"', 'id = "second"').replace(
+            'catalog = "dynamodb"', 'catalog = "documentdb"'
+        )
+        _write(tmp_path, "second", other)
+        with pytest.raises(CatalogError, match="dynamodb-99 already names example.toml"):
             load_pattern_catalog(tmp_path)
 
     def test_an_alias_cannot_shadow_a_pattern(self, tmp_path: Path) -> None:

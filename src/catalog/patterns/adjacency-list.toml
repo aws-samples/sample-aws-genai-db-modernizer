@@ -1,5 +1,6 @@
 # Pattern adjacency-list. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "adjacency-list"
+name = "Adjacency list"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

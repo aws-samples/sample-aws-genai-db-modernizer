@@ -230,7 +230,7 @@ def test_the_catalog_loader_rejects_an_unknown_segment_weighting() -> None:
 
     from src.shared.catalog.patterns import PatternEntry
 
-    base = {"id": "x", "detectors": [], "penalty": 0, "engines": {}}
+    base = {"id": "x", "name": "X", "detectors": [], "penalty": 0, "engines": {}}
     assert PatternEntry.model_validate(base).segment_weighting == "segment"
     with pytest.raises(ValidationError):
         PatternEntry.model_validate({**base, "segment_weighting": "per_database"})

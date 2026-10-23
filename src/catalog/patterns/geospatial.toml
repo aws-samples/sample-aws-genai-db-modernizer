@@ -1,5 +1,6 @@
 # Pattern geospatial. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "geospatial"
+name = "Geospatial query"
 detectors = [
     "src.tools.analysis.redis_analysis_tools:analyze_redis_use_cases",
 ]

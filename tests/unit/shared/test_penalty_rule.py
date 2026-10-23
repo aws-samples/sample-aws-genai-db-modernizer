@@ -484,5 +484,12 @@ class TestTheWideTransactionPenaltyIsCalibrated:
     def test_a_reason_needs_a_basis(self) -> None:
         with pytest.raises(ValueError, match="penalty_why explains a penalty_basis"):
             PatternEntry.model_validate(
-                {"id": "x", "detectors": [], "penalty": 0, "penalty_why": "y", "engines": {}}
+                {
+                    "id": "x",
+                    "name": "X",
+                    "detectors": [],
+                    "penalty": 0,
+                    "penalty_why": "y",
+                    "engines": {},
+                }
             )

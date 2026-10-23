@@ -1,5 +1,6 @@
 # Pattern high-frequency-small-updates. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "high-frequency-small-updates"
+name = "High-frequency small updates"
 detectors = []
 penalty = 0
 penalty_basis = "guidance_only"

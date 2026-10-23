@@ -3,6 +3,7 @@
 # Precomputing an aggregate at write time is a design every engine can use (#967): no
 # analysis reports it as a fit any more, and the schema designers' skills describe it.
 id = "write-time-aggregation"
+name = "Write-time aggregation"
 detectors = []
 penalty = 0
 

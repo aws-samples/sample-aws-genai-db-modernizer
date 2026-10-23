@@ -1,5 +1,6 @@
 # Pattern unbounded-result-set. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "unbounded-result-set"
+name = "Unbounded result set"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]

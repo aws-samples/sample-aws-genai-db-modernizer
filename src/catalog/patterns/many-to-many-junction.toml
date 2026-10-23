@@ -1,5 +1,6 @@
 # Pattern many-to-many-junction. Fields: src/shared/catalog/patterns.py (ADR-031 Decision 8).
 id = "many-to-many-junction"
+name = "Many-to-many junction"
 detectors = [
     "src.tools.analysis.dynamodb_analysis_tools:analyze_dynamodb_use_cases",
 ]
