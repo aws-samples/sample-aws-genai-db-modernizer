@@ -789,8 +789,21 @@ def test_the_gate_block_is_written_out_before_schema_design_starts() -> None:
     assert "Run it on its own, never in the same batch of tool calls as another command" in (
         decision_gate
     )
-    assert "A tool result is not shown to the user" in decision_gate
+    assert "start Phase 6 only in a later message" in decision_gate
     assert "before any Phase 6 command or dispatch" in decision_gate
+
+
+def test_the_gate_section_names_the_hook_that_holds_schema_design() -> None:
+    # #1401: the wording alone did not hold; a hook refuses Phase 6 until the gate ran first,
+    # and the orchestrator must know what to do when it does.
+    decision_gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
+    decision_gate = " ".join(decision_gate.split("### Phase 6", 1)[0].split())
+    assert "`scripts/hooks/require_gate_shown.py`" in decision_gate
+    # Maintainer decision on #1401: the gate's own output is what the user sees; the hook holds
+    # only the order.
+    assert "unless a successful gate ran in an earlier message" in decision_gate
+    assert "run the gate on its own first, then start schema design" in decision_gate
+    assert "thinking" not in decision_gate
 
 
 def test_auto_skips_only_the_gate_question_never_its_block_or_url() -> None:
@@ -816,6 +829,8 @@ def test_completion_gets_the_results_page_url_from_the_printed_summary() -> None
     assert "--final --mode {experience_mode}" in completion
     assert "the URLs of the results page and the summary page" in completion
     assert "start_local_ui.py --page results" not in completion
+    # #1401: its output carries the pointer, so it runs only once synthesis has reported back.
+    assert "Run it only after the `/synthesize` subagent has reported back" in completion
 
 
 def test_no_command_hard_codes_a_local_ui_url() -> None:

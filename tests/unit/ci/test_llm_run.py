@@ -1756,6 +1756,308 @@ def test_the_gate_url_counts_only_from_the_gate_block_not_the_final_summary(
     _fails_with(tmp_path, records, "never got a summary-page ui_url")
 
 
+def _split_refused_then_gate_quoted() -> list[dict]:
+    """#1401: the split, sent in one message with the gate, is refused by the gate hook; the
+    orchestrator runs it again in a later message. The summary URL is shown by the gate's own
+    output (no text quote)."""
+    records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
+    gate_use = next(
+        rec
+        for rec in records
+        if rec.get("type") == "assistant"
+        and any(
+            b.get("input", {}).get("command") == _GATE_COMMAND for b in rec["message"]["content"]
+        )
+    )
+    split = (
+        "uv run python scripts/run_schema_design.py --job-id dry00002 --db wordpress "
+        "--engine dynamodb --split"
+    )
+    gate_use["message"]["content"].append(
+        {"type": "tool_use", "id": "tu-refused", "name": "Bash", "input": {"command": split}}
+    )
+    gate_at = next(
+        i
+        for i, rec in enumerate(records)
+        if rec.get("type") == "user" and json.dumps(_GATE_BLOCK) in json.dumps(rec)
+    )
+    refusal = {
+        "type": "user",
+        "parent_tool_use_id": None,
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu-refused",
+                    "is_error": True,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "PreToolUse:Bash hook error: [uv run --no-project python -I "
+                            '"$CLAUDE_PROJECT_DIR/scripts/hooks/require_gate_shown.py"]: '
+                            "Blocked: schema design waits for the approval gate: run the gate on "
+                            "its own first, then start schema design.",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    return records[: gate_at + 1] + [refusal] + records[gate_at + 1 :]
+
+
+def test_a_phase_6_call_the_gate_hook_refused_does_not_start_schema_design() -> None:
+    # The refused call never ran: schema design starts at the next call, after the gate.
+    assert run.check_ui_pointers(_split_refused_then_gate_quoted(), "ui") == (True, None)
+
+
+@pytest.mark.passes_on_main  # guards that only a hook refusal is skipped, not any error
+def test_a_phase_6_call_that_ran_and_failed_still_starts_schema_design(tmp_path: Path) -> None:
+    records = _split_refused_then_gate_quoted()
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_result" and block.get("tool_use_id") == "tu-refused":
+                block["content"][0]["text"] = '{"status": "error", "message": "no assignment"}'
+    _fails_with(tmp_path, records, "only after schema design started")
+
+
+def _refused_call(records: list[dict]) -> tuple[dict, dict]:
+    use = next(
+        b
+        for rec in records
+        for b in (rec.get("message") or {}).get("content") or []
+        if b.get("type") == "tool_use" and b.get("id") == "tu-refused"
+    )
+    result = next(
+        b
+        for rec in records
+        for b in (rec.get("message") or {}).get("content") or []
+        if b.get("type") == "tool_result" and b.get("tool_use_id") == "tu-refused"
+    )
+    return use, result
+
+
+@pytest.mark.passes_on_main  # PR 1402 review: a refusal is recognised by its shape only
+def test_a_dispatch_that_ran_and_reports_a_refused_call_still_starts_schema_design(
+    tmp_path: Path,
+) -> None:
+    # A /design-schema-* dispatch ran; its subagent's report mentions one of its own refused
+    # calls. Not an error result, so schema design started there, before the quote.
+    records = _split_refused_then_gate_quoted()
+    use, result = _refused_call(records)
+    use.update(name="Agent", input={"prompt": "Run /design-schema-aurora-mysql for job_id=x"})
+    result.pop("is_error")
+    result["content"][0]["text"] = (
+        "Design written. One call was refused on the way: PreToolUse:Bash hook error: [hook]: "
+        "Blocked by the tool-use rule: ... and once Blocked: schema design waits for the "
+        "approval gate."
+    )
+    _fails_with(tmp_path, records, "only after schema design started")
+
+
+@pytest.mark.passes_on_main  # PR 1402 review: is_error alone is not a hook refusal
+def test_an_error_result_that_does_not_start_with_the_hook_prefix_starts_schema_design(
+    tmp_path: Path,
+) -> None:
+    records = _split_refused_then_gate_quoted()
+    _, result = _refused_call(records)
+    result["content"][0]["text"] = (
+        "Exit code 1. Note: PreToolUse:Bash hook error: Blocked: schema design waits for the "
+        "approval gate."
+    )
+    _fails_with(tmp_path, records, "only after schema design started")
+
+
+def test_the_transcript_check_knows_the_gate_hooks_refusal() -> None:
+    from scripts.hooks import require_gate_shown as hook
+
+    assert hook._reason("j1", "db").startswith(run._GATE_HOOK_REFUSAL)
+
+
+_FINAL_COMMAND = (
+    "uv run python scripts/print_summary.py --job-id dry00002 --db wordpress --final --mode ui"
+)
+
+
+def _final_printed_records(synthesis: list[dict] | None) -> list[dict]:
+    """The UI run with the results page's URL only in ``print_summary.py --final``'s output
+    (never retyped), and ``synthesis`` (the /synthesize dispatch records) just before it."""
+    records = _drop_url_from_texts(_ui_records(), _RESULTS_URL)
+    final_at = None
+    for i, rec in enumerate(records):
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use" and "--page results" in block["input"].get(
+                "command", ""
+            ):
+                block["input"]["command"] = _FINAL_COMMAND
+                final_at = i
+            elif block.get("type") == "tool_result" and _RESULTS_URL in json.dumps(block):
+                block["content"][0]["text"] = (
+                    "## Assessment: wordpress (job dry00002)\n\n### Where to look next\n\n"
+                    f"- Results page (the interactive report): {_RESULTS_URL}\n"
+                )
+    assert final_at is not None
+    return records[:final_at] + (synthesis or []) + records[final_at:]
+
+
+def _synthesis(result_text: str, notification: bool = False) -> list[dict]:
+    out = [
+        {
+            "type": "assistant",
+            "parent_tool_use_id": None,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tu-synth",
+                        "name": "Agent",
+                        "input": {"prompt": "Run /synthesize for job_id=dry00002 db=wordpress."},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "parent_tool_use_id": None,
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "tu-synth",
+                        "content": [{"type": "text", "text": result_text}],
+                    }
+                ],
+            },
+        },
+    ]
+    if notification:
+        out.append(
+            {
+                "type": "system",
+                "subtype": "task_notification",
+                "tool_use_id": "tu-synth",
+                "status": "completed",
+            }
+        )
+    return out
+
+
+_HAND_BACK = "[Subagent hand-back] Synthesis for job dry00002 (wordpress) is complete."
+_LAUNCHED = "Async agent launched successfully. agentId: a1"
+
+
+def test_the_final_summary_output_alone_shows_the_results_url() -> None:
+    # Maintainer decision on #1401, applied to the final pointer (the PR 1402 e2e-llm run): the
+    # user sees print_summary.py --final's output after synthesis, so its Results page line counts.
+    assert run.check_ui_pointers(_final_printed_records(_synthesis(_HAND_BACK)), "ui") == (
+        True,
+        None,
+    )
+    async_done = _synthesis(_LAUNCHED, notification=True)
+    assert run.check_ui_pointers(_final_printed_records(async_done), "ui") == (True, None)
+
+
+@pytest.mark.parametrize(
+    "synthesis", [None, _synthesis(_LAUNCHED)], ids=["no-synthesis", "still-running"]
+)
+def test_a_final_summary_before_synthesis_finished_does_not_count(
+    tmp_path: Path, synthesis: list[dict] | None
+) -> None:
+    _fails_with(tmp_path, _final_printed_records(synthesis), "before synthesis finished")
+
+
+def test_a_run_that_never_printed_the_final_summary_fails(tmp_path: Path) -> None:
+    records = [
+        rec
+        for rec in _final_printed_records(_synthesis(_HAND_BACK))
+        if "--final" not in json.dumps(rec)
+    ]
+    records = [rec for rec in records if _RESULTS_URL not in json.dumps(rec)]
+    _fails_with(tmp_path, records, "never got a results-page ui_url")
+
+
+def _message_ids(records: list[dict]) -> list[dict]:
+    """The records with API message ids: a new id for each run of assistant records."""
+    out: list[dict] = json.loads(json.dumps(records))
+    n = 0
+    for rec in out:
+        if rec.get("type") == "user":
+            n += 1
+        elif rec.get("type") == "assistant":
+            rec["message"]["id"] = f"msg-{n}"
+    return out
+
+
+def test_the_gate_output_alone_shows_the_summary_url() -> None:
+    # Maintainer decision on #1401: the user sees the gate script's output, so its Summary page
+    # line counts without the orchestrator retyping it (batch10231016, pr1402).
+    records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
+    assert run.check_ui_pointers(records, "ui") == (True, None)
+    assert run.check_ui_pointers(_message_ids(records), "ui") == (True, None)
+
+
+def test_a_gate_in_the_same_message_as_the_first_schema_design_call_fails(
+    tmp_path: Path,
+) -> None:
+    # The gate's result can be recorded before the split's tool_use of the same message; the
+    # gate still was not run on its own before schema design started.
+    records = _message_ids(_drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL))
+    gate_rec = next(
+        rec
+        for rec in records
+        if rec.get("type") == "assistant"
+        and any(
+            b.get("input", {}).get("command") == _GATE_COMMAND for b in rec["message"]["content"]
+        )
+    )
+    split_rec = next(
+        rec
+        for rec in records
+        if rec.get("type") == "assistant"
+        and any(
+            "--split" in b.get("input", {}).get("command", "") for b in rec["message"]["content"]
+        )
+    )
+    split_rec["message"]["id"] = gate_rec["message"]["id"]
+    _fails_with(tmp_path, records, "ran the approval gate in the same message")
+
+
+def test_a_gate_that_runs_only_after_schema_design_started_fails(tmp_path: Path) -> None:
+    records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
+    gate_at = next(
+        i
+        for i, rec in enumerate(records)
+        if rec.get("type") == "assistant"
+        and any(
+            b.get("input", {}).get("command") == _GATE_COMMAND for b in rec["message"]["content"]
+        )
+    )
+    split_at = next(
+        i
+        for i, rec in enumerate(records)
+        if rec.get("type") == "assistant"
+        and any(
+            "--split" in b.get("input", {}).get("command", "") for b in rec["message"]["content"]
+        )
+    )
+    assert gate_at < split_at
+    gate_pair = records[gate_at : gate_at + 2]
+    rest = records[:gate_at] + records[gate_at + 2 :]
+    split_at = next(
+        i
+        for i, rec in enumerate(rest)
+        if rec.get("type") == "assistant"
+        and any(
+            "--split" in b.get("input", {}).get("command", "") for b in rec["message"]["content"]
+        )
+    )
+    records = rest[: split_at + 2] + gate_pair + rest[split_at + 2 :]
+    _fails_with(tmp_path, records, "only after schema design started")
+
+
 def test_design_schema_dispatch_also_marks_schema_design_start() -> None:
     dispatch = {
         "type": "tool_use",

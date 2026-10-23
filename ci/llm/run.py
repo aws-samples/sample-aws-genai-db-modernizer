@@ -317,6 +317,34 @@ def _phase6_starts(rtype: str, block: dict[str, Any]) -> bool:
     return isinstance(prompt, str) and "/design-schema-" in prompt
 
 
+# The reason scripts/hooks/require_gate_shown.py gives when it refuses a Phase 6 call (#1401).
+_GATE_HOOK_REFUSAL = "Blocked: schema design waits for the approval gate"
+
+
+def _refused_by_gate_hook(records: list[dict[str, Any]]) -> set[str]:
+    """Ids of the top-level tool calls the gate hook refused: the result is marked as an error
+    and its text starts with Claude Code's ``PreToolUse:<Tool> hook error:`` prefix and carries
+    the hook's reason. Text that merely mentions a refusal (a subagent's report) never counts."""
+    refused: set[str] = set()
+    for rec in records:
+        if rec.get("parent_tool_use_id") is not None or rec.get("type") != "user":
+            continue
+        content = (
+            rec.get("message", {}).get("content") if isinstance(rec.get("message"), dict) else None
+        )
+        for block in content if isinstance(content, list) else []:
+            if not (isinstance(block, dict) and block.get("type") == "tool_result"):
+                continue
+            text = _text_from_content(block.get("content"))
+            if (
+                block.get("is_error") is True
+                and re.match(r"PreToolUse:\w+ hook error: ", text)
+                and _GATE_HOOK_REFUSAL in text
+            ):
+                refused.add(str(block.get("tool_use_id")))
+    return refused
+
+
 def _page_url_from_result(text: str) -> str | None:
     try:
         parsed = json.loads(text)
@@ -341,21 +369,49 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
     come from a top-level ``start_local_ui.py --page <page>`` tool_result (the summary page's may
     instead be the ``Summary page`` line of ``print_summary.py --gate``, the results page's the
     ``Results page`` line of ``print_summary.py --final``, #1307) and
-    appear in a top-level assistant text block (or the final result text).
-    Subagent messages never count. Chat mode is never checked."""
+    appear in a top-level assistant text block (or the final result text). The summary page's
+    URL also counts as shown when it is in the gate script's own output, which the user sees
+    (maintainer decision on #1401), provided the gate ran in an earlier assistant message than
+    the first schema-design call: a gate batched with that call was not in front of anyone
+    before schema design started.
+    Likewise the results page's URL counts as shown when it is in the output of
+    ``print_summary.py --final``, provided that ran after synthesis finished (the
+    ``/synthesize`` dispatch reported back).
+    Subagent messages never count. Chat mode is never checked. A schema design call one of our
+    hooks refused (``require_gate_shown.py``, #1401) never ran, so it does not start schema
+    design; the next call that runs does."""
     if mode == "chat":
         return True, None
+    refused = _refused_by_gate_hook(records)
     pending: dict[str, str] = {}  # tool_use id -> page
     printed_final: set[str] = set()  # print_summary.py --final tool_use ids
     printed_gate: set[str] = set()  # print_summary.py --gate tool_use ids
     urls: dict[str, str] = {}
     quoted_at: dict[str, int] = {}
     phase6_at: int | None = None
+    phase6_message: str | None = None
+    message_of: dict[str, str] = {}  # tool_use id -> key of the assistant message it is in
+    gate_message: str | None = None  # message of the gate call whose output showed the URL
+    synthesis_ids: set[str] = set()  # top-level /synthesize dispatches
+    synthesis_done = False
+    final_too_early = False  # print_summary.py --final printed the URL before synthesis finished
     position = 0
+    run = 0
     for rec in records:
         if rec.get("parent_tool_use_id") is not None:
             continue
         rtype = rec.get("type")
+        if rtype == "user":
+            run += 1
+        message = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+        message_key = str(message.get("id") or f"run-{run}")
+        if (
+            rtype == "system"
+            and rec.get("subtype") == "task_notification"
+            and str(rec.get("tool_use_id")) in synthesis_ids
+            and rec.get("status") == "completed"
+        ):
+            synthesis_done = True
         texts: list[str] = []
         if rtype == "result" and isinstance(rec.get("result"), str):
             texts.append(rec["result"])
@@ -366,8 +422,18 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
             if not isinstance(block, dict):
                 continue
             position += 1
-            if phase6_at is None and _phase6_starts(str(rtype), block):
+            if (
+                phase6_at is None
+                and _phase6_starts(str(rtype), block)
+                and str(block.get("id")) not in refused
+            ):
                 phase6_at = position
+                phase6_message = message_key
+            if rtype == "assistant" and block.get("type") == "tool_use":
+                message_of[str(block.get("id"))] = message_key
+                prompt = (block.get("input") or {}).get("prompt")
+                if isinstance(prompt, str) and re.match(r"\s*Run /synthesize\b", prompt):
+                    synthesis_ids.add(str(block.get("id")))
             if rtype == "assistant" and block.get("type") == "text":
                 if isinstance(block.get("text"), str):
                     _mark_quoted(block["text"], urls, quoted_at, position)
@@ -392,13 +458,27 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
                 printed = (
                     _PRINTED_RESULTS_RE.search(result_text) if use_id in printed_final else None
                 )
+                if use_id in synthesis_ids and not result_text.lstrip().startswith(
+                    "Async agent launched"
+                ):
+                    synthesis_done = True  # the dispatch reported back (foreground or hand-back)
                 if printed:
                     urls["results"] = printed.group(1)
+                    if (
+                        "results" not in quoted_at
+                    ):  # the final summary's output is in front of the user
+                        if synthesis_done:
+                            quoted_at["results"] = position
+                        else:
+                            final_too_early = True
                 gate_url = (
                     _PRINTED_SUMMARY_RE.search(result_text) if use_id in printed_gate else None
                 )
                 if gate_url:
                     urls["summary"] = gate_url.group(1)
+                    if "summary" not in quoted_at:  # the gate's own output is in front of the user
+                        quoted_at["summary"] = position
+                        gate_message = message_of.get(use_id)
         position += 1
         for text in texts:
             _mark_quoted(text, urls, quoted_at, position)
@@ -413,6 +493,11 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
                 )
             )
         if page not in quoted_at:
+            if page == "results" and final_too_early:
+                return False, (
+                    f"{mode} mode ran scripts/print_summary.py --final before synthesis finished "
+                    f"and never quoted the results-page ui_url {urls[page]} after it"
+                )
             return False, (
                 f"{mode} mode never quoted the {page}-page ui_url {urls[page]} to the user"
             )
@@ -420,6 +505,11 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
         return False, (
             f"{mode} mode quoted the summary-page ui_url only after schema design started, "
             "not at the approval gate"
+        )
+    if phase6_at is not None and gate_message is not None and gate_message == phase6_message:
+        return False, (
+            f"{mode} mode ran the approval gate in the same message as the first schema-design "
+            "call, not on its own before it"
         )
     return True, None
 
