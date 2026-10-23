@@ -370,3 +370,37 @@ def test_clean_model_prose_rejects_a_judge_hedge_with_the_term_recorded() -> Non
 def test_an_abbreviation_does_not_hide_a_hedge_in_the_next_sentence() -> None:
     hits = find_style_hits("Use a TTL, e.g. 60 s. A reader may see the old value.")
     assert ("hedge", "may see the old value") in {(h.kind, h.term) for h in hits}
+
+
+# --- the dash scan is linear in the text (#1418) ----------------------------
+
+_DASH_UNIT = "The reads stay local. `code_span` -- 2-4 weeks.\n"
+_DASH_SIZES = (20_000, 160_000)
+
+
+def _many_dashes(size: int) -> str:
+    return _DASH_UNIT * max(1, size // len(_DASH_UNIT))
+
+
+@pytest.mark.parametrize(
+    "scan", [replace_dashes, find_style_hits, lambda t: clean_model_prose(t, "x")]
+)
+def test_dash_scan_cost_grows_linearly_with_the_text(scan):
+    from tests.unit.tools.sql._timing import assert_linear
+
+    assert_linear(_many_dashes, scan, sizes=_DASH_SIZES)
+
+
+@pytest.mark.passes_on_main
+def test_replace_dashes_rewrites_every_sentence_of_a_long_text():
+    # The code span and the identifier keep their dash; each sentence's own
+    # prose dash is rewritten, so the single-pass rebuild loses no edit.
+    unit = "Reads stay local -- 2-4 weeks. A `a -- b` span -- here.\n"
+    out = replace_dashes(unit * 50)
+    assert out == ("Reads stay local: 2-4 weeks. A `a -- b` span, here.\n") * 50
+
+
+@pytest.mark.passes_on_main
+def test_replace_dashes_leaves_a_sentence_with_three_dashes_alone():
+    text = "One -- two -- three -- four.\nA -- b.\n"
+    assert replace_dashes(text) == "One -- two -- three -- four.\nA, b.\n"

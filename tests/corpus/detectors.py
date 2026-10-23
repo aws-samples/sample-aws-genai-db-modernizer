@@ -59,8 +59,6 @@ BUG_RAW_TEXT_SCANS = 1415
 BUG_BLANKING_MISSES_DIALECT_FORMS = 1416
 # The summary checks read a negated sentence as the claim it denies.
 BUG_NEGATION_READ_AS_CLAIM = 1417
-# The plain-prose dash scan is quadratic in the number of code spans and dashes.
-BUG_QUADRATIC_DASH_SCAN = 1418
 
 # Where each entry's hostile part hides: a literal or comment every dialect reads
 # the same way, a form one dialect has, a dollar-quoted string.
@@ -456,7 +454,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": (),
             "negated_attribution": (),
         },
-        linear_bug=BUG_QUADRATIC_DASH_SCAN,
     ),
     ProseDetector(
         f"{_PROSE}:replace_dashes",
@@ -469,7 +466,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": True,
             "negated_attribution": True,
         },
-        linear_bug=BUG_QUADRATIC_DASH_SCAN,
     ),
     ProseDetector(
         f"{_PROSE}:clean_model_prose",
@@ -482,7 +478,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": True,
             "negated_attribution": True,
         },
-        linear_bug=BUG_QUADRATIC_DASH_SCAN,
     ),
     ProseDetector(
         f"{_GUARD}:scan_text",
@@ -562,7 +557,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": False,
             "negated_attribution": False,
         },
-        linear_bug=BUG_QUADRATIC_DASH_SCAN,
     ),
     ProseDetector(
         f"{_GROUNDING}:check_summary_wave_order",

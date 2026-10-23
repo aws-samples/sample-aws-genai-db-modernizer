@@ -45,6 +45,7 @@ not in the deliverable. Renderers never filter (ADR-032).
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -241,7 +242,11 @@ def _protected_spans(
 
 
 def _inside(pos: int, spans: list[tuple[int, int]]) -> bool:
-    return any(s <= pos < e for s, e in spans)
+    """True when ``pos`` falls in one of ``spans``, which must be sorted and
+    non-overlapping (``_protected_spans`` returns them merged): a binary search,
+    so a text with many spans costs ``O(log n)`` per lookup, not ``O(n)`` (#1418)."""
+    i = bisect_right(spans, pos, key=lambda span: span[0]) - 1
+    return i >= 0 and pos < spans[i][1]
 
 
 def _blank(text: str, spans: list[tuple[int, int]]) -> str:
@@ -298,10 +303,20 @@ def replace_dashes(text: str, identifiers: Iterable[str] = ()) -> str:
         return text
     prose = _blank(text, spans)
     bounds = [0] + [m.end() for m in _UNIT_END_RE.finditer(prose)] + [len(text)]
+    # ``dashes`` is sorted and its entries do not overlap, so one forward walk
+    # hands each sentence its own dashes (one that straddles a boundary belongs
+    # to none) and the edits come out in order: one pass over the text (#1418).
     edits: list[tuple[int, int, str]] = []
+    j = 0
     for u0, u1 in zip(bounds, bounds[1:], strict=False):
-        inner = [d for d in dashes if u0 <= d[0] and d[1] <= u1]
-        if not inner or not all(
+        while j < len(dashes) and dashes[j][0] < u0:
+            j += 1
+        k = j
+        while k < len(dashes) and dashes[k][1] <= u1:
+            k += 1
+        inner = dashes[j:k]
+        j = k
+        if len(inner) not in (1, 2) or not all(
             text[u0 : d[0]].strip()
             and text[d[1] : u1].strip(".!?;\n ").strip()
             and not text[u0 : d[0]].rstrip().endswith(("(", "["))
@@ -314,15 +329,19 @@ def replace_dashes(text: str, identifiers: Iterable[str] = ()) -> str:
             rest = text[e:u1]
             listy = bool(re.match(r"\$?\d", rest)) or "," in rest
             edits.append((s, e, ": " if listy else ", "))
-        elif len(inner) == 2 and text[inner[0][1] : inner[1][0]].strip():
+        elif text[inner[0][1] : inner[1][0]].strip():
             (s1, e1), (s2, e2) = inner
             after = text[e2 : e2 + 1]
             edits.append((s1, e1, " ("))
             edits.append((s2, e2, ")" + ("" if not after or after in ".,;:!?)" else " ")))
-    out = text
-    for s, e, rep in sorted(edits, reverse=True):
-        out = out[:s] + rep + out[e:]
-    return out
+    pieces: list[str] = []
+    last = 0
+    for s, e, rep in edits:
+        pieces.append(text[last:s])
+        pieces.append(rep)
+        last = e
+    pieces.append(text[last:])
+    return "".join(pieces)
 
 
 # --- the matcher ------------------------------------------------------------
