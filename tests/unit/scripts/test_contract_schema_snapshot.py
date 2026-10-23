@@ -12,6 +12,7 @@ real contracts, so both exercise the identical comparison.
 
 from __future__ import annotations
 
+import pytest
 from pydantic import BaseModel, Field
 
 from scripts.contract_schema_snapshot import (
@@ -354,10 +355,14 @@ def test_a_pending_bump_covers_only_its_own_contract() -> None:
     assert problem.startswith("m.D:") and "bump_contract.py m.D minor" in problem
 
 
-def test_a_pending_bump_does_not_excuse_a_hand_bump_left_unregenerated() -> None:
+def test_a_pending_contract_is_compared_without_its_version() -> None:
+    """#1393: the snapshot test cannot tell main's move of a pending contract from a
+    hand bump, so it leaves the version to ``resolve_contract_versions.py --check
+    --against``, which refuses the hand bump (``test_contract_bumps.py``)."""
     committed = {"m.C": _snapshot_entry(_Base, "1.0")}
     actual = {"m.C": _snapshot_entry(_Added, "1.1")}
-    (problem,) = evaluate_snapshot(committed, actual, {"m.C": "minor"})
+    assert evaluate_snapshot(committed, actual, {"m.C": "minor"}) == []
+    (problem,) = evaluate_snapshot(committed, actual)
     assert "wasn't regenerated" in problem
 
 
@@ -385,3 +390,23 @@ def test_against_main_a_removal_needs_a_major_move_or_pending_major() -> None:
     )
     assert "declares only MINOR" in problem
     assert evaluate_against_base(main, {"m.C": _snapshot_entry(_Removed, "2.0")}) == []
+
+
+def test_a_pending_bump_leaves_the_version_to_the_resolver() -> None:
+    """#1393: main moved m.C (1.0 -> 1.1) after the branch declared a pending bump and
+    committed its entry at 1.0. The shape matches, so the entry passes: the resolver
+    writes the version after the last rebase."""
+    committed = {"m.C": _snapshot_entry(_Added, "1.0")}
+    rebased = {"m.C": _snapshot_entry(_Added, "1.1")}
+    assert evaluate_snapshot(committed, rebased, {"m.C": "minor"}) == []
+
+
+@pytest.mark.passes_on_main
+def test_a_stale_version_fails_without_a_pending_bump_of_that_contract() -> None:
+    """A resolved branch has no pending file left and must match exactly; a pending bump
+    of another contract does not excuse it."""
+    committed = {"m.C": _snapshot_entry(_Added, "1.0")}
+    rebased = {"m.C": _snapshot_entry(_Added, "1.1")}
+    for pending in ({}, {"m.D": "minor"}):
+        (problem,) = evaluate_snapshot(committed, rebased, pending)
+        assert "wasn't regenerated" in problem

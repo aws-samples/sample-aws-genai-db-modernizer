@@ -75,8 +75,8 @@ def _module(stem: str) -> Any:
     return importlib.import_module(f"src.contracts.{stem}")
 
 
-def module_version(stem: str) -> str | None:
-    """The version of contract module ``stem``, or ``None`` if it has none."""
+def _own_version(stem: str) -> str | None:
+    """The version contract module ``stem`` declares itself, ignoring overrides."""
     versions = [
         model.model_fields["contract_version"].default
         for key, model in versioned_contract_models()
@@ -88,9 +88,23 @@ def module_version(stem: str) -> str | None:
     if entries:
         major, minor = max(entries)
         return f"{major}.{minor}"
-    if stem in VERSION_SOURCE_OVERRIDES:
-        return module_version(VERSION_SOURCE_OVERRIDES[stem])
     return None
+
+
+def version_source(stem: str) -> str:
+    """The module whose version governs ``stem``'s value sets: ``stem`` itself, unless
+    it declares no version and ``VERSION_SOURCE_OVERRIDES`` names another module (the
+    same rule ``module_version`` applies). That is the module a bump is declared on."""
+    seen: set[str] = set()
+    while stem in VERSION_SOURCE_OVERRIDES and stem not in seen and _own_version(stem) is None:
+        seen.add(stem)
+        stem = VERSION_SOURCE_OVERRIDES[stem]
+    return stem
+
+
+def module_version(stem: str) -> str | None:
+    """The version of contract module ``stem``, or ``None`` if it has none."""
+    return _own_version(version_source(stem))
 
 
 def contract_value_sets() -> dict[str, list[str]]:
@@ -180,6 +194,13 @@ def unversioned_value_sets(snapshot: dict[str, Any]) -> list[str]:
     return sorted(k for k, v in snapshot.items() if v["version"] is None)
 
 
+def pending_kind(module: str, pending_modules: Mapping[str, str]) -> str | None:
+    """The pending bump kind of the module that governs ``module``'s version
+    (``version_source``): ``query_trace``'s sets move with ``synthesis_output``, as
+    long as ``query_trace`` declares no version of its own."""
+    return pending_modules.get(version_source(module))
+
+
 def evaluate_snapshot(
     committed: dict[str, Any],
     actual: dict[str, Any],
@@ -190,6 +211,11 @@ def evaluate_snapshot(
     ``pending_modules`` maps a contract module to the strongest bump kind its pending
     files declare (ADR-008 Decision 8): a value change that kind covers is accepted
     with the version left at main's until ``scripts/resolve_contract_versions.py``.
+    The version a pending module's committed entry records is not compared either
+    (#1393): the resolver writes it, and it goes stale whenever another pull request's
+    bump of the same module lands first (a new set records main's version of the day);
+    ``resolve_contract_versions.py --check --against`` checks that the branch left the
+    version at main's.
     """
     pending_modules = pending_modules or {}
     problems: list[str] = []
@@ -204,9 +230,12 @@ def evaluate_snapshot(
             problems.append(
                 f"{key}: value set removed (or its values moved out of src/contracts/) but "
                 f"still in the committed snapshot. Removing a published value set is a "
-                f"MAJOR change of {before['module']}. Run: {REGENERATE_COMMAND}"
+                f"MAJOR change of {version_source(before['module'])}. Run: {REGENERATE_COMMAND}"
             )
             continue
+        declared = pending_kind(after["module"], pending_modules)
+        if declared is not None:
+            before = {**before, "version": after["version"]}
         if before == after:
             continue
         removed = sorted(set(before["values"]) - set(after["values"]))
@@ -223,11 +252,10 @@ def evaluate_snapshot(
             [f"removed or renamed {removed!r} (major)"] * bool(removed)
             + [f"added {added!r} (minor)"] * bool(added)
         )
-        module, old, new = after["module"], before["version"], after["version"]
+        module, old, new = version_source(after["module"]), before["version"], after["version"]
         if old is None or new is None:
             problems.append(f"{key}: {detail}, but {module} has no version to bump.")
-        elif old == new and module in pending_modules:
-            declared = pending_modules[module]
+        elif old == new and declared is not None:
             if declared != "major" and bump == "major":
                 problems.append(
                     f"{key}: published values changed ({detail}), which needs a MAJOR bump "
@@ -270,11 +298,11 @@ def evaluate_against_base(
         if not removed and not added:
             continue
         bump = "major" if removed else "minor"
-        module, old, new = after["module"], before["version"], after["version"]
+        module, old, new = version_source(after["module"]), before["version"], after["version"]
         if old is None or new is None:
             continue  # evaluate_snapshot reports a module with no version
         if old == new:
-            declared = pending_modules.get(module)
+            declared = pending_kind(module, pending_modules)
             if declared == "major" or (declared == "minor" and bump == "minor"):
                 continue
             problems.append(

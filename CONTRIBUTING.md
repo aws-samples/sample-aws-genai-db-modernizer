@@ -513,7 +513,7 @@ Do not pick the new number yourself: parallel pull requests used to claim the sa
 uv run python scripts/bump_contract.py synthesis_output minor --reason "Added optional ``foo`` (what and why)." --issue 1234
 ```
 
-Leave the version, the Version History and both snapshots at main's while the pull request is open; the snapshot tests accept a change the declared kind covers. After your last rebase onto main, before the merge queue, assign the number and regenerate both snapshots in one step, then amend and push:
+Leave the version, the Version History and both snapshots at main's while the pull request is open; the snapshot tests accept a change the declared kind covers, and do not compare the version a pending contract's entry records, so a value set you added keeps passing when another pull request's bump of the same module lands first. After your last rebase onto main, before the merge queue, assign the number and regenerate both snapshots in one step, then amend and push:
 
 ```bash
 uv run python scripts/resolve_contract_versions.py

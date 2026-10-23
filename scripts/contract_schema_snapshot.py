@@ -559,7 +559,11 @@ def evaluate_snapshot(
     (``scripts/contract_bumps.py``, ADR-008 Decision 8). A shape change that a
     pending bump covers is accepted with the version and the snapshot left at
     main's; ``scripts/resolve_contract_versions.py`` writes both after the last
-    rebase. A pending kind smaller than the change requires is a problem.
+    rebase. A pending kind smaller than the change requires is a problem. The version
+    a pending contract's committed entry records is not compared (#1393): the resolver
+    writes it, and it goes stale whenever another pull request's bump of the same
+    contract lands first; ``resolve_contract_versions.py --check --against`` checks
+    that the branch left the version at main's.
     """
     pending = pending or {}
     problems: list[str] = []
@@ -576,6 +580,9 @@ def evaluate_snapshot(
                 f"snapshot. Run: {REGENERATE_COMMAND}"
             )
             continue
+        declared = pending.get(key)
+        if declared is not None:
+            before = {**before, "version": after["version"]}
         if before == after:
             continue
 
@@ -602,8 +609,7 @@ def evaluate_snapshot(
             )
             continue
 
-        declared = pending.get(key)
-        if before["version"] == after["version"] and declared is not None:
+        if declared is not None:
             if _KIND_RANK[declared] >= _KIND_RANK[bump]:
                 continue
             problems.append(

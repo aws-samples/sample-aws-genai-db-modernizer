@@ -26,7 +26,11 @@ resolver could edit its contract, and its bump has not already landed.
 merge queue keeps an unresolved bump off main. ``--against REF`` (the merge base)
 also compares the contracts with REF's committed snapshots, so a shape or value
 change with no version move and no pending bump fails even when the branch
-regenerated its own snapshot (the ``validate-contracts`` job and ``ci/pre_merge.sh``).
+regenerated its own snapshot (the ``validate-contracts`` job and ``ci/pre_merge.sh``),
+and runs the dry run with REF as main, so a pending contract whose version the branch
+also moved by hand fails there, and so does a pending file for a contract REF does not
+have (a new contract starts at its own version); the snapshot tests do not compare a
+pending contract's version (#1393). A REF git cannot read is an error of its own.
 """
 
 from __future__ import annotations
@@ -220,6 +224,10 @@ def _check(require_resolved: bool, against: str | None) -> int:
     except BumpError as exc:
         print(f"error: {exc}")
         return 1
+    if against and _git("rev-parse", "--verify", "--quiet", f"{against}^{{commit}}").returncode:
+        # Otherwise every module would read as "not on main" (an incomplete fetch).
+        print(f"error: --against {against} is not a commit git can read here; fetch it")
+        return 1
     keys = {key for key, _ in versioned_contract_models()}
     problems = [
         f"error: {b.name}: {b.contract} is not a versioned contract"
@@ -232,9 +240,15 @@ def _check(require_resolved: bool, against: str | None) -> int:
         path = REPO / "src" / "contracts" / f"{module}.py"
         return path.read_text(encoding="utf-8") if path.is_file() else ""
 
-    # Dry run against this tree, as if it were main: it finds what the resolver would
-    # refuse (a contract it cannot edit, a bump that already landed) while the PR is open.
-    _, _, failed = resolve_texts(known, read, read, "0000-00-00")
+    def read_ref(module: str) -> str | None:
+        proc = _git("show", f"{against}:src/contracts/{module}.py")
+        return proc.stdout if proc.returncode == 0 else None
+
+    # Dry run, as if main were REF (else this tree): it finds what the resolver would
+    # refuse (a contract it cannot edit, a bump that already landed, and with REF a
+    # version the branch also moved by hand) while the PR is open. The snapshot tests
+    # leave a pending contract's version to this check (#1393).
+    _, _, failed = resolve_texts(known, read, read_ref if against else read, "0000-00-00")
     problems += _failure_lines(failed)
     if against:
         problems += [f"error: {p}" for p in _against(against, pending_kinds(bumps))]

@@ -544,6 +544,63 @@ def test_check_against_a_ref_without_snapshots_says_so(monkeypatch) -> None:
     ]
 
 
+def test_check_against_a_ref_refuses_a_hand_bump_next_to_a_pending_file(
+    monkeypatch, capsys
+) -> None:
+    """#1393: the snapshot tests no longer compare a pending contract's version, so
+    ``--check --against REF`` runs the resolver's dry run with REF as main: a version
+    the branch also moved by hand fails there, and a version main moved does not."""
+    from src.contracts.synthesis_output import SynthesisOutputContract
+
+    contract = "synthesis_output.SynthesisOutputContract"
+    real = PendingBump(f"{contract}.x.toml", contract, "minor", "A new reason (#1393).")
+    here = (Path(rcv.REPO) / "src/contracts/synthesis_output.py").read_text(encoding="utf-8")
+    version = SynthesisOutputContract.model_fields["contract_version"].default
+    older = set_contract_default(here, "SynthesisOutputContract", "1.0")
+
+    class Proc:
+        def __init__(self, out):
+            self.returncode, self.stdout = 0, out
+
+    monkeypatch.setattr(rcv, "load_pending", lambda: [real])
+    monkeypatch.setattr(rcv, "_against", lambda ref, pending: [])
+    monkeypatch.setattr(rcv, "_git", lambda *args: Proc(here))
+    assert rcv.main(["--check", "--against", "REF"]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(rcv, "_git", lambda *args: Proc(older))
+    assert rcv.main(["--check", "--against", "REF"]) == 1
+    out = capsys.readouterr().out
+    assert f"already moved the version by hand (1.0 on main, {version} here)" in out
+    assert rcv.main(["--check"]) == 0  # without a ref there is no main to compare with
+
+
+def test_check_against_a_ref_refuses_a_contract_the_ref_does_not_have(monkeypatch, capsys) -> None:
+    """With ``--against`` the dry run takes REF as main, so a pending file for a
+    contract REF does not have fails, as the resolver would refuse it; a REF git cannot
+    read says so instead of reporting every contract as missing."""
+    contract = "synthesis_output.SynthesisOutputContract"
+    real = PendingBump(f"{contract}.x.toml", contract, "minor", "A new reason (#1393).")
+
+    def git(returncode_show: int, returncode_ref: int):
+        def run(*args):
+            code = returncode_ref if args[0] == "rev-parse" else returncode_show
+            return type("P", (), {"returncode": code, "stdout": ""})()
+
+        return run
+
+    monkeypatch.setattr(rcv, "load_pending", lambda: [real])
+    monkeypatch.setattr(rcv, "_against", lambda ref, pending: [])
+    monkeypatch.setattr(rcv, "_git", git(128, 0))
+    assert rcv.main(["--check", "--against", "REF"]) == 1
+    out = capsys.readouterr().out
+    assert "synthesis_output.py is not on main" in out
+    assert "a new contract starts at its own version" in out
+    monkeypatch.setattr(rcv, "_git", git(128, 1))
+    assert rcv.main(["--check", "--against", "REF"]) == 1
+    out = capsys.readouterr().out
+    assert "--against REF is not a commit git can read here" in out and "not on main" not in out
+
+
 def test_check_refuses_a_pending_file_for_an_unknown_contract(monkeypatch, capsys) -> None:
     monkeypatch.setattr(rcv, "load_pending", lambda: [_bump("synthesis_output.Nope")])
     assert rcv.main(["--check"]) == 1
