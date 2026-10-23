@@ -1,0 +1,33 @@
+{
+  "job_id": "wordpress-example",
+  "wave": 2,
+  "source": {
+    "engine": "mysql",
+    "dialect": "mysql",
+    "database": "wordpress",
+    "tables": [
+      {"name": "wp_options", "primary_key_columns": ["option_id"]},
+      {"name": "wp_posts", "primary_key_columns": ["ID"]},
+      {"name": "wp_postmeta", "primary_key_columns": ["meta_id"]},
+      {"name": "wp_users", "primary_key_columns": ["ID"]},
+      {"name": "wp_usermeta", "primary_key_columns": ["umeta_id"]},
+      {"name": "wp_term_relationships", "primary_key_columns": ["object_id", "term_taxonomy_id"]}
+    ]
+  },
+  "cdc": {
+    "tool": "debezium",
+    "snapshot_mode": "initial",
+    "heartbeat_interval_ms": 10000,
+    "topic_prefix": "wordpress"
+  },
+  "hub": {
+    "tables": [
+      {"table": "wp_options", "topic": "wordpress.wordpress.wp_options", "partitions": 1},
+      {"table": "wp_posts", "topic": "wordpress.wordpress.wp_posts", "partitions": 3},
+      {"table": "wp_postmeta", "topic": "wordpress.wordpress.wp_postmeta", "partitions": 6},
+      {"table": "wp_users", "topic": "wordpress.wordpress.wp_users", "partitions": 1},
+      {"table": "wp_usermeta", "topic": "wordpress.wordpress.wp_usermeta", "partitions": 3},
+      {"table": "wp_term_relationships", "topic": "wordpress.wordpress.wp_term_relationships", "partitions": 1}
+    ]
+  }
+}

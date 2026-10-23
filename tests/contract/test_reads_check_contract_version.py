@@ -173,6 +173,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/run_schema_design.py", "_draft_state", "<expr>"): (
         "a model's group draft, only checked to be a JSON object"
     ),
+    ("scripts/render_debezium_connector.py", "_load", "<expr>"): (
+        "a Debezium connector input, validated by DebeziumConnectorInput; it has no "
+        "contract version until the DataMovementPlan contract (#1413) feeds it (#1414)"
+    ),
     ("scripts/validate_schemas.py", "validate_schema_file", "schema"): "JSON Schema files",
     ("scripts/contract_schema_snapshot.py", "main", "<expr>"): "the contract schema snapshot",
     ("scripts/contract_value_snapshot.py", "main", "<expr>"): "the contract value snapshot",

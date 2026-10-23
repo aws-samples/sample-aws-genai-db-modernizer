@@ -274,13 +274,16 @@ jobs:
       - name: cfn-lint
         # Scoped to the CloudFormation templates that still exist after #175:
         # the one remaining hosted-path template (automation.yaml, kept per
-        # maintainer decision — see #342), the CI-runner IAM sample, and the
+        # maintainer decision — see #342), the CI-runner IAM sample, the
+        # data movement stacks and their rendered examples (#1414), and the
         # AWS Transform integration's IAM roles template. W3037 is cfn-lint's
         # IAM-action-prefix check; its bundled service list doesn't yet know
         # about bedrock-runtime or transform-agents, both real AWS actions.
         run: |
           uv run cfn-lint infrastructure/cloudformation/automation.yaml \
             infrastructure/cloudformation/example-ci-runner-iam.yaml \
+            infrastructure/cloudformation/data-movement/*.yaml \
+            infrastructure/cloudformation/data-movement/examples/*.yaml \
             pipeline/iam-roles.yaml \
             --ignore-checks W3037
       - name: Checkov (CloudFormation)
@@ -288,6 +291,9 @@ jobs:
           pip install checkov
           checkov -f infrastructure/cloudformation/automation.yaml \
             -f infrastructure/cloudformation/example-ci-runner-iam.yaml \
+            -f infrastructure/cloudformation/data-movement/debezium-plugin-bucket.yaml \
+            -f infrastructure/cloudformation/data-movement/examples/wordpress-mysql.yaml \
+            -f infrastructure/cloudformation/data-movement/examples/wordpress-postgresql.yaml \
             -f pipeline/iam-roles.yaml \
             --framework cloudformation --quiet --compact \
             --skip-check CKV_AWS_46,CKV_AWS_111,CKV2_AWS_71

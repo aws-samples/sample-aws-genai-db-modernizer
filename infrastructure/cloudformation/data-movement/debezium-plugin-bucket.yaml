@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Bucket for the Debezium custom plugin of an Amazon MSK Connect connector (#1412).
+  Deploy this stack first, upload the plugin ZIP you build from the public Debezium
+  release (see README.md next to this template), then deploy the connector stack
+  rendered by scripts/render_debezium_connector.py with PluginBucketStackName set to
+  this stack's name: it imports the PluginBucketArn export, so the plugin can only
+  come from this stack's bucket, in the same account and region.
+  Nothing in the project deploys it.
+
+Parameters:
+  JobId:
+    Type: String
+    Description: Assessment job id the data movement belongs to (tags every resource)
+    AllowedPattern: '^[A-Za-z0-9_-]{1,128}$'
+    ConstraintDescription: 1 to 128 letters, digits, underscores or hyphens
+
+  NoncurrentVersionRetentionDays:
+    Type: Number
+    Description: Days to keep replaced plugin versions (a connector pins one object version)
+    Default: 90
+    MinValue: 1
+    MaxValue: 3650
+
+Resources:
+  AccessLogBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "This is the access-log target bucket; logging it to itself would loop"
+      checkov:
+        skip:
+          - id: CKV_AWS_18
+            comment: "This is the access-log target bucket; logging it to itself would loop"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAccessLogs
+            Status: Enabled
+            ExpirationInDays: 365
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      Tags:
+        - Key: modernizer:job-id
+          Value: !Ref JobId
+
+  AccessLogBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccessLogBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt AccessLogBucket.Arn
+              - !Sub '${AccessLogBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: AllowServerAccessLogs
+            Effect: Allow
+            Principal:
+              Service: logging.s3.amazonaws.com
+            Action: 's3:PutObject'
+            Resource: !Sub '${AccessLogBucket.Arn}/plugin-bucket/*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !GetAtt PluginBucket.Arn
+
+  PluginBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      # A custom plugin pins one object version, so a re-upload never changes a
+      # running connector's code.
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireReplacedPluginVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: !Ref NoncurrentVersionRetentionDays
+      LoggingConfiguration:
+        DestinationBucketName: !Ref AccessLogBucket
+        LogFilePrefix: plugin-bucket/
+      Tags:
+        - Key: modernizer:job-id
+          Value: !Ref JobId
+
+  PluginBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PluginBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt PluginBucket.Arn
+              - !Sub '${PluginBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+Outputs:
+  PluginBucketName:
+    Description: Upload the plugin ZIP here
+    Value: !Ref PluginBucket
+  PluginBucketArn:
+    Description: Imported by the connector stack (PluginBucketStackName parameter)
+    Value: !GetAtt PluginBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PluginBucketArn'
+  AccessLogBucketName:
+    Description: Server access logs of the plugin bucket
+    Value: !Ref AccessLogBucket
