@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  ElastiCache Valkey Cluster with full monitoring, alarms, and dashboard.
+  One-click deploy. Includes: Multi-AZ, cluster mode, TLS, CloudWatch alarms, SNS alerts, dashboard.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: Name for the Valkey cluster
+    Default: my-valkey-cluster
+
+  NodeType:
+    Type: String
+    Default: cache.m6g.large
+    AllowedValues:
+      - cache.t3.small
+      - cache.t3.medium
+      - cache.m6g.large
+      - cache.m6g.xlarge
+      - cache.r6g.large
+      - cache.r6g.xlarge
+      - cache.r6g.2xlarge
+
+  NumShards:
+    Type: Number
+    Default: 3
+    Description: Number of shards (node groups)
+
+  ReplicasPerShard:
+    Type: Number
+    Default: 2
+    Description: Read replicas per shard (1 or 2 recommended)
+    AllowedValues: [1, 2]
+
+  EngineVersion:
+    Type: String
+    Default: '9.0'
+    AllowedValues: ['7.2', '8.0', '9.0']
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 3 subnets in different AZs
+
+  AllowedCIDR:
+    Type: String
+    Default: '10.0.0.0/8'
+    Description: CIDR range allowed to connect to Valkey
+
+  AlertEmail:
+    Type: String
+    Description: Email for alarm notifications
+    Default: ''
+
+  EvictionPolicy:
+    Type: String
+    Default: volatile-lru
+    AllowedValues:
+      - volatile-lru
+      - volatile-lfu
+      - allkeys-lru
+      - allkeys-lfu
+      - volatile-ttl
+      - noeviction
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Resources:
+  # ═══════════════════════════════════════════════════
+  # Security Group
+  # ═══════════════════════════════════════════════════
+  ValkeySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ClusterName} Valkey access'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedCIDR
+          Description: Valkey client access
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-sg'
+
+  # ═══════════════════════════════════════════════════
+  # Subnet Group
+  # ═══════════════════════════════════════════════════
+  SubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub '${ClusterName} subnets (Multi-AZ)'
+      SubnetIds: !Ref SubnetIds
+
+  # ═══════════════════════════════════════════════════
+  # Parameter Group
+  # ═══════════════════════════════════════════════════
+  ParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: valkey9
+      Description: !Sub '${ClusterName} tuned parameters'
+      Properties:
+        cluster-enabled: 'yes'
+        maxmemory-policy: !Ref EvictionPolicy
+        timeout: '300'
+        tcp-keepalive: '60'
+
+  # ═══════════════════════════════════════════════════
+  # Valkey Cluster
+  # ═══════════════════════════════════════════════════
+  ValkeyCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Ref ClusterName
+      ReplicationGroupDescription: !Sub '${ClusterName} - Valkey ${EngineVersion}'
+      Engine: valkey
+      EngineVersion: !Ref EngineVersion
+      CacheNodeType: !Ref NodeType
+      NumNodeGroups: !Ref NumShards
+      ReplicasPerNodeGroup: !Ref ReplicasPerShard
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref SubnetGroup
+      CacheParameterGroupName: !Ref ParameterGroup
+      SecurityGroupIds:
+        - !Ref ValkeySecurityGroup
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      ClusterMode: enabled
+      SnapshotRetentionLimit: 7
+      SnapshotWindow: '03:00-05:00'
+      PreferredMaintenanceWindow: 'sun:05:00-sun:07:00'
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
+        - Key: Environment
+          Value: production
+
+  # ═══════════════════════════════════════════════════
+  # SNS Topic for Alerts
+  # ═══════════════════════════════════════════════════
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${ClusterName}-alerts'
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ═══════════════════════════════════════════════════
+  # CloudWatch Alarms
+  # ═══════════════════════════════════════════════════
+
+  # 1. CPU Utilization > 80%
+  CPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-cpu-high'
+      AlarmDescription: 'Engine CPU utilization exceeds 80%'
+      Namespace: AWS/ElastiCache
+      MetricName: EngineCPUUtilization
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  # 2. Memory Usage > 80%
+  MemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-memory-high'
+      AlarmDescription: 'Database memory usage exceeds 80%'
+      Namespace: AWS/ElastiCache
+      MetricName: DatabaseMemoryUsagePercentage
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  # 3. Evictions > 0
+  EvictionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-evictions'
+      AlarmDescription: 'Keys being evicted - cluster may need more memory'
+      Namespace: AWS/ElastiCache
+      MetricName: Evictions
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # 4. Replication Lag > 5 seconds
+  ReplicationLagAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-replication-lag'
+      AlarmDescription: 'Replication lag exceeds 5 seconds'
+      Namespace: AWS/ElastiCache
+      MetricName: ReplicationLag
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
+
+  # 5. Current Connections > 50000
+  ConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-connections-high'
+      AlarmDescription: 'Current connections exceeds 50000 - possible connection leak'
+      Namespace: AWS/ElastiCache
+      MetricName: CurrConnections
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 50000
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # 6. Cache Hit Rate < 80%
+  CacheHitAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${ClusterName}-cache-hit-low'
+      AlarmDescription: 'Cache hit rate below 80% - cache not effective'
+      Namespace: AWS/ElastiCache
+      MetricName: CacheHitRate
+      Dimensions:
+        - Name: ReplicationGroupId
+          Value: !Ref ClusterName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: LessThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # ═══════════════════════════════════════════════════
+  # CloudWatch Dashboard
+  # ═══════════════════════════════════════════════════
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${ClusterName}-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "CPU Utilization",
+                "metrics": [
+                  ["AWS/ElastiCache", "EngineCPUUtilization", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Memory Usage %",
+                "metrics": [
+                  ["AWS/ElastiCache", "DatabaseMemoryUsagePercentage", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}",
+                "annotations": { "horizontal": [{"value": 80, "label": "Warning"}] }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Cache Hit Rate",
+                "metrics": [
+                  ["AWS/ElastiCache", "CacheHitRate", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}",
+                "annotations": { "horizontal": [{"value": 80, "label": "Warning"}] }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Evictions",
+                "metrics": [
+                  ["AWS/ElastiCache", "Evictions", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Sum", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 6, "width": 8, "height": 6,
+              "properties": {
+                "title": "Connections",
+                "metrics": [
+                  ["AWS/ElastiCache", "CurrConnections", "ReplicationGroupId", "${ClusterName}"],
+                  ["AWS/ElastiCache", "NewConnections", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Network (Bytes In/Out)",
+                "metrics": [
+                  ["AWS/ElastiCache", "NetworkBytesIn", "ReplicationGroupId", "${ClusterName}"],
+                  ["AWS/ElastiCache", "NetworkBytesOut", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 12, "width": 12, "height": 6,
+              "properties": {
+                "title": "Replication Lag",
+                "metrics": [
+                  ["AWS/ElastiCache", "ReplicationLag", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Maximum", "region": "${AWS::Region}",
+                "annotations": { "horizontal": [{"value": 5, "label": "Warning (5s)"}] }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 18, "width": 12, "height": 6,
+              "properties": {
+                "title": "Commands Processed",
+                "metrics": [
+                  ["AWS/ElastiCache", "GetTypeCmds", "ReplicationGroupId", "${ClusterName}"],
+                  ["AWS/ElastiCache", "SetTypeCmds", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Sum", "region": "${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 18, "width": 12, "height": 6,
+              "properties": {
+                "title": "Latency (GetType vs SetType)",
+                "metrics": [
+                  ["AWS/ElastiCache", "GetTypeCmdsLatency", "ReplicationGroupId", "${ClusterName}"],
+                  ["AWS/ElastiCache", "SetTypeCmdsLatency", "ReplicationGroupId", "${ClusterName}"]
+                ],
+                "period": 60, "stat": "Average", "region": "${AWS::Region}"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  ClusterEndpoint:
+    Description: Valkey cluster configuration endpoint
+    Value: !GetAtt ValkeyCluster.ConfigurationEndPoint.Address
+
+  ClusterPort:
+    Description: Valkey port
+    Value: !GetAtt ValkeyCluster.ConfigurationEndPoint.Port
+
+  SecurityGroupId:
+    Description: Security group ID (add to your app's SG for access)
+    Value: !Ref ValkeySecurityGroup
+
+  DashboardName:
+    Description: CloudWatch dashboard name
+    Value: !Sub '${ClusterName}-dashboard'
+
+  AlertTopicArn:
+    Description: SNS Topic for alerts (subscribe Slack/PagerDuty here)
+    Value: !Ref AlertTopic
+
+  ConnectCommand:
+    Description: Test connection command (from within VPC)
+    Value: !Sub 'valkey-cli -h ${ValkeyCluster.ConfigurationEndPoint.Address} -p 6379 --tls -c ping'

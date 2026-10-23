@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache CDC broker (self-contained) — single-shard, cluster-mode DISABLED, Multi-AZ
+  ElastiCache for Valkey, with its own subnet group + security group. Used by the
+  quickstart `cdc` subcommand as the durable Streams buffer between Debezium and
+  the Go sink. Debezium's Redis sink is single-connection (not cluster-aware), so
+  the broker must be cluster-mode disabled with a primary endpoint.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: cdc-cache-demo-broker-cache
+    Description: ReplicationGroupId for the broker cache.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 2 subnets in different AZs.
+  AllowedCIDR:
+    Type: String
+    Default: '10.0.0.0/8'
+    Description: CIDR allowed to reach the broker on 6379 (the pipeline SG is also granted separately).
+  NodeType:
+    Type: String
+    Default: cache.t4g.small
+  EngineVersion:
+    Type: String
+    Default: '9.0'
+
+Resources:
+  BrokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ClusterName} broker access'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedCIDR
+          Description: Broker client access (in-VPC)
+      Tags:
+        - Key: Name
+          Value: !Sub '${ClusterName}-sg'
+
+  BrokerSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub '${ClusterName} broker subnets (Multi-AZ)'
+      SubnetIds: !Ref SubnetIds
+
+  Broker:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Ref ClusterName
+      ReplicationGroupDescription: CDC-cache CDC broker (single shard, cluster-mode disabled, Multi-AZ)
+      Engine: valkey
+      EngineVersion: !Ref EngineVersion
+      CacheNodeType: !Ref NodeType
+      NumCacheClusters: 2            # 1 primary + 1 replica (cluster mode disabled)
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref BrokerSubnetGroup
+      SecurityGroupIds:
+        - !Ref BrokerSecurityGroup
+      TransitEncryptionEnabled: false   # internal broker, SG-restricted; matches Debezium ssl.enabled=false
+      Port: 6379
+      Tags:
+        - Key: Project
+          Value: CDC-cache
+        - Key: Role
+          Value: broker-cdc
+
+Outputs:
+  PrimaryEndpoint:
+    Description: Primary endpoint host for the Debezium sink + Go sink.
+    Value: !GetAtt Broker.PrimaryEndPoint.Address
+  Port:
+    Value: !GetAtt Broker.PrimaryEndPoint.Port
+  SecurityGroupId:
+    Description: Broker security group (pipeline tasks are granted ingress to it).
+    Value: !Ref BrokerSecurityGroup

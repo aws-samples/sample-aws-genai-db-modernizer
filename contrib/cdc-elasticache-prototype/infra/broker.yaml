@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache Broker — managed ElastiCache for Valkey, CLUSTER MODE ENABLED (sharded, Multi-AZ).
+  NOTE: This is NOT for the standard Debezium -> broker -> sink path. Debezium's
+  Redis sink is single-connection / not cluster-aware and needs a NON-cluster
+  primary endpoint, and a single Valkey Stream lives on one slot (cluster mode
+  does not shard it). Use infra/broker-single.yaml for the CDC broker.
+  This template is only for the advanced PARTITIONED-STREAMS scaling scenario
+  (multiple streams across shards) — see docs/benchmarks/04 section 7.
+
+Parameters:
+  ReplicationGroupId:
+    Type: String
+    Default: cdc-cache-broker
+  NodeType:
+    Type: String
+    Default: cache.t4g.small
+    Description: Small burstable node (broker buffers transient CDC events)
+  NumShards:
+    Type: Number
+    Default: 3
+    Description: Number of node groups (shards)
+  ReplicasPerShard:
+    Type: Number
+    Default: 1
+    Description: Replicas per shard (1 = Multi-AZ ready)
+  EngineVersion:
+    Type: String
+    Default: '9.0'
+  SubnetGroupName:
+    Type: String
+  SecurityGroupId:
+    Type: String
+  TransitEncryption:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: TLS in transit (set false only for a fully-internal broker)
+
+Resources:
+  BrokerReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Ref ReplicationGroupId
+      ReplicationGroupDescription: CDC-cache CDC stream broker (small sharded, Multi-AZ)
+      Engine: valkey
+      EngineVersion: !Ref EngineVersion
+      CacheNodeType: !Ref NodeType
+      NumNodeGroups: !Ref NumShards
+      ReplicasPerNodeGroup: !Ref ReplicasPerShard
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      TransitEncryptionEnabled: !Ref TransitEncryption
+      CacheSubnetGroupName: !Ref SubnetGroupName
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      Port: 6379
+      Tags:
+        - Key: Project
+          Value: CDC-cache
+        - Key: Role
+          Value: broker
+
+Outputs:
+  ConfigurationEndpoint:
+    Description: Cluster-mode configuration endpoint (host:port)
+    Value: !Sub '${BrokerReplicationGroup.ConfigurationEndPoint.Address}:${BrokerReplicationGroup.ConfigurationEndPoint.Port}'
+  ReplicationGroupId:
+    Value: !Ref ReplicationGroupId

@@ -1,0 +1,392 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache v3 - Debezium Server + Valkey Target (No Kafka, No Broker)
+  Architecture: Aurora MySQL → Debezium Server → HTTP → Sink Worker → Valkey Target
+  Offset Storage: Valkey (same target cluster, like Redis RDI)
+
+Parameters:
+  # --- Source Database ---
+  SourceDBEndpoint:
+    Type: String
+    Description: Aurora MySQL cluster endpoint
+  SourceDBPort:
+    Type: Number
+    Default: 3306
+  SourceDBName:
+    Type: String
+    Description: Database name (e.g., Inventory)
+  DBSecretArn:
+    Type: String
+    Description: Secrets Manager ARN of the source DB secret (JSON with username and password).
+  Tables:
+    Type: String
+    Description: Comma-separated table list (e.g., Inventory.customers,Inventory.orders)
+
+  # --- Target Valkey ---
+  TargetNodeType:
+    Type: String
+    Default: cache.m6g.large
+    AllowedValues: [cache.t3.medium, cache.m6g.large, cache.r6g.large, cache.r6g.xlarge]
+  TargetNumShards:
+    Type: Number
+    Default: 1
+  TargetReplicasPerShard:
+    Type: Number
+    Default: 1
+
+  # --- Networking ---
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  AuroraSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  # --- ECS ---
+  ECSClusterName:
+    Type: String
+    Default: cdc-cache-v3
+  DebeziumImage:
+    Type: String
+    Description: Debezium Server image URI (build data-plane/debezium-server/Dockerfile and push it to your registry).
+  SinkWorkerImage:
+    Type: String
+    Description: Sink worker image URI (build data-plane/sink-worker-v3/Dockerfile and push it to your registry).
+
+  # --- Misc ---
+  TopicPrefix:
+    Type: String
+    Default: cdc-cache
+  ArtifactsBucket:
+    Type: String
+    Description: Existing S3 bucket for pipeline artifacts.
+
+Resources:
+  # ═══════════════════════════════════════════════════════════════
+  # Security Groups
+  # ═══════════════════════════════════════════════════════════════
+  CdcCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName} CDC-cache v3 Debezium'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-sg'
+
+  # Allow internal communication (Debezium → Sink Worker, both → Valkey)
+  SelfIngressHTTP:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref CdcCacheSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8081
+      ToPort: 8081
+      SourceSecurityGroupId: !Ref CdcCacheSecurityGroup
+
+  SelfIngressValkey:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref CdcCacheSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref CdcCacheSecurityGroup
+
+  # Allow Debezium to read Aurora binlog
+  AuroraIngressFromCdcCache:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref SourceDBPort
+      ToPort: !Ref SourceDBPort
+      SourceSecurityGroupId: !Ref CdcCacheSecurityGroup
+
+  # ═══════════════════════════════════════════════════════════════
+  # Valkey Target Cluster (Cache — app reads here)
+  # ═══════════════════════════════════════════════════════════════
+  TargetSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub '${AWS::StackName} target subnets'
+      SubnetIds: !Ref SubnetIds
+
+  TargetCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Sub '${AWS::StackName}-target'
+      ReplicationGroupDescription: CDC-cache v3 Target (app reads, Debezium offsets stored here)
+      Engine: valkey
+      EngineVersion: '9.0'
+      CacheNodeType: !Ref TargetNodeType
+      NumNodeGroups: !Ref TargetNumShards
+      ReplicasPerNodeGroup: !Ref TargetReplicasPerShard
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref TargetSubnetGroup
+      SecurityGroupIds: [!Ref CdcCacheSecurityGroup]
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      ClusterMode: enabled
+      CacheParameterGroupName: !Ref TargetParameterGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-target'
+
+  # Parameter group with volatile-lfu (protects offset keys from eviction)
+  TargetParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: valkey9
+      Description: !Sub '${AWS::StackName} - volatile-lfu eviction (protects no-TTL keys)'
+      Properties:
+        maxmemory-policy: volatile-lfu
+
+  # ═══════════════════════════════════════════════════════════════
+  # IAM Roles
+  # ═══════════════════════════════════════════════════════════════
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-ecs-exec'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !Ref DBSecretArn
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-ecs-task'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CdcCacheTaskPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [cloudwatch:PutMetricData, logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: '*'
+              - Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ArtifactsBucket}'
+                  - !Sub 'arn:aws:s3:::${ArtifactsBucket}/*'
+
+  # ═══════════════════════════════════════════════════════════════
+  # ECS Cluster
+  # ═══════════════════════════════════════════════════════════════
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ECSClusterName
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # ═══════════════════════════════════════════════════════════════
+  # CloudWatch Log Groups
+  # ═══════════════════════════════════════════════════════════════
+  DebeziumLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/debezium'
+      RetentionInDays: 14
+
+  SinkWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/sink-worker'
+      RetentionInDays: 14
+
+  # ═══════════════════════════════════════════════════════════════
+  # Service Discovery (so Debezium can find Sink Worker by name)
+  # ═══════════════════════════════════════════════════════════════
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub '${AWS::StackName}.local'
+      Vpc: !Ref VpcId
+
+  SinkWorkerServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: sink-worker
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+
+  # ═══════════════════════════════════════════════════════════════
+  # ECS Task: Sink Worker (must start FIRST — Debezium posts to it)
+  # ═══════════════════════════════════════════════════════════════
+  SinkWorkerTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-sink-worker'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: sink-worker
+          Image: !Ref SinkWorkerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8081
+              Protocol: tcp
+          Environment:
+            - Name: TARGET_HOST
+              Value: !GetAtt TargetCluster.ConfigurationEndPoint.Address
+            - Name: TARGET_PORT
+              Value: !GetAtt TargetCluster.ConfigurationEndPoint.Port
+            - Name: TARGET_SSL
+              Value: 'true'
+            - Name: TRANSFORMS_FILE
+              Value: '/opt/cdc-cache/transforms.json'
+            - Name: CLOUDWATCH_NAMESPACE
+              Value: 'CDC-cache/Pipeline-v3'
+            - Name: PIPELINE_NAME
+              Value: !Ref AWS::StackName
+          HealthCheck:
+            Command: ['CMD-SHELL', 'curl -f http://localhost:8081/health || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SinkWorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: sink
+
+  SinkWorkerService:
+    Type: AWS::ECS::Service
+    DependsOn: [TargetCluster]
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-sink-worker'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref SinkWorkerTaskDef
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref CdcCacheSecurityGroup]
+          AssignPublicIp: DISABLED
+      ServiceRegistries:
+        - RegistryArn: !GetAtt SinkWorkerServiceDiscovery.Arn
+
+  # ═══════════════════════════════════════════════════════════════
+  # ECS Task: Debezium Server (CDC engine)
+  # ═══════════════════════════════════════════════════════════════
+  DebeziumTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-debezium'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: debezium-server
+          Image: !Ref DebeziumImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          Environment:
+            - Name: SOURCE_DB_HOST
+              Value: !Ref SourceDBEndpoint
+            - Name: SOURCE_DB_PORT
+              Value: !Ref SourceDBPort
+            - Name: SOURCE_DB_NAME
+              Value: !Ref SourceDBName
+            - Name: TABLE_INCLUDE_LIST
+              Value: !Ref Tables
+            - Name: TOPIC_PREFIX
+              Value: !Ref TopicPrefix
+            - Name: SINK_HTTP_URL
+              Value: !Sub 'http://sink-worker.${AWS::StackName}.local:8081/events'
+            - Name: TARGET_VALKEY_HOST
+              Value: !GetAtt TargetCluster.ConfigurationEndPoint.Address
+            - Name: TARGET_VALKEY_PORT
+              Value: !GetAtt TargetCluster.ConfigurationEndPoint.Port
+          Secrets:
+            - Name: SOURCE_DB_USER
+              ValueFrom: !Sub '${DBSecretArn}:username::'
+            - Name: SOURCE_DB_PASSWORD
+              ValueFrom: !Sub '${DBSecretArn}:password::'
+          HealthCheck:
+            Command: ['CMD-SHELL', 'curl -f http://localhost:8080/q/health || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref DebeziumLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: debezium
+
+  DebeziumService:
+    Type: AWS::ECS::Service
+    DependsOn: [SinkWorkerService, TargetCluster]
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-debezium'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref DebeziumTaskDef
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref CdcCacheSecurityGroup]
+          AssignPublicIp: DISABLED
+
+Outputs:
+  TargetEndpoint:
+    Value: !GetAtt TargetCluster.ConfigurationEndPoint.Address
+    Description: Valkey target cluster endpoint (app reads + Debezium offsets)
+  TargetPort:
+    Value: !GetAtt TargetCluster.ConfigurationEndPoint.Port
+  ECSCluster:
+    Value: !Ref ECSCluster
+  SinkWorkerService:
+    Value: !Sub '${AWS::StackName}-sink-worker'
+  DebeziumService:
+    Value: !Sub '${AWS::StackName}-debezium'
+  Architecture:
+    Value: 'Aurora MySQL → Debezium Server → HTTP → Sink Worker → Valkey Target. No Kafka. Offset in Valkey.'
+  CostEstimate:
+    Value: 'Fargate (~$36/mo) + Valkey cache.m6g.large (~$290/mo) = ~$330/mo total'

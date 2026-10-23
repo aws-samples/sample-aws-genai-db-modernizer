@@ -1,0 +1,82 @@
+<mxfile host="app.diagrams.net" agent="CDC-cache">
+  <diagram id="cdc-cache-arch" name="CDC-cache Architecture">
+    <mxGraphModel dx="1505" dy="918" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1660" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" parent="1" vertex="1" style="text;html=1;fontSize=20;fontStyle=1;align=center;" value="CDC-cache — Relational DB → ElastiCache Valkey">
+          <mxGeometry x="430" y="20" width="800" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="src" parent="1" vertex="1" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" value="Source RDBMS&#10;Aurora MySQL / PostgreSQL">
+          <mxGeometry x="40" y="300" width="180" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="loader" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" value="Parallel Bulk Loader&#10;initial load (one-time)">
+          <mxGeometry x="360" y="110" width="250" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dbz" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" value="Debezium Server&#10;ECS Fargate&#10;reads the change log">
+          <mxGeometry x="360" y="315" width="210" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="broker" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" value="Broker&#10;ElastiCache for Valkey (Streams)&#10;Multi-AZ · durable buffer">
+          <mxGeometry x="720" y="310" width="250" height="120" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sink" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" value="Sink Worker&#10;ECS Fargate&#10;applies transforms">
+          <mxGeometry x="1080" y="315" width="210" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tgt" parent="1" vertex="1" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" value="Target&#10;ElastiCache for Valkey&#10;Multi-AZ">
+          <mxGeometry x="1420" y="300" width="180" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="app" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" value="Application&#10;reads from cache">
+          <mxGeometry x="1425" y="120" width="180" height="62" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" value="Secrets Manager&#10;DB credentials">
+          <mxGeometry x="360" y="540" width="210" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tspec" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" value="Transforms (shared)&#10;filter · rename · compute · denormalize">
+          <mxGeometry x="780" y="540" width="270" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_src_loader" parent="1" edge="1" source="src" target="loader" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;strokeColor=#82b366;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="bulk read">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_loader_tgt" parent="1" edge="1" source="loader" target="tgt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;strokeColor=#82b366;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="initial load (bypasses CDC)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_src_dbz" parent="1" edge="1" source="src" target="dbz" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.7;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="change log">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dbz_broker" parent="1" edge="1" source="dbz" target="broker" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="publish">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_broker_sink" parent="1" edge="1" source="broker" target="sink" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="consume">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sink_tgt" parent="1" edge="1" source="sink" target="tgt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="write (idempotent)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tgt_app" parent="1" edge="1" source="tgt" target="app" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" value="read">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sec_dbz" parent="1" edge="1" source="sec" target="dbz" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;dashed=1;strokeColor=#666666;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" value="DB credentials">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tspec_sink" parent="1" edge="1" source="tspec" target="sink" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;dashed=1;strokeColor=#9673a6;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" value="rules">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" parent="1" vertex="1" style="text;html=1;fontSize=11;align=left;" value="Blue = managed AWS  •  Yellow = ECS Fargate  •  Green = initial load  •  Purple = transforms  •  Pink = application  •  Solid = data flow, Dashed = config">
+          <mxGeometry x="40" y="650" width="1500" height="20" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

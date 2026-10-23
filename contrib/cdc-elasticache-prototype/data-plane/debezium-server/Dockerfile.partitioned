@@ -1,0 +1,17 @@
+# Production Debezium Server image with content-based routing (partitioning).
+# Adds the debezium-scripting SMT + Groovy JSR223 engine so rows can be routed
+# to N partition streams by a hash of the primary key.
+FROM curlimages/curl:8.8.0 AS jars
+ARG DBZ_VERSION=3.0.6.Final
+ARG GROOVY_VERSION=4.0.22
+WORKDIR /jars
+RUN set -eux; \
+    base=https://repo1.maven.org/maven2; \
+    curl -fsSLO $base/io/debezium/debezium-scripting/${DBZ_VERSION}/debezium-scripting-${DBZ_VERSION}.jar; \
+    curl -fsSLO $base/org/apache/groovy/groovy/${GROOVY_VERSION}/groovy-${GROOVY_VERSION}.jar; \
+    curl -fsSLO $base/org/apache/groovy/groovy-json/${GROOVY_VERSION}/groovy-json-${GROOVY_VERSION}.jar; \
+    curl -fsSLO $base/org/apache/groovy/groovy-jsr223/${GROOVY_VERSION}/groovy-jsr223-${GROOVY_VERSION}.jar
+
+FROM quay.io/debezium/server:3.0.6.Final
+# Drop the scripting + engine jars onto the Debezium Server classpath.
+COPY --from=jars /jars/*.jar /debezium/lib/

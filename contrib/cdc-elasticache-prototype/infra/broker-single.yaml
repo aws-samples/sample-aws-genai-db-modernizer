@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache Broker (single-shard, cluster-mode DISABLED, Multi-AZ) — for the CDC path.
+  Debezium's Redis sink is single-connection (not cluster-aware), so it needs a
+  non-cluster primary endpoint. 1 primary + 1 replica for HA.
+
+Parameters:
+  ReplicationGroupId:
+    Type: String
+    Default: cdc-cache-broker-cmd
+  NodeType:
+    Type: String
+    Default: cache.t4g.small
+  EngineVersion:
+    Type: String
+    Default: '9.0'
+  SubnetGroupName:
+    Type: String
+  SecurityGroupId:
+    Type: String
+
+Resources:
+  Broker:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Ref ReplicationGroupId
+      ReplicationGroupDescription: CDC-cache CDC broker (single shard, Multi-AZ, non-cluster)
+      Engine: valkey
+      EngineVersion: !Ref EngineVersion
+      CacheNodeType: !Ref NodeType
+      NumCacheClusters: 2            # 1 primary + 1 replica (cluster mode disabled)
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      TransitEncryptionEnabled: false   # internal broker, SG-restricted; matches Debezium ssl.enabled=false
+      CacheSubnetGroupName: !Ref SubnetGroupName
+      SecurityGroupIds:
+        - !Ref SecurityGroupId
+      Port: 6379
+      Tags:
+        - Key: Project
+          Value: CDC-cache
+        - Key: Role
+          Value: broker-cdc
+
+Outputs:
+  PrimaryEndpoint:
+    Description: Primary endpoint for Debezium sink (host:port)
+    Value: !Sub '${Broker.PrimaryEndPoint.Address}:${Broker.PrimaryEndPoint.Port}'

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1660 700" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aBlack" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#333333"/>
+    </marker>
+    <marker id="aGreen" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#82b366"/>
+    </marker>
+    <marker id="aGrey" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#666666"/>
+    </marker>
+    <marker id="aPurple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9673a6"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1660" height="700" fill="#ffffff"/>
+  <text x="830" y="46" text-anchor="middle" font-size="24" font-weight="bold" fill="#222">CDC-cache — Relational DB to ElastiCache Valkey</text>
+
+  <!-- ================= EDGES ================= -->
+  <g fill="none" stroke-width="2">
+    <polyline points="220,330 300,330 300,155 360,155" stroke="#82b366" marker-end="url(#aGreen)"/>
+    <polyline points="610,155 1510,155 1510,300" stroke="#82b366" marker-end="url(#aGreen)"/>
+    <polyline points="220,390 320,390 320,370 360,370" stroke="#333333" marker-end="url(#aBlack)"/>
+    <polyline points="570,370 720,370" stroke="#333333" marker-end="url(#aBlack)"/>
+    <polyline points="970,370 1080,370" stroke="#333333" marker-end="url(#aBlack)"/>
+    <polyline points="1290,370 1420,370" stroke="#333333" marker-end="url(#aBlack)"/>
+    <polyline points="1510,300 1510,182" stroke="#333333" marker-end="url(#aBlack)"/>
+    <polyline points="465,540 465,427" stroke="#666666" stroke-dasharray="6 4" marker-end="url(#aGrey)"/>
+    <polyline points="915,540 915,470 1185,470 1185,427" stroke="#9673a6" stroke-dasharray="6 4" marker-end="url(#aPurple)"/>
+  </g>
+
+  <!-- edge labels -->
+  <g font-size="12" fill="#333" style="paint-order:stroke;stroke:#ffffff;stroke-width:3px;stroke-linejoin:round;">
+    <text x="308" y="250" text-anchor="start">bulk read</text>
+    <text x="1010" y="147" text-anchor="middle">initial load (bypasses CDC)</text>
+    <text x="236" y="422" text-anchor="start">change log</text>
+    <text x="645" y="360" text-anchor="middle">publish</text>
+    <text x="1025" y="360" text-anchor="middle">consume</text>
+    <text x="1355" y="360" text-anchor="middle">write (idempotent)</text>
+    <text x="1522" y="245" text-anchor="start">read</text>
+    <text x="475" y="492" text-anchor="start">DB credentials</text>
+    <text x="1000" y="462" text-anchor="start">rules</text>
+  </g>
+
+  <!-- ================= NODES ================= -->
+  <!-- Source (cylinder) -->
+  <path d="M40,314 L40,426 A90,13 0 0,0 220,426 L220,314 Z" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <ellipse cx="130" cy="314" rx="90" ry="13" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#1a2b4a">
+    <text x="130" y="362" font-size="13" font-weight="bold">Source RDBMS</text>
+    <text x="130" y="382" font-size="11">Aurora MySQL / PostgreSQL</text>
+  </g>
+
+  <!-- Bulk Loader -->
+  <rect x="360" y="110" width="250" height="90" rx="10" fill="#d5e8d4" stroke="#82b366" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#1e3a1e">
+    <text x="485" y="150" font-size="13" font-weight="bold">Parallel Bulk Loader</text>
+    <text x="485" y="170" font-size="11">initial load (one-time)</text>
+  </g>
+
+  <!-- Debezium -->
+  <rect x="360" y="315" width="210" height="110" rx="10" fill="#fff2cc" stroke="#d6b656" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#5c4a00">
+    <text x="465" y="355" font-size="13" font-weight="bold">Debezium Server</text>
+    <text x="465" y="374" font-size="11">ECS Fargate</text>
+    <text x="465" y="392" font-size="11">reads the change log</text>
+  </g>
+
+  <!-- Broker -->
+  <rect x="720" y="310" width="250" height="120" rx="10" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#1a2b4a">
+    <text x="845" y="352" font-size="14" font-weight="bold">Broker</text>
+    <text x="845" y="372" font-size="11">ElastiCache for Valkey (Streams)</text>
+    <text x="845" y="390" font-size="11">Multi-AZ · durable buffer</text>
+  </g>
+
+  <!-- Sink Worker -->
+  <rect x="1080" y="315" width="210" height="110" rx="10" fill="#fff2cc" stroke="#d6b656" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#5c4a00">
+    <text x="1185" y="355" font-size="13" font-weight="bold">Sink Worker</text>
+    <text x="1185" y="374" font-size="11">ECS Fargate</text>
+    <text x="1185" y="392" font-size="11">applies transforms</text>
+  </g>
+
+  <!-- Target (cylinder) -->
+  <path d="M1420,314 L1420,426 A90,13 0 0,0 1600,426 L1600,314 Z" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <ellipse cx="1510" cy="314" rx="90" ry="13" fill="#dae8fc" stroke="#6c8ebf" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#1a2b4a">
+    <text x="1510" y="360" font-size="13" font-weight="bold">Target</text>
+    <text x="1510" y="380" font-size="11">ElastiCache for Valkey</text>
+    <text x="1510" y="398" font-size="11">Multi-AZ</text>
+  </g>
+
+  <!-- Application -->
+  <rect x="1425" y="120" width="180" height="62" rx="10" fill="#f8cecc" stroke="#b85450" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#5a1f1c">
+    <text x="1515" y="147" font-size="13" font-weight="bold">Application</text>
+    <text x="1515" y="166" font-size="11">reads from cache</text>
+  </g>
+
+  <!-- Secrets Manager -->
+  <rect x="360" y="540" width="210" height="64" rx="10" fill="#f5f5f5" stroke="#666666" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#333">
+    <text x="465" y="567" font-size="12" font-weight="bold">Secrets Manager</text>
+    <text x="465" y="586" font-size="11">DB credentials</text>
+  </g>
+
+  <!-- Transforms -->
+  <rect x="780" y="540" width="270" height="80" rx="10" fill="#e1d5e7" stroke="#9673a6" stroke-width="1.5"/>
+  <g text-anchor="middle" fill="#3d2a52">
+    <text x="915" y="566" font-size="12" font-weight="bold">Transforms (shared)</text>
+    <text x="915" y="585" font-size="11">filter · rename · compute</text>
+    <text x="915" y="603" font-size="11">denormalize</text>
+  </g>
+
+  <!-- Legend -->
+  <text x="40" y="665" font-size="12" fill="#333">Blue = managed AWS&#160;&#160;•&#160;Yellow = ECS Fargate&#160;&#160;•&#160;Green = initial load&#160;&#160;•&#160;Purple = transforms&#160;&#160;•&#160;Pink = application&#160;&#160;•&#160;Solid = data flow, Dashed = config</text>
+</svg>

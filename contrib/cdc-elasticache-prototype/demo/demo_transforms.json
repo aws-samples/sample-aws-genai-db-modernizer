@@ -1,0 +1,8 @@
+{
+  "tables": {
+    "catalog": {
+      "filter": { "field": "status", "op": "=", "value": "active" },
+      "computed": [ { "name": "price_cents", "expr": "price*100" } ]
+    }
+  }
+}

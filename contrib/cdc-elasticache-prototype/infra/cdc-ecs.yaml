@@ -1,0 +1,383 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache CDC pipeline on ECS Fargate (verified Streams + Go architecture).
+  Aurora MySQL -> Debezium Server -> Broker Valkey (Streams) -> Go Sink -> Target Valkey.
+  Offset + schema history stored in the broker itself (Option B; no SQLite/EFS).
+  Reuses EXISTING managed ElastiCache broker/target and Aurora. DB credentials from a Secrets Manager secret.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: cdc-cache-cluster
+    Description: Existing ECS cluster to deploy services into.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  AssignPublicIp:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+
+  # --- Existing broker (ElastiCache Valkey, cluster-mode-disabled, single shard) ---
+  BrokerHost:
+    Type: String
+    Description: Broker primary endpoint.
+  BrokerPort:
+    Type: String
+    Default: '6379'
+  BrokerSSL:
+    Type: String
+    Default: 'false'
+  BrokerSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: SG attached to the broker cluster (ingress 6379 will be added from the task SG).
+
+  # --- Existing target (ElastiCache Valkey, cluster-mode-enabled) ---
+  TargetHost:
+    Type: String
+    Description: Target configuration endpoint.
+  TargetPort:
+    Type: String
+    Default: '6379'
+  TargetSSL:
+    Type: String
+    Default: 'true'
+  TargetCluster:
+    Type: String
+    Default: 'true'
+  TargetSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  # --- Existing Aurora MySQL source ---
+  SourceDBHost:
+    Type: String
+    Description: Source cluster writer endpoint.
+  SourceDBPort:
+    Type: String
+    Default: '3306'
+  SourceDBName:
+    Type: String
+    Default: Inventory
+  DBSecretArn:
+    Type: String
+    Description: Secrets Manager ARN of the source DB secret (JSON with username and password, e.g. the RDS-managed secret).
+  AuroraSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+
+  # --- CDC scope ---
+  Tables:
+    Type: String
+    Default: Inventory.orders
+  TopicPrefix:
+    Type: String
+    Default: cdc-cache
+  SnapshotMode:
+    Type: String
+    Default: schema_only
+    AllowedValues: [schema_only, initial, no_data, when_needed]
+  StreamKey:
+    Type: String
+    Default: data:cdc-cache.Inventory.orders
+  StreamTable:
+    Type: String
+    Default: orders
+  TransformsJson:
+    Type: String
+    Default: ''
+    Description: >
+      Inline transform spec (JSON) applied by the sink on the CDC path
+      (filter / computed / columns / rename, keyed by table). Empty = passthrough.
+
+  # --- Images ---
+  DebeziumImage:
+    Type: String
+    Description: Debezium Server image URI (build data-plane/debezium-server/Dockerfile and push it to your registry).
+  SinkImage:
+    Type: String
+    Description: Go sink image URI (build tools/go-sink/Dockerfile and push it to your registry).
+
+  # --- Sink scaling knobs ---
+  SinkWorkers:
+    Type: String
+    Default: '8'
+    Description: Goroutine workers per sink task (in-process concurrency).
+  SinkBatchSize:
+    Type: String
+    Default: '500'
+  SinkDesiredCount:
+    Type: Number
+    Default: 2
+    Description: Initial number of sink tasks (horizontal scale within the consumer group).
+  SinkMinCount:
+    Type: Number
+    Default: 1
+  SinkMaxCount:
+    Type: Number
+    Default: 10
+  SinkTargetCpuPercent:
+    Type: Number
+    Default: 60
+    Description: Target-tracking CPU utilization for sink autoscaling.
+
+Resources:
+  # ═══════════════════════════════════════════════════════════════
+  # Security: dedicated SG for the pipeline tasks + ingress to deps
+  # ═══════════════════════════════════════════════════════════════
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName} CDC-cache CDC task SG'
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-task-sg'
+
+  BrokerIngressFromTasks:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BrokerSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref TaskSecurityGroup
+
+  TargetIngressFromTasks:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TargetSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref TaskSecurityGroup
+
+  AuroraIngressFromTasks:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AuroraSecurityGroupId
+      IpProtocol: tcp
+      FromPort: !Ref SourceDBPort
+      ToPort: !Ref SourceDBPort
+      SourceSecurityGroupId: !Ref TaskSecurityGroup
+
+  # ═══════════════════════════════════════════════════════════════
+  # IAM
+  # ═══════════════════════════════════════════════════════════════
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadDBSecret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !Ref DBSecretArn
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelineTaskPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [cloudwatch:PutMetricData]
+                Resource: '*'
+
+  # ═══════════════════════════════════════════════════════════════
+  # Logs
+  # ═══════════════════════════════════════════════════════════════
+  DebeziumLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/debezium'
+      RetentionInDays: 14
+  SinkLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${AWS::StackName}/sink'
+      RetentionInDays: 14
+
+  # ═══════════════════════════════════════════════════════════════
+  # Debezium Server (single task — one binlog reader)
+  # ═══════════════════════════════════════════════════════════════
+  DebeziumTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-debezium'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '8192'
+      Memory: '16384'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: debezium
+          Image: !Ref DebeziumImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+          Environment:
+            - { Name: BROKER_HOST, Value: !Ref BrokerHost }
+            - { Name: BROKER_PORT, Value: !Ref BrokerPort }
+            - { Name: BROKER_SSL, Value: !Ref BrokerSSL }
+            - { Name: SOURCE_DB_HOST, Value: !Ref SourceDBHost }
+            - { Name: SOURCE_DB_PORT, Value: !Ref SourceDBPort }
+            - { Name: SOURCE_DB_NAME, Value: !Ref SourceDBName }
+            - { Name: TABLE_INCLUDE_LIST, Value: !Ref Tables }
+            - { Name: TOPIC_PREFIX, Value: !Ref TopicPrefix }
+            - { Name: SNAPSHOT_MODE, Value: !Ref SnapshotMode }
+          Secrets:
+            - Name: SOURCE_DB_USER
+              ValueFrom: !Sub '${DBSecretArn}:username::'
+            - Name: SOURCE_DB_PASSWORD
+              ValueFrom: !Sub '${DBSecretArn}:password::'
+          HealthCheck:
+            Command: ['CMD-SHELL', 'curl -f http://localhost:8080/q/health || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 90
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref DebeziumLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: debezium
+
+  DebeziumService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-debezium'
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref DebeziumTaskDef
+      DesiredCount: 1
+      LaunchType: FARGATE
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref TaskSecurityGroup]
+          AssignPublicIp: !Ref AssignPublicIp
+
+  # ═══════════════════════════════════════════════════════════════
+  # Go Sink (scalable — N tasks share the stream via the consumer group)
+  # ═══════════════════════════════════════════════════════════════
+  SinkTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${AWS::StackName}-sink'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: sink
+          Image: !Ref SinkImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8081
+          Environment:
+            - { Name: BROKER_HOST, Value: !Ref BrokerHost }
+            - { Name: BROKER_PORT, Value: !Ref BrokerPort }
+            - { Name: TARGET_HOST, Value: !Ref TargetHost }
+            - { Name: TARGET_PORT, Value: !Ref TargetPort }
+            - { Name: TARGET_SSL, Value: !Ref TargetSSL }
+            - { Name: TARGET_CLUSTER, Value: !Ref TargetCluster }
+            - { Name: STREAM_KEY, Value: !Ref StreamKey }
+            - { Name: STREAM_TABLE, Value: !Ref StreamTable }
+            - { Name: EVENT_FORMAT, Value: envelope }
+            - { Name: CONSUMER_GROUP, Value: cdc-cache-sink }
+            - { Name: WORKERS, Value: !Ref SinkWorkers }
+            - { Name: BATCH_SIZE, Value: !Ref SinkBatchSize }
+            - { Name: HEALTH_PORT, Value: '8081' }
+            - { Name: TRANSFORMS_JSON, Value: !Ref TransformsJson }
+          HealthCheck:
+            Command: ['CMD-SHELL', 'curl -f http://localhost:8081/health || exit 1']
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 20
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SinkLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: sink
+
+  SinkService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub '${AWS::StackName}-sink'
+      Cluster: !Ref ClusterName
+      TaskDefinition: !Ref SinkTaskDef
+      DesiredCount: !Ref SinkDesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref TaskSecurityGroup]
+          AssignPublicIp: !Ref AssignPublicIp
+
+  # ═══════════════════════════════════════════════════════════════
+  # Autoscaling for the sink service (target-tracking on CPU)
+  # ═══════════════════════════════════════════════════════════════
+  SinkScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ResourceId: !Sub 'service/${ClusterName}/${AWS::StackName}-sink'
+      MinCapacity: !Ref SinkMinCount
+      MaxCapacity: !Ref SinkMaxCount
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+    DependsOn: SinkService
+
+  SinkScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${AWS::StackName}-sink-cpu-tt'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref SinkScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref SinkTargetCpuPercent
+        ScaleInCooldown: 120
+        ScaleOutCooldown: 60
+
+Outputs:
+  DebeziumService:
+    Value: !Sub '${AWS::StackName}-debezium'
+  SinkService:
+    Value: !Sub '${AWS::StackName}-sink'
+  SinkScaling:
+    Value: !Sub 'min=${SinkMinCount} desired=${SinkDesiredCount} max=${SinkMaxCount}, target CPU ${SinkTargetCpuPercent}%, ${SinkWorkers} workers/task'
+  Architecture:
+    Value: 'Aurora -> Debezium(ECS) -> Broker Valkey Streams -> Go Sink(ECS, autoscaled) -> Target Valkey. Offset+schema in broker (Option B).'
+  Note:
+    Value: 'One sink service consumes StreamKey. For multiple tables, deploy additional sink services with different StreamKey/StreamTable.'

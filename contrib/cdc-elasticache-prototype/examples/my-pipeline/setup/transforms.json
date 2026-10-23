@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "_doc": "Shared transform spec (filter/computed/columns/rename) applied identically by the Go sink (CDC path) and the Python bulk loader (initial-load path). Processing order per row: filter (on original fields) -> computed -> column selection (whitelist) -> rename. Key is always <table>:<source-pk>. NOTE: denormalization is NOT part of this shared spec - it is a CDC/sink feature expressed in the per-table YAML under ../transforms/ (see customer_kyc.yaml). Use this file with the bulk loader: TRANSFORMS_FILE=setup/transforms.json.",
+  "tables": {
+    "products": {
+      "_doc": "Filter (cache only active products) + computed (price in cents).",
+      "filter": { "field": "status", "op": "=", "value": "active" },
+      "computed": [
+        { "name": "price_cents", "expr": "price * 100" }
+      ]
+    },
+    "merchants": {
+      "_doc": "Column selection (drop timestamps) + rename (risk_tier -> tier).",
+      "columns": ["merchant_id", "name", "category", "country", "risk_tier", "fee_rate"],
+      "rename": { "risk_tier": "tier" }
+    },
+    "users": {
+      "_doc": "Column selection: cache identity fields only.",
+      "columns": ["id", "name", "email", "status"]
+    },
+    "customer_kyc": {
+      "_doc": "Column selection. Merging txn aggregates into this key is the denormalize rule in ../transforms/customer_kyc.yaml, applied on the CDC path (not in this shared spec).",
+      "columns": ["customer_id", "user_id", "full_name", "country", "kyc_status"]
+    }
+  }
+}

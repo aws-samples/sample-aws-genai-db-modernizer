@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CDC-cache test source - Aurora PostgreSQL Serverless v2, CDC-ready.
+  Enables logical replication (rds.logical_replication=1 -> wal_level=logical) so
+  Debezium can capture changes via a replication slot. The master password is
+  managed by RDS in AWS Secrets Manager (ManageMasterUserPassword) - no plaintext
+  credentials in this template. Intended for POC / benchmark testing, not production.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy the cluster into.
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least 2 subnets in different AZs (private recommended).
+  DBName:
+    Type: String
+    Default: inventory
+    Description: Initial database name (lowercase recommended for PostgreSQL).
+  MasterUsername:
+    Type: String
+    Description: Master username (password is auto-generated and stored in Secrets Manager).
+  EngineVersion:
+    Type: String
+    Default: '16.4'
+    Description: >
+      Aurora PostgreSQL engine version. Must be compatible with the
+      aurora-postgresql16 parameter group family. List available versions with:
+      aws rds describe-db-engine-versions --engine aurora-postgresql --query "DBEngineVersions[].EngineVersion"
+  MinCapacity:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Serverless v2 capacity (ACUs). 0.5 is the floor.
+  MaxCapacity:
+    Type: Number
+    Default: 8
+    Description: Maximum Aurora Serverless v2 capacity (ACUs).
+  ClientSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: (Optional) SG allowed to reach the DB on 5432 (e.g. the sink/Debezium task SG).
+  ClientCidr:
+    Type: String
+    Default: ''
+    Description: (Optional) CIDR allowed to reach the DB on 5432.
+
+Conditions:
+  HasClientSg: !Not [!Equals [!Ref ClientSecurityGroupId, '']]
+  HasClientCidr: !Not [!Equals [!Ref ClientCidr, '']]
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub '${AWS::StackName} Aurora PostgreSQL subnets'
+      SubnetIds: !Ref SubnetIds
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${AWS::StackName} Aurora PostgreSQL access'
+      VpcId: !Ref VpcId
+
+  IngressFromSg:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasClientSg
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref ClientSecurityGroupId
+      Description: Client SG access to Aurora PostgreSQL
+
+  IngressFromCidr:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HasClientCidr
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      CidrIp: !Ref ClientCidr
+      Description: Client CIDR access to Aurora PostgreSQL
+
+  ClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Description: !Sub '${AWS::StackName} - logical replication enabled for CDC'
+      Family: aurora-postgresql16
+      Parameters:
+        rds.logical_replication: '1'
+
+  DBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: !Ref DBName
+      MasterUsername: !Ref MasterUsername
+      ManageMasterUserPassword: true
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+      DBClusterParameterGroupName: !Ref ClusterParameterGroup
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+      BackupRetentionPeriod: 1
+      StorageEncrypted: true
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster
+      Engine: aurora-postgresql
+      DBInstanceClass: db.serverless
+      PubliclyAccessible: false
+
+Outputs:
+  ClusterEndpoint:
+    Description: Writer endpoint - use as the CDC-cache source DB endpoint.
+    Value: !GetAtt DBCluster.Endpoint.Address
+  ReaderEndpoint:
+    Description: Reader endpoint.
+    Value: !GetAtt DBCluster.ReadEndpoint.Address
+  Port:
+    Description: DB port.
+    Value: !GetAtt DBCluster.Endpoint.Port
+  MasterUserSecretArn:
+    Description: Secrets Manager ARN for the RDS-managed master credentials.
+    Value: !GetAtt DBCluster.MasterUserSecret.SecretArn
+  SecurityGroupId:
+    Description: Security group protecting the DB (add as a client SG source, or reference in the pipeline).
+    Value: !Ref DBSecurityGroup
+  ReplicationSlotNote:
+    Description: Debezium needs the pgoutput plugin (default) and will create a slot; ensure the user has REPLICATION.
+    Value: "Grant: ALTER ROLE <user> WITH REPLICATION; Debezium creates the slot automatically (plugin.name=pgoutput)."

@@ -1,0 +1,27 @@
+{
+  "row_filters": [
+    {
+      "table": "customers",
+      "field": "status",
+      "operator": "=",
+      "value": "active"
+    }
+  ],
+  "computed_fields": [
+    {
+      "table": "customers",
+      "name": "risk_score",
+      "expression": "failed_txn_count * 10 + cross_border_count * 2"
+    }
+  ],
+  "denormalize": [
+    {
+      "child_table": "customer_addresses",
+      "parent_table": "customers",
+      "join_field": "customer_id",
+      "fields": "city,state,country,zip",
+      "prefix": "addr_"
+    }
+  ],
+  "columns": {}
+}
