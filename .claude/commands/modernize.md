@@ -128,7 +128,7 @@ DynamoDB is always designed as split → one subagent per group → merge, and *
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split
 ```
 
-It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: per group `group_index` (`{G}`), `primary_tables`, `input_file`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use that line; do not read the manifest.
+It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: per group `group_index` (`{G}`), `primary_tables`, `context_tables`, `input_file`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use that line; do not read the manifest.
 
 **6b. Launch every schema subagent in a SINGLE message:** one per non-DynamoDB engine, plus one per DynamoDB group.
 

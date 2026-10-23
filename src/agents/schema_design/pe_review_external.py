@@ -185,6 +185,9 @@ def _design_targets(
                         (group_input.get("collector_output") or {}).get("tables") or []
                     )
                     or len({t for q in queries for t in q.get("tables_accessed") or []}),
+                    # The group's context tables and their rule (#1243), for the review.
+                    "context_tables": group_input.get("group_context_tables") or [],
+                    "context_table_rule": group_input.get("group_context_rule"),
                 }
             )
         if not targets:
@@ -299,6 +302,14 @@ def prepare_pe_review_llm_input(
                     ),
                     "access_pattern_count": len(design.get("access_patterns") or []),
                 },
+                **(
+                    {
+                        "context_tables": target["context_tables"],
+                        "context_table_rule": target["context_table_rule"],
+                    }
+                    if target.get("context_tables")
+                    else {}
+                ),
                 "flag_contract": ModelFlag.model_json_schema(),
                 "output_schema": review_contract(engine).model_json_schema(),
                 "design": _review_design(engine, design),

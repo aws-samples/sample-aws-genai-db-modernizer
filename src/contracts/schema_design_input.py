@@ -389,7 +389,16 @@ class SchemaDesignGroupEntry(BaseModel):
 
     group_index: int = Field(..., ge=0)
     group_name: str
-    primary_tables: list[str]
+    primary_tables: list[str] = Field(
+        ..., description="The tables this group owns: each table is primary in one group (#1243)"
+    )
+    context_tables: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tables this group's queries touch that another group owns (#1243): designed "
+            "by the owner, read here as context, never redesigned"
+        ),
+    )
     query_count: int = Field(..., ge=0)
     table_count: int = Field(..., ge=0)
     input_file: str = Field(..., description="Filename relative to the schema version dir")
@@ -420,13 +429,20 @@ class SchemaDesignGroupsManifest(BaseModel):
 
     Lives at: artifacts/{db}/{job}/schema-{engine}/v1/groups_manifest.json
 
-    Versioned on its own (ADR-008 Decision 1): 1.0 (2026-10-17, #972) added
-    ``contract_version``; a manifest written before has none, and still loads.
-    1.1 (2026-10-17, #976): unknown fields are accepted and kept (was ``extra="forbid"``).
+    Versioned on its own (ADR-008 Decision 1).
+
+    Version History:
+    - 1.0 (2026-10-17, #972): added ``contract_version``; a manifest written before
+      has none, and still loads.
+    - 1.1 (2026-10-17, #976): unknown fields are accepted and kept (was
+      ``extra="forbid"``).
+    - 1.2 (2026-10-22, #1243): added ``groups[].context_tables``; each table is
+      primary in exactly one group (a manifest written before has none, and still
+      loads).
     """
 
     contract_version: str = Field(
-        default="1.1", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str

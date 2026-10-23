@@ -118,6 +118,9 @@ FILE_READS: dict[tuple[str, str, str], str] = {
         "a model's HTTP response body"
     ),
     ("src/graph/raw_query_worker.py", "_child_main", "request"): "the worker's stdin request",
+    ("src/tools/schema/dynamodb_schema_agent.py", "run_dynamodb_schema_agent", "context_tables"): (
+        "a group input's group_context_tables list, written by the handler (#1243)"
+    ),
     ("src/tools/aws/s3_storage.py", "load_json", "<return>"): (
         "collector checkpoints; each collector reads its cached output with load_contract"
     ),

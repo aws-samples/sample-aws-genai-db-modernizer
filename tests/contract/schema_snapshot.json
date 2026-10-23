@@ -19063,6 +19063,16 @@
           "items": {
             "kind": "object",
             "properties": {
+              "context_tables": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
               "group_index": {
                 "required": true,
                 "schema": {
@@ -19160,8 +19170,8 @@
         }
       }
     },
-    "schema_hash": "f76f9b98f86b67da12a6c40696a53c08c1c5e5ea64f2028cbee39f926f9d43b9",
-    "version": "1.1"
+    "schema_hash": "c40e9988029f80f48f925c665ee76689bef7a834cf3ead63cd314f24bc6b8c62",
+    "version": "1.2"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {

@@ -29,6 +29,7 @@ from src.agents.schema_design.dynamodb_merge import (
     rewrite_pattern_ids,
 )
 from src.agents.schema_design.output_contract import write_schema_output
+from src.agents.schema_design.scope import normalize_table_name
 from src.contracts.schema_design_input import ExcludedQuery
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.contract_versioning import ContractVersionError
@@ -111,6 +112,31 @@ def _dedupe_by_name(items: list[dict], key: str) -> list[dict]:
     return result
 
 
+def table_owners(manifest: dict) -> dict[str, int]:
+    """Normalised source table -> the group index that owns it (#1243).
+
+    ``--split`` lists each table in exactly one group's ``primary_tables`` since
+    manifest 1.2. A manifest written before (no ``contract_version``, or below 1.2)
+    has no ownership: it gave a table to every chunk of its cluster, so this returns
+    ``{}`` and the merge works as it did before ownership. A table listed by more
+    than one group has no owner either.
+    """
+    version = str(manifest.get("contract_version") or "0.0")
+    try:
+        major, minor = (int(part) for part in version.split(".", 1))
+    except ValueError:
+        return {}
+    if (major, minor) < (1, 2):
+        return {}
+    listed: dict[str, set[int]] = {}
+    for group in manifest.get("groups") or []:
+        for table in group.get("primary_tables") or []:
+            listed.setdefault(normalize_table_name(str(table)), set()).add(
+                int(group["group_index"])
+            )
+    return {t: next(iter(groups)) for t, groups in listed.items() if len(groups) == 1}
+
+
 def merge_group_drafts(
     drafts: list[dict],
     engine: str,
@@ -118,6 +144,7 @@ def merge_group_drafts(
     unique_keys: dict[str, list[frozenset[str]]] | None = None,
     notes: list[str] | None = None,
     column_types: dict[str, dict[str, str]] | None = None,
+    owners: dict[str, int] | None = None,
 ) -> dict:
     """Merge multiple group drafts into a single schema draft.
 
@@ -134,6 +161,10 @@ def merge_group_drafts(
         column_types: DynamoDB only: integer/text source columns
             (``dynamodb_key_reconcile.column_types_from_collector``), so an
             N-vs-S partition-key disagreement takes the source column's type.
+        owners: DynamoDB only: normalised source table -> owning group index
+            (:func:`table_owners`, #1243). A context group's placeholder for a
+            table is pointed at the owner's table, and the owner's key schema is
+            kept there.
 
     Returns:
         Merged schema draft dict.
@@ -155,7 +186,12 @@ def merge_group_drafts(
         # tables per draft, before the drafts are combined (see dynamodb_merge).
         drafts, group_indices = dynamodb_merge.canonical_draft_order(drafts, group_indices)
         drafts, reconciliation, drafts_passed = dynamodb_merge.prepare_drafts(
-            drafts, group_indices, unique_keys=unique_keys, notes=notes, column_types=column_types
+            drafts,
+            group_indices,
+            unique_keys=unique_keys,
+            notes=notes,
+            column_types=column_types,
+            owners=owners,
         )
 
     # Use first draft as base for scalar fields
@@ -375,6 +411,7 @@ def merge_schema_groups(
         unique_keys=unique_keys,
         notes=notes,
         column_types=column_types,
+        owners=table_owners(manifest) if engine == "dynamodb" else None,
     )
 
     # Carry the manifest's excluded_queries (--split's "not designed: no source

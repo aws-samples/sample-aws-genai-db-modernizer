@@ -26,7 +26,10 @@ Merge rule
     deterministic -- key-attribute names, entity labels, GSI names, one key
     schema per single-entity table (another group's key becomes a GSI), and a
     single-entity table folded into the item collection that holds its rows.
-    Its trade-offs record each change. The rules below then apply.
+    Its trade-offs record each change. With the split's table ownership
+    (``owners``, #1243), a context group's single-entity placeholder for a table
+    another group owns is first pointed at the owner's table, and the owner's
+    key schema is the one kept. The rules below then apply.
 2. **Compatible tables merge.** Tables that share a source table (or a table
    name) are merged into one when they have the same partition/sort
    key names and types, the same shape (both item collections, or both
@@ -58,7 +61,9 @@ Merge rule
    same entity type for the same source table with contradictory PK/SK
    templates (tokens compared by source column) in tables from different
    groups, a merged table with more GSIs than DynamoDB allows by default, and
-   a table or GSI name over DynamoDB's 255-character limit (#866).
+   a table or GSI name over DynamoDB's 255-character limit (#866), and an access
+   pattern or hot-partition entry on a table or GSI the merged design does not
+   define (:func:`dangling_references`, #1243).
 4. **Independent homes are warnings.** When a source table is the *primary
    entity* (its own entity in an item collection, or the base entity of a
    single-entity table) of two or more tables designed by different groups,
@@ -954,12 +959,14 @@ def prepare_drafts(
     unique_keys: dict[str, list[frozenset[str]]] | None = None,
     notes: list[str] | None = None,
     column_types: dict[str, dict[str, str]] | None = None,
+    owners: dict[str, int] | None = None,
 ) -> tuple[list[dict], TableReconciliation, bool]:
     """Renumber, reconcile tables and re-point references, per draft, before combining.
 
     Returns the prepared drafts (ready for list concatenation), the table
     reconciliation, and whether all drafts passed their own validation.
-    ``unique_keys``, ``notes`` and ``column_types`` are passed to rule 1a
+    ``unique_keys``, ``notes``, ``column_types`` and ``owners`` (the split's table
+    ownership, #1243) are passed to rule 1a
     (:func:`dynamodb_key_reconcile.reconcile_shared_tables`).
     """
     from src.agents.schema_design.dynamodb_key_reconcile import reconcile_shared_tables
@@ -969,15 +976,52 @@ def prepare_drafts(
     renumbered = [
         renumber_draft(d, m) for d, m in zip(cleaned, pattern_id_maps(cleaned), strict=True)
     ]
+    owner_failures: list[str] = []  # what the split's ownership cannot reconcile (#1243)
     renumbered, key_trade_offs = reconcile_shared_tables(
-        renumbered, group_indices, unique_keys=unique_keys, notes=notes, column_types=column_types
+        renumbered,
+        group_indices,
+        unique_keys=unique_keys,
+        notes=notes,
+        column_types=column_types,
+        owners=owners,
+        failures=owner_failures,
     )
     reconciliation = reconcile_tables(renumbered, group_indices, notes)
     reconciliation.trade_offs[:0] = key_trade_offs
+    reconciliation.failures[:0] = [f"{MERGE_FAILURE_PREFIX}{f}" for f in owner_failures]
     prepared = [
         apply_renames(d, r) for d, r in zip(renumbered, reconciliation.renames, strict=True)
     ]
     return prepared, reconciliation, passed
+
+
+def dangling_references(design: dict) -> list[str]:
+    """A failure for each access pattern or hot-partition entry naming a table or GSI
+    the design does not define (#1243): such a design cannot run its queries, so it
+    never passes validation."""
+    gsis = {
+        str(t.get("table_name")): {str(g.get("gsi_name")) for g in _dicts(t.get("gsis"))}
+        for t in _dicts(design.get("table_definitions"))
+    }
+    failures: list[str] = []
+    for list_field, label in (
+        ("access_patterns", "access pattern"),
+        ("hot_partition_analysis", "hot-partition entry"),
+    ):
+        for item in _dicts(design.get(list_field)):
+            what = f"{label} {item.get('pattern_id') or ''}".rstrip()
+            table, gsi = str(item.get("table_name") or ""), item.get("gsi_name")
+            if table not in gsis:
+                failures.append(
+                    f"{MERGE_FAILURE_PREFIX}{what} runs on table '{table}', but no table "
+                    "of that name is defined"
+                )
+            elif gsi and str(gsi) not in gsis[table]:
+                failures.append(
+                    f"{MERGE_FAILURE_PREFIX}{what} uses GSI '{gsi}', but table '{table}' "
+                    "has no GSI of that name"
+                )
+    return failures
 
 
 def finish_merge(
@@ -1016,6 +1060,7 @@ def finish_merge(
         + entity_conflicts(homes)
         + gsi_limit_failures([h.table for h in homes], MERGE_FAILURE_PREFIX)
         + name_length_failures([h.table for h in homes], MERGE_FAILURE_PREFIX)
+        + dangling_references(merged)
     )
     existing = [f for f in merged.get("validation_failures") or [] if isinstance(f, str)]
     if "validation_failures" in merged or failures:

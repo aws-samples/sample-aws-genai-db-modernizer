@@ -30,6 +30,7 @@ from src.agents.prompt_framing import (
     frame_customer_requests,
     frame_untrusted,
 )
+from src.agents.schema_design.group_input import CONTEXT_TABLE_RULE
 from src.contracts.analysis_output import AnalysisOutputContract
 from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.dynamodb_model_output import DynamoDBModelOutputContract
@@ -238,6 +239,7 @@ def _invoke_pe_reviewer(
             json.dumps(design_summary, indent=2),
             label="schema design output to review (JSON; echoes source names)",
         )
+        + context_tables_prompt(agent_input_summary.get("context_tables"))
         + "\n\nEvaluate this design following your review process. "
         + "Return a PEReviewResult with your verdict and any change requests."
     )
@@ -387,6 +389,31 @@ class SchemaDesignTrace:
 
 
 # ---------------------------------------------------------------------------
+# Context tables (#1243)
+# ---------------------------------------------------------------------------
+
+
+def context_tables_prompt(context: list[dict] | None) -> str:
+    """The designer prompt's section on a group's context tables, or ``""`` for none.
+
+    ``context`` is the group input's ``group_context_tables``: tables this group's
+    queries touch that another group owns, each with the owner's ``owner_group``. The
+    table names are customer text, so they are framed as data (``frame_untrusted``).
+    """
+    if not context:
+        return ""
+    owners = sorted({int(c.get("owner_group", 0)) for c in context})
+    rule = (
+        "\n\n---\n# CONTEXT TABLES\n"
+        f"Owner groups here: group {', group '.join(str(n) for n in owners)}. "
+        f"{CONTEXT_TABLE_RULE}\n"
+    )
+    return rule + frame_untrusted(
+        json.dumps(context, indent=2), label="tables another design group owns"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -398,6 +425,7 @@ def run_dynamodb_schema_agent(
     analysis_path: str | None = None,
     revision_context_path: str | None = None,
     decision_trace_path: str | None = None,
+    context_tables_path: str | None = None,
 ) -> tuple[DynamoDBModelOutputContract, dict]:
     """Run the DynamoDB schema design agent with PE review loop.
 
@@ -408,6 +436,8 @@ def run_dynamodb_schema_agent(
         collector_path: Path to collector JSON (preferred over env var).
         analysis_path: Path to analysis JSON (preferred over env var).
         revision_context_path: Path to revision context JSON (optional).
+        context_tables_path: Path to the group's ``group_context_tables`` JSON
+            (optional, #1243): tables another design group owns.
 
     Returns:
         Tuple of (validated output, trace dict for S3 artifact)
@@ -468,6 +498,11 @@ def run_dynamodb_schema_agent(
                 "\n\n".join(revision_sections)
             )
 
+    context_tables: list[dict] | None = None
+    if context_tables_path:
+        context_tables = json.loads(Path(context_tables_path).read_text(encoding="utf-8"))
+        designer_prompt += context_tables_prompt(context_tables)
+
     # The numbers check reads this call's own input (#1054). An unreadable input
     # is an error here, never a silently skipped check.
     metrics: dict | None = _project_input(paths)["design_metrics"]
@@ -484,4 +519,8 @@ def run_dynamodb_schema_agent(
         ),
     )
 
-    return runner.run(designer_prompt)
+    # The PE reviewer gets the same context-table rule (#1243): a review must not ask
+    # a context group for the owner's writes.
+    return runner.run(
+        designer_prompt, {"context_tables": context_tables} if context_tables else None
+    )

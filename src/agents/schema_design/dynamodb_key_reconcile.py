@@ -17,6 +17,16 @@ same rows did it on purpose), and never tables a trade-off already justifies
 keeping apart (one whose ``source_tables`` include the source table and whose
 ``target_tables`` name every table involved).
 
+With the split's ownership (``owners``, #1243), a context group's single-entity
+placeholder for rows another group owns is reconciled with the owner's home for
+them. Before anything else, a placeholder takes the name of the owner's
+single-entity table for those rows (:func:`_point_context_tables`), so the rules
+below treat it as that table. After rule 4, a placeholder the owner keeps in an
+item collection is folded into it with its GSIs, the collection's key kept
+(:func:`_fold_into_owner_collections`). A placeholder whose owner only copies the
+rows stays as it is. Without ownership (a manifest written before it) none of this
+runs.
+
 0. **A partition-key type disagreement** (``N`` vs ``S``) between tables meant
    as one table, with the same key-attribute names, takes the type of the
    source column behind the key (integer -> ``N``, text -> ``S``, from the
@@ -37,6 +47,7 @@ keeping apart (one whose ``source_tables`` include the source table and whose
    ``{ID}`` and ``{post_id}`` (an attribute copying ``ID``) are the same.
 2. **Single-entity tables for the same rows** (same base source table) name a
    key or GSI-key attribute that copies the same source column the same way:
+   the owner group's name when the split gives the rows an owner (#1243), else
    the name most of those tables use, then the longer name, then alphabetical
    (never the draft order).
 3. **Single-entity tables for the same rows with different key schemas** keep
@@ -58,6 +69,8 @@ keeping apart (one whose ``source_tables`` include the source table and whose
 
    Among the safe keys the merge keeps the one that serves the most access
    patterns directly, then one holding the source primary key, then by name.
+   With the split's ownership (#1243), the owner group's key is the only one
+   kept: when it is not safe, nothing is rewritten and the merge reports it.
    With no safe key, nothing is rewritten and the merge reports the conflict.
    Every other table takes the kept key schema; its own key becomes a GSI
    (one with the same keys is reused and widened if needed) when a pattern
@@ -277,6 +290,7 @@ class _Drafts:
         self.groups = group_indices
         self.trade_offs: list[dict] = []
         self.notes: list[str] = []  # mechanical changes, for the merge trace
+        self.failures: list[str] = []  # what the merge must fail on (#1243)
 
     def refs(self) -> list[_Ref]:
         return [
@@ -834,10 +848,12 @@ def _vote_order(item: tuple[str, int]) -> tuple[int, int, str]:
     return -item[1], -len(item[0]), item[0]
 
 
-def _align_single_names(drafts: _Drafts) -> None:
+def _align_single_names(drafts: _Drafts, owners: dict[str, int] | None = None) -> None:
     for base, refs in _singles_by_base(drafts).items():
         votes: dict[str, dict[str, int]] = {}  # column -> name -> tables using it
-        for ref in refs:
+        owned: dict[str, str] = {}  # column -> the owner group's name for it (#1243)
+        owner = (owners or {}).get(base)
+        for ref in sorted(refs, key=lambda r: r.name):
             attrs = _attributes(ref.table)
             seen: set[tuple[str, str]] = set()
             for name in _key_attribute_names(ref.table):
@@ -846,7 +862,10 @@ def _align_single_names(drafts: _Drafts) -> None:
                     seen.add((column, name))
                     names = votes.setdefault(column, {})
                     names[name] = names.get(name, 0) + 1
+                    if ref.group == owner:
+                        owned.setdefault(column, name)
         canonical = {c: sorted(n.items(), key=_vote_order)[0][0] for c, n in votes.items()}
+        canonical |= owned
         for ref in refs:
             attrs = _attributes(ref.table)
             renames: dict[str, str] = {}
@@ -1162,7 +1181,195 @@ def _rekey(
     return _Rekeyed(ref, old, gsi_name, gsi_new, reads, lookups, direct)
 
 
-def _unify_single_keys(drafts: _Drafts, unique_keys: dict[str, list[frozenset[str]]]) -> None:
+def _owner_single(drafts: _Drafts, owner: int, base: str) -> _Ref | None:
+    """The owner group's single-entity table whose own entity is ``base``'s rows (by name)."""
+    found = sorted(
+        (
+            r
+            for r in drafts.refs()
+            if r.group == owner and _shape(r.table) == "single" and _base_entity(r.table) == base
+        ),
+        key=lambda r: r.name,
+    )
+    return found[0] if found else None
+
+
+def _owner_entity(drafts: _Drafts, owner: int, base: str) -> tuple[_Ref, dict] | None:
+    """The owner group's item collection and its entity for ``base``'s rows (by
+    collection name, then entity type), or None."""
+    found = sorted(
+        (
+            (r, e)
+            for r in drafts.refs()
+            if r.group == owner and _shape(r.table) == "item_collection"
+            for e in _dicts(r.table.get("entities"))
+            if normalize_table_name(str(e.get("source_table") or "")) == base
+        ),
+        key=lambda pair: (pair[0].name, str(pair[1].get("entity_type") or "")),
+    )
+    return found[0] if found else None
+
+
+def _placeholder_owner(drafts: _Drafts, ref: _Ref, owners: dict[str, int]) -> int | None:
+    """The owner group of ``ref``'s rows when ``ref`` is a context placeholder: a
+    single-entity table in another group's draft, every source table of which that
+    one owner owns. Else None."""
+    if not owners or _shape(ref.table) != "single":
+        return None
+    base = _base_entity(ref.table)
+    sources = {normalize_table_name(str(t)) for t in ref.table.get("source_tables") or []}
+    owner = owners.get(base)
+    if owner is None or owner == ref.group or {owners.get(t) for t in sources | {base}} != {owner}:
+        return None
+    return owner
+
+
+def _point_context_tables(drafts: _Drafts, owners: dict[str, int]) -> None:
+    """Point each context placeholder at its owner's single-entity table (#1243).
+
+    A placeholder (:func:`_placeholder_owner`) takes the name of the owner's
+    single-entity table for its rows, and its access patterns, hot-partition entries
+    and trade-offs follow, so rule 3 keeps one key schema (the owner's) and the merge
+    combines the two. An owner that keeps the rows in an item collection is handled
+    by :func:`_fold_into_owner_collections`; an owner with no home of its own for the
+    rows (it only copies them) leaves the placeholder as is. Also left as is: a draft
+    that already has another table of that name, or tables a trade-off keeps apart.
+    """
+    for ref in drafts.refs():
+        owner = _placeholder_owner(drafts, ref, owners)
+        if owner is None:
+            continue
+        base = _base_entity(ref.table)
+        target = _owner_single(drafts, owner, base)
+        if target is None or target.name == ref.name:
+            continue
+        taken = {r.name for r in drafts.refs() if r.pos == ref.pos and r.table is not ref.table}
+        if target.name in taken or drafts.justified(base, [ref, target]):
+            continue
+        drafts.notes.append(
+            f"{_shown(base, ref.table)}: group {ref.group}'s table {ref.name} is a context "
+            f"placeholder; pointed at owner group {owner}'s table {target.name}"
+        )
+        drafts.rename_table(ref, target.name)
+
+
+def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> None:
+    """Fold each context placeholder the owner keeps in an item collection into it (#1243).
+
+    Runs after rule 4, for a placeholder still on its own whose owner has no
+    single-entity table for the rows but an item collection with an entity for them.
+    The collection keeps its key schema. The placeholder's GSIs join the collection
+    (one with the same name and other keys is renamed) and their key attributes join
+    the owner's entity; its patterns and hot-partition entries move to the
+    collection. A pattern on the placeholder's own key moves only when the entity's
+    PK and SK templates copy nothing but the placeholder's key columns, so the
+    placeholder's key finds the entity's item. Otherwise, or when a GSI key attribute
+    already means another column in the entity, nothing moves and the merge fails
+    naming the pattern (``drafts.failures``). As in rule 4, every attribute of the
+    placeholder joins the entity, and a write that moves onto the owner's items gets
+    the trade-off that writes must carry the union of the attributes.
+    """
+    folded_writes: FoldedWrites = {}
+    for ref in drafts.refs():
+        owner = _placeholder_owner(drafts, ref, owners)
+        if owner is None:
+            continue
+        base = _base_entity(ref.table)
+        if _owner_single(drafts, owner, base) is not None:
+            continue
+        home = _owner_entity(drafts, owner, base)
+        if home is None or drafts.justified(base, [ref, home[0]]):
+            continue
+        coll, entity = home
+        shown = _shown(base, ref.table, coll.table)
+        etype = str(entity.get("entity_type") or "")
+        pk_tpl, sk_tpl = str(entity.get("pk_template") or ""), str(entity.get("sk_template") or "")
+        where = (
+            f"owner group {owner}'s table {coll.name} (entity {etype}, PK {pk_tpl}, SK {sk_tpl})"
+        )
+        own_cols = _columns(_key_columns(ref.table, base))
+        tokens = set(_TOKEN_RE.findall(canon_template(pk_tpl, entity)))
+        tokens |= set(_TOKEN_RE.findall(canon_template(sk_tpl, entity)))
+        problems: list[str] = []
+        for ap in drafts.patterns(ref):
+            if not ap.get("gsi_name") and not tokens <= own_cols:
+                problems.append(
+                    f"group {ref.group}'s access pattern {ap.get('pattern_id')} reads {shown} "
+                    f"by its context placeholder {ref.name}'s key "
+                    f"({_describe(*_table_key(ref.table))}), which {where} cannot be shown to "
+                    "serve: put the pattern on a GSI of the placeholder, or design it on the "
+                    "owner's entity key"
+                )
+        entity_attrs = {str(a.get("name")): a for a in _dicts(entity.get("attributes"))}
+        placeholder_attrs = _attributes(ref.table)
+        for gsi in _dicts(ref.table.get("gsis")):
+            for name in [n for part in _gsi_key_names(gsi) for n in part]:
+                attr = placeholder_attrs.get(name)
+                if (
+                    attr
+                    and name in entity_attrs
+                    and _direct_column(entity_attrs[name], base) != _direct_column(attr, base)
+                ):
+                    problems.append(
+                        f"group {ref.group}'s context placeholder {ref.name} keys GSI "
+                        f"{gsi.get('gsi_name')} on {name}, which entity {etype} of "
+                        f"{where} uses for another column"
+                    )
+        if problems:
+            drafts.failures.extend(problems)
+            continue
+        # Every attribute of the placeholder the entity does not have yet, as rule 4
+        # copies them: a pattern of the context group uses each.
+        names = {a.get("name") for a in _dicts(entity.get("attributes"))}
+        entity["attributes"] = _dicts(entity.get("attributes")) + [
+            copy.deepcopy(a)
+            for a in _dicts(ref.table.get("attributes"))
+            if a.get("name") not in names
+        ]
+        taken = {str(g.get("gsi_name")): g for g in _dicts(coll.table.get("gsis"))}
+        renames: dict[str, str] = {}
+        for gsi in _dicts(ref.table.get("gsis")):
+            name = str(gsi.get("gsi_name"))
+            same = taken.get(name)
+            if same is not None and _gsi_signature(same) == _gsi_signature(gsi):
+                continue
+            if same is not None:
+                renames[name] = _unique_gsi_name(name, set(taken))
+            new = copy.deepcopy(gsi)
+            new["gsi_name"] = renames.get(name, name)
+            coll.table.setdefault("gsis", [])
+            coll.table["gsis"] = _dicts(coll.table["gsis"]) + [new]
+            taken[new["gsi_name"]] = new
+        for ap in drafts.patterns(ref):
+            if not ap.get("gsi_name"):
+                _note(ap, f"in {coll.name} as {etype}: PK {pk_tpl}, SK {sk_tpl}")
+        for item in drafts.patterns(ref) + drafts.hot_partitions(ref):
+            if item.get("gsi_name") in renames:
+                item["gsi_name"] = renames[item["gsi_name"]]
+        drafts.notes.append(
+            f"{shown}: group {ref.group}'s context placeholder {ref.name} folded into {where}"
+            + (f"; GSIs renamed {renames}" if renames else "")
+        )
+        old, old_name = ref.table, ref.name
+        drafts.rename_table(ref, coll.name)
+        tables = drafts.drafts[ref.pos].get("table_definitions")
+        if isinstance(tables, list):
+            drafts.drafts[ref.pos]["table_definitions"] = [t for t in tables if t is not old]
+        writes = [ap for ap in drafts.patterns(ref) if ap.get("operation") in _WRITES]
+        if writes:
+            text = (
+                f"{old_name} (group {ref.group}) folded into {coll.name} (group "
+                f"{coll.group}) as entity {etype}, PK {pk_tpl}, SK {sk_tpl}"
+            )
+            folded_writes.setdefault((coll.name, shown), []).append((text, writes))
+    _record_folded_writes(drafts, folded_writes)
+
+
+def _unify_single_keys(
+    drafts: _Drafts,
+    unique_keys: dict[str, list[frozenset[str]]],
+    owners: dict[str, int] | None = None,
+) -> None:
     for base, refs in _singles_by_base(drafts).items():
         keys = list(dict.fromkeys(_table_key(r.table) for r in refs))
         if len(keys) < 2:
@@ -1181,6 +1388,22 @@ def _unify_single_keys(drafts: _Drafts, unique_keys: dict[str, list[frozenset[st
         }
         plans = [_plan(drafts, refs, base, holders[k], unique_keys.get(base, [])) for k in keys]
         allowed = [p for p in plans if p.blocked is None]
+        # The split's owner designs these rows (#1243): its key is the one kept. When
+        # it is not safe for every group, nothing is rewritten (the merge reports it).
+        owner = (owners or {}).get(base)
+        owned = {_table_key(r.table) for r in refs if r.group == owner}
+        if owned:
+            blocked = [p for p in plans if p.key in owned and p.blocked is not None]
+            allowed = [p for p in allowed if p.key in owned]
+            if not allowed:
+                reasons = "; ".join(f"{_describe(*p.key)}: {p.blocked}" for p in blocked)
+                text = (
+                    f"{_shown(base, *(r.table for r in refs))}: owner group {owner}'s key "
+                    f"schema is not safe for every group, so no key is kept ({reasons})"
+                )
+                drafts.notes.append(text)
+                drafts.failures.append(text)
+                continue
         if not allowed:
             reasons = "; ".join(f"{_describe(*p.key)}: {p.blocked}" for p in plans)
             drafts.notes.append(f"{base}: key schemas left as a conflict ({reasons})")
@@ -1371,12 +1594,49 @@ def _new_entity(single: _Ref, coll: _Ref, base: str, pk_col: str) -> _Fold | Non
     return _Fold(coll, entity, label, new_entity=True)
 
 
+FoldedWrites = dict[tuple[str, str], list[tuple[str, list[dict]]]]
+
+
+def _record_folded_writes(drafts: _Drafts, folded_writes: FoldedWrites) -> None:
+    """One trade-off per (collection, source table) that folded writes now share: the
+    groups write the same items with different attribute sets (rule 4, and the owner
+    fold of #1243)."""
+    for (coll_name, shown), items in folded_writes.items():
+        drafts.trade_offs.append(
+            {
+                "description": (
+                    f"Design groups modelled {shown} both on its own and inside {coll_name}; "
+                    f"the merge keeps one home, {coll_name}: "
+                    + "; ".join(t for t, _ in items)
+                    + "."
+                ),
+                "impact": (
+                    "Groups now write the same items with different attribute sets: every "
+                    "PutItem must carry the union of their attributes, or become an UpdateItem "
+                    "of its own attributes, or it overwrites the other group's."
+                ),
+                "source_tables": [shown],
+                "target_tables": [coll_name],
+                "query_ids": list(
+                    dict.fromkeys(
+                        q
+                        for _, writes in items
+                        for ap in writes
+                        for q in ap.get("query_ids") or []
+                        if isinstance(q, str)
+                    )
+                ),
+                "engine": "dynamodb",
+            }
+        )
+
+
 def _fold_singles(drafts: _Drafts) -> None:
     refs = drafts.refs()
     collections = [r for r in refs if _shape(r.table) == "item_collection"]
     if not collections:
         return
-    folded_writes: dict[tuple[str, str], list[tuple[str, list[dict]]]] = {}
+    folded_writes: FoldedWrites = {}
     for single in [r for r in refs if _shape(r.table) == "single"]:
         base = _base_entity(single.table)
         if not _known(base):
@@ -1447,34 +1707,7 @@ def _fold_singles(drafts: _Drafts) -> None:
             folded_writes.setdefault((coll.name, shown), []).append((text, writes))
         else:
             drafts.notes.append(f"{shown}: {text}")
-    for (coll_name, shown), items in folded_writes.items():
-        drafts.trade_offs.append(
-            {
-                "description": (
-                    f"Design groups modelled {shown} both on its own and inside {coll_name}; "
-                    f"the merge keeps one home, {coll_name}: "
-                    + "; ".join(t for t, _ in items)
-                    + "."
-                ),
-                "impact": (
-                    "Groups now write the same items with different attribute sets: every "
-                    "PutItem must carry the union of their attributes, or become an UpdateItem "
-                    "of its own attributes, or it overwrites the other group's."
-                ),
-                "source_tables": [shown],
-                "target_tables": [coll_name],
-                "query_ids": list(
-                    dict.fromkeys(
-                        q
-                        for _, writes in items
-                        for ap in writes
-                        for q in ap.get("query_ids") or []
-                        if isinstance(q, str)
-                    )
-                ),
-                "engine": "dynamodb",
-            }
-        )
+    _record_folded_writes(drafts, folded_writes)
 
 
 # ---------------------------------------------------------------------------
@@ -1604,6 +1837,8 @@ def reconcile_shared_tables(
     unique_keys: UniqueKeys | None = None,
     notes: list[str] | None = None,
     column_types: ColumnTypes | None = None,
+    owners: dict[str, int] | None = None,
+    failures: list[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Rewrite group drafts so the merge sees compatible shared tables.
 
@@ -1612,21 +1847,29 @@ def reconcile_shared_tables(
     labels, folds without writes) are appended to ``notes`` when given, for
     the merge trace. ``unique_keys`` (from :func:`unique_keys_from_collector`)
     lets a key that holds a source unique key be kept even when another
-    group's key has other columns. See the module docstring for the rules.
+    group's key has other columns. ``owners`` (normalised source table -> owning
+    group index, from the split's manifest, #1243) points context placeholders at
+    the owner's table and keeps the owner's key schema (rule 3); what that cannot
+    reconcile is appended to ``failures`` when given. See the module docstring for
+    the rules.
     """
     state = _Drafts(copy.deepcopy(drafts), list(group_indices))
     if len(drafts) < 2:
         return state.drafts, []
-    _align_single_names(state)
+    _point_context_tables(state, owners or {})
+    _align_single_names(state, owners or {})
     _align_pk_types(state, column_types or {})
     _align_collections(state)
-    _unify_single_keys(state, unique_keys or {})
+    _unify_single_keys(state, unique_keys or {}, owners or {})
     _fold_singles(state)
+    _fold_into_owner_collections(state, owners or {})
     _align_collections(state)
     _reconcile_gsi_names(state)
     _flush_notes(state.drafts)
     if notes is not None:
         notes.extend(state.notes)
+    if failures is not None:
+        failures.extend(state.failures)
     return state.drafts, state.trade_offs
 
 

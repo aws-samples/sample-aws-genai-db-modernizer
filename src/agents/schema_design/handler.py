@@ -64,8 +64,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_GROUP_CONCURRENCY = 5
 
 
-def _write_trace_tmp(trace_data: dict) -> str:
-    """Write a decision trace to a temp file and return its path."""
+def _write_trace_tmp(trace_data: dict | list) -> str:
+    """Write a decision trace (or another JSON input) to a temp file and return its path."""
     trace_tmp = tempfile.NamedTemporaryFile(mode="wb", suffix=".json", delete=False)
     try:
         trace_tmp.write(json.dumps(trace_data, indent=2, default=str).encode())
@@ -1189,20 +1189,31 @@ def run_schema_design_auto(
 
         # The group's own slice of the decision trace, in its own temp file (#1060).
         trace_tmp_path: str | None = None
+        # The tables another group owns (#1243): the DynamoDB designer is told not to
+        # redesign them, in its own temp file like every other input (#1054).
+        context_tmp_path: str | None = None
+        extra: dict[str, str] = {}
         try:
             if full_trace is not None:
                 trace_tmp_path = _write_trace_tmp(scope_decision_trace(full_trace, group_collector))
+            context = group_input.get("group_context_tables") or []
+            if context and target_type == "dynamodb":
+                context_tmp_path = _write_trace_tmp(context)
+                extra["context_tables_path"] = context_tmp_path
             output_json, trace_json = _dispatch_schema_agent(
                 target_type,
                 collector_path=collector_tmp.name,
                 analysis_path=analysis_tmp.name,
                 decision_trace_path=trace_tmp_path,
+                **extra,
             )
         finally:
             os.unlink(collector_tmp.name)
             os.unlink(analysis_tmp.name)
             if trace_tmp_path:
                 os.unlink(trace_tmp_path)
+            if context_tmp_path:
+                os.unlink(context_tmp_path)
 
         # Write group draft (draft_key computed at the top for the resume check).
         store.write_json(draft_key, json.loads(output_json))
@@ -1406,6 +1417,7 @@ def _dispatch_schema_agent(
     analysis_path: str | None = None,
     revision_context_path: str | None = None,
     decision_trace_path: str | None = None,
+    context_tables_path: str | None = None,
 ) -> tuple[str, str | None]:
     """Route to the correct schema design agent. Returns (output_json, trace_json).
 
@@ -1419,6 +1431,8 @@ def _dispatch_schema_agent(
         analysis_path: Path to analysis output JSON (preferred over env var).
         revision_context_path: Optional path to revision context JSON.
         decision_trace_path: Optional path to the analysis decision trace JSON.
+        context_tables_path: Optional path to a DynamoDB group's context tables
+            (``group_context_tables``, #1243): tables another group owns.
     """
     # The cases below are the implemented designers; keep them in sync with
     # core.IMPLEMENTED_SCHEMA_DESIGNERS (the orchestrator skips engines absent
@@ -1433,6 +1447,7 @@ def _dispatch_schema_agent(
                 analysis_path=analysis_path,
                 revision_context_path=revision_context_path,
                 decision_trace_path=decision_trace_path,
+                context_tables_path=context_tables_path,
             )
             return result.model_dump_json(indent=2), json.dumps(trace, indent=2)
 

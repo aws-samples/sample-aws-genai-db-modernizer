@@ -11,7 +11,12 @@ The grouping strategy (enhanced with analysis signals):
   2. Map queries to their cluster (not just primary table)
   3. Clusters with SMALL_GROUP_THRESHOLD+ queries get their own group
   4. Smaller clusters are batched together into misc groups
-  5. Groups exceeding MAX_GROUP_SIZE are sub-split into chunks
+  5. Groups exceeding MAX_GROUP_SIZE are sub-split into chunks, each table's
+     queries kept in one chunk when they fit
+  6. Each table is primary in exactly one group, its owner (#1243): the group
+     holding most of the queries whose primary table it is. Another group whose
+     queries touch it gets it in ``context_tables``: designed by the owner, never
+     redesigned there
 
 The queries of one query pattern (``src.tools.sql.query_pattern_groups``, #1146) are
 designed together: they go to the cluster of the pattern's first query, sit next to
@@ -26,7 +31,7 @@ Works with ArtifactStore for both local and S3 backends.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 
 from src.agents.prompt_framing import with_untrusted_notice
@@ -274,8 +279,10 @@ def build_groups(
     by_cluster: dict[str, list[dict]] = defaultdict(list)
     cluster_tables: dict[str, set[str]] = defaultdict(set)
 
+    primary_of: dict[str, str] = {}
     for q in queries:
         primary = _canon(get_primary_table(q, db_name), db_name, resolver)
+        primary_of[_qid(q)] = primary
         root = pattern_root.setdefault(pattern_of[_qid(q)], _get_cluster_root(primary, parent))
         by_cluster[root].append(q)
         cluster_tables[root].add(primary)
@@ -308,8 +315,9 @@ def build_groups(
                     }
                 )
             else:
-                # Sub-split large clusters by chunk, whole query patterns per chunk
-                chunks = _pattern_chunks(cluster_queries, pattern_of, MAX_GROUP_SIZE)
+                # Sub-split large clusters by chunk: whole tables per chunk when they
+                # fit, whole query patterns otherwise (#1243, #1146).
+                chunks = _table_chunks(cluster_queries, primary_of, pattern_of, MAX_GROUP_SIZE)
                 for chunk_num, chunk in enumerate(chunks, start=1):
                     suffix = f"_part{chunk_num}" if len(chunks) > 1 else ""
                     groups.append(
@@ -353,7 +361,60 @@ def build_groups(
             }
         )
 
-    return groups
+    return assign_table_owners(groups, db_name, resolver)
+
+
+def assign_table_owners(
+    groups: list[dict], db_name: str, resolver: TableNameResolver | None = None
+) -> list[dict]:
+    """Give every table in the groups' ``primary_tables`` exactly one owning group (#1243).
+
+    The owner of a table is the group listing it whose queries have it as their
+    primary table most often, then the one whose queries touch it most often, then the
+    first. Its ``primary_tables`` keep only the tables it owns. Every group gets
+    ``context_tables``: the owned tables its queries touch that another group owns,
+    and ``context_owners``, each context table's owner index in ``groups``. A context
+    table is designed by its owner; the group designs its own queries' access
+    patterns on the owner's table and never gives it a key schema of its own.
+
+    Run on the final list (after :func:`fit_groups_to_budget`): the indices are the
+    groups' positions. A table no group lists stays unowned, as before. Sorted
+    throughout, so the result does not depend on the hash seed.
+    """
+    primary_counts: list[Counter[str]] = []
+    touch_counts: list[Counter[str]] = []
+    for group in groups:
+        primary: Counter[str] = Counter()
+        touched: Counter[str] = Counter()
+        for q in group["queries"]:
+            primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
+            for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
+                touched[t] += 1
+        primary_counts.append(primary)
+        touch_counts.append(touched)
+
+    candidates: dict[str, list[int]] = defaultdict(list)
+    for n, group in enumerate(groups):
+        for t in group["primary_tables"]:
+            candidates[t].append(n)
+
+    def rank(n: int, t: str) -> tuple[int, int, int]:
+        return (-primary_counts[n][t], -touch_counts[n][t], n)
+
+    owner = {t: min(rank(n, t) for n in ns)[2] for t, ns in candidates.items()}
+
+    owned: list[dict] = []
+    for n, group in enumerate(groups):
+        context = sorted(t for t in touch_counts[n] if t in owner and owner[t] != n)
+        owned.append(
+            {
+                **group,
+                "primary_tables": sorted(t for t in set(group["primary_tables"]) if owner[t] == n),
+                "context_tables": context,
+                "context_owners": {t: owner[t] for t in context},
+            }
+        )
+    return owned
 
 
 def _qid(query: dict) -> str:
@@ -401,9 +462,53 @@ def _pattern_chunks(queries: list[dict], pattern_of: dict[str, int], size: int) 
     keeping the patterns whole would still take more chunks than a plain ``size``
     cut, the plain cut of the same (pattern-ordered) queries is kept: no extra
     designer call (#1146 review)."""
+    chunks = _fill_chunks(_runs(queries, pattern_of), size)
+    plain = [queries[i : i + size] for i in range(0, len(queries), size)]
+    return chunks if len(chunks) <= len(plain) else plain
+
+
+def _table_chunks(
+    queries: list[dict],
+    primary_of: dict[str, str],
+    pattern_of: dict[str, int],
+    size: int,
+) -> list[list[dict]]:
+    """Chunks of at most ``size`` queries keeping each primary table's queries in one
+    chunk when they fit (#1243), so a table's queries span groups only when they must.
+
+    A query pattern's queries count under its first query's table, so a table never
+    pulls a pattern apart (#1146). The tables go largest first (then by name); a table
+    of more than ``size`` queries is cut by query pattern, as :func:`_pattern_chunks`
+    cuts. When keeping tables whole would take more chunks than :func:`_pattern_chunks`
+    on the same table-ordered queries, that cut is kept: no extra designer call. Either
+    way :func:`assign_table_owners` gives each table one owner and the other chunks
+    it as context."""
+    table_of_pattern: dict[int, str] = {}
+    by_table: dict[str, list[dict]] = defaultdict(list)
+    for n, q in enumerate(queries):
+        key = pattern_of.get(_qid(q), -1 - n)
+        table = table_of_pattern.setdefault(key, primary_of.get(_qid(q), ""))
+        by_table[table].append(q)
+    order = sorted(by_table, key=lambda t: (-len(by_table[t]), t))
+    runs: list[list[dict]] = []
+    for t in order:
+        table_queries = _by_pattern(by_table[t], pattern_of)
+        if len(table_queries) <= size:
+            runs.append(table_queries)
+        else:
+            runs.extend(_runs(table_queries, pattern_of))
+    chunks = _fill_chunks(runs, size)
+    fallback = _pattern_chunks([q for run in runs for q in run], pattern_of, size)
+    return chunks if len(chunks) <= len(fallback) else fallback
+
+
+def _fill_chunks(runs: list[list[dict]], size: int) -> list[list[dict]]:
+    """Fill chunks of at most ``size`` queries with ``runs`` in order: a run that fits
+    in a chunk is never cut; a larger one fills the open chunk, then whole chunks, and
+    leaves its last part open for the next run."""
     chunks: list[list[dict]] = []
     current: list[dict] = []
-    for run in _runs(queries, pattern_of):
+    for run in runs:
         if len(run) <= size and current and len(current) + len(run) > size:
             chunks.append(current)
             current = []
@@ -413,8 +518,7 @@ def _pattern_chunks(queries: list[dict], pattern_of: dict[str, int], size: int) 
             current = current[size:]
     if current:
         chunks.append(current)
-    plain = [queries[i : i + size] for i in range(0, len(queries), size)]
-    return chunks if len(chunks) <= len(plain) else plain
+    return chunks
 
 
 def tables_for_queries(
@@ -523,10 +627,12 @@ def _group_input(
     analysis_output: dict,
     total_queries: int,
     decision_trace: dict | None = None,
+    context_owners: dict[str, int] | None = None,
 ) -> dict:
     # The group subagent reads this file: it says its content is data, not
     # instructions (#1317). The Bedrock group designer reads only its
-    # collector_output and analysis_output, and frames them in its prompt.
+    # collector_output and analysis_output, and frames them in its prompt
+    # (with its context tables, #1243).
     return with_untrusted_notice(
         build_group_input(
             job_id=job_id,
@@ -541,6 +647,9 @@ def _group_input(
             analysis_output=analysis_output,
             total_queries=total_queries,
             decision_trace=decision_trace,
+            context_owners=(
+                group.get("context_owners") or {} if context_owners is None else context_owners
+            ),
         )
     )
 
@@ -621,6 +730,11 @@ def split_schema_input(
             analysis_output,
             len(design_queries),
             decision_trace,
+            # The owners are known only once the groups are final (#1243): measure
+            # as if every table the part touches were context, the most it can list.
+            context_owners={
+                str(t.get("table_id")): len(design_queries) for t in tables if t.get("table_id")
+            },
         )
         text = render_group_input(data)
         if len(read_pages(text)) > MAX_GROUP_INPUT_PAGES:
@@ -632,7 +746,11 @@ def split_schema_input(
     manifest_groups: list[SchemaDesignGroupEntry] = []
 
     pattern_of = query_pattern_index(design_queries, collector_output)
-    for idx, group in enumerate(fit_groups_to_budget(groups, measure, pattern_of=pattern_of)):
+    # Halved parts copy their group's tables: give each table one owner again (#1243).
+    fitted = assign_table_owners(
+        fit_groups_to_budget(groups, measure, pattern_of=pattern_of), database_name, resolver
+    )
+    for idx, group in enumerate(fitted):
         group_queries = group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables, resolver)
         text = render_group_input(
@@ -657,6 +775,7 @@ def split_schema_input(
                 group_index=idx,
                 group_name=group["group_name"],
                 primary_tables=group["primary_tables"],
+                context_tables=group["context_tables"],
                 query_count=len(group_queries),
                 table_count=len(group_tables),
                 input_file=input_file,

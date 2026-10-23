@@ -29,6 +29,9 @@ contract shape but holds only what the group's design uses (issue #272):
   ``design_rps``, row sizes and the engine's sizing figures, computed here so
   the designer reads them instead of computing them (#626). No coverage ratio:
   a group has no whole-database query count;
+- ``group_context_tables``: the tables the group's queries touch that another group
+  owns, each with the owner's group index (#1243); designed by the owner, never
+  redesigned by this group;
 - ``decision_trace`` for DocumentDB and OpenSearch: the engine's analysis trace
   scoped to the group's queries and tables, which the skills tell the designer
   to read (#1068).
@@ -193,6 +196,44 @@ def _trim_signal(signal: dict, fields: set[str], kind: str, query_ids: set[str],
     return _slim({**signal, "query_ids": qids, "table_ids": tids}, fields, kind)
 
 
+CONTEXT_TABLE_RULE = (
+    "`group_context_tables` lists the source tables this group's queries touch that "
+    "another group owns (`owner_group`), as data. The owner designs them, and the "
+    "owner designs the table's writes: a context group never adds an access pattern "
+    "that writes a context table, never puts a query id in `query_ids` that is not in"
+    " its own input, and never designs an index or attribute whose correctness "
+    "depends on writes to a context table that it does not serve (such as a sparse "
+    "GSI flag those writes would have to set); when a query needs one, it says so in "
+    "a trade-off instead. When an access pattern needs one, define a placeholder for "
+    "it: a single-entity table (no `entities`) named after the source table, whose "
+    "`source_tables` list only that table, keyed by the source table's primary-key "
+    "columns, with only the attributes and GSIs this group's patterns need. Put those"
+    " access patterns on the placeholder (`table_name`, and `gsi_name` for a GSI it "
+    "defines). `--merge` reconciles every placeholder with the owner's home for those"
+    " rows and always keeps the owner's key schema. When the owner has a single-"
+    "entity table for them, the placeholder takes that table's name and key-attribute"
+    " names, its GSIs join it, and a placeholder key that differs becomes a GSI when "
+    "a pattern still uses it. When the owner keeps them in an item collection, the "
+    "placeholder's GSIs and their key attributes join the collection and the owner's "
+    "entity, and its patterns move there; a pattern on the placeholder's own key "
+    "moves only when the entity's PK and SK templates use nothing but the "
+    "placeholder's key columns. When the owner only copies their columns into another"
+    " table, the placeholder stays its own table. The merge fails and names the "
+    "reason when the owner's key cannot serve this group's writes safely, when a "
+    "placeholder pattern cannot move onto the owner's item collection, or when a "
+    "placeholder GSI is keyed on an attribute name the owner's entity uses for "
+    "another column. A placeholder folded into an item collection brings all its "
+    "attributes to the owner's entity, and a write it moves there gets a trade-off: "
+    "every PutItem on those items must carry the union of both groups' attributes. An"
+    " access pattern or hot-partition entry naming a table or GSI that no draft "
+    "defines fails the merge."
+)
+"""The context-table rule (#1243), word for word in ``/design-schema-dynamodb``'s Group
+draft task and in the Bedrock DynamoDB designer's prompt
+(``dynamodb_schema_agent.context_tables_prompt``): what ``--merge`` does with a
+context group's placeholder tables (``dynamodb_key_reconcile``)."""
+
+
 def build_group_input(
     *,
     job_id: str,
@@ -207,8 +248,13 @@ def build_group_input(
     analysis_output: dict,
     total_queries: int,
     decision_trace: dict | None = None,
+    context_owners: dict[str, int] | None = None,
 ) -> dict:
-    """The compact input for one group (see the module docstring)."""
+    """The compact input for one group (see the module docstring).
+
+    ``context_owners``: each table the group's queries touch that another group owns
+    (#1243), with that group's index. Listed as ``group_context_tables``: the owner
+    designs the table, this group never gives it a key schema of its own."""
     table_ids = {t["table_id"] for t in group_tables if t.get("table_id")}
     table_keys = table_ids | {t["table_name"] for t in group_tables if t.get("table_name")}
     query_ids = {q.get("query_id", "") for q in group_queries}
@@ -322,6 +368,15 @@ def build_group_input(
         "group_index": group_index,
         "group_name": group_name,
         "group_primary_tables": primary_tables,
+    }
+    if context_owners:
+        group_input["group_context_tables"] = [
+            {"table": t, "owner_group": n} for t, n in sorted(context_owners.items())
+        ]
+        # The rule itself, so every reader of this file (the designer, the PE review
+        # request) has it, not only the command that dispatched it (#1243).
+        group_input["group_context_rule"] = CONTEXT_TABLE_RULE
+    group_input |= {
         "collector_output": group_collector,
         "analysis_output": group_analysis,
     }

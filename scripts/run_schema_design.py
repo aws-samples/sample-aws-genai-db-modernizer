@@ -345,6 +345,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
             {
                 "group_index": idx,
                 "primary_tables": group.get("primary_tables", []),
+                # Tables another group owns (#1243): designed there, never redesigned here.
+                "context_tables": group.get("context_tables", []),
                 "query_count": group.get("query_count"),
                 "input_file": _local_path(store, f"{base_key}/input_group_{idx}.json"),
                 "input_pages": group.get("input_pages") or [],
