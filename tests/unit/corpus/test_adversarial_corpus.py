@@ -127,7 +127,10 @@ def test_prose_detector_answers_as_declared(detector, entry):
 
 
 def _module_functions(path: str) -> set[str]:
-    module = importlib.import_module(path.removesuffix(".py").replace("/", "."))
+    # The path comes from this test's own detector registry, never from input (#1438).
+    module = importlib.import_module(  # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+        path.removesuffix(".py").replace("/", ".")
+    )
     return {
         f"{path}:{name}"
         for name, value in inspect.getmembers(module, inspect.isfunction)
