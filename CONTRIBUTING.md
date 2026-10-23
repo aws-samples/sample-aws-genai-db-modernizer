@@ -316,6 +316,10 @@ Changes to `.github/workflows/issue-assignment-gate.yml` itself (or any other wo
 
 Reviewers using Claude Code can run the same checklist by hand -- routing bias and drift, deliverables agreeing, customer wording and escaping, contract bumps, whether new tests fail on main, evidence for behavior claims, public wording -- with the `pr-reviewer` subagent (`.claude/agents/pr-reviewer.md`): ask Claude Code to review the PR with the `pr-reviewer` agent, and it checks out the PR in its own disposable worktree, runs the hooks and guard tests, and posts one ranked comment.
 
+When a review round proposes replacing patterns with an allowlist or a parser, the next round does that rather than adding more patterns. Each added pattern answers one hostile input and the next round finds another; the allowlist or parser answers the whole class. This applies to people and to coding agents briefed to address review findings.
+
+A text or SQL heuristic (a detector in the declared fact modules, a prose rewriter or a guard) runs over the shared adversarial corpus in `tests/corpus/`: quoted keywords, comments, dollar-quoted strings, quoted identifiers, negation, ranges, code fences and very long input, in each dialect an entry applies to. A new one is registered in `tests/corpus/detectors.py` with its expected answers, or `tests/unit/corpus/test_adversarial_corpus.py` fails. A hostile input a review finds by hand goes into the corpus, so every heuristic is checked against it; a wrong answer the PR does not fix is filed as a bug and marked `xfail(strict=True)` with that issue's number.
+
 ---
 
 ## Code Standards
