@@ -63,6 +63,11 @@ NOT_ARTIFACT_READS: dict[tuple[str, str, str], str] = {
         "write_reality_check_result",
         "RealityCheckOutputContract",
     ): "builds the new output in memory before writing it",
+    # The public assess() request (#1182): a caller's argument, never a stored artifact;
+    # its contract_version is a Literal of the one version it accepts.
+    ("src/assessment/runner.py", "assess", "AssessmentRequest"): (
+        "validates the caller's request argument, not a file"
+    ),
     (
         "src/agents/referee/synthesis_handler.py",
         "_write_synthesis_report",

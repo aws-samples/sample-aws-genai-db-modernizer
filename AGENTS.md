@@ -21,6 +21,7 @@ and the CI scripts are documented in [ci/README.md](ci/README.md).
 | `src/skills/` | Markdown prompts (data-modeling and PE-review guidance per engine) that agents and commands load |
 | `src/orchestrator/`, `src/storage/`, `src/graph/` | Local phase orchestrator, artifact store and assignment versioning, context graph |
 | `src/api/`, `src/ui/` | FastAPI backend and React UI (the results page, with the wave plan and the deliverables download panel) |
+| `src/assessment/` | The public library entry point `assess(request) -> result`: typed request and result, the stable surface (`summary`, `statements[]`, `groups[]`) over the internal contracts ([docs/contracts/assess.md](docs/contracts/assess.md)) |
 | `src/atx_orchestrator/` | AWS Transform integration |
 | `scripts/` | CLI entry points (`run_*.py`) the commands call, plus validators and helpers |
 | `.claude/commands/` | Claude Code slash commands (`/modernize`, `/analyze-<engine>`, `/design-schema-<engine>`, `/reality-check`, `/synthesize`, ...) |

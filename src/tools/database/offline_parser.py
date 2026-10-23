@@ -582,6 +582,161 @@ def _shadow_table_refs(
         logger.warning("offline_parser: sql shadow skipped query %s", query_id, exc_info=True)
 
 
+def _parsed_query_facts(
+    query_id: str,
+    query_text: str,
+    source_engine: str,
+    db_name: str,
+    known_table_names: set[str],
+    table_schemas: Mapping[str, set[str]],
+    case_folded: Mapping[str, tuple[str, ...]] | None,
+    shadow: TableShadow | None = None,
+) -> tuple[dict, TableReferences]:
+    """The facts this parser derives from one statement's text, and the facade's
+    table references (for the fallback count).
+
+    The one place a query's ``tables_accessed``, ``query_type``, join, aggregation
+    and subquery facts and its stored reading come from, for a raw collection
+    (:func:`_transform_queries`) and for a collector output whose facts are read
+    again (:func:`rederive_query_facts`).
+    """
+    from src.tools.sql.stored_facts import stored_reading
+
+    # Table references come from the sqlglot facade (src/tools/sql/facade.py),
+    # with the regex scan as its fallback, resolved to collection table ids.
+    tables_accessed, refs, reading = _facade_table_ids(
+        query_id,
+        query_text,
+        source_engine,
+        db_name,
+        known_table_names,
+        table_schemas,
+        case_folded,
+    )
+    facts = reading.facts
+
+    if shadow is not None:
+        _shadow_table_refs(
+            shadow,
+            query_id,
+            query_text,
+            tables_accessed,
+            refs,
+            source_engine,
+            db_name,
+            known_table_names,
+            table_schemas,
+            case_folded,
+        )
+
+    # After the cross-check, which compares the facade's own reading with the
+    # regex scan: a sequence is not a table either of them should know about.
+    if is_unlisted_sequence_read(query_text, source_engine, refs, known_table_names):
+        tables_accessed = ["unknown"]
+
+    return (
+        {
+            # The first verb after the leading comments, in the source dialect; a bulk
+            # load (COPY ... FROM / LOAD DATA) is an INSERT (#777, #1178).
+            "query_type": statement_query_type(query_text, source_engine),
+            "tables_accessed": tables_accessed,
+            "has_joins": facts.has_joins,
+            "join_count": facts.join_count,
+            "has_aggregations": facts.has_aggregation,
+            "has_subqueries": facts.has_subquery,
+            "parsed_facts": stored_reading(query_text, source_engine, reading),
+        },
+        refs,
+    )
+
+
+# Collector-output fields this parser never fills from a raw collection: a value a
+# caller supplied there is a fact we did not derive, so it is dropped.
+_UNDERIVED_QUERY_FIELDS = (
+    "filter_columns",
+    "sort_columns",
+    "has_text_search",
+    "text_search_type",
+    "has_time_range_filter",
+)
+
+
+def rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
+    """A copy of a collector output whose per-query facts are read again from each
+    statement's ``query_text`` by this parser, in the ``source_engine`` dialect.
+
+    For a caller that hands in a collector output instead of a raw collection: the
+    facts routing depends on (the tables a statement touches, its type, joins,
+    aggregations and subqueries, its leading-comment tags) are this parser's, never
+    the caller's. Execution statistics and the schema are kept as given. A table
+    reference resolves to the collector output's own table id for that table name
+    (or the name as written, when no single table has it); a field this parser
+    never fills from a raw collection (``_UNDERIVED_QUERY_FIELDS``) is cleared.
+    The input is not changed.
+    """
+    import copy
+
+    from src.tools.sql.query_tags import QueryTags
+
+    out = copy.deepcopy(collector_output)
+    metadata = (out.get("metadata") or {}).get("source_database") or {}
+    db_name = str(metadata.get("database_name") or "")
+    tables = [
+        t for t in (out.get("database_schema") or {}).get("tables") or [] if isinstance(t, dict)
+    ]
+    known: set[str] = set()
+    schemas: dict[str, set[str]] = {}
+    ids_by_name: dict[str, list[str]] = {}
+    for t in tables:
+        name = str(t.get("table_name") or "")
+        if not name:
+            continue
+        known.add(name)
+        if t.get("schema_name"):
+            schemas.setdefault(name, set()).add(str(t["schema_name"]))
+        ids_by_name.setdefault(name, []).append(str(t.get("table_id") or name))
+    table_ids = {tid for ids in ids_by_name.values() for tid in ids}
+    case_folded = _case_folded_names(known, source_engine)
+
+    def table_id(resolved: str) -> str:
+        if resolved in table_ids:
+            return resolved
+        prefix = f"{db_name}."
+        if resolved.startswith(prefix):
+            ids = ids_by_name.get(resolved[len(prefix) :], [])
+            if len(ids) == 1:
+                return ids[0]
+        return resolved
+
+    rows: list[dict] = []
+    for pattern in (out.get("queries") or {}).get("query_patterns") or []:
+        if not isinstance(pattern, dict):
+            continue
+        query_text = str(pattern.get("query_text") or "")
+        facts, _ = _parsed_query_facts(
+            str(pattern.get("query_id") or ""),
+            query_text,
+            source_engine,
+            db_name,
+            known,
+            schemas,
+            case_folded,
+        )
+        facts["tables_accessed"] = list(
+            dict.fromkeys(table_id(t) for t in facts["tables_accessed"])
+        )
+        # The collector output's query type, mapped as a raw row's is (REPLACE is an INSERT).
+        qtype = facts["query_type"]
+        facts["query_type"] = "INSERT" if qtype == "REPLACE" else (qtype or "SELECT")
+        row = {**pattern, **facts, **QueryTags.of([query_text], source_engine).fields()}
+        for field in _UNDERIVED_QUERY_FIELDS:
+            row[field] = None
+        rows.append(row)
+    queries = out.setdefault("queries", {})
+    queries["query_patterns"] = rows
+    return out
+
+
 def _transform_queries(
     raw: list[dict],
     db_name: str,
@@ -614,8 +769,6 @@ def _transform_queries(
     """
     import hashlib
 
-    from src.tools.sql.stored_facts import stored_reading
-
     patterns = []
     fallbacks: Counter[str] = Counter()
     case_folded = _case_folded_names(known_table_names, source_engine)
@@ -629,9 +782,7 @@ def _transform_queries(
 
         digest = r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16]
 
-        # Table references come from the sqlglot facade (src/tools/sql/facade.py),
-        # with the regex scan as its fallback, resolved to collection table ids.
-        tables_accessed, refs, reading = _facade_table_ids(
+        facts, refs = _parsed_query_facts(
             str(digest),
             query_text,
             source_engine,
@@ -639,39 +790,16 @@ def _transform_queries(
             known_table_names,
             table_schemas or {},
             case_folded,
+            shadow,
         )
         if refs.fallback_reason:
             fallbacks[refs.fallback_reason] += 1
-        facts = reading.facts
-
-        # The first verb after the leading comments, in the source dialect; a bulk
-        # load (COPY ... FROM / LOAD DATA) is an INSERT (#777, #1178).
-        query_type = statement_query_type(query_text, source_engine)
-
-        if shadow is not None:
-            _shadow_table_refs(
-                shadow,
-                str(digest),
-                query_text,
-                tables_accessed,
-                refs,
-                source_engine,
-                db_name,
-                known_table_names,
-                table_schemas or {},
-                case_folded,
-            )
-
-        # After the cross-check, which compares the facade's own reading with the
-        # regex scan: a sequence is not a table either of them should know about.
-        if is_unlisted_sequence_read(query_text, source_engine, refs, known_table_names):
-            tables_accessed = ["unknown"]
 
         patterns.append(
             {
                 "query_id": digest,
                 "query_text": query_text,
-                "query_type": query_type,
+                "query_type": facts["query_type"],
                 # Every merged row's leading comment tags (#1180).
                 "query_tags": r["query_tags"],
                 "query_tags_dropped": r["query_tags_dropped"],
@@ -694,15 +822,15 @@ def _transform_queries(
                 "lock_time_pct": round(
                     float(r.get("lock_time_ms") or 0) / max(total_time_ms, 0.001) * 100, 2
                 ),
-                "tables_accessed": tables_accessed,
-                "has_joins": facts.has_joins,
-                "join_count": facts.join_count,
+                "tables_accessed": facts["tables_accessed"],
+                "has_joins": facts["has_joins"],
+                "join_count": facts["join_count"],
                 "scan_efficiency_pct": min(
                     round(total_rows_sent / max(total_rows_examined, 1) * 100, 2), 100.0
                 ),
-                "has_aggregations": facts.has_aggregation,
-                "has_subqueries": facts.has_subquery,
-                "parsed_facts": stored_reading(query_text, source_engine, reading),
+                "has_aggregations": facts["has_aggregations"],
+                "has_subqueries": facts["has_subqueries"],
+                "parsed_facts": facts["parsed_facts"],
                 "errors": r.get("sum_errors") or 0,
                 "warnings": r.get("sum_warnings") or 0,
                 "first_seen": r.get("first_seen"),

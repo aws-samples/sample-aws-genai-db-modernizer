@@ -105,7 +105,7 @@ Each decision names the guard test that fails when the code stops following it. 
 | 1. Fold Reality Check into the core agent | `tests/unit/atx_orchestrator/test_run_assessment_core.py::test_runs_all_phases_and_writes_same_artifacts` |
 | 2. Rename the agent to `assessment-core` | `tests/unit/atx_orchestrator/test_tools_a2a.py::TestRunDeterministicCoreViaA2AHappyPath::test_invokes_correct_agent_name` |
 | 3. Resolve the assignment version in Python, not the prompt | `tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestCoreResolvesAbsentVersion`<br>`tests/unit/atx_orchestrator/test_subagent_assignment_version.py::TestSubagentParams`<br>`tests/unit/atx_orchestrator/test_run_assessment_core.py::test_resolve_assignment_version` |
-| 4. Defer the human gate and the external LLM mode | superseded by ADR-028 Decision A (the gate was added)<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode`<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode::test_external_is_rejected_with_a_clear_error` |
+| 4. Defer the human gate and the external LLM mode | superseded by ADR-028 Decision A (the gate was added)<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode`<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmMode::test_external_is_rejected_with_a_clear_error`<br>`tests/unit/atx_orchestrator/test_reality_check_core_llm_mode.py::TestRealityCheckCoreLlmModeArgument` |
 
 ## Rationale
 

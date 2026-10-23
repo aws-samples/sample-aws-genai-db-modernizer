@@ -919,6 +919,7 @@ def run_reality_check_core(
     database_name: str,
     assignment_version: int | None = None,
     store=None,
+    llm_mode: str | None = None,
 ) -> dict:
     """Run Reality Check (CTO-level engine consolidation) for a completed assignment.
 
@@ -929,9 +930,10 @@ def run_reality_check_core(
     executive summary). Writes ``reality-check/output.json`` always and, only when
     it consolidates, ``assignment/v{N+1}/assignment.json``.
 
-    ``llm_mode`` comes from ``REALITY_CHECK_LLM_MODE`` (default ``"bedrock"``,
-    per ADR-026). Set it to ``"none"`` to run purely deterministically (e.g. in
-    tests without Bedrock access); ``"external"`` is rejected with a ``ValueError``
+    ``llm_mode``, when given, is the mode; otherwise it comes from
+    ``REALITY_CHECK_LLM_MODE`` (default ``"bedrock"``, per ADR-026). ``"none"`` runs
+    purely deterministically (e.g. in tests without Bedrock access, or the public
+    ``assess()`` with ``deterministic=True``); ``"external"`` is rejected with a ``ValueError``
     before any work (it needs an out-of-band resume the A2A model cannot do), and so
     is any other value than ``"bedrock"`` or ``"none"``.
 
@@ -946,7 +948,8 @@ def run_reality_check_core(
     goes to ``next_assignment_version()`` so no version is overwritten (issue
     #189). With the default, a run whose input is already consolidated is a no-op.
     """
-    llm_mode = os.environ.get("REALITY_CHECK_LLM_MODE", "bedrock")
+    if llm_mode is None:
+        llm_mode = os.environ.get("REALITY_CHECK_LLM_MODE", "bedrock")
     if llm_mode == "external":
         # ADR-026 Decision 4: the A2A model has no mid-run input, so nothing could
         # supply the response and the run would report success while still waiting.

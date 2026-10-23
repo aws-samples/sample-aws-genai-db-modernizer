@@ -84,3 +84,22 @@ class TestRealityCheckCoreLlmMode:
                 run_reality_check_core(JOB, DB, assignment_version=1, store=store)
         assert repr(value) in str(err.value)
         handler.assert_not_called()
+
+
+class TestRealityCheckCoreLlmModeArgument:
+    """A caller can pass the mode instead of the variable (the public ``assess()``, #1182)."""
+
+    @pytest.mark.parametrize(("arg", "env"), [("none", "bedrock"), ("bedrock", "none")])
+    def test_the_argument_wins_over_the_variable(self, store, monkeypatch, arg, env) -> None:
+        monkeypatch.setenv("REALITY_CHECK_LLM_MODE", env)
+        with patch(HANDLER) as handler:
+            run_reality_check_core(JOB, DB, assignment_version=1, store=store, llm_mode=arg)
+        assert handler.call_args.kwargs["llm_mode"] == arg
+
+    @pytest.mark.parametrize("value", ["external", "bedrok", ""])
+    def test_the_argument_is_validated_the_same_way(self, store, monkeypatch, value) -> None:
+        monkeypatch.delenv("REALITY_CHECK_LLM_MODE", raising=False)
+        with patch(HANDLER) as handler:
+            with pytest.raises(ValueError, match="bedrock|none"):
+                run_reality_check_core(JOB, DB, assignment_version=1, store=store, llm_mode=value)
+        handler.assert_not_called()
