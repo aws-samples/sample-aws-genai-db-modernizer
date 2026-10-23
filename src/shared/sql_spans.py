@@ -37,6 +37,7 @@ __all__ = [
     "POSTGRES_LITERALS_AND_COMMENTS",
     "QUOTED_IDENTIFIERS",
     "Grammar",
+    "code_text",
     "comments_literals_and_identifiers_for",
     "literals_and_comments_for",
     "quoted_span_end",
@@ -247,3 +248,27 @@ def sub_spans(text: str, grammar: Grammar, repl: Callable[[str], str]) -> str:
         last = end
     out.append(text[last:])
     return "".join(out)
+
+
+def code_text(text: str, source_engine: str | None) -> str:
+    """``text`` as the source engine runs it (#1415): each comment a space, each string
+    literal a ``?`` placeholder, each quoted identifier as written.
+
+    The spans are the dialect's (:func:`literals_and_comments_for`): MySQL's and MariaDB's
+    ``#`` comments and ``"..."`` strings, PostgreSQL's dollar-quoted strings. A literal keeps
+    its place as a value (``status = 'x'`` reads ``status = ?``), so a fact that needs one
+    after an operator still sees it, and a keyword inside it is never SQL. ``"..."`` names
+    an identifier in every other dialect, and a backtick span always does, so the name is
+    kept (``"latitude"``, `` `session_id` ``).
+    """
+    grammar = literals_and_comments_for(source_engine)
+    double_quote_is_string = grammar is MYSQL_LITERALS_AND_COMMENTS
+
+    def _replace(span: str) -> str:
+        if span.startswith(("--", "/*", "#")):
+            return " "
+        if span.startswith("`") or (span.startswith('"') and not double_quote_is_string):
+            return span
+        return "?"
+
+    return sub_spans(text or "", grammar, _replace)

@@ -25,7 +25,10 @@ Each fact has one definition, and every reader uses it (#893; the guard is
   ``has_subqueries``, #796), the same facts read once.
 - Text facts are a regex scan on the text: the ones no parse gives yet (a
   session key, a write statement, a computed join key, ...), each moved here
-  from its detector by #491.
+  from its detector by #491. Each reads the text as the source engine runs it
+  (``sql_spans.code_text``, #1415): comments blanked, each string literal a
+  ``?``, quoted identifiers kept, so a keyword inside a literal or a comment
+  is never SQL.
 - The timestamp column (#935) is the one fact that also reads the schema: a
   column is a timestamp when the collection says its type is one
   (:func:`is_timestamp_type`), whatever its name. The facade's columns
@@ -62,6 +65,7 @@ from typing import TYPE_CHECKING
 from src.shared.sql_comments import strip_leading_comments
 from src.shared.sql_spans import (
     POSTGRES_LITERALS_AND_COMMENTS,
+    code_text,
     comments_literals_and_identifiers_for,
     literals_and_comments_for,
     spans,
@@ -251,9 +255,10 @@ _WRITE_WORD_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE)\b", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Relational shape keywords (the Aurora analysis's detectors, moved here from
-# ``aurora_common_pattern_catalog``). Case-insensitive substring checks on the
-# raw text: they read comments, literals and column names too (``limit`` in
-# ``credit_limit``), which is why they are kept apart from the parsed facts.
+# ``aurora_common_pattern_catalog``). Case-insensitive checks on the text with its
+# comments and literals blanked (``QueryFacts._code``, #1415): they still read column
+# names (``limit`` in ``credit_limit``), which is why they are kept apart from the
+# parsed facts.
 # ---------------------------------------------------------------------------
 
 # EXISTS (subquery) or NOT EXISTS (subquery) is ``regex_facts.EXISTS_CONDITION_RE``, the
@@ -737,6 +742,17 @@ class QueryFacts:
     def _lower(self) -> str:
         return self._text.lower()
 
+    @cached_property
+    def _code(self) -> str:
+        """The text as the source engine runs it (``sql_spans.code_text``, #1415): comments
+        blanked, each string literal a ``?``, quoted identifiers kept. The text facts read
+        this, so a keyword inside a literal or a comment is never SQL."""
+        return code_text(self._text, self._source_engine)
+
+    @cached_property
+    def _code_lower(self) -> str:
+        return self._code.lower()
+
     # -- Parsed facts (the facade's ``SqlFacts``, #893) ------------------------
 
     @cached_property
@@ -1000,7 +1016,7 @@ class QueryFacts:
         """MySQL's ``SQL_CALC_FOUND_ROWS`` modifier or a ``FOUND_ROWS()`` call (the row
         count of the previous query).
         """
-        return bool(_FOUND_ROWS_RE.search(self._text))
+        return bool(_FOUND_ROWS_RE.search(self._code))
 
     @cached_property
     def dedup_only_group_by(self) -> bool:
@@ -1020,24 +1036,24 @@ class QueryFacts:
     @cached_property
     def write_with_subquery(self) -> bool:
         """``INSERT``/``UPDATE``/``DELETE`` followed later by ``SELECT``."""
-        write = _WRITE_WORD_RE.search(self._text)
-        return write is not None and SELECT_WORD_RE.search(self._text, write.end()) is not None
+        write = _WRITE_WORD_RE.search(self._code)
+        return write is not None and SELECT_WORD_RE.search(self._code, write.end()) is not None
 
     @cached_property
     def exists_or_in_subquery(self) -> bool:
         """``EXISTS (``, ``NOT EXISTS (`` or ``IN (SELECT``."""
-        return bool(EXISTS_CONDITION_RE.search(self._text) or _IN_SUBQUERY_RE.search(self._text))
+        return bool(EXISTS_CONDITION_RE.search(self._code) or _IN_SUBQUERY_RE.search(self._code))
 
     @cached_property
     def in_list(self) -> bool:
         """An ``IN (`` list: ``regex_facts.IN_LIST_RE``, the one definition the key
         predicate and the transaction shape read too (#1010)."""
-        return bool(IN_LIST_RE.search(self._text))
+        return bool(IN_LIST_RE.search(self._code))
 
     @cached_property
     def duplicate_key_upsert(self) -> bool:
         """``on duplicate key`` or ``replace into``."""
-        return _contains_any(self._lower, DUPLICATE_KEY_KEYWORDS)
+        return _contains_any(self._code_lower, DUPLICATE_KEY_KEYWORDS)
 
     @cached_property
     def upsert(self) -> bool:
@@ -1067,7 +1083,7 @@ class QueryFacts:
         procedure``, ``create function``), or, for a SQL Server source, a statement that
         is an ``EXEC``/``EXECUTE`` of a procedure.
         """
-        if _contains_any(self._lower, STORED_ROUTINE_KEYWORDS):
+        if _contains_any(self._code_lower, STORED_ROUTINE_KEYWORDS):
             return True
         if self._source_engine.strip().lower() != "sqlserver" or not self._has("exec"):
             return False
@@ -1076,7 +1092,7 @@ class QueryFacts:
     @cached_property
     def array_operation(self) -> bool:
         """``ANY(ARRAY``, ``array_agg(``, ``unnest(``, ``ARRAY[`` or ``@> ARRAY``."""
-        return bool(_ARRAY_OPERATION_RE.search(self._text))
+        return bool(_ARRAY_OPERATION_RE.search(self._code))
 
     @cached_property
     def lateral_join(self) -> bool:
@@ -1098,12 +1114,12 @@ class QueryFacts:
     @cached_property
     def on_conflict_or_returning(self) -> bool:
         """``ON CONFLICT``, or ``RETURNING <column>`` not preceded by ``AS``."""
-        return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._text))
+        return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._code))
 
     @cached_property
     def negation_word(self) -> bool:
         """``NOT IN``, ``NOT EXISTS``, ``<>`` or ``!=`` between word characters."""
-        return bool(_NEGATION_WORD_RE.search(self._text))
+        return bool(_NEGATION_WORD_RE.search(self._code))
 
     @cached_property
     def correlated_subquery_shape(self) -> bool:
@@ -1113,34 +1129,34 @@ class QueryFacts:
     @cached_property
     def time_function_keyword(self) -> bool:
         """``date_trunc``, ``date(``, ``hour(`` or ``extract(``."""
-        return _contains_any(self._lower, TIME_AGG_KEYWORDS)
+        return _contains_any(self._code_lower, TIME_AGG_KEYWORDS)
 
     @cached_property
     def geospatial_keyword(self) -> bool:
         """A :data:`GEOSPATIAL_KEYWORDS` substring (``st_distance``, ..., ``latitude``,
         ``geometry``).
         """
-        return _contains_any(self._lower, GEOSPATIAL_KEYWORDS)
+        return _contains_any(self._code_lower, GEOSPATIAL_KEYWORDS)
 
     @cached_property
     def min_max_call(self) -> bool:
         """A ``MAX(`` or ``MIN(`` call."""
-        return bool(_MIN_MAX_CALL_RE.search(self._lower))
+        return bool(_MIN_MAX_CALL_RE.search(self._code_lower))
 
     @cached_property
     def status_equals_value(self) -> bool:
         """``status = ?`` / ``status = '...`` / ``status = "...``."""
-        return bool(_STATUS_EQUALS_VALUE_RE.search(self._lower))
+        return bool(_STATUS_EQUALS_VALUE_RE.search(self._code_lower))
 
     @cached_property
     def is_null(self) -> bool:
         """``IS NULL``."""
-        return bool(_IS_NULL_RE.search(self._lower))
+        return bool(_IS_NULL_RE.search(self._code_lower))
 
     @cached_property
     def count_star_or_one(self) -> bool:
         """``COUNT(*)`` or ``COUNT(1)``."""
-        return bool(_COUNT_STAR_OR_ONE_RE.search(self._lower))
+        return bool(_COUNT_STAR_OR_ONE_RE.search(self._code_lower))
 
     @cached_property
     def _scanned(self) -> str:
@@ -1155,7 +1171,7 @@ class QueryFacts:
         """Real search depth (#326): relevance ranking or fuzzy matching, or a search
         predicate with a ``GROUP BY`` facet, read with string literals blanked.
         """
-        return _has_search_depth(self._text, self.group_by)
+        return _has_search_depth(self._code, self.group_by)
 
     @cached_property
     def merge_statement(self) -> bool:
@@ -1209,7 +1225,7 @@ class QueryFacts:
         ``sess_id``, ``session_id``, ``csrf``), or a two-part PascalCase/camelCase session
         key in the WHERE clause (``[SessionToken]``, ``sessionId``). Reads the original case.
         """
-        return _has_session_key(self._text)
+        return _has_session_key(self._code)
 
     @property
     def needs_aggregation(self) -> bool:

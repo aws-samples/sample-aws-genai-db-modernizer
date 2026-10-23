@@ -67,6 +67,7 @@ from src.shared.sql_comments import (
     strip_trailing_comments,
     unwrap_executable_comment,
 )
+from src.shared.sql_spans import code_text
 
 # Leading ``/* block */``, ``-- line`` and ``# line`` comments before the verb
 # that actually marks the statement are stripped before any verb match, so a
@@ -364,16 +365,17 @@ def is_utility_statement(
         return False
     if any(_UTILITY_VERB_RE.search(head) or _is_update_statistics(head) for head in heads):
         return True
-    text = heads[0]
-    if _CATALOG_RE.search(text):
+    # The rest reads the statement as its engine runs it (#1415): a catalog name, call or
+    # cast inside a string literal or a comment is not one.
+    code = code_text(heads[0], source.engine if source else None)
+    if _CATALOG_RE.search(code):
         return True
     if _all_tables_are_system_catalog(tables_accessed, source):
         return True
-    unquoted = _blank_string_literals(text)
     if (
-        _CATALOG_FUNCTION_RE.search(unquoted)
-        or _CATALOG_CAST_RE.search(text)
-        or has_sequence_reference(unquoted)
+        _CATALOG_FUNCTION_RE.search(code)
+        or _CATALOG_CAST_RE.search(code)
+        or has_sequence_reference(code)
         or is_sequence_state_read(query_text)
     ):
         return _has_no_real_source_table(tables_accessed)

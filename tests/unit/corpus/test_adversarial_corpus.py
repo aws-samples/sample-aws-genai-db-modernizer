@@ -127,6 +127,8 @@ def test_prose_detector_answers_as_declared(detector, entry):
 
 
 def _module_functions(path: str) -> set[str]:
+    # The path is a literal from the detector registry in this repo, never input.
+    # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
     module = importlib.import_module(path.removesuffix(".py").replace("/", "."))
     return {
         f"{path}:{name}"

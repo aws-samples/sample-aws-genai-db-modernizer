@@ -49,9 +49,6 @@ from tests.unit.tools.sql.test_one_definition_per_fact import SCHEMA_FACTS, _pub
 # Tracked bugs: wrong answers on the corpus, filed and left for their own fix
 # ---------------------------------------------------------------------------
 
-# Text facts and the utility check that scan the raw query text read a keyword
-# inside a string literal or a comment as SQL.
-BUG_RAW_TEXT_SCANS = 1415
 # The blanking passes other detectors read through miss a dialect's own forms:
 # scan_sql takes no dialect (MySQL # comments and backslash escapes, PostgreSQL
 # dollar quotes), and strip_comments_and_literals neither nests PostgreSQL and SQL
@@ -62,17 +59,8 @@ BUG_NEGATION_READ_AS_CLAIM = 1417
 # The plain-prose dash scan is quadratic in the number of code spans and dashes.
 BUG_QUADRATIC_DASH_SCAN = 1418
 
-# Where each entry's hostile part hides: a literal or comment every dialect reads
-# the same way, a form one dialect has, a dollar-quoted string.
-_LITERAL_AND_COMMENT = (
-    "keywords_in_string",
-    "line_comment",
-    "block_comment",
-    "leading_block_comment",
-)
-_DIALECT_FORMS = ("nested_block_comment", "mysql_hash_comment")
+# PostgreSQL's dollar-quoted strings, which a blanking pass with no dialect misses.
 _DOLLAR_QUOTES = ("dollar_quoted_string", "nested_dollar_quoted_tags")
-_EVERY_HIDING_PLACE = _LITERAL_AND_COMMENT + _DIALECT_FORMS + _DOLLAR_QUOTES
 
 
 def _bug(issue: int, *ids: str, dialects: tuple[str, ...] = ALL_DIALECTS) -> dict[str, int]:
@@ -184,8 +172,9 @@ _KEEPS_IDENTIFIER_NAMES = {
     "double_quoted_identifiers": _IDENTIFIER_NAMES,
 }
 
-# The facts that scan the raw text: every place a keyword can hide fools them.
-_RAW_TEXT_FACTS = (
+# The text facts read the dialect's blanked text (``sql_spans.code_text``, #1415), whose
+# grammar ends a block comment at its first ``*/``.
+_CODE_TEXT_FACTS = (
     "found_rows",
     "exists_or_in_subquery",
     "in_list",
@@ -200,19 +189,14 @@ _RAW_TEXT_FACTS = (
     "status_equals_value",
     "is_null",
     "count_star_or_one",
+    "session_key",
+    "search_depth",
     "needs_aggregation",  # through found_rows
 )
 _FACT_BUGS: dict[str, dict[str, int]] = {
-    name: _bug(BUG_RAW_TEXT_SCANS, *_EVERY_HIDING_PLACE) for name in _RAW_TEXT_FACTS
+    name: _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
+    for name in _CODE_TEXT_FACTS
 }
-_FACT_BUGS["session_key"] = _bug(
-    BUG_RAW_TEXT_SCANS, *_EVERY_HIDING_PLACE, "timestamp_and_session_names_in_string"
-)
-# Blanks string literals, not comments.
-_FACT_BUGS["search_depth"] = _bug(
-    BUG_RAW_TEXT_SCANS, *_LITERAL_AND_COMMENT[1:], *_DIALECT_FORMS, *_DOLLAR_QUOTES
-)
-_FACT_BUGS["write_with_subquery"] = _bug(BUG_RAW_TEXT_SCANS, "leading_block_comment")
 # Blank comments and literals, but not a nested block comment or a dialect's own forms.
 for _name in ("upsert", "write_statement_text"):
     _FACT_BUGS[_name] = _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
@@ -222,10 +206,10 @@ _FACT_BUGS["lateral_join"] = _bug(
 _FACT_BUGS["string_aggregate_call"] = _bug(
     BUG_BLANKING_MISSES_DIALECT_FORMS, "mysql_hash_comment", *_DOLLAR_QUOTES
 )
-# The capability gate reads needs_aggregation and the utility check, so a keyword in a
-# literal or a comment makes a point read relational.
-_CAPABILITY_BUGS = _bug(BUG_RAW_TEXT_SCANS, *_EVERY_HIDING_PLACE, "utility_verbs_in_string")
 _NESTED = _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
+# The capability gate reads needs_aggregation and the utility check, so a keyword in a
+# nested block comment's tail makes a point read relational.
+_CAPABILITY_BUGS = _NESTED
 
 
 _FACADE = "src/tools/sql/facade.py"
@@ -321,16 +305,8 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: utility_statements.is_utility_statement(
             text, _query(text, dialect)["tables_accessed"], SourceScope(engine=dialect)
         ),
-        # information_schema in a literal or a comment past the leading ones.
-        bugs=_bug(
-            BUG_RAW_TEXT_SCANS,
-            "keywords_in_string",
-            "utility_verbs_in_string",
-            "line_comment",
-            "block_comment",
-            *_DIALECT_FORMS,
-            *_DOLLAR_QUOTES,
-        ),
+        # information_schema in a nested block comment's tail.
+        bugs=_NESTED,
     ),
     SqlDetector(
         f"{_UTILITY}:is_sequence_fetch",
