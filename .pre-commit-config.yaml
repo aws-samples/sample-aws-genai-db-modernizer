@@ -60,7 +60,7 @@ repos:
   # run different tools and a green hook stops meaning a green CI. When bumping
   # dependencies, bump these revs to match.
   - repo: https://github.com/psf/black
-    rev: 26.5.1
+    rev: 26.10.1
     hooks:
       - id: black
         name: Format Python code with Black
