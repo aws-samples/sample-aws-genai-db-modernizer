@@ -54,8 +54,6 @@ from tests.unit.tools.sql.test_one_definition_per_fact import SCHEMA_FACTS, _pub
 # dollar quotes), and strip_comments_and_literals neither nests PostgreSQL and SQL
 # Server block comments nor blanks SQL Server bracket identifiers.
 BUG_BLANKING_MISSES_DIALECT_FORMS = 1416
-# The summary checks read a negated sentence as the claim it denies.
-BUG_NEGATION_READ_AS_CLAIM = 1417
 
 # PostgreSQL's dollar-quoted strings, which a blanking pass with no dialect misses.
 _DOLLAR_QUOTES = ("dollar_quoted_string", "nested_dollar_quoted_tags")
@@ -493,7 +491,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": True,  # "Move OpenSearch first"
             "negated_attribution": False,
         },
-        bugs={"negation": BUG_NEGATION_READ_AS_CLAIM},
     ),
     ProseDetector(
         f"{_GROUNDING}:check_summary_grounding",
@@ -508,7 +505,6 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "risk_and_wave_claims": False,
             "negated_attribution": False,
         },
-        bugs={"negated_attribution": BUG_NEGATION_READ_AS_CLAIM},
     ),
     ProseDetector(
         f"{_GROUNDING}:check_summary_internal_leaks",

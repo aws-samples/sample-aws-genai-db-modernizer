@@ -324,6 +324,59 @@ def _mention_cue(before: str) -> str | None:
     return None
 
 
+# One definition of "this engine mention is negated" for both ``recommends_engine`` and
+# ``check_summary_grounding`` (#1417). It looks only at the engine's own clause: the text
+# before and after the mention, cut at a clause break by the caller (see
+# ``_NEG_CLAUSE_BREAK``; a comma or but/while/whereas ends the clause).
+# - before: negators in the last six words are counted and the parity decides, so a double
+#   negation cancels ("no reason not to use X", "don't delay moving to X", "won't regret",
+#   "isn't hard", "without question"). Negators: not, never, cannot, n't forms, without,
+#   "instead of", and "no" when it is directly before the engine or pairs with a later
+#   negator. A flip word (delay, regret, hard, hesitate, ...) only flips an existing
+#   negation, never creates one. "not only/just/merely/necessarily" is no negator.
+# - after: a negated auxiliary right after the engine ("ElastiCache does not serve ...",
+#   "OpenSearch cannot ...", "ElastiCache never serves ..."), except "will not only ...".
+_NEG_CLAUSE_BREAK = re.compile(r"[,;:!?]|\.\s|\b(?:but|while|whereas)\b", re.IGNORECASE)
+_NEG_WORD = re.compile(r"^(?:not|never|cannot|without|\w+n't|\w+n\u2019t)$", re.IGNORECASE)
+_NEG_FLIP = re.compile(
+    r"^(?:delay|regret|hard|difficult|hesitate|forget|question|doubt|fail)$", re.IGNORECASE
+)
+_NOT_ONLY = re.compile(r"^(?:only|just|merely|necessarily)$", re.IGNORECASE)
+_NEG_AFTER = re.compile(
+    r"^\W*(?:\w+\s+)?(?:(?:does|do|did|is|are|was|were|will|would|should|can|could|must|may|"
+    r"might|has|have)\s+(?:not|never)\b(?!\s+(?:only|just|merely|necessarily)\b)|"
+    r"cannot\b|never\b|\w+n['\u2019]t\b)",
+    re.IGNORECASE,
+)
+
+
+def _engine_negated(before: str, after: str) -> bool:
+    """True when the engine mention between ``before`` and ``after`` is negated.
+
+    ``before``/``after`` are the text on each side of the mention within its clause.
+    """
+    words = re.findall(r"[\w'\u2019]+", before)[-6:]
+    low = [w.lower() for w in words]
+    real = [
+        i
+        for i, w in enumerate(low)
+        if (_NEG_WORD.match(w) or (w == "instead" and low[i + 1 : i + 2] == ["of"]))
+        and not (_NEG_WORD.match(w) and i + 1 < len(low) and _NOT_ONLY.match(low[i + 1]))
+    ]
+    # "no" negates directly before the engine, or in a pair with a later negator.
+    no = [
+        i
+        for i, w in enumerate(low)
+        if w == "no" and (i == len(low) - 1 or any(r > i for r in real))
+    ]
+    count = len(real) + len(no) + (sum(bool(_NEG_FLIP.match(w)) for w in low) if real or no else 0)
+    if count % 2 == 1:
+        return True
+    if count:  # a double negation cancels; the clause before is affirmative
+        return False
+    return bool(_NEG_AFTER.match(after))
+
+
 def _recommends(sentence: str, engines: Iterable[str]) -> bool:
     """True when ``sentence`` recommends one of ``engines``.
 
@@ -335,6 +388,9 @@ def _recommends(sentence: str, engines: Iterable[str]) -> bool:
     targets = set(engines)
     for engine, start, end in engine_mentions(sentence):
         if engine not in targets:
+            continue
+        before = _NEG_CLAUSE_BREAK.split(sentence[:start])[-1]
+        if _engine_negated(before, _NEG_CLAUSE_BREAK.split(sentence[end:])[0]):
             continue
         cue = _mention_cue(sentence[:start])
         if cue == "recommend":
@@ -744,8 +800,6 @@ _ACCESS_NOUNS = frozenset(
     "table tables item items entry entries traffic access".split()
 )
 _ACCESS_WINDOW = 4
-# Only "not"/"no" directly before the engine negates it ("not DynamoDB").
-_NEG_DIRECT = re.compile(r"\b(?:not|no)\s+$", re.IGNORECASE)
 # Clause boundaries for attribution: punctuation and clause-joining words.
 _CLAUSE_SPLIT = re.compile(
     r"[,;:\u2014\u2013()]|\b(?:while|whereas|but|and|leaving|freeing)\b", re.IGNORECASE
@@ -829,7 +883,7 @@ def _engine_refs(clause: str, engines_in_play: set[str]) -> list[tuple[str, int,
     """Engine mentions as ``(engine, start, end, negated)``.
 
     Bare "Aurora" resolves to the single Aurora engine in play, if there is exactly one.
-    Only "not"/"no" directly before the engine negates it.
+    Negation is decided by ``_engine_negated`` within the mention's clause.
     """
     refs = [(e, s, t) for e, s, t in engine_mentions(clause)]
     aurora = sorted(engines_in_play & {"aurora_mysql", "aurora_postgresql"})
@@ -837,7 +891,7 @@ def _engine_refs(clause: str, engines_in_play: set[str]) -> list[tuple[str, int,
         for m in re.finditer(r"\baurora\b(?![\s_-]?(?:mysql|postgre))", clause, re.IGNORECASE):
             refs.append((aurora[0], m.start(), m.end()))
     refs.sort(key=lambda r: r[1])
-    return [(e, s, t, bool(_NEG_DIRECT.search(clause[:s]))) for e, s, t in refs]
+    return [(e, s, t, _engine_negated(clause[:s], clause[t:])) for e, s, t in refs]
 
 
 def _clauses(sentence: str) -> list[str]:
@@ -869,7 +923,8 @@ def check_summary_grounding(
       unit). A table is checked against the live engines named in its clause; a clause
       naming none inherits the engines of the nearest earlier clause in the sentence
       (list continuation), or else of the next one. It passes if ANY of those engines
-      serves it. Engines directly preceded by "not"/"no" are not attributions, and
+      serves it. Negated engines ("not"/"no" before, "does not serve" after; see
+      ``_engine_negated``) are not attributions, and
       history clauses (from ... to, consolidated, absorbed, moved, previously,
       formerly, migrated from) are skipped.
     - A mismatch is high confidence when the table is written as an identifier
@@ -930,8 +985,10 @@ def check_summary_grounding(
                 pending = []
                 inherited = live
             elif inherited:
-                for named, _, text, n in mentions:
-                    judge(named, text, n, inherited, False, sentence)
+                for named, pos, text, n in mentions:
+                    # "..., but does not serve wp_postmeta": the carried-over engine is negated.
+                    if not _engine_negated(clause[:pos], ""):
+                        judge(named, text, n, inherited, False, sentence)
             else:
                 pending.extend(mentions)
     return findings
