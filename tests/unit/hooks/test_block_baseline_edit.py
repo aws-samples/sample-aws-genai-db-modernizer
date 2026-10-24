@@ -61,3 +61,12 @@ def test_protected_files_exist() -> None:
 @pytest.mark.parametrize("event", ["", "{", '{"tool_input": {"file_path": 3}}', "{}"])
 def test_bad_input_fails_open(event: str, run_hook) -> None:
     assert run_hook("block_baseline_edit.py", event).code == 0
+
+
+@pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit"])
+def test_value_set_snapshot_is_protected(tool: str, run_hook) -> None:
+    """#1408: the value-set snapshot is regenerated like the schema snapshot."""
+    path = str(REPO_ROOT / "tests/contract/value_set_snapshot.json")
+    res = run_hook("block_baseline_edit.py", edit(path, tool))
+    assert res.blocked
+    assert "uv run python scripts/contract_value_snapshot.py --write" in res.stderr

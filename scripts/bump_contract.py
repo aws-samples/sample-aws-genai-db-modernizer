@@ -29,7 +29,6 @@ from scripts.contract_bumps import (  # noqa: E402
     PENDING_DIR,
     RESOLVE_COMMAND,
     BumpError,
-    PendingBump,
     by_hand_steps,
     fragment_name,
     fragment_text,
@@ -75,14 +74,11 @@ def resolve_contract(name: str, keys: list[str]) -> str:
 
 def check_resolvable(contract: str, kind: str, reason: str) -> None:
     """Refuse now, not after review, a contract the resolver cannot edit."""
-    from scripts.resolve_contract_versions import resolve_texts
+    from scripts.resolve_contract_versions import resolver_refusal
 
     path = CONTRACTS_DIR / f"{module_of(contract)}.py"
-    source = path.read_text(encoding="utf-8")
-    bump = PendingBump(name="(new)", contract=contract, kind=kind, reason=reason)
-    _, _, failed = resolve_texts([bump], lambda m: source, lambda m: source, "0000-00-00")
-    if failed:
-        message = failed[0].message
+    message = resolver_refusal(contract, path.read_text(encoding="utf-8"), kind, reason)
+    if message:
         if "already landed" in message:
             raise BumpError(f"{contract}: that reason is already a Version History entry")
         raise BumpError(f"{contract}: {message}. {by_hand_steps(contract)}")

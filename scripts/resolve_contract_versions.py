@@ -36,6 +36,7 @@ pending contract's version (#1393). A REF git cannot read is an error of its own
 from __future__ import annotations
 
 import argparse
+import ast
 import datetime
 import json
 import subprocess  # nosec B404 -- runs git and the snapshot scripts with fixed argv
@@ -166,6 +167,47 @@ def resolve_texts(
         texts[module] = new_text
         done.append(resolution)
     return texts, done, failed
+
+
+def resolver_refusal(
+    contract: str, source: str, kind: str = "minor", reason: str = ""
+) -> str | None:
+    """Why the resolver cannot bump ``contract`` in ``source``, or None when it can.
+
+    A dry run of ``resolve_texts`` with main's text the same as the branch's. A
+    contract it refuses is one ``scripts/bump_contract.py`` sends to a hand bump
+    (``by_hand_steps``); ``scripts/hooks/block_contract_version_edit.py`` lets
+    exactly those be edited by hand (#1408).
+    """
+    bump = PendingBump(name="(new)", contract=contract, kind=kind, reason=reason or "(dry run)")
+    _, _, failed = resolve_texts([bump], lambda m: source, lambda m: source, "0000-00-00")
+    return failed[0].message if failed else None
+
+
+def module_contracts(module: str, source: str) -> list[str]:
+    """The contracts of a module as ``bump_contract.py`` names them.
+
+    ``module.Class`` for each top-level class with a literal ``contract_version``
+    default, else the module itself when it has a Version History. The schema
+    snapshot lists the same classes; ``tests/unit/hooks/test_block_contract_version_edit.py``
+    asserts it.
+    """
+    classes = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ClassDef):
+            try:
+                contract_default(source, node.name)
+            except BumpError:
+                continue
+            classes.append(f"{module}.{node.name}")
+    if classes:
+        return classes
+    return [module] if history_newest(source) is not None else []
+
+
+def hand_bumped_contracts(module: str, source: str) -> set[str]:
+    """The contracts of ``module`` the resolver cannot edit: they are bumped by hand."""
+    return {c for c in module_contracts(module, source) if resolver_refusal(c, source)}
 
 
 def _failure_lines(failed: list[Failure]) -> list[str]:

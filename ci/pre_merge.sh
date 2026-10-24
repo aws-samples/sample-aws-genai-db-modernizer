@@ -3,12 +3,12 @@
 #
 #   ./ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]
 #
-# fetch main, count commits behind, check for merge conflicts without touching
-# the worktree, check contract versions, warn on stale generated files, list the
-# new and changed tests that pass on main's code, then lint, tests (skipped by
-# --quick) and the needs_llm_run verdict. Exits non-zero on a conflict, a lint or
-# test failure, a contract version problem, or (with --strict-main-tests) a new or
-# changed test that passes on main.
+# fetch main, count commits behind, check commit authors and merge conflicts
+# (without touching the worktree), check contract versions, warn on stale
+# generated files, list the new and changed tests that pass on main's code, then
+# lint, tests (skipped by --quick) and the needs_llm_run verdict. Exits non-zero
+# on a refused author, a conflict, a lint or test failure, a contract version
+# problem, or (with --strict-main-tests) a new or changed test that passes on main.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -19,7 +19,7 @@ for arg in "$@"; do
     --quick) quick=1 ;;
     --strict-main-tests) main_tests=strict ;;
     --no-main-tests) main_tests=skip ;;
-    -h | --help) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]" >&2; exit 2 ;;
   esac
 done
@@ -50,6 +50,14 @@ if [ "$behind" -eq 0 ]; then
   note "ok   behind: 0 commits behind $base ($ahead ahead)"
 else
   note "warn behind: $behind commit(s) behind $base ($ahead ahead); rebase and re-test before merging"
+fi
+
+# b2. Commit authors (#1408): the allowlist, or the pull request author from `gh pr view`.
+if author_out="$(uv run python scripts/check_commit_authors.py --range "$base..HEAD" 2>&1)"; then
+  note "ok   authors: every commit ahead of $base has an allowed author"
+else
+  fail "authors: a commit ahead of $base has an author that is not allowed"
+  printf '%s\n' "$author_out" | grep -v '^commit authors: ' | sed '/^$/d; s/^/       /'
 fi
 
 # c. Conflict check against main. merge-tree writes objects only: no index, worktree or ref changes.
