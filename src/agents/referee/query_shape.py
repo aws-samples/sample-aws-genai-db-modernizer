@@ -33,11 +33,8 @@ from src.agents.referee.access_pattern import KEY_LOOKUP, KEY_RANGE, KEY_SCOPED,
 from src.agents.referee.capability_registry import detect_required_capabilities
 from src.agents.referee.table_resolution import SourceScope
 from src.shared.sql_spans import (
-    MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS,
-    MYSQL_LITERALS_AND_COMMENTS,
     QUOTED_IDENTIFIERS,
     comments_literals_and_identifiers_for,
-    literals_and_comments_for,
     sub_spans,
 )
 from src.shared.unsupported_pattern import non_scalar_function_names, strip_comments_and_literals
@@ -363,20 +360,18 @@ def _unquote_identifiers(text: str) -> str:
 def readable_sql(text: str, source_engine: str | None) -> str:
     """``text`` without comments and literals, identifiers unquoted.
 
-    The same two steps whichever the dialect, in the order the dialect needs: MySQL's
-    ``#`` comments make unquoting first unsafe (it would expose the ``#`` of
-    `` `order#items` ``), so MySQL and MariaDB do both in one scan, in source order
-    (#1101). Every other engine unquotes first, as before.
+    Both steps in one scan, in source order and in the dialect's grammar
+    (``sql_spans.comments_literals_and_identifiers_for``): unquoting first would expose
+    the ``#`` of MySQL's `` `order#items` `` (#1101) or the apostrophe of SQL Server's
+    ``[O'Brien]`` (#1416) to the strip that follows.
     """
-    if literals_and_comments_for(source_engine) is not MYSQL_LITERALS_AND_COMMENTS:
-        return strip_comments_and_literals(_unquote_identifiers(text), source_engine)
 
     def read(span: str) -> str:
         if span[0] in '"`[':
             return span[1:-1].replace('""', '"')
         return " "
 
-    return sub_spans(text, MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS, read)
+    return sub_spans(text, comments_literals_and_identifiers_for(source_engine), read)
 
 
 def _qualifier(match: re.Match[str]) -> str:

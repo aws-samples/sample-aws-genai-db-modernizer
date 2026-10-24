@@ -183,7 +183,7 @@ def detect_heterogeneous_features(
     )
     return {
         # shared, #654
-        "sequences": any(has_sequence_reference(scan_sql(t)) for t in query_texts),
+        "sequences": any(has_sequence_reference(scan_sql(t, source_engine)) for t in query_texts),
         "merge_statements": any(f.merge_statement for f in facts),
         "json_usage": json_columns or any(f.json_access for f in facts),
         "multiple_schemas": len(schema_names) > 1,

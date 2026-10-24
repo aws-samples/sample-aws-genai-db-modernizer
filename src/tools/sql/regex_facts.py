@@ -77,6 +77,7 @@ import re
 from bisect import bisect_left
 from dataclasses import dataclass
 
+from src.shared.sql_spans import comments_literals_and_identifiers_for, spans
 from src.tools.sql.refs import ColumnUse
 
 _JOIN_WORD_RE = re.compile(r"\bjoin\b", re.IGNORECASE)
@@ -385,15 +386,15 @@ def regex_windowed_aggregate(query_text: str) -> bool:
     return bool(_WINDOWED_AGGREGATE_RE.search(query_text or ""))
 
 
-def regex_grouping_sets(query_text: str) -> bool:
+def regex_grouping_sets(query_text: str, source_engine: str | None = None) -> bool:
     """``GROUPING SETS (``, ``ROLLUP (`` or ``CUBE (`` after ``GROUP BY``, or ``WITH ROLLUP``
     / ``WITH CUBE``."""
-    return bool(_GROUPING_SETS_RE.search(scan_sql(query_text or "")))
+    return bool(_GROUPING_SETS_RE.search(scan_sql(query_text or "", source_engine)))
 
 
-def regex_recursive_cte(query_text: str) -> bool:
+def regex_recursive_cte(query_text: str, source_engine: str | None = None) -> bool:
     """``WITH RECURSIVE`` or a self-referencing ``UNION`` CTE, on :func:`scan_sql`'s output."""
-    return _has_recursive_cte(scan_sql(query_text or ""))
+    return _has_recursive_cte(scan_sql(query_text or "", source_engine))
 
 
 # ---------------------------------------------------------------------------
@@ -412,122 +413,62 @@ def regex_recursive_cte(query_text: str) -> bool:
 _CTE_NAME_RE = re.compile(r"(?:\bwith\b|,)\s*([#\w]+)\s*(?:\([^)]*\))?\s+as\s*\(", re.IGNORECASE)
 
 
-# The characters :func:`scan_sql` acts on: ``--``, ``/*``, a quote (with an optional
-# ``N`` prefix), ``[`` and ``"``. Everything between two of them passes through.
-_SCAN_SPECIAL_RE = re.compile(r"--|/\*|[Nn]?'|\[|\"")
+# A national string's ``N`` (``N'x'``), read with the string it prefixes. Not part of a
+# name (``IN'x'`` is ``IN`` and a string).
+_NATIONAL_PREFIX_RE = re.compile(r"(?<![\w$])[Nn]'")
 
 
-def scan_sql(text: str) -> str:
+def scan_sql(text: str, source_engine: str | None) -> str:
     """One left-to-right pass over ``text`` neutralizing comments, strings and
     quoted identifiers, so every feature regex below runs against SQL as the engine
     would actually parse it, never raw source text (#381 review round 2).
 
-    Two independent regex passes (strip strings, then strip comments) can each
-    mis-handle what the other produces: a comment containing an apostrophe
-    (``-- don't touch``) made the string-literal pass, if it ran first, swallow
-    everything up to the *next* quote -- which could be an entire real statement
-    later in the query. Scanning once, left to right, in the order these characters
-    are actually encountered removes that ordering bug entirely.
+    The spans are the source dialect's, from the one span grammar
+    (``sql_spans.comments_literals_and_identifiers_for``, #1416): MySQL's ``#``
+    comments and backslash escapes, PostgreSQL's dollar-quoted and ``E'...'``
+    strings, nested block comments in PostgreSQL and SQL Server, SQL Server's
+    ``]]``-escaped brackets. Scanning once, left to right, in the order these
+    characters are met, means a comment holding an apostrophe (``-- don't``) never
+    opens a string and a string never hides a comment marker.
 
-    Each construct below is replaced the way the engine would resolve it, not simply
-    deleted (so a real token on either side is never glued to its neighbour):
+    Each construct is replaced the way the engine resolves it, not simply deleted
+    (so a real token on either side is never glued to its neighbour):
 
-    - ``--`` to end of line: a space (the newline itself is kept, so later-line
-      offsets are not shifted and a line comment never merges two lines).
-    - ``/* ... */``: a space, with nesting support (SQL Server supports nested
-      block comments) -- the whole span up to the matching outer ``*/`` is one
-      comment, so text between an inner ``*/`` and the outer one is never
-      mistaken for live code.
-    - ``'...'`` string literals, with ``''``-doubled escapes and an optional
-      ``N``/``n`` (Unicode) prefix: a space. Content is never a real keyword
-      match, only text a customer or generator happened to write.
-    - ``[ident]`` (T-SQL brackets, ``]]``-escaped) and ``"ident"`` (ANSI/Oracle/
-      PostgreSQL double quotes, ``""``-escaped): the bare identifier, with the
-      quoting removed. These name a column, table or CTE -- not a string -- so a
-      feature regex must still be able to see and match the name inside
-      (``MERGE [dbo].[Target]``, ``WITH "Tree" AS (...)``).
+    - a comment: a space (a line comment's newline is kept);
+    - a string literal (with its ``N`` prefix): a space; its content is never a real
+      keyword match;
+    - ``[ident]`` and ``"ident"``: the bare identifier, unescaped (``]]``, ``""``).
+      These name a column, table or CTE -- not a string -- so a feature regex still
+      sees the name inside (``MERGE [dbo].[Target]``, ``WITH "Tree" AS (...)``); a
+      backtick identifier is kept as written.
 
     Every other character passes through unchanged.
     """
+    grammar = comments_literals_and_identifiers_for(source_engine)
     out: list[str] = []
-    i, n = 0, len(text)
-    while i < n:
-        # Copy the plain run up to the next character that starts a construct.
-        hit = _SCAN_SPECIAL_RE.search(text, i)
-        if hit is None:
-            out.append(text[i:])
-            break
-        if hit.start() > i:
-            out.append(text[i : hit.start()])
-            i = hit.start()
-        c = text[i]
-        if c == "-" and i + 1 < n and text[i + 1] == "-":
-            j = text.find("\n", i)
+    last = 0
+    for start, end, opener in spans(text, grammar):
+        kept = text[last:start]
+        last = end
+        span = text[start:end]
+        if opener in ("--", "/*", "#"):
+            out.append(kept)
             out.append(" ")
-            i = n if j == -1 else j
-            continue
-        if c == "/" and i + 1 < n and text[i + 1] == "*":
-            depth = 1
-            i += 2
-            while i < n and depth > 0:
-                if text[i : i + 2] == "/*":
-                    depth += 1
-                    i += 2
-                elif text[i : i + 2] == "*/":
-                    depth -= 1
-                    i += 2
-                else:
-                    i += 1
+        elif opener == "[":
+            out.append(kept)
+            out.append(span[1:-1].replace("]]", "]"))
+        elif opener == '"':
+            out.append(kept)
+            out.append(span[1:-1].replace('""', '"'))
+        elif opener == "`":
+            out.append(kept)
+            out.append(span)
+        else:
+            if opener == "'" and start and _NATIONAL_PREFIX_RE.match(text, start - 1):
+                kept = kept[:-1]  # the N is plain text just before the quote
+            out.append(kept)
             out.append(" ")
-            continue
-        if c == "'" or (c in "Nn" and i + 1 < n and text[i + 1] == "'"):
-            if c in "Nn":
-                i += 1
-            i += 1  # opening quote
-            while i < n:
-                if text[i] == "'" and i + 1 < n and text[i + 1] == "'":
-                    i += 2
-                    continue
-                if text[i] == "'":
-                    i += 1
-                    break
-                i += 1
-            out.append(" ")
-            continue
-        if c == "[":
-            j = i + 1
-            body: list[str] = []
-            while j < n:
-                if text[j] == "]" and j + 1 < n and text[j + 1] == "]":
-                    body.append("]")
-                    j += 2
-                    continue
-                if text[j] == "]":
-                    j += 1
-                    break
-                body.append(text[j])
-                j += 1
-            out.append("".join(body))
-            i = j
-            continue
-        if c == '"':
-            j = i + 1
-            body = []
-            while j < n:
-                if text[j] == '"' and j + 1 < n and text[j + 1] == '"':
-                    body.append('"')
-                    j += 2
-                    continue
-                if text[j] == '"':
-                    j += 1
-                    break
-                body.append(text[j])
-                j += 1
-            out.append("".join(body))
-            i = j
-            continue
-        out.append(c)
-        i += 1
+    out.append(text[last:])
     return "".join(out)
 
 
@@ -734,10 +675,10 @@ _NOT_AN_ALIAS = frozenset(
 )
 
 
-def regex_write_targets(query_text: str) -> tuple[str, ...]:
+def regex_write_targets(query_text: str, source_engine: str | None = None) -> tuple[str, ...]:
     """The tables a statement writes, by the keyword before each table name (the
     fallback of ``SqlFacts.write_targets``)."""
-    text = scan_sql(query_text or "")
+    text = scan_sql(query_text or "", source_engine)
     aliases: dict[str, str] = {}
     for m in _ALIASED_TABLE_RE.finditer(text):
         alias = _bare(m.group("alias"))
@@ -764,10 +705,10 @@ _OUTPUT_INTO_RE = re.compile(
 )
 
 
-def output_into_targets(query_text: str) -> tuple[str, ...]:
+def output_into_targets(query_text: str, source_engine: str | None = None) -> tuple[str, ...]:
     """The tables a SQL Server ``OUTPUT ... INTO <table>`` clause writes (a temp table
     ``#t`` or a table variable ``@t`` is no collected table and is left out)."""
-    text = scan_sql(query_text or "")
+    text = scan_sql(query_text or "", source_engine)
     out = [
         _bare(m.group("table"))
         for m in _OUTPUT_INTO_RE.finditer(text)

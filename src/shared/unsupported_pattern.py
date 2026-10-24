@@ -122,7 +122,7 @@ def unsupported_pattern_mitigation(u: dict[str, Any]) -> str | None:
 # GROUP BY, HAVING, function call, OVER, or ROLLUP/CUBE/GROUPING SETS that
 # only appears inside one of them (dead SQL, or incidental text in a quoted
 # value) never changes the verdict either way. One left-to-right scan
-# (``sql_spans.LITERALS_AND_COMMENTS``, linear time, #886), so an opening
+# (``sql_spans.literals_and_comments_for``, linear time, #886), so an opening
 # ``'``/``"``/``--``/``/*`` is never misinterpreted while a different kind of
 # literal is still open.
 
@@ -313,9 +313,11 @@ def strip_comments_and_literals(query_sql: str | None, source_engine: str | None
     operator or function call that only appears inside a literal or comment
     never counts as part of the query.
 
-    ``source_engine`` picks the dialect's extra forms (#1101): MySQL and MariaDB ``#``
-    line comments, PostgreSQL ``$$...$$`` and ``$tag$...$tag$`` strings. None known
-    reads only the forms every dialect shares.
+    ``source_engine`` picks the dialect's own forms (``sql_spans``, #1101, #1416): MySQL
+    and MariaDB ``#`` line comments, backslash escapes and backtick names, PostgreSQL
+    ``$$...$$``/``$tag$...$tag$`` and ``E'...'`` strings, SQL Server ``[...]`` names,
+    nested block comments in PostgreSQL and SQL Server. None known reads only the forms
+    the old regexes read.
     """
     return sub_spans(query_sql or "", literals_and_comments_for(source_engine), lambda _span: " ")
 

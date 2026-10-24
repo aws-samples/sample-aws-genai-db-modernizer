@@ -113,6 +113,20 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         "MySQL's backslash-escaped quote: the string runs past it",
     ),
     SqlEntry(
+        "backslash_ends_no_string",
+        "SELECT id FROM t WHERE path = 'C:\\' AND c IS NULL AND note = 'x'",
+        "SELECT id FROM t WHERE path = 'C:x' AND c IS NULL AND note = 'x'",
+        ("postgresql", "sqlserver", "oracle"),
+        "a backslash is an ordinary character outside MySQL: the string ends at its quote",
+    ),
+    SqlEntry(
+        "escape_string_backslash_quote",
+        "SELECT id FROM t WHERE note = E'a\\' JOIN u ON 1=1 GROUP BY x' AND id = 1",
+        "SELECT id FROM t WHERE note = E'x' AND id = 1",
+        ("postgresql",),
+        "PostgreSQL's E'...' string, the one there that reads a backslash as an escape",
+    ),
+    SqlEntry(
         "line_comment",
         f"SELECT id FROM t -- {_IN_COMMENT}\nWHERE id = 1",
         "SELECT id FROM t\nWHERE id = 1",
@@ -177,6 +191,22 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         "a dollar-quoted string holding another tag, which does not end it",
     ),
     SqlEntry(
+        "do_block_body",
+        "DO $$ BEGIN CALL refresh_stats(); END $$",
+        "DO $body$ BEGIN CALL refresh_stats(); END $body$",
+        ("postgresql",),
+        "a DO block's dollar-quoted body is code the engine runs, not a string",
+    ),
+    SqlEntry(
+        "function_body",
+        "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 WHERE a IN (SELECT b FROM u) $$ "
+        "LANGUAGE sql",
+        "CREATE FUNCTION f() RETURNS int AS $fn$ SELECT 1 WHERE a IN (SELECT b FROM u) $fn$ "
+        "LANGUAGE sql",
+        ("postgresql",),
+        "a routine's AS $$ ... $$ body is code the engine runs, not a string",
+    ),
+    SqlEntry(
         "backtick_identifiers",
         "SELECT `order`, `group by`, `count`, `join` FROM t WHERE `limit` = 1",
         "SELECT c1, c2, c3, c4 FROM t WHERE c5 = 1",
@@ -189,6 +219,13 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         "SELECT c1, c2, c3, c4 FROM t WHERE c5 = 1",
         ("sqlserver",),
         "keywords as bracket-quoted SQL Server identifiers",
+    ),
+    SqlEntry(
+        "bracket_identifier_with_apostrophe",
+        "SELECT [O'Brien]] Notes] FROM t WHERE status = 'x' AND c IS NULL AND note = 'y'",
+        "SELECT c1 FROM t WHERE status = 'x' AND c IS NULL AND note = 'y'",
+        ("sqlserver",),
+        "an apostrophe (and a ]] escape) inside a bracketed SQL Server name opens no string",
     ),
     SqlEntry(
         "double_quoted_identifiers",

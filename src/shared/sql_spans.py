@@ -7,17 +7,45 @@ once per opener: quadratic. :func:`spans` walks the text once, left to right,
 and answers exactly what those alternations did: the span that opens first
 wins, and an opener with no closer is plain text. Once one kind of opener has
 no closer left, every later opener of that kind is skipped without a search
-(a closer after a later opener would also be a closer after the earlier one),
-so each character is looked at a bounded number of times.
+(a closer after a later opener would also be a closer after the earlier one;
+for a nested block comment the text is one the engine rejects, and reading the
+rest as code keeps the scan linear, as ``sql_comments`` does), so each
+character is looked at a bounded number of times.
 
-Two grammars are provided, one per old regex:
+This is the one span grammar: every pass that blanks comments, string literals
+or quoted identifiers reads its spans from here, in the source dialect's own
+forms (#1416):
 
-- :data:`LITERALS_AND_COMMENTS`: ``/* */``, ``--``, ``'...'`` and ``"..."``,
-  both with doubled-quote and backslash escapes (``unsupported_pattern``'s
-  former ``_STRIP_RE``);
-- :data:`QUOTED_IDENTIFIERS`: ``"..."`` (doubled-quote escape only),
-  `` `...` `` and ``[...]``, with no comment or literal awareness
-  (``query_shape``'s former ``_QUOTED_IDENT_RE``).
+======================  =====  ======  ==========  ======  ======  =========
+dialect                 ``#``  nested  ``\\`` esc   ``$$``  ``[]``  `` ` ``
+======================  =====  ======  ==========  ======  ======  =========
+MySQL, MariaDB          yes    no      yes         no      no      yes
+PostgreSQL              no     yes     ``E'..'``   yes     no      no
+SQL Server              no     yes     no          no      yes     no
+Oracle                  no     no      no          no      no      no
+none known              no     no      yes         no      no      no
+======================  =====  ======  ==========  ======  ======  =========
+
+A doubled quote escapes a quote in every dialect (``''`` and ``""``, a doubled
+backtick in MySQL, ``]]`` in SQL Server). MySQL reads ``"..."`` as a string,
+every other dialect as an identifier. With no dialect known the grammar is the
+common one the old regexes read, unchanged (``test_sql_spans.py`` pins it). An
+unterminated nested block comment is plain text, as ``sql_comments`` reads it.
+
+Two grammars per dialect:
+
+- :func:`literals_and_comments_for`: the dialect's comments, strings and its own
+  quoted identifiers (MySQL backticks, SQL Server brackets);
+- :func:`comments_literals_and_identifiers_for`: the same with ``"..."``,
+  `` `...` `` and ``[...]`` identifiers in every dialect, one scan that strips
+  comments and literals and unquotes identifiers in source order
+  (``query_shape``'s normalized text, #871).
+
+:data:`QUOTED_IDENTIFIERS` reads ``"..."``, `` `...` `` and ``[...]`` alone, with no
+comment or literal awareness (``query_shape``'s former ``_QUOTED_IDENT_RE``).
+
+:func:`code_text` is the text as the engine runs it; a PostgreSQL ``DO`` block or
+``AS $$ ... $$`` routine body is code there, not a string (:func:`opens_routine_body`).
 """
 
 from __future__ import annotations
@@ -25,8 +53,10 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from functools import lru_cache
+from dataclasses import dataclass, field
+from functools import cache, lru_cache, partial
+
+from src.shared.sql_comments import block_comment_end, block_comments_nest
 
 __all__ = [
     "COMMENTS_LITERALS_AND_IDENTIFIERS",
@@ -36,18 +66,21 @@ __all__ = [
     "POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS",
     "POSTGRES_LITERALS_AND_COMMENTS",
     "QUOTED_IDENTIFIERS",
+    "ROUTINE_BODY_OPENER_RE",
     "Grammar",
     "code_text",
     "comments_literals_and_identifiers_for",
     "literals_and_comments_for",
+    "opens_routine_body",
     "quoted_span_end",
+    "span_dialect",
     "spans",
     "sub_spans",
 ]
 
 _STOPS = {
-    (quote, backslash): re.compile(f"[{quote}\\\\]" if backslash else quote)
-    for quote in ("'", '"')
+    (quote, backslash): re.compile(f"[{re.escape(quote)}\\\\]" if backslash else re.escape(quote))
+    for quote in ("'", '"', "]")
     for backslash in (True, False)
 }
 
@@ -55,12 +88,12 @@ _STOPS = {
 def quoted_span_end(text: str, start: int, quote: str, backslash: bool) -> int:
     """End (exclusive) of the ``quote``-quoted span opening at ``start``, or -1.
 
-    A doubled quote is an escaped quote, and with ``backslash`` so is ``\\``
-    followed by any character (newline included). Same answer as the regex
-    ``'(?:[^'\\]|\\.|'')*'`` (without the backslash parts when ``backslash`` is
-    false): when the text ends inside the span, the span closes at the first
-    quote of its last doubled pair, as the regex does when it backtracks; with
-    no pair it is unterminated.
+    ``quote`` is the closing character (``]`` for a ``[`` span). A doubled quote is
+    an escaped quote, and with ``backslash`` so is ``\\`` followed by any character
+    (newline included). Same answer as the regex ``'(?:[^'\\]|\\.|'')*'`` (without
+    the backslash parts when ``backslash`` is false): when the text ends inside the
+    span, the span closes at the first quote of its last doubled pair, as the regex
+    does when it backtracks; with no pair it is unterminated.
     """
     stops = _STOPS[quote, backslash]
     k = start + 1
@@ -83,38 +116,12 @@ def quoted_span_end(text: str, start: int, quote: str, backslash: bool) -> int:
 
 @dataclass(frozen=True)
 class Grammar:
-    """The openers a scan looks for, and how each one's span ends."""
+    """The openers a scan looks for, how each one's span ends, and which openers
+    start a quoted identifier rather than a string (``code_text`` keeps those)."""
 
     opener: re.Pattern[str]
     end: Callable[[str, int, str], int]
-
-
-def _end_literals_and_comments(text: str, start: int, opener: str) -> int:
-    if opener == "--":
-        newline = text.find("\n", start)
-        return len(text) if newline < 0 else newline
-    if opener == "/*":
-        found = text.find("*/", start + 2)
-        return found + 2 if found >= 0 else -1
-    return quoted_span_end(text, start, opener, backslash=True)
-
-
-def _end_quoted_identifiers(text: str, start: int, opener: str) -> int:
-    if opener == "[":
-        found = text.find("]", start + 1)
-        return found + 1 if found >= 0 else -1
-    if opener == "`":
-        found = text.find("`", start + 1)
-        return found + 1 if found >= 0 else -1
-    return quoted_span_end(text, start, opener, backslash=False)
-
-
-def _end_comments_literals_and_identifiers(text: str, start: int, opener: str) -> int:
-    if opener in ("--", "/*"):
-        return _end_literals_and_comments(text, start, opener)
-    if opener in ("`", "["):
-        return _end_quoted_identifiers(text, start, opener)
-    return quoted_span_end(text, start, opener, backslash=opener == "'")
+    identifiers: frozenset[str] = field(default=frozenset())
 
 
 # A PostgreSQL dollar-quoted string opens with ``$$`` or ``$tag$`` (a tag cannot start with
@@ -122,6 +129,9 @@ def _end_comments_literals_and_identifiers(text: str, start: int, opener: str) -
 # inside an identifier (``a$b$``), which PostgreSQL reads as one name.
 _DOLLAR_OPENER = r"(?<![\w$])\$(?:[^\W\d]\w*)?\$"
 _DOLLAR_TOKEN_RE = re.compile(r"(?=(\$(?:[^\W\d]\w*)?\$))")
+# PostgreSQL's escape string, ``E'...'``: the one string there that reads ``\`` as an
+# escape. The ``E`` stands alone (``note'x'`` is a name and a string).
+_ESCAPE_STRING_OPENER = r"(?<![\w$])[Ee]'"
 
 
 @lru_cache(maxsize=2)
@@ -140,84 +150,116 @@ def _dollar_end(text: str, start: int, opener: str) -> int:
     return positions[at] + len(opener) if at < len(positions) else -1
 
 
-def _end_with_hash(text: str, start: int, opener: str) -> int:
-    if opener == "#":
-        newline = text.find("\n", start)
-        return len(text) if newline < 0 else newline
+# The source engine names each dialect is known by (``metadata.source_database.engine``,
+# and the sqlglot dialect names ``facade`` passes).
+_DIALECTS = {
+    "mysql": "mysql",
+    "mariadb": "mysql",
+    "postgresql": "postgresql",
+    "postgres": "postgresql",
+    "sqlserver": "sqlserver",
+    "mssql": "sqlserver",
+    "tsql": "sqlserver",
+    "oracle": "oracle",
+}
+
+
+def span_dialect(source_engine: str | None) -> str:
+    """The span dialect of a source engine: ``"mysql"`` (MySQL, MariaDB),
+    ``"postgresql"``, ``"sqlserver"``, ``"oracle"``, or ``""`` when none is known."""
+    return _DIALECTS.get((source_engine or "").strip().lower(), "")
+
+
+def _line_end(text: str, start: int) -> int:
+    newline = text.find("\n", start)
+    return len(text) if newline < 0 else newline
+
+
+def _span_end(dialect: str, identifiers: bool, text: str, start: int, opener: str) -> int:
+    """Where the span ``opener`` opens at ``start`` ends, read the ``dialect``'s way."""
+    if opener in ("--", "#"):
+        return _line_end(text, start)
+    if opener == "/*":
+        return block_comment_end(text, start, block_comments_nest(dialect))
+    if opener[0] == "$":
+        return _dollar_end(text, start, opener)
+    if opener == "[":
+        if dialect == "sqlserver":
+            return quoted_span_end(text, start, "]", backslash=False)
+        found = text.find("]", start + 1)
+        return found + 1 if found >= 0 else -1
     if opener == "`":
-        return _end_quoted_identifiers(text, start, opener)
-    return _end_literals_and_comments(text, start, opener)
+        # A doubled backtick closes one span and opens the next: the same spans.
+        found = text.find("`", start + 1)
+        return found + 1 if found >= 0 else -1
+    if opener in ("E'", "e'"):
+        return quoted_span_end(text, start + 1, "'", backslash=True)
+    backslash = dialect in ("mysql", "")
+    if opener == '"' and identifiers:
+        backslash = False
+    return quoted_span_end(text, start, opener, backslash)
 
 
-def _end_mysql_comments_literals_and_identifiers(text: str, start: int, opener: str) -> int:
-    if opener == "#":
-        return _end_with_hash(text, start, opener)
-    return _end_comments_literals_and_identifiers(text, start, opener)
-
-
-def _end_with_dollar(text: str, start: int, opener: str) -> int:
-    if opener.startswith("$"):
-        return _dollar_end(text, start, opener)
-    return _end_literals_and_comments(text, start, opener)
-
-
-def _end_postgres_comments_literals_and_identifiers(text: str, start: int, opener: str) -> int:
-    if opener.startswith("$"):
-        return _dollar_end(text, start, opener)
-    return _end_comments_literals_and_identifiers(text, start, opener)
-
-
-LITERALS_AND_COMMENTS = Grammar(re.compile(r"/\*|--|['\"]"), _end_literals_and_comments)
-# MySQL and MariaDB also end a line at ``#``; PostgreSQL reads ``#`` as an operator, so
-# only this grammar blanks it (#1101).
-# A backtick-quoted identifier is a span too, so a ``#`` inside one (`` `order#items` ``)
-# is not a comment.
-MYSQL_LITERALS_AND_COMMENTS = Grammar(re.compile(r"/\*|--|#|['\"`]"), _end_with_hash)
-# The same with ``"..."`` and ``[...]`` identifiers: one scan that strips comments and
-# literals and unquotes identifiers in source order (the transaction shape, #1101).
-MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
-    re.compile(r"/\*|--|#|['\"`\[]"), _end_mysql_comments_literals_and_identifiers
-)
-# PostgreSQL also quotes strings with ``$$...$$`` and ``$tag$...$tag$`` (#1101).
-POSTGRES_LITERALS_AND_COMMENTS = Grammar(
-    re.compile(rf"/\*|--|['\"]|{_DOLLAR_OPENER}"), _end_with_dollar
-)
-# The same with PostgreSQL's dollar-quoted strings (#1114).
-POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
-    re.compile(rf"/\*|--|['\"`\[]|{_DOLLAR_OPENER}"),
-    _end_postgres_comments_literals_and_identifiers,
-)
-QUOTED_IDENTIFIERS = Grammar(re.compile(r"[\"`\[]"), _end_quoted_identifiers)
-# All of them in one scan, the span that opens first winning: ``/* */`` and ``--``
-# comments, ``'...'`` literals with backslash escapes, ``"..."`` identifiers without
-# (``query_shape._normalized_sql``, #871).
-COMMENTS_LITERALS_AND_IDENTIFIERS = Grammar(
-    re.compile(r"/\*|--|['\"`\[]"), _end_comments_literals_and_identifiers
-)
+@cache
+def _grammar(dialect: str, identifiers: bool) -> Grammar:
+    """The span grammar of a span ``dialect``; with ``identifiers``, ``"..."``,
+    `` `...` `` and ``[...]`` identifiers in every dialect too."""
+    parts = [r"/\*", "--"]
+    if dialect == "mysql":
+        parts.append("#")
+    if dialect == "postgresql":
+        parts.append(_ESCAPE_STRING_OPENER)
+    quotes = "'\""
+    if identifiers or dialect == "mysql":
+        quotes += "`"
+    if identifiers or dialect == "sqlserver":
+        quotes += r"\["
+    parts.append(f"[{quotes}]")
+    if dialect == "postgresql":
+        parts.append(_DOLLAR_OPENER)
+    named = {"`", "["}
+    if identifiers or dialect != "mysql":
+        named.add('"')
+    return Grammar(
+        re.compile("|".join(parts)),
+        partial(_span_end, dialect, identifiers),
+        frozenset(named),
+    )
 
 
 def literals_and_comments_for(source_engine: str | None) -> Grammar:
-    """The comment and literal grammar of a source engine (``metadata.source_database.engine``):
-    MySQL's and MariaDB's add ``#`` comments, PostgreSQL's adds dollar quoting, every other
-    engine (or none known) keeps the common one."""
-    engine = (source_engine or "").strip().lower()
-    if engine in ("mysql", "mariadb"):
-        return MYSQL_LITERALS_AND_COMMENTS
-    if engine in ("postgresql", "postgres"):
-        return POSTGRES_LITERALS_AND_COMMENTS
-    return LITERALS_AND_COMMENTS
+    """The comment and literal grammar of a source engine (``metadata.source_database.engine``),
+    with its own quoted identifiers (MySQL backticks, SQL Server brackets); see the module
+    docstring for each dialect's forms. None known reads the forms the old regexes read."""
+    return _grammar(span_dialect(source_engine), False)
 
 
 def comments_literals_and_identifiers_for(source_engine: str | None) -> Grammar:
-    """The one-scan comment, literal and quoted-identifier grammar of a source engine,
-    chosen as :func:`literals_and_comments_for` chooses (``#`` for MySQL and MariaDB,
-    dollar quoting for PostgreSQL)."""
-    base = literals_and_comments_for(source_engine)
-    if base is MYSQL_LITERALS_AND_COMMENTS:
-        return MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS
-    if base is POSTGRES_LITERALS_AND_COMMENTS:
-        return POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS
-    return COMMENTS_LITERALS_AND_IDENTIFIERS
+    """The one-scan comment, literal and quoted-identifier grammar of a source engine:
+    :func:`literals_and_comments_for`'s, with ``"..."``, `` `...` `` and ``[...]``
+    identifiers whatever the dialect."""
+    return _grammar(span_dialect(source_engine), True)
+
+
+LITERALS_AND_COMMENTS = literals_and_comments_for(None)
+MYSQL_LITERALS_AND_COMMENTS = literals_and_comments_for("mysql")
+POSTGRES_LITERALS_AND_COMMENTS = literals_and_comments_for("postgresql")
+COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for(None)
+MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for("mysql")
+POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS = comments_literals_and_identifiers_for("postgresql")
+
+
+def _end_quoted_identifiers(text: str, start: int, opener: str) -> int:
+    if opener == '"':
+        return quoted_span_end(text, start, opener, backslash=False)
+    closer = "]" if opener == "[" else "`"
+    found = text.find(closer, start + 1)
+    return found + 1 if found >= 0 else -1
+
+
+QUOTED_IDENTIFIERS = Grammar(
+    re.compile(r"[\"`\[]"), _end_quoted_identifiers, frozenset({'"', "`", "["})
+)
 
 
 def spans(text: str, grammar: Grammar) -> Iterator[tuple[int, int, str]]:
@@ -250,25 +292,55 @@ def sub_spans(text: str, grammar: Grammar, repl: Callable[[str], str]) -> str:
     return "".join(out)
 
 
+# A PostgreSQL ``DO $$ ... $$`` block (with an optional ``LANGUAGE x``), or the ``AS $$ ... $$``
+# body of a ``CREATE FUNCTION`` / ``CREATE PROCEDURE``, is code that runs, not a string
+# literal (#1144, #1416). Matched on the code before the dollar quote.
+ROUTINE_BODY_OPENER_RE = re.compile(r"\b(?:do|as)\s+(?:language\s+\w+\s+)?$", re.IGNORECASE)
+
+
+def opens_routine_body(code_before: str) -> bool:
+    """Whether a dollar-quoted string after ``code_before`` (the code just before it,
+    comments and strings already blanked) is a ``DO`` block or an ``AS`` routine body."""
+    return bool(ROUTINE_BODY_OPENER_RE.search(code_before))
+
+
 def code_text(text: str, source_engine: str | None) -> str:
     """``text`` as the source engine runs it (#1415): each comment a space, each string
     literal a ``?`` placeholder, each quoted identifier as written.
 
     The spans are the dialect's (:func:`literals_and_comments_for`): MySQL's and MariaDB's
-    ``#`` comments and ``"..."`` strings, PostgreSQL's dollar-quoted strings. A literal keeps
-    its place as a value (``status = 'x'`` reads ``status = ?``), so a fact that needs one
-    after an operator still sees it, and a keyword inside it is never SQL. ``"..."`` names
-    an identifier in every other dialect, and a backtick span always does, so the name is
-    kept (``"latitude"``, `` `session_id` ``).
+    ``#`` comments and ``"..."`` strings, PostgreSQL's dollar-quoted and ``E'...'``
+    strings, SQL Server's ``[...]`` names, nested block comments in PostgreSQL and SQL
+    Server. A literal keeps its place as a value (``status = 'x'`` reads ``status = ?``),
+    so a fact that needs one after an operator still sees it, and a keyword inside it is
+    never SQL. ``"..."`` names an identifier in every other dialect, and a backtick or
+    bracket span always does, so the name is kept (``"latitude"``, `` `session_id` ``).
+
+    A PostgreSQL ``DO`` block or ``AS $$ ... $$`` routine body is SQL the engine runs, so
+    it is read as code, the same way, between two spaces (#1416): a ``CALL`` or an
+    ``IN (SELECT`` in it is one. Every other dollar-quoted string is a literal, and a
+    string inside a body is still a string (``RAISE NOTICE 'call x()'`` calls nothing).
     """
+    text = text or ""
     grammar = literals_and_comments_for(source_engine)
-    double_quote_is_string = grammar is MYSQL_LITERALS_AND_COMMENTS
-
-    def _replace(span: str) -> str:
-        if span.startswith(("--", "/*", "#")):
-            return " "
-        if span.startswith("`") or (span.startswith('"') and not double_quote_is_string):
-            return span
-        return "?"
-
-    return sub_spans(text or "", grammar, _replace)
+    out: list[str] = []
+    last = 0
+    for start, end, opener in spans(text, grammar):
+        out.append(text[last:start])
+        last = end
+        if opener in ("--", "/*", "#"):
+            out.append(" ")
+        elif opener in grammar.identifiers:
+            out.append(text[start:end])
+        elif (
+            opener[0] == "$"
+            and end - start >= 2 * len(opener)
+            # The few pieces before the quote: the code it follows, a comment or two.
+            and opens_routine_body("".join(out[-4:]))
+        ):
+            body = text[start + len(opener) : end - len(opener)]
+            out.append(f" {code_text(body, source_engine)} ")
+        else:
+            out.append("?")
+    out.append(text[last:])
+    return "".join(out)

@@ -440,7 +440,6 @@ class SqlTokens:
 
 
 _TOKEN_RE = re.compile(r"@@?[A-Za-z_][\w$#@]*|#{1,2}[A-Za-z_][\w$#@]*|[A-Za-z_][\w$#]*|\d+|\S")
-_TSQL_BRACKET_RE = re.compile(r"\[[^\]\n]*\]")
 _BACKTICK_CALL_RE = re.compile(r"`([A-Za-z_][\w$]*)`(?=\s*\()")
 _DOUBLE_QUOTE_CALL_RE = re.compile(r'"([A-Za-z_][\w$]*)"(?=\s*\()')
 
@@ -464,12 +463,10 @@ def sql_tokens(sql: str, source_engine: str) -> SqlTokens:
     """
     text = sql or ""
     engine = (source_engine or "").strip().lower()
-    mask = quoted_mask(text, engine)
+    # A SQL Server ``[name]`` is quoted in the same scan, so an apostrophe inside one
+    # (``[O'Brien]``) opens no string (#1416).
+    mask = quoted_mask(text, engine, brackets=engine == "sqlserver")
     chars = [" " if hidden else ch for ch, hidden in zip(text, mask, strict=True)]
-    if engine == "sqlserver":
-        for m in _TSQL_BRACKET_RE.finditer(text):
-            if not any(mask[m.start() : m.end()]):
-                chars[m.start() : m.end()] = " " * (m.end() - m.start())
     # A quoted name directly followed by "(" is still a call: a MySQL digest writes a
     # native function such as FOUND_ROWS as `FOUND_ROWS` ( ).
     for m in _quoted_call_re(engine).finditer(text):
@@ -840,7 +837,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         fallback_reason=reason,
         dialect=dialect,
         group_by=regex_group_by(sql),
-        grouping_sets=regex_grouping_sets(sql),
+        grouping_sets=regex_grouping_sets(sql, dialect),
         aggregate_function_count=regex_aggregate_function_count(sql),
         like_parameter=regex_like_parameter(sql),
         fulltext_search=regex_fulltext_search(sql),
@@ -850,7 +847,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         ranking_window_function=regex_ranking_window_function(sql),
         offset_window_function=regex_offset_window_function(sql),
         windowed_aggregate=regex_windowed_aggregate(sql),
-        recursive_cte=regex_recursive_cte(sql),
+        recursive_cte=regex_recursive_cte(sql, dialect),
         order_by=regex_order_by(sql),
         row_limit=regex_row_limit(sql),
         top_n=regex_top_n(sql),
@@ -860,7 +857,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         ),
         json_access=regex_json_access(sql),
         multi_table_write=regex_multi_table_write(sql),
-        write_targets=regex_write_targets(sql),
+        write_targets=regex_write_targets(sql, dialect),
     )
 
 

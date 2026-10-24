@@ -67,7 +67,8 @@ from src.shared.sql_spans import (
     POSTGRES_LITERALS_AND_COMMENTS,
     code_text,
     comments_literals_and_identifiers_for,
-    literals_and_comments_for,
+    opens_routine_body,
+    span_dialect,
     spans,
     sub_spans,
 )
@@ -486,7 +487,7 @@ def _is_session_key_name(name: str) -> bool:
     )
 
 
-def _has_session_key(text: str) -> bool:
+def _has_session_key(text: str, source_engine: str | None) -> bool:
     """Whether ``text`` is a session/token statement (``session_store``, #663).
 
     Either ``_SESSION_RE`` matches a whole word (``session``, ``token``,
@@ -506,7 +507,7 @@ def _has_session_key(text: str) -> bool:
         return True
     # Literals blanked (``purpose = 'reset_token'`` names no column); a bracketed or
     # double-quoted identifier keeps its name (``scan_sql``).
-    where = _WHERE_CLAUSE_RE.search(scan_sql(text))
+    where = _WHERE_CLAUSE_RE.search(scan_sql(text, source_engine))
     if where is None:
         return False
     return any(_is_session_key_name(name) for name in _IDENTIFIER_RE.findall(where.group(1)))
@@ -654,8 +655,8 @@ def _strip_leading_comments(text: str, nested: bool = False) -> str:
 
 
 # A PostgreSQL ``DO $$ ... $$`` block, or the ``AS $$ ... $$`` body of a ``CREATE FUNCTION`` /
-# ``CREATE PROCEDURE``, is code that runs, not a string literal (#1144).
-_CODE_OPENER_RE = re.compile(r"\b(?:do|as)\s+(?:language\s+\w+\s+)?$", re.IGNORECASE)
+# ``CREATE PROCEDURE``, is code that runs, not a string literal (#1144): the one opener
+# check is ``sql_spans.opens_routine_body``, which ``code_text`` reads too (#1416).
 _TAIL = 80
 # Inside a body ``CALL``, ``TRUNCATE`` and ``COPY`` are statements wherever they stand, not
 # only at the start of the text, so a body reads them as the DML they are.
@@ -685,10 +686,11 @@ def _postgres_code_reading(text: str, in_body: bool = False) -> str:
         span = text[start:end]
         piece = " "
         if opener.startswith("$") and len(span) >= 2 * len(opener):
-            if in_body or _CODE_OPENER_RE.search(tail):
+            if in_body or opens_routine_body(tail):
                 piece = f" {_postgres_code_reading(span[len(opener) : -len(opener)], True)} "
-        elif opener == "'" and in_body and len(span) >= 2:
-            piece = f" {_postgres_code_reading(span[1:-1].replace(chr(39) * 2, chr(39)), True)} "
+        elif opener in ("'", "E'", "e'") and in_body and len(span) >= len(opener) + 1:
+            body = span[len(opener) : -1].replace(chr(39) * 2, chr(39))
+            piece = f" {_postgres_code_reading(body, True)} "
         out.append(piece)
         tail = (tail + piece)[-_TAIL:]
         last = end
@@ -986,7 +988,9 @@ class QueryFacts:
         targets = self._parsed.write_targets
         if self._source_engine == "sqlserver":
             # ``OUTPUT ... INTO <table>`` writes that table too (#1287).
-            targets = tuple(dict.fromkeys((*targets, *output_into_targets(self._text))))
+            targets = tuple(
+                dict.fromkeys((*targets, *output_into_targets(self._text, self._source_engine)))
+            )
         return targets
 
     @cached_property
@@ -1074,7 +1078,7 @@ class QueryFacts:
         """``GROUP_CONCAT(``, ``STRING_AGG(`` or ``LISTAGG(`` outside comments and
         string literals."""
         return self._has("group_concat", "string_agg", "listagg") and bool(
-            _STRING_AGGREGATE_RE.search(scan_sql(self._text))
+            _STRING_AGGREGATE_RE.search(scan_sql(self._text, self._source_engine))
         )
 
     @cached_property
@@ -1160,7 +1164,7 @@ class QueryFacts:
 
     @cached_property
     def _scanned(self) -> str:
-        return scan_sql(self._text)
+        return scan_sql(self._text, self._source_engine)
 
     @cached_property
     def _scanned_lower(self) -> str:
@@ -1207,7 +1211,7 @@ class QueryFacts:
             # The dialect's own comments and strings (MySQL ``#``, PostgreSQL ``$$``)
             # hold no statement: a keyword inside one neither makes a write nor, by
             # opening a string the dialect does not have, hides one (#1144).
-            if literals_and_comments_for(self._source_engine) is POSTGRES_LITERALS_AND_COMMENTS:
+            if span_dialect(self._source_engine) == "postgresql":
                 readings = tuple(_postgres_code_reading(reading) for reading in readings)
             else:
                 readings = tuple(
@@ -1225,7 +1229,7 @@ class QueryFacts:
         ``sess_id``, ``session_id``, ``csrf``), or a two-part PascalCase/camelCase session
         key in the WHERE clause (``[SessionToken]``, ``sessionId``). Reads the original case.
         """
-        return _has_session_key(self._code)
+        return _has_session_key(self._code, self._source_engine)
 
     @property
     def needs_aggregation(self) -> bool:

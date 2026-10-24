@@ -424,11 +424,12 @@ def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
     )
 
 
-def quoted_mask(text: str, dialect: str) -> list[bool]:
+def quoted_mask(text: str, dialect: str, *, brackets: bool = False) -> list[bool]:
     """Per character of ``text``: True inside a string literal, a quoted
     identifier or a comment (the same scan the rules below use), so a caller
-    can rewrite SQL syntax without touching quoted content."""
-    return _scan(text, dialect).mask
+    can rewrite SQL syntax without touching quoted content. ``brackets`` also
+    reads a SQL Server ``[name]`` as quoted (``]]`` escaping a ``]``)."""
+    return _scan(text, dialect, brackets=brackets).mask
 
 
 # ---------------------------------------------------------------------------

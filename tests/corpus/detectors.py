@@ -49,15 +49,6 @@ from tests.unit.tools.sql.test_one_definition_per_fact import SCHEMA_FACTS, _pub
 # Tracked bugs: wrong answers on the corpus, filed and left for their own fix
 # ---------------------------------------------------------------------------
 
-# The blanking passes other detectors read through miss a dialect's own forms:
-# scan_sql takes no dialect (MySQL # comments and backslash escapes, PostgreSQL
-# dollar quotes), and strip_comments_and_literals neither nests PostgreSQL and SQL
-# Server block comments nor blanks SQL Server bracket identifiers.
-BUG_BLANKING_MISSES_DIALECT_FORMS = 1416
-
-# PostgreSQL's dollar-quoted strings, which a blanking pass with no dialect misses.
-_DOLLAR_QUOTES = ("dollar_quoted_string", "nested_dollar_quoted_tags")
-
 
 def _bug(issue: int, *ids: str, dialects: tuple[str, ...] = ALL_DIALECTS) -> dict[str, int]:
     """``{"<id>@<dialect>": issue}`` for each listed entry, in each of its dialects
@@ -168,44 +159,12 @@ _KEEPS_IDENTIFIER_NAMES = {
     "double_quoted_identifiers": _IDENTIFIER_NAMES,
 }
 
-# The text facts read the dialect's blanked text (``sql_spans.code_text``, #1415), whose
-# grammar ends a block comment at its first ``*/``.
-_CODE_TEXT_FACTS = (
-    "found_rows",
-    "exists_or_in_subquery",
-    "in_list",
-    "duplicate_key_upsert",
-    "stored_routine_keyword",
-    "array_operation",
-    "on_conflict_or_returning",
-    "negation_word",
-    "time_function_keyword",
-    "geospatial_keyword",
-    "min_max_call",
-    "status_equals_value",
-    "is_null",
-    "count_star_or_one",
-    "session_key",
-    "search_depth",
-    "needs_aggregation",  # through found_rows
-)
-_FACT_BUGS: dict[str, dict[str, int]] = {
-    name: _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
-    for name in _CODE_TEXT_FACTS
+# A PostgreSQL routine body is code (``sql_spans.code_text``, #1416): the fact in it counts,
+# on the entry and its twin alike (the same body under another dollar tag).
+_FACT_EXPECT: dict[str, dict[str, object]] = {
+    "stored_routine_keyword": {"do_block_body": True, "function_body": True},
+    "exists_or_in_subquery": {"function_body": True},
 }
-# Blank comments and literals, but not a nested block comment or a dialect's own forms.
-for _name in ("upsert", "write_statement_text"):
-    _FACT_BUGS[_name] = _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
-_FACT_BUGS["lateral_join"] = _bug(
-    BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment", dialects=("sqlserver",)
-)
-_FACT_BUGS["string_aggregate_call"] = _bug(
-    BUG_BLANKING_MISSES_DIALECT_FORMS, "mysql_hash_comment", *_DOLLAR_QUOTES
-)
-_NESTED = _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "nested_block_comment")
-# The capability gate reads needs_aggregation and the utility check, so a keyword in a
-# nested block comment's tail makes a point read relational.
-_CAPABILITY_BUGS = _NESTED
 
 
 _FACADE = "src/tools/sql/facade.py"
@@ -218,7 +177,7 @@ _UTILITY = "src/agents/referee/utility_statements.py"
 
 SQL_DETECTORS: tuple[SqlDetector, ...] = (
     *(
-        SqlDetector(f"QueryFacts.{name}", _fact(name), bugs=_FACT_BUGS.get(name, {}))
+        SqlDetector(f"QueryFacts.{name}", _fact(name), expect=_FACT_EXPECT.get(name, {}))
         for name in _public_facts()
     ),
     SqlDetector(f"{_FACADE}:sql_facts", _sql_facts_shape),
@@ -230,14 +189,8 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
     SqlDetector(f"{_FACADE}:sql_tokens", _tokens),
     SqlDetector(
         f"{_REGEX}:scan_sql",
-        lambda text, dialect: _words(regex_facts.scan_sql(text)),
+        lambda text, dialect: _words(regex_facts.scan_sql(text, dialect)),
         expect=_KEEPS_IDENTIFIER_NAMES,
-        bugs=_bug(
-            BUG_BLANKING_MISSES_DIALECT_FORMS,
-            "backslash_escaped_quote",
-            "mysql_hash_comment",
-            *_DOLLAR_QUOTES,
-        ),
     ),
     SqlDetector(
         f"{_UNSUPPORTED}:strip_comments_and_literals",
@@ -246,26 +199,22 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         ),
         # Documented to blank quoted identifiers too.
         expect={entry: () for entry in _KEEPS_IDENTIFIER_NAMES},
-        bugs=_NESTED | _bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "bracket_identifiers"),
     ),
     SqlDetector(
         f"{_UNSUPPORTED}:is_dedup_only_group_by",
         unsupported_pattern.is_dedup_only_group_by,
-        bugs=_bug(BUG_BLANKING_MISSES_DIALECT_FORMS, "bracket_identifiers"),
     ),
     SqlDetector(
         f"{_UNSUPPORTED}:non_scalar_function_names",
         lambda text, dialect: sorted(unsupported_pattern.non_scalar_function_names(text, dialect)),
-        bugs=_NESTED,
     ),
     SqlDetector(
         f"{_SHAPE}:readable_sql",
         lambda text, dialect: _words(query_shape.readable_sql(text, dialect)),
         expect=_KEEPS_IDENTIFIER_NAMES,
-        bugs=_NESTED,
     ),
-    SqlDetector(f"{_SHAPE}:skips_locked_rows", query_shape.skips_locked_rows, bugs=_NESTED),
-    SqlDetector(f"{_SHAPE}:locking_clause", query_shape.locking_clause, bugs=_NESTED),
+    SqlDetector(f"{_SHAPE}:skips_locked_rows", query_shape.skips_locked_rows),
+    SqlDetector(f"{_SHAPE}:locking_clause", query_shape.locking_clause),
     SqlDetector(
         f"{_SHAPE}:primary_key_ordered_limit",
         lambda text, dialect: query_shape.primary_key_ordered_limit(text, ["id"], dialect),
@@ -281,14 +230,12 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: query_shape.single_table_access_shape(
             _query(text, dialect), ["id"], None, SourceScope(engine=dialect)
         ),
-        bugs=_CAPABILITY_BUGS,
     ),
     SqlDetector(
         f"{_SHAPE}:is_single_table_crud",
         lambda text, dialect: query_shape.is_single_table_crud(
             _query(text, dialect), ["id"], None, SourceScope(engine=dialect)
         ),
-        bugs=_CAPABILITY_BUGS,
     ),
     SqlDetector(
         f"{_TRANSACTION}:transaction_shape",
@@ -301,8 +248,6 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: utility_statements.is_utility_statement(
             text, _query(text, dialect)["tables_accessed"], SourceScope(engine=dialect)
         ),
-        # information_schema in a nested block comment's tail.
-        bugs=_NESTED,
     ),
     SqlDetector(
         f"{_UTILITY}:is_sequence_fetch",
