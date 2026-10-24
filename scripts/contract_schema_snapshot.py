@@ -836,6 +836,9 @@ def public_snapshot_at(ref: str, repo: Path = REPO) -> dict[str, Any]:
     if archive.returncode != 0:
         raise RuntimeError(f"cannot read src/ at {ref}: {archive.stderr.decode().strip()}")
     with tempfile.TemporaryDirectory(prefix="public-contract-") as root:
+        # The data filter below rejects absolute paths, ".." and links outside root, and
+        # the archive is this repository's own src/ at ref.
+        # nosemgrep: trailofbits.python.tarfile-extractall-traversal.tarfile-extractall-traversal
         with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
             tar.extractall(root, filter="data")
         done = subprocess.run(  # nosec B603 -- this interpreter and this script, fixed flags
