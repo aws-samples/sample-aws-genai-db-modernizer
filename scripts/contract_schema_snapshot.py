@@ -62,6 +62,15 @@ This module is the harness for that check, the same shape as
   one per case) exercise, so neither can drift from what ``--write``
   actually checks.
 
+The public ``assess()`` contract (``src/assessment/models.py``, #1184) is versioned on its
+own and promised to callers, so it is compared with the shape the last release shipped
+rather than with main: ``build_public_snapshot()`` records ``PUBLIC_CONTRACTS`` with the
+same ``field_summary()``, and ``evaluate_against_released()`` applies the same
+classification against ``tests/contract/assess_released_snapshot.json`` (a breaking
+change needs a MAJOR move of ``CONTRACT_VERSION``; once a release is recorded, an additive
+one needs a MINOR move). The release step records the shipped shape with
+``--write-released <tag>``.
+
 Regenerate the committed snapshot deliberately, review it like the routing
 snapshot (``git diff`` on the file -- it is ``indent=2``, one field change
 per line)::
@@ -79,9 +88,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import io
 import json
 import re
+import subprocess  # nosec B404 -- git and this interpreter, fixed arguments, no shell
 import sys
+import tarfile
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -92,6 +105,15 @@ REPO = Path(__file__).resolve().parent.parent
 CONTRACTS_DIR = REPO / "src" / "contracts"
 SNAPSHOT_PATH = REPO / "tests" / "contract" / "schema_snapshot.json"
 REGENERATE_COMMAND = "uv run python scripts/contract_schema_snapshot.py --write"
+RELEASED_SNAPSHOT_PATH = REPO / "tests" / "contract" / "assess_released_snapshot.json"
+WRITE_RELEASED_COMMAND = "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
+
+#: The public contract's models (key -> ``module:Class``), compared with the shape the
+#: last release shipped (``evaluate_against_released``), not with main.
+PUBLIC_CONTRACTS: dict[str, str] = {
+    "assessment.AssessmentRequest": "src.assessment.models:AssessmentRequest",
+    "assessment.AssessmentResult": "src.assessment.models:AssessmentResult",
+}
 
 # Keys pydantic puts in generated JSON Schema that describe documentation or
 # are known to vary cosmetically between pydantic versions, never the shape
@@ -690,6 +712,213 @@ def evaluate_against_base(
     return problems
 
 
+def public_contract_models(root: Path | None = None) -> list[tuple[str, type[BaseModel]]]:
+    """``(key, model)`` for every ``PUBLIC_CONTRACTS`` entry, in key order.
+
+    ``root`` (a source tree other than this one, such as a release tag's) is put first
+    on ``sys.path``, and every model must come from it; only ``--print-public`` in a
+    fresh process passes it, since ``src`` is imported once per process."""
+    base = REPO if root is None else root.resolve()
+    if root is not None:
+        sys.path.insert(0, str(base))
+    elif str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    found: list[tuple[str, type[BaseModel]]] = []
+    for key in sorted(PUBLIC_CONTRACTS):
+        module_name, _, class_name = PUBLIC_CONTRACTS[key].partition(":")
+        # module_name comes from the PUBLIC_CONTRACTS constant above, not input.
+        # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
+        module = importlib.import_module(module_name)
+        if root is not None and not Path(module.__file__ or "").resolve().is_relative_to(base):
+            raise RuntimeError(f"{module_name} was imported from {module.__file__}, not {base}")
+        found.append((key, getattr(module, class_name)))
+    return found
+
+
+def build_public_snapshot(
+    models: Mapping[str, type[BaseModel]] | None = None,
+) -> dict[str, Any]:
+    """``{key: {"version", "schema_hash", "fields"}}`` for the public contract (or the
+    given models): the same entry ``build_snapshot()`` writes for an internal contract."""
+    chosen = dict(public_contract_models()) if models is None else dict(models)
+    snapshot: dict[str, Any] = {}
+    for key in sorted(chosen):
+        model = chosen[key]
+        fields = field_summary(model)
+        snapshot[key] = {
+            "version": model.model_fields["contract_version"].default,
+            "schema_hash": schema_hash(fields),
+            "fields": fields,
+        }
+    return snapshot
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def evaluate_against_released(released: Mapping[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Every public-contract change since the last release that its version does not
+    cover (#1184).
+
+    ``released`` is ``tests/contract/assess_released_snapshot.json``: ``{"released": tag
+    or None, "contracts": {key: entry}}``. A change ``diff_fields`` classifies as MAJOR
+    (a field removed or renamed, a type changed, an enum value removed or changed, a
+    field made required) needs the MAJOR number to rise. Once a release is recorded
+    (``released`` is a tag), a MINOR change needs the version to rise; before the first
+    release, additions keep the draft's version (docs/contracts/assess.md). The
+    ``contract_version`` field itself is a ``Literal`` of the version, so its own move is
+    the bump, never a change.
+    """
+    tag = released.get("released")
+    before_all: dict[str, Any] = released.get("contracts", {})
+    problems: list[str] = []
+    for key in sorted(set(before_all) | set(actual)):
+        before, after = before_all.get(key), actual.get(key)
+        if after is None:
+            problems.append(
+                f"{key}: public contract removed since the last release (a MAJOR change); "
+                "callers built on it"
+            )
+            continue
+        if before is None:
+            problems.append(
+                f"{key}: public contract not in the released snapshot. Record it with: "
+                f"{WRITE_RELEASED_COMMAND}"
+            )
+            continue
+        old, new = before["version"], after["version"]
+        if _version_tuple(new) < _version_tuple(old):
+            problems.append(f"{key}: contract_version went back ({old!r} -> {new!r})")
+            continue
+        changes = [
+            c for c in diff_fields(before["fields"], after["fields"]) if c[0] != "contract_version"
+        ]
+        bump = overall_bump(changes)
+        since = f"since {tag}" if tag else "since the recorded draft"
+        if bump == "major" and major_version(new) <= major_version(old):
+            problems.append(
+                f"{key}: {_format_changes(changes)} {since} breaks callers, which needs a "
+                f"MAJOR bump of CONTRACT_VERSION (src/assessment/models.py), but it is "
+                f"{new!r} (was {old!r}). Keep the field, or bump the MAJOR version and add "
+                "the next schema file (docs/contracts/schemas/README.md)."
+            )
+        elif bump == "minor" and tag and new == old:
+            problems.append(
+                f"{key}: {_format_changes(changes)} {since} needs a MINOR bump of "
+                f"CONTRACT_VERSION (src/assessment/models.py), but it is still {new!r}."
+            )
+    return problems
+
+
+def _git(repo: Path, *args: str, text: bool = True) -> subprocess.CompletedProcess[Any]:
+    # Fixed git subcommands; refs and paths are separate arguments, never a shell.
+    return subprocess.run(  # nosec B603 B607
+        ["git", "-C", str(repo), *args], capture_output=True, text=text, check=False
+    )
+
+
+def tag_exists(tag: str, repo: Path = REPO) -> bool:
+    """Whether ``tag`` is a tag in ``repo`` (an exact ``refs/tags/`` name)."""
+    return (
+        _git(repo, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}^{{commit}}").returncode
+        == 0
+    )
+
+
+def public_snapshot_at(ref: str, repo: Path = REPO) -> dict[str, Any]:
+    """``build_public_snapshot()`` of the models as ``ref`` has them, not this tree's.
+
+    ``src/`` at ``ref`` is extracted to a temporary directory (``git archive``, no
+    worktree or ref changes) and a fresh process imports the models from there and
+    prints their snapshot with this script's own classification."""
+    archive = _git(repo, "archive", "--format=tar", ref, "src", text=False)
+    if archive.returncode != 0:
+        raise RuntimeError(f"cannot read src/ at {ref}: {archive.stderr.decode().strip()}")
+    with tempfile.TemporaryDirectory(prefix="public-contract-") as root:
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(root, filter="data")
+        done = subprocess.run(  # nosec B603 -- this interpreter and this script, fixed flags
+            [sys.executable, str(Path(__file__).resolve()), "--print-public", "--root", root],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if done.returncode != 0:
+        raise RuntimeError(f"cannot build the public contract at {ref}: {done.stderr.strip()}")
+    loaded: dict[str, Any] = json.loads(done.stdout)
+    return loaded
+
+
+def released_document(tag: str | None, repo: Path = REPO) -> dict[str, Any]:
+    """The released snapshot for ``tag``: the public contract's shape at that tag, read
+    from the tag itself (so running it on a later main never records main's shape). With
+    no tag, this tree's shape as the unreleased draft."""
+    if tag is not None and not tag_exists(tag, repo):
+        raise SystemExit(
+            f"contract_schema_snapshot: {tag!r} is not a tag here; create or fetch the "
+            "release tag first (git fetch --tags)"
+        )
+    return {
+        "about": (
+            "The public assess() contract's shape at the last release (#1184). Compared by "
+            "tests/contract/test_assess_released_contract.py and, against the base branch's "
+            "copy, by scripts/resolve_contract_versions.py --check --against. Recorded by the "
+            "release step, never by hand: " + WRITE_RELEASED_COMMAND
+        ),
+        "released": tag,
+        "contracts": build_public_snapshot() if tag is None else public_snapshot_at(tag, repo),
+    }
+
+
+def write_released(
+    tag: str | None, repo: Path = REPO, path: Path = RELEASED_SNAPSHOT_PATH
+) -> dict[str, Any]:
+    """Write ``path``: the public contract's shape as ``tag`` ships it."""
+    document = released_document(tag, repo)
+    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n")
+    return document
+
+
+def check_released_against(
+    base: str,
+    repo: Path = REPO,
+    path: Path = RELEASED_SNAPSHOT_PATH,
+    actual: dict[str, Any] | None = None,
+) -> list[str]:
+    """``evaluate_against_released`` with the base branch's copy of the released snapshot,
+    so a pull request cannot pass by re-recording the baseline it is checked against.
+
+    A branch copy that differs from ``base``'s is used only when it records an existing
+    tag with exactly that tag's shape (the release step); otherwise that is a problem and
+    the base copy is used. With no copy at ``base`` (the file's first commit), the
+    branch's copy is used."""
+    shown = _git(repo, "show", f"{base}:{path.relative_to(repo).as_posix()}")
+    base_doc = json.loads(shown.stdout) if shown.returncode == 0 else None
+    branch_doc = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    problems: list[str] = []
+    effective = branch_doc if base_doc is None else base_doc
+    if base_doc is not None and branch_doc is not None and branch_doc != base_doc:
+        tag = branch_doc.get("released")
+        name = path.relative_to(repo).as_posix()
+        if not tag or not tag_exists(tag, repo):
+            problems.append(
+                f"{name} changed since {base} without recording an existing release tag "
+                f"(released: {tag!r}); only the release step changes it: {WRITE_RELEASED_COMMAND}"
+            )
+        elif branch_doc.get("contracts") != public_snapshot_at(tag, repo):
+            problems.append(
+                f"{name} records {tag} with a shape that is not {tag}'s; record it with: "
+                f"uv run python scripts/contract_schema_snapshot.py --write-released {tag}"
+            )
+        else:
+            effective = branch_doc
+    if effective is None:
+        return problems
+    current = build_public_snapshot() if actual is None else actual
+    return problems + evaluate_against_released(effective, current)
+
+
 def write_snapshot() -> dict[str, Any]:
     """Build and commit-write the snapshot, returning what was written."""
     snapshot = build_snapshot()
@@ -730,7 +959,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write", action="store_true", help="regenerate tests/contract/schema_snapshot.json"
     )
+    parser.add_argument(
+        "--write-released",
+        metavar="TAG",
+        help=(
+            "record the public assess() contract's shape at release TAG (read from the tag) "
+            "in tests/contract/assess_released_snapshot.json (the release step)"
+        ),
+    )
+    parser.add_argument("--print-public", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--root", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.print_public:
+        models = dict(public_contract_models(args.root))
+        print(json.dumps(build_public_snapshot(models), sort_keys=True))
+        return 0
+    if args.write_released is not None:
+        tag = args.write_released.strip() or None
+        document = write_released(tag)
+        versions = {key: entry["version"] for key, entry in document["contracts"].items()}
+        print(
+            json.dumps(
+                {
+                    "recorded": RELEASED_SNAPSHOT_PATH.relative_to(REPO).as_posix(),
+                    "released": tag,
+                    "versions": versions,
+                }
+            )
+        )
+        return 0
     if not args.write:
         print(json.dumps(build_snapshot(), indent=2, sort_keys=True))
         return 0

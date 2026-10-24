@@ -188,6 +188,12 @@ The refresh copies two outputs, the synthesis `report.json` and the collected na
 
 A pattern list cannot judge free text: the report carries model-written prose (the summary, the reality-check review, the risks and trade-offs) where a customer name or an internal reference would not match any pattern. Before the refresh PR merges, a person reads the diff of the refreshed `report.json`'s prose fields.
 
+Preview the routing and contract changes the release will carry:
+
+```bash
+uv run python scripts/release_notes.py --since v1.4.0
+```
+
 **Step 3: Tag Release**
 
 ```bash
@@ -201,7 +207,21 @@ git push origin v1.5.0
 
 Pushing the tag triggers `.github/workflows/release.yml`, which checks out
 full git history, verifies the resolved `hatch-vcs` version matches the tag
-(failing the workflow if it doesn't), and publishes the GitHub release.
+(failing the workflow if it doesn't), and publishes the GitHub release. The
+release body carries the routing-snapshot diff since the previous tag (per query:
+engine, score and reason code that moved) and one changelog line per rule or
+contract change, from `scripts/release_notes.py`; the full diff is attached as
+`release-changes.md`.
+
+Then record the public `assess()` contract's shape as this release ships it, in a PR
+to main (CONTRIBUTING.md's Releases section). The contract checks compare the next
+release's contract with it, so a breaking change after this release needs a MAJOR bump.
+The command refuses a tag that does not exist and reads the models at the tag:
+
+```bash
+git fetch --tags
+uv run python scripts/contract_schema_snapshot.py --write-released v1.5.0
+```
 
 **Note:** any checkout that isn't a clone with the matching `v*` tag reports a
 version that is obviously not a release, never `v1.5.0`'s clean `1.5.0`. A
@@ -268,6 +288,13 @@ git checkout release/v1.5.x
 git pull
 git tag -a v1.5.1 -m "Hotfix v1.5.1: Security patch"
 git push origin v1.5.1
+```
+
+Record the hotfix's public `assess()` contract shape on main, as for a standard
+release (the release notes compare a hotfix with the previous version on its line):
+
+```bash
+uv run python scripts/contract_schema_snapshot.py --write-released v1.5.1
 ```
 
 **Step 5: Cherry-Pick to Mainline**

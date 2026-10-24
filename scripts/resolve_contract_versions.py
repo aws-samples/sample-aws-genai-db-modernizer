@@ -30,7 +30,10 @@ regenerated its own snapshot (the ``validate-contracts`` job and ``ci/pre_merge.
 and runs the dry run with REF as main, so a pending contract whose version the branch
 also moved by hand fails there, and so does a pending file for a contract REF does not
 have (a new contract starts at its own version); the snapshot tests do not compare a
-pending contract's version (#1393). A REF git cannot read is an error of its own.
+pending contract's version (#1393). It also compares the public ``assess()`` contract
+with REF's copy of ``tests/contract/assess_released_snapshot.json``
+(``contract_schema_snapshot.check_released_against``, #1184), so a branch cannot pass by
+re-recording that baseline. A REF git cannot read is an error of its own.
 """
 
 from __future__ import annotations
@@ -294,6 +297,10 @@ def _check(require_resolved: bool, against: str | None) -> int:
     problems += _failure_lines(failed)
     if against:
         problems += [f"error: {p}" for p in _against(against, pending_kinds(bumps))]
+        # The public assess() contract, against main's copy of its released snapshot (#1184).
+        from scripts.contract_schema_snapshot import check_released_against
+
+        problems += [f"error: {p}" for p in check_released_against(against)]
     for problem in problems:
         print(problem)
     if problems:

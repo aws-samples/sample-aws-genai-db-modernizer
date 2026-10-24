@@ -537,6 +537,30 @@ no such field (ADR-008 Decision 1).
 If two in-flight PRs both touch a contract, whichever lands second
 regenerates the snapshot.
 
+### The public `assess()` contract
+
+The library entry point's request and result (`src/assessment/models.py`, [docs/contracts/assess.md](docs/contracts/assess.md)) are versioned on their own (`CONTRACT_VERSION`) and promised to callers, so two guards in `tests/contract/` (run by `make test` and `ci/test.sh`) check them as a caller would:
+
+- `test_assess_consumer_contract.py` runs `assess()` on the fixtures in `tests/contract/fixtures/assess_consumer_fixtures.json` (WordPress, the SQL Server sample `trailgear`, and WordPress with an engine scope), for every `run_through` in `SUPPORTED_RUN_THROUGH`, with the model entry points patched. Each fixture lists the result fields it guards; every guarded field must be present with the type the published JSON Schema gives it, every result field must be guarded by some fixture, and the result must validate against `docs/contracts/schemas/assess_result.v1.schema.json`. A new result field is added to a fixture's `guards`; a phase that calls a model adds its entry point to `MODEL_ENTRY_POINTS` there.
+- `test_assess_released_contract.py` compares the current shape with the one the last release shipped, `tests/contract/assess_released_snapshot.json`, using the same field classification as the internal snapshot. Removing or renaming a field, changing its type, or removing or changing an enum value fails unless `CONTRACT_VERSION`'s MAJOR number rises (and a MAJOR adds the next schema file, `docs/contracts/schemas/README.md`). Once a release is recorded, an additive change needs a MINOR rise; before the first release, additions keep `1.0`. A new value of a result enum (a reason code, a role) counts as additive. The file changes only in the release step below, never by hand: the `validate-contracts` job and `ci/pre_merge.sh` (`scripts/resolve_contract_versions.py --check --against <main>`) compare with main's copy of it, and accept a change to it only when it records an existing release tag with exactly that tag's shape, so a pull request cannot pass by re-recording it.
+
+## Releases
+
+The release process is in [docs/RELEASE_MANAGEMENT.md](docs/RELEASE_MANAGEMENT.md). Two steps belong to this repository's guards:
+
+1. Record the public contract's shipped shape, so the next release is compared with it. `--write-released` refuses a tag that does not exist and reads the models at the tag itself (`git archive`), never the working tree, so run it after pushing the tag, in a pull request to main (a hotfix tag too):
+
+   ```bash
+   git fetch --tags
+   uv run python scripts/contract_schema_snapshot.py --write-released v0.4.0
+   ```
+
+2. Pushing the tag runs `.github/workflows/release.yml`. It picks the previous release with `scripts/release_notes.py --previous-tag <tag>` (the highest version tag below it: exact names, PEP 440 order, so `v0.3.0` follows `v0.3.0-beta.2` and a hotfix `v1.5.1` follows `v1.5.0`), then runs `scripts/release_notes.py --since <previous tag> --until <tag>` and attaches its output to the release: the routing-snapshot diff since the previous release (from `tests/e2e/baselines/routing_snapshot.json`: engine changes first, then reason-code-only changes, then queries whose score alone moved), and one changelog line per rule change (a file under `src/catalog/`, with the commits that touched it) and per contract change (an internal contract's version move from `tests/contract/schema_snapshot.json`, and the public contract's from `tests/contract/assess_released_snapshot.json`). The release body (`--body`) lists the first 50 engine and reason-code changes, summarises score-only drift (counts per sample and per score change), keeps 40 changelog lines and stays under GitHub's body limit; `release-changes.md`, attached to the release, carries every row and line. The step is non-blocking: if it fails, the release is published with a warning line in its body. To preview it before tagging:
+
+   ```bash
+   uv run python scripts/release_notes.py --since v0.3.0-beta.1
+   ```
+
 ---
 
 ## Working with a fast-moving main

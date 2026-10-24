@@ -27,6 +27,10 @@ PROTECTED: dict[str, str] = {
     "tests/contract/schema_snapshot.json": (
         "uv run python scripts/contract_schema_snapshot.py --write"
     ),
+    # The public assess() contract's shape at the last release (#1184).
+    "tests/contract/assess_released_snapshot.json": (
+        "uv run python scripts/contract_schema_snapshot.py --write-released <tag>"
+    ),
     # The public assess() request and result schemas (#1183).
     "docs/contracts/schemas/assess_request.v1.schema.json": (
         "uv run python scripts/render_contract_schemas.py --write"

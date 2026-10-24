@@ -74,6 +74,8 @@ The result's stable surface follows semantic versioning (`contract_version`, sep
 - `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer).
 
+Consumer contract tests keep this surface (`tests/contract/test_assess_consumer_contract.py`, on the fixtures in `tests/contract/fixtures/assess_consumer_fixtures.json`, each with the fields it guards), and a removed or renamed field, a changed type or a removed or changed enum value fails the build without a MAJOR bump of `contract_version` against the shape the last release shipped (`tests/contract/test_assess_released_contract.py`). A new enum value in the result (a new `reason_code` or `role`, for example) is a MINOR change: read enums with a default branch, since an exhaustive match on today's values can meet a new one in a MINOR release. Each release lists the routing changes since the previous one (CONTRIBUTING.md's Releases section).
+
 Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`.
 
 ### The label

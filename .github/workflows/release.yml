@@ -16,6 +16,9 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          # The steps below run repository Python; the release action takes its own
+          # token, so the write token is not left in .git/config.
+          persist-credentials: false
 
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
@@ -63,21 +66,42 @@ jobs:
 
       - name: Get previous tag
         id: prev_tag
+        # The highest version tag below this one (scripts/release_notes.py
+        # previous_tag: exact tag names, PEP 440 order, so v0.3.0 follows
+        # v0.3.0-beta.2 and a hotfix v1.5.1 follows v1.5.0). A failure here blocks
+        # the release: every range below depends on it.
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "$TAG_NAME" | head -n 1)
+          PREV_TAG=$(uv run python scripts/release_notes.py --previous-tag "$TAG_NAME")
           if [ -z "$PREV_TAG" ]; then
             echo "range=" >> "$GITHUB_OUTPUT"
           else
             echo "range=$PREV_TAG..$TAG_NAME" >> "$GITHUB_OUTPUT"
+            echo "prev=$PREV_TAG" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Routing and contract changes since the previous release
+        # #1184: the routing-snapshot diff (engine changes first, score-only drift
+        # summarised) and one line per rule or contract change, read from the committed
+        # snapshots at both tags. The body copy is capped under GitHub's body limit; the
+        # attachment carries every row. Non-blocking: if it fails the release is still
+        # published, with a warning line in the body and this step's annotation.
+        if: steps.prev_tag.outputs.prev != ''
+        continue-on-error: true
+        env:
+          PREV_TAG: ${{ steps.prev_tag.outputs.prev }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          uv run python scripts/release_notes.py --since "$PREV_TAG" --until "$TAG_NAME" --output release-changes.md
+          uv run python scripts/release_notes.py --since "$PREV_TAG" --until "$TAG_NAME" --body --output release-changes-body.md
 
       - name: Generate release notes
         id: notes
         env:
           TAG_NAME: ${{ github.ref_name }}
           RANGE: ${{ steps.prev_tag.outputs.range }}
+          PREV_TAG: ${{ steps.prev_tag.outputs.prev }}
           REPO: ${{ github.repository }}
         run: |
           {
@@ -119,6 +143,14 @@ jobs:
                 echo ""
               fi
 
+              if [ -f release-changes-body.md ] && [ -f release-changes.md ]; then
+                cat release-changes-body.md
+                echo ""
+              else
+                echo "> **Warning:** the routing and contract changes could not be generated (see the release workflow log). Run \`uv run python scripts/release_notes.py --since $PREV_TAG --until $TAG_NAME\` and add its output to this release."
+                echo ""
+              fi
+
               echo "---"
               echo "**Full Changelog**: https://github.com/$REPO/compare/$RANGE"
             else
@@ -136,3 +168,4 @@ jobs:
           body: ${{ steps.notes.outputs.notes }}
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
           generate_release_notes: false
+          files: release-changes.md
