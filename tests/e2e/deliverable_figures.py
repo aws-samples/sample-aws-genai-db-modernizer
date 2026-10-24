@@ -232,6 +232,8 @@ def expected_figures(report: dict[str, Any]) -> dict[str, Any]:
             exp[f"sized:{row['database']}"] = (
                 int(sizing["sized_query_count"]),
                 round(float(sizing["calls_per_second"]), 2),
+                # #1378: the tables no in-scope query reads it stores.
+                int(sizing.get("unqueried_table_count") or 0),
             )
 
     risks = [r for r in (report.get("risk_assessment") or {}).get("risks") or [] if r]
@@ -990,18 +992,23 @@ def pdf_page_texts(pdf_path: str) -> list[str]:
 _PDF_ROLES = "Retained|Migration target|Cache layer|Search read model|Evaluated|Assessed"
 _PDF_COST_ROW = re.compile(rf"({_NAMES_RE}) (?:{_PDF_ROLES}) \$([\d,]+\.\d\d)")
 # #1195: "67 queries, 96.51 calls/s" / "20 cached reads, 185.07 calls/s".
+# #1378: ", plus 28 tables no query reads" on the engine wave 1 stores them on.
 _SIZED = re.compile(
-    r"([\d,]+) (?:quer(?:y|ies)|cached reads?), ([\d,.]+) calls?/s(?:, also billed on their owners)?"
+    r"([\d,]+) (?:quer(?:y|ies)|cached reads?), ([\d,.]+) calls?/s"
+    r"(?:, plus ([\d,]+) tables? no query reads)?(?:, also billed on their owners)?"
 )
 _PDF_SIZED_ROW = re.compile(
     rf"({_NAMES_RE}) (?:{_PDF_ROLES}) \$[\d,]+\.\d\d ([\d,]+ (?:quer(?:y|ies)|cached reads?), "
-    r"[\d,.]+ calls?/s)"
+    r"[\d,.]+ calls?/s(?:, plus [\d,]+ tables? no query reads)?)"
 )
 
 
-def _sized(text: str) -> tuple[int, float] | None:
+def _sized(text: str) -> tuple[int, float, int] | None:
+    """(queries, calls/s, tables no query reads) from a "Sized for" cell."""
     m = _SIZED.fullmatch(text.strip())
-    return (_int(m.group(1)), float(m.group(2).replace(",", ""))) if m else None
+    if not m:
+        return None
+    return (_int(m.group(1)), float(m.group(2).replace(",", "")), _int(m.group(3) or "0"))
 
 
 _PDF_SEVERITY = re.compile(r"([\d,]+) (critical|high|medium|low|unrated)")

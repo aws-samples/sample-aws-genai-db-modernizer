@@ -49,6 +49,15 @@ test('it reads as the reports word it', () => {
     .toBe('Sized for 1,654 queries, 1,234.5 calls/s');
 });
 
+test('the engine that stores the tables no query reads says so (#1378)', () => {
+  expect(costSizingText(t, { ...AURORA, unqueried_table_count: 28 }))
+    .toBe('Sized for 67 queries, 96.51 calls/s, plus 28 tables no query reads');
+  expect(costSizingText(t, { ...AURORA, unqueried_table_count: 1 }))
+    .toBe('Sized for 67 queries, 96.51 calls/s, plus 1 table no query reads');
+  expect(costSizingText(t, { ...AURORA, unqueried_table_count: 0 }))
+    .toBe('Sized for 67 queries, 96.51 calls/s');
+});
+
 test('a report written before states no sizing', () => {
   [undefined, null, {}].forEach((sizing) => expect(costSizingText(t, sizing)).toBe(''));
 });

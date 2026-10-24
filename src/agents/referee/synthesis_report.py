@@ -26,6 +26,9 @@ from src.agents.referee.assigned_cost import (
     CACHE_MISS_ASSUMPTION,
     CACHE_OVERLAY,
     sized_cost_estimate,
+    storage_gb,
+    unqueried_assumption,
+    unqueried_tables,
 )
 from src.agents.referee.assignment_resolver import retained_engine_for
 from src.agents.referee.aurora_choice import source_database_engine
@@ -932,8 +935,19 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     return result
 
 
-def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | None = None) -> dict:
+def build_tco_analysis(
+    data: SynthesisData,
+    retired_costs: dict[str, float] | None = None,
+    wave_one_engine: str | None = None,
+) -> dict:
     """Aggregate cost estimates from all analysis outputs.
+
+    ``wave_one_engine`` (#1378) is wave 1's Aurora engine (``wave_retained_engine``):
+    wave 1 moves the whole source database, so the tables no in-scope query reads are
+    stored on it, priced with its own tables. ``unqueried_tables`` states how many there
+    are, their size and the engine that stores them (None when no kept engine is wave 1's,
+    so no figure includes them); None when every table is read, with no assignment and
+    with no query in scope.
 
     ``retired_costs`` (#380, #949) is each engine the source runs today that the
     plan retires, mapped to its own analysed ``cost_estimate.monthly_cost_usd`` --
@@ -949,6 +963,8 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
     """
     target_costs = []
     total_projected = 0.0
+    unqueried = unqueried_tables(data.collector, data.assignment)
+    stored_on = wave_one_engine if unqueried and wave_one_engine in data.engines else None
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -960,7 +976,16 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
         # TCO prices it for the queries the effective assignment gives it. An analysis
         # that priced nothing (no cost components: cost estimation turned off) keeps its
         # figure, and so does a job with no assignment.
-        sized = sized_cost_estimate(engine, data.collector, data.assignment) if components else None
+        sized = (
+            sized_cost_estimate(
+                engine,
+                data.collector,
+                data.assignment,
+                unqueried if engine == stored_on else None,
+            )
+            if components
+            else None
+        )
         if sized is not None:
             estimate, sizing = sized
             monthly = estimate.monthly_cost_usd
@@ -977,6 +1002,11 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
             }
         )
         total_projected += monthly
+    unqueried_summary = (
+        {"table_count": len(unqueried), "storage_gb": storage_gb(unqueried), "stored_on": stored_on}
+        if unqueried
+        else None
+    )
 
     # Source cost estimate from collector metrics (if available)
     rds_meta = (
@@ -1004,6 +1034,7 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
         "projected_monthly_cost": round(total_projected, 2),
         "savings_percent": savings_pct,
         "cost_breakdown": target_costs,
+        "unqueried_tables": unqueried_summary,
         "assumptions": [
             "On-demand capacity mode for all target databases",
             "Region: us-east-1",
@@ -1027,6 +1058,8 @@ def build_tco_analysis(data: SynthesisData, retired_costs: dict[str, float] | No
                 )
                 else []
             ),
+            # #1378: which engine stores the tables no in-scope query reads.
+            *([unqueried_assumption(unqueried_summary)] if unqueried_summary else []),
         ],
     }
     if retired_costs:

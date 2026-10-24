@@ -22636,6 +22636,14 @@
                                       "type": "number"
                                     }
                                   },
+                                  "unqueried_table_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
                                   "write_calls_per_second": {
                                     "required": true,
                                     "schema": {
@@ -29066,6 +29074,14 @@
                                       "type": "number"
                                     }
                                   },
+                                  "unqueried_table_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
                                   "write_calls_per_second": {
                                     "required": true,
                                     "schema": {
@@ -29192,6 +29208,55 @@
               "schema": {
                 "kind": "scalar",
                 "type": "number"
+              }
+            },
+            "unqueried_tables": {
+              "required": false,
+              "schema": {
+                "kind": "anyOf",
+                "members": [
+                  {
+                    "kind": "object",
+                    "properties": {
+                      "storage_gb": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 0,
+                          "type": "number"
+                        }
+                      },
+                      "stored_on": {
+                        "required": true,
+                        "schema": {
+                          "kind": "anyOf",
+                          "members": [
+                            {
+                              "kind": "scalar",
+                              "type": "null"
+                            },
+                            {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "table_count": {
+                        "required": true,
+                        "schema": {
+                          "kind": "scalar",
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "scalar",
+                    "type": "null"
+                  }
+                ]
               }
             }
           }
@@ -29339,8 +29404,8 @@
         }
       }
     },
-    "schema_hash": "1ad3b23b42f66f0573030fa096e165cbc2aa302b3eee52625f14cbd144967646",
-    "version": "1.63"
+    "schema_hash": "6e3d1f2a80eb45fcbf422b9f569593e67157b94bc8f56aa6166543ed6ea44d91",
+    "version": "1.64"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

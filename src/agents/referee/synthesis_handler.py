@@ -265,17 +265,6 @@ def run_synthesis_deterministic(
     considered = [
         {"engine": e, "absorbed_by": a} for e, a in sorted(eliminated.items()) if e not in running
     ]
-    tco = build_tco_analysis(data, retired_costs=retired_costs)
-    # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
-    # queries), never the whole-collection analysis estimate, so every cost agrees.
-    sized = {
-        str(row["database"]): row["monthly_cost_usd"]
-        for row in tco.get("cost_breakdown") or []
-        if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
-    }
-    for entry in ranking:
-        if entry.get("target") in sized:
-            entry["monthly_cost_usd"] = sized[str(entry["target"])]
     # Per-engine table scope of the effective assignment, for the summary LLM input and
     # the summary post-check (#205).
     known_tables: list[str] = sorted(
@@ -354,6 +343,23 @@ def run_synthesis_deterministic(
         # #1329: a scope with no Aurora engine gives wave 1 no relational target.
         engine_scope=scope_of(data.triage),
     )
+    # #1378: built once the waves exist, so wave 1's Aurora engine stores the tables no
+    # in-scope query reads (wave 1 moves the whole source database).
+    tco = build_tco_analysis(
+        data,
+        retired_costs=retired_costs,
+        wave_one_engine=wave_retained_engine(migration_waves),
+    )
+    # #1195: a kept engine's ranking entry states its TCO figure (sized for its assigned
+    # queries), never the whole-collection analysis estimate, so every cost agrees.
+    sized = {
+        str(row["database"]): row["monthly_cost_usd"]
+        for row in tco.get("cost_breakdown") or []
+        if isinstance(row, dict) and isinstance(row.get("monthly_cost_usd"), (int, float))
+    }
+    for entry in ranking:
+        if entry.get("target") in sized:
+            entry["monthly_cost_usd"] = sized[str(entry["target"])]
     # #339: the per-query decision traces from the move ledger (the close calls
     # and the queries no engine fits), read before the risks that cite them.
     query_traces = (
