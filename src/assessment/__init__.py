@@ -1,6 +1,7 @@
 """The public library entry point: ``assess(request) -> result``.
 
->>> from src.assessment import AssessmentRequest, assess
+>>> from src.assessment import AssessmentRequest, assess, load_collection
+>>> raw = load_collection(Path("collection.txt"))  # the scripts' output; text, bytes, .json or .zip  # doctest: +SKIP
 >>> result = assess(AssessmentRequest(database_name="shop", collection=raw))  # doctest: +SKIP
 >>> result.statements[0].engine  # doctest: +SKIP
 
@@ -44,6 +45,7 @@ This package's models are not the local API's request models
 (``src.api.models.requests``); import them from here.
 """
 
+from src.assessment.loading import CollectionLoadError, load_collection
 from src.assessment.models import (
     CONTRACT_VERSION,
     SUPPORTED_RUN_THROUGH,
@@ -75,6 +77,7 @@ __all__ = [
     "AssessmentOptions",
     "AssessmentRequest",
     "AssessmentResult",
+    "CollectionLoadError",
     "Consolidation",
     "EngineLine",
     "EngineRole",
@@ -90,4 +93,5 @@ __all__ = [
     "TableLine",
     "WorkloadScope",
     "assess",
+    "load_collection",
 ]

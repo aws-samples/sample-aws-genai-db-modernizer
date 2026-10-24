@@ -16,6 +16,34 @@ for statement in result.statements:
     print(statement.query_id, statement.engine, statement.reason_code)
 ```
 
+## Loading the collection
+
+The collection scripts write text, often with a header line before the JSON object (`collection_output` followed by `{...}`). `assess()` takes the parsed dict; `load_collection` turns the scripts' output into it, with the reader the command line uses:
+
+```python
+from pathlib import Path
+
+from src.assessment import AssessmentRequest, CollectionLoadError, assess, load_collection
+
+try:
+    collection = load_collection(Path("docs/examples/wordpress/wordpress.zip"))
+except CollectionLoadError as error:
+    raise SystemExit(str(error))
+
+result = assess(
+    AssessmentRequest(database_name="wordpress", collection=collection, options={"run_through": "analysis"})
+)
+```
+
+`load_collection(source)` accepts:
+
+- a `str` or `bytes` (UTF-8): the output text. A `str` is always text, never a path;
+- a `pathlib.Path` (or any path-like): a `.json` or `.txt` file with that text, or a `.zip` holding exactly one `.json` or `.txt` collection file, as the bundled samples under `docs/examples/` are shipped.
+
+A header line before the object, a leading BOM and client chatter after it are ignored. The result is the collection dict (it has `tables` and `queries`), ready for `AssessmentRequest.collection`. `AssessmentRequest` itself still takes a dict.
+
+Every problem raises `CollectionLoadError`, a `ValueError` subclass, with a message in your terms: no JSON object found, more than one JSON object (or, for a zip, more than one collection file), no collection file in the zip, not a valid zip, the JSON is invalid, not a collection (no `tables` or `queries` key), file not found, or not UTF-8. A test loads every bundled sample this way and runs `assess()` on it, so the example above runs as written.
+
 ## What the result is for
 
 The result is for **engine placement**: which engine serves each statement, which statements move together, and which engine owns each table.
