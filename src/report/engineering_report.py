@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from src.shared.design_text import design_text_item, unsupported_pattern_detail
+from src.shared.design_text import (
+    design_text_item,
+    split_carried_write_detail,
+    unsupported_pattern_detail,
+)
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import executive_brief_text
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
@@ -820,6 +825,27 @@ def _texts_listed_elsewhere(report: dict[str, Any], rule: Any, eng: str) -> set[
     return set()
 
 
+def _carried_write_lines(details: list[str]) -> list[str]:
+    """The carried writes of a ``design.carried_writes`` risk (#1454), the statements that
+    share a target-native approach listed under it once: ``Statements: ... Approach: ...``.
+    A statement with an approach of its own keeps its line, in the same order."""
+    parsed = [(d, split_carried_write_detail(d)) for d in details]
+    leads: dict[str, list[str]] = {}
+    for _, split in parsed:
+        if split:
+            leads.setdefault(split[1], []).append(split[0])
+    out: list[str] = []
+    done: set[str] = set()
+    for detail, split in parsed:
+        if split is None or len(leads[split[1]]) == 1:
+            out.append(f"  - {escaping.md_text(detail)}")
+        elif split[1] not in done:
+            done.add(split[1])
+            names = "; ".join(escaping.md_text(lead) for lead in leads[split[1]])
+            out.append(f"  - Statements: {names}. Approach: {escaping.md_text(split[1])}")
+    return out
+
+
 def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> list[str]:
     """A risk's ``details`` sub-bullets (#950): each text in full, except those this
     report already lists in their own section (#1410), matched by text. Those are named
@@ -828,7 +854,9 @@ def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> 
     details = [d for d in risk.get("details") or [] if isinstance(d, str) and d.strip()]
     elsewhere = _texts_listed_elsewhere(report, risk.get("rule"), eng)
     kept = [d for d in details if d not in elsewhere]
-    out = [f"  - {escaping.md_text(d)}" for d in kept]
+    out = _carried_write_lines(kept) if risk.get("rule") == "design.carried_writes" else None
+    if out is None:
+        out = [f"  - {escaping.md_text(d)}" for d in kept]
     if len(kept) < len(details):
         where, side = _DETAILS_SECTION[str(risk.get("rule"))]
         heading = where if where == "Migration trade-offs" else f"{where} ({display_engine(eng)})"
@@ -839,10 +867,46 @@ def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> 
     return out
 
 
+# A sentence this long is stated once in the report's risk sections (#1454); the same
+# length the report guard (``tests/report_concision.py``) holds every sample to.
+_ONCE_MIN_WORDS = 15
+_SENTENCE_END = re.compile(r"((?<=[.!?])[:;]?\s+)")
+
+
+class _SaidOnce:
+    """Risk text that states each long sentence once (#1454).
+
+    Analysis risks carry a catalog explanation ("Aurora serves single-table CRUD natively
+    ...") that the register prints for the queries still flagged and "Resolved by the
+    assignment" prints again for the queries the assignment moved. The first line to
+    print a sentence keeps it; a later line says where it is stated. Sentences are cut
+    where the guard cuts them, so a sentence is replaced only when it reads word for word
+    as one printed before."""
+
+    def __init__(self) -> None:
+        self._seen: dict[str, str] = {}
+
+    def line(self, text: str, where: str) -> str:
+        """``text`` with each long sentence stated before replaced by a pointer to
+        ``where`` (the first line's own label: ``under RISK-001`` or ``above``)."""
+        parts = _SENTENCE_END.split(text)
+        for i in range(0, len(parts), 2):
+            key = " ".join(parts[i].replace("**", "").split()).strip(" -*:,.;")
+            if len(key.split()) < _ONCE_MIN_WORDS:
+                continue
+            if key in self._seen:
+                end = parts[i][len(parts[i].rstrip(" .;:,")) :]
+                parts[i] = f"Stated {self._seen[key]}{end or '.'}"
+            else:
+                self._seen[key] = where
+        return "".join(parts)
+
+
 def _risk_register_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Risk register" and "Resolved by the assignment" sections."""
     facts = report_facts(report)
     out: list[str] = []
+    said = _SaidOnce()
     risks = filtered_risks(report)
     if risks:
         by_eng: dict[str, list] = {}
@@ -864,9 +928,10 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                 sev = r.get("severity", "-")
                 rtype = str(r.get("risk_type", "")).replace("_", " ").lower()
                 rid = r.get("risk_id", "-")
+                where = f"under {escaping.md_text(rid)}"
                 out.append(
                     f"- **{escaping.md_text(rid)}** \u00b7 {escaping.md_text(sev)} \u00b7 "
-                    f"{escaping.md_text(rtype)} \u00b7 {escaping.md_text(body)}"
+                    + said.line(f"{escaping.md_text(rtype)} \u00b7 {escaping.md_text(body)}", where)
                 )
                 mitigation = str(r.get("mitigation") or "")
                 if mitigation and not _repeats(mitigation, body):
@@ -874,7 +939,9 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                         out.append(f"  - Mitigation: as for {mitigated_by[mitigation]}.")
                     else:
                         mitigated_by[mitigation] = escaping.md_text(rid)
-                        out.append(f"  - Mitigation: {escaping.md_text(mitigation)}")
+                        out.append(
+                            "  - Mitigation: " + said.line(escaping.md_text(mitigation), where)
+                        )
                 affects = _affects_line(r)
                 if affects:
                     out.append(affects)
@@ -898,8 +965,12 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                 _, body = _risk_engine_and_body(r.get("description"))
                 where = resolved_risk_label(r)
                 out.append(
-                    f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
-                    f"{escaping.md_text(where)} \u00b7 {escaping.md_text(body)}"
+                    "- "
+                    + said.line(
+                        f"{escaping.md_text(r.get('severity', '-'))} \u00b7 "
+                        f"{escaping.md_text(where)} \u00b7 {escaping.md_text(body)}",
+                        "above",
+                    )
                 )
                 if reason and i == 0:
                     out.append(f"  - Resolved because {escaping.md_text(reason)}.")

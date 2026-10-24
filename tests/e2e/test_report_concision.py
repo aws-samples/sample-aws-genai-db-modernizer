@@ -92,8 +92,7 @@ def test_the_designed_job_has_no_raw_label(designed_run: PipelineResult) -> None
 def test_no_long_paragraph_is_printed_twice(run: PipelineResult) -> None:
     md = _md(run)
     assert repeated_paragraphs(md) == []
-    if run.db == "wordpress":
-        assert repeated_statements(md) == []
+    assert repeated_statements(md) == []
 
 
 @pytest.mark.deterministic

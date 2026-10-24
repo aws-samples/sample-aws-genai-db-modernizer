@@ -111,7 +111,11 @@ from typing import Any
 
 from src.agents.referee.cache_overlay import is_write_query
 from src.shared.catalog.access_classes import access_classes
-from src.shared.design_text import design_text_item, unsupported_pattern_detail
+from src.shared.design_text import (
+    carried_write_detail,
+    design_text_item,
+    unsupported_pattern_detail,
+)
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.migration_risk_rules import (
     GATE_IDS_NAMED,
@@ -952,10 +956,13 @@ def _carried_write_risks(
             "approach."
         )
         details = [
-            f"{str(r.get('statement') or 'Statement').upper()} of "
-            f"{str(r.get('table_id') or '').rsplit('.', 1)[-1]}, "
-            f"{str(r.get('intent_name') or '').lower()} (score "
-            f"{_score_text(float(r.get('score') or 0))}): {_item(str(r.get('approach') or ''))}"
+            carried_write_detail(
+                str(r.get("statement") or "Statement"),
+                str(r.get("table_id") or ""),
+                str(r.get("intent_name") or ""),
+                _score_text(float(r.get("score") or 0)),
+                str(r.get("approach") or ""),
+            )
             for r in rows
         ]
         out.append(

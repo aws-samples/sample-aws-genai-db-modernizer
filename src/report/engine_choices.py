@@ -90,6 +90,7 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
     # refers to it instead of printing them again.
     stated: dict[tuple[str, ...], str] = {}
     option_stated: dict[str, str] = {}
+    why_stated: dict[str, str] = {}
     for c in choices:
         ids = c.get("query_ids") or []
         table = f"`{escaping.md_code(_bare_table(c.get('table')))}`"
@@ -109,13 +110,28 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
             out += [f"The same tie and options as {stated[key]}.", ""]
         else:
             stated[key] = table
+            # #1454: tables tied at the same score and engines share the tie sentence;
+            # a later one refers to the first and keeps its own figures.
+            lead, _, rest = why.partition(". ")
+            if rest and lead in why_stated:
+                why = f"The tie is the same as for {why_stated[lead]}. {rest}"
+            elif rest:
+                why_stated[lead] = table
             out += [why, ""]
             for name, text in options:
                 line = f"{name}: {text}"
+                # #1454: an option whose first sentence reads as an earlier table's
+                # refers to it and keeps only what is its own (the score delta).
+                lead, _, rest = text.partition(". ")
+                head = f"{name}: {lead}"
                 if text and line in option_stated:
                     out.append(f"- {name}: as for {option_stated[line]}.")
+                elif rest and head in option_stated:
+                    out.append(f"- {name}: as for {option_stated[head]}. {rest}")
                 else:
                     option_stated.setdefault(line, table)
+                    if rest:
+                        option_stated.setdefault(head, table)
                     out.append(f"- {line}")
             out.append(decide)
         out.append("- Queries: " + ", ".join(f"`{escaping.md_code(str(qid))}`" for qid in ids))

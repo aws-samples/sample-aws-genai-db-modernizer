@@ -16,6 +16,7 @@ import pytest
 
 from src.agents.schema_design import handler
 from src.report.escaping import md_text
+from src.shared.design_text import split_carried_write_detail
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.pipeline import PipelineResult
 
@@ -126,7 +127,10 @@ def test_the_engineering_report_shows_each_statements_approach(sample):
     md = sample.deliverable("engineering-report.md").read_text(encoding="utf-8")
     (risk,) = _carried_risks(sample)
     for line in risk["details"]:
-        assert md_text(line) in md, line
+        # Statements that share an approach are listed under it once (#1454).
+        lead, approach = split_carried_write_detail(line)
+        assert md_text(lead) in md, line
+        assert md_text(approach) in md, line
 
 
 def test_each_sample_carries_exactly_its_statements(run):
