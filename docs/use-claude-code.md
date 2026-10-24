@@ -46,6 +46,8 @@ mysql -N -u <user> -p -h <host> -D <database> < scripts/collect-mysql.sql > my-c
 # SQL Server 2016 or later (needs VIEW SERVER STATE for the query section);
 # sqlcmd reads the password from SQLCMDPASSWORD, so it stays off the command line
 sqlcmd -S <host>,<port> -U <user> -d <database> -C -y 0 -i scripts/collect-sqlserver.sql > my-collection.json
+# The SQL Server query statistics are server-wide: connect with -d <database> (the database to assess).
+# The query section keeps that database's statements, and each query row carries its database_name.
 
 # Oracle 12.2 or later (needs SELECT_CATALOG_ROLE)
 sqlplus -S <user>/<password>@<host>:<port>/<service> @scripts/collect-oracle.sql > my-collection.json

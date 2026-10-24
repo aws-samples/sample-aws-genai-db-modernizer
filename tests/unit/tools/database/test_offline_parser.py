@@ -831,3 +831,79 @@ class TestTsqlTableExtractionGaps:
             [{"query_text": sql}], "trailgear", set(schemas), table_schemas=schemas
         )
         assert result[0]["tables_accessed"] == ["trailgear.StockLevel", "trailgear.StockMovement"]
+
+
+class TestQueriesOfOtherDatabases:
+    """#382: SQL Server's query DMVs are server-wide, so a collection can hold
+    statements of other databases. The script records the database each
+    statement belongs to (``database_name``); the parser keeps the target
+    database's statements and says how many it dropped."""
+
+    @staticmethod
+    def _collection(queries: list[dict]) -> dict:
+        return {
+            "metadata": {"database_name": "AdventureWorks", "engine": "sqlserver"},
+            "tables": [{"table_name": "Person", "schema_name": "Person"}],
+            "queries": queries,
+        }
+
+    @staticmethod
+    def _row(digest: str, text: str, database: str | None) -> dict:
+        row = {"digest": digest, "query_text": text, "execution_count": 20, "total_time_ms": 5.0}
+        if database is not None:
+            row["database_name"] = database
+        return row
+
+    def test_drops_statements_of_other_databases(self, caplog):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = self._collection(
+            [
+                self._row("0xA", "SELECT * FROM Person.Person", "AdventureWorks"),
+                self._row("0xB", "SELECT * FROM dbo.Orders", "OtherDb"),
+                self._row("0xC", "SELECT * FROM dbo.Orders WHERE id = 1", "otherdb"),
+            ]
+        )
+        with caplog.at_level("WARNING"):
+            result = parse_offline_collection(data)
+        assert [q["query_id"] for q in result["queries"]] == ["0xA"]
+        assert result["queries_dropped_other_database"] == 2
+        assert "2 statement(s) belonging to other databases" in caplog.text
+
+    @pytest.mark.passes_on_main
+    def test_database_name_match_ignores_case(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = self._collection([self._row("0xA", "SELECT * FROM Person.Person", "adventureworks")])
+        result = parse_offline_collection(data)
+        assert len(result["queries"]) == 1
+        assert "queries_dropped_other_database" not in result
+
+    @pytest.mark.passes_on_main
+    def test_rows_without_a_database_are_kept(self):
+        """Older collections and the other engines' scripts carry no per-query
+        database; a statement whose database could not be resolved is kept."""
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = self._collection(
+            [
+                self._row("0xA", "SELECT * FROM Person.Person", None),
+                self._row("0xB", "SELECT * FROM Person.Person WHERE id = 2", None),
+            ]
+        )
+        result = parse_offline_collection(data)
+        assert len(result["queries"]) == 2
+        assert "queries_dropped_other_database" not in result
+
+    def test_same_digest_in_two_databases_is_not_merged(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = self._collection(
+            [
+                self._row("0xA", "SELECT * FROM Person.Person", "AdventureWorks"),
+                self._row("0xA", "SELECT * FROM Person.Person", "OtherDb"),
+            ]
+        )
+        result = parse_offline_collection(data)
+        assert len(result["queries"]) == 1
+        assert result["queries"][0]["execution_count"] == 20

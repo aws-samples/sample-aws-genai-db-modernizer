@@ -178,14 +178,18 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
         "tmp_tables": int(raw_stats.get("created_tmp_tables", 0)),
     }
 
+    raw_queries, dropped_other_db = _drop_other_database_queries(data.get("queries") or [], db_name)
+    other_db_note = {"queries_dropped_other_database": dropped_other_db} if dropped_other_db else {}
+
     return {
+        **other_db_note,
         "metadata": metadata,
         "tables": tables,
         "views": data.get("views", []),
         "procedures": data.get("procedures", []),
         "triggers": data.get("triggers", []),
         "queries": _transform_queries(
-            data.get("queries") or [],
+            raw_queries,
             db_name,
             known_table_names,
             table_schemas=table_schemas,
@@ -197,6 +201,29 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
         "wait_events": data.get("wait_events", []),
         "os_stats": data.get("os_stats", {}),
     }
+
+
+def _drop_other_database_queries(raw: list[dict], db_name: str) -> tuple[list[dict], int]:
+    """Drop the statements a row's ``database_name`` attributes to another database.
+
+    SQL Server's query DMVs are server-wide (#382); its collection script records
+    the database each statement belongs to. A row with no ``database_name`` (older
+    collections, the other engines' scripts, an unresolved statement) is kept.
+    Returns the kept rows and how many were dropped (also logged).
+    """
+    target = db_name.casefold()
+    kept = [
+        r for r in raw if not r.get("database_name") or str(r["database_name"]).casefold() == target
+    ]
+    dropped = len(raw) - len(kept)
+    if dropped:
+        logger.warning(
+            "offline_parser: dropped %d statement(s) belonging to other databases "
+            "than the collected %r",
+            dropped,
+            db_name,
+        )
+    return kept, dropped
 
 
 def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:

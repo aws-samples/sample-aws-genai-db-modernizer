@@ -64,6 +64,9 @@ DECLARE @ExcludeSystemSchemas NVARCHAR(200) =
 SET @queries = (
     SELECT TOP 1000
         CONVERT(VARCHAR(40), g.query_hash, 1) AS digest,
+        -- Database the statement belongs to (NULL, so omitted, when it could
+        -- not be resolved). The offline parser drops other databases' rows.
+        DB_NAME(g.statement_dbid) AS database_name,
         g.query_text,
         g.execution_count,
         ROUND(g.total_elapsed_time / 1000.0, 3) AS total_time_ms,
@@ -94,6 +97,7 @@ SET @queries = (
         -- text via the variant_rank tiebreak from the innermost query below.
         SELECT
             v.query_hash,
+            v.statement_dbid,
             SUM(v.execution_count) AS execution_count,
             SUM(v.total_elapsed_time) AS total_elapsed_time,
             SUM(v.total_worker_time) AS total_worker_time,
@@ -110,6 +114,7 @@ SET @queries = (
             -- picks the costliest variant per query_hash as the sample text.
             SELECT
                 qs.query_hash,
+                d.statement_dbid,
                 qs.execution_count,
                 qs.total_elapsed_time,
                 qs.total_worker_time,
@@ -129,12 +134,26 @@ SET @queries = (
                             END - qs.statement_start_offset) / 2) + 1),
                     CHAR(13), ' '), CHAR(10), ' '), CHAR(9), ' ') AS query_text,
                 ROW_NUMBER() OVER (
-                    PARTITION BY qs.query_hash
+                    PARTITION BY qs.query_hash, d.statement_dbid
                     ORDER BY qs.total_elapsed_time DESC, qs.plan_handle, qs.statement_start_offset
                 ) AS variant_rank
             FROM sys.dm_exec_query_stats qs
             CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) st
-            WHERE (st.dbid = DB_ID() OR st.dbid IS NULL OR st.dbid = 0)
+            -- The DMVs are server-wide (#382). st.dbid is NULL for ad hoc and
+            -- prepared statements, so fall back to the plan's 'dbid' attribute
+            -- (the database context the plan was compiled in). Microsoft docs:
+            -- sys.dm_exec_sql_text and sys.dm_exec_plan_attributes (Transact-SQL).
+            OUTER APPLY (
+                SELECT TOP 1 CONVERT(INT, pa.value) AS plan_dbid
+                FROM sys.dm_exec_plan_attributes(qs.plan_handle) pa
+                WHERE pa.attribute = 'dbid'
+            ) pa
+            CROSS APPLY (
+                SELECT COALESCE(NULLIF(st.dbid, 0), NULLIF(pa.plan_dbid, 0)) AS statement_dbid
+            ) d
+            -- Keep this database's statements; keep unresolved ones (NULL),
+            -- and drop every statement attributed to another database.
+            WHERE (d.statement_dbid = DB_ID() OR d.statement_dbid IS NULL)
               AND st.text NOT LIKE '%rdsadmin%'
               AND st.text NOT LIKE '%rds_configuration%'
               AND st.text NOT LIKE '%rds_database_tracking%'
@@ -154,7 +173,7 @@ SET @queries = (
               AND st.text NOT LIKE '%sys.databases%'
               AND st.text NOT LIKE '%sys.dm_%'
         ) v
-        GROUP BY v.query_hash
+        GROUP BY v.query_hash, v.statement_dbid
     ) g
     WHERE g.execution_count >= 10
     ORDER BY g.total_elapsed_time DESC

@@ -88,3 +88,21 @@ def test_output_field_names_unchanged() -> None:
         "last_seen",
     ):
         assert f"AS {field}" in sql, f"missing output field: {field}"
+
+
+def test_statements_are_attributed_to_their_database() -> None:
+    """#382: the DMVs are server-wide. A statement's database is st.dbid when
+    set, else the plan's 'dbid' attribute (NULL for ad hoc and prepared
+    statements), and only the collected database's statements are kept."""
+    sql = _script_text()
+    assert "sys.dm_exec_plan_attributes(qs.plan_handle)" in sql
+    assert "pa.attribute = 'dbid'" in sql
+    assert "DB_NAME(" in sql and "AS database_name" in sql
+    # The old filter kept every NULL-dbid statement of the whole server.
+    assert "st.dbid IS NULL" not in sql
+    assert "= DB_ID()" in sql
+
+
+def test_same_query_hash_in_two_databases_stays_two_rows() -> None:
+    sql = _script_text()
+    assert "GROUP BY v.query_hash, v.statement_dbid" in sql
