@@ -44,14 +44,37 @@ regenerates the DDL and validates the full contract.
    packages, identity quirks, ON UPDATE CURRENT_TIMESTAMP) goes in
    `app_layer_notes` with a concrete recommendation — never invent DDL for it.
 4. **Add Aurora optimizations** driven by `hot_queries`: partitioning for
-   large hot tables, read-replica routing for read-heavy patterns, I/O-Optimized
-   when write throughput is high. Put each in `optimizations`. Express index
+   large hot tables and read-replica routing for read-heavy patterns. Put each
+   in `optimizations`. Express index
    changes for frequent filter/sort columns without an index as
    `tables[].add_indexes` / `modify_indexes` (structured entries
    `{index_name, columns, unique}` over that table's columns; the script renders
    the DDL) and `remove_indexes` (names). modify/remove name an index from that
    table's `indexes`. Every `aurora_type` is a plain SQL type such as `BIGINT`
    or `VARCHAR(255)`, never a constraint or default.
+
+   **Storage configuration.** Do not choose Standard or I/O-Optimized from write
+   volume. AWS's criterion is the share of spend: I/O-Optimized "is the best
+   choice when your I/O spending is 25% or more of your total Aurora database
+   spending" and Standard when it is below 25%
+   (<https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Aurora.Overview.StorageReliability.html>).
+   The pipeline's cost estimate states the storage configuration (the sizing
+   module's figure, design on issue #1000); take it from there and never decide
+   it in the design.
+
+   **Serverless v2.** If you propose Aurora Serverless v2 with a minimum of 0 ACU
+   (scale to zero), name what keeps an instance from pausing: an associated RDS
+   Proxy, logical replication (PostgreSQL) or binlog replication (MySQL) turned
+   on, the primary cluster of a Global Database (secondary clusters never
+   pause), a zero-ETL integration, and, on PostgreSQL, Babelfish. A CDC-based
+   migration wave keeps logical replication or binlog on, so scale to zero does
+   not apply while that wave runs. Aurora PostgreSQL needs 16.3, 15.7, 14.12 or
+   13.15 or later, and Aurora MySQL 3.08.0 or later
+   (<https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html>).
+   On Serverless v2, `max_connections` is derived from the maximum ACU, not the
+   current one, so size the maximum with the connection count in mind
+   (<https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.setting-capacity.html>).
+
 5. **carry_over strategy:** types map 1:1 — your value-add is optimizations, not
    translation. Map residual source types back to themselves and add
    optimizations/trade-offs.
