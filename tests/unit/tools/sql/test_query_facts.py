@@ -16,6 +16,7 @@ import pytest
 
 from src.agents.referee.capability_registry import detect_required_capabilities
 from src.agents.referee.engine_exclusions import check_exclusions
+from src.shared.sql_spans import code_text
 from src.tools.sql import query_facts as query_facts_module
 from src.tools.sql.query_facts import ColumnTypes, QueryFacts, query_facts
 from tests.unit.tools.sql._timing import assert_cost_ratio
@@ -485,7 +486,7 @@ def test_a_fact_is_computed_once_per_text(monkeypatch):
     assert query_facts(text).computed_join_key
     assert query_facts(text).computed_join_key
     assert detect_required_capabilities(text, []) == ["computed_join"]
-    assert calls == [text]
+    assert calls == [code_text(text, "")]
 
 
 # The same total text (80,000 characters), as 5 long and as 80 short queries.
@@ -647,3 +648,46 @@ class TestCrossApplyIsALateralJoin:
     def test_a_bracketed_name_next_to_a_real_apply_still_reads_it(self) -> None:
         text = "SELECT [cross apply] FROM [t] CROSS APPLY dbo.f([t].[id]) x"
         assert query_facts(text, "sqlserver").lateral_join
+
+
+class TestTextFactsReadCode:
+    """#1440: ``where_word``, ``keyed_after_where``, ``correlated_subquery_shape`` and
+    ``computed_join_key`` read the code, not a comment or a string literal."""
+
+    @pytest.mark.parametrize("engine", ["mysql", "postgresql", "sqlserver", "oracle"])
+    def test_where_in_a_comment_or_a_literal_is_no_where(self, engine: str) -> None:
+        for text in (
+            "SELECT id FROM t -- WHERE a = 1",
+            "SELECT id FROM t /* WHERE a IN (1) */",
+            "SELECT 'WHERE a = 1' AS note FROM t",
+        ):
+            facts = QueryFacts(text, engine)
+            assert (facts.where_word, facts.keyed_after_where) == (False, False), text
+
+    @pytest.mark.parametrize("engine", ["mysql", "postgresql", "sqlserver", "oracle"])
+    @pytest.mark.passes_on_main
+    def test_a_key_after_a_real_where_still_reads(self, engine: str) -> None:
+        facts = QueryFacts("SELECT id FROM t /* x */ WHERE id = 1", engine)
+        assert (facts.where_word, facts.keyed_after_where) == (True, True)
+
+    def test_a_key_only_in_a_comment_after_a_where_is_no_key(self) -> None:
+        facts = QueryFacts("SELECT id FROM t WHERE id > 1 -- AND a = 1", "mysql")
+        assert (facts.where_word, facts.keyed_after_where) == (True, False)
+
+    def test_a_subquery_in_a_literal_is_no_correlated_shape(self) -> None:
+        text = "SELECT id FROM t WHERE note = '(SELECT x WHERE a.b = c.d)'"
+        assert QueryFacts(text, "mysql").correlated_subquery_shape is False
+
+    @pytest.mark.passes_on_main
+    def test_a_real_correlated_subquery_still_reads(self) -> None:
+        text = "SELECT (SELECT 1 FROM u WHERE u.id = t.uid) FROM t"
+        assert QueryFacts(text, "mysql").correlated_subquery_shape is True
+
+    def test_a_join_in_a_comment_is_no_computed_join_key(self) -> None:
+        text = "SELECT id FROM t /* JOIN u ON lower(u.a) = t.b */ WHERE id = 1"
+        assert QueryFacts(text, "mysql").computed_join_key is False
+
+    @pytest.mark.passes_on_main
+    def test_a_real_computed_join_key_still_reads(self) -> None:
+        text = "SELECT id FROM t JOIN u ON lower(u.a) = t.b /* x */ WHERE id = 1"
+        assert QueryFacts(text, "mysql").computed_join_key is True

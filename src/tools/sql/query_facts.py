@@ -1035,7 +1035,7 @@ class QueryFacts:
         (``lower(g.name) = u.username_lower``, either side); a function compared with a
         bind parameter is a filter, not a computed join key.
         """
-        return _has_computed_join_key(self._text)
+        return _has_computed_join_key(self._code)
 
     @cached_property
     def write_with_subquery(self) -> bool:
@@ -1128,7 +1128,7 @@ class QueryFacts:
     @cached_property
     def correlated_subquery_shape(self) -> bool:
         """``( SELECT ... WHERE ... a.b = c.d``."""
-        return _has_correlated_subquery_shape(self._text)
+        return _has_correlated_subquery_shape(self._code)
 
     @cached_property
     def time_function_keyword(self) -> bool:
@@ -1186,11 +1186,11 @@ class QueryFacts:
 
     @cached_property
     def _where_split(self) -> list[str]:
-        return _WHERE_RE.split(self._text, maxsplit=1)
+        return _WHERE_RE.split(self._code, maxsplit=1)
 
     @cached_property
     def where_word(self) -> bool:
-        """A ``WHERE`` word anywhere in the text."""
+        """A ``WHERE`` word anywhere in the code (not in a comment or a string literal)."""
         return len(self._where_split) == 2
 
     @cached_property

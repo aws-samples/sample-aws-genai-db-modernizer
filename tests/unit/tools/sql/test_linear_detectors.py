@@ -123,11 +123,11 @@ def corpus() -> list[str]:
 
 def _check(text: str) -> None:
     facts = QueryFacts(text)
-    assert facts.correlated_subquery_shape is bool(_OLD_CORRELATED_RE.search(text)), text[:120]
+    # The fact reads the text with comments and literals blanked since #1415 (#1440).
+    code = code_text(text, None)
+    assert facts.correlated_subquery_shape is bool(_OLD_CORRELATED_RE.search(code)), text[:120]
     assert has_match_against(text) is bool(_OLD_MATCH_AGAINST_RE.search(text)), text[:120]
     assert regex_fulltext_search(text) is bool(_OLD_FULLTEXT_RE.search(text)), text[:120]
-    # The fact reads the text with comments and literals blanked since #1415.
-    code = code_text(text, None)
     assert facts.write_with_subquery is bool(_OLD_WRITE_WITH_SUBQUERY_RE.search(code)), text[:120]
     for group_by in (False, True):
         assert query_facts_module._has_search_depth(text, group_by) is _old_search_depth(
