@@ -7,6 +7,7 @@ Uses the specialist-curated pattern catalog for detection and scoring.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from itertools import combinations
 from pathlib import Path
@@ -22,8 +23,11 @@ from src.agents.referee.access_pattern import (
     SchemaKeys,
     query_access,
 )
+from src.agents.referee.cache_overlay import is_locking_read
+from src.agents.referee.query_cost import row_widths
 from src.agents.referee.table_resolution import SourceScope
-from src.agents.referee.transaction_shape import transaction_shape
+from src.agents.referee.transaction_shape import BOUNDED, transaction_shape
+from src.agents.referee.write_groups import written_tables
 from src.contracts.analysis_output import (
     AntiPattern,
     Confidence,
@@ -1366,6 +1370,62 @@ def _assess_complexity(
 # Cost estimation
 # ---------------------------------------------------------------------------
 
+# The DynamoDB on-demand request-unit rules (#1476), adapted from the AWS documentation
+# (https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/read-write-operations.html;
+# the transactional rate: .../developerguide/transaction-apis.html, every item in a
+# transaction is read or written twice). A read unit covers 4 KB: one strongly consistent
+# read, two eventually consistent reads, or half a transactional read. A Query is billed
+# on the total size of the items it reads, rounded up to 4 KB once. A write unit covers
+# 1 KB of one item, two when transactional; each item is rounded up on its own, and an
+# update is billed on the larger of the item before and after it. The unit sizes are the
+# engine file's (``src/catalog/engines/dynamodb.toml``), the prices the price table's.
+EVENTUAL = "eventually consistent"
+STRONG = "strongly consistent"
+TRANSACTIONAL = "transactional"
+STANDARD = "standard"
+READ_UNITS_PER_BLOCK = {EVENTUAL: 0.5, STRONG: 1.0, TRANSACTIONAL: 2.0}
+WRITE_UNITS_PER_BLOCK = {STANDARD: 1.0, TRANSACTIONAL: 2.0}
+
+# The maintainer decision on #1000 (2026-10-24): stated whenever a read is priced
+# eventually consistent because the collection can't tell what it is.
+CONSISTENCY_FOOTNOTE = (
+    "DynamoDB reads are priced eventually consistent, except transactions, which are "
+    "priced at transactional rates."
+)
+
+_READ_TYPES = frozenset({"SELECT"})
+_WRITE_TYPES = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE"})
+
+
+def _blocks(nbytes: float, unit_bytes: int) -> int:
+    """Whole units of ``unit_bytes`` that ``nbytes`` needs, at least one."""
+    return max(1, math.ceil(max(0.0, nbytes) / unit_bytes - 1e-9))
+
+
+def read_request_units(call_bytes: float, kind: str, unit_bytes: int) -> float:
+    """Read request units one call bills: its bytes rounded up once to ``unit_bytes``
+    (4 KB), at the rate of ``kind`` (``EVENTUAL``, ``STRONG`` or ``TRANSACTIONAL``)."""
+    return _blocks(call_bytes, unit_bytes) * READ_UNITS_PER_BLOCK[kind]
+
+
+def write_request_units(item_bytes: float, kind: str, unit_bytes: int, items: float = 1.0) -> float:
+    """Write request units one call bills: each of its ``items`` rounded up to
+    ``unit_bytes`` (1 KB) on its own, at the rate of ``kind`` (``STANDARD`` or
+    ``TRANSACTIONAL``)."""
+    return items * _blocks(item_bytes, unit_bytes) * WRITE_UNITS_PER_BLOCK[kind]
+
+
+def _rows(query: dict, *fields: str) -> float:
+    for name in fields:
+        value = query.get(name)
+        if isinstance(value, int | float) and value > 0:
+            return max(1.0, float(value))
+    return 1.0
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
 
 def estimate_dynamodb_costs(
     collector_output: dict,
@@ -1374,8 +1434,27 @@ def estimate_dynamodb_costs(
 ) -> CostEstimate:
     """Estimate DynamoDB monthly costs based on workload characteristics.
 
-    Uses on-demand pricing as the default (simpler, no capacity planning).
-    It is a very very high level and basic cost estimate
+    On-demand pricing (no capacity planning), on average load: each statement's call
+    rate times the request units one call bills (#1476).
+
+    - A read (``SELECT``) bills its bytes: the rows it returns (``rows_returned_avg``,
+      at least one) times the average row of its tables (each table's ``size_mb`` over
+      its ``row_count``, the per-query cost model's rule), rounded up to 4 KB once. A
+      locking read (``SELECT ... FOR UPDATE``, read in the source dialect) reads the
+      item it is about to write, so it is priced strongly consistent; every other read
+      eventually consistent, with :data:`CONSISTENCY_FOOTNOTE` (the maintainer decision
+      on #1000). The collection records no transaction boundaries, so no read is
+      priced transactional.
+    - A write bills each item it changes (``rows_affected_avg``, else
+      ``rows_returned_avg``, at least one) at the average row of the tables it writes,
+      rounded up to 1 KB per item. A write that changes a bounded set of items (2 to
+      100, ``transaction_shape`` BOUNDED) keeps its atomicity as one
+      ``TransactWriteItems`` call and is priced transactional; any other write at the
+      standard rate.
+    - Global secondary indexes are not modelled, so their write fan-out and storage
+      are not included.
+
+    A missing price or unit size raises (#1395).
     """
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
@@ -1383,24 +1462,10 @@ def estimate_dynamodb_costs(
     # Aggregate storage
     total_size_gb = sum(t.get("size_mb", 0) for t in tables) / 1024
 
-    # Aggregate throughput
-    total_read_cps = 0.0
-    total_write_cps = 0.0
-    for q in queries:
-        cps = q.get("calls_per_second", 0)
-        qt = q.get("query_type", "").upper()
-        if qt == "SELECT":
-            total_read_cps += cps
-        elif qt in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
-            total_write_cps += cps
-
     # On-demand pricing: the request unit and storage prices are the price table's
     # (``src/catalog/prices.toml``, #1196), through the engine file's configuration.
     engine_id = "dynamodb"
     prices = catalog.pricing(engine_id)
-    read_units_per_month = total_read_cps * SECONDS_PER_MONTH
-    write_units_per_month = total_write_cps * SECONDS_PER_MONTH
-
     read_price = catalog.required_price(
         engine_id, "read_unit_price_per_million", prices.read_unit_price_per_million
     )
@@ -1410,29 +1475,98 @@ def estimate_dynamodb_costs(
     storage_price = catalog.required_price(
         engine_id, "storage_price_per_gb_month", prices.storage_price_per_gb_month
     )
+    read_bytes = int(catalog.required_price(engine_id, "read_unit_bytes", prices.read_unit_bytes))
+    write_bytes = int(
+        catalog.required_price(engine_id, "write_unit_bytes", prices.write_unit_bytes)
+    )
+
+    source_engine = source_engine_of(collector_output)
+    scope = SourceScope.from_collector(collector_output)
+    keys = SchemaKeys.from_collector(collector_output)
+    widths = row_widths(collector_output)
+
+    def width(names) -> float:
+        return sum(widths.get(str(t), 0.0) for t in names or [])
+
+    read_units = 0.0
+    write_units = 0.0
+    reads = {EVENTUAL: 0, STRONG: 0}
+    writes = {STANDARD: 0, TRANSACTIONAL: 0}
+    for q in queries:
+        cps = float(q.get("calls_per_second") or 0.0)
+        qt = str(q.get("query_type") or "").upper()
+        if qt in _READ_TYPES:
+            kind = STRONG if is_locking_read(q, source_engine) else EVENTUAL
+            reads[kind] += 1
+            call_bytes = _rows(q, "rows_returned_avg") * width(q.get("tables_accessed"))
+            read_units += cps * read_request_units(call_bytes, kind, read_bytes)
+        elif qt in _WRITE_TYPES:
+            shape = transaction_shape(q, scope, keys)
+            kind = TRANSACTIONAL if shape is not None and shape.shape == BOUNDED else STANDARD
+            writes[kind] += 1
+            items = _rows(q, "rows_affected_avg", "rows_returned_avg")
+            item_bytes = width(written_tables(q, source_engine, scope))
+            write_units += cps * write_request_units(item_bytes, kind, write_bytes, items)
+
+    read_units_per_month = read_units * SECONDS_PER_MONTH
+    write_units_per_month = write_units * SECONDS_PER_MONTH
     read_cost = (read_units_per_month / 1_000_000) * read_price
     write_cost = (write_units_per_month / 1_000_000) * write_price
     storage_cost = max(total_size_gb, 0.01) * storage_price
 
     total = round(read_cost + write_cost + storage_cost, 2)
 
+    read_kb, write_kb = read_bytes // 1024, write_bytes // 1024
+    rates: list[str] = []
+    if reads[EVENTUAL]:
+        rates.append(
+            f"{_plural(reads[EVENTUAL], 'read')} priced eventually consistent "
+            f"({READ_UNITS_PER_BLOCK[EVENTUAL]:g} RRU per {read_kb} KB)"
+        )
+    if reads[STRONG]:
+        rates.append(
+            f"{_plural(reads[STRONG], 'locking read')} (a read of an item it then writes) "
+            f"priced strongly consistent ({READ_UNITS_PER_BLOCK[STRONG]:g} RRU per {read_kb} KB)"
+        )
+    if writes[STANDARD]:
+        rates.append(
+            f"{_plural(writes[STANDARD], 'write')} priced at the standard rate "
+            f"({WRITE_UNITS_PER_BLOCK[STANDARD]:g} WRU per {write_kb} KB per item)"
+        )
+    if writes[TRANSACTIONAL]:
+        rates.append(
+            f"{_plural(writes[TRANSACTIONAL], 'multi-item write')} (2 to 100 items, kept "
+            "atomic as one TransactWriteItems call) priced transactional "
+            f"({WRITE_UNITS_PER_BLOCK[TRANSACTIONAL]:g} WRU per {write_kb} KB per item)"
+        )
     return CostEstimate(
         monthly_cost_usd=total,
         cost_components={
             "read_request_units": round(read_cost, 2),
             "write_request_units": round(write_cost, 2),
             "storage_gb": round(storage_cost, 2),
+            "read_request_units_per_month": round(read_units_per_month, 2),
+            "write_request_units_per_month": round(write_units_per_month, 2),
             "pricing_mode": "on-demand",
             "list_prices": prices.list_prices,
             # #1196: the price table this estimate was priced from, by date.
             "price_list": price_basis(),
+            # #1476: the lines the TCO states with this figure (``build_tco_analysis``).
+            "footnotes": [CONSISTENCY_FOOTNOTE] if reads[EVENTUAL] else [],
         },
         pricing_assumptions=[
-            "On-demand capacity mode (no provisioned throughput)",
+            "On-demand capacity mode (no provisioned throughput), on average load",
             f"Region: {target_region}",
-            "Eventually consistent reads (1 RRU per 4KB)",
-            "Standard write units (1 WRU per 1KB)",
+            f"Reads billed on the bytes each call returns (rows times the table's average "
+            f"row size), rounded up to {read_kb} KB",
+            f"Writes billed on each item's size (the table's average row), rounded up to "
+            f"{write_kb} KB; an update's new size is not collected, so the larger of the "
+            "item before and after it is taken as that average",
+            *rates,
+            "Global secondary indexes are not modelled: their write and storage costs "
+            "are not included",
             "No DAX, backups, or global tables included",
+            *([CONSISTENCY_FOOTNOTE] if reads[EVENTUAL] else []),
         ],
     )
 

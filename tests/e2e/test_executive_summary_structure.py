@@ -25,8 +25,10 @@ from tests.e2e.pipeline import PipelineResult
 
 pytestmark = pytest.mark.deterministic
 
-# Each sample's projected monthly cost in whole dollars ($505.02, $535.32, $435.08).
-WHOLE_DOLLARS = {"wordpress": 505, "discourse": 535, "trailgear": 435}
+# Each sample's projected monthly cost in whole dollars ($512.58, $537.06, $433.15). #1476
+# re-priced DynamoDB's request units by item size and read kind (was $505.02, $535.32,
+# $435.08): its row moves +$7.56 on wordpress, +$1.74 on discourse, -$1.93 on trailgear.
+WHOLE_DOLLARS = {"wordpress": 513, "discourse": 537, "trailgear": 433}
 
 
 def _report(run: PipelineResult) -> dict:

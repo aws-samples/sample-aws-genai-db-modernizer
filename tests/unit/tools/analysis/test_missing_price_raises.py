@@ -69,6 +69,17 @@ CASES = [
         lambda: estimate_dynamodb_costs(COLLECTION, "us-east-1"),
         "storage_price_per_gb_month",
     ),
+    # #1476: the request units are sized by the engine file's unit sizes.
+    (
+        "dynamodb",
+        lambda: estimate_dynamodb_costs(COLLECTION, "us-east-1"),
+        "read_unit_bytes",
+    ),
+    (
+        "dynamodb",
+        lambda: estimate_dynamodb_costs(COLLECTION, "us-east-1"),
+        "write_unit_bytes",
+    ),
     (
         "opensearch",
         lambda: estimate_opensearch_costs(COLLECTION, "us-east-1"),

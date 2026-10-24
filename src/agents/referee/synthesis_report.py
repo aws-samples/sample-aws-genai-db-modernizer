@@ -965,6 +965,9 @@ def build_tco_analysis(
     total_projected = 0.0
     unqueried = unqueried_tables(data.collector, data.assignment)
     stored_on = wave_one_engine if unqueried and wave_one_engine in data.engines else None
+    # #1476: a line an engine's estimate asks the TCO to state with its figure (the
+    # DynamoDB read-consistency footnote), each once, in engine order.
+    footnotes: list[str] = []
 
     for engine, artifacts in data.engines.items():
         analysis = artifacts.analysis or {}
@@ -990,6 +993,7 @@ def build_tco_analysis(
             estimate, sizing = sized
             monthly = estimate.monthly_cost_usd
             components = estimate.cost_components
+        footnotes += [str(f) for f in components.get("footnotes") or [] if str(f) not in footnotes]
         target_costs.append(
             {
                 "database": engine,
@@ -1060,6 +1064,7 @@ def build_tco_analysis(
             ),
             # #1378: which engine stores the tables no in-scope query reads.
             *([unqueried_assumption(unqueried_summary)] if unqueried_summary else []),
+            *footnotes,
         ],
     }
     if retired_costs:
