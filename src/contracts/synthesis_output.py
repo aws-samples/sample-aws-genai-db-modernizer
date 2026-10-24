@@ -546,6 +546,11 @@ Version History:
   ``min_billed_miss_pct``; and ``ReportFacts.cost_basis_notes`` (that basis as one
   sentence per engine, printed next to the cost). Backward compatible: a report without
   them states no basis.
+- 1.68 (2026-10-25, #226): facts.query_group_counts.ungrouped_queries: per owner engine,
+  the in-scope queries no group of its own serves; query_groups[].cache_layer and
+  source_queries[].cached_read: the cache layer's patterns make their own groups, whose
+  queries are cached reads, so the owners' groups are a partition of the queries they
+  serve
 """
 
 from datetime import datetime
@@ -677,7 +682,12 @@ class TableMapping(BaseModel):
 
 
 class QueryGroup(BaseModel):
-    """Group of queries organized by access pattern."""
+    """Group of queries organized by access pattern.
+
+    A cache-layer group (#226) carries ``cache_layer: true`` and only the cache
+    engine's patterns; each of its ``source_queries`` carries ``cached_read: true``,
+    a read its owner's group serves. The other groups never list a cache pattern.
+    """
 
     group_name: str = Field(..., description="Human-readable group name")
     engines: list[str] = Field(default_factory=list, description="Engines serving this group")
@@ -1793,6 +1803,16 @@ class RelationalGroupRow(BaseModel):
     calls_per_second: float = Field(0.0, ge=0, description="Their design calls/s, summed")
 
 
+class UngroupedQueryRow(BaseModel):
+    """An owner engine's in-scope queries that no query group of its own serves (#226)."""
+
+    engine: str = Field(..., description="The owner engine (id)")
+    query_count: int = Field(0, ge=0, description="Its in-scope queries in no group")
+    schema_design_available: bool = Field(
+        False, description="False: the engine has no schema design, so no access patterns yet"
+    )
+
+
 class QueryGroupFacts(BaseModel):
     """The engineering report's query group figures (#1410), from ``query_groups``."""
 
@@ -1815,6 +1835,13 @@ class QueryGroupFacts(BaseModel):
     )
     relational_query_counts: dict[str, int] = Field(
         default_factory=dict, description="Each relational engine's queries over its rows"
+    )
+    ungrouped_queries: list[UngroupedQueryRow] = Field(
+        default_factory=list,
+        description=(
+            "Per owner engine, the in-scope queries no group of its own serves (#226); "
+            "empty when every one is grouped"
+        ),
     )
 
 
@@ -2475,7 +2502,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.67",
+        default="1.68",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

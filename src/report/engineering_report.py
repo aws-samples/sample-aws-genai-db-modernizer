@@ -1005,11 +1005,39 @@ def _relational_only_groups_text(facts: dict[str, Any]) -> str:
     if not n:
         return ""
     names = ", ".join(display_engine(str(e)) for e in counts.get("relational_only_engines") or [])
-    on = f" run only on {names}" if names else " run only on a relational engine"
+    run = "runs" if n == 1 else "run"
+    on = f" {run} only on {names}" if names else f" {run} only on a relational engine"
+    if not counts.get("listed_group_count"):
+        lead = "The only group" if n == 1 else f"All {n} groups"
+    else:
+        lead = f"The other {n} {plural_noun(n, 'group')}"
     return (
-        f"The other {n} {plural_noun(n, 'group')}{on}; Queries on Aurora by table lists "
+        f"{lead}{on}; Queries on Aurora by table lists "
         f"{'its' if n == 1 else 'their'} queries per table."
     )
+
+
+def _ungrouped_queries_text(facts: dict[str, Any]) -> str:
+    """The sentences naming each owner engine's queries no group serves (#226)."""
+    counts = facts.get("query_group_counts") or {}
+    out = []
+    for row in counts.get("ungrouped_queries") or []:
+        if not isinstance(row, dict) or not row.get("query_count"):
+            continue
+        n = int(row["query_count"])
+        name = display_engine(str(row.get("engine")))
+        queries = f"{n} {name} {plural_noun(n, 'query', 'queries')}"
+        if row.get("schema_design_available"):
+            out.append(
+                f"No group serves {queries}: no access pattern in {name}'s schema design "
+                f"lists {'it' if n == 1 else 'them'}."
+            )
+        else:
+            out.append(
+                f"No group yet for {queries}: {name}'s schema design has not run, and its "
+                "access patterns make the groups."
+            )
+    return " ".join(out)
 
 
 def render_engineering_report_md(
@@ -1273,7 +1301,9 @@ def render_engineering_report_md(
         for i in (facts.get("query_group_counts") or {}).get("listed_group_indexes") or []
         if (g := query_group_at(report, i))
     ]
-    if groups:
+    # #226: the queries no group serves are stated here too, even with no listed group.
+    ungrouped = _ungrouped_queries_text(facts)
+    if groups or ungrouped:
         # "Query groups", as the deck summary calls them: the assignment's
         # co-dependency groups (tables that must move together) are a different,
         # usually much smaller count the deck also shows (#258).
@@ -1286,16 +1316,24 @@ def render_engineering_report_md(
         aurora = _relational_only_groups_text(facts)
         if aurora:
             intro.append(aurora)
+        if ungrouped:
+            intro.append(ungrouped)
+        if any(g.get("cache_layer") for g in groups):
+            intro.append(
+                "A cache layer group lists the reads it fronts as cached reads; "
+                "their owner's group serves them."
+            )
         if isinstance(co_dep, int):
             intro.append(
                 f"These are not the assignment's {co_dep} co-dependency "
                 f"{plural_noun(co_dep, 'group')} (tables that must move together)."
             )
         out += [" ".join(intro), ""]
-        out += [
-            "| Group | Engines | Access patterns | Source queries | Design RPS |",
-            "|---|---|---|---|---|",
-        ]
+        if groups:
+            out += [
+                "| Group | Engines | Access patterns | Source queries | Design RPS |",
+                "|---|---|---|---|---|",
+            ]
         for g in groups:
             engines = (
                 ", ".join(display_engine(e) for e in g.get("engines") or [])
@@ -1304,13 +1342,18 @@ def render_engineering_report_md(
             )
             aps = g.get("access_patterns")
             sqs = g.get("source_queries")
+            queries = len(sqs) if isinstance(sqs, list) else escaping.md_cell(sqs or "-")
+            if g.get("cache_layer") and isinstance(sqs, list):
+                # #226: the reads it fronts, which their owner's group serves.
+                queries = f"{len(sqs)} cached {plural_noun(len(sqs), 'read')}"
             out.append(
                 f"| {escaping.md_cell(g.get('group_name', '?'))} | {escaping.md_cell(engines)} "
                 f"| {len(aps) if isinstance(aps, list) else escaping.md_cell(aps or '-')} "
-                f"| {len(sqs) if isinstance(sqs, list) else escaping.md_cell(sqs or '-')} "
+                f"| {queries} "
                 f"| {escaping.md_cell(fmt_num(g.get('total_design_rps', '-')))} |"
             )
-        out.append("")
+        if groups:
+            out.append("")
 
     out += _aurora_queries_by_table_md(report)
 

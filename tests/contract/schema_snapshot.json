@@ -23748,6 +23748,39 @@
                               },
                               "kind": "array"
                             }
+                          },
+                          "ungrouped_queries": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "query_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "schema_design_available": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "boolean"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
                           }
                         }
                       },
@@ -29983,8 +30016,8 @@
         }
       }
     },
-    "schema_hash": "c26048ec6dd6ff3d146872541e944a75cd278fd7de1261a138167b9b18916d46",
-    "version": "1.67"
+    "schema_hash": "8966ee1854995dada3ba5b3aaf626dca2ab75a809549afea4d120206d1634641",
+    "version": "1.68"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

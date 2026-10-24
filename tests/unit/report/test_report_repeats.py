@@ -362,6 +362,7 @@ def test_query_group_facts_cover_every_group() -> None:
         "listed_group_indexes": [],
         "relational_rows": [],
         "relational_query_counts": {},
+        "ungrouped_queries": [],
     }
     pg = "aurora_postgresql"
 
@@ -404,6 +405,8 @@ def test_query_group_facts_cover_every_group() -> None:
             {"engine": pg, "group_index": 3, "query_count": 1, "calls_per_second": 50.0},
         ],
         "relational_query_counts": {pg: 4},
+        # No query_pattern_groups: no in-scope query list to check against.
+        "ungrouped_queries": [],
     }
 
 

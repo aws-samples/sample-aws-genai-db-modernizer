@@ -2061,7 +2061,8 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
     and the rows are one list); the relational-only rest, with their engines; and the
     "Queries on Aurora by table" rows: per relational engine and group, that engine's
     own queries and calls/s, busiest first with the two blame groups last, and each
-    engine's query total. None for a report with no ``query_groups`` field.
+    engine's query total; and the in-scope queries no group of their own engine serves
+    (``ungrouped_queries``, #226). None for a report with no ``query_groups`` field.
     """
     groups = report.get("query_groups")
     if not isinstance(groups, list):
@@ -2115,7 +2116,51 @@ def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
         "listed_group_indexes": listed,
         "relational_rows": rows,
         "relational_query_counts": query_counts,
+        "ungrouped_queries": _ungrouped_query_rows(report, [g for _, g in indexed]),
     }
+
+
+def _ungrouped_query_rows(report: dict[str, Any], groups: list[dict[str, Any]]) -> list[dict]:
+    """Per owner engine, its in-scope queries that no group of its own serves (#226).
+
+    The in-scope queries and their engines are ``query_pattern_groups``' members. A query
+    is grouped when an access pattern of its own engine in an owner group (not one of
+    the cache layer's, ``cache_layer``) lists it. ``schema_design_available`` is the
+    engine's ranking row's: without a design, the engine has no access patterns to
+    group its queries by yet. Sorted by engine id; empty with no ``query_pattern_groups``.
+    """
+    served: set[tuple[str, str]] = {
+        (str(ap["engine"]), str(q))
+        for g in groups
+        if not g.get("cache_layer")
+        for ap in g.get("access_patterns") or []
+        if isinstance(ap, dict) and ap.get("engine")
+        for q in ap.get("query_ids") or []
+    }
+    missing: dict[str, set[str]] = {}
+    for pattern in report.get("query_pattern_groups") or []:
+        if not isinstance(pattern, dict):
+            continue
+        for m in pattern.get("members") or []:
+            engine = m.get("engine") if isinstance(m, dict) else None
+            if not isinstance(engine, str) or not engine or engine in CACHE_ENGINES:
+                continue
+            qid = str(m.get("query_id") or "")
+            if qid and (engine, qid) not in served:
+                missing.setdefault(engine, set()).add(qid)
+    designed = {
+        str(r.get("target")): bool(r.get("schema_design_available"))
+        for r in report.get("ranking") or []
+        if isinstance(r, dict)
+    }
+    return [
+        {
+            "engine": engine,
+            "query_count": len(ids),
+            "schema_design_available": designed.get(engine, False),
+        }
+        for engine, ids in sorted(missing.items())
+    ]
 
 
 # ---------------------------------------------------------------------------

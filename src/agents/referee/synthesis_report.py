@@ -651,10 +651,17 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     enriched with the original source query data from the collector.
     This is the primary organizing structure for the UI — similar to
     Leo's query classification approach.
+
+    The owners' groups are a partition of the queries they serve (#226): the cache
+    layer (``CACHE_OVERLAY_ENGINES``) owns no query, so its patterns make groups of
+    their own (``cache_layer``: True), keyed apart from an owner's group of the same
+    name, and each query they list is a ``cached_read``, never a served query.
     """
     source_queries = {q["query_id"]: q for q in data.source_queries}
     source_scope = SourceScope.from_collector(data.collector)
-    groups: dict[str, dict] = {}
+    # Keyed by (group name, cache layer): a cache pattern grouped by its tables (or a
+    # pattern_group that happens to match an owner's) never joins the owner's group.
+    groups: dict[tuple[str, bool], dict] = {}
 
     # Reason text repeats far more than it varies (#478): a consolidation
     # reason is written once per *event*, not per query, so on a large
@@ -669,7 +676,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
     # the relational branch further down (one still awaiting its design), so
     # the same table's reasons dedupe together regardless of which branch
     # built the group first.
-    reason_indices: dict[str, dict[str, int]] = {}
+    reason_indices: dict[tuple[str, bool], dict[str, int]] = {}
     # query_id -> the assignment's own routing reason (#157 review, I3): an
     # Aurora access pattern's own ``description`` is structural ("SELECT on
     # t; filtered by id"), not why the query is on Aurora at all -- that
@@ -704,18 +711,22 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             else:
                 group_name = ", ".join(clean_tables) or "ungrouped"
             query_ids = _access_pattern_query_ids(ap)
+            cached = engine in CACHE_OVERLAY_ENGINES
+            key = (group_name, cached)
 
-            if group_name not in groups:
-                groups[group_name] = {
+            if key not in groups:
+                groups[key] = {
                     "group_name": group_name,
                     "engines": [],
                     "access_patterns": [],
                     "source_queries": [],
                     "total_design_rps": 0,
                 }
+                if cached:
+                    groups[key]["cache_layer"] = True
 
-            if engine not in groups[group_name]["engines"]:
-                groups[group_name]["engines"].append(engine)
+            if engine not in groups[key]["engines"]:
+                groups[key]["engines"].append(engine)
 
             entry = {
                 "pattern_id": ap.get("pattern_id"),
@@ -740,28 +751,24 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                 reason_text = _clean_relational_reason(
                     qid_to_assignment_reason.get(query_ids[0]) if query_ids else None
                 )
-                group_reasons = groups[group_name].setdefault("reasons", [])
-                idx_by_reason = reason_indices.setdefault(group_name, {})
+                group_reasons = groups[key].setdefault("reasons", [])
+                idx_by_reason = reason_indices.setdefault(key, {})
                 reason_index = idx_by_reason.get(reason_text)
                 if reason_index is None:
                     reason_index = len(group_reasons)
                     idx_by_reason[reason_text] = reason_index
                     group_reasons.append(reason_text)
                 entry["reason_index"] = reason_index
-            groups[group_name]["access_patterns"].append(entry)
+            groups[key]["access_patterns"].append(entry)
 
-            groups[group_name]["total_design_rps"] += ap.get("design_rps", 0)
+            groups[key]["total_design_rps"] += ap.get("design_rps", 0)
 
             # Link back to source queries
             for qid in query_ids:
                 if qid in source_queries:
                     # Check if already added
                     existing = next(
-                        (
-                            sq
-                            for sq in groups[group_name]["source_queries"]
-                            if sq["query_id"] == qid
-                        ),
+                        (sq for sq in groups[key]["source_queries"] if sq["query_id"] == qid),
                         None,
                     )
                     if existing:
@@ -770,7 +777,7 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                             existing["linked_patterns"].append(ap.get("pattern_id"))
                     else:
                         sq = source_queries[qid]
-                        groups[group_name]["source_queries"].append(
+                        groups[key]["source_queries"].append(
                             {
                                 "query_id": qid,
                                 "query_text": sq.get("query_text", "")[:200],
@@ -779,6 +786,8 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                                 "execution_time_ms_avg": sq.get("execution_time_ms_avg"),
                                 "tables_accessed": sq.get("tables_accessed", []),
                                 "linked_patterns": [ap.get("pattern_id")],
+                                # #226: a read the cache layer fronts, served by its owner.
+                                **({"cached_read": True} if cached else {}),
                             }
                         )
 
@@ -845,9 +854,10 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             # assignment row for the same query within the same group is
             # recognized as the same pattern, not counted twice.
             pattern_id = f"relational-{engine}-{qid}"
+            key = (group_name, False)
 
-            if group_name not in groups:
-                groups[group_name] = {
+            if key not in groups:
+                groups[key] = {
                     "group_name": group_name,
                     "engines": [],
                     "access_patterns": [],
@@ -855,17 +865,17 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                     "total_design_rps": 0,
                 }
 
-            if engine not in groups[group_name]["engines"]:
-                groups[group_name]["engines"].append(engine)
+            if engine not in groups[key]["engines"]:
+                groups[key]["engines"].append(engine)
 
-            # A query naming the same tables a non-relational engine's own
-            # access pattern already grouped under this exact name reuses
-            # that group (the loop above may have created it first, with no
+            # A query naming the same tables an owner engine's own access
+            # pattern already grouped under this exact name reuses that group
+            # (never the cache layer's, #226: it is keyed apart; the loop above may have created it first, with no
             # "reasons" key at all -- only this branch ever needs one).
             # ``setdefault``, not a plain assignment: that existing group's
             # own entries have no "reason_index" and keep reading their
             # reason from "description" directly, unaffected either way.
-            groups[group_name].setdefault("reasons", [])
+            groups[key].setdefault("reasons", [])
 
             if pattern_id in seen_pattern_ids.setdefault(group_name, set()):
                 continue
@@ -879,14 +889,14 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             # names a real table the collector missed for some queries,
             # #483).
             reason_text = _clean_relational_reason(qa.get("assignment_reason"))
-            group_reasons = groups[group_name]["reasons"]
-            idx_by_reason = reason_indices.setdefault(group_name, {})
+            group_reasons = groups[key]["reasons"]
+            idx_by_reason = reason_indices.setdefault(key, {})
             reason_index = idx_by_reason.get(reason_text)
             if reason_index is None:
                 reason_index = len(group_reasons)
                 idx_by_reason[reason_text] = reason_index
                 group_reasons.append(reason_text)
-            groups[group_name]["access_patterns"].append(
+            groups[key]["access_patterns"].append(
                 {
                     "pattern_id": pattern_id,
                     "engine": engine,
@@ -909,12 +919,10 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
             # target-table mapping only once Aurora has real access
             # patterns), and the latter is always None -- neither is read by
             # anything that renders this group.
-            groups[group_name]["total_design_rps"] += design_rps
+            groups[key]["total_design_rps"] += design_rps
 
-            if src_query and not any(
-                s["query_id"] == qid for s in groups[group_name]["source_queries"]
-            ):
-                groups[group_name]["source_queries"].append(
+            if src_query and not any(s["query_id"] == qid for s in groups[key]["source_queries"]):
+                groups[key]["source_queries"].append(
                     {
                         "query_id": qid,
                         "query_text": src_query.get("query_text", "")[:200],
