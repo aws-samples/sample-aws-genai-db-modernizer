@@ -58,27 +58,29 @@ The ready JSON result includes `"ui_build": "rebuilt"` or `"ui_build": "reused"`
 
 #### validate_schemas.py
 
-Validates JSON schema files for correctness.
+Validates JSON schema files for correctness (the pre-commit hook runs it on every JSON file under a `schemas` directory).
 
 **Usage:**
 
 ```bash
-# Validate specific schema files
-python scripts/validate_schemas.py docs/03-contracts/schemas/v1/collector/collector-output.json
-
-# Validate all schemas in a directory
-python scripts/validate_schemas.py docs/03-contracts/schemas/v1/**/*.json
-
-# Run via pre-commit (automatic)
-git commit  # Pre-commit hook runs validation automatically
+uv run python scripts/validate_schemas.py docs/contracts/schemas/assess_result.v1.schema.json
+uv run python scripts/validate_schemas.py   # every schema in docs/contracts/schemas/
 ```
 
 **What it checks:**
 
 - Valid JSON syntax
-- Conforms to JSON Schema Draft 07
-- Has required metadata fields (title, version, description, type)
-- Version follows semantic versioning (MAJOR.MINOR.PATCH)
+- Names JSON Schema Draft 07 or 2020-12 in `$schema`, and is a valid schema for it
+- Has the required metadata fields (`title`, `description`, `type`) and a version: `x-contract-version` (MAJOR.MINOR, the generated `assess()` schemas) or `version` (MAJOR.MINOR.PATCH)
+
+#### render_contract_schemas.py
+
+Writes the JSON Schemas of the public `assess()` request and result (`docs/contracts/schemas/assess_request.v1.schema.json`, `assess_result.v1.schema.json`) from the models in `src/assessment/models.py`. `--check` exits 1 when a committed file differs from a fresh render; `ci/lint.sh` runs it.
+
+```bash
+uv run python scripts/render_contract_schemas.py --write
+uv run python scripts/render_contract_schemas.py --check
+```
 
 #### redact_stored_inputs.py
 

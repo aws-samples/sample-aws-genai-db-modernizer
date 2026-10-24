@@ -4,8 +4,10 @@ Validate JSON schema files for Database Modernizer Assessment.
 
 This script validates that JSON schema files:
 1. Are valid JSON
-2. Conform to JSON Schema Draft 07
-3. Have required metadata fields (title, version, description)
+2. Name JSON Schema Draft 07 or 2020-12 in ``$schema``, and are valid schemas for it
+3. Have the required metadata fields: ``title``, ``description``, ``type`` and a version, either
+   ``x-contract-version`` (MAJOR.MINOR, the generated ``assess()`` schemas, #1183) or
+   ``version`` (MAJOR.MINOR.PATCH)
 """
 
 import json
@@ -14,11 +16,15 @@ from pathlib import Path
 
 try:
     import jsonschema
-    from jsonschema import Draft7Validator
+    from jsonschema.validators import validator_for
 except ImportError:
     print("Error: jsonschema package not installed")
     print("Install with: pip install jsonschema")
     sys.exit(1)
+
+
+# Draft 07 (the older schema files) and 2020-12 (the generated assess() schemas, #1183).
+SUPPORTED_DRAFTS = ("draft-07", "draft/2020-12")
 
 
 def validate_schema_file(file_path: Path) -> tuple[bool, list[str]]:
@@ -44,30 +50,42 @@ def validate_schema_file(file_path: Path) -> tuple[bool, list[str]]:
         errors.append(f"Error reading file: {e}")
         return False, errors
 
-    # Check if it's a JSON Schema
+    # Check if it's a JSON Schema, of a draft this repository uses
     if "$schema" not in schema:
         errors.append("Missing '$schema' field")
-    elif "draft-07" not in schema["$schema"]:
-        errors.append(f"Expected JSON Schema Draft 07, got: {schema['$schema']}")
+    elif not any(d in schema["$schema"] for d in SUPPORTED_DRAFTS):
+        errors.append(f"Expected JSON Schema Draft 07 or 2020-12, got: {schema['$schema']}")
 
     # Validate required metadata fields
-    required_fields = ["title", "version", "description", "type"]
-    for field in required_fields:
+    for field in ("title", "description", "type"):
         if field not in schema:
             errors.append(f"Missing required field: '{field}'")
-
-    # Validate version format (semantic versioning)
-    if "version" in schema:
-        version = schema["version"]
-        parts = version.split(".")
+    if "x-contract-version" in schema:
+        parts = str(schema["x-contract-version"]).split(".")
+        if len(parts) != 2 or not all(p.isdigit() for p in parts):
+            errors.append(
+                f"Invalid x-contract-version: '{schema['x-contract-version']}' "
+                "(expected: MAJOR.MINOR)"
+            )
+    elif "version" in schema:
+        parts = str(schema["version"]).split(".")
         if len(parts) != 3 or not all(p.isdigit() for p in parts):
-            errors.append(f"Invalid version format: '{version}' (expected: MAJOR.MINOR.PATCH)")
+            errors.append(
+                f"Invalid version format: '{schema['version']}' (expected: MAJOR.MINOR.PATCH)"
+            )
+    else:
+        errors.append("Missing required field: 'x-contract-version' or 'version'")
 
-    # Validate the schema itself using Draft7Validator
-    try:
-        Draft7Validator.check_schema(schema)
-    except jsonschema.SchemaError as e:
-        errors.append(f"Invalid JSON Schema: {e.message}")
+    # Validate the schema itself against the draft it names
+    if "$schema" in schema:
+        validator = validator_for(schema, default=None)
+        if validator is None:
+            errors.append(f"Unknown JSON Schema draft: {schema['$schema']}")
+        else:
+            try:
+                validator.check_schema(schema)
+            except jsonschema.SchemaError as e:
+                errors.append(f"Invalid JSON Schema: {e.message}")
 
     return len(errors) == 0, errors
 

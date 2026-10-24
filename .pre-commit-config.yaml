@@ -239,6 +239,16 @@ repos:
         files: '(src/catalog/.*\.toml|src/shared/catalog/.*\.py|scripts/render_catalog\.py|src/ui/src/utils/engineCatalog\.generated\.js|docs/architecture/rule-catalog\.md)'
         pass_filenames: false
 
+  # The assess() request and result JSON Schemas are generated from the public models (#1183)
+  - repo: local
+    hooks:
+      - id: render-contract-schemas
+        name: assess() JSON Schemas are fresh
+        entry: uv run python scripts/render_contract_schemas.py --check
+        language: system
+        files: '(src/assessment/.*\.py|scripts/render_contract_schemas\.py|docs/contracts/schemas/.*\.json)'
+        pass_filenames: false
+
   # The price table's age (#1196): warns only, so an old table never blocks a commit
   - repo: local
     hooks:

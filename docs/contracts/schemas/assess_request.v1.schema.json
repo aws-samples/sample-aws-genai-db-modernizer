@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_request.v1.schema.json",
+  "title": "AssessmentRequest",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "AssessmentOptions": {
+      "additionalProperties": false,
+      "description": "How far to run and over which engines. Echoed in the result as applied.",
+      "properties": {
+        "target_engines": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Engine scope: the engine catalog ids to consider. None means every engine the workload warrants. Ids are lower-cased, trimmed, de-duplicated and sorted; an empty list, a legacy id, a planned engine or an unknown id is refused.",
+          "title": "Target Engines"
+        },
+        "run_through": {
+          "default": "reality_check",
+          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement. 'schema_design' (the data model, which needs a model) and 'synthesis' are refused in this release.",
+          "enum": [
+            "analysis",
+            "reality_check",
+            "schema_design",
+            "synthesis"
+          ],
+          "title": "Run Through",
+          "type": "string"
+        },
+        "deterministic": {
+          "default": true,
+          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary.",
+          "title": "Deterministic",
+          "type": "boolean"
+        },
+        "include_artifacts": {
+          "default": false,
+          "description": "Include the internal contracts in `artifacts` (no compatibility promise).",
+          "title": "Include Artifacts",
+          "type": "boolean"
+        }
+      },
+      "title": "AssessmentOptions",
+      "type": "object"
+    },
+    "WorkloadScope": {
+      "additionalProperties": false,
+      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.",
+      "properties": {
+        "tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "derived_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From"
+        },
+        "rewritten_query_ids": {
+          "description": "Statements the caller rewrote; marked rewritten_by_caller in the result.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Rewritten Query Ids",
+          "type": "array"
+        },
+        "dropped_foreign_keys": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Dropped Foreign Keys",
+          "type": "array"
+        }
+      },
+      "title": "WorkloadScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One assessment: a database's raw collection and the options to run it with.",
+  "properties": {
+    "contract_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "database_name": {
+      "description": "1 to 128 ASCII letters, digits, underscores or hyphens, not starting with a hyphen.",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$",
+      "title": "Database Name",
+      "type": "string"
+    },
+    "collection": {
+      "additionalProperties": true,
+      "description": "A raw collection: the unmodified output of the collection scripts (statement text, execution statistics and the schema). A collector output (contract 3.x) is accepted too, but every derived fact is read again from each statement's text by the library's parser; derived fields it carries are ignored.",
+      "title": "Collection",
+      "type": "object"
+    },
+    "options": {
+      "$ref": "#/$defs/AssessmentOptions"
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkloadScope"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "database_name",
+    "collection"
+  ],
+  "type": "object"
+}

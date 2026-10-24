@@ -129,6 +129,8 @@ check_generated "contract schema snapshot" "tests/contract/schema_snapshot.json"
   uv run pytest tests/contract/test_schema_snapshot.py -p no:xdist -q
 check_generated "rendered catalog" "docs/architecture/rule-catalog.md|src/ui/src/utils/engineCatalog.generated.js" \
   uv run python scripts/render_catalog.py --check
+check_generated "assess() JSON Schemas" "docs/contracts/schemas/assess_request.v1.schema.json|docs/contracts/schemas/assess_result.v1.schema.json" \
+  uv run python scripts/render_contract_schemas.py --check
 
 tmp="$(mktemp)"
 main_wt=""

@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from src.shared.database_name import validate_database_name
+from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_name
 from src.shared.target_databases import normalize_target_databases
 
 #: The version of this public surface (not of any internal contract).
@@ -85,7 +85,11 @@ COMPATIBILITY_NOTE: Literal["none: internal contracts, may change in any release
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Unknown fields are refused. In the serialization JSON Schema (what a result is as
+    # JSON), a field with a default is required: ``model_dump_json`` always writes it, so
+    # the published result schema says so (#1183). The request schema is the validation
+    # schema, where a default still makes a field optional.
+    model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
 
 
 # --------------------------------------------------------------------------- request
@@ -160,7 +164,11 @@ class AssessmentRequest(_Strict):
     database_name: str = Field(
         ...,
         min_length=1,
-        description="1 to 128 ASCII letters, digits, underscores or hyphens.",
+        description=(
+            "1 to 128 ASCII letters, digits, underscores or hyphens, not starting with a hyphen."
+        ),
+        # The published schema states the rule ``validate_database_name`` applies.
+        json_schema_extra={"pattern": f"^{DATABASE_NAME_PATTERN}$"},
     )
     collection: dict[str, Any] = Field(
         ...,
@@ -414,7 +422,7 @@ class Group(_Strict):
 class Artifacts(BaseModel):
     """Internal contracts, verbatim. No compatibility promise; each keeps its own version."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", json_schema_serialization_defaults_required=True)
 
     compatibility: Literal["none: internal contracts, may change in any release"] = (
         COMPATIBILITY_NOTE
@@ -422,6 +430,9 @@ class Artifacts(BaseModel):
 
 
 class AssessmentResult(_Strict):
+    """One assessment's result: where each statement runs, which statements move
+    together and which engine owns each table (not a data model)."""
+
     contract_version: Literal["1.0"] = CONTRACT_VERSION
     label: ResultLabel = Field(
         ...,

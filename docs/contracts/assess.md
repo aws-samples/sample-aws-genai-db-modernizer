@@ -87,3 +87,192 @@ With `deterministic: true`, the same request on the same library version gives t
 ## Artifacts: no compatibility promise
 
 With `include_artifacts: true`, the result also carries `artifacts`: the pipeline's internal contracts, verbatim (`collector_output`, `triage`, `analyses`, `decision_traces`, and from `"reality_check"` on, `assignment` and `reality_check`). Each keeps its own internal `contract_version`, and the block's `compatibility` field says it plainly: they may change in any release, as routing evolves. Use them for debugging and audit, not as an integration surface.
+
+## JSON Schemas
+
+The request and the result are published as JSON Schemas (draft 2020-12) in [`docs/contracts/schemas/`](schemas/README.md), for callers in other languages or callers that validate payloads outside Python:
+
+- [`assess_request.v1.schema.json`](schemas/assess_request.v1.schema.json): `AssessmentRequest`;
+- [`assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json): `AssessmentResult`, as `model_dump_json` writes it.
+
+`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape; the library also refuses an unknown engine id, a `run_through` this release does not run and a `label` that does not match `summary.run_through_reached` ([schemas/README.md](schemas/README.md)).
+
+## Sample
+
+A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQL and DynamoDB, and the result it could give. The values are illustrative (shortened ids, a placeholder `ruleset_hash`); both payloads validate against the schemas above, and a test keeps them valid.
+
+### Sample request
+
+```json
+{
+  "contract_version": "1.0",
+  "database_name": "shop",
+  "collection": {
+    "...": "the collection scripts' output"
+  },
+  "options": {
+    "target_engines": [
+      "aurora_postgresql",
+      "dynamodb"
+    ],
+    "run_through": "reality_check",
+    "deterministic": true,
+    "include_artifacts": false
+  },
+  "scope": null
+}
+```
+
+### Sample result
+
+```json
+{
+  "contract_version": "1.0",
+  "label": "recommendation",
+  "library_version": "0.3.0",
+  "ruleset_version": "0.3.0",
+  "ruleset_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "options": {
+    "target_engines": [
+      "aurora_postgresql",
+      "dynamodb"
+    ],
+    "run_through": "reality_check",
+    "deterministic": true,
+    "include_artifacts": false
+  },
+  "scope": null,
+  "summary": {
+    "run_through_reached": "reality_check",
+    "source_engine": "sqlserver",
+    "assignment_version": 2,
+    "statement_count": 2,
+    "statements_per_engine": {
+      "aurora_postgresql": 1,
+      "dynamodb": 1
+    },
+    "unservable_count": 0,
+    "unique_delta_threshold": 15,
+    "relational_engine": {
+      "engine": "aurora_postgresql",
+      "reason": "The customer's engine scope includes Aurora PostgreSQL and no other Aurora engine, so it is the relational candidate"
+    },
+    "engines": [
+      {
+        "engine": "aurora_postgresql",
+        "role": "owner",
+        "statement_count": 1,
+        "consolidated_into": null,
+        "unique_queries": 1,
+        "avg_delta": 18.0,
+        "reason": "84% mean fit across 1 query (2 rated tables), pinned by multi-table joins (1 of 1)."
+      },
+      {
+        "engine": "dynamodb",
+        "role": "owner",
+        "statement_count": 1,
+        "consolidated_into": null,
+        "unique_queries": 0,
+        "avg_delta": 4.0,
+        "reason": "81% mean fit across 1 query (1 rated table), led by key-value lookups (1 of 1)."
+      }
+    ],
+    "consolidations": [],
+    "tables": [
+      {
+        "table_id": "sales.Orders",
+        "owner": "aurora_postgresql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": null,
+        "reason": "No statement writes it; Aurora PostgreSQL serves its only query."
+      },
+      {
+        "table_id": "sales.OrderLines",
+        "owner": "aurora_postgresql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": null,
+        "reason": "No statement writes it; Aurora PostgreSQL serves its only query."
+      },
+      {
+        "table_id": "sales.Carts",
+        "owner": "dynamodb",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": null,
+        "reason": "No statement writes it; DynamoDB serves its only query."
+      }
+    ]
+  },
+  "statements": [
+    {
+      "query_id": "Q01",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 1,
+      "tables": [
+        "sales.Orders",
+        "sales.OrderLines"
+      ],
+      "calls_per_second": 12.5,
+      "rewritten_by_caller": false,
+      "engine": "aurora_postgresql",
+      "confidence": 84,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_postgresql": 84,
+        "dynamodb": 66
+      },
+      "signals": [],
+      "matched_patterns": [
+        {
+          "id": "simple-join",
+          "name": "Simple join"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "highest fit for Aurora PostgreSQL"
+    },
+    {
+      "query_id": "Q02",
+      "query_tags": [
+        "endpoint: CartController.Get"
+      ],
+      "query_type": "SELECT",
+      "join_count": 0,
+      "tables": [
+        "sales.Carts"
+      ],
+      "calls_per_second": 3.0,
+      "rewritten_by_caller": false,
+      "engine": "dynamodb",
+      "confidence": 81,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_postgresql": 77,
+        "dynamodb": 81
+      },
+      "signals": [
+        "key_value_lookups"
+      ],
+      "matched_patterns": [
+        {
+          "id": "key-value-lookup",
+          "name": "Key-value lookup"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "highest fit for DynamoDB"
+    }
+  ],
+  "groups": [],
+  "artifacts": null
+}
+```

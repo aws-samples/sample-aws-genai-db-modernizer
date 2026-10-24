@@ -1,70 +1,45 @@
-# DEPRECATED: JSON Schema Files
+# JSON Schemas for the `assess()` contract
 
-**Status:** DEPRECATED as of v2.0
-**Date:** February 2, 2026
+This folder holds the JSON Schemas of the public library entry point `assess()` ([assess.md](../assess.md)), for callers in other languages or callers that validate payloads outside Python.
 
----
+| File | Model | What it describes |
+|---|---|---|
+| `assess_request.v1.schema.json` | `AssessmentRequest` | The request a caller sends |
+| `assess_result.v1.schema.json` | `AssessmentResult` | The result `assess()` returns, as JSON (`model_dump_json`) |
 
-## Migration Notice
+## Versions
 
-These JSON Schema files are **deprecated** and should not be used for new development.
+Each file is named after the MAJOR version of the contract it describes: `v1` covers every `contract_version` `1.x`. A MINOR version (a new optional field, a new enum value) regenerates the same file; a MAJOR version adds a `v2` file next to it. Each file states the exact `contract_version` it was rendered from in `x-contract-version`, and the payloads carry it in `contract_version`.
 
-**Use Pydantic models instead:** `src/contracts/`
+The schemas use JSON Schema draft 2020-12 (`$schema`). Each file's `$id` is its raw URL on this repository's `main` branch.
 
----
+In the result schema every field is required: the library always writes it, and a field with nothing to say is `null` or empty, never left out. In the request schema only `database_name` and `collection` are required; the other fields have defaults.
 
-## Why Deprecated?
+## Validating a payload
 
-As of Database Modernizer Assessment v2.0, we use **Pydantic models** instead of JSON Schema for contracts.
-
-**Reasons:**
-
-- ✅ Pydantic provides better type safety
-- ✅ LLMs understand Pydantic type hints better (no format retries needed)
-- ✅ Easier to maintain and evolve
-- ✅ Better IDE support and developer experience
-- ✅ Automatic validation without retry loops
-
-**See:**
-
-- [ADR-002: Structured Output with Pydantic](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-002-structured-output-and-validation.md)
-- [Pydantic Contracts](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)
-
----
-
-## Migration Path
-
-**Old (JSON Schema):**
+Any draft 2020-12 validator works. In Python, with `jsonschema`:
 
 ```python
 import json
-import jsonschema
+from jsonschema import Draft202012Validator
 
-# Load schema
-with open('schemas/collector-output.json') as f:
-    schema = json.load(f)
-
-# Validate
-jsonschema.validate(instance=data, schema=schema)
+schema = json.load(open("docs/contracts/schemas/assess_result.v1.schema.json"))
+Draft202012Validator(schema).validate(json.load(open("result.json")))
 ```
 
-**New (Pydantic):**
+From Python, the models themselves are the stricter check: `AssessmentRequest.model_validate(payload)` and `AssessmentResult.model_validate_json(text)` (`src.assessment`). The schemas describe the shape; the library applies a few rules a schema does not state:
 
-```python
-from contracts.models.collector_output import CollectorOutput
+- `options.target_engines`: ids are normalised, and an unknown, legacy or planned engine id is refused;
+- `options.run_through`: `"schema_design"` and `"synthesis"` are part of the contract and refused in this release;
+- `database_name`: surrounding whitespace is stripped before the name is checked (the schema's `pattern` checks the name as sent);
+- `label` follows `summary.run_through_reached` (`analysis_only`, `recommendation`, `designed`).
 
-# Validate and create
-output = CollectorOutput(**data)  # Automatic validation
+## Regenerating
 
-# Or from JSON
-output = CollectorOutput.model_validate_json(json_str)
+The files are generated from the Pydantic models in `src/assessment/models.py`; never edit them by hand:
+
+```bash
+uv run python scripts/render_contract_schemas.py --write
 ```
 
----
-
-## Timeline
-
-- **v1.x**: JSON Schema (deprecated)
-- **v2.0+**: Pydantic models (current)
-
-These files are kept for reference only. Do not use for new development.
+`ci/lint.sh` runs `scripts/render_contract_schemas.py --check`, which fails when a committed schema differs from a fresh render, so a model change without a regeneration fails lint.
