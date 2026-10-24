@@ -29,8 +29,18 @@ def _request_unit_prices(engine: str) -> tuple[float, float]:
     table's (src/catalog/prices.toml, #1196), through the engine catalog."""
     prices = catalog.pricing(engine)
     return (
-        (prices.read_unit_price_per_million or 0.0) / 1_000_000,
-        (prices.write_unit_price_per_million or 0.0) / 1_000_000,
+        (
+            catalog.required_price(
+                engine, "read_unit_price_per_million", prices.read_unit_price_per_million
+            )
+        )
+        / 1_000_000,
+        (
+            catalog.required_price(
+                engine, "write_unit_price_per_million", prices.write_unit_price_per_million
+            )
+        )
+        / 1_000_000,
     )
 
 

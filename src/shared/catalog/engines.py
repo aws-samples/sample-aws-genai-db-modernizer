@@ -469,6 +469,17 @@ def pricing(engine: str) -> EnginePricing:
     return EnginePricing()
 
 
+def required_price(engine: str, field: str, value: float | None) -> float:
+    """``value``, the price ``field`` of ``engine``; a ValueError naming both when it is missing.
+
+    An estimate never prices a gap at $0 (#1395). A price that is truly free is a written
+    ``0.0`` in ``src/catalog/prices.toml``, which this returns.
+    """
+    if value is None:
+        raise ValueError(f"{engine} has no {field} in the price table (src/catalog/prices.toml)")
+    return float(value)
+
+
 def default_score_weights() -> dict[str, float]:
     """The score-dimension weights an engine with no ``score_weights`` uses."""
     return dict(DEFAULT_SCORE_WEIGHTS)
