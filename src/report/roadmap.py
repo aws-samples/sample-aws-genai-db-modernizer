@@ -88,7 +88,7 @@ def _wave_headline_stats(w: dict[str, Any], wf: dict[str, Any] | None = None) ->
     if wf is None:
         wf = wave_facts(w)
     n = int(w.get("query_count") or 0)
-    basis = "of calls" if w.get("share_basis") == "calls" else "of query patterns"
+    basis = "of calls" if w.get("share_basis") == "calls" else "of queries"
     share = fmt_num(w.get("workload_share_percent", 0), 1)
     tables = int(wf.get("served_tables") or 0)
     cutover = w.get("cutover_query_count")

@@ -157,7 +157,7 @@ def _kv_facts(moving: int = 15, kept: int = 3) -> dict:
 def test_the_wave_headline_says_what_the_tables_it_does_not_move_are() -> None:
     count, tables = _wave_headline_stats(_kv_wave(), _kv_facts())
     assert count + tables == (
-        "39 queries (36.4% of query patterns), 18 source tables: 15 to move, 3 kept in "
+        "39 queries (36.4% of queries), 18 source tables: 15 to move, 3 kept in "
         "sync from their owners"
     )
     assert "served" not in tables

@@ -80,7 +80,7 @@ function tablePhrase(t, synthesis, wave) {
 
 // "all 107 queries at cutover; 65 (60.7%) remain on Aurora MySQL at the end,
 // 50 source tables and views", "20 queries (83.4% of calls)",
-// "1 query (0.9% of query patterns), 4 source tables: 3 to move, 1 kept in sync from its owner".
+// "1 query (0.9% of queries), 4 source tables: 3 to move, 1 kept in sync from its owner".
 export function waveHeadline(t, synthesis, wave) {
   // #1383: a wave that moves nothing states no query share and no carried-table count.
   if (waveMovesNothing(synthesis, wave)) return '';

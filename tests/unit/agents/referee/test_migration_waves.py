@@ -715,7 +715,7 @@ class TestCacheWave:
 
     def test_cache_overlap_note_names_the_owner_wave(self):
         # Finding 11 (#225): the cache share (of calls) and the owner shares
-        # (of query patterns) are different bases; say so and name the
+        # (of queries) are different bases; say so and name the
         # overlapping wave -- now wave 3 (DynamoDB) since Aurora is wave 1.
         wave = _build()[1]
         assert "wave 3 (DynamoDB)" in wave["rationale"]

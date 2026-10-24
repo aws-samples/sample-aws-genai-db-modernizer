@@ -30,15 +30,15 @@ Queries moved: 1654 of 1654 queries move to a new engine (a migration target or 
 ### Wave 1: Move to Aurora PostgreSQL
 
 - Engines: Aurora PostgreSQL
-- 1266 queries \(76.5% of query patterns\)
+- 1266 queries \(76.5% of queries\)
 - Moves from: the source PostgreSQL database
-- Why: The whole source database moves to Aurora PostgreSQL first, schema carried over 1:1 \(every collected table and view\): a homogeneous migration \(same engine family\). 1266 queries \(76.5% of query patterns\) are still assigned to Aurora PostgreSQL once every later wave in this roadmap has moved its own share away; every later wave's table count is a subset of this wave's tables, never an addition to them.
+- Why: The whole source database moves to Aurora PostgreSQL first, schema carried over 1:1 \(every collected table and view\): a homogeneous migration \(same engine family\). 1266 queries \(76.5% of queries\) are still assigned to Aurora PostgreSQL once every later wave in this roadmap has moved its own share away; every later wave's table count is a subset of this wave's tables, never an addition to them.
 - Gate before the next wave: Schema and data parity validated against the source database before cutover; decommission the legacy source once replication lag is zero.
 
 ### Wave 2: Move key-value and point-lookup queries to DynamoDB
 
 - Engines: DynamoDB
-- 385 queries \(23.3% of query patterns\)
+- 385 queries \(23.3% of queries\)
 - Moves from: Aurora PostgreSQL
 - Why: 385 queries \(23.3% of query patterns\) to DynamoDB.
 - Gate before the next wave: Query parity confirmed before the next wave.
@@ -46,9 +46,9 @@ Queries moved: 1654 of 1654 queries move to a new engine (a migration target or 
 ### Wave 3: Sync search and analytics read models to OpenSearch
 
 - Engines: OpenSearch
-- 3 queries \(0.2% of query patterns\)
+- 3 queries \(0.2% of queries\)
 - Synced from (durable owner): Aurora PostgreSQL
-- Why: 3 search/analytics queries \(0.2% of query patterns\) build a read model in OpenSearch. The indexed tables could not be resolved from the table mappings, so Aurora PostgreSQL is treated as the owner of record until they can be.
+- Why: 3 search/analytics queries \(0.2% of queries\) build a read model in OpenSearch. The indexed tables could not be resolved from the table mappings, so Aurora PostgreSQL is treated as the owner of record until they can be.
 - Gate before the next wave: Sync lag inside SLA and every served table still has a durable owner.
 
 ## Risk posture

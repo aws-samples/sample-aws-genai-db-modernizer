@@ -384,7 +384,7 @@ def _kv_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} key-value and point-lookup {query} ({share:.1f}% of query patterns) across "
+            f"{n} key-value and point-lookup {query} ({share:.1f}% of queries) across "
             # #951: no "where possible": the grouping is deterministic, each
             # co-dependency group's tables form one group (_dynamodb_table_groups).
             f"{n_groups} table {group}, where co-dependent tables move together: the "
@@ -422,7 +422,7 @@ def _other_target_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} {query} ({share:.1f}% of query patterns) to {display_engine(engine)}, the "
+            f"{n} {query} ({share:.1f}% of queries) to {display_engine(engine)}, the "
             "migration target the earlier waves do not already cover."
         ),
         "gate": "Query parity confirmed before the next wave.",
@@ -456,7 +456,7 @@ def _document_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} document-shaped {query} ({share:.1f}% of query patterns) to "
+            f"{n} document-shaped {query} ({share:.1f}% of queries) to "
             f"{display_engine(engine)}, kept as an owner engine for its nested, variable-shape "
             "tables."
         ),
@@ -497,7 +497,7 @@ def _search_wave(
             "workload_share_percent": share,
             "share_basis": "queries",
             "rationale": (
-                f"{n} search/analytics {query} ({share:.1f}% of query patterns) build a read "
+                f"{n} search/analytics {query} ({share:.1f}% of queries) build a read "
                 f"model in {display_engine(engine)}. The indexed tables could not be resolved "
                 "from the SQL, so until the OpenSearch index/mapping definitions are audited "
                 f"directly, {owner_label} is treated as the owner of record."
@@ -531,7 +531,7 @@ def _search_wave(
         "workload_share_percent": share,
         "share_basis": "queries",
         "rationale": (
-            f"{n} search/analytics {query} ({share:.1f}% of query patterns) build a read model "
+            f"{n} search/analytics {query} ({share:.1f}% of queries) build a read model "
             f"in {display_engine(engine)}, kept in sync (zero-ETL, OpenSearch Ingestion or CDC "
             f"per table) from {owner_names}, which keep durable ownership: every table it "
             f"serves still has an owner. {display_engine(engine)} never becomes the system of "

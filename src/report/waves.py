@@ -142,7 +142,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                     "first, schema carried over 1:1 (every collected table and view): a "
                     "homogeneous migration (same engine family). "
                     f"{n_retained} {plural_noun(n_retained, 'query', 'queries')} "
-                    f"({fmt_num(share_retained, 1)}% of query patterns) are still assigned to "
+                    f"({fmt_num(share_retained, 1)}% of queries) are still assigned to "
                     f"{display_engine(retained_engine)} once every later wave in this roadmap "
                     "has moved its own share away; every later wave's table count is a subset "
                     "of this wave's tables, never an addition to them."
@@ -198,7 +198,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "share_basis": share_basis,
                 "rationale": (
                     f"{n_cached} hot {plural_noun(n_cached, 'read')} "
-                    f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'query patterns'}), "
+                    f"({fmt_num(share, 1)}% of {'calls' if share_basis == 'calls' else 'queries'}), "
                     "cache-aside in front of "
                     f"{cache_front_description(retained_engine, overlay.get('owners')) if retained_engine else front_label}"
                     ": no data migration, fully reversible."
@@ -265,7 +265,7 @@ def _legacy_migration_waves(report: dict[str, Any]) -> list[dict[str, Any]]:
         fallback_owner = retained_engine or source_engine
         lead_in = (
             f"{n} search/analytics {plural_noun(n, 'query', 'queries')} "
-            f"({fmt_num(share, 1)}% of query patterns) build a read model in "
+            f"({fmt_num(share, 1)}% of queries) build a read model in "
             f"{display_engine(engine)}"
         )
         if tables:

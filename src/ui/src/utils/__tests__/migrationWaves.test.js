@@ -35,7 +35,7 @@ describe('waveHeadline matches the reports for every wave in the shared fixture'
 test('a wave with no facts row states its served count and nothing it would have to compute', () => {
   const wave = { wave: 9, engines: ['dynamodb'], query_count: 3, workload_share_percent: 5, table_count: 2 };
   expect(waveHeadline(t, { migration_waves: [wave], facts: { waves: [] } }, wave))
-    .toBe('3 queries (5% of query patterns), 2 source tables');
+    .toBe('3 queries (5% of queries), 2 source tables');
 });
 
 test('a wave with no tables has no table phrase', () => {
@@ -45,7 +45,7 @@ test('a wave with no tables has no table phrase', () => {
 
 test('a cutover wave without engines falls back to the plain count phrase, like the reports', () => {
   const wave = { wave: 1, engines: [], query_count: 4, cutover_query_count: 9, workload_share_percent: 40, table_count: 0 };
-  expect(waveHeadline(t, { facts: { waves: [] } }, wave)).toBe('4 queries (40% of query patterns)');
+  expect(waveHeadline(t, { facts: { waves: [] } }, wave)).toBe('4 queries (40% of queries)');
 });
 
 describe('formatShare mirrors src/report/formatting.py fmt_num(value, 1)', () => {
@@ -86,5 +86,5 @@ test('a wave without the no_move fact keeps its headline (#1383)', () => {
   const wave = { wave: 9, engines: ['dynamodb'], query_count: 3, workload_share_percent: 5, table_count: 2 };
   const synthesis = { migration_waves: [wave], facts: { waves: [{ wave: 9, served_tables: 2 }] } };
   expect(waveMovesNothing(synthesis, wave)).toBe(false);
-  expect(waveHeadline(t, synthesis, wave)).toBe('3 queries (5% of query patterns), 2 source tables');
+  expect(waveHeadline(t, synthesis, wave)).toBe('3 queries (5% of queries), 2 source tables');
 });

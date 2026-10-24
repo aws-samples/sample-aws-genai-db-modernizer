@@ -521,7 +521,7 @@ def _table_group_coverage_parts(
 def _cache_overlap_note(cache_overlay: dict[str, Any], engine_wave_number: dict[str, int]) -> str:
     """Says which wave(s) the cache's owner engines move in (#225).
 
-    The cache's share is of calls, the owner shares are of query patterns; a
+    The cache's share is of calls, the owner shares are of queries; a
     reader seeing both needs to know they measure different things and that
     the cached reads already belong to a later wave's queries.
     """
