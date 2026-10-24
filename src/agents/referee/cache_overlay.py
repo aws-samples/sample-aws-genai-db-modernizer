@@ -855,6 +855,21 @@ def overlay_summary(
     }
 
 
+def no_designed_overlay(engine: str) -> dict:
+    """The ``cache_overlay`` of a cache whose design covers no candidate (#1400): zero covered
+    reads, so the stored candidate figures (added by the caller) survive a full drop."""
+    return {
+        "engine": engine,
+        "query_count": 0,
+        "calls_per_second": 0.0,
+        "call_share_percent": 0.0,
+        "owners": {},
+        "patterns": {},
+        "min_calls_per_second": HOT_READ_MIN_CALLS_PER_SECOND,
+        "max_rows_avg": CACHE_MAX_ROWS_AVG,
+    }
+
+
 def refresh_cache_overlay(
     assignment: dict,
     queries: Iterable[Mapping],

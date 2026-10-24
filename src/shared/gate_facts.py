@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.cache_change import cache_change_sentence
 from src.shared.cache_engines import CACHE_ENGINES
 
 
@@ -68,6 +69,14 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
                 ),
                 "call_share_percent": overlay.get(
                     "candidate_call_share_percent", overlay.get("call_share_percent")
+                ),
+                # #1400: what the design covers, once synthesis stored the candidates.
+                "change": (
+                    cache_change_sentence(
+                        _count(overlay["candidate_query_count"]), _count(overlay.get("query_count"))
+                    )
+                    if "candidate_query_count" in overlay
+                    else None
                 ),
             }
             if isinstance(overlay, Mapping)
