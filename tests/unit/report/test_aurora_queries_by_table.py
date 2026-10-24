@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from src.report import engineering_report, renderers
 
 
@@ -189,10 +191,11 @@ class TestGenericQueryGroupsTable:
         assert "Aurora MySQL" in section
         assert "aurora_mysql" not in section
 
+    @pytest.mark.passes_on_main
     def test_header_count_matches_the_rows_actually_listed(self) -> None:
         md = renderers.render_engineering_report_md(_report())
         section = md.split("## Query groups (", 1)[1]
-        count = int(section.split(")", 1)[0])
+        count = int(section.split(")", 1)[0].split(" of ", 1)[0])
         rows = [
             line
             for line in section.split("\n## ", 1)[0].splitlines()
@@ -208,9 +211,17 @@ class TestGenericQueryGroupsTable:
         -- the heading says where they are, since "Queries on Aurora by table"
         renders after this section, not before it."""
         md = renderers.render_engineering_report_md(_report())
-        assert "## Query groups (1) (plus 3 Aurora groups below)" in md
+        # #1410: the heading counts the listed groups of all of them, from the facts,
+        # and one sentence names the rest, so no pointer count reads as a contradiction.
+        assert "## Query groups (1 of 4)" in md
+        assert (
+            "The other 3 groups run only on Aurora MySQL; Queries on Aurora by table lists "
+            "their queries per table." in md
+        )
+        assert "plus 3 Aurora" not in md
         assert md.index("## Query groups (") < md.index("## Queries on Aurora by table")
 
+    @pytest.mark.passes_on_main
     def test_heading_has_no_pointer_when_nothing_was_omitted(self) -> None:
         report = _report()
         report["query_groups"] = [
@@ -221,5 +232,5 @@ class TestGenericQueryGroupsTable:
             not in ("Table not identified by the collector", "Utility and session statements")
         ]
         md = renderers.render_engineering_report_md(report)
-        assert "## Query groups (1)" in md
-        assert "Aurora group" not in md
+        assert "## Query groups (1)" in md.splitlines()
+        assert "Aurora group" not in md and "run only on" not in md

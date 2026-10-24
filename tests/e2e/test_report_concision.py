@@ -22,7 +22,9 @@ from tests.report_concision import (
     known_query_ids,
     md_sections,
     raw_labels,
+    repeated_paragraphs,
     repeated_sentences,
+    repeated_statements,
     section,
 )
 
@@ -85,3 +87,31 @@ def test_the_designed_job_has_no_raw_label(designed_run: PipelineResult) -> None
     assert bare_ids(md, ids) == []
     assert raw_labels(md) == []
     assert repeated_sentences(section(md, "Sources of truth and replicas")) == []
+
+
+def test_no_long_paragraph_is_printed_twice(run: PipelineResult) -> None:
+    md = _md(run)
+    assert repeated_paragraphs(md) == []
+    if run.db == "wordpress":
+        assert repeated_statements(md) == []
+
+
+@pytest.mark.deterministic
+def test_the_designed_job_states_each_long_sentence_once(designed_run: PipelineResult) -> None:
+    md = _md(designed_run)
+    assert repeated_paragraphs(md) == [] and repeated_statements(md) == []
+    report = json.loads(designed_run.report_json().read_text())
+    register = section(md, "Risk register")
+    for risk in report["risk_assessment"]["risks"]:
+        if risk.get("rule") in ("design.trade_offs", "cache.unsupported"):
+            for detail in risk.get("details") or []:
+                assert f"  - {md_text(detail)}" not in register.splitlines(), detail[:40]
+    counts = report["facts"]["query_group_counts"]
+    listed, total = counts["listed_group_count"], counts["group_count"]
+    assert listed + counts["relational_only_group_count"] == total
+    heading = (
+        f"## Query groups ({listed} of {total})"
+        if total > listed
+        else f"## Query groups ({listed})"
+    )
+    assert heading in md.splitlines()

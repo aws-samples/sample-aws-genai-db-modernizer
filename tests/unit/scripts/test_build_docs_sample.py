@@ -334,6 +334,13 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
         assert cache["candidate_read_count"] == overlay["query_count"] + dropped
         assert cache["owner_only_read_count"] == dropped
         assert cache["candidate_call_share_percent"] is None
+    # #1410: facts.query_group_counts too; its two parts add up to every group.
+    if "query_group_counts" not in stored:
+        groups = read.pop("query_group_counts")
+        assert groups["group_count"] == len(report["query_groups"])
+        assert groups["listed_group_count"] + groups["relational_only_group_count"] == len(
+            report["query_groups"]
+        )
     assert read == stored
 
 

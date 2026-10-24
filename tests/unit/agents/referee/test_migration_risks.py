@@ -24,7 +24,7 @@ from src.agents.referee.migration_risks import (
     wave_gate_strategies,
 )
 from src.shared.prose_style import find_style_hits
-from src.shared.report_facts import CLOSE_CALL_MARGIN
+from src.shared.report_facts import CLOSE_CALL_MARGIN, close_call_facts
 
 AURORA = "aurora_mysql"
 DDB = "dynamodb"
@@ -255,11 +255,74 @@ def test_close_calls_are_one_risk_per_wave_medium_when_a_query_moves() -> None:
     assert risk["wave"] == 3
     assert risk["query_ids"] == ["q1", "q2", "q3"]
     assert risk["affected_tables"] == ["db.a", "db.b"]
+    # #1410: close calls and settled ties are counted apart, as the Close calls
+    # section counts them (2 close calls, plus 1 tie).
     assert risk["description"] == (
-        f"[dynamodb] Wave 3: 3 queries were decided by less than {CLOSE_CALL_MARGIN:g} points "
-        "(1 exact tie a routing rule settled): 2 stay on Aurora MySQL over DynamoDB and 1 "
-        "goes to DynamoDB over Aurora MySQL. A small change in the scores moves them."
+        f"[dynamodb] Wave 3: 2 queries were decided by less than {CLOSE_CALL_MARGIN:g} points, "
+        "and 1 more was an exact tie a routing rule settled: Aurora MySQL keeps 1 close call "
+        "and 1 tie over DynamoDB; DynamoDB takes 1 close call over Aurora MySQL. A small "
+        "change in the scores moves them."
     )
+
+
+def test_the_close_call_risk_states_the_close_call_facts() -> None:
+    """ADR-032: the risk's figures are the ones facts.close_calls states (the Close
+    calls section), the close calls and the settled ties counted apart."""
+    traces = {
+        "close_calls": [
+            _close("q1", DDB, AURORA, 2.0),
+            _close("q2", AURORA, DDB, 1.0),
+            _close("q3", AURORA, DDB, 3.0),
+            _close("q4", AURORA, DDB, 0.0, settled=True),
+        ]
+    }
+    risk = _one(_build(migration_waves=WAVES, query_traces=traces), "routing.close_calls")
+    facts = close_call_facts({"query_traces": traces})
+    assert facts is not None
+    text = risk["description"]
+    assert f"{facts['close_call_query_count']} queries were decided by less than" in text
+    assert f"and {facts['settled_tie_count']} more was an exact tie" in text
+    for pair in facts["engine_pairs"]:
+        won = [f"{pair['pair_query_count']} close call"]
+        if pair["exact_tie_count"]:
+            won.append(f"{pair['exact_tie_count']} tie")
+        verb = "keeps" if pair["engine"] == AURORA else "takes"
+        name = "Aurora MySQL" if pair["engine"] == AURORA else "DynamoDB"
+        assert f"{name} {verb} {won[0]}" in text
+
+
+def test_close_calls_with_only_ties_or_only_gaps_name_one_count() -> None:
+    ties = _build(
+        migration_waves=WAVES,
+        query_traces={
+            "close_calls": [
+                _close("q1", AURORA, DDB, 0.0, settled=True),
+                _close("q2", AURORA, DDB, 0.0, settled=True),
+            ]
+        },
+    )
+    assert _one(ties, "routing.close_calls")["description"] == (
+        "[dynamodb] Wave 3: 2 queries were exact ties a routing rule settled: Aurora MySQL "
+        "keeps 2 ties over DynamoDB. A small change in the scores moves them."
+    )
+    gaps = _build(
+        migration_waves=WAVES,
+        query_traces={
+            "close_calls": [_close("q1", DDB, AURORA, 2.0), _close("q2", DDB, AURORA, 3.0)]
+        },
+    )
+    assert _one(gaps, "routing.close_calls")["description"] == (
+        f"[dynamodb] Wave 3: 2 queries were decided by less than {CLOSE_CALL_MARGIN:g} points: "
+        "DynamoDB takes 2 close calls over Aurora MySQL. A small change in the scores moves them."
+    )
+    one_tie = _build(
+        migration_waves=WAVES,
+        query_traces={
+            "close_calls": [_close("q1", DDB, AURORA, 2.0), _close("q2", DDB, AURORA, 0.0, True)]
+        },
+    )
+    assert "1 query was decided by less than" in one_tie[0]["description"]
+    assert "and 1 more was an exact tie" in one_tie[0]["description"]
 
 
 def test_close_calls_that_all_stay_on_the_source_compatible_engine_are_low() -> None:
@@ -368,8 +431,8 @@ def test_a_cache_layer_unsupported_pattern_is_medium() -> None:
     assert risk["query_ids"] == ["c2"]
     assert risk["affected_tables"] == ["db.b"]
     assert risk["description"] == (
-        "[elasticache] The cache design marks 1 pattern unsupported; each one's workaround "
-        "is in the engineering report."
+        "[elasticache] The cache design marks 1 pattern unsupported; the engineering report "
+        "lists each one with its workaround under Target schemas by engine."
     )
     assert risk["details"] == [
         "unsupported pattern: A range read over a sorted set the design does not keep. "
@@ -516,8 +579,8 @@ def test_an_engines_trade_offs_are_one_review_risk_listing_them() -> None:
     assert _rules(risks) == ["design.trade_offs", "design.trade_offs"]
     ddb = next(r for r in risks if r["description"].startswith("[dynamodb]"))
     assert ddb["description"] == (
-        "[dynamodb] The DynamoDB schema design records 2 trade-offs to review; each one is in "
-        "the engineering report."
+        "[dynamodb] The DynamoDB schema design records 2 trade-offs to review, listed under "
+        "Migration trade-offs in the engineering report."
     )
     assert ddb["details"] == ["GSI reads are eventually consistent", "Single table per entity"]
     assert ddb["affected_tables"] == ["db.c"]
@@ -610,6 +673,30 @@ class TestRedesignRisk:
             "the source shows on 1 query"
         )
         assert "as each one's evidence says" in risk["mitigation"]
+        # #1410: the detail is the evidence as a sentence, with no "no new key;" label.
+        assert risk["details"] == ["A whole read of a small reference table."]
+
+    def test_a_redesign_detail_reads_as_sentences(self) -> None:
+        """Classes by their catalog label, never their id; evidence that starts with an
+        identifier is printed as written; one final full stop."""
+        risk = _one(
+            self._risks([_redesign("r1", DDB, lifted=["frequent-full-scan"])]), "design.redesign"
+        )
+        assert risk["details"] == [
+            "A key on c.region: read as key-scoped 1:N read instead of ad hoc filter. "
+            "A key on c.region anchors the rows it reads."
+        ]
+        assert "key_scoped" not in risk["details"][0] and "ad_hoc" not in risk["details"][0]
+        ident = {
+            **_redesign("r2", DDB, keys=()),
+            "class_after_redesign": None,
+            "evidence": ["wp_posts is read whole by its key"],
+        }
+        assert _one(self._risks([ident]), "design.redesign")["details"] == [
+            "wp_posts is read whole by its key."
+        ]
+        bare = {**_redesign("r2", DDB, keys=()), "class_after_redesign": None, "evidence": []}
+        assert not _one(self._risks([bare]), "design.redesign").get("details")
 
     def test_a_requirement_the_engines_plan_does_not_rely_on_raises_no_gate(self) -> None:
         index_only = {**_redesign("r1", DDB), "routing_depends": False}
@@ -900,7 +987,7 @@ def test_mixed_engine_ids_are_one_risk_per_engine_in_its_wave() -> None:
     risk = _one(risks, "design.trade_offs")
     assert risk["wave"] == 1
     assert risk["description"].startswith(
-        "[aurora_mysql] The Aurora MySQL schema design records 10 trade-offs to review; "
+        "[aurora_mysql] The Aurora MySQL schema design records 10 trade-offs to review, "
     )
     assert len(risk["details"]) == 10
     assert not any("[PE note]" in d for d in risk["details"])

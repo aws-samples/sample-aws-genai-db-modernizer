@@ -525,6 +525,8 @@ Version History:
   their owner engine
 - 1.62 (2026-10-24, #1383): Added MigrationWave.no_move_reason and WaveFacts.no_move: a
   wave 1 that moves nothing reads as no step
+- 1.63 (2026-10-24, #1410): facts.query_group_counts: the engineering report's query
+  group counts (#1410)
 """
 
 from datetime import datetime
@@ -1691,6 +1693,41 @@ class CacheLayerFacts(BaseModel):
     )
 
 
+class RelationalGroupRow(BaseModel):
+    """One "Queries on Aurora by table" row (#1410): a relational engine's own queries
+    in one query group."""
+
+    engine: str = Field(..., description="The relational engine (id)")
+    group_index: int = Field(..., ge=0, description="The group's index in query_groups")
+    query_count: int = Field(0, ge=0, description="The engine's distinct queries in the group")
+    calls_per_second: float = Field(0.0, ge=0, description="Their design calls/s, summed")
+
+
+class QueryGroupFacts(BaseModel):
+    """The engineering report's query group figures (#1410), from ``query_groups``."""
+
+    group_count: int = Field(0, ge=0, description="Every query group")
+    listed_group_count: int = Field(
+        0, ge=0, description="Groups a non-relational engine serves: the Query groups table"
+    )
+    relational_only_group_count: int = Field(
+        0, ge=0, description="Groups only relational engines serve, listed per table instead"
+    )
+    relational_only_engines: list[str] = Field(
+        default_factory=list, description="The relational engines (ids) those groups run on"
+    )
+    listed_group_indexes: list[int] = Field(
+        default_factory=list, description="The listed groups' indexes in query_groups, in order"
+    )
+    relational_rows: list[RelationalGroupRow] = Field(
+        default_factory=list,
+        description="Queries on Aurora by table: per engine, busiest first, blame groups last",
+    )
+    relational_query_counts: dict[str, int] = Field(
+        default_factory=dict, description="Each relational engine's queries over its rows"
+    )
+
+
 class QueryPatternMember(BaseModel):
     """One query of a query pattern (#1146): its id, frequency and engine, as routed."""
 
@@ -2216,6 +2253,13 @@ class ReportFacts(BaseModel):
             "has no query_groups"
         ),
     )
+    query_group_counts: QueryGroupFacts | None = Field(
+        None,
+        description=(
+            "The query groups the engineering report lists and the relational-only rest "
+            "(#1410); None when the report has no query_groups"
+        ),
+    )
     table_sources: TableSourceFacts | None = Field(
         None,
         description=(
@@ -2319,7 +2363,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.62",
+        default="1.63",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -110,6 +110,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.agents.referee.cache_overlay import is_write_query
+from src.shared.catalog.access_classes import access_classes
+from src.shared.design_text import design_text_item, unsupported_pattern_detail
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.migration_risk_rules import (
     GATE_IDS_NAMED,
@@ -128,7 +130,7 @@ from src.shared.migration_risk_rules import (
 )
 from src.shared.report_facts import CLOSE_CALL_MARGIN, RELATIONAL_ENGINES, wave_facts
 from src.shared.risk_severity import overall_risk_level
-from src.shared.unsupported_pattern import unsupported_pattern_ids, unsupported_pattern_label
+from src.shared.unsupported_pattern import unsupported_pattern_ids
 
 # A hot partition at or above this utilization is HIGH; below it (but at risk,
 # above 80%) it is MEDIUM.
@@ -450,21 +452,37 @@ def _close_call_risks(ctx: _Context, query_traces: Mapping[str, Any] | None) -> 
         ):
             kept = engine in ctx.retained
             moved = moved or not kept
-            k = len(members)
-            verb = (
-                ("stays on" if kept else "goes to") if k == 1 else ("stay on" if kept else "go to")
+            # #1410: close calls and settled ties counted apart, as the Close calls
+            # section counts them, so neither count reads as the other.
+            pair_ties = sum(1 for r in members if r.get("settled_tie"))
+            won = [
+                _n(k, label, f"{label}s")
+                for k, label in ((len(members) - pair_ties, "close call"), (pair_ties, "tie"))
+                if k
+            ]
+            parts.append(
+                f"{display_engine(engine)} {'keeps' if kept else 'takes'} {_join(won)} over "
+                f"{display_engine(alternative)}"
             )
-            parts.append(f"{k} {verb} {display_engine(engine)} over {display_engine(alternative)}")
             qids += [str(r["query_id"]) for r in members]
         total = len(qids)
         ties = sum(1 for p in pairs.values() for r in p if r.get("settled_tie"))
-        tie_note = (
-            f" ({_n(ties, 'exact tie', 'exact ties')} a routing rule settled)" if ties else ""
-        )
+        close = total - ties
         head = f"Wave {wave}: " if wave else ""
+        decided = (
+            f"{_n(close, 'query was', 'queries were')} decided by less than {margin} points"
+            if close
+            else ""
+        )
+        if ties:
+            tied = (
+                f"{ties} more {'was an exact tie' if ties == 1 else 'were exact ties'}"
+                if close
+                else f"{_n(ties, 'query was an exact tie', 'queries were exact ties')}"
+            )
+            decided = (f"{decided}, and " if decided else "") + f"{tied} a routing rule settled"
         description = (
-            f"{head}{_n(total, 'query was', 'queries were')} decided by less than {margin} "
-            f"points{tie_note}: {_join(parts)}. A small change in the scores moves "
+            f"{head}{decided}: {'; '.join(parts)}. A small change in the scores moves "
             f"{_them(total)}."
         )
         mitigation = (
@@ -589,14 +607,15 @@ def _cache_risks(
             continue
         wave = ctx.wave_of_engine.get(engine)
         qids = {q for up in patterns for q in unsupported_pattern_ids(up)}
-        details = [_detail_of_pattern(up) for up in patterns]
+        details = [unsupported_pattern_detail(up) for up in patterns]
         k = len(patterns)
         out.append(
             _risk(
                 "cache.unsupported",
                 engine,
-                f"The cache design marks {_n(k, 'pattern', 'patterns')} unsupported; each "
-                "one's workaround is in the engineering report.",
+                f"The cache design marks {_n(k, 'pattern', 'patterns')} unsupported; the "
+                "engineering report lists each one with its workaround under Target schemas by "
+                "engine.",
                 f"Serve {_these(k, 'pattern', 'patterns')} from {'its' if k == 1 else 'their'} owner engine or "
                 f"add {'it' if k == 1 else 'them'} to the cache design before the "
                 f"{_gate(wave)}, as the design's workaround for each says.",
@@ -607,14 +626,6 @@ def _cache_risks(
             )
         )
     return out
-
-
-def _detail_of_pattern(up: Mapping[str, Any]) -> str:
-    """One unsupported pattern in full: its label, reason and workaround."""
-    label = unsupported_pattern_label(dict(up))
-    reason = _item(str(up.get("reason") or "")) or "not served by the cache design"
-    fix = _item(str(up.get("workaround") or up.get("recommendation") or ""))
-    return f"{label}: {reason}" + (f". Workaround: {fix}" if fix else "")
 
 
 # ---------------------------------------------------------------------------
@@ -746,8 +757,8 @@ def _trade_off_risks(
                 "design.trade_offs",
                 engine,
                 f"The {display_engine(engine)} schema design records "
-                f"{_n(n, 'trade-off', 'trade-offs')} to review; each one is in the engineering "
-                "report.",
+                f"{_n(n, 'trade-off', 'trade-offs')} to review, listed under Migration "
+                "trade-offs in the engineering report.",
                 f"Review {_these(n, 'trade-off', 'trade-offs')} with the team that builds "
                 f"{display_engine(engine)} before {_start(wave)}, and test each one the "
                 "application depends on.",
@@ -815,19 +826,7 @@ def _redesign_risks(
             if unknown
             else ""
         )
-        details = []
-        for qid in sorted(queries):
-            r = queries[qid]
-            columns = ", ".join(str(key.get("column")) for key in r.get("assumed_keys") or [])
-            after = r.get("class_after_redesign")
-            line = f"a key on {columns}" if columns else "no new key"
-            if after:
-                line += f": read as {str(after).replace('_', ' ')} instead of " + str(
-                    r.get("class_as_written") or ""
-                ).replace("_", " ")
-            for evidence in r.get("evidence") or []:
-                line += f"; {_item(str(evidence))}"
-            details.append(line)
+        details = [d for qid in sorted(queries) if (d := _redesign_detail(queries[qid]))]
         if keys:
             body = (
                 f": it scored {_them(k)} with {_n(len(keys), 'key', 'keys')} the source does "
@@ -865,6 +864,38 @@ def _redesign_risks(
             )
         )
     return out
+
+
+def _redesign_detail(r: Mapping[str, Any]) -> str:
+    """One query's redesign as sentences (#1410): the key it gains and the read it
+    becomes, then its evidence; a query that gains no key states only what it reads
+    as, or its evidence. Access-pattern classes are named in words, never by id."""
+    columns = ", ".join(str(key.get("column")) for key in r.get("assumed_keys") or [])
+    after = r.get("class_after_redesign")
+    read_as = (
+        f"read as {_class_words(after)} instead of {_class_words(r.get('class_as_written'))}"
+        if after
+        else ""
+    )
+    head = f"A key on {columns}" + (f": {read_as}" if read_as else "") if columns else read_as
+    sentences = [head[:1].upper() + head[1:]] if head else []
+    sentences += [_sentence(text) for e in r.get("evidence") or [] if (text := _item(str(e)))]
+    return ". ".join(sentences) + "." if sentences else ""
+
+
+def _sentence(text: str) -> str:
+    """``text`` with a capital first letter, unless its first word is an identifier
+    (``wp_posts``, ``c.region``), which is printed as written."""
+    first = text.split(" ", 1)[0]
+    return text[:1].upper() + text[1:] if re.fullmatch(r"[a-z]+", first) else text
+
+
+def _class_words(cls: Any) -> str:
+    """An access-pattern class by its catalog label, in running text ("key-scoped 1:N
+    read"), never its id (#1410)."""
+    text = str(cls or "").strip()
+    label = next((c.label for c in access_classes() if c.id == text), "")
+    return label[:1].lower() + label[1:] if label else text.replace("_", " ")
 
 
 def _score_text(value: float) -> str:
@@ -942,13 +973,9 @@ def _carried_write_risks(
     return out
 
 
-# A leading review marker a designer puts on a line: "[PE note] ...", "PE note: ...".
-_MARKER_RE = re.compile(r"^(?:\[[^\]]{1,30}\]\s*|(?:PE|review) note:\s*)+", re.IGNORECASE)
-
-
 def _item(text: str) -> str:
-    """One detail line in full: one line, its review marker and final full stop gone."""
-    return _MARKER_RE.sub("", " ".join(str(text or "").split())).rstrip(" .;")
+    """One detail line in full (``design_text_item``)."""
+    return design_text_item(text)
 
 
 # ---------------------------------------------------------------------------

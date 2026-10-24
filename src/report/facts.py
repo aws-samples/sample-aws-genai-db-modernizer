@@ -24,6 +24,7 @@ from src.shared.report_facts import (
     map_split_facts,
     mapped_tables_by_role,
     owned_table_mappings,
+    query_group_facts,
     query_move_facts,
     query_pattern_facts,
     query_total_facts,
@@ -51,7 +52,8 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
     written before #1120 no cross-engine wave 1 figures or note, one written before #1284
     no ``waves[].moved_by_later_waves``, one written before #212 no ``table_owner_lines``
     (and a map split by recommended engine), one written before #1329 no
-    ``unservable.no_engine_in_scope_query_count``, and one written before
+    ``unservable.no_engine_in_scope_query_count``, one written before #1410 no
+    ``query_group_counts``, and one written before
     #1146 no ``query_pattern_counts`` (filled in from ``query_pattern_groups``: None for a
     report with no grouping, whose deliverables leave the query patterns out); those
     figures are filled in from ``query_groups``, ``ranking``, the resolved risks, the
@@ -62,6 +64,9 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         missing: dict[str, Any] = {}
         if "access_pattern_totals" not in facts:
             missing["access_pattern_totals"] = access_pattern_facts(report)
+        if "query_group_counts" not in facts:
+            # A block written before #1410: the query group counts, from query_groups.
+            missing["query_group_counts"] = query_group_facts(report)
         if "moving_query_count" not in facts:
             moves = query_move_facts(report, facts["engines"])
             missing.update(moves)

@@ -56,6 +56,57 @@ def repeated_sentences(text: str, min_words: int = MIN_WORDS) -> list[tuple[str,
     return [(s, n) for s, n in seen.items() if n > 1]
 
 
+# #1410: a statement this long is said once in the whole report.
+REPORT_MIN_WORDS = 15
+# The per-query routing record: each query's own trace, one entry per query, where
+# two queries that took the same step read the same by design (like table rows).
+PER_QUERY_SECTIONS = ("Appendix: per-query routing decisions",)
+
+
+def repeated_statements(
+    md: str, min_words: int = REPORT_MIN_WORDS, skip: tuple[str, ...] = PER_QUERY_SECTIONS
+) -> list[tuple[str, int]]:
+    """Each sentence of at least ``min_words`` words the whole report states more than
+    once, with how often (#1410). Unlike ``repeated_sentences`` the text is compared
+    as written (numbers and code spans count), so two rows that differ in their table
+    or figure are not a repeat, but a list printed in two sections is: the same
+    sentence as a risk's detail and as a trade-off's bold title counts twice. Table
+    rows, code blocks, headings and the ``skip`` sections are not compared."""
+    seen: Counter[str] = Counter()
+    for line in _prose_lines(md, skip):
+        # "- **Title.**: impact" ends a sentence at ".:" too.
+        for raw in re.split(r"(?<=[.!?])[:;]?\s+", line.replace("**", "")):
+            sentence = re.sub(r"\s+", " ", raw).strip(" -*:,.;")
+            if len(sentence.split()) >= min_words:
+                seen[sentence] += 1
+    return [(s, n) for s, n in seen.items() if n > 1]
+
+
+def repeated_paragraphs(
+    md: str, min_words: int = REPORT_MIN_WORDS, skip: tuple[str, ...] = PER_QUERY_SECTIONS
+) -> list[tuple[str, int]]:
+    """Each paragraph or list item of at least ``min_words`` words the whole report
+    prints more than once, word for word, with how often (#1410). Table rows, code
+    blocks, headings and the ``skip`` sections are not compared."""
+    seen: Counter[str] = Counter()
+    for line in _prose_lines(md, skip):
+        text = re.sub(r"\s+", " ", line).strip(" -*")
+        if len(text.split()) >= min_words:
+            seen[text] += 1
+    return [(s, n) for s, n in seen.items() if n > 1]
+
+
+def _prose_lines(md: str, skip: tuple[str, ...]) -> list[str]:
+    body = re.sub(r"\A---\n.*?\n---\n", "", md, flags=re.S)
+    parts = re.split(r"^(?=## )", body, flags=re.M)
+    text = "\n".join(p for p in parts if not any(p.startswith(f"## {h}") for h in skip))
+    return [
+        line.strip()
+        for line in _FENCE.sub("", text).splitlines()
+        if line.strip() and not line.strip().startswith(("|", "#"))
+    ]
+
+
 def known_query_ids(report: Any) -> set[str]:
     """Every query id ``report.json`` holds (``query_id``, ``query_ids``,
     ``source_query_ids``, ``representative_id`` at any depth)."""

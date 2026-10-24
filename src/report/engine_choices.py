@@ -86,22 +86,38 @@ def pending_choices_md(report: dict[str, Any]) -> list[str]:
             f"| {escaping.md_cell(display_engine(str(c.get('decide_for_me_engine', ''))))} |"
         )
     out.append("")
+    # #1410: a table whose tie and options read word for word as an earlier table's
+    # refers to it instead of printing them again.
+    stated: dict[tuple[str, ...], str] = {}
+    option_stated: dict[str, str] = {}
     for c in choices:
         ids = c.get("query_ids") or []
-        out += [
-            f"### `{escaping.md_code(_bare_table(c.get('table')))}` "
-            f"({len(ids)} {plural_noun(len(ids), 'query', 'queries')})",
-            "",
-            escaping.md_text(c.get("why_tied") or ""),
-            "",
+        table = f"`{escaping.md_code(_bare_table(c.get('table')))}`"
+        why = escaping.md_text(c.get("why_tied") or "")
+        options = [
+            (
+                escaping.md_text(display_engine(str(e.get("engine", "")))),
+                escaping.md_text(e.get("trade_off") or ""),
+            )
+            for e in c.get("options") or []
+            if isinstance(e, dict)
         ]
-        for e in c.get("options") or []:
-            if isinstance(e, dict):
-                out.append(
-                    f"- {escaping.md_text(display_engine(str(e.get('engine', ''))))}: "
-                    f"{escaping.md_text(e.get('trade_off') or '')}"
-                )
-        out.append(f"- Decide for me: {escaping.md_text(c.get('decide_for_me_reason') or '')}")
+        decide = f"- Decide for me: {escaping.md_text(c.get('decide_for_me_reason') or '')}"
+        out += [f"### {table} ({len(ids)} {plural_noun(len(ids), 'query', 'queries')})", ""]
+        key = (why, *(f"{name}: {text}" for name, text in options), decide)
+        if key in stated:
+            out += [f"The same tie and options as {stated[key]}.", ""]
+        else:
+            stated[key] = table
+            out += [why, ""]
+            for name, text in options:
+                line = f"{name}: {text}"
+                if text and line in option_stated:
+                    out.append(f"- {name}: as for {option_stated[line]}.")
+                else:
+                    option_stated.setdefault(line, table)
+                    out.append(f"- {line}")
+            out.append(decide)
         out.append("- Queries: " + ", ".join(f"`{escaping.md_code(str(qid))}`" for qid in ids))
         out.append("")
     return out

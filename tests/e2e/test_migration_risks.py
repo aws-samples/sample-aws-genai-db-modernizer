@@ -174,10 +174,14 @@ def test_the_designed_job_adds_the_design_risks(designed: PipelineResult) -> Non
     for r in risks:
         assert f"**{r['risk_id']}**" in md, r["risk_id"]
     # A long design text is listed in full in the engineering report and never quoted,
-    # clipped or whole, in the executive PDF (the e2e-llm PDF check found "…").
+    # clipped or whole, in the executive PDF (the e2e-llm PDF check found "…"). #1410:
+    # it is listed once, under the cache design in "Target schemas by engine", which
+    # the risk names; the register does not print it again.
     cache = next(r for r in risks if r["rule"] == "cache.unsupported")
     assert any(UNSUPPORTED_CACHE_READ.rstrip(".") in d for d in cache["details"])
-    assert md_text(cache["details"][0]) in md
+    assert "under Target schemas by engine" in cache["description"]
+    assert md.count(md_text(UNSUPPORTED_CACHE_READ.rstrip("."))) == 1
+    assert md_text(cache["details"][0]) not in md
     pdf = " ".join(pdf_page_texts(str(designed.deliverable("executive-report.pdf"))))
     assert "…" not in pdf and "..." not in pdf
     assert norm(cache["risk_id"]) in pdf and "Lookup by post title" not in pdf
@@ -276,6 +280,24 @@ def test_a_flagged_and_a_held_query_are_one_high_risk_in_every_deliverable(
 OLD_1_41 = REPO / "tests/unit/report/fixtures/wordpress_1_41_flagged_report.json"
 # Rules synthesis raises that the deliverables never backfill into an older report.
 NOT_BACKFILLED = frozenset({"design.redesign"})
+# #1410 reworded the close-call risk (close calls and settled ties counted apart); the
+# 1.41 report keeps the text its synthesis wrote, so that text is compared by its figures.
+REWORDED = frozenset({"routing.close_calls"})
+
+
+def _as_stored(risk: dict[str, Any]) -> dict[str, Any]:
+    out = {**risk, "affected_tables": None, "risk_id": None}
+    return {**out, "description": None} if risk.get("rule") in REWORDED else out
+
+
+def _close_call_figures(text: str) -> tuple[int, int]:
+    """(queries decided, settled ties) in a close-call risk, worded either way."""
+    old = re.search(r"(\d+) queries were decided by less than \d+ points \((\d+) exact", text)
+    if old:
+        return int(old.group(1)), int(old.group(2))
+    new = re.search(r"(\d+) queries were decided by less than \d+ points, and (\d+) more", text)
+    assert new, text
+    return int(new.group(1)) + int(new.group(2)), int(new.group(2))
 
 
 def test_a_report_from_before_the_rule_renders_the_same_risks(
@@ -305,9 +327,10 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     fresh_risks = [
         r for r in report["risk_assessment"]["risks"] if r.get("rule") not in NOT_BACKFILLED
     ]
-    assert [{**r, "affected_tables": None, "risk_id": None} for r in backfilled] == [
-        {**r, "affected_tables": None, "risk_id": None} for r in fresh_risks
-    ]
+    assert [_as_stored(r) for r in backfilled] == [_as_stored(r) for r in fresh_risks]
+    for b, f in zip(backfilled, fresh_risks, strict=True):
+        if b.get("rule") in REWORDED:
+            assert _close_call_figures(b["description"]) == _close_call_figures(f["description"])
     assert [r["risk_id"] for r in backfilled] == [
         f"RISK-{i:03d}" for i in range(1, len(backfilled) + 1)
     ]

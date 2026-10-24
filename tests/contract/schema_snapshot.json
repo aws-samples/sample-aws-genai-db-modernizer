@@ -23370,6 +23370,119 @@
                     "type": "number"
                   }
                 },
+                "query_group_counts": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "group_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "listed_group_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "listed_group_indexes": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "relational_only_engines": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "relational_only_group_count": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "relational_query_counts": {
+                            "required": false,
+                            "schema": {
+                              "additional": {
+                                "kind": "scalar",
+                                "type": "integer"
+                              },
+                              "kind": "object"
+                            }
+                          },
+                          "relational_rows": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "calls_per_second": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "engine": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "group_index": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "query_count": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "query_pattern_counts": {
                   "required": false,
                   "schema": {
@@ -29226,8 +29339,8 @@
         }
       }
     },
-    "schema_hash": "fd34e89d30b93bfba67dbe89a768c0b2ad4f71d48ddf2a2d3f978986a43b28e1",
-    "version": "1.62"
+    "schema_hash": "1ad3b23b42f66f0573030fa096e165cbc2aa302b3eee52625f14cbd144967646",
+    "version": "1.63"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

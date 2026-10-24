@@ -2017,6 +2017,99 @@ def unservable_query_facts(report: dict[str, Any]) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
+# Query group counts (#1410)
+# ---------------------------------------------------------------------------
+
+
+# A relational group with no real source table (#478), as synthesis labels it: a
+# utility/session/DDL statement, or a query the collector found no table for. Listed
+# last under "Queries on Aurora by table": neither is a busiest table.
+UTILITY_GROUP_LABEL = "Utility and session statements"
+UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
+
+
+def is_listed_query_group(group: Mapping[str, Any]) -> bool:
+    """Whether the "Query groups" table lists a group: a non-relational engine serves
+    it. A group only relational engines serve has its queries listed per table under
+    "Queries on Aurora by table" instead (#478)."""
+    return not set(group.get("engines") or []).issubset(RELATIONAL_ENGINES)
+
+
+def query_group_at(report: dict[str, Any], index: Any) -> dict[str, Any]:
+    """The ``query_groups`` entry a ``QueryGroupFacts`` index names, or {} (#1410)."""
+    groups = report.get("query_groups")
+    if not isinstance(groups, list) or not isinstance(index, int) or index < 0:
+        return {}
+    group = groups[index] if index < len(groups) else None
+    return group if isinstance(group, dict) else {}
+
+
+def query_group_facts(report: dict[str, Any]) -> dict[str, Any] | None:
+    """The engineering report's query group figures (``QueryGroupFacts``), or None.
+
+    From ``query_groups``: every group; the ones the "Query groups" table lists
+    (``is_listed_query_group``, by their index in ``query_groups``, so the heading
+    and the rows are one list); the relational-only rest, with their engines; and the
+    "Queries on Aurora by table" rows: per relational engine and group, that engine's
+    own queries and calls/s, busiest first with the two blame groups last, and each
+    engine's query total. None for a report with no ``query_groups`` field.
+    """
+    groups = report.get("query_groups")
+    if not isinstance(groups, list):
+        return None
+    indexed = [(i, g) for i, g in enumerate(groups) if isinstance(g, dict)]
+    listed = [i for i, g in indexed if is_listed_query_group(g)]
+    relational_only = [g for _, g in indexed if not is_listed_query_group(g)]
+    rows: list[dict[str, Any]] = []
+    engines = sorted(
+        {
+            str(ap["engine"])
+            for _, g in indexed
+            for ap in g.get("access_patterns") or []
+            if isinstance(ap, dict) and ap.get("engine") in RELATIONAL_ENGINES
+        }
+    )
+    query_counts: dict[str, int] = {}
+    for engine in engines:
+        engine_rows: list[dict[str, Any]] = []
+        for i, g in indexed:
+            aps = [
+                ap
+                for ap in g.get("access_patterns") or []
+                if isinstance(ap, dict) and ap.get("engine") == engine
+            ]
+            if not aps:
+                continue
+            query_ids = {str(q) for ap in aps for q in ap.get("query_ids") or []}
+            engine_rows.append(
+                {
+                    "engine": engine,
+                    "group_index": i,
+                    "query_count": len(query_ids),
+                    "calls_per_second": _unrounded(
+                        sum(float(ap.get("design_rps") or 0) for ap in aps)
+                    ),
+                    "blame": str(g.get("group_name"))
+                    in (UTILITY_GROUP_LABEL, UNRESOLVED_TABLE_GROUP_LABEL),
+                }
+            )
+        engine_rows.sort(key=lambda r: (bool(r["blame"]), -float(r["calls_per_second"])))
+        query_counts[engine] = sum(int(r["query_count"]) for r in engine_rows)
+        rows += [{k: v for k, v in r.items() if k != "blame"} for r in engine_rows]
+    return {
+        "group_count": len(indexed),
+        "listed_group_count": len(listed),
+        "relational_only_group_count": len(relational_only),
+        "relational_only_engines": sorted(
+            {str(e) for g in relational_only for e in g.get("engines") or [] if e}
+        ),
+        "listed_group_indexes": listed,
+        "relational_rows": rows,
+        "relational_query_counts": query_counts,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Access-pattern totals (#792)
 # ---------------------------------------------------------------------------
 
@@ -3064,6 +3157,8 @@ def compute_report_facts(
         "unservable": unservable_query_facts(report),
         # #792: the access-pattern totals the results page shows.
         "access_pattern_totals": access_pattern_facts(report),
+        # #1410: the query groups the engineering report lists, and the rest.
+        "query_group_counts": query_group_facts(report),
         # #992: each written table's source of truth, replicas and CDC risk.
         "table_sources": table_source_facts(report),
         # #212: each mapped table's owner, the engines that also read it, its cache.

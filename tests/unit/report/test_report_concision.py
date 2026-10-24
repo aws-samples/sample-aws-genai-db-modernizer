@@ -241,8 +241,11 @@ def test_model_written_trade_offs_are_printed_as_stored(md: str, saved) -> None:
 
 
 def test_an_unsupported_pattern_with_no_type_names_its_query(md: str) -> None:
+    """#1410: the description leads, the query it is about follows it."""
     cache = section(md, "Target schemas by engine")
-    assert "- Query `f31a66f5`: The query filters wp\\_posts by parent" in cache
+    line = next(ln for ln in cache.splitlines() if "The query filters wp\\_posts by parent" in ln)
+    assert line.startswith("- The query filters wp\\_posts by parent")
+    assert line.endswith(" (query `f31a66f5`).")
     assert "unsupported pattern**" not in cache
 
 

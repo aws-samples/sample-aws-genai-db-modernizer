@@ -123,6 +123,7 @@ ID_FIELDS = frozenset(
         "deciding_features",  # AuroraEngineChoice.deciding_features
         "designed_engines",  # ReportFacts.table_basis.designed_engines (#615)
         "pending_engines",  # ReportFacts.table_basis.pending_engines (#615)
+        "relational_only_engines",  # ReportFacts.query_group_counts (#1410)
         "moved_to",  # ReportFacts.removed_engines[].moved_to (#615)
         "engines_in_use",  # SynthesisOutputContract.engines_in_use: raw engine ids (#1076)
         "signal_overrides",  # ReportFacts.engines[].signal_overrides: raw signal ids (#584)
@@ -209,6 +210,7 @@ ID_FIELD_PATHS = frozenset(
         ("removed_engines", "engine"),  # ReportFacts.removed_engines[].engine (#615)
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)
+        ("relational_rows", "engine"),  # ReportFacts.query_group_counts.relational_rows (#1410)
         ("engine_pairs", "alternative"),  # ReportFacts.close_calls.engine_pairs[] (#730)
         ("unresolved_names", "names"),  # UnresolvedNames.names, report.json's own key
         ("unresolved_table_names", "names"),  # UnresolvedNames.names, assignment.json's own key

@@ -155,7 +155,7 @@ class TestEngineeringReport:
     def test_unsupported_pattern_md_many_ids_truncated(self) -> None:
         many = {"query_ids": [f"id{i}" * 4 for i in range(10)], "reason": "too many to list"}
         line = engineering_report._unsupported_pattern_md(many)
-        assert "+7 more" in line
+        assert line.endswith("and 7 more)")  # #1410: no nested "(+7 more)"
 
     def test_unsupported_pattern_md_documentdb_shape(self) -> None:
         """documentdb: source_query_ids + reason, workaround optional (often None)."""
@@ -168,9 +168,9 @@ class TestEngineeringReport:
         assert "{" not in line and "[" not in line and "'" not in line
         assert "CTE queries with window functions" in line
         # #1170: no pattern_type, so no generic "unsupported pattern" label; the
-        # entry names its query instead.
+        # entry names its query instead, after its description (#1410).
         assert "unsupported pattern" not in line
-        assert line.startswith("Query `abc123`: ")
+        assert line == "CTE queries with window functions are not supported (query `abc123`)."
 
     def test_unsupported_pattern_md_string_query_ids_is_one_id(self) -> None:
         """A bare string under query_ids is one malformed id, not a list to

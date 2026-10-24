@@ -21,9 +21,11 @@ import copy
 import re
 from typing import Any
 
+import pytest
+
 from src.contracts.synthesis_output import ReportFacts, SynthesisOutputContract
 from src.report.engine_choices import reroute_summary
-from src.report.engineering_report import render_engineering_report_md
+from src.report.engineering_report import MAP_SPLIT_DEFINED_ABOVE, render_engineering_report_md
 from src.report.facts import report_facts
 from src.report.formatting import label_summary_counts
 from src.shared.report_facts import compute_report_facts
@@ -800,7 +802,7 @@ def test_1169_the_reports_print_the_stored_split() -> None:
     ) in md
     cell = "3 source tables served: 1 migrate, 5 move to DynamoDB, 9 kept in sync"
     assert f"| {cell} |" in md
-    assert "Served counts the source tables" in md
+    assert "In the Scope column, \u201cserved\u201d is the source tables" in md
     assert cell in executive_text(report)
 
 
@@ -809,9 +811,12 @@ def test_1169_the_map_note_follows_the_fact_not_the_heading_text() -> None:
     report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "stays": 1}
     md = render_engineering_report_md(report)
     assert "Migrate counts the mapped tables a migration wave moves" not in md
+    assert MAP_SPLIT_DEFINED_ABOVE not in md
     report["facts"]["table_basis"]["mapped_tables_by_move"] = {"migrate": 4, "kept_in_sync": 1}
     md = render_engineering_report_md(report)
-    assert "Migrate counts the mapped tables a migration wave moves" in md
+    # #1410: Target engines above defines migrate and kept in sync; the map refers to it.
+    assert MAP_SPLIT_DEFINED_ABOVE in md
+    assert "Migrate counts the mapped tables a migration wave moves" not in md
 
 
 def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
@@ -824,10 +829,11 @@ def test_1169_the_heading_agrees_with_the_tables_that_migrate() -> None:
         "Rows the schema design maps to DynamoDB that no query routed to DynamoDB reads "
         "stay on the source engine: `db.t6`."
     ) in md
-    assert "Migrate counts the mapped tables a migration wave moves" in md
+    assert MAP_SPLIT_DEFINED_ABOVE in md
     assert _tables_migrate(md) == "3"
 
 
+@pytest.mark.passes_on_main  # main already prints no served note here; #1410 rewords it
 def test_1169_a_scope_cell_with_nothing_kept_in_sync_stays_plain() -> None:
     report = _merged_report()
     wave = report["migration_waves"][1]
@@ -839,7 +845,7 @@ def test_1169_a_scope_cell_with_nothing_kept_in_sync_stays_plain() -> None:
     md = render_engineering_report_md(_with_facts(report))
     assert md.count("| 1 source table |") == 2
     assert "kept in sync |" not in md
-    assert "Served counts the source tables" not in md
+    assert "In the Scope column, \u201cserved\u201d is the source tables" not in md
 
 
 def test_1169_a_facts_block_written_before_1_42_gets_the_split() -> None:

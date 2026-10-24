@@ -34,10 +34,10 @@ SHARED_TABLES_NOTE = (
 MIGRATE_LABEL = "migrate"
 KEPT_IN_SYNC_LABEL = "kept in sync"
 KEPT_IN_SYNC_NOTE = (
-    "Served counts the source tables a migration target\u2019s queries read. The tables "
-    "it owns migrate, and the Total counts only those. A table another engine of the "
-    "same wave owns moves to that engine. A table an engine outside the wave owns stays "
-    "there and is kept in sync from it, as in the wave plan."
+    "In the Scope column, \u201cserved\u201d is the source tables a migration target\u2019s queries "
+    "read. The tables it owns migrate, and the Total counts only those. A table another "
+    "engine of the same wave owns moves to that engine. A table an engine outside the "
+    "wave owns stays there and is kept in sync from it, as in the wave plan."
 )
 KEPT_IN_SYNC_SOURCES_NOTE = (
     "These counts are about reads; Sources of truth and replicas below lists where "

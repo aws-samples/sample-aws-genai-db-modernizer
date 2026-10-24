@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.shared.engine_names import display_engine
+from src.shared.design_text import design_text_item, unsupported_pattern_detail
+from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import executive_brief_text
-from src.shared.report_facts import CACHE_LAYER
+from src.shared.report_facts import CACHE_LAYER, query_group_at
 from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
     unsupported_pattern_ids,
@@ -301,19 +302,26 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     if len(ids) > 3:
         id_bits += f" (+{len(ids) - 3} more)"
 
+    body = escaping.md_text(unsupported_pattern_text(u))
+    # Inside the closing parenthesis the count reads "and 2 more", never a nested "(+2 more)".
+    listed = id_bits.replace(f" (+{len(ids) - 3} more)", f" and {len(ids) - 3} more")
+    which = f"{'query' if len(ids) == 1 else 'queries'} {listed}" if id_bits else ""
+
     if str(u.get("pattern_type") or "").strip().strip("*"):
         head_bits = [f"**{escaping.md_text(unsupported_pattern_label(u))}**"]
         if id_bits:
-            head_bits.append(f"({id_bits})")
+            head_bits.append(f"({listed})")
         head = " ".join(head_bits)
-    elif id_bits:
+    elif which and body:
         # #1170: with no pattern type, the generic label under "Unsupported
-        # patterns" says nothing; the entry names its queries instead.
-        head = f"{'Query' if len(ids) == 1 else 'Queries'} {id_bits}"
+        # patterns" says nothing; #1410: the description leads and the entry
+        # names its queries after it, so no id opens the sentence.
+        stop = body[-1] if body.endswith((".", "!", "?")) else ""
+        return f"{body[: len(body) - len(stop)]} ({which}){stop}"
+    elif which:
+        head = which[:1].upper() + which[1:]
     else:
         head = ""
-
-    body = escaping.md_text(unsupported_pattern_text(u))
 
     if head and body:
         return f"{head}: {body}"
@@ -347,20 +355,6 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
     if head and body:
         return f"{head}: {body}"
     return head or body or "(no detail provided)"
-
-
-# #478: a relational engine's query_groups entry for a
-# query with no real source table is labelled one of these two ways, never
-# a generic "unknown" -- a real utility/session/DDL statement
-# (synthesis_report.UTILITY_GROUP_LABEL, already routed to the relational
-# engine by the assignment: SHOW/SET/EXPLAIN, catalog introspection) or a
-# query the collector could not resolve a table for at all
-# (synthesis_report.UNRESOLVED_TABLE_GROUP_LABEL). Duplicated here as exact
-# literals rather than imported -- src/report has no existing dependency on
-# src/agents.referee and this file already duplicates engine-literal
-# constants rather than take one on (see ``engine_roles._RELATIONAL_ENGINES``).
-_UTILITY_GROUP_LABEL = "Utility and session statements"
-_UNRESOLVED_TABLE_GROUP_LABEL = "Table not identified by the collector"
 
 
 def _reason_text_for(group: dict[str, Any], access_pattern: dict[str, Any]) -> str:
@@ -403,45 +397,16 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
     someone else's.
     """
     out: list[str] = []
-    groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
-    all_patterns = [
-        ap for g in groups for ap in (g.get("access_patterns") or []) if isinstance(ap, dict)
-    ]
-    engines_present: list[str] = sorted(
-        {str(ap["engine"]) for ap in all_patterns if ap.get("engine") in _RELATIONAL_ENGINES}
-    )
-    if not engines_present:
+    counts = report_facts(report).get("query_group_counts") or {}
+    rows = [r for r in counts.get("relational_rows") or [] if isinstance(r, dict)]
+    if not rows:
         return out
-
     out += ["## Queries on Aurora by table", ""]
-    for eng in engines_present:
-        rows: list[tuple[str, int, float, list[str]]] = []
-        for g in groups:
-            aps = [
-                ap
-                for ap in (g.get("access_patterns") or [])
-                if isinstance(ap, dict) and ap.get("engine") == eng
-            ]
-            if not aps:
-                continue
-            total_rps = sum(ap.get("design_rps") or 0 for ap in aps)
-            query_ids: set[str] = set()
-            for ap in aps:
-                query_ids.update(ap.get("query_ids") or [])
-            reasons = sorted({text for ap in aps if (text := _reason_text_for(g, ap))})
-            rows.append((str(g.get("group_name", "?")), len(query_ids), total_rps, reasons))
-        if not rows:
-            continue
-        # Real table rows first, by calls/s descending; the two blame labels
-        # always last (#478: neither is a busiest access pattern, just a
-        # bucket for what the collector/utility traffic is).
-        rows.sort(
-            key=lambda r: (
-                r[0] in (_UTILITY_GROUP_LABEL, _UNRESOLVED_TABLE_GROUP_LABEL),
-                -r[2],
-            )
-        )
-        total_queries = sum(r[1] for r in rows)
+    by_engine: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_engine.setdefault(str(r.get("engine")), []).append(r)
+    for eng, engine_rows in by_engine.items():
+        total_queries = int((counts.get("relational_query_counts") or {}).get(eng) or 0)
         out += [
             f"### {escaping.md_text(display_engine(eng))} "
             f"({total_queries} {plural_noun(total_queries, 'query', 'queries')})",
@@ -449,11 +414,21 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
             "| Table | Queries | Calls/s | Reason |",
             "|---|---|---|---|",
         ]
-        for table, n_queries, total_rps, reasons in rows:
+        for r in engine_rows:
+            g = query_group_at(report, r.get("group_index"))
+            reasons = sorted(
+                {
+                    text
+                    for ap in g.get("access_patterns") or []
+                    if isinstance(ap, dict)
+                    and ap.get("engine") == eng
+                    and (text := _reason_text_for(g, ap))
+                }
+            )
             reason_text = _table_reason_cell(reasons)
             out.append(
-                f"| {escaping.md_cell(table)} | {n_queries} "
-                f"| {escaping.md_cell(fmt_num(total_rps))} "
+                f"| {escaping.md_cell(str(g.get('group_name', '?')))} | {r.get('query_count', 0)} "
+                f"| {escaping.md_cell(fmt_num(r.get('calls_per_second', 0)))} "
                 f"| {escaping.md_cell(reason_text or '-')} |"
             )
         out.append("")
@@ -520,11 +495,19 @@ def _app_layer_notes_md(design: dict[str, Any]) -> list[str]:
             "where the application relies on them.",
             "",
         ]
-        out += [
-            f"- `{escaping.md_code(n.get('source_object') or '?')}`: "
-            f"{escaping.md_text(n.get('recommendation') or '')}"
-            for n in defaults
-        ]
+        # #1410: columns whose note reads the same share one bullet that lists them.
+        by_note: dict[str, list[str]] = {}
+        for n in defaults:
+            by_note.setdefault(str(n.get("recommendation") or ""), []).append(
+                f"`{escaping.md_code(n.get('source_object') or '?')}`"
+            )
+        for note, columns in by_note.items():
+            text = escaping.md_text(note.strip())
+            if len(columns) == 1 or not text:
+                out.append(f"- {', '.join(columns)}" + (f": {text}" if text else ""))
+            else:
+                stop = "" if text.endswith((".", "!", "?")) else "."
+                out.append(f"- {text}{stop} Columns: {', '.join(columns)}.")
         out.append("")
     return out
 
@@ -762,11 +745,24 @@ def _engine_role_notes_md(
         )
     if any(SHARED_TABLES_LABEL in str(e["scope"]) for e in engines):
         notes.append(escaping.md_text(SHARED_TABLES_NOTE))
-    if any(e.get("kept_in_sync") or e.get("moves_to") for e in engines):
+    if _defines_kept_in_sync(engines):
         notes.append(escaping.md_text(KEPT_IN_SYNC_NOTE))
         if sources_pointer:
             notes.append(escaping.md_text(KEPT_IN_SYNC_SOURCES_NOTE))
     return notes
+
+
+def _defines_kept_in_sync(engines: list[dict[str, Any]]) -> bool:
+    """Whether "Target engines" defines served, migrate and kept in sync
+    (``KEPT_IN_SYNC_NOTE``): some migration target serves tables it does not move."""
+    return any(e.get("kept_in_sync") or e.get("moves_to") for e in engines)
+
+
+# #1410: the Migration map refers to the definitions "Target engines" gave above.
+MAP_SPLIT_DEFINED_ABOVE = (
+    "Migrate and kept in sync are as Target engines above defines them; Migrate counts the "
+    "same tables as its Total."
+)
 
 
 def _affects_line(risk: dict[str, Any]) -> str | None:
@@ -777,6 +773,66 @@ def _affects_line(risk: dict[str, Any]) -> str | None:
     shown = ", ".join(f"`{escaping.md_code(a)}`" for a in aff[:8])
     more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""
     return f"  - Affects: {shown}{more}"
+
+
+def _unsupported_entries(design: dict[str, Any]) -> list[Any]:
+    """A design's ``unsupported_patterns`` as "Target schemas by engine" lists them: a
+    bare string is one entry, not one character per entry; any other shape is none."""
+    unsupported = design.get("unsupported_patterns") or []
+    if isinstance(unsupported, str):
+        return [unsupported]
+    return unsupported if isinstance(unsupported, list) else []
+
+
+# Where this report lists a risk's details in full (#1410), by rule: the section, and
+# whether it comes before ("above") or after ("below") the risk register.
+_DETAILS_SECTION = {
+    "design.trade_offs": ("Migration trade-offs", "below"),
+    "cache.unsupported": ("Target schemas by engine", "above"),
+}
+
+
+def _texts_listed_elsewhere(report: dict[str, Any], rule: Any, eng: str) -> set[str]:
+    """The detail texts this report lists in full in another section for a risk of
+    ``rule`` on ``eng`` (#1410), written as synthesis writes a risk's details
+    (``src.shared.design_text``): each trade-off title under "Migration trade-offs";
+    each unsupported pattern of a completed cache design under "Target schemas by
+    engine" (a bare-string entry is printed as it is, so it matches no detail)."""
+    engine = canonical_engine_id(eng)
+    if rule == "design.trade_offs":
+        return {
+            design_text_item(str(t.get("description") or ""))
+            for t in report.get("trade_offs") or []
+            if isinstance(t, dict) and canonical_engine_id(str(t.get("engine") or "")) == engine
+        }
+    if rule == "cache.unsupported":
+        return {
+            unsupported_pattern_detail(u)
+            for e, design in _completed_designs(report).items()
+            if canonical_engine_id(e) == engine
+            for u in _unsupported_entries(design)
+            if isinstance(u, dict)
+        }
+    return set()
+
+
+def _risk_details_md(report: dict[str, Any], risk: dict[str, Any], eng: str) -> list[str]:
+    """A risk's ``details`` sub-bullets (#950): each text in full, except those this
+    report already lists in their own section (#1410), matched by text. Those are named
+    by a pointer to that section, unless the risk's own text already names it and none
+    is left here."""
+    details = [d for d in risk.get("details") or [] if isinstance(d, str) and d.strip()]
+    elsewhere = _texts_listed_elsewhere(report, risk.get("rule"), eng)
+    kept = [d for d in details if d not in elsewhere]
+    out = [f"  - {escaping.md_text(d)}" for d in kept]
+    if len(kept) < len(details):
+        where, side = _DETAILS_SECTION[str(risk.get("rule"))]
+        heading = where if where == "Migration trade-offs" else f"{where} ({display_engine(eng)})"
+        if kept:
+            out.append(f"  - The others are listed under {heading} {side}.")
+        elif where not in str(risk.get("description") or ""):
+            out.append(f"  - Each one is listed under {heading} {side}.")
+    return out
 
 
 def _risk_register_md(report: dict[str, Any]) -> list[str]:
@@ -790,6 +846,8 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
             eng, _ = _risk_engine_and_body(r.get("description"))
             by_eng.setdefault(eng, []).append(r)
         out += [f"## Risk register ({facts.get('open_risk_count', 0)})", ""]
+        # #1410: a mitigation another risk above already states in full is named by it.
+        mitigated_by: dict[str, str] = {}
         for eng, items in by_eng.items():
             # #572: eng is the raw [engine] tag _risk_engine_and_body parsed off the
             # description (or "(general)") -- display_engine leaves "(general)" as is
@@ -806,16 +864,19 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                     f"- **{escaping.md_text(rid)}** \u00b7 {escaping.md_text(sev)} \u00b7 "
                     f"{escaping.md_text(rtype)} \u00b7 {escaping.md_text(body)}"
                 )
-                if r.get("mitigation") and not _repeats(r.get("mitigation"), body):
-                    out.append(f"  - Mitigation: {escaping.md_text(r.get('mitigation'))}")
+                mitigation = str(r.get("mitigation") or "")
+                if mitigation and not _repeats(mitigation, body):
+                    if mitigation in mitigated_by:
+                        out.append(f"  - Mitigation: as for {mitigated_by[mitigation]}.")
+                    else:
+                        mitigated_by[mitigation] = escaping.md_text(rid)
+                        out.append(f"  - Mitigation: {escaping.md_text(mitigation)}")
                 affects = _affects_line(r)
                 if affects:
                     out.append(affects)
                 # #950: the design texts the risk covers, in full (the executive
-                # report states only their count).
-                for detail in r.get("details") or []:
-                    if isinstance(detail, str) and detail.strip():
-                        out.append(f"  - {escaping.md_text(detail)}")
+                # report states only their count), each one once in this report.
+                out += _risk_details_md(report, r, eng)
             out.append("")
 
     resolved = resolved_risks(report)
@@ -823,21 +884,55 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
         # Analysis risks the effective assignment resolved (#221): listed so none
         # disappears without a record.
         out += [f"## Resolved by the assignment ({facts.get('resolved_risk_count', 0)})", ""]
+        # #1410: risks resolved for the same reason are listed together, and the
+        # reason is stated once, under the first of them.
+        by_reason: dict[str, list[dict[str, Any]]] = {}
         for r in resolved:
-            _, body = _risk_engine_and_body(r.get("description"))
-            where = resolved_risk_label(r)
-            out.append(
-                f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
-                f"{escaping.md_text(where)} \u00b7 {escaping.md_text(body)}"
-            )
-            if r.get("reason"):
-                out.append(f"  - Resolved because {escaping.md_text(r['reason'])}.")
-            # #950: a resolved risk keeps naming its tables, as an open one does.
-            affects = _affects_line(r)
-            if affects:
-                out.append(affects)
+            by_reason.setdefault(str(r.get("reason") or ""), []).append(r)
+        for reason, members in by_reason.items():
+            for i, r in enumerate(members):
+                _, body = _risk_engine_and_body(r.get("description"))
+                where = resolved_risk_label(r)
+                out.append(
+                    f"- {escaping.md_text(r.get('severity', '-'))} \u00b7 "
+                    f"{escaping.md_text(where)} \u00b7 {escaping.md_text(body)}"
+                )
+                if reason and i == 0:
+                    out.append(f"  - Resolved because {escaping.md_text(reason)}.")
+                elif reason:
+                    out.append("  - Resolved for the same reason as the risk above.")
+                # #950: a resolved risk keeps naming its tables, as an open one does.
+                affects = _affects_line(r)
+                if affects:
+                    out.append(affects)
         out.append("")
     return out
+
+
+def _query_groups_heading(facts: dict[str, Any]) -> str:
+    """``## Query groups (33 of 51)``: the groups listed, of all of them (#1410)."""
+    counts = facts.get("query_group_counts") or {}
+    listed = int(counts.get("listed_group_count") or 0)
+    total = int(counts.get("group_count") or 0)
+    return (
+        f"## Query groups ({listed} of {total})"
+        if total > listed
+        else f"## Query groups ({listed})"
+    )
+
+
+def _relational_only_groups_text(facts: dict[str, Any]) -> str:
+    """The sentence naming the query groups only relational engines serve (#1410)."""
+    counts = facts.get("query_group_counts") or {}
+    n = int(counts.get("relational_only_group_count") or 0)
+    if not n:
+        return ""
+    names = ", ".join(display_engine(str(e)) for e in counts.get("relational_only_engines") or [])
+    on = f" run only on {names}" if names else " run only on a relational engine"
+    return (
+        f"The other {n} {plural_noun(n, 'group')}{on}; Queries on Aurora by table lists "
+        f"{'its' if n == 1 else 'their'} queries per table."
+    )
 
 
 def render_engineering_report_md(
@@ -922,15 +1017,18 @@ def render_engineering_report_md(
         # #212: one line per table, its owner (the engine that takes its writes, never a
         # cache), the engines that also read it and its cache, from the facts layer.
         written = (facts.get("table_sources") or {}).get("written_table_count")
+        # #1410: "Target engines" above already defined migrate and kept in sync, and
+        # pointed at Sources of truth and replicas; the map refers to it, once.
+        defined_above = _defines_kept_in_sync(_architecture_engines(report))
         sources_pointer = (
             " Sources of truth and replicas below lists each written table's replica reads."
-            if written
+            if written and not defined_above
             else ""
         )
         split = _mapping_split(report, mappings)
         basis = facts.get("table_basis") or {}
         split_note = (
-            f" {MAP_SPLIT_NOTE}"
+            f" {MAP_SPLIT_DEFINED_ABOVE if defined_above else MAP_SPLIT_NOTE}"
             if (basis.get("mapped_tables_by_move") or {}).get("kept_in_sync")
             else ""
         )
@@ -1050,13 +1148,7 @@ def render_engineering_report_md(
                         ]
                     out.append("| " + " | ".join(row) + " |")
                 out.append("")
-            unsupported = dz.get("unsupported_patterns") or []
-            if isinstance(unsupported, str):
-                # Same malformed-shape guard as migration_notes below: a bare
-                # string must be one entry, not one character per entry.
-                unsupported = [unsupported]
-            elif not isinstance(unsupported, list):
-                unsupported = []
+            unsupported = _unsupported_entries(dz)
             if unsupported:
                 out += [f"**Unsupported patterns ({len(unsupported)}):**", ""]
                 out += [
@@ -1090,40 +1182,34 @@ def render_engineering_report_md(
                     "",
                 ]
 
-    all_groups = [g for g in (report.get("query_groups") or []) if isinstance(g, dict)]
-    # #478: a group served only by relational engine(s) is
-    # already shown in full, per table, by the "Queries on Aurora by table"
-    # subsection below -- listing it again here just duplicated it (and, on
-    # a large relational workload, bloated this file: 359 extra rows on the
-    # discourse sample). A group a relational engine shares with another
-    # engine (e.g. the cache layer reading the same source table) stays,
-    # since its non-relational side belongs here.
+    # #478: a group served only by relational engine(s) is shown per table by the
+    # "Queries on Aurora by table" subsection below, not here (359 extra rows on the
+    # discourse sample); a group a relational engine shares with another engine stays.
+    # #1410: the rows are the facts' listed groups, the same list the heading counts.
     groups = [
-        g for g in all_groups if not set(g.get("engines") or []).issubset(_RELATIONAL_ENGINES)
+        g
+        for i in (facts.get("query_group_counts") or {}).get("listed_group_indexes") or []
+        if (g := query_group_at(report, i))
     ]
     if groups:
         # "Query groups", as the deck summary calls them: the assignment's
         # co-dependency groups (tables that must move together) are a different,
         # usually much smaller count the deck also shows (#258).
         co_dep = (report.get("assignment_summary") or {}).get("co_dependency_groups")
-        # #478: the groups excluded just above (pure-Aurora,
-        # already shown in full by "Queries on Aurora by table") would
-        # otherwise look like missing data to a reader who only sees this
-        # heading's count -- point at where they actually are instead.
-        omitted_aurora = len(all_groups) - len(groups)
-        aurora_pointer = (
-            f" (plus {omitted_aurora} Aurora {plural_noun(omitted_aurora, 'group')} below)"
-            if omitted_aurora > 0
-            else ""
-        )
-        out += [f"## Query groups ({len(groups)}){aurora_pointer}", ""]
+        out += [_query_groups_heading(facts), ""]
+        intro = ["Queries grouped by the access patterns that serve them."]
+        # #478, #1410: the groups excluded just above (pure-Aurora, their queries
+        # listed per table under "Queries on Aurora by table") are named once, with
+        # the facts' count, so the heading's two counts add up.
+        aurora = _relational_only_groups_text(facts)
+        if aurora:
+            intro.append(aurora)
         if isinstance(co_dep, int):
-            out += [
-                "Queries grouped by the access patterns that serve them. These are not the "
-                f"assignment's {co_dep} co-dependency {plural_noun(co_dep, 'group')} "
-                "(tables that must move together).",
-                "",
-            ]
+            intro.append(
+                f"These are not the assignment's {co_dep} co-dependency "
+                f"{plural_noun(co_dep, 'group')} (tables that must move together)."
+            )
+        out += [" ".join(intro), ""]
         out += [
             "| Group | Engines | Access patterns | Source queries | Design RPS |",
             "|---|---|---|---|---|",
