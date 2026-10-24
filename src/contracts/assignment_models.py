@@ -161,6 +161,9 @@ Version History:
   out-of-scope ``closest_engine`` (ADR-031 Decision 2 Amendment 15). Move gained the
   pass ``unservable`` and the evidence ``closest_engine`` (move ledger). Defaults to
   empty, so an assignment written before still loads.
+- 1.24 (2026-10-24, #1373): Added optional ``QueryAssignment.pinned`` ('utility' for a
+  utility or DDL statement pinned to its engine; views show 'pinned (utility)' instead
+  of its confidence).
 """
 
 from datetime import datetime
@@ -270,6 +273,17 @@ class QueryAssignment(BaseModel):
     warnings: list[str] = Field(
         default_factory=list,
         description="Warnings associated with this query assignment",
+    )
+    pinned: Literal["utility"] | None = Field(
+        default=None,
+        description=(
+            "Why the query is pinned to its engine rather than placed by its score: "
+            "'utility' for a utility or DDL statement kept on the relational engine "
+            "(the first assignment's utility pin, Move rule override.utility). Every "
+            "view shows 'pinned (utility)' instead of the confidence percentage, and "
+            "the mean-fit figures leave it out; confidence still holds the query's "
+            "score there. None for a query placed by its score (#1373)."
+        ),
     )
     cache_engine: str | None = Field(
         default=None,
@@ -642,7 +656,7 @@ class Assignment(BaseModel):
     """Complete versioned assignment artifact."""
 
     contract_version: str = Field(
-        default="1.23", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
+        default="1.24", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR format)"
     )
 
     job_id: str = Field(..., description="Unique job identifier")

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.shared.workload_fit_labels import pinned_label
+
 from . import escaping
 from .facts import report_facts
 from .formatting import fmt_num, plural_noun, plural_verb
@@ -163,7 +165,13 @@ def _trace_md(
         out += _step_md(step, first=step is first, previous=previous)
         previous = step
     final_score = trace.get("final_score")
-    scored = f" ({_score(final_score)})" if isinstance(final_score, (int, float)) else ""
+    pin = pinned_label(trace.get("pinned"))
+    # A pinned query shows its pin, not its score (#1373).
+    scored = (
+        f", {pin}"
+        if pin
+        else f" ({_score(final_score)})" if isinstance(final_score, (int, float)) else ""
+    )
     group_mean = trace.get("final_group_mean")
     if isinstance(group_mean, (int, float)):
         scored += f"; its co-dependency group's mean score there is {_score(group_mean)}"

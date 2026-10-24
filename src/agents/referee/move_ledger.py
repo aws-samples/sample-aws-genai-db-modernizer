@@ -10,6 +10,16 @@ from it. ``replay`` folds a list of Moves back into each query's engine and
 tied engines, so a version's Moves can be checked against the version itself
 (``unexplained`` / ``check_replay``).
 
+A query's ``confidence`` follows its engine (#1373): every Move sets it to the
+query's score on the engine it lands on (:func:`query_score`: the query's own
+rung of the Move's candidate ladder, else its ``score_after``), the figure the
+report's query trace shows as ``final_score``. ``MoveLedger.confidence`` holds
+it for a pass that builds records from the ledger (the first assignment);
+``apply_to_assignment`` writes it on the record with the engine. An assignment
+saved before #1373 kept the engine a query left's score after a consolidation;
+:func:`confidence_from_moves` corrects it on read, from the Moves of its
+lineage.
+
 This module is the only writer of ``assigned_engine`` and ``tied_engines`` (ADR-031 Amendment 3,
 guarded by ``tests/unit/agents/referee/test_only_the_ledger_writes_engines.py``).
 The first assignment (``AssignmentResolver.resolve``), the reality check (Phase
@@ -54,6 +64,7 @@ from src.contracts.move_ledger import (
     MovePass,
     ReasonCode,
 )
+from src.shared.workload_fit_labels import PINNED_UTILITY, PinKind
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +77,15 @@ __all__ = [
     "best_other",
     "candidate_ladder",
     "check_replay",
+    "confidence_after",
+    "confidence_from_moves",
+    "follow_moves",
     "group_key",
     "ledger_continuing",
     "ledger_for",
+    "pin_after",
+    "pins_from_moves",
+    "query_score",
     "replay",
     "state_of",
     "unexplained",
@@ -78,10 +95,11 @@ __all__ = [
 class MoveLedger:
     """The engines of one assignment being built, and the Moves that set them.
 
-    ``engines`` maps a query id to its current engine and ``tied`` to its
-    current unresolved tie (sorted; empty when there is none); a query with no
-    Move yet has no ``engines`` entry. Read them, never write them: ``apply``
-    is the only writer.
+    ``engines`` maps a query id to its current engine, ``tied`` to its
+    current unresolved tie (sorted; empty when there is none) and
+    ``confidence`` to its score on that engine (:func:`confidence_after`); a
+    query with no Move yet has no ``engines`` entry. Read them, never write
+    them: ``apply`` is the only writer.
     """
 
     def __init__(
@@ -93,6 +111,8 @@ class MoveLedger:
         self.engines: dict[str, str] = dict(engines or {})
         self.moves: list[Move] = list(moves)
         self.tied: dict[str, list[str]] = {q: sorted(t) for q, t in (tied or {}).items() if t}
+        self.confidence: dict[str, int] = {}
+        self.pinned: dict[str, PinKind] = {}
 
     def engine_of(self, query_id: str) -> str | None:
         """The query's current engine, ``None`` before its first Move."""
@@ -101,6 +121,14 @@ class MoveLedger:
     def tied_of(self, query_id: str) -> list[str]:
         """The query's current unresolved tie (sorted), empty when there is none."""
         return list(self.tied.get(query_id, []))
+
+    def confidence_of(self, query_id: str) -> int:
+        """The query's score on its current engine (0 when its Moves never scored it)."""
+        return self.confidence.get(query_id, 0)
+
+    def pinned_of(self, query_id: str) -> PinKind | None:
+        """Why the query is pinned to its engine (:func:`pin_after`), ``None`` when scored."""
+        return self.pinned.get(query_id)
 
 
 def apply(
@@ -150,6 +178,14 @@ def apply(
     )
     ledger.moves.append(move)
     ledger.engines[query_id] = to_engine
+    confidence = confidence_after(move, ledger.confidence.get(query_id))
+    if confidence is not None:
+        ledger.confidence[query_id] = confidence
+    pinned = pin_after(move, ledger.pinned.get(query_id))
+    if pinned:
+        ledger.pinned[query_id] = pinned
+    else:
+        ledger.pinned.pop(query_id, None)
     if move.tied_engines:
         ledger.tied[query_id] = list(move.tied_engines)
     else:
@@ -185,7 +221,10 @@ def apply_to_assignment(
     leaves (empty for a decided move); ``None`` keeps the dict's current tie,
     for a pass that does not decide one (the customer-override restore). A
     Move that changes the tie records the earlier one in
-    ``evidence.previous_tied_engines``.
+    ``evidence.previous_tied_engines``. The record's ``confidence`` is set
+    with the engine: the query's score on ``to_engine`` (:func:`confidence_after`,
+    #1373), never the score of the engine it left. An engine change whose Move
+    records no score sets it to 0 and logs a warning naming the query and pass.
     """
     qid = _get(qa, "query_id")
     if to_engine == UNSERVABLE:
@@ -225,15 +264,36 @@ def apply_to_assignment(
     )
     # The one write of a query's engine and tie (ADR-031 Amendment 3). With
     # ``tied_engines=None`` the record keeps its tie, which is what the Move
-    # recorded (``tied`` above is the record's current tie then).
+    # recorded (``tied`` above is the record's current tie then). Its
+    # confidence follows the engine (#1373).
+    confidence = confidence_after(move, _get(qa, "confidence"))
+    pinned = pin_after(move, _get(qa, "pinned"))
+    if query_score(move) is None and move.from_engine != move.to_engine:
+        # An engine change the pass recorded no score for: the query reads 0 on
+        # its new engine (never the engine it left's score), and it is said here
+        # rather than shown as a silent 0% (#1373).
+        logger.warning(
+            "move_ledger: query %r moved %r -> %r (%s) with no score recorded; "
+            "its confidence is 0",
+            qid[:80],
+            move.from_engine,
+            move.to_engine,
+            move.pass_.value,
+        )
     if isinstance(qa, MutableMapping):
         qa["assigned_engine"] = move.to_engine
         if tied_engines is not None:
             qa["tied_engines"] = list(move.tied_engines)
+        if confidence is not None:
+            qa["confidence"] = confidence
+        qa["pinned"] = pinned
     else:
         qa.assigned_engine = move.to_engine
         if tied_engines is not None:
             qa.tied_engines = list(move.tied_engines)
+        if confidence is not None:
+            qa.confidence = confidence
+        qa.pinned = pinned
     return move
 
 
@@ -291,6 +351,128 @@ def unservable_in_assignment(
     kept = [u for u in assignment.get("unservable_queries") or [] if _get(u, "query_id") != qid]
     assignment["unservable_queries"] = [*kept, dict(record)]
     return made
+
+
+def query_score(move: Move) -> float | None:
+    """The query's own score on the engine ``move`` lands on, ``None`` when unscored.
+
+    The Move's candidate ladder holds every engine's score for the query, so
+    its ungated rung for ``to_engine`` is that score; without one (no ladder,
+    or a gated rung) it is the Move's ``score_after``. A co-dependency group's
+    Move may record the group's mean as ``score_after``; the rung is still the
+    query's own score. Reads the Move only, never scores anything.
+    """
+    for rung in move.evidence.candidates:
+        if rung.engine == move.to_engine and not rung.gate and rung.score is not None:
+            return float(rung.score)
+    return move.score_after
+
+
+def confidence_after(move: Move, current: int | None = None) -> int | None:
+    """A query's ``confidence`` after ``move`` (#1373): its score on ``to_engine``.
+
+    :func:`query_score`, rounded to an integer in 0..100. A Move with no score
+    keeps ``current`` when the engine did not change (a tie-only Move) and is
+    0 when it did (an unscored engine, as the first assignment's no-score
+    fallback reads), never the score of the engine the query left.
+    """
+    score = query_score(move)
+    if score is None:
+        return current if move.from_engine == move.to_engine else 0
+    return max(0, min(100, round(score)))
+
+
+def pin_after(move: Move, current: PinKind | None = None) -> PinKind | None:
+    """Why a query is pinned to its engine after ``move`` (``QueryAssignment.pinned``).
+
+    The first assignment's utility pin (rule ``override.utility``) pins it as
+    ``"utility"``; any later Move that changes its engine unpins it (the pin
+    named the engine it left), and a tie-only Move keeps ``current``.
+    """
+    if move.reason_code == ReasonCode.OVERRIDE_UTILITY:
+        return PINNED_UTILITY
+    return None if move.from_engine != move.to_engine else current
+
+
+def pins_from_moves(assignment: MutableMapping, lineage: Iterable[Mapping]) -> list[str]:
+    """Set ``pinned`` on ``assignment``'s queries from its lineage's Moves, in place.
+
+    For a version saved before ``QueryAssignment.pinned`` existed (#1373): each query
+    whose Moves end on its engine gets the pin those Moves leave (:func:`pin_after`);
+    a query with no Move, or whose last Move is not on its engine, is left as stored.
+    Returns the query ids whose pin changed.
+    """
+    by_query = _moves_by_query(lineage)
+    changed: list[str] = []
+    for qa in assignment.get("query_assignments") or []:
+        moves = by_query.get(_get(qa, "query_id"), [])
+        if not moves or moves[-1].to_engine != _get(qa, "assigned_engine"):
+            continue
+        pinned: PinKind | None = None
+        for move in moves:
+            pinned = pin_after(move, pinned)
+        same = pinned == _get(qa, "pinned")
+        if isinstance(qa, MutableMapping):
+            qa["pinned"] = pinned
+        elif not same:
+            qa.pinned = pinned
+        if not same:
+            changed.append(_get(qa, "query_id"))
+    return changed
+
+
+def follow_moves(assignment: MutableMapping, lineage: Iterable[Mapping]) -> None:
+    """Both read-side corrections of a saved version (#1373): its confidences
+    (:func:`confidence_from_moves`) and its pins (:func:`pins_from_moves`)."""
+    versions = list(lineage)
+    confidence_from_moves(assignment, versions)
+    pins_from_moves(assignment, versions)
+
+
+def _moves_by_query(lineage: Iterable[Mapping]) -> dict[str, list[Move]]:
+    """Every query's Moves across ``lineage`` (oldest version first), in seq order."""
+    by_query: dict[str, list[Move]] = {}
+    for version in lineage:
+        moves = []
+        for raw in version.get("moves") or []:
+            try:
+                moves.append(raw if isinstance(raw, Move) else Move.model_validate(raw))
+            except ValueError:
+                continue
+        for move in sorted(moves, key=lambda m: m.seq):
+            by_query.setdefault(move.query_id, []).append(move)
+    return by_query
+
+
+def confidence_from_moves(assignment: MutableMapping, lineage: Iterable[Mapping]) -> list[str]:
+    """Correct ``assignment``'s confidences from its lineage's Moves, in place (#1373).
+
+    ``lineage`` is the versions ``assignment`` descends from, oldest first,
+    itself last (``query_trace.assignment_lineage``); a version's Moves are its
+    own, so a query a later version did not move takes its score from an
+    earlier version's Move. A version saved before #1373 kept a consolidated
+    query's score on the engine it left; this gives each query whose Moves end
+    on its engine the confidence those Moves set (:func:`confidence_after`). A
+    query with no Move, or whose last Move is not on its engine (a file the
+    Moves do not explain), is left as stored. Returns the corrected query ids.
+    """
+    by_query = _moves_by_query(lineage)
+    corrected: list[str] = []
+    for qa in assignment.get("query_assignments") or []:
+        moves = by_query.get(_get(qa, "query_id"), [])
+        if not moves or moves[-1].to_engine != _get(qa, "assigned_engine"):
+            continue
+        confidence: int | None = None
+        for move in moves:
+            confidence = confidence_after(move, confidence)
+        if confidence is None or confidence == _get(qa, "confidence"):
+            continue
+        if isinstance(qa, MutableMapping):
+            qa["confidence"] = confidence
+        else:
+            qa.confidence = confidence
+        corrected.append(_get(qa, "query_id"))
+    return corrected
 
 
 def _get(qa: Any, key: str) -> Any:

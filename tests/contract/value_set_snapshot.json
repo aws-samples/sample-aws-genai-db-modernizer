@@ -90,7 +90,7 @@
       "reality_check",
       "source_of_truth_reroute"
     ],
-    "version": "1.23"
+    "version": "1.24"
   },
   "assignment_models.AssignmentStatus": {
     "module": "assignment_models",
@@ -102,7 +102,7 @@
       "reroute_rolled_back",
       "rerouted_after_approval"
     ],
-    "version": "1.23"
+    "version": "1.24"
   },
   "capability_ids": {
     "module": "triage_output",
@@ -603,7 +603,7 @@
       "neptune",
       "opensearch"
     ],
-    "version": "1.23"
+    "version": "1.24"
   },
   "feasibility_models.FindingKind": {
     "module": "feasibility_models",
@@ -762,7 +762,7 @@
       "not_key_eligible",
       "rewritten_by_write"
     ],
-    "version": "1.58"
+    "version": "1.59"
   },
   "query_trace.TraceBasis": {
     "module": "query_trace",
@@ -770,7 +770,7 @@
       "group_mean",
       "query"
     ],
-    "version": "1.58"
+    "version": "1.59"
   },
   "reality_check_marker.MarkerStatus": {
     "module": "reality_check_marker",
@@ -925,6 +925,6 @@
       "informational",
       "needs_rewrite"
     ],
-    "version": "1.58"
+    "version": "1.59"
   }
 }

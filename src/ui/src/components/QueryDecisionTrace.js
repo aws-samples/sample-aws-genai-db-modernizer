@@ -3,6 +3,7 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Badge from "@cloudscape-design/components/badge";
+import { pinnedFitLabel } from "../utils/queryRouting";
 
 /**
  * "Why this engine" (#339): one query's decision trace, from
@@ -130,12 +131,19 @@ const QueryDecisionTrace = memo(({ trace, loading, error, t }) => {
     );
   }
 
-  const finalLine = trace.final_engine_name
-    ? t('analysis-results.query-trace.final-value', {
-        engine: trace.final_engine_name,
-        score: formatTraceScore(trace.final_score),
-      })
-    : '—';
+  // A utility pin shows its pin, not its score (#1373).
+  const pinLabel = pinnedFitLabel(trace.pinned, t);
+  const finalLine = !trace.final_engine_name
+    ? '—'
+    : pinLabel
+      ? t('analysis-results.query-trace.final-value-pinned', {
+          engine: trace.final_engine_name,
+          pin: pinLabel,
+        })
+      : t('analysis-results.query-trace.final-value', {
+          engine: trace.final_engine_name,
+          score: formatTraceScore(trace.final_score),
+        });
 
   if (!trace.has_ledger) {
     return (

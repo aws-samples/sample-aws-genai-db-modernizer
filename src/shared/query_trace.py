@@ -30,6 +30,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from src.agents.referee.move_ledger import pin_after, query_score
 from src.contracts.move_ledger import UNSERVABLE, CandidateScore, Move, ReasonCode
 from src.contracts.query_trace import (
     CloseCall,
@@ -68,6 +69,7 @@ from src.shared.report_facts import (
     trace_kinds,
     trace_order,
 )
+from src.shared.workload_fit_labels import PinKind
 
 # One decimal, like every score the trace shows: a co-dependency group's
 # mean (80.1340206185567) is stored as 80.1, never next to a whole-number score.
@@ -421,7 +423,16 @@ def build_query_trace(
     steps = [_step(v, m, i) for i, (v, m) in enumerate(moves, start=1)]
     last_version, last = moves[-1]
     final = final_engine or last.to_engine
-    final_score = last.score_after if last.to_engine == final else None
+    # The query's own score on its final engine, the figure its ``confidence``
+    # holds (``move_ledger.query_score``, #1373), even when a group's Move
+    # recorded the group's mean as ``score_after``.
+    final_score = query_score(last) if last.to_engine == final else None
+    # The pin its Moves leave on the final engine (a utility pin, #1373).
+    pinned: PinKind | None = None
+    for _, move in moves:
+        pinned = pin_after(move, pinned)
+    if last.to_engine != final:
+        pinned = None
     runner_up: TraceRunnerUp | None = None
     outscored: list[TraceOutscored] = []
     compared: float | None = None
@@ -440,6 +451,7 @@ def build_query_trace(
         final_version=last_version,
         effective_version=effective_version,
         final_score=final_score,
+        pinned=pinned,
         final_group_mean=_round(compared) if group else None,
         tied_engines=list(last.tied_engines),
         tied_engine_names=[display_engine(e) for e in last.tied_engines],
@@ -452,6 +464,7 @@ def build_query_trace(
             len(steps),
             runner_up.explanation if runner_up else None,
             last,
+            pinned=pinned,
         ),
     )
 

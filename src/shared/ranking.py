@@ -23,14 +23,37 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
+from src.shared.workload_fit_labels import PINNED_UTILITY_LABEL
 
 
 def engine_confidence(entry: Mapping[str, Any]) -> float:
-    """The confidence to show for a ranking entry: routed, else the analysis average."""
+    """The confidence to show for a ranking entry: routed, else the analysis average.
+
+    An engine whose routed queries are all utility pins has no routed figure and no
+    average to stand in for one (#1373): show it with :func:`fit_text`, which says so.
+    """
     routed = entry.get("routed_confidence")
     if routed is not None:
         return float(routed)
     return float(entry.get("confidence_score") or 0)
+
+
+def pinned_only(entry: Mapping[str, Any]) -> int:
+    """How many queries are routed to the entry's engine when every one of them is a
+    utility pin (no routed figure, #1373); 0 otherwise."""
+    if entry.get("routed_confidence") is not None:
+        return 0
+    return int(entry.get("routed_pinned_queries") or 0)
+
+
+def fit_text(entry: Mapping[str, Any], word: str = "fit") -> str:
+    """``73% fit`` for a ranking entry, or ``all 3 routed queries pinned (utility)``
+    for an engine that holds only utility pins (never the analysis average, #1373)."""
+    pinned = pinned_only(entry)
+    if pinned:
+        noun = "query" if pinned == 1 else "queries"
+        return f"all {pinned} routed {noun} {PINNED_UTILITY_LABEL}"
+    return f"{engine_confidence(entry):.0f}% {word}"
 
 
 def is_cache_layer_entry(entry: Mapping[str, Any]) -> bool:
@@ -97,5 +120,7 @@ def evidence_note(entry: Mapping[str, Any], short: bool = False) -> str:
 
 def confidence_text(entry: Mapping[str, Any], short: bool = False) -> str:
     """``60% (signal only, no table-level evidence)``; ``93%`` when table-backed."""
+    if pinned_only(entry):
+        return fit_text(entry)
     note = evidence_note(entry, short=short)
     return f"{engine_confidence(entry):.0f}%" + (f" ({note})" if note else "")

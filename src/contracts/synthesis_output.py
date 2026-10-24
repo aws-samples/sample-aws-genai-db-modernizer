@@ -510,6 +510,9 @@ Version History:
   (TraceKeyCandidate, src.contracts.query_trace): each column the redesign considered as
   a key for the query, accepted or refused with every guard that refused it; a report
   written before has none
+- 1.59 (2026-10-24, #1373): Added optional ``routed_pinned_queries`` on a ranking entry
+  and ``pinned`` on a query trace (#1373): pins are left out of the mean fit and shown
+  as 'pinned (utility)'.
 """
 
 from datetime import datetime
@@ -572,6 +575,15 @@ class EngineRanking(BaseModel):
         )
     )
     routed_queries_without_table_evidence: int | None = Field(None, ge=0)
+    routed_pinned_queries: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Routed queries pinned to the engine rather than placed by their score (a "
+            "utility pin, QueryAssignment.pinned): left out of routed_confidence and "
+            "routed_queries, and counted here (#1373)"
+        ),
+    )
     routed_lead: str | None = Field(
         None,
         description=(
@@ -2146,7 +2158,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.58",
+        default="1.59",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -324,6 +324,105 @@ def test_a_querys_trace_opens_from_the_routing_table(
     assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
+def _consolidated_query(r: PipelineResult) -> tuple[str, int, int] | None:
+    """A query the effective assignment's own Moves took to another engine with a
+    different score: its id, the figure the journey must show (the Move's score for
+    the query on its new engine, read by the ledger's own rule, ``query_score``,
+    which takes the query's ladder rung before a group's mean ``score_after``),
+    and the score on the engine it left. None when the run consolidated no such
+    query."""
+    from src.agents.referee.move_ledger import query_score
+    from src.contracts.move_ledger import Move
+
+    report = json.loads((r.artifact_root / r.report["report"]).read_text())
+    version = (report.get("query_traces") or {}).get("effective_version")
+    path = r.job_dir() / "assignment" / f"v{version}" / "assignment.json"
+    if not version or not path.exists():
+        return None
+    for raw in json.loads(path.read_text()).get("moves") or []:
+        m = Move.model_validate(raw)
+        after = query_score(m)
+        if m.from_engine and m.from_engine != m.to_engine and m.score_before is not None:
+            if after is not None and round(after) != round(m.score_before):
+                return m.query_id, round(after), round(m.score_before)
+    return None
+
+
+def test_a_consolidated_querys_journey_shows_its_new_engines_fit(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1373: the query journey's "Workload Fit" is the query's score on the engine
+    the reality check moved it to, not the score of the engine it left."""
+    r = next((x for x in all_runs if x.db == "wordpress"), all_runs[0])
+    found = _consolidated_query(r)
+    if not r.external:
+        assert found is not None, "the wordpress sample consolidates queries"
+    if found is None:
+        return
+    qid, score, left = found
+
+    ev = _watch(page)
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    section = page.locator("#query-routing-section")
+    expect(section).to_be_visible(timeout=READY_MS)
+    _expand_query_routing(page)
+    section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
+    section.get_by_role("button", name="Routing changed or decided").click()
+    section.get_by_label("Filter queries").fill(qid[:16])
+    section.get_by_role("button", name=f"{OPEN_TRACE}{qid}").click()
+    modal = page.get_by_role("dialog")
+    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
+    expect(modal).to_contain_text("Workload Fit", timeout=READY_MS)
+    text = modal.inner_text()
+    fit = re.search(r"Workload Fit\s+(\d+)%", text)
+    assert fit is not None, text[:2000]
+    assert int(fit.group(1)) == score, (qid, "shown", fit.group(1), "engine it left", left)
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
+def _utility_pin(r: PipelineResult) -> str | None:
+    """A query the effective assignment marks pinned as a utility statement (#1373)."""
+    report = json.loads((r.artifact_root / r.report["report"]).read_text())
+    version = (report.get("query_traces") or {}).get("effective_version")
+    path = r.job_dir() / "assignment" / f"v{version}" / "assignment.json"
+    if not version or not path.exists():
+        return None
+    pins = [
+        qa["query_id"]
+        for qa in json.loads(path.read_text())["query_assignments"]
+        if qa.get("pinned") == "utility"
+    ]
+    return str(sorted(pins)[0]) if pins else None
+
+
+def test_a_utility_pins_journey_shows_pinned_not_a_percentage(
+    page: Page, ui: str, all_runs: list[PipelineResult]
+) -> None:
+    """#1373 (maintainer decision on #1381): the journey of a query pinned as a
+    utility statement shows "pinned (utility)" as its Workload Fit, not a percentage."""
+    r = next((x for x in all_runs if x.db == "wordpress"), all_runs[0])
+    qid = _utility_pin(r)
+    if not r.external:
+        assert qid is not None, "the wordpress sample pins utility statements"
+    if qid is None:
+        return
+    ev = _watch(page)
+    page.goto(f"{ui}/analysis/results/{r.job_id}")
+    section = page.locator("#query-routing-section")
+    expect(section).to_be_visible(timeout=READY_MS)
+    _expand_query_routing(page)
+    section.get_by_role("table", name="Query routing").wait_for(timeout=READY_MS)
+    section.get_by_label("Filter queries").fill(qid[:16])
+    section.get_by_role("button", name=f"{OPEN_TRACE}{qid}").click()
+    modal = page.get_by_role("dialog")
+    modal.get_by_text(f"Query Journey: {qid}").wait_for(timeout=READY_MS)
+    expect(modal).to_contain_text("Workload Fit", timeout=READY_MS)
+    text = modal.inner_text()
+    assert re.search(r"Workload Fit\s+pinned \(utility\)", text), text[:2000]
+    assert not re.search(r"Workload Fit\s+\d+%", text), text[:2000]
+    assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
+
+
 def _expand_query_routing(page: Page) -> None:
     """Open the query routing section, collapsed when the page opens (#1028)."""
     header = page.locator('#query-routing-section [aria-expanded="false"]').first

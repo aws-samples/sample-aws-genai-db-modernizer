@@ -1,4 +1,5 @@
 {
+  "common.fit.pinned-utility": "pinned (utility)",
   "common.actions.cancel": "Cancel",
   "common.actions.refresh": "Refresh",
   "common.actions.clear-filter": "Clear filter",
@@ -572,6 +573,7 @@
   "analysis-results.query-trace.no-later-steps": "No later routing step changed this query.",
   "analysis-results.query-trace.final": "Final engine",
   "analysis-results.query-trace.final-value": "{{engine}} ({{score}})",
+  "analysis-results.query-trace.final-value-pinned": "{{engine}}, {{pin}}",
   "analysis-results.query-trace.as-of-version": "version {{version}}",
   "analysis-results.query-trace.effective-version": "effective assignment: version {{version}}",
   "analysis-results.query-trace.runner-up": "Runner-up",

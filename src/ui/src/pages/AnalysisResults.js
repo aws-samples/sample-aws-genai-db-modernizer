@@ -53,7 +53,7 @@ import ExecutiveSummaryStats from "../components/ExecutiveSummaryStats";
 import SourcesOfTruthCallout from "../components/SourcesOfTruthCallout";
 import TableOwnersCallout from "../components/TableOwnersCallout";
 import DeliverablesPanel from "../components/DeliverablesPanel";
-import { buildQueryRoutingRows } from "../utils/queryRouting";
+import { buildQueryRoutingRows, journeyWorkloadFit } from "../utils/queryRouting";
 import { getCacheOverlay, ownerDistribution, formatCacheLayerLine, cacheOverlayNotes, targetEngineEntries, resolveCostBreakdown, ownerSchemaDesigns, cacheAccessPatternCount, addCacheOverlayNode, cacheLayerAccessPatterns } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { fallbackWithheldReason } from "../utils/fallbackWithheldReason";
@@ -3014,9 +3014,9 @@ const AnalysisResultsPage = memo(() => {
                         },
                         {
                           label: 'Workload Fit',
-                          value: queryJourneyData?.assignment?.confidence ? (
+                          value: journeyWorkloadFit(queryJourneyData, t) ? (
                             <SpaceBetween size="xxxs">
-                              <Box>{`${queryJourneyData.assignment.confidence}%`}</Box>
+                              <Box>{journeyWorkloadFit(queryJourneyData, t)}</Box>
                               <Box fontSize="body-s" color="text-status-inactive">
                                 {WORKLOAD_FIT_DEFINITION}
                               </Box>

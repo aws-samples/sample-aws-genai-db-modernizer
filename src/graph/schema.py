@@ -14,7 +14,9 @@ from src.graph.store import GraphStore
 #   version). Every graph saved before reads as revision 0.
 # - 2 (#1361): ``Query.key_candidates_json``, the columns the redesign considered
 #   as a key for the query (the effective version's access-pattern record).
-GRAPH_SCHEMA_REVISION = 2
+# - 3 (#1373): MIGRATES_TO.pinned (a utility pin), and confidence follows the
+#   query's engine; a graph built before keeps stale figures, so it is rebuilt.
+GRAPH_SCHEMA_REVISION = 3
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -97,7 +99,7 @@ NODE_TABLES = [
 
 REL_TABLES = [
     "CREATE REL TABLE IF NOT EXISTS READS_FROM (FROM Query TO SourceTable)",
-    "CREATE REL TABLE IF NOT EXISTS MIGRATES_TO (FROM Query TO Destination, confidence DOUBLE, assignment_reason STRING)",
+    "CREATE REL TABLE IF NOT EXISTS MIGRATES_TO (FROM Query TO Destination, confidence DOUBLE, pinned STRING, assignment_reason STRING)",
     "CREATE REL TABLE IF NOT EXISTS EMITS_SIGNAL (FROM Query TO Signal, strength DOUBLE)",
     "CREATE REL TABLE IF NOT EXISTS MEMBER_OF (FROM Query TO CoDependencyGroup)",
     "CREATE REL TABLE IF NOT EXISTS TESTED_IN (FROM Query TO LoadTestRun)",

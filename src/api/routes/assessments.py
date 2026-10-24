@@ -33,7 +33,7 @@ from src.api.services.local_execution import (
 )
 from src.api.services.local_s3 import LocalS3Service
 from src.shared.contract_versioning import ContractVersionError
-from src.shared.ranking import engine_confidence, main_engine
+from src.shared.ranking import fit_text, main_engine
 from src.shared.report_facts import analysis_overview_facts
 from src.tools.validation.ingestion_limits import IngestionLimitError, check_file_size
 
@@ -648,7 +648,7 @@ def _summarize_artifact(summary: dict | None) -> str | None:
                 # The engine owning the largest workload share, with the fit of the
                 # queries routed to it (#152); no shares (no assignment): the top entry
                 top = main.get("target", "unknown")
-                score = f"{engine_confidence(main):.0f}% fit"
+                score = fit_text(main)
                 if main.get("workload_percent") is not None:
                     return f"Main engine: {top} ({main['workload_percent']}% of workload, {score})"
                 return f"Top recommendation: {top} ({score})"

@@ -481,7 +481,6 @@ class AssignmentResolver:
                     break
             return out
 
-        assigned_confidence: dict[str, int] = {}
         assigned_reason: dict[str, str] = {}
         assigned_signal: dict[str, str] = {}
 
@@ -545,7 +544,6 @@ class AssignmentResolver:
                     fallback_group[qid] = group_key(group)
                     fallback_group_gates[qid] = gates
                     handled.add(qid)
-                    assigned_confidence[qid] = 0
                 continue
             if routing_trace is not None:
                 routing_trace.record_group(group, group_score, weights=unit_weights)
@@ -569,7 +567,6 @@ class AssignmentResolver:
                     evidence=_evidence(query_by_id[qid], group_scores=group_score),
                     group_key=group_key(group),
                 )
-                assigned_confidence[qid] = scores.get(qid, {}).get(best[0], 0)
                 assigned_reason[qid] = f"{_group_label(qid)} → {display_engine(best[0])}"
 
         source_aurora = SOURCE_ENGINE_TO_AURORA.get(source_engine)
@@ -644,7 +641,6 @@ class AssignmentResolver:
                     runner_up=best_other(_ownable_scores(query), engine),
                     evidence=_evidence(query, signal=signal),
                 )
-                assigned_confidence[qid] = scores.get(qid, {}).get(engine, 0)
                 # #584: readable signal and engine names; the raw signal
                 # travels as data in ``signal_override`` (assigned_signal).
                 assigned_reason[qid] = (
@@ -681,14 +677,12 @@ class AssignmentResolver:
                     runner_up=best_other(_ownable_scores(query), best[0]),
                     evidence=_evidence(query),
                 )
-                assigned_confidence[qid] = top_score
                 assigned_reason[qid] = f"highest fit for {display_engine(best[0])}"
             else:
                 # Step 7: Fallback to aurora engine from triage
                 fallback_qids.append(qid)
                 fallback_reason[qid] = ReasonCode.FALLBACK_NO_SCORE
                 handled.add(qid)
-                assigned_confidence[qid] = 0
                 assigned_reason[qid] = "no engine scored this query"
 
         # Step 6b: Resolve exact ties (ADR-031 Decision 2, #503). ``settled_counts``
@@ -709,7 +703,7 @@ class AssignmentResolver:
         if routing_trace is not None:
             routing_trace.record_settled_counts(settled_counts)
         if tied:
-            for qids, best, top_score, kind, ranked in tied:
+            for qids, best, _top_score, kind, ranked in tied:
                 # Sorted member ids (#503): the hash fallback's seed must not
                 # depend on ``qids``'s own input order,
                 # which here comes from ``build_co_dependency_groups``'s (or the
@@ -737,10 +731,8 @@ class AssignmentResolver:
                         tied_engines=best if unresolved else (),
                     )
                     if kind == "individual":
-                        assigned_confidence[qid] = top_score
                         assigned_reason[qid] = f"highest fit for {display_engine(winner)} ({why})"
                     else:
-                        assigned_confidence[qid] = scores.get(qid, {}).get(winner, 0)
                         assigned_reason[qid] = (
                             f"{_group_label(qid)} → {display_engine(winner)} ({why})"
                         )
@@ -888,7 +880,6 @@ class AssignmentResolver:
                 evidence=moved_evidence,
                 tied_engines=best if count_tie == "tie_unresolved" else (),
             )
-            assigned_confidence[qid] = top_score
             reason = f"highest fit for {display_engine(winner)}"
             if why:
                 reason += f" ({why})"
@@ -975,7 +966,6 @@ class AssignmentResolver:
                         == utility_engine,
                     ),
                 )
-                assigned_confidence[qid] = 100
                 # Only the source's own Aurora dialect is source-compatible; for a
                 # heterogeneous source it is the chosen engine (ADR-031 Decision 6
                 # Amendment 1, #710).
@@ -1121,7 +1111,9 @@ class AssignmentResolver:
                     )
                 )
                 continue
-            confidence = assigned_confidence.get(qid, 0)
+            # The query's score on its engine, set by its Moves (#1373): a
+            # utility pin or a fallback reads its engine's score like any other.
+            confidence = ledger.confidence_of(qid)
             reason = assigned_reason.get(qid, f"highest fit for {display_engine(engine)}")
 
             # Append exclusion notes to the reason if this query was excluded from other engines
@@ -1142,6 +1134,7 @@ class AssignmentResolver:
                     cache_pattern=overlay_by_id[qid]["cache_pattern"],
                     cache_reason=overlay_by_id[qid]["cache_reason"],
                     tied_engines=ledger.tied_of(qid),
+                    pinned=ledger.pinned_of(qid),
                 )
             )
 

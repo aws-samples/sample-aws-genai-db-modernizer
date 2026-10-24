@@ -50,6 +50,7 @@ import EngineBadge from "../components/EngineBadge";
 import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
+import { pinnedFitLabel } from "../utils/queryRouting";
 import Checkbox from "@cloudscape-design/components/checkbox";
 
 import './AssignmentGate.css';
@@ -670,6 +671,8 @@ const AssignmentGatePage = memo(() => {
       }
 
       if (token.propertyKey === 'confidence') {
+        // A pinned query has no fit to compare (#1373): it matches no fit filter.
+        if (q.pinned) return false;
         const conf = q.confidence ?? 0;
         const numVal = parseFloat(token.value);
         if (isNaN(numVal)) return true;
@@ -721,8 +724,9 @@ const AssignmentGatePage = memo(() => {
           bVal = (overrides[b.query_id] || b.assigned_engine || '').toLowerCase();
           return dir * aVal.localeCompare(bVal);
         case 'confidence':
-          aVal = a.confidence ?? 0;
-          bVal = b.confidence ?? 0;
+          // A pinned query (#1373) sorts below every scored one.
+          aVal = a.pinned ? -1 : (a.confidence ?? 0);
+          bVal = b.pinned ? -1 : (b.confidence ?? 0);
           return dir * (aVal - bVal);
         case 'tables':
           aVal = (a.source_tables || []).map(t => t.split('.').pop()).join(', ').toLowerCase();
@@ -1181,7 +1185,7 @@ const AssignmentGatePage = memo(() => {
                       )}
                     </div>
                     <div className="query-list-col query-list-col--confidence">
-                      {item.confidence ?? '-'}%
+                      {pinnedFitLabel(item.pinned, t) ?? `${item.confidence ?? '-'}%`}
                     </div>
                     <div className="query-list-col query-list-col--tables">
                       {(item.source_tables || []).map(t => t.split('.').pop()).join(', ') || '-'}

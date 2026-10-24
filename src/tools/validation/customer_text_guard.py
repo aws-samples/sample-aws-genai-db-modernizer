@@ -314,6 +314,7 @@ ID_FIELD_PATHS = frozenset(
         ("outscored_by", "basis"),  # TraceOutscored.basis
         ("outscored_by", "decided_by_rule"),  # TraceOutscored.decided_by_rule (ReasonCode)
         ("unlisted_rules", "rule"),  # TraceRuleCount.rule (ReasonCode rule id)
+        ("queries", "pinned"),  # QueryTraceResponse.pinned (pin kind code, #1373)
         # query_traces.close_calls (CloseCall, #730): engine ids and the basis code.
         ("close_calls", "engine"),  # CloseCall.engine
         ("close_calls", "alternative"),  # CloseCall.alternative

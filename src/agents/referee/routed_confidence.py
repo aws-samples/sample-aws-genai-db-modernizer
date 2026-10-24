@@ -18,8 +18,10 @@ routed workload instead:
   score of 0 would -- a routed query is already on this engine in the
   assignment, so a gate firing here says the gate and the assignment disagree,
   not that the number is meaningless. The per-query ``confidence`` stored on
-  the assignment is not used: Reality Check does not update it when it moves a
-  query, so it would describe the engine the query left.
+  the assignment is not read (it is the same score, set by the move ledger,
+  #1373). A query pinned to the engine (``QueryAssignment.pinned``: a utility
+  pin) is not placed by its score, so it is left out of the mean and counted
+  in ``pinned_queries`` instead.
 - **Cache layer** (owns no query, #296): the mean fit of the in-scope reads it
   fronts (``cache_engine``), the same resolver score computed against the cache
   engine's own analysis and ``workload_analysis`` (its own detected patterns and
@@ -90,6 +92,10 @@ class RoutedFit:
     lead_count: int = 0
     evidence: str | None = None
     unbacked_queries: int = 0
+    # Routed queries pinned to the engine rather than placed by their score (a
+    # utility pin, ``QueryAssignment.pinned``, #1373): left out of every figure
+    # above and counted here, so a deliverable can say how many it left out.
+    pinned_queries: int = 0
 
 
 def _lead(counts: Counter[str], n_queries: int) -> tuple[str | None, int]:
@@ -141,7 +147,11 @@ def routed_fits(
     """
     if not assignment:
         return {}
-    qas = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
+    in_scope = [qa for qa in assignment.get("query_assignments") or [] if qa.get("in_scope", True)]
+    # A pinned query (a utility pin) is not placed by its score, so its fit says
+    # nothing about the engine: it is left out of the mean and counted (#1373).
+    qas = [qa for qa in in_scope if not qa.get("pinned")]
+    pinned_qas = [qa for qa in in_scope if qa.get("pinned")]
     query_map = {str(q.get("query_id")): dict(q) for q in query_patterns}
     query_signals = _build_query_signals(list(triage.get("signals") or []))
     outputs = {e: dict(a or {}) for e, a in analysis_outputs.items()}
@@ -177,8 +187,14 @@ def routed_fits(
         else:
             basis = BASIS_OWNED
             routed = [qa for qa in qas if qa.get("assigned_engine") == engine]
+        pinned = sum(
+            1
+            for qa in pinned_qas
+            if (qa.get("cache_engine") if basis == BASIS_CACHED else qa.get("assigned_engine"))
+            == engine
+        )
         if not routed:
-            result[engine] = RoutedFit(None, basis, 0, 0)
+            result[engine] = RoutedFit(None, basis, 0, 0, pinned_queries=pinned)
             continue
 
         ids = [qa["query_id"] for qa in routed]
@@ -228,5 +244,6 @@ def routed_fits(
             lead_count=lead_n,
             evidence=evidence,
             unbacked_queries=unbacked,
+            pinned_queries=pinned,
         )
     return result

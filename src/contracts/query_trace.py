@@ -207,6 +207,14 @@ class QueryTraceResponse(BaseModel):
         ),
     )
     final_score: float | None = None
+    pinned: Literal["utility"] | None = Field(
+        None,
+        description=(
+            "Why the query is pinned to its final engine rather than placed by its score "
+            "('utility': the first assignment's utility pin); views show 'pinned "
+            "(utility)' instead of final_score (#1373). None for a scored query"
+        ),
+    )
     tied_engines: list[str] = Field(
         default_factory=list, description="The query's unresolved tie at the end, if any"
     )

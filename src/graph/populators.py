@@ -200,6 +200,7 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
             "qid": qa["query_id"],
             "did": _dest_id(qa),
             "conf": qa["confidence"],
+            "pinned": qa.get("pinned") or "",
             "reason": qa["assignment_reason"],
         }
         for qa in qas
@@ -207,7 +208,8 @@ def populate_from_assignment(assignment: dict, store: GraphStore) -> None:
     if migrate_rows:
         store.execute(
             "UNWIND $rows AS r MATCH (q:Query {id: r.qid}), (d:Destination {id: r.did}) "
-            "MERGE (q)-[:MIGRATES_TO {confidence: r.conf, assignment_reason: r.reason}]->(d)",
+            "MERGE (q)-[:MIGRATES_TO {confidence: r.conf, pinned: r.pinned, "
+            "assignment_reason: r.reason}]->(d)",
             {"rows": migrate_rows},
         )
 
@@ -723,14 +725,21 @@ def rebuild_graph(
 
     assignment_version = resolve_effective_assignment_version(artifact_store, db_name, job_id)
     if assignment_version > 0:
-        assignment = _read_safe(assignment_artifact_path(db_name, job_id, assignment_version))
-        if assignment:
-            populate_from_assignment(assignment, graph_store)
-        # 4b. The move ledger of every version in the effective lineage (#339).
-        for version in assignment_lineage(
+        lineage = assignment_lineage(
             lambda v: _read_safe(assignment_artifact_path(db_name, job_id, v)),
             assignment_version,
-        ):
+        )
+        assignment = _read_safe(assignment_artifact_path(db_name, job_id, assignment_version))
+        if assignment:
+            # A version saved before #1373 kept a consolidated query's score on
+            # the engine it left and has no ``pinned``: the journey reads what its
+            # Moves set.
+            from src.agents.referee.move_ledger import follow_moves
+
+            follow_moves(assignment, lineage)
+            populate_from_assignment(assignment, graph_store)
+        # 4b. The move ledger of every version in the effective lineage (#339).
+        for version in lineage:
             populate_from_moves(version, graph_store)
         # 4c. The candidate keys of each query, from the effective version's
         # access-pattern record (#1361). An older job has none: a missing file is a

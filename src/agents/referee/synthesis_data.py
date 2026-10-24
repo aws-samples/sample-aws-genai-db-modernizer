@@ -127,6 +127,19 @@ def load_synthesis_data(
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json",
             required=False,
         )
+        if data.assignment:
+            # A version saved before #1373 has stale confidences and no ``pinned``:
+            # set from its lineage's Moves, so the mean fits leave its pins out.
+            from src.agents.referee.move_ledger import follow_moves
+            from src.shared.query_trace import assignment_lineage
+
+            def _version(v: int) -> dict | None:
+                path = f"{database_name}/{job_id}/assignment/v{v}/assignment.json"
+                return store.read_json(path) if store.exists(path) else None
+
+            previous = data.assignment.get("previous_version")
+            earlier = assignment_lineage(_version, previous) if isinstance(previous, int) else []
+            follow_moves(data.assignment, [*earlier, data.assignment])
 
         # Pre-Reality-Check assignment (#335): the version Reality Check started
         # from. Reading fails open to None (no run on record, or the read itself

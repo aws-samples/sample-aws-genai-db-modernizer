@@ -295,6 +295,8 @@ def _journey_from_row(row: dict) -> dict:
         {
             "assigned_engine": engine,
             "confidence": row.get("confidence"),
+            # A utility pin shows "pinned (utility)" instead of its fit (#1373).
+            "pinned": row.get("pinned") or None,
             "in_scope": row.get("in_scope"),
         }
         if engine
@@ -331,7 +333,7 @@ _JOURNEY_MATCH = (
     "  q.performance_json AS performance_json, "
     "  q.characteristics_json AS characteristics_json, "
     "  COLLECT(DISTINCT st.id) AS tables_accessed, "
-    "  d.engine AS assigned_engine, m.confidence AS confidence, "
+    "  d.engine AS assigned_engine, m.confidence AS confidence, m.pinned AS pinned, "
     "  COLLECT(DISTINCT ap.engine) AS design_engines"
 )
 

@@ -54,6 +54,7 @@ from src.agents.referee.move_ledger import (
     apply_to_assignment,
     best_other,
     check_replay,
+    follow_moves,
     group_key,
     ledger_for,
     state_of,
@@ -483,6 +484,11 @@ def _load_for_edit(
     owner normalisation is recorded on that version's ledger (returned);
     otherwise on the in-memory version's own ``moves``."""
     raw = store.read_json(assignment_artifact_path(database_name, job_id, version))
+    # A version saved before #1373 kept a consolidated query's score on the engine
+    # it left and has no ``pinned``: both are set in memory from the Moves of its
+    # lineage (the stored artifact is not rewritten), so the review shows, and a
+    # derived version keeps, each query's score on its own engine and its pin.
+    follow_moves(raw, _earlier_versions(store, database_name, job_id, raw) + [raw])
     stored_state = state_of(raw.get("query_assignments") or [])
     ledger = ledger_for(raw.get("query_assignments") or []) if new_version else None
     collector_key = f"{database_name}/{job_id}/collector/output.json"
@@ -517,6 +523,18 @@ def _load_for_edit(
         raw["table_assignments"] = [ta.model_dump(mode="json") for ta in table_assignments]
         raw["unresolved_table_names"] = unresolved_table_names.model_dump(mode="json")
     return _EditInputs(raw, collector_output, analysis_outputs, triage, stored_state, ledger)
+
+
+def _earlier_versions(store: _Store, database_name: str, job_id: str, raw: dict) -> list[dict]:
+    """The versions ``raw`` descends from, oldest first (``raw`` itself left out)."""
+    from src.shared.query_trace import assignment_lineage
+
+    def read(v: int) -> dict | None:
+        path = assignment_artifact_path(database_name, job_id, v)
+        return store.read_json(path) if store.exists(path) else None
+
+    previous = raw.get("previous_version")
+    return assignment_lineage(read, previous) if isinstance(previous, int) else []
 
 
 def _apply_cache_override(

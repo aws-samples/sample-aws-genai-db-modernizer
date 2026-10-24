@@ -72,7 +72,9 @@ class TestAuroraRationaleLeadsWithTheRelationalReason:
         entry = _ranking_entry("aurora_postgresql", 1283, "key_value_lookups", 559)
         text = _engine_rationale(data, entry)
         assert "led by key-value lookups" not in text
-        assert "pinned by aggregation and multi-table joins (900 of 1283)" in text
+        assert (
+            "kept relational by aggregation and multi-table joins (900 of all 1283 routed)" in text
+        )
 
     def test_utility_statement_pin_is_named_too(self) -> None:
         data = _data(
@@ -88,7 +90,7 @@ class TestAuroraRationaleLeadsWithTheRelationalReason:
         )
         entry = _ranking_entry("aurora_mysql", 1, "key_value_lookups", 1)
         text = _engine_rationale(data, entry)
-        assert "pinned by a utility or DDL statement (1 of 1)" in text
+        assert "kept relational by a utility or DDL statement (1 of all 1 routed)" in text
 
     def test_no_pin_falls_back_to_the_workload_signal(self) -> None:
         """An Aurora engine with no capability-pinned query at all (e.g. a 1:1
@@ -106,3 +108,58 @@ class TestAuroraRationaleLeadsWithTheRelationalReason:
         entry = _ranking_entry("dynamodb", 1, "key_value_lookups", 1)
         text = _engine_rationale(data, entry)
         assert "led by key-value lookups (1 of 1)" in text
+
+
+class TestAUtilityPinHasItsOwnNote:
+    """#1373: "pinned" names the utility pin only. A query the assignment marks
+    ``pinned`` is left out of the mean and of the capability lead, and the note
+    after the lead counts it; the lead's count is out of every routed query."""
+
+    def test_the_lead_leaves_pins_out_and_the_note_counts_them(self) -> None:
+        joins = [
+            _qa(
+                f"q{i}",
+                "aurora_mysql",
+                "co-dependency group → aurora_mysql | [capability] dynamodb lacks "
+                "required capability: complex_joins",
+            )
+            for i in range(3)
+        ]
+        pins = [
+            {
+                **_qa(
+                    f"u{i}",
+                    "aurora_mysql",
+                    "utility/metadata statement, kept on the source-compatible relational "
+                    "engine (Aurora MySQL)",
+                ),
+                "pinned": "utility",
+            }
+            for i in range(2)
+        ]
+        data = _data(joins + pins)
+        entry = {**_ranking_entry("aurora_mysql", 3, "key_value_lookups", 1)}
+        entry["routed_pinned_queries"] = 2
+        text = _engine_rationale(data, entry)
+        assert "across 3 queries" in text
+        assert "kept relational by multi-table joins (3 of all 5 routed)" in text
+        assert "utility or DDL" not in text
+        assert "; 2 more queries are pinned (utility), not in the mean" in text
+        assert text.count("pinned") == 1
+
+    def test_an_engine_with_only_pins_says_so_not_an_average(self) -> None:
+        pins = [
+            {**_qa(f"u{i}", "aurora_mysql", "utility/metadata statement"), "pinned": "utility"}
+            for i in range(3)
+        ]
+        entry = {
+            **_ranking_entry("aurora_mysql", 0, None, 0),
+            "routed_confidence": None,
+            "routed_pinned_queries": 3,
+            "assigned_queries": 3,
+            "confidence_score": 64,
+            "tables_analyzed": 9,
+        }
+        text = _engine_rationale(_data(pins), entry)
+        assert text.startswith("3 queries routed, all are pinned (utility)")
+        assert "64%" not in text and "average fit" not in text

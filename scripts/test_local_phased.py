@@ -33,6 +33,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.shared.workload_fit_labels import query_fit_text  # noqa: E402
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 
 os.environ.setdefault("RUNTIME_MODE", "local")
@@ -429,7 +430,8 @@ def _print_assignment(a: dict) -> None:
         for qa in qas[:5]:
             s = "" if qa.get("in_scope", True) else " [OUT]"
             t = ", ".join(qa.get("source_tables", [])[:3])
-            print(f"    {qa['query_id'][:16]}: {qa['confidence']}% [{t}]{s}")
+            fit = query_fit_text(qa.get("confidence"), qa.get("pinned"))
+            print(f"    {qa['query_id'][:16]}: {fit} [{t}]{s}")
         if len(qas) > 5:
             print(f"    ... and {len(qas) - 5} more")
     multi = [

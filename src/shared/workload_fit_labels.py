@@ -28,6 +28,12 @@ fails if the two drift.
 
 from __future__ import annotations
 
+from typing import Literal
+
+#: Why a query is pinned to its engine rather than placed by its score
+#: (``QueryAssignment.pinned``).
+PinKind = Literal["utility"]
+
 #: The short label for a column header, slide title or filter property.
 WORKLOAD_FIT_LABEL = "Workload fit"
 
@@ -53,3 +59,29 @@ CACHE_FIT_DEFINITION = (
     "reads it fronts. The cache layer owns no queries, so this is not a workload "
     "fit and is not compared with the owning engines' figures."
 )
+
+#: ``QueryAssignment.pinned`` for a utility or DDL statement the first assignment pins
+#: to the relational engine (Move rule ``override.utility``, #1373).
+PINNED_UTILITY: PinKind = "utility"
+
+#: What every view shows instead of a pinned query's percentage (maintainer decision on
+#: #1381, 2026-10-22): the pin, not its score, placed the query. The UI shows the same
+#: wording through its ``common.fit.pinned-utility`` i18n key
+#: (``tests/unit/agents/referee/test_utility_pin_label.py::test_the_label_is_one_wording_in_python_and_the_ui``
+#: keeps the two equal).
+PINNED_LABELS: dict[str, str] = {PINNED_UTILITY: "pinned (utility)"}
+PINNED_UTILITY_LABEL = PINNED_LABELS[PINNED_UTILITY]
+
+
+def pinned_label(pinned: str | None) -> str | None:
+    """The label a pinned query shows instead of its fit, ``None`` for a scored query."""
+    return PINNED_LABELS.get(pinned) if pinned else None
+
+
+def query_fit_text(confidence: float | int | None, pinned: str | None) -> str:
+    """A query's fit as every view shows it: its pin's label, else ``78%`` (``-`` with
+    no figure). Formats only; ``confidence`` and ``pinned`` come from the assignment."""
+    label = pinned_label(pinned)
+    if label:
+        return label
+    return "-" if confidence is None else f"{round(confidence)}%"

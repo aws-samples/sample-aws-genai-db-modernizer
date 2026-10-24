@@ -3,7 +3,9 @@
 Every change of a query's engine (``assigned_engine``) or of its unresolved
 tie (``tied_engines``) is a Move, recorded by
 ``src/agents/referee/move_ledger.py`` (``apply`` / ``apply_to_assignment``),
-the one module allowed to set either field. This test scans the AST of every
+the one module allowed to set either field. The utility pin a Move leaves
+(``pinned``, ADR-031 Amendment 16, #1373) is guarded the same way: the ledger
+sets it with the engine, and the resolver builds v1's from ``ledger.pinned_of``. This test scans the AST of every
 module under ``src/`` and ``scripts/`` and fails when any other module writes
 one, so a new pass (or a quick fix in an old one) cannot change an engine or a
 tie without leaving a record that replays.
@@ -62,7 +64,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[4]
 _SCANNED_DIRS = (_REPO / "src", _REPO / "scripts")
 _LEDGER = _REPO / "src" / "agents" / "referee" / "move_ledger.py"
-_FIELDS = frozenset({"assigned_engine", "tied_engines"})
+_FIELDS = frozenset({"assigned_engine", "tied_engines", "pinned"})
 
 
 @dataclass(frozen=True)
@@ -249,6 +251,9 @@ def test_the_ledger_itself_is_the_writer() -> None:
     assert shapes, "the scanner found no write in move_ledger.py itself"
 
 
+# The scanner's own shapes, on snippets: they pass on main's code too, since the
+# fields scanned are this file's (#1373 adds ``pinned``).
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     ("snippet", "shape"),
     [
@@ -273,6 +278,8 @@ def test_the_ledger_itself_is_the_writer() -> None:
         ),
         ("def f(qa):\n    qa['tied_engines'] = []\n", "key_store"),
         ("def f(qa):\n    qa.tied_engines = []\n", "attr_store"),
+        ("def f(qa):\n    qa['pinned'] = 'utility'\n", "key_store"),
+        ("def f(qa):\n    qa.pinned = None\n", "attr_store"),
         ("F = 'assigned_engine'\ndef f(qa, e):\n    qa[F] = e\n", "key_store"),
         ("F = 'assigned_engine'\ndef f(qa, e):\n    setattr(qa, F, e)\n", "setattr_call"),
         ("def f(qa, e):\n    qa.update(**{'assigned_engine': e})\n", "update_call"),
@@ -309,6 +316,9 @@ def test_each_shape_is_caught(snippet: str, shape: str) -> None:
     assert [f.shape for f in scan_source(snippet, "x.py")] == [shape]
 
 
+# The scanner's own shapes, on snippets: they pass on main's code too, since the
+# fields scanned are this file's (#1373 adds ``pinned``).
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize(
     "snippet",
     [
@@ -318,6 +328,7 @@ def test_each_shape_is_caught(snippet: str, shape: str) -> None:
         "def f(e):\n    return QueryOverrideInput('q', assigned_engine=e)\n",
         "def f(qa):\n    return qa.get('assigned_engine')\n",
         "def f(qa, ledger):\n    return QueryAssignment(query_id='q', tied_engines=ledger.tied_of('q'))\n",
+        "def f(ledger):\n    return QueryAssignment(query_id='q', pinned=ledger.pinned_of('q'))\n",
         "def f(a):\n    return a.model_copy(update={'version': 2})\n",
         "def f(s):\n    s |= {'x'}\n",
         "def f(ledger, qa, s):\n    apply_to_assignment(ledger, qa, 'x', tied_engines=[], **s)\n",

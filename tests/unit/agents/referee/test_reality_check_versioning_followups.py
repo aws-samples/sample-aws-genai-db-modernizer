@@ -345,7 +345,11 @@ class TestCorruptLineage:
 
         with caplog.at_level(logging.WARNING, logger="src.storage.assignment_versioning"):
             assert reality_check_run_for_lineage(store, DB, JOB) is not None
-        assert caplog.text == ""
+        # The lineage check's own records only: the harness's stubbed consolidation
+        # records its settle Moves with no score, which the move ledger rightly warns
+        # about (#1373); real settle Moves always carry the scorer's score.
+        own = [r for r in caplog.records if r.name == "src.storage.assignment_versioning"]
+        assert own == []
 
     @pytest.mark.passes_on_main
     def test_the_run_on_a_corrupt_lineage_writes_a_new_version(self, store) -> None:

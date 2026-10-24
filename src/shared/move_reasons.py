@@ -27,6 +27,7 @@ from src.agents.referee.query_scoring import (
 )
 from src.contracts.move_ledger import UNSERVABLE, GroupGate, Move, MoveActor, ReasonCode
 from src.shared.engine_names import display_engine
+from src.shared.workload_fit_labels import pinned_label
 
 __all__ = [
     "GATE_TEXT_KINDS",
@@ -557,6 +558,8 @@ def render_trace_summary(
     step_count: int,
     runner_up_sentence: str | None,
     last_move: Move | None = None,
+    *,
+    pinned: str | None = None,
 ) -> str:
     """One line for a query's whole trace: where it ended, after how many steps, and the runner-up.
 
@@ -583,5 +586,10 @@ def render_trace_summary(
             f"was rolled back because its redesign failed, and the design review's flag on "
             f"{final} still applies."
         )
-    head = f"Ends on {_scored(final_engine, final_score)} {steps}."
+    label = pinned_label(pinned)
+    # A pinned query shows its pin, not its score (#1373).
+    where = (
+        f"{display_engine(final_engine)}, {label}," if label else _scored(final_engine, final_score)
+    )
+    head = f"Ends on {where} {steps}."
     return f"{head} {runner_up_sentence}" if runner_up_sentence else head

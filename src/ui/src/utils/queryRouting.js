@@ -62,3 +62,25 @@ export function queryRoutingFilterOptions(rows) {
       .sort((a, b) => a.engineName.localeCompare(b.engineName)),
   };
 }
+
+// The label a query pinned to its engine shows instead of its fit (#1373): the
+// assignment's `pinned` ('utility' for a utility or DDL statement), translated;
+// null for a query placed by its score. Formats only.
+const PINNED_FIT_KEYS = { utility: 'common.fit.pinned-utility' };
+
+export function pinnedFitLabel(pinned, t) {
+  const key = pinned ? PINNED_FIT_KEYS[pinned] : null;
+  return key ? t(key) : null;
+}
+
+// The query journey's "Workload Fit" (#1373): the pin's label for a pinned query,
+// else the assignment's `confidence`, the query's score on the engine it is on
+// (the server sets it with every engine change, so a consolidated query shows its
+// new engine's score). Formatted only, never recomputed; no figure reads as null.
+export function journeyWorkloadFit(journey, t = (key) => key) {
+  const assignment = journey && journey.assignment;
+  const pinned = assignment && pinnedFitLabel(assignment.pinned, t);
+  if (pinned) return pinned;
+  const confidence = assignment && assignment.confidence;
+  return confidence ? `${confidence}%` : null;
+}

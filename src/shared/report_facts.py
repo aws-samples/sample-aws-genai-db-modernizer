@@ -1437,6 +1437,7 @@ def _trace_signature(trace: Mapping[str, Any], row: Mapping[str, Any]) -> str:
             "final": [
                 trace.get("final_engine"),
                 trace.get("final_score"),
+                trace.get("pinned"),
                 trace.get("final_group_mean"),
                 trace.get("final_version"),
                 trace.get("effective_version"),

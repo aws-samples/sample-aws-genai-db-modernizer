@@ -292,3 +292,20 @@ describe('the keys the redesign considered (#1361)', () => {
     expect(section('query-trace-key-candidates')).not.toBeNull();
   });
 });
+
+test('a utility pin shows its pin on the final line, not its score (#1373)', () => {
+  render({
+    trace: {
+      ...movedTrace,
+      moves: [],
+      final_engine: 'aurora_mysql',
+      final_engine_name: 'Aurora MySQL',
+      final_score: 43,
+      pinned: 'utility',
+      runner_up: null,
+      outscored_by: [],
+    },
+  });
+  expect(text('query-trace-final')).toContain('Aurora MySQL, pinned (utility)');
+  expect(text('query-trace-final')).not.toContain('(43)');
+});

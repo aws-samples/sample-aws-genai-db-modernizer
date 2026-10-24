@@ -62,7 +62,7 @@ from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
-from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, engine_confidence, evidence_note
+from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
 from src.shared.report_facts import (
     analysis_overview_facts,
     mean_table_fit,
@@ -78,6 +78,7 @@ from src.shared.unsupported_pattern import (
     unsupported_pattern_mitigation,
     unsupported_pattern_text,
 )
+from src.shared.workload_fit_labels import PINNED_UTILITY_LABEL
 from src.tools.analysis.aurora_common_pattern_catalog import (
     CATALOG_ENGINE_GUIDANCE,
     CATALOG_ENGINE_HINTS,
@@ -490,6 +491,7 @@ def build_ranking(data: SynthesisData) -> list[dict]:
             entry["routed_lead_count"] = fit.lead_count
             entry["routed_confidence_evidence"] = fit.evidence
             entry["routed_queries_without_table_evidence"] = fit.unbacked_queries
+            entry["routed_pinned_queries"] = fit.pinned_queries
 
         # Enrich with assignment distribution when available
         if assignment_dist and engine in assignment_dist:
@@ -2144,6 +2146,10 @@ def _aurora_capability_lead(data: SynthesisData, engine: str) -> tuple[int, str]
     for qa in (data.assignment or {}).get("query_assignments", []):
         if not qa.get("in_scope", True) or qa.get("assigned_engine") != engine:
             continue
+        if qa.get("pinned"):
+            # A utility pin has its own note ("N more queries are pinned
+            # (utility)", #1373), so it is not counted here too.
+            continue
         reason = qa.get("assignment_reason") or ""
         if _UTILITY_PIN_RE.search(reason) or _CAPABILITY_PIN_RE.search(reason):
             qid = qa.get("query_id")
@@ -2806,6 +2812,16 @@ def _routed_phrase(r: dict, noun: str, what: tuple[str, str]) -> str:
     return f"{fit}% {noun} across {_count(n, *what)} ({detail})"
 
 
+def _pinned_note(r: dict, what: tuple[str, str]) -> str:
+    """``; 13 more queries are pinned (utility), not in the mean`` (#1373); empty
+    with none: the routed queries a pin, not their score, placed on the engine."""
+    pinned = int(r.get("routed_pinned_queries") or 0)
+    if not pinned:
+        return ""
+    verb = "is" if pinned == 1 else "are"
+    return f"; {_count(pinned, *what).replace(' ', ' more ', 1)} {verb} {PINNED_UTILITY_LABEL}, not in the mean"
+
+
 def _engine_rationale(data: SynthesisData, r: dict) -> str:
     """Generate a rationale string for an engine recommendation.
 
@@ -2864,7 +2880,9 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
             )
         return ". ".join(parts) + "."
     if r.get("routed_confidence") is not None:
-        n = int(r.get("routed_queries") or 0)
+        # Every routed query, pinned ones included: the capability pins below
+        # count utility pins too (#1373).
+        n = int(r.get("routed_queries") or 0) + int(r.get("routed_pinned_queries") or 0)
         engine = r.get("target", "")
         lead_clause = None
         if engine in AURORA_ENGINES:
@@ -2880,7 +2898,10 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
             pin = _aurora_capability_lead(data, engine)
             if pin:
                 pinned, caps = pin
-                lead_clause = f"pinned by {caps} ({pinned} of {n})"
+                # "Pinned" is the utility pin's word alone (#1373): the capability
+                # lead says the queries are kept relational, out of every query
+                # routed here, pins included.
+                lead_clause = f"kept relational by {caps} ({pinned} of all {n} routed)"
         if lead_clause is None:
             lead = r.get("routed_lead")
             if lead:
@@ -2888,7 +2909,13 @@ def _engine_rationale(data: SynthesisData, r: dict) -> str:
         parts = [
             _routed_phrase(r, "mean fit", ("query", "queries"))
             + (f", {lead_clause}" if lead_clause else "")
+            + _pinned_note(r, ("query", "queries"))
         ]
+    elif r.get("routed_pinned_queries"):
+        # Every routed query is pinned (#1373): no score to average.
+        pinned = int(r["routed_pinned_queries"])
+        verb = "is" if pinned == 1 else "are"
+        parts = [f"{_count(pinned, 'query', 'queries')} routed, all {verb} {PINNED_UTILITY_LABEL}"]
     elif "assigned_queries" in r:
         parts = [
             f"No queries routed; {r['confidence_score']}% average fit across "
@@ -2964,9 +2991,14 @@ def _architecture_rationale(
             retained_clause += f" ({retained_share:.0f}% of queries)"
     if arch_type == "SINGLE_DATABASE":
         if databases:
+            # The ranking entry carries the pin count (#1373); the database entry
+            # is read when no ranking entry matches.
+            entry = next(
+                (r for r in ranking if r.get("target") == databases[0]["service"]), databases[0]
+            )
             return (
                 f"Workload analysis indicates {display_name(databases[0]['service'])} as the "
-                f"primary target with {engine_confidence(databases[0]):.0f}% workload fit."
+                f"primary target with {fit_text(entry, 'workload fit')}."
             )
         if retained_engine:
             return f"{retained_clause}, with no data migration."

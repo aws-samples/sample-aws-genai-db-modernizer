@@ -2597,6 +2597,22 @@
                   "type": "boolean"
                 }
               },
+              "pinned": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "const",
+                      "value": "utility"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "query_id": {
                 "required": true,
                 "schema": {
@@ -2991,8 +3007,8 @@
         }
       }
     },
-    "schema_hash": "909f0b32fd1d3e9763e0a41b595a33ed5d84f6439d333c32894af0cf366fccfc",
-    "version": "1.23"
+    "schema_hash": "1ae9f061845298aac5b91729a100533a2fb3c7abb0a236859a1f2e5590d899c1",
+    "version": "1.24"
   },
   "assignment_models.ValidationResult": {
     "fields": {
@@ -26983,6 +26999,22 @@
                             "kind": "array"
                           }
                         },
+                        "pinned": {
+                          "required": false,
+                          "schema": {
+                            "kind": "anyOf",
+                            "members": [
+                              {
+                                "kind": "const",
+                                "value": "utility"
+                              },
+                              {
+                                "kind": "scalar",
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
                         "query_excerpt": {
                           "required": false,
                           "schema": {
@@ -27607,6 +27639,23 @@
                 }
               },
               "routed_lead_count": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "routed_pinned_queries": {
                 "required": false,
                 "schema": {
                   "kind": "anyOf",
@@ -28777,8 +28826,8 @@
         }
       }
     },
-    "schema_hash": "ad4c7ffab6591473cf2a21bbe4e132137a86ef57fa5568f345c82ed71ff44f83",
-    "version": "1.58"
+    "schema_hash": "052bbbe78b7e0e2ab92694f7dd52e760dbc40ccfef65b9302d9e318206e3a09e",
+    "version": "1.59"
   },
   "triage_output.TriageOutputContract": {
     "fields": {
