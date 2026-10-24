@@ -21,6 +21,7 @@ from src.shared.catalog.engines import (
     justification_floors,
     load_engine_catalog,
     pricing,
+    required_price,
     score_weight_profiles,
     score_weights,
     source_engine_dialects,
@@ -61,6 +62,7 @@ __all__ = [
     "load_engine_catalog",
     "default_score_weights",
     "pricing",
+    "required_price",
     "score_weight_profiles",
     "score_weights",
 ]

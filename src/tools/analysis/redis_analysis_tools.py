@@ -396,7 +396,8 @@ def estimate_redis_costs(
     # Node-based Valkey, on-demand: each node's hourly price and memory are the price
     # table's (src/catalog/prices.toml, #1196). The max_ops column has no AWS source (AWS
     # publishes no requests-a-second figure per node type); sizing it is #1000's.
-    prices = catalog.pricing("elasticache")
+    engine_id = "elasticache"
+    prices = catalog.pricing(engine_id)
     node_max_ops = {
         "cache.m7g.large": 25_000,
         "cache.r7g.large": 50_000,
@@ -432,13 +433,17 @@ def estimate_redis_costs(
     replica_cost = hourly_rate * hours_per_month * replica_count
 
     # Backup storage (the price table's), assume daily snapshot = ~cache size
-    backup_cost = cache_size_gb * (prices.backup_price_per_gb_month or 0.0)
+    backup_cost = cache_size_gb * catalog.required_price(
+        engine_id, "backup_price_per_gb_month", prices.backup_price_per_gb_month
+    )
 
     # Data transfer: cross-AZ replication at the price table's regional transfer rate,
     # estimated from write throughput
     write_bytes_per_month = total_write_cps * 1024 * SECONDS_PER_MONTH  # assume 1KB avg write
     data_transfer_gb = write_bytes_per_month / (1024**3)
-    data_transfer_cost = data_transfer_gb * (prices.cross_az_transfer_price_per_gb or 0.0)
+    data_transfer_cost = data_transfer_gb * catalog.required_price(
+        engine_id, "cross_az_transfer_price_per_gb", prices.cross_az_transfer_price_per_gb
+    )
 
     total = round(primary_cost + replica_cost + backup_cost + data_transfer_cost, 2)
 
