@@ -18,9 +18,10 @@
 #                       `discourse` or `trailgear` (the report checks whose test id
 #                       names that sample), `hashseed` (test_hashseed_determinism.py),
 #                       `determinism` (test_deliverable_determinism.py), `cross` (the
-#                       other report checks, tied to no sample), or `ui` (UI smoke +
-#                       help site, the only shard that builds the UI and the site).
-#                       Unset runs everything, as before. The six report shards' -k
+#                       other report checks, tied to no sample), `ui` (UI smoke +
+#                       help site, the only shard that builds the UI and the site),
+#                       or `replay` (ci/replay.sh: the saved real-model run's checks,
+#                       no browser, #1409). Unset runs everything, as before. The six report shards' -k
 #                       expressions partition the report suite: each test lands in
 #                       exactly one of them (see e2e_shard_k).
 #
@@ -69,22 +70,25 @@ e2e_shard_k() {
     discourse) echo "discourse and not wordpress and not ($det)" ;;
     trailgear) echo "trailgear and not wordpress and not discourse and not ($det)" ;;
     cross) echo "not ($det) and not (wordpress or discourse or trailgear)" ;;
-    *) echo "error: unknown E2E_SHARD '$1' (wordpress, discourse, trailgear, hashseed, determinism, cross, ui)" >&2; return 2 ;;
+    *) echo "error: unknown E2E_SHARD '$1' (wordpress, discourse, trailgear, hashseed, determinism, cross, ui, replay)" >&2; return 2 ;;
   esac
 }
 
 run_reports=1
 run_ui=1
+run_replay=1
 report_k=()
 browsers=(chromium webkit)
 case "$E2E_SHARD" in
   "") ;;
-  ui) run_reports=0; browsers=(chromium) ;;
+  ui) run_reports=0; run_replay=0; browsers=(chromium) ;;
+  # The replayed checks read a saved report and its PDF and open no browser page.
+  replay) run_reports=0; run_ui=0; browsers=() ;;
   # The two determinism suites run the pipeline scripts in subprocesses and open
   # no browser page, so they skip the browser install (about 45s on CI, and the
   # step that hung a whole shard in #1360).
-  hashseed|determinism) run_ui=0; browsers=(); report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
-  *) run_ui=0; report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
+  hashseed|determinism) run_ui=0; run_replay=0; browsers=(); report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
+  *) run_ui=0; run_replay=0; report_k=(-k "$(e2e_shard_k "$E2E_SHARD")") ;;
 esac
 
 # The UI build (about 90s on CI) does not depend on the browsers or the help
@@ -147,4 +151,9 @@ uv run pytest tests/e2e/test_ui.py tests/e2e/test_docs_site.py -m e2e -p no:xdis
   --browser chromium \
   --output="$E2E_OUTPUT/pw-ui" --screenshot=only-on-failure --tracing=retain-on-failure \
   --junitxml="$E2E_OUTPUT/e2e-ui-junit.xml" "$@" $E2E_UI_ARGS
+fi
+
+if [ "$run_replay" = 1 ]; then
+log "replay of the saved real-model run (#1409)"
+"$(dirname "$0")/replay.sh"
 fi

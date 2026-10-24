@@ -363,8 +363,40 @@ ID_FIELD_PATHS = frozenset(
         ("flagged_unservable", "reason_category"),
         ("flagged_unservable", "gate"),
         ("flagged_unservable", "required_capabilities"),
+        # #1409: engine ids the id-field guard found undeclared. Each renderer names
+        # them through display_engine (synthesis_handler's sweep trade-off, the price
+        # basis line, the unservable callout).
+        ("sweep_decisions", "engine"),  # SweepDecision.engine (reality_check_output.py)
+        ("price_list", "undated_engines"),  # ReportFacts.price_list.undated_engines
+        ("unservable", "no_engine_in_scope_closest_engines"),  # UnservableFacts (#1329)
     }
 )
+
+# #1409: a field whose name says it holds an engine (``engine``, ``*_engine``,
+# ``engines``, ``*_engines``, ``database``, ``target``, ``service``, ...) or a
+# table's owner line (``owner``, ``cached_by``, ``also_read_by``,
+# ``source_of_truth``) holds a raw engine id unless it says otherwise. Each one in a
+# contract scan_json reads must be declared: an id field (``ID_FIELDS``/
+# ``ID_FIELD_PATHS``, never scanned) or a display field
+# (``DISPLAY_NAME_FIELD_PATHS``, written through ``display_engine`` and scanned like
+# prose). tests/unit/tools/validation/test_customer_text_guard_id_fields.py walks
+# the report.json, assignment.json and reality-check contracts and a real-model
+# report.json, so an undeclared one fails in seconds rather than in an e2e shard or
+# a real-model run (#1399's ``facts.cache_layer.engine``).
+#
+# Matched by name, so a new engine field needs one of these names to be caught; the
+# names besides the engine/owner ones are those that hold an engine id in report.json
+# today (each already declared).
+ENGINE_FIELD_NAME_RE = re.compile(
+    r"^(?:engines?|[a-z0-9_]+_engines?|owner|cached_by|also_read_by"
+    r"|source_of_truth|moved_to|alternatives?|absorbed_by|moves_from|serves_from|fronts"
+    r"|recommended_database|database|target|service)$"
+)
+
+# (immediate parent key, field name) of an engine-named field that holds a display
+# name ("Amazon DynamoDB"), not an id: scanned like any prose field, so a raw id
+# there is still a finding. Empty today: every engine-named field holds an id.
+DISPLAY_NAME_FIELD_PATHS: frozenset[tuple[str, str]] = frozenset()
 
 # The opposite of ID_FIELDS/ID_FIELD_PATHS: fields this pipeline's own
 # deterministic code writes (never an LLM) -- #587 round 4. The snake_case
@@ -546,6 +578,47 @@ _TAG_PREFIXED_FIELD_PATHS = frozenset(
 )
 
 
+def is_id_field(parent_key: str | None, key: str) -> bool:
+    """Whether ``scan_json`` skips ``key`` (and everything under it) when reached
+    through ``parent_key``: a declared id field."""
+    return key in ID_FIELDS or (parent_key, key) in ID_FIELD_PATHS
+
+
+def _holds_strings(value: Any) -> bool:
+    if isinstance(value, str):
+        return True
+    if isinstance(value, list):
+        return any(_holds_strings(v) for v in value)
+    return False
+
+
+def undeclared_engine_fields(obj: Any, path: str = "$") -> list[str]:
+    """The path of every engine-named field (``ENGINE_FIELD_NAME_RE``) in a parsed
+    JSON document whose value holds a string and that is neither an id field nor a
+    display field, walked the way ``scan_json`` walks it: a declared id field's
+    whole value is skipped. Reads field names, not prose (#1409)."""
+    out: list[str] = []
+
+    def walk(node: Any, p: str, parent_key: str | None) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if is_id_field(parent_key, key):
+                    continue
+                if (
+                    ENGINE_FIELD_NAME_RE.match(key)
+                    and (parent_key, key) not in DISPLAY_NAME_FIELD_PATHS
+                    and _holds_strings(value)
+                ):
+                    out.append(f"{p}.{key}")
+                walk(value, f"{p}.{key}", key)
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{p}[{i}]", parent_key)
+
+    walk(obj, path, None)
+    return out
+
+
 def _walk_json(obj: Any, path: str, findings: list[Finding], parent_key: str | None) -> None:
     """``parent_key`` is the key (list or dict) through which ``obj`` itself was
     reached -- a list's own key, never a numeric index, so a schema path with
@@ -554,7 +627,7 @@ def _walk_json(obj: Any, path: str, findings: list[Finding], parent_key: str | N
     alone (see the module docstring)."""
     if isinstance(obj, dict):
         for key, value in obj.items():
-            if key in ID_FIELDS or (parent_key, key) in ID_FIELD_PATHS:
+            if is_id_field(parent_key, key):
                 continue
             if isinstance(value, str) and (parent_key, key) in _TAG_PREFIXED_FIELD_PATHS:
                 stripped = _LEADING_ENGINE_TAG_RE.sub("", value)
@@ -647,7 +720,7 @@ def scan_json_style(
     def walk(node: Any, p: str, parent_key: str | None) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
-                if key in ID_FIELDS or (parent_key, key) in ID_FIELD_PATHS:
+                if is_id_field(parent_key, key):
                     continue
                 if key in STYLE_AUDIT_FIELDS or key in STYLE_SKIPPED_FIELDS:
                     continue

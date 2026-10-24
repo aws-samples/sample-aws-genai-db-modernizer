@@ -6,9 +6,10 @@
 # fetch main, count commits behind, check commit authors and merge conflicts
 # (without touching the worktree), check contract versions, warn on stale
 # generated files, list the new and changed tests that pass on main's code, then
-# lint, tests (skipped by --quick) and the needs_llm_run verdict. Exits non-zero
-# on a refused author, a conflict, a lint or test failure, a contract version
-# problem, or (with --strict-main-tests) a new or changed test that passes on main.
+# lint, the zero-token replay of the saved real-model run, tests (skipped by
+# --quick) and the needs_llm_run verdict. Exits non-zero on a refused author, a
+# conflict, a lint, replay or test failure, a contract version problem, or (with
+# --strict-main-tests) a new or changed test that passes on main.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -232,7 +233,19 @@ else
   fail "lint: ci/lint.sh failed (last lines above)"
 fi
 
-# h. Tests, and the version-pin check (a test that compares with a literal
+# h. The zero-token replay of the saved real-model run (#1409): its transcript checks
+# and the external-mode e2e checks over its re-rendered report, in seconds. Runs
+# with --quick too: it catches what used to wait for a real-model run.
+replay_out="$(mktemp -d)"  # its own folder: parallel worktrees never share one
+if E2E_OUTPUT="$replay_out" ./ci/replay.sh >"$tmp" 2>&1; then
+  note "ok   replay: $(tail -n 1 "$tmp" | sed 's/=//g; s/^ *//; s/ *$//')"
+else
+  tail -n 20 "$tmp"
+  fail "replay: ci/replay.sh failed (last lines above)"
+fi
+rm -rf "$replay_out"
+
+# i. Tests, and the version-pin check (a test that compares with a literal
 # contract version fails once the resolver moves it; about a minute).
 if [ "$quick" -eq 1 ]; then
   note "skip version-pins: --quick"
@@ -251,7 +264,7 @@ else
   fail "tests: ci/test.sh -q failed (last lines above)"
 fi
 
-# i. Real-model runs the branch needs (informational).
+# j. Real-model runs the branch needs (informational).
 if verdict="$(./ci/needs_llm_run.sh "$base" 2>&1)"; then
   note "info llm: $(printf '%s\n' "$verdict" | grep -E '^[a-z0-9-]+: ' | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
 else

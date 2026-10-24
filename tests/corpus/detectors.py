@@ -523,6 +523,8 @@ NOT_PROSE_DETECTORS: dict[str, str] = {
     f"{_PROSE}:style_list_markdown": "renders the style list for a prompt",
     f"{_GUARD}:scan_json": "scan_text over each string of a document, registered",
     f"{_GUARD}:scan_json_style": "find_style_hits over each string of a document, registered",
+    f"{_GUARD}:is_id_field": "reads a field name and its parent key, not prose",
+    f"{_GUARD}:undeclared_engine_fields": "reads a document's field names, not its prose",
     f"{_GROUNDING}:display_name": "maps an engine id to its display name",
     f"{_GROUNDING}:engine_mentions": "a helper of recommends_engine and ground_risks",
     f"{_GROUNDING}:split_sentences": "a helper of every summary check, registered",
