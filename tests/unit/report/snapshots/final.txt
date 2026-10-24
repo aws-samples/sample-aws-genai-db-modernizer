@@ -44,6 +44,7 @@ The results page and the engineering report list every open risk.
 - `artifacts/wordpress/job1/deliverables/executive-report.pdf`: Executive report (PDF). For: Executives and stakeholders deciding whether to proceed.
 - `artifacts/wordpress/job1/deliverables/engineering-report.md`: Engineering report (Markdown). For: The team that will build it: schemas, migration waves, risks.
 - `artifacts/wordpress/job1/deliverables/assessment-data.json`: Assessment Data (JSON). For: Tools and scripts: the complete machine-readable assessment.
+- `artifacts/wordpress/job1/deliverables/engineering-report-detailed.md`: Detailed engineering report (Markdown). For: Engineers auditing or debugging the result: the full routing detail per table, query and group.
 - `artifacts/wordpress/job1/deliverables/index.md`: lists each file and the assignment version
 - Results page (the interactive report): http://localhost:3000/analysis/results/job1
 - Summary page (the query flow and the assignment): http://localhost:3000/analysis/monitor/summary/job1

@@ -3,7 +3,8 @@
 
 Writes the job's latest synthesis version into the customer folder
 ``artifacts/<db>/<job>/deliverables/`` under stable names (the executive report, the
-engineering report, the assessment data JSON) with an ``index.md``
+engineering report, the assessment data JSON, and the detailed engineering report with
+the full routing detail, read from the job's saved routing records) with an ``index.md``
 (``src.report.deliverables.FOLDER_ENTRIES``). Nothing is written next to the
 synthesis ``report.json``: model I/O, traces and the versioned folders stay as
 the pipeline left them. Deterministic, no LLM calls.

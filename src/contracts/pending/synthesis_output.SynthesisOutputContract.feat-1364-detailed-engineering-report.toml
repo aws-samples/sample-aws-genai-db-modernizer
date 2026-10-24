@@ -1,0 +1,6 @@
+# A pending contract version bump (ADR-008 Decision 8). The number is assigned by
+# uv run python scripts/resolve_contract_versions.py after the last rebase.
+contract = "synthesis_output.SynthesisOutputContract"
+kind = "minor"
+reason = "Added optional carried_writes (analysis_output.CarriedWrite): the write-group members of the effective assignment their engine serves poorly, with their intent and the target-native approach (#1362), for the detailed engineering report; None in a report written before"
+issue = 1364

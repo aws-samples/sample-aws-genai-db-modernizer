@@ -18,6 +18,7 @@ These are the files a run writes to its deliverables folder, under the same name
   <li><a href="executive-report.pdf">Executive report (PDF)</a>, <code>executive-report.pdf</code>: the stakeholder-facing landscape briefing: recommendation, the numbers, why, migration waves, risks, decisions needed and next steps.</li>
   <li><a href="engineering-report.html">Engineering report (HTML)</a> (the run writes it as <a href="engineering-report.md">Markdown</a>, <code>engineering-report.md</code>): the same facts with implementation detail, for the team that will build it, including the per-engine schemas, migration waves, per-engine query placement, and risks.</li>
   <li><a href="assessment-data.json">Assessment Data (JSON)</a>, <code>assessment-data.json</code>: the complete machine-readable assessment the other files are rendered from.</li>
+  <li><a href="engineering-report-detailed.md">Detailed engineering report (Markdown)</a>, <code>engineering-report-detailed.md</code>: the routing record behind the reports, for auditing the result. The recorded sample run was saved without its assignments, so this copy states which routing records it does not have; a run of your own carries them all.</li>
   <li><a href="index.md">Folder index</a>, <code>index.md</code>: each file, who it is for, and the assignment version.</li>
 </ul>
 <!-- /deliverables-list -->

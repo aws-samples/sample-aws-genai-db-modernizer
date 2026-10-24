@@ -133,6 +133,7 @@ def test_run_assessment_all_with_llm_mode_none_makes_no_model_calls(
         "executive-report.pdf",
         "engineering-report.md",
         "assessment-data.json",
+        "engineering-report-detailed.md",
         "index.md",
     }
 

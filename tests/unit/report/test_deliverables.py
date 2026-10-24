@@ -24,16 +24,18 @@ def store(tmp_path: Path) -> LocalArtifactStore:
     return s
 
 
-def test_renders_the_three_deliverables_in_publish_order(store) -> None:
+def test_renders_the_deliverables_in_publish_order(store) -> None:
     out = dl.render_deliverables(store, JOB, DB, KEY, assignment_version=1)
 
     assert out.errors == []
     assert [d.name for d in out.items] == [
         "engineering-report",
         "assessment-data",
+        "engineering-report-detailed",
         "executive-report",
     ]
-    assert all(d.publish for d in out.items)
+    # #1364: the detailed report stays in the folder; the delivery channel gets the rest.
+    assert [d.name for d in out.items if not d.publish] == ["engineering-report-detailed"]
 
 
 def test_the_folder_files_are_exactly_the_folder_entries(store) -> None:
@@ -45,12 +47,14 @@ def test_the_folder_files_are_exactly_the_folder_entries(store) -> None:
         ("executive-report.pdf", "executive-report"),
         ("engineering-report.md", "engineering-report"),
         ("assessment-data.json", "assessment-data"),
+        ("engineering-report-detailed.md", "engineering-report-detailed"),
     ]
     assert {d.name for d in out.items} == {e.name for e in dl.FOLDER_ENTRIES}
     assert dl.FOLDER_FILENAMES == (
         "executive-report.pdf",
         "engineering-report.md",
         "assessment-data.json",
+        "engineering-report-detailed.md",
         "index.md",
     )
 
@@ -65,6 +69,7 @@ def test_a_failed_render_is_absent_from_the_folder_files(store, monkeypatch) -> 
     assert [e.filename for e, _ in out.folder_files()] == [
         "engineering-report.md",
         "assessment-data.json",
+        "engineering-report-detailed.md",
     ]
 
 
@@ -97,7 +102,7 @@ def test_a_failing_optional_deliverable_is_reported_not_raised(store, monkeypatc
     names = {d.name for d in out.items}
     assert "executive-report" not in names
     assert any(e.startswith("executive-report: RuntimeError: template missing") for e in out.errors)
-    assert names == {"engineering-report", "assessment-data"}
+    assert names == {"engineering-report", "assessment-data", "engineering-report-detailed"}
 
 
 def test_synthesis_report_key_prefers_the_highest_version(tmp_path: Path) -> None:
