@@ -297,6 +297,42 @@ def test_every_kept_engine_is_sized_for_its_assigned_queries(run: PipelineResult
     assert report["tco_analysis"]["projected_monthly_cost"] <= round(whole, 2)
 
 
+def test_the_tables_no_query_reads_are_stored_on_wave_ones_engine(run: PipelineResult) -> None:
+    """#1378: wave 1 moves the whole source database, so every collected table no in-scope
+    query reads is stored on wave 1's Aurora engine, and only there."""
+    report = _report_json(run)
+    assignment = json.loads(
+        (
+            run.job_dir()
+            / "assignment"
+            / f"v{report['assignment_summary']['version']}"
+            / "assignment.json"
+        ).read_text()
+    )
+    read = {
+        str(t)
+        for qa in assignment["query_assignments"]
+        if qa.get("in_scope", True)
+        for t in qa.get("source_tables") or []
+    }
+    schema = json.loads((run.job_dir() / "collector" / "output.json").read_text())
+    unread = [t for t in schema["database_schema"]["tables"] if t["table_id"] not in read]
+    tco = report["tco_analysis"]
+    stored = {
+        r["database"]: r["sizing"]["unqueried_table_count"]
+        for r in tco["cost_breakdown"]
+        if (r.get("sizing") or {}).get("unqueried_table_count")
+    }
+    if not unread:
+        assert tco.get("unqueried_tables") is None
+        assert stored == {}
+        return
+    wave_one = report["migration_waves"][0]["engines"]
+    assert tco["unqueried_tables"]["table_count"] == len(unread)
+    assert tco["unqueried_tables"]["stored_on"] == wave_one[0]
+    assert stored == {wave_one[0]: len(unread)}
+
+
 def test_every_deliverable_states_the_price_date(run: PipelineResult) -> None:
     """#1196: report.json states the price table each TCO figure was priced from, the one
     its TCO row recorded, and the PDF and engineering reports both print it."""

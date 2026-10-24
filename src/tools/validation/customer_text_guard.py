@@ -130,6 +130,7 @@ ID_FIELDS = frozenset(
         # #1329: the out-of-scope engine an unservable query would fall back to
         # (MoveEvidence, UnservableQueryAssignment, ScopeUnservableQuery, UnservableQueryFact).
         "closest_engine",
+        "stored_on",  # TCOAnalysis.unqueried_tables.stored_on (#1378)
         # Rule/pattern ids (exclusion rule ids, generated pattern ids like
         # "relational-aurora_mysql-<query_id>"): internal identifiers, not prose.
         "rule_id",  # ExclusionResult.rule_id (decision-trace shape)

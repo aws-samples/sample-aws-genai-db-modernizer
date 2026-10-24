@@ -229,7 +229,8 @@ def price_list_text(facts: dict[str, Any]) -> str:
 
 def cost_sizing_text(sizing: Any) -> str:
     """ "67 queries, 96.51 calls/s" or "20 cached reads, 185.07 calls/s, also billed on
-    their owners" (#1195).
+    their owners" (#1195); ", plus 28 tables no query reads" on the engine that stores
+    them (#1378).
 
     What an engine's TCO figure was sized for (``facts.engines[].cost_sizing``): the
     queries the assignment gives it, or the reads the cache layer fronts. "" with none
@@ -242,6 +243,10 @@ def cost_sizing_text(sizing: Any) -> str:
     cached = sizing["basis"] == "cache_overlay"
     noun = plural_noun(n, "cached read") if cached else plural_noun(n, "query", "queries")
     text = f"{fmt_num(n)} {noun}, {fmt_num(cps)} {plural_noun(cps, 'call')}/s"
+    # #1378: wave 1's Aurora engine also stores the tables no in-scope query reads.
+    unread = sizing.get("unqueried_table_count") or 0
+    if unread:
+        text += f", plus {fmt_num(unread)} {plural_noun(unread, 'table')} no query reads"
     # The cache layer's reads stay billed on their owner engines too (CACHE_MISS_ASSUMPTION).
     return text + ", also billed on their owners" if cached and n else text
 
