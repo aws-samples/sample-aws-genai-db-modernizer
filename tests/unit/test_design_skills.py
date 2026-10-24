@@ -39,3 +39,36 @@ def test_elasticache_skill_never_treats_the_cache_as_a_primary_store() -> None:
     text = " ".join((SKILLS_DIR / "elasticache-data-modeling.md").read_text().split())
     assert not re.search(r"unless[^.]*primary data store", text, re.IGNORECASE)
     assert "never the system of record" in text
+
+
+DYNAMODB_SKILLS = ("dynamodb-data-modeling.md", "dynamodb-pe-review.md")
+
+
+@pytest.mark.parametrize("name", DYNAMODB_SKILLS)
+@pytest.mark.parametrize(
+    "rule",
+    [
+        # #1483: uniqueness through a sentinel item in the record's transaction.
+        r"sentinel item[^.]*TransactWriteItems",
+        r"attribute_not_exists",
+        r"Count items, not records",
+        # Read-your-writes from the update itself, not a second read.
+        r"ReturnValues=ALL_NEW",
+        # The tenant leads the partition key: LeadingKeys matches it only.
+        r"dynamodb:LeadingKeys",
+    ],
+)
+def test_dynamodb_skills_state_each_design_rule(name: str, rule: str) -> None:
+    text = " ".join((SKILLS_DIR / name).read_text().split())
+    assert re.search(rule, text, re.IGNORECASE), f"{name}: {rule}"
+
+
+def test_dynamodb_designer_prices_the_keys_only_fetch_and_states_the_sparse_threshold() -> None:
+    text = " ".join((SKILLS_DIR / "dynamodb-data-modeling.md").read_text().split())
+    # The fetch after a KEYS_ONLY index is a read per returned item, counted.
+    assert "design_rps × avg_items_returned" in text
+    # One sparse-GSI threshold, with its reason; the unexplained >90% is gone.
+    assert "50% or more excluded" in text and "the 50% is ours, for this reason" in text
+    assert ">90%" not in text
+    # Callers with only the child's id are the identifying relationship's exception.
+    assert "only the child's id" in text

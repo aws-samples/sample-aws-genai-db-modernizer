@@ -80,13 +80,14 @@ For each DynamoDB table:
 
 - List the top 3 patterns by `design_rps` that the table must serve
 - Derive the PK from the highest-RPS pattern's primary filter column
+- When the source tables carry a tenant column, lead every partition key with it (see "Tenant and authorization boundary" below) before applying the rule above
 - Design the SK to serve the next most frequent patterns without requiring a GSI
 - Verify the chosen PK distributes writes evenly — flag any PK value that concentrates traffic (e.g. a status enum, a date bucket with low cardinality)
 
 **Step 4 — Design GSIs**
 For each pattern the base table key cannot serve:
 
-- Propose a GSI with the minimal projection needed (default KEYS_ONLY; justify INCLUDE only if GetItem round-trip would breach the SLO)
+- Propose a GSI with the projection its reads need (see "Projection" under GSIs below); a `KEYS_ONLY` index whose reads fetch the full item adds a base-table read per returned item, which the design states and counts
 - For write-heavy tables, calculate amplified WCU at `design_rps` for any mutable GSI key attribute
 
 **Step 5 — Hot partition pre-check**
@@ -106,9 +107,15 @@ Before Phase 2b, settle each table's structural `TableDefinition` fields: `table
 - **GSI sort key attribute ordering**: equality conditions (`=`) must precede range conditions (`>`, `<`, `BETWEEN`, `begins_with`). Once a range operator is used, subsequent attributes cannot be queried.
 - **Naming**: use natural names. `user_id` not `PK`. `DiscussionsByTag` not `GSI1`.
 
+### Tenant and authorization boundary
+
+When a source table has a tenant column (a column that scopes each row to one tenant, such as `tenant_id`, `org_id`, `account_id` or `workspace_id`: a foreign key to the table of tenants that the table's queries filter on by equality), the partition key of every table and GSI holding those rows starts with it: `tenant_id#order_id` on a base table, the tenant attribute first in a GSI's multi-attribute partition key. IAM fine-grained access control restricts a caller to its own items through the `dynamodb:LeadingKeys` condition key, which matches the partition key value only (Amazon DynamoDB Developer Guide, Using IAM policy conditions for fine-grained access control), so a key that does not lead with the tenant leaves isolation to application code. A query that reads across tenants (an operator report) is the exception: name it in `trade_offs`. With no tenant column, skip this rule.
+
 ### Aggregation — pick one pattern per entity group
 
 **Identifying relationship** — child cannot exist without parent AND is always queried via parent_id → `PK=parent_id, SK=child_id`. No GSI needed. Saves ~50% write cost vs a separate table + GSI. Default choice for bounded parent-child relationships.
+
+Exception: when some queries arrive with only the child's id (the `WHERE` names the child key and not the parent's), the identifying key cannot serve them: `GetItem` needs the full primary key (Amazon DynamoDB Developer Guide, Working with items and attributes). Keep the identifying relationship and add a GSI keyed on the child id when those lookups are the minority of the child's reads by `design_rps`; when they are the majority, make the child a separate table keyed by its own id with a GSI on `parent_id`. Name the choice and the two rates in `trade_offs`.
 
 **Item collection** — entities have >50% co-access AND share operational characteristics (same backup, stream processing, scaling needs) → same table, same PK, different SK prefixes (e.g., `PROFILE`, `ORDER#<id>`).
 
@@ -116,8 +123,12 @@ Before Phase 2b, settle each table's structural `TableDefinition` fields: `table
 
 ### GSIs
 
-- Default to KEYS_ONLY projection + GetItem for the full item on cache miss. Use INCLUDE only when the GetItem round-trip latency is unacceptable given the SLO; list the exact attributes each access pattern needs to justify the choice.
-- Sparse GSI: create when the indexed attribute is absent from >90% of items. State which attribute controls inclusion and the estimated exclusion percentage.
+- **Projection**: project what the index's reads return. A query on a GSI cannot fetch attributes that are not projected (Amazon DynamoDB Developer Guide, Using Global Secondary Indexes, Attribute projections), so the choice is:
+  - `KEYS_ONLY` when the reads need only key attributes, or when the index only finds an item's table key for a write;
+  - `INCLUDE` with `projected_attributes` listing the attributes the patterns read, when they read a few non-key attributes;
+  - `ALL` only when the patterns read most of the item and the index is read far more often than the item is written;
+  - `KEYS_ONLY` followed by a `BatchGetItem` of the full items only when the index is read rarely and its items are written often (AWS's guidance for a write-heavy, rarely queried index). That fetch is a second read per returned item: `design_rps × avg_items_returned` extra item reads per second, each item rounded up to 4 KB and billed 0.5 read unit per 4 KB eventually consistent (1 strongly consistent) (Amazon DynamoDB Developer Guide, DynamoDB read and write operations). The cost check does not add it: count those reads in the base table's `hot_partition_analysis` read entry and state them, with the index writes the narrow projection saves, in a trade-off.
+- **Sparse GSI**: use one when at least half of the items a read would otherwise touch lack the indexed attribute (50% or more excluded). AWS publishes no threshold (it describes sparse indexes as useful for queries over a small subsection of a table, Amazon DynamoDB Developer Guide, Take advantage of sparse indexes); the 50% is ours, for this reason: the alternative is a `Query` with a `FilterExpression`, which consumes the same read capacity with or without the filter (Filter expressions for the Query operation), so once half the items read are discarded the filtered read pays for at least one discarded item per returned one, while a sparse index writes and stores only the items that carry the attribute. Below 50% excluded the index holds most of the table's items and writes for a small read saving, and the filtered `Query` is the design. A `not_null_test` assumed key (`redesign_requirements`) is a sparse GSI whatever the share. State which attribute controls inclusion and the estimated exclusion percentage.
 - Write amplification: mutable GSI key attributes (counters, status fields) cause delete + insert on every update. Flag this, calculate the amplified WCU at design RPS, and verify it stays below 1,000 WCU/s per partition.
 
 ### Scale
@@ -130,15 +141,16 @@ Before Phase 2b, settle each table's structural `TableDefinition` fields: `table
 
 ### Unique constraints
 
-When a table has multiple unique non-PK attributes (detected via `indexes` where `is_unique=true, is_primary=false`):
+DynamoDB enforces uniqueness on a table's primary key only. A GSI cannot enforce it, because GSI key values do not need to be unique (Amazon DynamoDB Developer Guide, Using Global Secondary Indexes), and a read-then-write check in the application lets two writers pass the check before either writes. For each unique non-PK attribute (`indexes` where `is_unique=true, is_primary=false`) that an in-scope write inserts or changes, use a sentinel item, the pattern AWS describes in "Simulating Amazon DynamoDB unique constraints using transactions" (AWS Database Blog):
 
-**Preferred approach — single unique identifier + GSI:**
-Use one unique attribute as the table's partition key (e.g. `user_id`) and add a GSI on the most-queried secondary unique attribute (e.g. `email`). For other unique attributes that are not queried for lookups, enforce uniqueness at the application layer. Add a trade-off note: "Uniqueness for [attribute] is enforced at the application layer rather than the database layer. If strict database-level enforcement is required, a dedicated lookup table with TransactWriteItems can be added."
+- **The sentinel**: one item per unique value, keyed by the value (`email#<email>`), as an entity of the record's item collection or in a dedicated table whose `source_tables` names the source table. It carries the record's table key, so a lookup by the unique value is a `GetItem` on the sentinel and a `GetItem` on the record.
+- **Insert**: the record and each of its sentinels go in one `TransactWriteItems`, each `Put` with `attribute_not_exists(<sentinel key>)`; the transaction is all-or-nothing, so a taken value cancels the insert. Set the write's `operation` to `TransactWriteItems` and its `condition_expression`.
+- **Change and delete**: changing a unique value deletes the old sentinel and puts the new one (conditionally) in the update's transaction; deleting the record deletes its sentinels in the same transaction.
+- **Bounds**: count items, not records. A transaction takes at most 100 distinct items, 4 MB in aggregate, in one account and Region, and one action per item (Amazon DynamoDB Developer Guide, Amazon DynamoDB Transactions: How it works). An insert with k unique attributes is 1 + k items; an update that changes j of them is 1 + 2j. A multi-row write whose items exceed 100 cannot be one transaction: say how it is split in `trade_offs`. On a global table the guarantee holds in the Region that runs the transaction only.
+- **Cost**: every item in the transaction, sentinels included, costs two writes (prepare and commit), and a canceled transaction still consumes them. Use the record's write `design_rps` for the sentinels' write load.
+- **Not needed**: a unique attribute no in-scope write sets or changes (loaded once by the migration) needs no sentinel; a unique index on a nullable column allows many NULLs in the source, so write a sentinel only when the value is present. A GSI on the unique attribute still serves eventually consistent lookups by it: it is a read path, never the enforcement.
 
-**When to use the purist approach — dedicated lookup tables:**
-Only use `TransactWriteItems` with dedicated lookup tables when write patterns on that table show high `errors` (indicating uniqueness collisions are actively occurring in production) AND the business requires strict database-level enforcement of multiple unique attributes simultaneously. In this case, create one lookup table per unique attribute with `ConditionExpression: attribute_not_exists(key)`, and put that expression in each such write's `condition_expression`.
-
-Always document the choice and its trade-off in `trade_offs`.
+`errors > 0` on such a write confirms collisions happen in production; it is not a condition for the sentinel. Document the sentinels, the transaction size and the extra writes in `trade_offs`.
 
 ### Unsupported SQL patterns
 
@@ -181,7 +193,7 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 - `table_name`: the DynamoDB table this pattern executes against
 - `key_condition`: concise expression, e.g. `"PK=discussion_id AND SK begins_with 'POST#'"`
 - `condition_expression`: for a write that must fail unless a condition holds, the DynamoDB `ConditionExpression` itself: uniqueness `attribute_not_exists(<key attribute>)`, existence `attribute_exists(<key attribute>)`, optimistic locking `version = :expected`. Set it on every conditional `PutItem`, `UpdateItem`, `DeleteItem` or `TransactWriteItems`, even when `key_condition` or `description` already says it in words ("rejected when the email is already taken"); `null` for unconditional writes and for reads. The group-draft merge relies on this field, not the prose, to keep the table key a condition depends on
-- `strongly_consistent`: `true` for a read that must see the latest write (read-after-write, a balance or stock check); a GSI cannot serve it
+- `strongly_consistent`: `true` for a read that must see the latest write (read-after-write, a balance or stock check); a GSI cannot serve it. When the source reads a row right after updating it (an `UPDATE` followed by a `SELECT` of the same key in one transaction or routine), the `UpdateItem` returns the new item itself with `ReturnValues=ALL_NEW` (or `UPDATED_NEW`): the values it returns are strongly consistent and consume no read capacity (Amazon DynamoDB API Reference, UpdateItem). Say so in the update's `description`, and mark the read `strongly_consistent` only when its other callers need the latest write
 - `design_rps`: copy from `design_metrics.queries`; for a pattern with several `query_ids`, the sum of theirs
 - `avg_items_returned`: `rows_returned_avg ?? 1` for reads; `null` for writes
 - `item_size_bytes`: estimated bytes per item returned/written
@@ -243,7 +255,7 @@ State a consistency or staleness window by its mechanism and its bound: what end
 - No DynamoDB Scans used
 - All GSI `partition_key` and `sort_key` fields are lists (multi-attribute, never composite strings)
 - All base table `partition_key.attribute_name` and `sort_key.attribute_name` are single attributes or composite strings
-- Every source table with non-PK unique indexes has either a GSI for lookup or a dedicated lookup table, and the choice is documented in `trade_offs`
+- Every non-PK unique attribute that an in-scope write inserts or changes has a sentinel item written in that write's `TransactWriteItems` with `attribute_not_exists`, and `trade_offs` documents it (a GSI alone does not count)
 - Every text search and aggregation query is in `unsupported_patterns`
 - All `hot_partition_analysis` entries where `at_risk=true` have a non-null `mitigation`
 - The cost / hot-partition check ran successfully on the final `hot_partition_analysis`: the `compute_performances_and_costs` tool returned without error (Bedrock mode), or `scripts/run_schema_design.py --engine dynamodb --check-costs <draft>` returned `"passed": true` (external / Claude Code mode), and every entry's `partition_limit`, `utilization_pct` and `at_risk` are the ones it returned. Both run the same computation.

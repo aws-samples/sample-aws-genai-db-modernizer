@@ -68,6 +68,14 @@ STALE_FACTS: list[tuple[str, str, str]] = [
         "https://docs.aws.amazon.com/documentdb/latest/developerguide/text-search.html",
     ),
     (
+        # #1483: a GSI's key values need not be unique and an application-side
+        # check races, so neither enforces a DynamoDB unique attribute.
+        r"uniqueness[^.\n]{0,40}at the application layer|single unique identifier \+ GSI",
+        "DynamoDB enforces a non-key unique attribute with a sentinel item in the same "
+        "TransactWriteItems, conditioned on attribute_not_exists",
+        "https://aws.amazon.com/blogs/database/simulating-amazon-dynamodb-unique-constraints-using-transactions/",
+    ),
+    (
         r"relational \(MySQL or PostgreSQL\)",
         "Sources also include MariaDB, SQL Server and Oracle",
         "src/agents/collector/handler.py",
