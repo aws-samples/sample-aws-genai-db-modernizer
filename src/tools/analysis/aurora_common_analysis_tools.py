@@ -827,10 +827,12 @@ def estimate_aurora_costs(
     query_count = len(queries)
 
     prices = catalog.pricing(f"aurora_{engine}")
-    acu_price = prices.acu_price_per_hour
-    storage_price = prices.storage_price_per_gb_month
-    if acu_price is None or storage_price is None:
-        raise ValueError(f"aurora_{engine} has no ACU or storage unit price in the engine catalog")
+    acu_price = catalog.required_price(
+        f"aurora_{engine}", "acu_price_per_hour", prices.acu_price_per_hour
+    )
+    storage_price = catalog.required_price(
+        f"aurora_{engine}", "storage_price_per_gb_month", prices.storage_price_per_gb_month
+    )
 
     # --- Serverless v2 estimate ---
     min_acu, max_acu = _estimate_acu_from_load(total_cps, query_count)

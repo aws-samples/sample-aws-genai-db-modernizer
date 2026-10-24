@@ -822,10 +822,13 @@ def estimate_opensearch_costs(
 
     # A managed domain: 2 data nodes on gp3 EBS. Both prices are the price table's
     # (src/catalog/prices.toml, #1196).
-    prices = catalog.pricing("opensearch")
+    engine_id = "opensearch"
+    prices = catalog.pricing(engine_id)
     instance_type = "r6g.large.search"
     instance_hourly = prices.instance_hourly[instance_type]
-    gp3_price = prices.storage_price_per_gb_month or 0.0
+    gp3_price = catalog.required_price(
+        engine_id, "storage_price_per_gb_month", prices.storage_price_per_gb_month
+    )
     instance_cost = 2 * instance_hourly * HOURS_PER_MONTH  # 2 nodes
     storage_gb = max(total_size_gb * 1.2, 20.0)  # 1.2x overhead, min 20GB
     storage_cost = storage_gb * gp3_price

@@ -759,7 +759,8 @@ def estimate_documentdb_costs(
 
     # Every price is the price table's (src/catalog/prices.toml, #1196), through the engine
     # file's configuration (Standard storage).
-    prices = catalog.pricing("documentdb")
+    engine_id = "documentdb"
+    prices = catalog.pricing(engine_id)
     instance_type = "db.r6g.large"
     instance_hourly = prices.instance_hourly[instance_type]
     instance_monthly = instance_hourly * HOURS_PER_MONTH
@@ -767,10 +768,14 @@ def estimate_documentdb_costs(
     read_ios_per_month = total_read_cps * SECONDS_PER_MONTH
     write_ios_per_month = total_write_cps * SECONDS_PER_MONTH
     # This estimate charges one I/O a call, read or write, as it always has.
-    io_price = prices.read_unit_price_per_million or 0.0
+    io_price = catalog.required_price(
+        engine_id, "read_unit_price_per_million", prices.read_unit_price_per_million
+    )
     io_cost = ((read_ios_per_month + write_ios_per_month) / 1_000_000) * io_price
 
-    storage_price = prices.storage_price_per_gb_month or 0.0
+    storage_price = catalog.required_price(
+        engine_id, "storage_price_per_gb_month", prices.storage_price_per_gb_month
+    )
     storage_cost = max(total_size_gb, 0.01) * storage_price
 
     total = round(instance_monthly + io_cost + storage_cost, 2)

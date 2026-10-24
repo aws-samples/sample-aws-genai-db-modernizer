@@ -1396,13 +1396,23 @@ def estimate_dynamodb_costs(
 
     # On-demand pricing: the request unit and storage prices are the price table's
     # (``src/catalog/prices.toml``, #1196), through the engine file's configuration.
-    prices = catalog.pricing("dynamodb")
+    engine_id = "dynamodb"
+    prices = catalog.pricing(engine_id)
     read_units_per_month = total_read_cps * SECONDS_PER_MONTH
     write_units_per_month = total_write_cps * SECONDS_PER_MONTH
 
-    read_cost = (read_units_per_month / 1_000_000) * (prices.read_unit_price_per_million or 0.0)
-    write_cost = (write_units_per_month / 1_000_000) * (prices.write_unit_price_per_million or 0.0)
-    storage_cost = max(total_size_gb, 0.01) * (prices.storage_price_per_gb_month or 0.0)
+    read_price = catalog.required_price(
+        engine_id, "read_unit_price_per_million", prices.read_unit_price_per_million
+    )
+    write_price = catalog.required_price(
+        engine_id, "write_unit_price_per_million", prices.write_unit_price_per_million
+    )
+    storage_price = catalog.required_price(
+        engine_id, "storage_price_per_gb_month", prices.storage_price_per_gb_month
+    )
+    read_cost = (read_units_per_month / 1_000_000) * read_price
+    write_cost = (write_units_per_month / 1_000_000) * write_price
+    storage_cost = max(total_size_gb, 0.01) * storage_price
 
     total = round(read_cost + write_cost + storage_cost, 2)
 
