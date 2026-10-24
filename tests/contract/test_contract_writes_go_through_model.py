@@ -96,7 +96,7 @@ UNRENDERED_PATHS: dict[tuple[str, str, str, str], str] = {
         "the redaction marker .meta/_stored-input-redaction-v1.json (not a contract)"
     ),
     (
-        "src/orchestrator/local_orchestrator.py",
+        "src/agents/referee/post_schema_routing_handler.py",
         "_copy_schema_artifacts",
         "self.store.read_json(key)",
         "",

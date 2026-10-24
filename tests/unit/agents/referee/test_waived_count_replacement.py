@@ -441,8 +441,8 @@ class TestTheSourceOfTruthRerouteHoldsPins:
 
 class TestThePostSchemaReroute:
     def _reroute(self, store, to_engine: str):
+        from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
         from src.contracts.post_schema_router_output import QueryRouting
-        from src.orchestrator.local_orchestrator import LocalOrchestrator
 
         assignment = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
         routings = [
@@ -456,7 +456,7 @@ class TestThePostSchemaReroute:
             )
             for qid in ("ins", "upd")
         ]
-        return LocalOrchestrator(store, llm_mode="bedrock")._rerouted_assignment(
+        return PostSchemaRouting(store, _no_redesign)._rerouted_assignment(
             JOB, DB, assignment, 1, 2, routings
         )
 
@@ -478,10 +478,10 @@ class TestThePostSchemaReroute:
 
     def test_a_reroute_that_moves_no_write_leaves_the_count(self) -> None:
         store = _store("dynamodb", "dynamodb")
-        from src.orchestrator.local_orchestrator import LocalOrchestrator
+        from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 
         assignment = store.read_json(f"{DB}/{JOB}/assignment/v1/assignment.json")
-        revised = LocalOrchestrator(store, llm_mode="bedrock")._rerouted_assignment(
+        revised = PostSchemaRouting(store, _no_redesign)._rerouted_assignment(
             JOB, DB, assignment, 1, 2, []
         )
         assert {qa["query_id"]: qa["assigned_engine"] for qa in revised["query_assignments"]}[
@@ -546,3 +546,7 @@ class TestThePostSchemaRerouteHoldsPins:
         assert not [m for m in revised["moves"] if m["query_id"] == "cnt"]
         assert "cnt" not in {r["query_id"] for r in revised["post_schema_reroutes"]}
         assert any("Query cnt" in w and "pin is kept" in w for w in revised["validation_warnings"])
+
+
+def _no_redesign(*_args: object) -> None:
+    raise AssertionError("the post-schema routing redesigns nothing in this test")

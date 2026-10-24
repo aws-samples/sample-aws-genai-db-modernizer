@@ -251,7 +251,7 @@ def overridden(tmp_path_factory) -> dict:
             {"trace": [], "routing_flags": [flag]},
         )
         for engine in ("documentdb", "elasticache", "opensearch"):
-            orch._copy_schema_artifacts(JOB, DB, engine, 3, 4)
+            orch._post_schema_routing()._copy_schema_artifacts(JOB, DB, engine, 3, 4)
         orch._run_post_schema_routing(JOB, DB)
     result = PipelineResult(db=DB, job_id=JOB, artifact_root=root)
     common = ["--job-id", JOB, "--db", DB, "--artifact-root", str(root)]

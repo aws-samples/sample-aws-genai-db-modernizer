@@ -6,7 +6,7 @@ Usage:
     uv run python scripts/run_post_schema_routing.py --job-id <id> --db <name> --rollback
 
 Runs the same post-schema router as Bedrock mode
-(``LocalOrchestrator._run_post_schema_routing``): the PE reviewers' routing
+(``core.run_post_schema_routing_core``, #1492): the PE reviewers' routing
 flags (design traces) and the designers' unsupported patterns gate the engine
 that reported them, and the shared scorer moves each flagged query (with its
 co-dependency group) to its best engine among those the assignment keeps,

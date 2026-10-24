@@ -609,25 +609,25 @@ def test_atx_copy_forward_copies_a_valid_design(tmp_path):
 
 
 def test_local_copy_forward_refuses_an_invalid_saved_design(tmp_path):
-    from src.orchestrator.local_orchestrator import LocalOrchestrator
+    from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _saved_design(store, 1, _items_draft(with_entities=True))
 
     with pytest.raises(SchemaContractError):
-        LocalOrchestrator(store)._copy_schema_artifacts(JOB, DB, "dynamodb", 1, 2)
+        PostSchemaRouting(store, _no_redesign)._copy_schema_artifacts(JOB, DB, "dynamodb", 1, 2)
 
     assert not store.exists(f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json")
     assert not store.exists(f"{DB}/{JOB}/schema-dynamodb/v2/design_trace.json")
 
 
 def test_local_copy_forward_copies_a_valid_design_and_its_files(tmp_path):
-    from src.orchestrator.local_orchestrator import LocalOrchestrator
+    from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _saved_design(store, 1, _items_draft(with_entities=False))
 
-    LocalOrchestrator(store)._copy_schema_artifacts(JOB, DB, "dynamodb", 1, 2)
+    PostSchemaRouting(store, _no_redesign)._copy_schema_artifacts(JOB, DB, "dynamodb", 1, 2)
 
     v2 = f"{DB}/{JOB}/schema-dynamodb/v2"
     assert store.read_json(f"{v2}/schema_output.json")["table_definitions"] == (
@@ -754,3 +754,7 @@ def test_a_revision_of_a_valid_design_is_written_without_contract_warnings():
 
     assert V2 in _written(store)
     assert not [w for w in meta.verification.warnings if w.message.startswith("Contract: ")]
+
+
+def _no_redesign(*_args: object) -> None:
+    raise AssertionError("the post-schema routing redesigns nothing in this test")

@@ -239,8 +239,8 @@ def test_only_the_move_ledger_writes_engines_and_ties() -> None:
 def test_the_post_schema_router_writes_through_the_ledger() -> None:
     """The last writer outside the ledger (#489 Track L PR4) is gone: the
     reroute and rollback versions are built through move_ledger, so the scan
-    of the orchestrator finds nothing (not even under an exception)."""
-    path = _REPO / "src" / "orchestrator" / "local_orchestrator.py"
+    of the post-schema routing finds nothing (not even under an exception)."""
+    path = _REPO / "src" / "agents" / "referee" / "post_schema_routing_handler.py"
     assert scan_source(path.read_text(encoding="utf-8"), str(path.relative_to(_REPO))) == []
 
 

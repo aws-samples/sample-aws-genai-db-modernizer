@@ -749,7 +749,7 @@ class TestLaterPasses:
         assert engines["cnt"] == count_engine
 
     def test_the_post_schema_router_scores_with_the_approved_versions_sources(self) -> None:
-        from src.orchestrator.local_orchestrator import LocalOrchestrator
+        from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
         from tests.unit.test_assignment_overrides import _MemStore
 
         store = _MemStore()
@@ -762,7 +762,7 @@ class TestLaterPasses:
         store.write_json(f"{prefix}/referee-triage/triage.json", TRIAGE)
         for engine, analysis in ANALYSES.items():
             store.write_json(f"{prefix}/analysis-{engine}/analysis.json", analysis)
-        inputs = LocalOrchestrator(store)._router_scoring_inputs(  # type: ignore[arg-type]
+        inputs = PostSchemaRouting(store, _no_redesign)._router_scoring_inputs(  # type: ignore[arg-type]
             "job-1", "forum", list(ENGINES), 1
         )
         ctx = inputs["scoring_context"]
@@ -961,3 +961,7 @@ class TestTheDesignerInput:
             "job-1", "forum", "dynamodb", store, assignment_version=1  # type: ignore[arg-type]
         )
         assert [c["query_id"] for c in payload["analysis_output"]["key_scoped_counts"]] == ["cnt"]
+
+
+def _no_redesign(*_args: object) -> None:
+    raise AssertionError("the post-schema routing redesigns nothing in this test")

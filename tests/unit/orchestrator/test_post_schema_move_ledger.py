@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from src.agents.referee import move_ledger
+from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 from src.contracts.move_ledger import Move
 from src.orchestrator.local_orchestrator import LocalOrchestrator
 from src.storage.local_store import LocalArtifactStore
@@ -346,9 +347,9 @@ class TestTheRollbackVersionRecordsTheMovesBack:
                 for qa in restated["query_assignments"]
             ],
         }
-        assert LocalOrchestrator._rollback_moves(rerouted, restated)
+        assert PostSchemaRouting._rollback_moves(rerouted, restated)
         with pytest.raises(RuntimeError, match="post-schema rollback"):
-            LocalOrchestrator._rollback_moves(rerouted, drifted)
+            PostSchemaRouting._rollback_moves(rerouted, drifted)
 
     @pytest.mark.usefixtures("schema_contract_off")
     def test_a_query_the_reroute_left_alone_gets_no_move(self, tmp_path) -> None:
@@ -489,7 +490,7 @@ class TestTheRollbackAfterATieKeepingReroute:
         }
 
         (back,) = [
-            Move.model_validate(m) for m in LocalOrchestrator._rollback_moves(rerouted, restated)
+            Move.model_validate(m) for m in PostSchemaRouting._rollback_moves(rerouted, restated)
         ]
 
         assert (back.to_engine, back.tied_engines) == ("aurora_mysql", ["a", "b"])
@@ -511,4 +512,4 @@ class TestTheRollbackAfterATieKeepingReroute:
         }
 
         with pytest.raises(RuntimeError, match="records the tie"):
-            LocalOrchestrator._rollback_moves(rerouted, untied)
+            PostSchemaRouting._rollback_moves(rerouted, untied)

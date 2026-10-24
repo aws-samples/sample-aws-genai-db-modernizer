@@ -30,7 +30,7 @@ sanity sweep and the customer-override restore), the cache owner normalisation
 the post-schema router (#489 Track L PR4): its reroute version
 (``post_schema_flag``, ``flag.capability_gap``) and its rollback version (the
 reverse Moves, ``rollback.redesign_failed``, #770) in
-``LocalOrchestrator._rerouted_assignment`` / ``_rollback_moves``. No writer is
+``PostSchemaRouting._rerouted_assignment`` / ``_rollback_moves``. No writer is
 left outside the ledger.
 
 A query no engine in the customer's engine scope can serve (#1329, ADR-031 Decision 2

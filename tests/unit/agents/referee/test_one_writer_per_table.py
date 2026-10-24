@@ -654,7 +654,7 @@ def test_a_flag_on_a_sibling_of_a_pinned_write_holds_the_whole_write_group() -> 
 
 ROUTING_PASS_MODULES = (
     "src/agents/referee/reality_check_handler.py",
-    "src/orchestrator/local_orchestrator.py",
+    "src/agents/referee/post_schema_routing_handler.py",
 )
 
 
@@ -670,7 +670,7 @@ def test_every_later_routing_pass_places_the_write_groups_too(module: str) -> No
 
     text = (Path(__file__).resolve().parents[4] / module).read_text(encoding="utf-8")
     assert "co_dependency_groups=assignment_placement_groups(" in text
-    if module.endswith("local_orchestrator.py"):
+    if module.endswith("post_schema_routing_handler.py"):
         # A pinned write holds its table's other writes in the reroute.
         assert 'write_groups=assignment.get("write_groups")' in text
     for line in text.splitlines():

@@ -335,8 +335,9 @@ class Summary(_Strict):
         None,
         ge=1,
         description=(
-            "The assignment version the result reflects (it rises when the reality check "
-            "or a customer edit writes a new one); None at 'analysis'"
+            "The assignment version the result reflects (it rises when the reality check, "
+            "a customer edit or the post-schema routing writes a new one); None at "
+            "'analysis'"
         ),
     )
     statement_count: int = Field(..., ge=0, description="Placed statements plus unservable ones")
@@ -495,8 +496,10 @@ class AssessmentResult(_Strict):
     (artifacts.assignment.moves, with include_artifacts=True), and the statement it
     moved has reason_code "capability_flag". run_through="schema_design" and
     "synthesis" always use a model: the placement is the reality check's (the same
-    guarantee), and the designs and the report's executive summary can differ between
-    runs. Results are never stored or reused: a repeat call is a new run."""
+    guarantee) plus the post-schema routing's moves of the statements a design cannot
+    serve (each a "post_schema_flag" Move, reason_code "post_schema_reroute"), and the
+    designs and the report's executive summary can differ between runs. Results are
+    never stored or reused: a repeat call is a new run."""
 
     contract_version: Literal["1.0"] = CONTRACT_VERSION
     label: ResultLabel = Field(

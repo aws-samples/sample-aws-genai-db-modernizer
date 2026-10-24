@@ -1713,3 +1713,48 @@ def run_schema_design_core(
         len(access_patterns),
     )
     return summary
+
+
+def run_post_schema_routing_core(
+    job_id: str,
+    database_name: str,
+    store=None,
+    llm_mode: str = "bedrock",
+    redesign: Callable[[str, str, str, int], None] | None = None,
+) -> dict:
+    """Run the post-schema routing after schema design (#1492). Returns a summary dict.
+
+    The one implementation the local pipeline and ``assess()`` share, and AWS
+    Transform is to call (#1498) (``post_schema_routing_handler.PostSchemaRouting``):
+    each statement a design
+    reports unsupported, or a PE reviewer flags, moves with its placement unit to its
+    best remaining engine among the ones the effective assignment keeps (the shared
+    scorer, the move ledger, never an engine outside the customer's engine scope);
+    the moves are a new assignment version, and every engine they touch is designed
+    again on it (``redesign``), the others' designs carried forward. A statement with
+    no remaining engine stays where it is and is listed as terminal. A failed
+    redesign writes a rollback version restating the one the reroute started from
+    and raises. Bounded at ``POST_SCHEMA_MAX_DEPTH`` cascade passes.
+
+    ``redesign(job_id, database_name, engine, assignment_version)`` designs one
+    engine on the reroute's version; by default ``run_schema_design_auto`` in
+    ``llm_mode``, as the local pipeline designs. Prerequisites: the designs of the
+    effective assignment version (with none, nothing is routed).
+    """
+    from src.agents.referee.post_schema_routing_handler import (
+        PostSchemaRouting,
+        pipeline_redesign,
+    )
+
+    store = store or make_store()
+    routing = PostSchemaRouting(store, redesign or pipeline_redesign(store, llm_mode))
+    run = routing.run(job_id, database_name)
+    return {
+        "job_id": job_id,
+        "database_name": database_name,
+        "source_assignment_version": run["start_version"],
+        "effective_assignment_version": run["assignment_version"],
+        "rerouted": len([r for r in run["routings"] if r.get("to_engine")]),
+        "terminal_queries": len(run["terminal_queries"]),
+        "held_queries": len(run["held_queries"]),
+    }

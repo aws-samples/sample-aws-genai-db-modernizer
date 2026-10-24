@@ -32,6 +32,7 @@ from unittest.mock import patch
 import pytest
 
 from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
+from src.agents.referee.post_schema_routing_handler import PostSchemaRouting
 from src.orchestrator.local_orchestrator import LocalOrchestrator
 from src.storage.local_store import LocalArtifactStore
 from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
@@ -583,7 +584,7 @@ def test_a_failed_carry_forward_is_saved_as_rolled_back(headless, tmp_path_facto
     store = LocalArtifactStore(base_dir=str(root))
     orch = LocalOrchestrator(store, llm_mode="external")
     with (
-        patch.object(LocalOrchestrator, "_carry_forward_designs", side_effect=OSError("disk")),
+        patch.object(PostSchemaRouting, "_carry_forward_designs", side_effect=OSError("disk")),
         pytest.raises(OSError),
     ):
         orch.run_post_schema_routing_external(JOB, DB)

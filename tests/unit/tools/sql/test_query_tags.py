@@ -334,7 +334,7 @@ _NO_TAG_READERS = (
     "src/report",
     "src/shared",
     "src/storage",
-    "src/orchestrator",  # post-schema routing (local_orchestrator.py)
+    "src/orchestrator",
     "src/ui/src",
 )
 _NO_TAG_READER_FILES = ("scripts/run_post_schema_routing.py",)

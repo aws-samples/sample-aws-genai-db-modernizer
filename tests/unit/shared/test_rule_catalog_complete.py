@@ -306,6 +306,11 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         frozenset({"MAX_QUERIES_PER_CALL"}),
         _BUDGET + ": the model batch size of a consolidation validation call",
     ),
+    "src/agents/referee/post_schema_routing_handler.py": (
+        frozenset({"POST_SCHEMA_MAX_DEPTH"}),
+        "the post-schema router's cascade bound (passes 0 to 2), a loop bound, not a score "
+        "or a placement rule; moved here from src/orchestrator/local_orchestrator.py (#1492)",
+    ),
     "src/agents/referee/transaction_shape.py": (
         frozenset({"TRANSACTION_MAX_ITEMS"}),
         _DETECTION + ": DynamoDB's 100-item transaction quota bounds the shape (#493)",

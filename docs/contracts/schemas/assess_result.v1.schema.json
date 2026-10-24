@@ -578,7 +578,7 @@
             }
           ],
           "default": null,
-          "description": "The assignment version the result reflects (it rises when the reality check or a customer edit writes a new one); None at 'analysis'",
+          "description": "The assignment version the result reflects (it rises when the reality check, a customer edit or the post-schema routing writes a new one); None at 'analysis'",
           "title": "Assignment Version"
         },
         "statement_count": {
@@ -821,7 +821,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee), and the designs and the report's executive summary can differ between\nruns. Results are never stored or reused: a repeat call is a new run.",
+  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
       "const": "1.0",

@@ -3,9 +3,10 @@
 The phases are the core entry points every other path uses
 (``src.atx_orchestrator.core``): ingest the collection, triage, analyse, then place
 statements and run the reality check, then design the schema of every engine the
-effective assignment keeps, then synthesise the report. No routing happens here. Each
-phase is one entry of :data:`PHASES`, run in order until ``options.run_through``, so a
-later phase is one more entry.
+effective assignment keeps and run the post-schema routing on the designs, then
+synthesise the report. No routing rule lives here. Each phase is one entry of
+:data:`PHASES`, run in order until ``options.run_through``, so a later phase is one
+more entry.
 """
 
 from __future__ import annotations
@@ -96,15 +97,22 @@ def _effective_version(job: _Job) -> int:
     return version
 
 
+def _design(job: _Job, engine: str, version: int) -> None:
+    from src.atx_orchestrator.core import run_schema_design_core
+
+    run_schema_design_core(
+        job.job_id, job.database_name, engine, assignment_version=version, store=job.store
+    )
+
+
 def _design_schemas(job: _Job) -> None:
     """Design every engine the effective assignment keeps (its owners and the cache
     layer, in triage's order, inside the engine scope), concurrently, as the pipeline
-    does. Every designer uses a model (the request model refuses this phase with
-    ``deterministic=True``). A failed design fails the run: no result is built from a
-    partial set of designs."""
+    does, then run the pipeline's post-schema routing on the designs. Every designer
+    uses a model (the request model refuses this phase with ``deterministic=True``). A
+    failed design fails the run: no result is built from a partial set of designs."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from src.atx_orchestrator.core import run_schema_design_core
     from src.storage.assignment_versioning import schema_design_engines
 
     version = _effective_version(job)
@@ -112,9 +120,7 @@ def _design_schemas(job: _Job) -> None:
     engines = schema_design_engines(job.store, job.database_name, job.job_id, version)
 
     def design(engine: str) -> None:
-        run_schema_design_core(
-            job.job_id, job.database_name, engine, assignment_version=version, store=job.store
-        )
+        _design(job, engine, version)
 
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=max(1, len(engines))) as pool:
@@ -127,6 +133,29 @@ def _design_schemas(job: _Job) -> None:
                 failed.append(engine)
     if failed:
         raise AssessmentRunError(f"schema design failed for {', '.join(failed)}; no result built")
+    _route_after_schema_design(job)
+
+
+def _route_after_schema_design(job: _Job) -> None:
+    """The pipeline's post-schema routing (#1492, the core entry point every path
+    uses): a statement a design cannot serve moves to its best remaining engine in the
+    engine scope, as a new assignment version, and only the engines the moves touch
+    are designed again on it. The result is then read at that version. A failed
+    redesign fails the run (the routing has written a rollback version first)."""
+    from src.atx_orchestrator.core import run_post_schema_routing_core
+
+    def redesign(job_id: str, database_name: str, engine: str, version: int) -> None:
+        _design(job, engine, version)
+
+    try:
+        run_post_schema_routing_core(
+            job.job_id, job.database_name, store=job.store, redesign=redesign
+        )
+    except Exception as exc:
+        logger.exception("assess(): the post-schema routing failed")
+        raise AssessmentRunError(
+            f"the post-schema routing failed ({exc}); no result built"
+        ) from exc
 
 
 def _synthesise(job: _Job) -> None:
