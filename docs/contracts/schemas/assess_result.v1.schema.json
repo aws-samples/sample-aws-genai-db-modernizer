@@ -6,7 +6,7 @@
   "$defs": {
     "Artifacts": {
       "additionalProperties": true,
-      "description": "Internal contracts, verbatim. No compatibility promise; each keeps its own version.",
+      "description": "Internal contracts, verbatim. No compatibility promise; each keeps its own version.\n\nFrom ``schema_design`` on: ``schema_designs`` (each designed engine's schema output,\nthe data model) and, at ``synthesis``, ``synthesis_report`` (the report every\ndeliverable renders). ``artifact_keys`` names the store key each was read from\n(under ``<database_name>/<job_id>/``), for a caller that passed its own store.",
       "properties": {
         "compatibility": {
           "const": "none: internal contracts, may change in any release",
@@ -24,6 +24,19 @@
     "AssessmentOptions": {
       "additionalProperties": false,
       "description": "How far to run and over which engines. Echoed in the result as applied.",
+      "if": {
+        "properties": {
+          "run_through": {
+            "enum": [
+              "schema_design",
+              "synthesis"
+            ]
+          }
+        },
+        "required": [
+          "run_through"
+        ]
+      },
       "properties": {
         "target_engines": {
           "anyOf": [
@@ -43,7 +56,7 @@
         },
         "run_through": {
           "default": "reality_check",
-          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement. 'schema_design' (the data model, which needs a model) and 'synthesis' are refused in this release.",
+          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement; 'schema_design' designs the data model of every engine the placement keeps; 'synthesis' adds the report. 'schema_design' and 'synthesis' need a model (deterministic=False); their designs and report are in `artifacts`.",
           "enum": [
             "analysis",
             "reality_check",
@@ -55,7 +68,7 @@
         },
         "deterministic": {
           "default": true,
-          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary.",
+          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary, schema design designs with a model and synthesis writes its executive summary with one. Must be False for 'schema_design' and 'synthesis'.",
           "title": "Deterministic",
           "type": "boolean"
         },
@@ -72,6 +85,16 @@
         "deterministic",
         "include_artifacts"
       ],
+      "then": {
+        "properties": {
+          "deterministic": {
+            "const": false
+          }
+        },
+        "required": [
+          "deterministic"
+        ]
+      },
       "title": "AssessmentOptions",
       "type": "object"
     },
@@ -619,6 +642,27 @@
           },
           "title": "Tables",
           "type": "array"
+        },
+        "designed_engines": {
+          "description": "The engines with a schema design (in `artifacts.schema_designs`), in triage's order; empty before 'schema_design', and when no engine could be designed",
+          "items": {
+            "type": "string"
+          },
+          "title": "Designed Engines",
+          "type": "array"
+        },
+        "design_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Customer-facing sentence; do not parse. Set only when 'schema_design' ran and no engine could be designed (the result is then a 'recommendation')",
+          "title": "Design Note"
         }
       },
       "required": [
@@ -632,7 +676,9 @@
         "relational_engine",
         "engines",
         "consolidations",
-        "tables"
+        "tables",
+        "designed_engines",
+        "design_note"
       ],
       "title": "Summary",
       "type": "object"
@@ -775,7 +821,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". Results are never stored or reused: a\nrepeat call is a new run.",
+  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee), and the designs and the report's executive summary can differ between\nruns. Results are never stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
       "const": "1.0",
@@ -784,7 +830,7 @@
       "type": "string"
     },
     "label": {
-      "description": "analysis_only: scores, nothing placed; recommendation: engine placement, not a data model; designed: with a schema design's data model (not produced by this release)",
+      "description": "analysis_only: scores, nothing placed; recommendation: engine placement, not a data model (also a 'schema_design' or 'synthesis' run with no engine to design: see summary.design_note); designed: engine placement and a schema design's data model for summary.designed_engines (the designs are in `artifacts`)",
       "enum": [
         "analysis_only",
         "recommendation",

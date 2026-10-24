@@ -30,9 +30,9 @@ Draft202012Validator(schema).validate(json.load(open("result.json")))
 From Python, the models themselves are the stricter check: `AssessmentRequest.model_validate(payload)` and `AssessmentResult.model_validate_json(text)` (`src.assessment`). The schemas describe the shape; the library applies a few rules a schema does not state:
 
 - `options.target_engines`: ids are normalised, and an unknown, legacy or planned engine id is refused;
-- `options.run_through`: `"schema_design"` and `"synthesis"` are part of the contract and refused in this release;
+- `options.run_through`: `"schema_design"` and `"synthesis"` need `deterministic: false` (the request schema states it too, with `if`/`then`); the library refuses them otherwise, with a message;
 - `database_name`: surrounding whitespace is stripped before the name is checked (the schema's `pattern` checks the name as sent);
-- `label` follows `summary.run_through_reached` (`analysis_only`, `recommendation`, `designed`).
+- `label` follows `summary.run_through_reached` (`analysis_only`, `recommendation`, `designed`); a `"schema_design"` or `"synthesis"` result with an empty `summary.designed_engines` is a `recommendation`.
 
 ## Regenerating
 

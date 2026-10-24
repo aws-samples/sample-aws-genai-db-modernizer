@@ -84,9 +84,13 @@ def test_other_contract_version_is_refused() -> None:
 
 
 @pytest.mark.parametrize("run_through", ["schema_design", "synthesis"])
-def test_later_phases_are_refused_for_now(run_through: str) -> None:
-    with pytest.raises(ValidationError, match="not implemented yet"):
+def test_later_phases_need_a_model(run_through: str) -> None:
+    with pytest.raises(ValidationError, match="needs a model"):
         AssessmentRequest.model_validate(_request(options={"run_through": run_through}))
+    request = AssessmentRequest.model_validate(
+        _request(options={"run_through": run_through, "deterministic": False})
+    )
+    assert request.options.run_through == run_through
 
 
 def test_unknown_run_through() -> None:

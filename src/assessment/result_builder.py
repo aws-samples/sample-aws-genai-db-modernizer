@@ -13,10 +13,13 @@ routing did not already decide:
   is placed yet), the same scorer called the way routing calls it
   (``ScoringContext.from_pipeline`` and ``score_query_for_engine``);
 - ``summary.tables`` are the facts layer's table owner lines
-  (``src.shared.report_facts``), from the same assignment usage synthesis reads;
+  (``src.shared.report_facts``), from the same assignment usage synthesis reads; at
+  ``run_through="synthesis"``, the report's own table owner lines
+  (``facts.table_owner_lines``) for every table it maps;
 - ``summary.engines`` are the analysed engines with the facts layer's per-engine line
   (the executive report's role and "why" text, from synthesis's own ranking of the
-  effective assignment) and the reality check's unique-value figures;
+  effective assignment and any schema design of it; at ``synthesis``, the report's
+  ``facts.engines``) and the reality check's unique-value figures;
   ``summary.consolidations`` are the reality check's consolidations;
 - a statement's ``matched_patterns`` are its assigned engine's decision-trace matches,
   named by the pattern catalog (``src/catalog/patterns``);
@@ -33,7 +36,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.assessment.models import (
-    LABEL_BY_PHASE,
     Artifacts,
     AssessmentRequest,
     AssessmentResult,
@@ -46,6 +48,7 @@ from src.assessment.models import (
     StatementResult,
     Summary,
     TableLine,
+    result_label,
 )
 from src.assessment.reason_codes import CONSOLIDATION_CODES, public_reason_code
 from src.assessment.ruleset import ruleset_hash, ruleset_version
@@ -73,6 +76,13 @@ class RunState:
     # effective assignment, by engine: the executive report's role and "why" text.
     # Empty before ``reality_check``.
     report_engines: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Each designed engine's schema output at the effective version, by engine, in
+    # design order; empty before ``schema_design``.
+    schema_designs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # The synthesis report of the effective version; None before ``synthesis``.
+    synthesis_report: dict[str, Any] | None = None
+    # The store key each design and the report were read from.
+    artifact_keys: dict[str, Any] = field(default_factory=dict)
 
     @property
     def assignment(self) -> dict[str, Any] | None:
@@ -135,9 +145,39 @@ def load_run_state(store: Any, database_name: str, job_id: str, run_through: str
     # The record of the reality-check run the effective assignment descends from, never
     # one from another lineage.
     state.reality_check = read_reality_check_output(store, database_name, job_id, effective)
-    if effective:
+    if not effective:
+        return state
+    designed = run_through in ("schema_design", "synthesis")
+    if designed:
+        _load_designs(state, store, database_name, job_id, effective)
+    if run_through == "synthesis":
+        # Where ``run_synthesis_core`` writes a versioned report.
+        key = f"{database_name}/{job_id}/synthesis/v{effective}/report.json"
+        state.synthesis_report = store.read_json(key)
+        state.artifact_keys["synthesis_report"] = key
+        facts = state.synthesis_report.get("facts") or {}
+        state.report_engines = {
+            str(r["engine"]): r for r in facts.get("engines") or [] if isinstance(r, dict)
+        }
+    else:
         state.report_engines = report_engine_lines(store, database_name, job_id, effective)
     return state
+
+
+def _load_designs(
+    state: RunState, store: Any, database_name: str, job_id: str, version: int
+) -> None:
+    """The schema outputs the designers wrote at ``version``, for the engines schema
+    design ran for."""
+    from src.storage.assignment_versioning import schema_design_engines
+
+    keys: dict[str, str] = {}
+    for engine in schema_design_engines(store, database_name, job_id, version):
+        key = f"{database_name}/{job_id}/schema-{engine}/v{version}/schema_output.json"
+        if store.exists(key):
+            state.schema_designs[engine] = store.read_json(key)
+            keys[engine] = key
+    state.artifact_keys["schema_designs"] = keys
 
 
 def report_engine_lines(
@@ -145,13 +185,15 @@ def report_engine_lines(
 ) -> dict[str, dict[str, Any]]:
     """The executive report's per-engine lines for assignment ``version``: synthesis's
     own ranking of it (``build_ranking`` over ``load_synthesis_data``, as the report
-    builds it) through the facts layer (``engine_facts``). Only the engines that keep
-    a part in the architecture are in it (an owner or the cache layer)."""
+    builds it, with any schema design of it) through the facts layer
+    (``engine_facts``). Only the engines that keep a part in the architecture are in
+    it (an owner or the cache layer)."""
     from src.agents.referee.synthesis_data import load_synthesis_data
     from src.agents.referee.synthesis_report import build_ranking
     from src.shared.report_facts import engine_facts
 
-    # Schema design has not run (it is after reality_check), so its outputs cannot exist.
+    # A missing design is no warning here: before schema design none can exist, and
+    # after it ``run_schema_design_core`` has checked that every design was written.
     data = load_synthesis_data(store, job_id, database_name, version, schema_design_expected=False)
     rows = engine_facts({"ranking": build_ranking(data)}, [])
     return {str(r["engine"]): r for r in rows}
@@ -445,7 +487,36 @@ def build_table_lines(state: RunState, retained_engine: str | None) -> list[Tabl
         )
         reason = table_owner_reason(line, writes, queries, retained_engine)
         lines.append(TableLine(table_id=table, **line, reason=reason))
-    return lines
+    stated = _report_table_lines(state)
+    if not stated:
+        return lines
+    # At synthesis the report's own lines, for every table it maps (a table only a
+    # schema design maps included); the others keep the assignment's line.
+    by_table = {line.table_id: line for line in lines}
+    for table, row in stated.items():
+        u = usage.get(table) or {}
+        line = {k: row.get(k) for k in _OWNER_FIELDS}
+        line["also_read_by"] = [str(e) for e in line["also_read_by"] or []]
+        reason = table_owner_reason(
+            line, u.get("writes") or {}, u.get("queries") or {}, retained_engine
+        )
+        by_table[table] = TableLine(table_id=table, **line, reason=reason)
+    return [by_table[t] for t in sorted(by_table)]
+
+
+_OWNER_FIELDS = ("owner", "owner_basis", "also_read_by", "cached_by")
+
+
+def _report_table_lines(state: RunState) -> dict[str, dict[str, Any]]:
+    """``{table: owner line}`` from the synthesis report's ``facts.table_owner_lines``
+    (``table_ownership_facts``); empty before synthesis or for a report with no map."""
+    facts = (state.synthesis_report or {}).get("facts") or {}
+    owner_lines = facts.get("table_owner_lines") or {}
+    return {
+        str(row["table"]): row
+        for row in owner_lines.get("table_lines") or []
+        if isinstance(row, dict) and row.get("table")
+    }
 
 
 def build_consolidations(state: RunState) -> list[Consolidation]:
@@ -576,7 +647,23 @@ def build_summary(state: RunState, statements: list[StatementResult]) -> Summary
         engines=build_engine_lines(state, per_engine, consolidations, relational),
         consolidations=consolidations,
         tables=build_table_lines(state, relational.engine if relational else None),
+        **_design_lines(state),
     )
+
+
+NO_DESIGN_NOTE = (
+    "No schema design ran: no engine in the engine scope serves a statement or fronts "
+    "its reads, so the result has no data model."
+)
+
+
+def _design_lines(state: RunState) -> dict[str, Any]:
+    """``designed_engines`` (the engines with a schema design that is not a skipped
+    placeholder) and, when a model phase designed none, ``design_note``."""
+    if state.run_through not in ("schema_design", "synthesis"):
+        return {}
+    designed = [e for e, d in state.schema_designs.items() if d.get("status") != "skipped"]
+    return {"designed_engines": designed, "design_note": None if designed else NO_DESIGN_NOTE}
 
 
 # --------------------------------------------------------------------------- groups
@@ -674,6 +761,12 @@ def build_artifacts(state: RunState) -> Artifacts:
         blocks["assignment"] = state.assignment
     if state.reality_check is not None:
         blocks["reality_check"] = state.reality_check
+    if state.run_through in ("schema_design", "synthesis"):
+        blocks["schema_designs"] = state.schema_designs
+    if state.synthesis_report is not None:
+        blocks["synthesis_report"] = state.synthesis_report
+    if state.artifact_keys:
+        blocks["artifact_keys"] = state.artifact_keys
     return Artifacts(**blocks)
 
 
@@ -682,14 +775,15 @@ def build_artifacts(state: RunState) -> Artifacts:
 
 def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResult:
     statements = build_statements(state, request)
+    summary = build_summary(state, statements)
     return AssessmentResult(
-        label=LABEL_BY_PHASE[state.run_through],  # type: ignore[arg-type]
+        label=result_label(state.run_through, summary.designed_engines),  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),
         ruleset_hash=ruleset_hash(),
         options=request.options,
         scope=request.scope,
-        summary=build_summary(state, statements),
+        summary=summary,
         statements=statements,
         groups=build_groups(state, statements),
         artifacts=build_artifacts(state) if request.options.include_artifacts else None,

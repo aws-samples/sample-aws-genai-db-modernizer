@@ -366,10 +366,18 @@ def test_designed_only_with_a_schema_design() -> None:
     dumped = assessed("wordpress", "reality_check").model_dump(mode="json")
     for phase in ("schema_design", "synthesis"):
         dumped["summary"]["run_through_reached"] = phase
+        dumped["summary"]["designed_engines"] = ["dynamodb"]
         dumped["label"] = "designed"
         assert AssessmentResult.model_validate(dumped).label == "designed"
         dumped["label"] = "recommendation"
         with pytest.raises(ValidationError, match="label must be 'designed'"):
+            AssessmentResult.model_validate(dumped)
+        # No engine designed: the result carries no data model, so it stays a
+        # recommendation (#1387 review).
+        dumped["summary"]["designed_engines"] = []
+        assert AssessmentResult.model_validate(dumped).label == "recommendation"
+        dumped["label"] = "designed"
+        with pytest.raises(ValidationError, match="label must be 'recommendation'"):
             AssessmentResult.model_validate(dumped)
 
 

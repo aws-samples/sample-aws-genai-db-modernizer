@@ -656,6 +656,28 @@ def engines_with_in_scope_queries(
     return set(_in_scope_engine_query_sets(store, database_name, job_id, version))
 
 
+def schema_design_engines(
+    store: _Reader, database_name: str, job_id: str, version: int
+) -> list[str]:
+    """The engines that get a schema design on one assignment version, in triage's
+    order: triage's selection (which already leaves out the engines outside the
+    customer's engine scope), filtered to the engines with an in-scope query at
+    ``version``: owners (``assigned_engine``) and the cache layer when it fronts an
+    owner's reads (``cache_engine``, #296). Empty when the version has no assignment.
+    """
+    in_scope = engines_with_in_scope_queries(store, database_name, job_id, version)
+    if not in_scope:
+        return []
+    triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
+    if not store.exists(triage_key):
+        return sorted(in_scope)
+    selected = [
+        a.get("agent_type") if isinstance(a, dict) else a
+        for a in store.read_json(triage_key).get("selected_agents") or []
+    ]
+    return [str(e) for e in dict.fromkeys(selected) if e in in_scope]
+
+
 def assignment_engine_diff(
     store: _Reader,
     database_name: str,

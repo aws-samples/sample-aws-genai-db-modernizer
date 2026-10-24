@@ -48,7 +48,58 @@ Every problem raises `CollectionLoadError`, a `ValueError` subclass, with a mess
 
 The result is for **engine placement**: which engine serves each statement, which statements move together, and which engine owns each table.
 
-It is **not a data model**. Partition and sort keys, indexes and target tables come only from schema design (`run_through="schema_design"`), which always uses a model and has its own reviewer. The deterministic analysis does make first guesses about a data model, but they are inputs to that design, not results: they are never part of the stable surface, and a caller should not build on them. Schema design is not available through `assess()` in this release.
+It is **not a data model**. Partition and sort keys, indexes and target tables come only from schema design (`run_through="schema_design"`), which always uses a model and has its own reviewer. Its designs are returned in the `artifacts` block (see [How far to run](#how-far-to-run-run_through)), not in the stable surface, until a stable design surface is agreed. The deterministic analysis does make first guesses about a data model, but they are inputs to that design, not results: they are never part of the stable surface, and a caller should not build on them.
+
+## How far to run: `run_through`
+
+Each value runs the phases before it too. From `"reality_check"` on, a later value's result keeps the stable fields an earlier one returns (see [Determinism](#determinism)).
+
+| `run_through` | What it adds | Needs a model | Time and cost |
+|---|---|---|---|
+| `"analysis"` | A score per statement on every analysed engine; nothing placed (`label` `analysis_only`) | Never | Seconds (see below); no model spend |
+| `"reality_check"` (default) | The final engine placement: each statement's engine, the groups' engines, each table's owner (`label` `recommendation`) | Only with `deterministic: false` (a model reviews the consolidations) | Seconds with `deterministic: true` (see below); with `false`, plus the model calls that review the consolidations and write a summary |
+| `"schema_design"` | A schema design (the data model) for every engine the placement keeps, in `artifacts.schema_designs`; `summary.designed_engines` names them (`label` `designed`, or `recommendation` when no engine could be designed) | Always: send `deterministic: false` | Minutes, and model spend that grows with the statement count (see below) |
+| `"synthesis"` | The report every deliverable renders, in `artifacts.synthesis_report`; `summary.tables` and `summary.engines[].reason` are the report's own lines (labelled as at `"schema_design"`) | Always: send `deterministic: false` | Schema design's, plus one executive-summary call |
+
+`"schema_design"` and `"synthesis"` with `deterministic: true` (the default) are refused when the request is validated, with a message that says the phase needs a model, before anything runs. Model access is configured as for the pipeline's `--llm-mode bedrock` ([Other ways to run it](../other-ways-to-run-it.md)): schema design uses the schema-design model role (Claude Opus by default), the summaries the summary role.
+
+**How long the deterministic phases take.** Measured on a laptop with nothing else running, three runs each, in a fresh process: the WordPress sample (107 statements) 0.8 seconds through `"analysis"` and 1.0 through `"reality_check"`; the TrailGear sample (95) 0.8 and 0.9; the Discourse sample (1,654) 6.3 to 6.4 and 9.1 to 9.2. A busy machine is slower: a run of Discourse next to the test suite took 11 to 15.5 seconds.
+
+**What schema design costs.** It calls a model for every engine it designs, in parallel, and, for the engines that split a large workload, once per group of up to 20 statements, and a reviewer model reads the designs. So its time and spend grow with the number of statements and engines, not with the database's size. `assess()` itself has not been measured with Amazon Bedrock yet, so there is no published figure for it. As an upper-bound reference only: the repository's headless pipeline runs (`/modernize` run by Claude Code, not Amazon Bedrock) take about 6 minutes and about $4 in model spend on the WordPress sample (107 statements, three designed engines), and 14 to 15 minutes and $18 to $20 on the Discourse sample (1,654 statements). Those figures include Claude Code's own orchestration turns and the post-schema routing and redesign that `assess()` does not run, so an `assess()` run through `"synthesis"` should cost less; #1494 measures it. Use `"analysis"` or `"reality_check"` (no model, seconds) for engine placement, and `"schema_design"` only when you need a data model.
+
+```python
+# Placement only, no model (seconds).
+placed = assess({"database_name": "shop", "collection": raw, "options": {"run_through": "reality_check"}})
+
+# Scores only, nothing placed.
+scored = assess({"database_name": "shop", "collection": raw, "options": {"run_through": "analysis"}})
+
+# The data model: a schema design per kept engine (needs a model).
+designed = assess(
+    {
+        "database_name": "shop",
+        "collection": raw,
+        "options": {"run_through": "schema_design", "deterministic": False, "include_artifacts": True},
+    }
+)
+dynamodb_design = designed.artifacts.schema_designs["dynamodb"]  # an internal contract
+
+# The report too.
+reported = assess(
+    {
+        "database_name": "shop",
+        "collection": raw,
+        "options": {"run_through": "synthesis", "deterministic": False, "include_artifacts": True},
+    }
+)
+report = reported.artifacts.synthesis_report
+```
+
+Which engines get a schema design: the ones the effective assignment keeps, owners and the cache layer when it fronts an owner's reads, in the engine scope (`target_engines`). An engine the reality check consolidated away, or one outside the scope, gets none. A design that fails (an error from the designer or the model) fails the run (`AssessmentRunError`): no result is built from a partial set of designs. A design that is written but does not pass its checks (for example, it names a statement outside its engine's scope) is not a failure: as in the pipeline, it comes back as a normal design with `validation_passed: false` and the reasons in `validation_failures`, in `artifacts.schema_designs.<engine>`. Check `validation_passed` before you use a design.
+
+`summary.designed_engines` lists the engines with a design. When the engine scope leaves no engine to design (for example `target_engines: ["elasticache"]`: a cache owns no statement, so every statement is unservable), no designer runs, `designed_engines` is empty, `summary.design_note` says so, and the result is labelled `recommendation`, not `designed`, because it has no data model. `summary.run_through_reached` still says how far the run got.
+
+The designs and the report are only in `artifacts`, so ask for `include_artifacts: true` (or pass your own `store`, where they stay under `<database_name>/<job_id>/`; `artifacts.artifact_keys` names each key). Without it, a designed result carries the placement and the label, but no design. `assess()` does not run the pipeline's post-schema routing (moving a statement a design cannot serve to another engine), so a designed result's placement is the reality check's.
 
 ## The request
 
@@ -57,9 +108,9 @@ It is **not a data model**. Partition and sort keys, indexes and target tables c
 | `contract_version` | `"1.0"` |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens |
 | `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
-| `options.run_through` | `"analysis"` or `"reality_check"` (default). `"schema_design"` and `"synthesis"` are refused in this release |
+| `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
 | `options.target_engines` | Engine scope, as engine catalog ids; `null` means every engine the workload warrants. Unknown, legacy and planned ids, and an empty list, are refused |
-| `options.deterministic` | `true` (default): no model is called. `false`: the reality check has a model review its consolidations, which needs model access |
+| `options.deterministic` | `true` (default): no model is called. `false`: the reality check has a model review its consolidations, which needs model access. Must be `false` for `"schema_design"` and `"synthesis"`, which always use a model |
 | `options.include_artifacts` | Include the internal contracts (see below) |
 | `scope` | Informational: what a cut workload left out. Echoed back; no rule reads it. Statements in `scope.rewritten_query_ids` are marked `rewritten_by_caller` |
 
@@ -67,10 +118,10 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, and `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, and `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
-- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, and `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`);
+- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
 - `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer).
 
@@ -85,8 +136,8 @@ Fields that come from a later phase are `null` (or empty) when `run_through` sto
 | `label` | When | What it holds |
 |---|---|---|
 | `analysis_only` | `run_through_reached` is `"analysis"` | Scores per statement; nothing placed |
-| `recommendation` | `run_through_reached` is `"reality_check"` | Engine placement: where each statement runs, which engine owns each table. No data model |
-| `designed` | `run_through_reached` is `"schema_design"` or `"synthesis"` | Placement plus a schema design's data model. Not produced by this release |
+| `recommendation` | `run_through_reached` is `"reality_check"`, or a model phase that had no engine to design (`summary.designed_engines` empty) | Engine placement: where each statement runs, which engine owns each table. No data model |
+| `designed` | `run_through_reached` is `"schema_design"` or `"synthesis"` and `summary.designed_engines` is not empty | Placement plus a schema design's data model for each engine in `summary.designed_engines`, in `artifacts` (no compatibility promise until a stable design surface is agreed) |
 
 ### Summary additions
 
@@ -116,11 +167,12 @@ How to read it:
 
 - **`run_through: "analysis"`** (no model): the same collection, library version and engine scope give an identical result, byte for byte once serialized with sorted keys, in any process and under any `PYTHONHASHSEED`. The result carries no run timestamp; only the opt-in `artifacts` block records run times. A test runs every bundled sample in separate processes under different hash seeds and compares the results.
 - **`run_through: "reality_check"`**: not guaranteed. Everything up to the reality check's model review is deterministic, but the review (`deterministic: false`) can differ between runs, and it can change consolidations. Every change it makes is recorded as a Move with `actor` `"model_flag"` in the assignment's `moves` (`artifacts.assignment.moves`, with `include_artifacts: true`), and the statement it moved has `reason_code` `capability_flag`, so a caller can see which parts came from the review.
+- **`run_through: "schema_design"` and `"synthesis"`**: they always use a model, so they are not deterministic. The placement in their result is the reality check's (with the guarantee above: each change the review made is a `model_flag` Move), and they change none of the stable fields `"reality_check"` returns for that placement: the statements, groups and summary are the same, except that `summary.engines[].reason` adds the schema design's sentence ("Schema design: ...") and, at `"synthesis"`, `summary.tables` can add a line for a table only a design maps. A test runs every phase on the WordPress sample with the model calls replaced and checks this. The designs in `artifacts.schema_designs` and the report's executive summary can differ between runs.
 - **No stored results.** The library never stores or reuses a result: a repeat call is a new run.
 
 ## Artifacts: no compatibility promise
 
-With `include_artifacts: true`, the result also carries `artifacts`: the pipeline's internal contracts, verbatim (`collector_output`, `triage`, `analyses`, `decision_traces`, and from `"reality_check"` on, `assignment` and `reality_check`). Each keeps its own internal `contract_version`, and the block's `compatibility` field says it plainly: they may change in any release, as routing evolves. Use them for debugging and audit, not as an integration surface.
+With `include_artifacts: true`, the result also carries `artifacts`: the pipeline's internal contracts, verbatim (`collector_output`, `triage`, `analyses`, `decision_traces`, and from `"reality_check"` on, `assignment` and `reality_check`; from `"schema_design"` on, `schema_designs`, each designed engine's schema output by engine id; at `"synthesis"`, `synthesis_report`; and `artifact_keys`, the store key each design and the report were read from). Each keeps its own internal `contract_version`, and the block's `compatibility` field says it plainly: they may change in any release, as routing evolves. Use them for debugging and audit, not as an integration surface.
 
 ## JSON Schemas
 
@@ -129,7 +181,7 @@ The request and the result are published as JSON Schemas (draft 2020-12) in [`do
 - [`assess_request.v1.schema.json`](schemas/assess_request.v1.schema.json): `AssessmentRequest`;
 - [`assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json): `AssessmentResult`, as `model_dump_json` writes it.
 
-`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape; the library also refuses an unknown engine id, a `run_through` this release does not run and a `label` that does not match `summary.run_through_reached` ([schemas/README.md](schemas/README.md)).
+`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id and a `label` that does not match `summary.run_through_reached` ([schemas/README.md](schemas/README.md)).
 
 ## Sample
 
@@ -237,7 +289,9 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
         "cached_by": null,
         "reason": "No statement writes it; DynamoDB serves its only query."
       }
-    ]
+    ],
+    "designed_engines": [],
+    "design_note": null
   },
   "statements": [
     {

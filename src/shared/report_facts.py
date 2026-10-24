@@ -2521,7 +2521,9 @@ def table_owner_reason(
         share += f", tied with {_engine_list(tied)}; {rule}"
     elif len(served) > 1:
         share += ", more than any other engine that can own a table"
-    if basis == OWNER_BY_WRITES:
+    if basis == OWNER_BY_DESIGN:
+        text = f"{name} owns it in the schema design; no statement in scope queries it"
+    elif basis == OWNER_BY_WRITES:
         text = f"{name} takes every statement that writes it ({_statements(writes.get(owner, 0))})"
     elif basis == OWNER_BY_RETAINED or not on_owner:
         text = f"No engine that can own a table queries it, so it stays on {name}, the retained relational engine"
@@ -2530,10 +2532,8 @@ def table_owner_reason(
             (str(e) for e, n in writes.items() if e and n), key=lambda e: (-writes[e], e)
         )
         text = f"Its writes are on {_engine_list(writers)}, so the owner is the engine serving most of its queries: {share}"
-    elif basis == OWNER_BY_MOST_QUERIES:
-        text = f"No statement writes it; {share}"
     else:
-        text = f"{name} owns it in the schema design; no statement in scope queries it"
+        text = f"No statement writes it; {share}"
     readers = [str(e) for e in line.get("also_read_by") or []]
     if readers:
         verb = "reads" if len(readers) == 1 else "read"

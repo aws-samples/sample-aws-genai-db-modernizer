@@ -17,19 +17,19 @@ edit here), and check what a caller relies on:
 Removing, renaming or retyping a field, or changing an enum value, without a MAJOR
 bump is caught by ``test_assess_released_contract.py``, against the last released shape.
 
-Model phases are patched (``deterministic=False`` runs the reality check's review
-through patched entry points); a real model is never called.
+Model phases are patched (``deterministic=False`` runs the reality check's review,
+schema design and synthesis's summary through the entry points in
+``tests/assess_models.py``); a real model is never called. The phases that always use
+a model (``MODEL_PHASES``) run only with the model patched; their refusal with
+``deterministic=True`` is asserted instead.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager
 from functools import cache
 from pathlib import Path
 from typing import Any, get_args
-from unittest.mock import patch
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -42,20 +42,14 @@ from src.assessment import (
     assess,
     load_collection,
 )
-from src.assessment.models import LABEL_BY_PHASE
+from src.assessment.models import LABEL_BY_PHASE, MODEL_PHASES, result_label
+from tests.assess_models import MODEL_ENTRY_POINTS, models_patched
 
 FIXTURES_PATH = Path(__file__).parent / "fixtures" / "assess_consumer_fixtures.json"
 #: A fixture's ``sample`` is a bundled sample, read as a caller reads it: the zip the
 #: collection scripts' output ships in, through the public ``load_collection``.
 SAMPLES_DIR = Path(__file__).resolve().parents[2] / "docs" / "examples"
 
-#: The model entry points a run with ``deterministic=False`` reaches, patched with the
-#: value each returns. A phase that adds a model call adds its entry point here.
-MODEL_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
-    ("src.agents.referee.reality_check_handler.require_valid_guardrail_config", None),
-    ("src.agents.referee.reality_check_handler.validate_consolidations", []),
-    ("src.agents.referee.reality_check_handler._generate_executive_summary", None),
-)
 
 #: The phases in contract order; a field a phase fills is filled from it on.
 PHASE_ORDER: tuple[str, ...] = get_args(RunThrough)
@@ -80,11 +74,23 @@ def _fixtures() -> dict[str, dict[str, Any]]:
 
 
 FIXTURES = _fixtures()
+
+
+def _modes(run_through: str) -> tuple[bool, ...]:
+    """The ``deterministic`` values a phase runs with: a model phase only with a model."""
+    return (False,) if run_through in MODEL_PHASES else (True, False)
+
+
 RUNS = [
-    pytest.param(name, run_through, deterministic, id=f"{name}-{run_through}-{mode}")
+    pytest.param(
+        name,
+        run_through,
+        deterministic,
+        id=f"{name}-{run_through}-{'deterministic' if deterministic else 'model-patched'}",
+    )
     for name in FIXTURES
     for run_through in SUPPORTED_RUN_THROUGH
-    for deterministic, mode in ((True, "deterministic"), (False, "model-patched"))
+    for deterministic in _modes(run_through)
 ]
 
 
@@ -94,18 +100,9 @@ def _result_schema() -> dict[str, Any]:
     return loaded
 
 
-@contextmanager
-def _models_patched() -> Iterator[None]:
-    with ExitStack() as stack:
-        for target, value in MODEL_ENTRY_POINTS:
-            stack.enter_context(patch(target, return_value=value))
-        yield
-
-
-@cache
-def _run_json(name: str, run_through: str, deterministic: bool) -> str:
+def _request(name: str, run_through: str, deterministic: bool) -> dict[str, Any]:
     fixture = FIXTURES[name]
-    request = {
+    return {
         "database_name": fixture["database_name"],
         "collection": load_collection(SAMPLES_DIR / fixture["sample"] / f"{fixture['sample']}.zip"),
         "options": {
@@ -115,8 +112,12 @@ def _run_json(name: str, run_through: str, deterministic: bool) -> str:
         },
         "scope": fixture["scope"],
     }
-    with _models_patched():
-        result = assess(request)
+
+
+@cache
+def _run_json(name: str, run_through: str, deterministic: bool) -> str:
+    with models_patched():
+        result = assess(_request(name, run_through, deterministic))
     # What a caller in another process reads: the result as JSON.
     return result.model_dump_json()
 
@@ -271,7 +272,7 @@ def test_every_result_field_is_guarded_by_a_fixture() -> None:
 @pytest.mark.passes_on_main
 def test_the_fixtures_cover_a_sql_server_source_and_an_engine_scope() -> None:
     run_through = SUPPORTED_RUN_THROUGH[-1]
-    results = {name: _run(name, run_through, True) for name in FIXTURES}
+    results = {name: _run(name, run_through, _modes(run_through)[0]) for name in FIXTURES}
     assert "wordpress" in FIXTURES
     assert any(r["summary"]["source_engine"] == "sqlserver" for r in results.values())
     scoped = [r for r in results.values() if r["options"]["target_engines"] is not None]
@@ -340,7 +341,7 @@ def test_a_removed_or_retyped_field_is_reported(change: Any, expected: str) -> N
 def test_every_guard_reaches_a_value(name: str) -> None:
     """A guard on a list item or a scope field only checks something when the fixture
     has one: across its runs, every guarded path reaches at least one value."""
-    runs = [_run(name, rt, det) for rt in SUPPORTED_RUN_THROUGH for det in (True, False)]
+    runs = [_run(name, rt, det) for rt in SUPPORTED_RUN_THROUGH for det in _modes(rt)]
     vacuous = [
         path for path in FIXTURES[name]["guards"] if not any(_values_at(r, path)[0] for r in runs)
     ]
@@ -354,7 +355,11 @@ def test_the_documented_phase_rules_hold(name: str, run_through: str, determinis
     result = _run(name, run_through, deterministic)
     summary, statements = result["summary"], result["statements"]
     assert summary["run_through_reached"] == run_through
-    assert result["label"] == LABEL_BY_PHASE[run_through]
+    assert result["label"] == result_label(run_through, summary["designed_engines"])
+    if run_through in MODEL_PHASES:
+        assert (summary["design_note"] is None) == bool(summary["designed_engines"])
+    else:
+        assert summary["designed_engines"] == [] and summary["design_note"] is None
     assert result["options"]["run_through"] == run_through
     assert statements and summary["statement_count"] == len(statements)
     assert any(s["fit"] for s in statements)
@@ -384,10 +389,39 @@ def test_the_documented_phase_rules_hold(name: str, run_through: str, determinis
 @pytest.mark.parametrize("run_through", SUPPORTED_RUN_THROUGH)
 def test_the_options_and_scope_are_echoed(run_through: str) -> None:
     fixture = FIXTURES["wordpress_scoped"]
-    result = _run("wordpress_scoped", run_through, True)
+    result = _run("wordpress_scoped", run_through, _modes(run_through)[0])
     assert result["options"]["target_engines"] == sorted(fixture["options"]["target_engines"])
     assert result["scope"] == fixture["scope"]
     rewritten = set(fixture["scope"]["rewritten_query_ids"])
     marked = {s["query_id"] for s in result["statements"] if s["rewritten_by_caller"]}
     assert marked == rewritten
     assert result["artifacts"]["compatibility"].startswith("none")
+
+
+@pytest.mark.parametrize("name", FIXTURES)
+@pytest.mark.parametrize("run_through", MODEL_PHASES)
+def test_a_model_phase_is_refused_without_a_model(name: str, run_through: str) -> None:
+    """A phase that always uses a model is refused with ``deterministic=True`` before
+    anything runs, and no model entry point is reached."""
+    from pydantic import ValidationError
+
+    with models_patched() as mocks:
+        with pytest.raises(ValidationError, match="needs a model"):
+            assess(_request(name, run_through, True))
+    assert not any(m.called for m in mocks.values())
+
+
+def test_every_model_phase_reaches_its_patched_entry_points() -> None:
+    """The designer and synthesis's summary are in MODEL_ENTRY_POINTS and are what a
+    model phase calls (a model call missing from the list would reach the Bedrock guard
+    in tests/conftest.py and fail the run)."""
+    targets = {target for target, _ in MODEL_ENTRY_POINTS}
+    with models_patched() as mocks:
+        assess(_request("wordpress", "synthesis", False))
+    for name in (
+        "run_schema_design_auto",
+        "generate_executive_summary",
+        "validate_consolidations",
+    ):
+        called = [t for t in targets if t.endswith(f".{name}") and mocks[t].called]
+        assert called, name

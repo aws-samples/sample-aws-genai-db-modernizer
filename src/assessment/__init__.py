@@ -13,10 +13,12 @@ What the result is for: engine placement. ``run_through="analysis"`` scores ever
 statement on every analysed engine and places nothing; ``run_through="reality_check"``
 adds where each statement runs, which statements move together and which engine owns
 each table. Neither is a data model: partition and sort keys, indexes and target
-tables come only from schema design (``run_through="schema_design"``, which needs a
-model and is not available in this release). The deterministic analysis's own
-data-model guesses are inputs to that design, not results, and are never part of the
-stable surface.
+tables come only from schema design (``run_through="schema_design"``, which designs
+every engine the placement keeps with a model; ``"synthesis"`` adds the report). Both
+need ``deterministic=False``; their designs and report are in ``artifacts`` (with
+``include_artifacts=True``) until a stable design surface is agreed. The
+deterministic analysis's own data-model guesses are inputs to that design, not
+results, and are never part of the stable surface.
 
 Stable surface (contract ``1.0``, semantic versioning): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
@@ -38,8 +40,10 @@ an identical result, in any process and under any ``PYTHONHASHSEED``. For
 review is deterministic, but the review (``deterministic=False``) can differ between
 runs and change consolidations; each change it makes is a Move with actor
 ``model_flag`` in ``artifacts.assignment.moves``, and the statement it moved has
-``reason_code`` ``capability_flag``. Results are never stored or reused: a repeat call
-is a new run.
+``reason_code`` ``capability_flag``. ``run_through="schema_design"`` and
+``"synthesis"`` always use a model: their placement has the reality check's guarantee,
+and the designs and the report's executive summary can differ between runs. Results
+are never stored or reused: a repeat call is a new run.
 
 This package's models are not the local API's request models
 (``src.api.models.requests``); import them from here.

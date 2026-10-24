@@ -7,6 +7,19 @@
     "AssessmentOptions": {
       "additionalProperties": false,
       "description": "How far to run and over which engines. Echoed in the result as applied.",
+      "if": {
+        "properties": {
+          "run_through": {
+            "enum": [
+              "schema_design",
+              "synthesis"
+            ]
+          }
+        },
+        "required": [
+          "run_through"
+        ]
+      },
       "properties": {
         "target_engines": {
           "anyOf": [
@@ -26,7 +39,7 @@
         },
         "run_through": {
           "default": "reality_check",
-          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement. 'schema_design' (the data model, which needs a model) and 'synthesis' are refused in this release.",
+          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement; 'schema_design' designs the data model of every engine the placement keeps; 'synthesis' adds the report. 'schema_design' and 'synthesis' need a model (deterministic=False); their designs and report are in `artifacts`.",
           "enum": [
             "analysis",
             "reality_check",
@@ -38,7 +51,7 @@
         },
         "deterministic": {
           "default": true,
-          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary.",
+          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary, schema design designs with a model and synthesis writes its executive summary with one. Must be False for 'schema_design' and 'synthesis'.",
           "title": "Deterministic",
           "type": "boolean"
         },
@@ -48,6 +61,16 @@
           "title": "Include Artifacts",
           "type": "boolean"
         }
+      },
+      "then": {
+        "properties": {
+          "deterministic": {
+            "const": false
+          }
+        },
+        "required": [
+          "deterministic"
+        ]
       },
       "title": "AssessmentOptions",
       "type": "object"

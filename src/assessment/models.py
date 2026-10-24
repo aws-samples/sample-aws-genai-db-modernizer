@@ -6,11 +6,12 @@ semantic versioning), separately from the pipeline's internal contracts. Interna
 contracts appear only in the optional ``artifacts`` block, verbatim and with no
 compatibility promise.
 
-The result is for engine placement: which engine serves each statement, which
+The stable surface is for engine placement: which engine serves each statement, which
 statements move together and which engine owns each table. It is not a data model.
 Partition keys, sort keys, indexes and target tables come only from schema design
-(``run_through="schema_design"``, which needs a model); nothing the deterministic
-analysis guesses about a data model is part of this surface.
+(``run_through="schema_design"``, which needs a model); its designs are in the
+``artifacts`` block until a stable design surface is agreed, and nothing the
+deterministic analysis guesses about a data model is part of this surface.
 
 Engine ids are the engine catalog's active ids (``src/catalog/engines``). The request
 validates them; the result carries them as plain strings.
@@ -30,9 +31,11 @@ CONTRACT_VERSION: Literal["1.0"] = "1.0"
 
 RunThrough = Literal["analysis", "reality_check", "schema_design", "synthesis"]
 
-#: The ``run_through`` values this release runs. The others are part of the contract
-#: and refused, with a message, until they are implemented (#1387).
-SUPPORTED_RUN_THROUGH: tuple[str, ...] = ("analysis", "reality_check")
+#: The ``run_through`` values this release runs (every value of the contract since #1387).
+SUPPORTED_RUN_THROUGH: tuple[str, ...] = ("analysis", "reality_check", "schema_design", "synthesis")
+
+#: The phases that always use a model: refused with ``deterministic=True``.
+MODEL_PHASES: tuple[str, ...] = ("schema_design", "synthesis")
 
 #: The public reason codes: why a statement is on its engine. Routing's own rules are
 #: finer-grained and change often; each maps onto exactly one of these
@@ -58,17 +61,28 @@ OwnerBasis = Literal["writes", "split_writes", "most_queries", "retained", "desi
 
 #: What a result is, so a routing-only result is never read as a data model:
 #: ``analysis_only`` (scores, nothing placed), ``recommendation`` (engine placement, no
-#: data model) and ``designed`` (with a schema design's data model, which needs a model;
-#: no release produces it yet).
+#: data model) and ``designed`` (a schema design ran, with a model, for at least one
+#: engine; its data model is in ``artifacts``). A run through ``schema_design`` or
+#: ``synthesis`` that had no engine to design (``summary.designed_engines`` empty) stays
+#: ``recommendation``.
 ResultLabel = Literal["analysis_only", "recommendation", "designed"]
 
-#: The label each ``run_through_reached`` gives a result.
+#: The label each ``run_through_reached`` gives a result with a design (see ``result_label``).
 LABEL_BY_PHASE: dict[str, str] = {
     "analysis": "analysis_only",
     "reality_check": "recommendation",
     "schema_design": "designed",
     "synthesis": "designed",
 }
+
+
+def result_label(run_through_reached: str, designed_engines: list[str]) -> str:
+    """The label of a result: the phase's, except that a model phase with no designed
+    engine is a ``recommendation`` (it carries no data model)."""
+    if run_through_reached in MODEL_PHASES and not designed_engines:
+        return "recommendation"
+    return LABEL_BY_PHASE[run_through_reached]
+
 
 #: An analysed engine's part in the result: ``owner`` (statements are placed on it),
 #: ``cache_layer`` (a cache in front of other engines' reads; it owns no statement),
@@ -98,6 +112,22 @@ class _Strict(BaseModel):
 class AssessmentOptions(_Strict):
     """How far to run and over which engines. Echoed in the result as applied."""
 
+    # The published schema states the one cross-field rule: a phase that needs a
+    # model is sent with ``deterministic: false`` (its default is true).
+    model_config = ConfigDict(
+        **_Strict.model_config,
+        json_schema_extra={
+            "if": {
+                "properties": {"run_through": {"enum": list(MODEL_PHASES)}},
+                "required": ["run_through"],
+            },
+            "then": {
+                "properties": {"deterministic": {"const": False}},
+                "required": ["deterministic"],
+            },
+        },
+    )
+
     target_engines: list[str] | None = Field(
         None,
         description=(
@@ -111,15 +141,19 @@ class AssessmentOptions(_Strict):
         "reality_check",
         description=(
             "Last phase to run. 'analysis' scores every statement and assigns nothing; "
-            "'reality_check' adds the final engine placement. 'schema_design' (the data "
-            "model, which needs a model) and 'synthesis' are refused in this release."
+            "'reality_check' adds the final engine placement; 'schema_design' designs "
+            "the data model of every engine the placement keeps; 'synthesis' adds the "
+            "report. 'schema_design' and 'synthesis' need a model (deterministic=False); "
+            "their designs and report are in `artifacts`."
         ),
     )
     deterministic: bool = Field(
         True,
         description=(
             "Run with no model. Analysis never uses one; with False the reality check "
-            "has a model review its consolidations and write its summary."
+            "has a model review its consolidations and write its summary, schema design "
+            "designs with a model and synthesis writes its executive summary with one. "
+            "Must be False for 'schema_design' and 'synthesis'."
         ),
     )
     include_artifacts: bool = Field(
@@ -133,16 +167,16 @@ class AssessmentOptions(_Strict):
         # The one engine-scope validation every entry point shares.
         return normalize_target_databases(value, setting="target_engines")
 
-    @field_validator("run_through")
-    @classmethod
-    def _supported_run_through(cls, value: str) -> str:
-        if value not in SUPPORTED_RUN_THROUGH:
-            what = " (the data model, which needs a model)" if value == "schema_design" else ""
+    @model_validator(mode="after")
+    def _model_phase_needs_a_model(self) -> AssessmentOptions:
+        if self.deterministic and self.run_through in MODEL_PHASES:
             raise ValueError(
-                f"run_through={value!r}{what} is not implemented yet; this release runs "
-                f"{' or '.join(repr(v) for v in SUPPORTED_RUN_THROUGH)}"
+                f"run_through={self.run_through!r} needs a model: schema design always "
+                "designs the data model with one, so it cannot run with "
+                "deterministic=True (the default). Set deterministic=False, or stop at "
+                "'reality_check' for engine placement with no model"
             )
-        return value
+        return self
 
 
 class WorkloadScope(_Strict):
@@ -336,6 +370,20 @@ class Summary(_Strict):
     tables: list[TableLine] = Field(
         default_factory=list, description="One line per source table; empty at 'analysis'"
     )
+    designed_engines: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The engines with a schema design (in `artifacts.schema_designs`), in triage's "
+            "order; empty before 'schema_design', and when no engine could be designed"
+        ),
+    )
+    design_note: str | None = Field(
+        None,
+        description=(
+            "Customer-facing sentence; do not parse. Set only when 'schema_design' ran "
+            "and no engine could be designed (the result is then a 'recommendation')"
+        ),
+    )
 
 
 class PatternRef(_Strict):
@@ -420,7 +468,12 @@ class Group(_Strict):
 
 
 class Artifacts(BaseModel):
-    """Internal contracts, verbatim. No compatibility promise; each keeps its own version."""
+    """Internal contracts, verbatim. No compatibility promise; each keeps its own version.
+
+    From ``schema_design`` on: ``schema_designs`` (each designed engine's schema output,
+    the data model) and, at ``synthesis``, ``synthesis_report`` (the report every
+    deliverable renders). ``artifact_keys`` names the store key each was read from
+    (under ``<database_name>/<job_id>/``), for a caller that passed its own store."""
 
     model_config = ConfigDict(extra="allow", json_schema_serialization_defaults_required=True)
 
@@ -440,16 +493,20 @@ class AssessmentResult(_Strict):
     deterministic=False) can differ between runs and change consolidations. Each change
     it makes is recorded in the assignment's moves with actor "model_flag"
     (artifacts.assignment.moves, with include_artifacts=True), and the statement it
-    moved has reason_code "capability_flag". Results are never stored or reused: a
-    repeat call is a new run."""
+    moved has reason_code "capability_flag". run_through="schema_design" and
+    "synthesis" always use a model: the placement is the reality check's (the same
+    guarantee), and the designs and the report's executive summary can differ between
+    runs. Results are never stored or reused: a repeat call is a new run."""
 
     contract_version: Literal["1.0"] = CONTRACT_VERSION
     label: ResultLabel = Field(
         ...,
         description=(
             "analysis_only: scores, nothing placed; recommendation: engine placement, not "
-            "a data model; designed: with a schema design's data model (not produced by "
-            "this release)"
+            "a data model (also a 'schema_design' or 'synthesis' run with no engine to "
+            "design: see summary.design_note); designed: engine placement and a schema "
+            "design's data model for summary.designed_engines (the designs are in "
+            "`artifacts`)"
         ),
     )
     library_version: str
@@ -464,10 +521,16 @@ class AssessmentResult(_Strict):
 
     @model_validator(mode="after")
     def _label_matches_the_phase(self) -> AssessmentResult:
-        expected = LABEL_BY_PHASE[self.summary.run_through_reached]
+        reached = self.summary.run_through_reached
+        expected = result_label(reached, self.summary.designed_engines)
         if self.label != expected:
+            designed = (
+                f" with {len(self.summary.designed_engines)} designed engines"
+                if reached in MODEL_PHASES
+                else ""
+            )
             raise ValueError(
-                f"label must be {expected!r} for run_through_reached="
-                f"{self.summary.run_through_reached!r}, not {self.label!r}"
+                f"label must be {expected!r} for run_through_reached={reached!r}"
+                f"{designed}, not {self.label!r}"
             )
         return self

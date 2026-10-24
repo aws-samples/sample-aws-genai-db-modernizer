@@ -149,6 +149,15 @@ def test_the_request_schema_accepts_the_minimal_request() -> None:
     _validator("assess_request").validate({"database_name": "shop", "collection": {"x": 1}})
 
 
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize("run_through", ["schema_design", "synthesis"])
+def test_the_request_schema_accepts_a_model_phase_with_a_model(run_through: str) -> None:
+    options = {"run_through": run_through, "deterministic": False}
+    _validator("assess_request").validate(
+        {"database_name": "shop", "collection": {"x": 1}, "options": options}
+    )
+
+
 @pytest.mark.parametrize(
     ("change", "what"),
     [
@@ -186,6 +195,18 @@ def test_the_result_schema_refuses(change: Any, what: str) -> None:
         (
             {"database_name": "shop", "collection": {}, "options": {"run_through": "all"}},
             "an unknown run_through",
+        ),
+        (
+            {"database_name": "shop", "collection": {}, "options": {"run_through": "synthesis"}},
+            "a model phase with the default deterministic=true",
+        ),
+        (
+            {
+                "database_name": "shop",
+                "collection": {},
+                "options": {"run_through": "schema_design", "deterministic": True},
+            },
+            "a model phase with deterministic=true",
         ),
     ],
 )
@@ -268,5 +289,7 @@ def test_the_determinism_limits_are_stated(where: str) -> None:
         text = " ".join(DOC.read_text(encoding="utf-8").split())
     for phrase in ("PYTHONHASHSEED", "not guaranteed", "model_flag", "capability_flag"):
         assert phrase in text, (where, phrase)
-    assert "analysis" in text and "reality_check" in text
+    for phase in ("analysis", "reality_check", "schema_design", "synthesis"):
+        assert phase in text, (where, phase)
+    assert "can differ between runs" in text, where
     assert "new run" in text

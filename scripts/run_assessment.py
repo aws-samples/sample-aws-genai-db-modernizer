@@ -647,16 +647,10 @@ def _schema_design_engines(store, job_id: str, db: str, version: int) -> list[st
     schema design never gets dispatched. This gives the orchestrator an
     explicit, correct list instead of making it infer one.
     """
-    from src.storage.assignment_versioning import engines_with_in_scope_queries
+    from src.storage.assignment_versioning import schema_design_engines
 
-    in_scope = engines_with_in_scope_queries(store, db, job_id, version)
-    triage_key = f"{db}/{job_id}/referee-triage/triage.json"
-    if not in_scope:
-        return []
-    if store.exists(triage_key):
-        selected = [a["agent_type"] for a in store.read_json(triage_key).get("selected_agents", [])]
-        return [e for e in selected if e in in_scope]
-    return sorted(in_scope)
+    # The one rule, shared with the public ``assess()`` (#1387).
+    return schema_design_engines(store, db, job_id, version)
 
 
 def _reality_check_artifact(store, job_id: str, db: str) -> dict:

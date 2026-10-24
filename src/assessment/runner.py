@@ -2,13 +2,15 @@
 
 The phases are the core entry points every other path uses
 (``src.atx_orchestrator.core``): ingest the collection, triage, analyse, then place
-statements and run the reality check. No routing happens here. Each phase is one
-entry of :data:`PHASES`, run in order until ``options.run_through``, so a later phase
-is one more entry.
+statements and run the reality check, then design the schema of every engine the
+effective assignment keeps, then synthesise the report. No routing happens here. Each
+phase is one entry of :data:`PHASES`, run in order until ``options.run_through``, so a
+later phase is one more entry.
 """
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import uuid
 from collections.abc import Callable, Mapping
@@ -17,6 +19,8 @@ from typing import Any
 
 from src.assessment.models import AssessmentRequest, AssessmentResult
 from src.assessment.result_builder import build_result, load_run_state
+
+logger = logging.getLogger(__name__)
 
 
 class AssessmentRunError(RuntimeError):
@@ -83,11 +87,64 @@ def _place_and_reality_check(job: _Job) -> None:
     )
 
 
-#: Each ``run_through`` value and the work that phase adds, in order. ``schema_design``
-#: and ``synthesis`` are refused by the request model until they are added here.
+def _effective_version(job: _Job) -> int:
+    from src.storage.assignment_versioning import resolve_effective_assignment_version
+
+    version = resolve_effective_assignment_version(job.store, job.database_name, job.job_id)
+    if not version:
+        raise AssessmentRunError("the reality check left no assignment; no result built")
+    return version
+
+
+def _design_schemas(job: _Job) -> None:
+    """Design every engine the effective assignment keeps (its owners and the cache
+    layer, in triage's order, inside the engine scope), concurrently, as the pipeline
+    does. Every designer uses a model (the request model refuses this phase with
+    ``deterministic=True``). A failed design fails the run: no result is built from a
+    partial set of designs."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.atx_orchestrator.core import run_schema_design_core
+    from src.storage.assignment_versioning import schema_design_engines
+
+    version = _effective_version(job)
+    # Triage's selection already leaves out every engine outside the engine scope.
+    engines = schema_design_engines(job.store, job.database_name, job.job_id, version)
+
+    def design(engine: str) -> None:
+        run_schema_design_core(
+            job.job_id, job.database_name, engine, assignment_version=version, store=job.store
+        )
+
+    failed: list[str] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(engines))) as pool:
+        futures = {engine: pool.submit(design, engine) for engine in engines}
+        for engine, future in futures.items():
+            try:
+                future.result()
+            except Exception:  # noqa: BLE001 -- every failure is named below
+                logger.exception("assess(): schema design failed for %s", engine)
+                failed.append(engine)
+    if failed:
+        raise AssessmentRunError(f"schema design failed for {', '.join(failed)}; no result built")
+
+
+def _synthesise(job: _Job) -> None:
+    """Write the report for the effective assignment and its designs (the executive
+    summary is written with a model)."""
+    from src.atx_orchestrator.core import run_synthesis_core
+
+    run_synthesis_core(
+        job.job_id, job.database_name, assignment_version=_effective_version(job), store=job.store
+    )
+
+
+#: Each ``run_through`` value and the work that phase adds, in order.
 PHASES: tuple[tuple[str, Callable[[_Job], None]], ...] = (
     ("analysis", _ingest_and_analyse),
     ("reality_check", _place_and_reality_check),
+    ("schema_design", _design_schemas),
+    ("synthesis", _synthesise),
 )
 
 
@@ -107,7 +164,9 @@ def assess(
 
     With ``options.deterministic`` (the default) no model is called. With
     ``deterministic=False`` the reality check has a model review its consolidations,
-    which needs model access.
+    which needs model access; ``run_through="schema_design"`` and ``"synthesis"`` need
+    it (they are refused with ``deterministic=True``) and call a model for every
+    designed engine and for the report's executive summary.
     """
     from src.atx_orchestrator.runtime.store import upgrade_store
     from src.shared.job_id import validate_job_id
