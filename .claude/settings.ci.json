@@ -89,6 +89,11 @@
             "type": "command",
             "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_baseline_edit.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_contract_version_edit.py\"",
+            "timeout": 10
           }
         ]
       },

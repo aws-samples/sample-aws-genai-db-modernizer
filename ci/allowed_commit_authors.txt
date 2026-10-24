@@ -1,0 +1,18 @@
+# Commit authors ci/check_commits.sh and ci/pre_merge.sh accept by name (#1408),
+# one "Name <email>" per line; the name must match exactly, the email in any
+# case. A commit under the maintainer's address must use one of these names, and
+# so must every commit of a pull request the maintainer account opens; other
+# commits pass when well-formed (see ci/README.md, check_commits.sh). A name of
+# one ASCII character is always refused.
+
+# The maintainer.
+Esteban Serna Parra <tebanieo@gmail.com>
+Esteban Serna <tebanieo@gmail.com>
+tebanieo <tebanieo@gmail.com>
+
+# Authors of imported contributions, as their commits record them.
+Norbert Funke <norbert@funke.com>
+Dinesh Kumar <94637609+happycontribute@users.noreply.github.com>
+
+# Bots.
+dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>

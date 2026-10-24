@@ -2,7 +2,9 @@
 # Lint every commit message added on top of main (#570), the CI counterpart
 # of the local `check-commit-message` pre-commit hook (commit-msg stage only
 # runs locally; CI never sees it, so this script catches a `--no-verify`
-# commit or a message edited after the hook ran).
+# commit or a message edited after the hook ran), and check every commit's
+# author against ci/allowed_commit_authors.txt and the pull request author
+# (#1408, scripts/check_commit_authors.py; see ci/README.md).
 #
 # No-op on a push to main: the range `origin/main..HEAD` is then empty (HEAD
 # already IS origin/main), so there is nothing to check. Needs `origin/main`
@@ -22,5 +24,9 @@ if [ -z "$(git rev-list "$RANGE")" ]; then
   exit 0
 fi
 
+status=0
 log "commit messages ($RANGE)"
-uv run python scripts/check_commit_message.py --range "$RANGE"
+uv run python scripts/check_commit_message.py --range "$RANGE" || status=1
+log "commit authors ($RANGE)"
+uv run python scripts/check_commit_authors.py --range "$RANGE" || status=1
+exit "$status"

@@ -184,6 +184,7 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/start_local_ui.py", "ui_build_is_current", "stamp"): "the UI build stamp",
     ("scripts/hooks/enforce_tool_use_rule.py", "allowed_rules", "<expr>"): "Claude Code settings",
     ("scripts/hooks/hook_common.py", "read_event", "data"): "a hook event on stdin",
+    ("scripts/check_commit_authors.py", "read_event", "<expr>"): "the GitHub Actions event",
 }
 
 
