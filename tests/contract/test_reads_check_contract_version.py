@@ -154,6 +154,10 @@ FILE_READS: dict[tuple[str, str, str], str] = {
         "the runner's query manifest (a list, not a contract)"
     ),
     ("scripts/atx_bootstrap_reference.py", "<module>", "raw"): _REFERENCE,
+    ("scripts/usage_cost.py", "main", "usage"): (
+        "the run's model usage record (_logs/model_usage.json, a declared internal file, "
+        "#1494): token counts to price, no contract"
+    ),
     ("scripts/atx_subagent_test.py", "<module>", "<expr>"): _REFERENCE,
     ("scripts/atx_tool_test.py", "<module>", "<expr>"): _REFERENCE,
     ("scripts/build_docs_sample.py", "update_scan_baseline", "data"): (

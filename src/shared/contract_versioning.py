@@ -317,6 +317,11 @@ INTERNAL_ARTIFACTS: tuple[tuple[str, str], ...] = (
         r"_logs/prose_style_rejections-v\d+\.json",
         "a log of the synthesis prose a style check rejected, per assignment version",
     ),
+    (
+        r"_logs/model_usage\.json",
+        "token usage of the run's model calls by phase and model id (#1494), written by "
+        "assess() for a run that called a model and read by scripts/usage_cost.py",
+    ),
     (r"uploads/input_key\.json", "AWS Transform transport state: the resolved input location"),
     (
         r"_pending/[^/]+/upload\.json",

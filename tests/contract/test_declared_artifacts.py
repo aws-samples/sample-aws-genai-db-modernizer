@@ -370,6 +370,10 @@ def test_the_mocked_model_run_wrote_model_io_and_designs(tmp_path_factory) -> No
 # Entries of the other two lists that neither the scan nor a run here produces, with
 # who writes them. Kept short; an entry here that a scan or run does produce is stale too.
 NOT_PRODUCED_HERE: dict[str, str] = {
+    r"_logs/model_usage\.json": (
+        "the token usage of a run that called a model, written by assess() "
+        "(src/shared/model_usage.py); no run here calls a model through it"
+    ),
     r"load-test-[^/]+/v\d+/results/(?!summary\.json)[^/]+\.json": (
         "a load test's per-pattern result, written by the load test runner (no load test "
         "runs here; its path is a caller's parameter the scan cannot render)"

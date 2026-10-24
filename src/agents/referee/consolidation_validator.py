@@ -62,6 +62,7 @@ from src.shared.bedrock_guardrail import (
 )
 from src.shared.engine_names import display_engine
 from src.shared.flag_reasons import IGNORED_NOT_ON_ENGINE, IGNORED_NOT_UNDER_REVIEW
+from src.shared.model_usage import record_usage
 from src.shared.models import (
     ROLE_SPECS,
     Role,
@@ -1216,6 +1217,7 @@ def _try_boto3_validator(
             system=[{"text": validator_system_prompt()}],
         )
         check_converse_response(response, "validator")
+        record_usage(model_id, response.get("usage"))
     except (GuardrailIntervened, GuardrailConfigError):
         raise
     except Exception as exc:

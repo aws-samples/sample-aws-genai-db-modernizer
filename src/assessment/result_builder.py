@@ -54,6 +54,7 @@ from src.assessment.reason_codes import CONSOLIDATION_CODES, public_reason_code
 from src.assessment.ruleset import ruleset_hash, ruleset_version
 from src.contracts.move_ledger import Move
 from src.shared.engine_names import display_engine
+from src.shared.model_usage import USAGE_KEY
 from src.shared.package_version import get_package_version
 
 # --------------------------------------------------------------------------- inputs
@@ -83,6 +84,9 @@ class RunState:
     synthesis_report: dict[str, Any] | None = None
     # The store key each design and the report were read from.
     artifact_keys: dict[str, Any] = field(default_factory=dict)
+    # The run's model token usage by phase and model (``_logs/model_usage.json``, #1494);
+    # None when the run called no model.
+    model_usage: dict[str, Any] | None = None
 
     @property
     def assignment(self) -> dict[str, Any] | None:
@@ -133,6 +137,10 @@ def load_run_state(store: Any, database_name: str, job_id: str, run_through: str
         trace_key = f"{prefix}/analysis-{engine}/decision-trace.json"
         if store.exists(trace_key):
             state.decision_traces[engine] = store.read_json(trace_key)
+    usage_key = f"{prefix}/{USAGE_KEY}"
+    if store.exists(usage_key):
+        state.model_usage = store.read_json(usage_key)
+        state.artifact_keys["model_usage"] = usage_key
     if run_through == "analysis":
         return state
 
@@ -765,6 +773,8 @@ def build_artifacts(state: RunState) -> Artifacts:
         blocks["schema_designs"] = state.schema_designs
     if state.synthesis_report is not None:
         blocks["synthesis_report"] = state.synthesis_report
+    if state.model_usage is not None:
+        blocks["model_usage"] = state.model_usage
     if state.artifact_keys:
         blocks["artifact_keys"] = state.artifact_keys
     return Artifacts(**blocks)

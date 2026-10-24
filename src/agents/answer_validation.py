@@ -24,6 +24,7 @@ from src.shared.bedrock_guardrail import (
     invoke_model_guardrail_kwargs,
     tag_guarded_input,
 )
+from src.shared.model_usage import record_invoke_model_usage
 from src.shared.models import Role, invoke_model_body, resolve_model_id
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ def _bedrock_validate(question: AgentQuestion, answer: str) -> ValidationResult:
 
     result = json.loads(response["body"].read())
     check_invoke_model_body(result, "free-text answer check")
+    record_invoke_model_usage(model_id, result)
     # Newer models may lead with a (possibly empty) thinking block.
     answer_text = next(
         (

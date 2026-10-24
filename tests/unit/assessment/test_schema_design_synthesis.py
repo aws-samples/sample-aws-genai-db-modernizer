@@ -460,3 +460,65 @@ def test_a_designed_result_validates_against_the_published_schema(run_through: s
     Draft202012Validator(schema).validate(json.loads(result.model_dump_json()))
     without = result.model_copy(update={"artifacts": None})
     Draft202012Validator(schema).validate(json.loads(without.model_dump_json()))
+
+
+# --------------------------------------------------------------------------- model usage (#1494)
+
+
+def test_a_model_run_records_its_token_usage_by_phase(tmp_path: Any) -> None:
+    """The fake designer and summary report usage as the model wrapper does; the run
+    writes ``_logs/model_usage.json`` and returns it under ``artifacts.model_usage``."""
+    from src.shared.model_usage import record_usage
+
+    opus, sonnet = "us.anthropic.claude-opus-5-5", "us.anthropic.claude-sonnet-5-5"
+
+    def designer(*args: Any, **kwargs: Any) -> Any:
+        record_usage(opus, {"inputTokens": 1000, "outputTokens": 200})
+        return fake_designer(*args, **kwargs)
+
+    def summary(*args: Any, **kwargs: Any) -> None:
+        record_usage(sonnet, {"inputTokens": 50, "outputTokens": 5, "cacheReadInputTokens": 40})
+
+    models = _Models()
+    models.designer = MagicMock(side_effect=designer)
+    models.summary = MagicMock(side_effect=summary)
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    patches = models.patches()
+    for p in patches:
+        p.start()
+    try:
+        result = assess(
+            {
+                "database_name": DB,
+                "collection": collection(DB),
+                "options": {
+                    "run_through": "synthesis",
+                    "deterministic": False,
+                    "include_artifacts": True,
+                },
+            },
+            store=store,
+            job_id=JOB,
+        )
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    usage = store.read_json(f"{DB}/{JOB}/_logs/model_usage.json")
+    assert usage["by_phase"]["schema_design"][opus]["inputTokens"] >= 1000
+    assert usage["by_phase"]["synthesis"][sonnet] == {
+        "calls": 1,
+        "inputTokens": 50,
+        "outputTokens": 5,
+        "cacheReadInputTokens": 40,
+        "cacheWriteInputTokens": 0,
+    }
+    assert result.artifacts is not None
+    assert result.artifacts.model_dump()["model_usage"] == usage
+
+
+def test_a_deterministic_run_writes_no_usage_record(tmp_path: Any) -> None:
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    result, _ = _run("reality_check", store=store, job_id="assess88", include_artifacts=True)
+    assert not store.exists(f"{DB}/assess88/_logs/model_usage.json")
+    assert result.artifacts is not None
+    assert "model_usage" not in result.artifacts.model_dump()

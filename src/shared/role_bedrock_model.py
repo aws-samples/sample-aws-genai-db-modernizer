@@ -35,6 +35,7 @@ from src.shared.bedrock_guardrail import (
     blocked_by_guardrail,
     guard_messages,
 )
+from src.shared.model_usage import record_usage
 from src.shared.models import ModelProfile
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ class RoleBedrockModel(BedrockModel):
         self.usage["calls"] += 1
         for field in USAGE_FIELDS:
             self.usage[field] += int(usage.get(field) or 0)
+        record_usage(str(self.config.get("model_id")), usage)
         logger.info(
             "model=<%s> | usage input=%s output=%s cache_read=%s cache_write=%s",
             self.config.get("model_id"),

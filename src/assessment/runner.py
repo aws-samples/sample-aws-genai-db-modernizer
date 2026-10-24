@@ -20,6 +20,7 @@ from typing import Any
 
 from src.assessment.models import AssessmentRequest, AssessmentResult
 from src.assessment.result_builder import build_result, load_run_state
+from src.shared import model_usage
 
 logger = logging.getLogger(__name__)
 
@@ -211,10 +212,16 @@ def assess(
 
     def run(target_store: Any) -> AssessmentResult:
         job = _Job(target_store, req.database_name, job_id, req)
-        for phase, work in PHASES:
-            work(job)
-            if phase == run_through:
-                break
+        model_usage.LEDGER.reset()
+        try:
+            for phase, work in PHASES:
+                with model_usage.phase(phase):
+                    work(job)
+                if phase == run_through:
+                    break
+        finally:
+            # Even a failed run records what it spent (None, no file, with no model call).
+            model_usage.write_usage(target_store, req.database_name, job_id)
         state = load_run_state(target_store, req.database_name, job_id, run_through)
         return build_result(state, req)
 

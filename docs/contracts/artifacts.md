@@ -82,6 +82,7 @@ Not contracts: callers may not rely on their shape. A pattern starting with `^` 
 | `^[^/]+/[^/]+/_meta\.json` | the local API runner's own job record (start time, request input), read only by the local API and its stored-input redaction, never by a phase |
 | `^[^/]+/[^/]+/_status\.json` | the local API runner's job status marker (cancelled, failed) |
 | `^[^/]+/[^/]+/(?:collector|referee-triage|referee-synthesis|assignment-resolver|reality-check|schema-design|schema-split|schema-merge|load-test|{engines})/error\.json` | a container agent's failure record, under its agent type |
+| `_logs/model_usage\.json` | token usage of the run's model calls by phase and model id (#1494), written by assess() for a run that called a model and read by scripts/usage_cost.py |
 | `_logs/prose_style_rejections-v\d+\.json` | a log of the synthesis prose a style check rejected, per assignment version |
 | `uploads/input_key\.json` | AWS Transform transport state: the resolved input location |
 | `_pending/[^/]+/upload\.json` | AWS Transform transport state: a pending upload task, before the job folder exists |
