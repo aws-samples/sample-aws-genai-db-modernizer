@@ -79,3 +79,39 @@ def test_a_model_flag_moves_the_statement(model: dict[str, MagicMock]) -> None:
     assert after.engine != moved.engine
     assert after.reason_code == "capability_flag"
     assert moved.engine in after.excluded
+
+
+@pytest.mark.passes_on_main
+def test_a_model_flag_is_a_model_flag_move_in_the_artifacts(model: dict[str, MagicMock]) -> None:
+    """What the contract tells a caller to read (#1259): the review's change is a Move
+    with actor ``model_flag`` in ``artifacts.assignment.moves``; the deterministic run
+    records no such Move."""
+    moved = next(
+        s
+        for s in assessed("wordpress", "reality_check").statements
+        if s.reason_code == "consolidated" and s.engine == "dynamodb"
+    )
+    model["validate"].return_value = [
+        ModelFlag(
+            query_ids=[moved.query_id],
+            flagged_engine=moved.engine,
+            reason_category=FlagReason.MISSING_FEATURE,
+            explanation="cannot serve this statement",
+        )
+    ]
+    reviewed = _run(False, include_artifacts=True)
+    assert reviewed.artifacts is not None
+    flagged = [
+        m
+        for m in reviewed.artifacts.model_dump()["assignment"]["moves"]
+        if m["actor"] == "model_flag"
+    ]
+    assert [m["query_id"] for m in flagged] == [moved.query_id]
+    assert flagged[0]["from_engine"] == moved.engine
+    after = next(s for s in reviewed.statements if s.query_id == moved.query_id)
+    assert flagged[0]["to_engine"] == after.engine
+
+    plain = _run(True, include_artifacts=True)
+    assert plain.artifacts is not None
+    moves = plain.artifacts.model_dump()["assignment"]["moves"]
+    assert moves and all(m["actor"] != "model_flag" for m in moves)

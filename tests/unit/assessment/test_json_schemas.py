@@ -247,3 +247,26 @@ def test_the_schema_validator_keeps_its_bar(tmp_path: Path, change: Any, error: 
     path.write_text(json.dumps(schema), encoding="utf-8")
     ok, errors = validate_schema_file(path)
     assert not ok and any(error in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["result_docstring", "package_docstring", "schema", "doc"],
+)
+def test_the_determinism_limits_are_stated(where: str) -> None:
+    """The result's docstring, its schema description and the library docs state what
+    is identical run to run and what is not (#1259)."""
+    import src.assessment as package
+
+    if where == "result_docstring":
+        text = " ".join((AssessmentResult.__doc__ or "").split())
+    elif where == "package_docstring":
+        text = " ".join((package.__doc__ or "").split())
+    elif where == "schema":
+        text = " ".join(_schema("assess_result")["description"].split())
+    else:
+        text = " ".join(DOC.read_text(encoding="utf-8").split())
+    for phrase in ("PYTHONHASHSEED", "not guaranteed", "model_flag", "capability_flag"):
+        assert phrase in text, (where, phrase)
+    assert "analysis" in text and "reality_check" in text
+    assert "new run" in text

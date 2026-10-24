@@ -30,8 +30,15 @@ Not stable: ``artifacts`` (only with ``include_artifacts=True``) carries the pip
 internal contracts verbatim, each with its own internal version, and has no
 compatibility promise: they change as routing evolves.
 
-Determinism: with ``deterministic=True`` (the default) no model is called, and the
-same request on the same library version gives the same result.
+Determinism: with ``deterministic=True`` (the default) no model is called. For
+``run_through="analysis"`` the same collection, library version and engine scope give
+an identical result, in any process and under any ``PYTHONHASHSEED``. For
+``run_through="reality_check"`` this is not guaranteed: everything up to the model
+review is deterministic, but the review (``deterministic=False``) can differ between
+runs and change consolidations; each change it makes is a Move with actor
+``model_flag`` in ``artifacts.assignment.moves``, and the statement it moved has
+``reason_code`` ``capability_flag``. Results are never stored or reused: a repeat call
+is a new run.
 
 This package's models are not the local API's request models
 (``src.api.models.requests``); import them from here.

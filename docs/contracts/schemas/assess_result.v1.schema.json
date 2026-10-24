@@ -775,7 +775,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).",
+  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". Results are never stored or reused: a\nrepeat call is a new run.",
   "properties": {
     "contract_version": {
       "const": "1.0",

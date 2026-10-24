@@ -82,7 +82,11 @@ How to read it:
 - **`reason_text`** and every `reason` (including `summary.engines[].reason`, `summary.consolidations[].reason` and `summary.tables[].reason`) are customer-facing sentences. Show them or word your own from them; do not parse them. They can quote collection text (table names, for example), so escape them for the format you render them in.
 - **`ruleset_hash`** names the rules that produced the result. Scores compare only within one hash. Asking for an older ruleset is not supported: pin the library version to reproduce a result.
 
-With `deterministic: true`, the same request on the same library version gives the same result.
+## Determinism
+
+- **`run_through: "analysis"`** (no model): the same collection, library version and engine scope give an identical result, byte for byte once serialized with sorted keys, in any process and under any `PYTHONHASHSEED`. The result carries no run timestamp; only the opt-in `artifacts` block records run times. A test runs every bundled sample in separate processes under different hash seeds and compares the results.
+- **`run_through: "reality_check"`**: not guaranteed. Everything up to the reality check's model review is deterministic, but the review (`deterministic: false`) can differ between runs, and it can change consolidations. Every change it makes is recorded as a Move with `actor` `"model_flag"` in the assignment's `moves` (`artifacts.assignment.moves`, with `include_artifacts: true`), and the statement it moved has `reason_code` `capability_flag`, so a caller can see which parts came from the review.
+- **No stored results.** The library never stores or reuses a result: a repeat call is a new run.
 
 ## Artifacts: no compatibility promise
 

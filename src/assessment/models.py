@@ -431,7 +431,17 @@ class Artifacts(BaseModel):
 
 class AssessmentResult(_Strict):
     """One assessment's result: where each statement runs, which statements move
-    together and which engine owns each table (not a data model)."""
+    together and which engine owns each table (not a data model).
+
+    Determinism: for run_through="analysis" (no model), the same collection, library
+    version and engine scope give an identical result, in any process and under any
+    PYTHONHASHSEED. For run_through="reality_check" this is not guaranteed: everything
+    up to the reality check's model review is deterministic, but the review (with
+    deterministic=False) can differ between runs and change consolidations. Each change
+    it makes is recorded in the assignment's moves with actor "model_flag"
+    (artifacts.assignment.moves, with include_artifacts=True), and the statement it
+    moved has reason_code "capability_flag". Results are never stored or reused: a
+    repeat call is a new run."""
 
     contract_version: Literal["1.0"] = CONTRACT_VERSION
     label: ResultLabel = Field(
