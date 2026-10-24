@@ -167,3 +167,14 @@ def test_a_stored_block_from_before_gets_the_tco_assumptions() -> None:
     report = _with_assumptions(["Region: us-east-1"])
     report["facts"].pop("cost_assumptions")
     assert report_facts(report)["cost_assumptions"] == ["Region: us-east-1"]
+
+
+def test_the_tables_no_query_reads_are_stated_with_the_engine_that_stores_them() -> None:
+    """#1378: wave 1's Aurora engine also stores the tables no in-scope query reads."""
+    assert cost_sizing_text({**AURORA, "unqueried_table_count": 28}) == (
+        "67 queries, 96.51 calls/s, plus 28 tables no query reads"
+    )
+    assert cost_sizing_text({**AURORA, "unqueried_table_count": 1}) == (
+        "67 queries, 96.51 calls/s, plus 1 table no query reads"
+    )
+    assert cost_sizing_text({**AURORA, "unqueried_table_count": 0}) == "67 queries, 96.51 calls/s"

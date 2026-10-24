@@ -281,6 +281,8 @@
   "analysis-results.cost-breakdown.sized-for": "Sized for {{what}}, {{rate}}",
   "analysis-results.cost-breakdown.sized-also-on-owners": ", also billed on their owners",
   "analysis-results.cost-breakdown.sized-nothing": "Sized for no in-scope queries",
+  "analysis-results.cost-breakdown.sized-unqueried_one": ", plus {{formatted}} table no query reads",
+  "analysis-results.cost-breakdown.sized-unqueried_other": ", plus {{formatted}} tables no query reads",
   "analysis-results.cost-breakdown.sized-queries_one": "{{formatted}} query",
   "analysis-results.cost-breakdown.sized-queries_other": "{{formatted}} queries",
   "analysis-results.cost-breakdown.sized-cached_one": "{{formatted}} cached read",

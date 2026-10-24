@@ -25,7 +25,7 @@ from src.tools.analysis.redis_analysis_tools import estimate_redis_costs
 TABLES = [
     {"table_id": "shop.orders", "size_mb": 10.0},
     {"table_id": "shop.carts", "size_mb": 5.0},
-    # 30 GB that no in-scope query reads: no engine stores it (#1195).
+    # 30 GB that no in-scope query reads: wave 1's Aurora engine stores it (#1378).
     {"table_id": "shop.audit", "size_mb": 30720.0},
 ]
 
@@ -132,6 +132,7 @@ def test_aurora_drops_to_the_smaller_instance_its_own_load_needs() -> None:
         "read_calls_per_second": 60.0,
         "write_calls_per_second": 30.0,
         "sized_table_count": 1,
+        "unqueried_table_count": 0,
         "storage_gb": round(10.0 / 1024, 4),
     }
 
@@ -145,6 +146,7 @@ def test_dynamodb_is_billed_only_for_its_own_reads_and_writes() -> None:
         "read_calls_per_second": 40.0,
         "write_calls_per_second": 10.0,
         "sized_table_count": 1,
+        "unqueried_table_count": 0,
         "storage_gb": round(5.0 / 1024, 4),
     }
     assert (
@@ -162,6 +164,7 @@ def test_the_cache_layer_is_sized_from_the_reads_its_overlay_fronts() -> None:
         "read_calls_per_second": 40.0,
         "write_calls_per_second": 0.0,
         "sized_table_count": 1,
+        "unqueried_table_count": 0,
         "storage_gb": round(5.0 / 1024, 4),
     }
 
@@ -355,3 +358,155 @@ def test_the_cache_miss_assumption_is_stated_only_with_a_cache_layer() -> None:
     }
     assert CACHE_MISS_ASSUMPTION not in build_tco_analysis(_data(no_cache))["assumptions"]
     assert CACHE_MISS_ASSUMPTION not in build_tco_analysis(_data(None))["assumptions"]
+
+
+# --------------------------------------------------------------------------
+# #1378: the tables no in-scope query reads are stored on wave 1's Aurora engine
+# --------------------------------------------------------------------------
+
+AUDIT_GB = round(30720.0 / 1024, 4)
+
+
+def test_wave_one_engine_stores_the_tables_no_in_scope_query_reads() -> None:
+    """Wave 1 moves the whole database, so shop.audit (read only by q5, out of scope)
+    lands on Aurora MySQL: its storage is in Aurora's figure and sizing, not its count of
+    tables its queries touch."""
+    tco = build_tco_analysis(_data(), wave_one_engine="aurora_mysql")
+    rows = _rows(tco)
+    aurora = estimate_aurora_costs(
+        _subset({"q1", "q4"}, {"shop.orders", "shop.audit"}), "us-east-1", engine="mysql"
+    )
+    assert rows["aurora_mysql"]["monthly_cost_usd"] == aurora.monthly_cost_usd
+    assert rows["aurora_mysql"]["sizing"]["sized_table_count"] == 1
+    assert rows["aurora_mysql"]["sizing"]["unqueried_table_count"] == 1
+    assert rows["aurora_mysql"]["sizing"]["storage_gb"] == round((10.0 + 30720.0) / 1024, 4)
+    for engine in ("dynamodb", "elasticache"):
+        assert rows[engine] == _rows(build_tco_analysis(_data()))[engine]
+        assert rows[engine]["sizing"]["unqueried_table_count"] == 0
+    assert tco["unqueried_tables"] == {
+        "table_count": 1,
+        "storage_gb": AUDIT_GB,
+        "stored_on": "aurora_mysql",
+    }
+
+
+def test_the_projected_cost_includes_that_storage() -> None:
+    without = build_tco_analysis(_data())
+    with_storage = build_tco_analysis(_data(), wave_one_engine="aurora_mysql")
+    assert with_storage["projected_monthly_cost"] > without["projected_monthly_cost"]
+    total = sum(r["monthly_cost_usd"] for r in with_storage["cost_breakdown"])
+    assert with_storage["projected_monthly_cost"] == round(total, 2)
+
+
+def test_the_assumptions_name_the_engine_that_stores_them() -> None:
+    lines = build_tco_analysis(_data(), wave_one_engine="aurora_mysql")["assumptions"]
+    assert (
+        "1 source table no in-scope query reads (30 GB) is stored on Aurora MySQL, "
+        "where wave 1 moves it"
+    ) in lines
+
+
+@pytest.mark.parametrize("engine", [None, "aurora_postgresql"])
+def test_with_no_wave_one_engine_in_the_tco_no_engine_stores_them(engine: str | None) -> None:
+    """No Aurora engine in wave 1 (a scope that leaves Aurora out), or one the TCO has no
+    row for: no figure grows, and the TCO says no engine stores the tables."""
+    tco = build_tco_analysis(_data(), wave_one_engine=engine)
+    assert {e: r["monthly_cost_usd"] for e, r in _rows(tco).items()} == {
+        e: r["monthly_cost_usd"] for e, r in _rows(build_tco_analysis(_data())).items()
+    }
+    assert all(r["sizing"]["unqueried_table_count"] == 0 for r in tco["cost_breakdown"])
+    assert tco["unqueried_tables"] == {"table_count": 1, "storage_gb": AUDIT_GB, "stored_on": None}
+    assert (
+        "1 source table no in-scope query reads (30 GB) is stored on no engine in this "
+        "estimate: wave 1 moves it to no engine the estimate prices"
+    ) in tco["assumptions"]
+
+
+def test_with_every_table_read_nothing_is_added() -> None:
+    every = {
+        "query_assignments": [
+            {**qa, "in_scope": True} if qa["query_id"] == "q5" else qa
+            for qa in ASSIGNMENT["query_assignments"]
+        ]
+    }
+    tco = build_tco_analysis(_data(every), wave_one_engine="aurora_mysql")
+    assert tco["unqueried_tables"] is None
+    assert not [line for line in tco["assumptions"] if "no in-scope query reads" in line]
+    assert tco["cost_breakdown"] == build_tco_analysis(_data(every))["cost_breakdown"]
+
+
+def test_engine_system_objects_are_not_stored() -> None:
+    """Wave 1 leaves engine-internal objects behind (``is_engine_system_object``)."""
+    data = _data()
+    data.collector = {
+        **COLLECTOR,
+        "database_schema": {
+            "tables": [*TABLES, {"table_id": "information_schema.tables", "size_mb": 1.0}]
+        },
+    }
+    assert build_tco_analysis(data, wave_one_engine="aurora_mysql")["unqueried_tables"] == {
+        "table_count": 1,
+        "storage_gb": AUDIT_GB,
+        "stored_on": "aurora_mysql",
+    }
+
+
+def test_with_every_query_out_of_scope_nothing_is_stored_either() -> None:
+    assignment = {
+        "query_assignments": [{**qa, "in_scope": False} for qa in ASSIGNMENT["query_assignments"]]
+    }
+    tco = build_tco_analysis(_data(assignment), wave_one_engine="aurora_mysql")
+    assert tco["projected_monthly_cost"] == 0.0
+    assert tco.get("unqueried_tables") is None
+
+
+def test_without_an_assignment_nothing_is_added() -> None:
+    tco = build_tco_analysis(_data(None), wave_one_engine="aurora_mysql")
+    assert tco.get("unqueried_tables") is None
+    for engine, row in _rows(tco).items():
+        assert row["monthly_cost_usd"] == _whole(engine)["cost_estimate"]["monthly_cost_usd"]
+
+
+def test_synthesis_stores_them_on_wave_ones_engine(tmp_path) -> None:
+    """End to end through synthesis: wave 1 moves the MySQL source to Aurora MySQL, the
+    TCO stores the unread table there, and the ranking states the same figure."""
+    from src.agents.referee.synthesis_handler import run_synthesis_deterministic
+    from src.storage.local_store import LocalArtifactStore
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    db, job = "shop", "j"
+    collector = {**COLLECTOR, "metadata": {"source_database": {"engine": "mysql"}}}
+    store.write_json(
+        f"{db}/{job}/referee-triage/triage.json",
+        {"selected_agents": [{"agent_type": e} for e in ("aurora_mysql", "dynamodb")]},
+    )
+    store.write_json(f"{db}/{job}/collector/output.json", collector)
+    for engine in ("aurora_mysql", "dynamodb"):
+        store.write_json(
+            f"{db}/{job}/analysis-{engine}/analysis.json",
+            {
+                "table_recommendations": [{"table_id": "shop.orders", "confidence_score": 80}],
+                "workload_analysis": {"patterns_detected": [], "anti_patterns_detected": []},
+                **_whole(engine),
+            },
+        )
+    store.write_json(
+        f"{db}/{job}/assignment/v1/assignment.json",
+        {
+            "job_id": job,
+            "version": 1,
+            "query_assignments": [
+                {k: v for k, v in qa.items() if k != "cache_engine"}
+                for qa in ASSIGNMENT["query_assignments"]
+            ],
+            "table_assignments": [],
+        },
+    )
+    result = run_synthesis_deterministic(job, db, store, assignment_version=1)
+    assert result["migration_waves"][0]["engines"] == ["aurora_mysql"]
+    tco = result["tco_analysis"]
+    assert tco["unqueried_tables"]["stored_on"] == "aurora_mysql"
+    rows = _rows(tco)
+    assert rows["aurora_mysql"]["sizing"]["unqueried_table_count"] == 1
+    ranked = {r["target"]: r["monthly_cost_usd"] for r in result["ranking"] if r["target"] in rows}
+    assert ranked == {e: r["monthly_cost_usd"] for e, r in rows.items()}

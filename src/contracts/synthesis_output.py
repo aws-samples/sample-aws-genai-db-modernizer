@@ -684,7 +684,32 @@ class CostSizing(BaseModel):
     read_calls_per_second: float = Field(..., ge=0)
     write_calls_per_second: float = Field(..., ge=0)
     sized_table_count: int = Field(..., ge=0, description="Source tables those queries touch")
+    unqueried_table_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Source tables no in-scope query reads that this engine also stores (#1378): "
+            "wave 1 moves them to it. Not in sized_table_count; their size is in storage_gb"
+        ),
+    )
     storage_gb: float = Field(..., ge=0, description="Those tables' source size, in GB")
+
+
+class UnqueriedTables(BaseModel):
+    """The source tables no in-scope query reads, and the engine that stores them (#1378).
+
+    Wave 1 moves the whole source database, so they land on its Aurora engine, whose TCO
+    figure is priced with them."""
+
+    table_count: int = Field(..., ge=1, description="Source tables no in-scope query reads")
+    storage_gb: float = Field(..., ge=0, description="Their source size, in GB")
+    stored_on: str | None = Field(
+        ...,
+        description=(
+            "Engine id of wave 1's Aurora engine, whose figure includes them; None when no "
+            "kept engine is wave 1's, so no figure includes them"
+        ),
+    )
 
 
 class CostBreakdown(BaseModel):
@@ -751,6 +776,14 @@ class TCOAnalysis(BaseModel):
             "Engines the source runs today (the source engine, or one the collection "
             "records in metadata.engines_in_use) that the plan retires, with their "
             "analysed monthly cost. A candidate engine the plan dropped is never here."
+        ),
+    )
+    unqueried_tables: UnqueriedTables | None = Field(
+        None,
+        description=(
+            "The source tables no in-scope query reads and the engine that stores them "
+            "(#1378); None when every table is read, with no assignment, and for a report "
+            "written before"
         ),
     )
     assumptions: list[str] | None = Field(None)

@@ -285,7 +285,12 @@ export function costSizingText(t, sizing) {
     { count, formatted: formatFigure(count) },
   );
   const calls = t('analysis-results.cost-breakdown.sized-rate', { count: rate, formatted: formatFigure(rate) });
-  const text = t('analysis-results.cost-breakdown.sized-for', { what, rate: calls });
+  const sized = t('analysis-results.cost-breakdown.sized-for', { what, rate: calls });
+  // #1378: wave 1's Aurora engine also stores the tables no in-scope query reads.
+  const unread = Number(sizing.unqueried_table_count) || 0;
+  const text = unread
+    ? sized + t('analysis-results.cost-breakdown.sized-unqueried', { count: unread, formatted: formatFigure(unread) })
+    : sized;
   // The cache layer's reads stay billed on their owner engines too (the TCO assumption).
   return sizing.basis === 'cache_overlay' && count
     ? text + t('analysis-results.cost-breakdown.sized-also-on-owners')
