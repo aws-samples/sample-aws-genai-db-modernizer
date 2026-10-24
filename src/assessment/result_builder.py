@@ -25,7 +25,11 @@ routing did not already decide:
   named by the pattern catalog (``src/catalog/patterns``);
 - ``groups`` are the assignment's co-dependency groups and write groups;
 - ``designs`` (a designed result only) are each designed engine's target tables, keys
-  and indexes, copied from its schema output (:func:`build_designs`).
+  and indexes, copied from its schema output (:func:`build_designs`);
+- a statement's ``post_schema_terminal`` is the post-schema router's terminal record
+  for it (``post-schema-router/router_output.json`` ``terminal``), while the effective
+  assignment keeps it in scope on the flagged engine, the rule synthesis applies to the
+  same records (``src.agents.referee.flagged_unservable``).
 
 The builder is pure over :class:`RunState`, so the next phases and fields are each a
 small addition: a field reads one more input here, a phase loads one more artifact.
@@ -35,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, get_args
 
 from src.assessment.models import (
     Artifacts,
@@ -57,8 +61,10 @@ from src.assessment.models import (
     ElastiCacheDesign,
     EngineDesign,
     EngineLine,
+    FlagReasonCode,
     Group,
     PatternRef,
+    PostSchemaTerminal,
     PublicReasonCode,
     RelationalEngine,
     StatementResult,
@@ -97,6 +103,9 @@ class RunState:
     schema_designs: dict[str, dict[str, Any]] = field(default_factory=dict)
     # The synthesis report of the effective version; None before ``synthesis``.
     synthesis_report: dict[str, Any] | None = None
+    # The post-schema router's terminal records (``TerminalQuery``, as written); empty
+    # before ``schema_design``.
+    router_terminal: list[dict[str, Any]] = field(default_factory=list)
     # The store key each design and the report were read from.
     artifact_keys: dict[str, Any] = field(default_factory=dict)
 
@@ -166,6 +175,9 @@ def load_run_state(store: Any, database_name: str, job_id: str, run_through: str
     designed = run_through in ("schema_design", "synthesis")
     if designed:
         _load_designs(state, store, database_name, job_id, effective)
+        router_key = f"{database_name}/{job_id}/{ROUTER_OUTPUT}"
+        if store.exists(router_key):
+            state.router_terminal = list(store.read_json(router_key).get("terminal") or [])
     if run_through == "synthesis":
         # Where ``run_synthesis_core`` writes a versioned report.
         key = f"{database_name}/{job_id}/synthesis/v{effective}/report.json"
@@ -178,6 +190,10 @@ def load_run_state(store: Any, database_name: str, job_id: str, run_through: str
     else:
         state.report_engines = report_engine_lines(store, database_name, job_id, effective)
     return state
+
+
+#: Where the post-schema routing writes its cumulative output, under the job.
+ROUTER_OUTPUT = "post-schema-router/router_output.json"
 
 
 def _load_designs(
@@ -368,6 +384,44 @@ def _placement(qa: Mapping[str, Any], history: list[Move]) -> _Placement:
     )
 
 
+_FLAG_REASONS = frozenset(get_args(FlagReasonCode))
+
+
+def post_schema_terminals(state: RunState) -> dict[str, PostSchemaTerminal]:
+    """``{query_id: marker}`` for each post-schema router terminal record whose
+    statement the effective assignment keeps in scope on the flagged engine (a later
+    move clears it, as synthesis's ``flagged_unservable`` rows are cleared). The
+    sentence is the one the deliverables state for it."""
+    from src.agents.referee.flagged_unservable import (
+        SOURCE_DESIGN_REVIEW,
+        flagged_unservable_explanation,
+    )
+    from src.contracts.post_schema_router_output import TerminalQuery
+
+    engine_of = {
+        str(qa["query_id"]): qa.get("assigned_engine")
+        for qa in (state.assignment or {}).get("query_assignments") or []
+        if isinstance(qa, dict) and qa.get("query_id") and qa.get("in_scope", True)
+    }
+    out: dict[str, PostSchemaTerminal] = {}
+    for raw in state.router_terminal:
+        record = TerminalQuery.model_validate(raw)
+        if record.query_id in out or engine_of.get(record.query_id) != record.flagged_engine:
+            continue
+        category = str(record.reason_category or "other")
+        if category not in _FLAG_REASONS:
+            category = "other"
+        out[record.query_id] = PostSchemaTerminal(
+            engine=record.flagged_engine,
+            flag_reason=category,  # type: ignore[arg-type]
+            cause=record.cause,
+            reason=flagged_unservable_explanation(
+                SOURCE_DESIGN_REVIEW, record.cause, record.flagged_engine, category
+            ),
+        )
+    return out
+
+
 def build_statements(state: RunState, request: AssessmentRequest) -> list[StatementResult]:
     """One entry per statement: every collected statement at ``analysis``; from
     ``reality_check`` on, every placed (in-scope) statement of the effective assignment,
@@ -377,6 +431,7 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
     matched = _patterns_by_query(state.decision_traces)
     scope_out = _scope_excluded(state.triage)
     rewritten = _rewritten(request)
+    terminal = post_schema_terminals(state)
 
     def statement(
         qid: str,
@@ -408,6 +463,7 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
             unservable_reason=placed.unservable_reason if placed else None,
             tied_engines=placed.tied_engines if placed else [],
             reason_text=placed.reason_text if placed else None,
+            post_schema_terminal=terminal.get(qid) if placed and engine else None,
         )
 
     assignment = state.assignment
@@ -658,6 +714,7 @@ def build_summary(state: RunState, statements: list[StatementResult]) -> Summary
         statement_count=len(statements),
         statements_per_engine=dict(sorted(per_engine.items())),
         unservable_count=unservable,
+        post_schema_terminal_count=sum(1 for s in statements if s.post_schema_terminal),
         unique_delta_threshold=int(UNIQUE_DELTA_THRESHOLD),
         relational_engine=relational,
         engines=build_engine_lines(state, per_engine, consolidations, relational),

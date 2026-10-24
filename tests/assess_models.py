@@ -7,7 +7,10 @@ what tests put in their place (tests never call a model).
   (``tests/e2e/designed_run.py``; DynamoDB's with one global secondary index added, so
   the stable design block has one) and a small DocumentDB design
   (:func:`write_documentdb_design`); on any other database, a skipped placeholder, as a
-  designer writes when it has nothing to design;
+  designer writes when it has nothing to design. The database
+  :data:`FLAGGED_DATABASE` (the wordpress sample under another name) gets the same
+  designs, with its first DynamoDB design reporting one statement unsupported
+  (:func:`report_unsupported`), so a consumer fixture reaches the post-schema routing;
 - synthesis's executive summary: no model answer, so the deterministic one stays.
 
 A phase that adds a model call adds its entry point to :data:`MODEL_ENTRY_POINTS`. The
@@ -16,7 +19,7 @@ Bedrock guard in ``tests/conftest.py`` still refuses any call this list misses.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import ExitStack, contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -145,6 +148,52 @@ def write_documentdb_design(
     store.write_json(key, design.model_dump(mode="json"))
 
 
+#: A database the fake designer designs as wordpress, with the first DynamoDB design
+#: reporting one statement unsupported (``assess_consumer_fixtures.json``'s
+#: ``wordpress_terminal``: in an engine scope with no other owner, it stays terminal).
+FLAGGED_DATABASE = "wordpress_terminal"
+
+#: The databases the fake designer writes the designed wordpress job's designs for.
+DESIGNED_DATABASES = ("wordpress", FLAGGED_DATABASE)
+
+
+def report_unsupported(
+    store: Any, database_name: str, job_id: str, version: int, skip: Collection[str] = ()
+) -> str:
+    """Make the DynamoDB design at ``version`` report one statement unsupported, and
+    return its id: the first DynamoDB read (by id) in no placement unit, so it moves
+    alone, and not in ``skip``."""
+    from src.agents.referee.write_groups import assignment_placement_groups
+
+    prefix = f"{database_name}/{job_id}"
+    assignment = store.read_json(f"{prefix}/assignment/v{version}/assignment.json")
+    grouped = {m for g in assignment_placement_groups(assignment) if len(g) > 1 for m in g}
+    types = {
+        q["query_id"]: str(q.get("query_type") or "").upper()
+        for q in store.read_json(f"{prefix}/collector/output.json")["queries"]["query_patterns"]
+    }
+    flagged = sorted(
+        qa["query_id"]
+        for qa in assignment["query_assignments"]
+        if qa["assigned_engine"] == "dynamodb"
+        and qa.get("in_scope", True)
+        and qa["query_id"] not in grouped
+        and qa["query_id"] not in skip
+        and types.get(qa["query_id"]) == "SELECT"
+    )[0]
+    key = f"{prefix}/schema-dynamodb/v{version}/schema_output.json"
+    design = store.read_json(key)
+    design["unsupported_patterns"] = [
+        {
+            "query_ids": [flagged],
+            "pattern_type": "aggregation",
+            "recommendation": "needs a server-side aggregation",
+        }
+    ]
+    store.write_json(key, design)
+    return str(flagged)
+
+
 def write_fake_design(
     job_id: str, database_name: str, target_type: str, store: Any, assignment_version: int
 ) -> None:
@@ -158,8 +207,10 @@ def write_fake_design(
         "aurora_mysql": write_aurora_mysql_design,
         "documentdb": write_documentdb_design,
     }
-    if database_name == "wordpress" and target_type in writers:
+    if database_name in DESIGNED_DATABASES and target_type in writers:
         writers[target_type](store, database_name, job_id, assignment_version)
+        if database_name == FLAGGED_DATABASE and target_type == "dynamodb":
+            report_unsupported(store, database_name, job_id, assignment_version)
         return
     placeholder = SkippedSchemaOutput(
         target_type=target_type,

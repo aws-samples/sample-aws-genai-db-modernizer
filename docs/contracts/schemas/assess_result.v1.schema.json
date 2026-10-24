@@ -811,6 +811,50 @@
       "title": "PatternRef",
       "type": "object"
     },
+    "PostSchemaTerminal": {
+      "additionalProperties": false,
+      "description": "A statement a schema design flagged that the post-schema routing could not move:\nit stays on the flagging engine, and the pipeline's deliverables show it as\napplication-layer work there.",
+      "properties": {
+        "engine": {
+          "description": "The engine whose design flagged it, by id; the statement stays on it",
+          "title": "Engine",
+          "type": "string"
+        },
+        "flag_reason": {
+          "description": "The flag's reason category: full_scan, client_side_join, missing_feature or other",
+          "enum": [
+            "full_scan",
+            "client_side_join",
+            "missing_feature",
+            "other"
+          ],
+          "title": "Flag Reason",
+          "type": "string"
+        },
+        "cause": {
+          "description": "no_kept_engine: no other engine the placement keeps, in the engine scope, can take it; depth_limit: the post-schema routing reached its last pass",
+          "enum": [
+            "no_kept_engine",
+            "depth_limit"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "flag_reason",
+        "cause",
+        "reason"
+      ],
+      "title": "PostSchemaTerminal",
+      "type": "object"
+    },
     "RelationalEngine": {
       "additionalProperties": false,
       "description": "The Aurora engine chosen for the source, and why.",
@@ -1039,6 +1083,18 @@
           "default": null,
           "description": "Customer-facing sentence; do not parse. It can quote collection text (table names): escape it when rendering",
           "title": "Reason Text"
+        },
+        "post_schema_terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostSchemaTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set when a schema design flagged the statement on its engine and the post-schema routing could not move it (it keeps its engine and reason_code); None otherwise and before 'schema_design'"
         }
       },
       "required": [
@@ -1059,7 +1115,8 @@
         "signals",
         "matched_patterns",
         "tied_engines",
-        "reason_text"
+        "reason_text",
+        "post_schema_terminal"
       ],
       "title": "StatementResult",
       "type": "object"
@@ -1114,6 +1171,13 @@
           "default": 0,
           "minimum": 0,
           "title": "Unservable Count",
+          "type": "integer"
+        },
+        "post_schema_terminal_count": {
+          "default": 0,
+          "description": "Statements with `post_schema_terminal` set: a design flagged them and the post-schema routing could not move them; 0 before 'schema_design'",
+          "minimum": 0,
+          "title": "Post Schema Terminal Count",
           "type": "integer"
         },
         "unique_delta_threshold": {
@@ -1187,6 +1251,7 @@
         "statement_count",
         "statements_per_engine",
         "unservable_count",
+        "post_schema_terminal_count",
         "unique_delta_threshold",
         "relational_engine",
         "engines",

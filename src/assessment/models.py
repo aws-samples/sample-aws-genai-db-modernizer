@@ -57,6 +57,16 @@ PublicReasonCode = Literal[
     "unservable",
 ]
 
+#: Why the post-schema routing left a flagged statement where it is (the router's
+#: ``TerminalQuery.cause``): ``no_kept_engine`` (no other engine the placement keeps, in
+#: the engine scope, can take it) or ``depth_limit`` (the routing reached its last pass).
+PostSchemaTerminalCause = Literal["no_kept_engine", "depth_limit"]
+
+#: The reason category of a design's flag (the router's ``FlagReason`` values): why the
+#: design or its reviewer found the engine unable to serve the statement. Adding a value
+#: is a MINOR change of this contract.
+FlagReasonCode = Literal["full_scan", "client_side_join", "missing_feature", "other"]
+
 #: How a table's owner was chosen (the facts layer's owner basis, ``src.shared.report_facts``).
 OwnerBasis = Literal["writes", "split_writes", "most_queries", "retained", "design"]
 
@@ -346,6 +356,14 @@ class Summary(_Strict):
         default_factory=dict, description="Placed statements per engine; empty at 'analysis'"
     )
     unservable_count: int = Field(0, ge=0)
+    post_schema_terminal_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Statements with `post_schema_terminal` set: a design flagged them and the "
+            "post-schema routing could not move them; 0 before 'schema_design'"
+        ),
+    )
     unique_delta_threshold: int = Field(
         ...,
         ge=0,
@@ -394,6 +412,31 @@ class PatternRef(_Strict):
 
     id: str = Field(..., description="The catalog's pattern id")
     name: str = Field(..., description="The catalog's display name for it")
+
+
+class PostSchemaTerminal(_Strict):
+    """A statement a schema design flagged that the post-schema routing could not move:
+    it stays on the flagging engine, and the pipeline's deliverables show it as
+    application-layer work there."""
+
+    engine: str = Field(
+        ...,
+        description="The engine whose design flagged it, by id; the statement stays on it",
+    )
+    flag_reason: FlagReasonCode = Field(
+        ...,
+        description=(
+            "The flag's reason category: full_scan, client_side_join, missing_feature or other"
+        ),
+    )
+    cause: PostSchemaTerminalCause = Field(
+        ...,
+        description=(
+            "no_kept_engine: no other engine the placement keeps, in the engine scope, can "
+            "take it; depth_limit: the post-schema routing reached its last pass"
+        ),
+    )
+    reason: str = Field(..., description="Customer-facing sentence; do not parse")
 
 
 class StatementResult(_Strict):
@@ -453,6 +496,14 @@ class StatementResult(_Strict):
         description=(
             "Customer-facing sentence; do not parse. It can quote collection text "
             "(table names): escape it when rendering"
+        ),
+    )
+    post_schema_terminal: PostSchemaTerminal | None = Field(
+        None,
+        description=(
+            "Set when a schema design flagged the statement on its engine and the "
+            "post-schema routing could not move it (it keeps its engine and reason_code); "
+            "None otherwise and before 'schema_design'"
         ),
     )
 

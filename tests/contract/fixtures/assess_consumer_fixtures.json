@@ -27,6 +27,7 @@
         "summary.statements_per_engine",
         "summary.statements_per_engine{}",
         "summary.unservable_count",
+        "summary.post_schema_terminal_count",
         "summary.unique_delta_threshold",
         "summary.relational_engine",
         "summary.relational_engine.engine",
@@ -75,6 +76,7 @@
         "statements[].matched_patterns[].name",
         "statements[].tied_engines",
         "statements[].reason_text",
+        "statements[].post_schema_terminal",
         "groups",
         "groups[].group_id",
         "groups[].kind",
@@ -250,6 +252,25 @@
         "designs[DocumentDBDesign].validation_passed",
         "designs[AuroraDesign].engine",
         "designs[AuroraDesign].tables[].name"
+      ]
+    },
+    "wordpress_terminal": {
+      "why": "A design flags a statement in an engine scope with no other owner, so the post-schema routing leaves it on the flagging engine as terminal (no_kept_engine) and the result marks it; the test designer flags it for this database name only (tests/assess_models.py, FLAGGED_DATABASE)",
+      "sample": "wordpress",
+      "database_name": "wordpress_terminal",
+      "options": {
+        "target_engines": ["elasticache", "dynamodb"]
+      },
+      "scope": null,
+      "guards": [
+        "summary.post_schema_terminal_count",
+        "statements[].engine",
+        "statements[].reason_code",
+        "statements[].post_schema_terminal",
+        "statements[].post_schema_terminal.engine",
+        "statements[].post_schema_terminal.flag_reason",
+        "statements[].post_schema_terminal.cause",
+        "statements[].post_schema_terminal.reason"
       ]
     }
   }

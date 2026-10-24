@@ -251,7 +251,7 @@ def test_every_always_written_result_field_is_required() -> None:
 
     result = _schema("assess_result")
     statement = result["$defs"]["StatementResult"]
-    assert len(StatementResult.model_fields) == 18
+    assert len(StatementResult.model_fields) == 19
     assert set(statement["required"]) == set(StatementResult.model_fields)
     for name, model in result["$defs"].items():
         assert set(model.get("required", [])) == set(model["properties"]), name

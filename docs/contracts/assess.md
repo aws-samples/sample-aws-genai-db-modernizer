@@ -104,7 +104,7 @@ Which engines get a schema design: the ones the effective assignment keeps, owne
 
 A designed result always carries the [design block](#the-design-block) (`designs`). The full designs and the report are only in `artifacts`, so ask for `include_artifacts: true` for them (or pass your own `store`, where they stay under `<database_name>/<job_id>/`; `artifacts.artifact_keys` names each key).
 
-**Post-schema routing.** After the designs, `assess()` runs the pipeline's post-schema routing, the same implementation the local pipeline uses: a statement a design reports unsupported, or its reviewer flags, moves (with the statements it moves with) to its best-scoring remaining engine among the ones the placement keeps, in the engine scope, never a cache. The move is a new assignment version, so `summary.assignment_version` rises, the statement's `reason_code` is `post_schema_reroute`, and its Move (pass `post_schema_flag`) is in `artifacts.assignment.moves`. Only the engines a move touches (the one it left and the one it joined) are designed again on the new version; the others' designs are carried forward, and the result, its designs and `summary.designed_engines` are those of the new version. A statement with no remaining engine in the scope is not moved: it stays on the engine whose design flagged it, with its reason code, and the router records it as terminal in the job's `post-schema-router/router_output.json` (in your `store`; the result does not mark it yet, #1497). A redesign that fails fails the run (`AssessmentRunError`), after a version restating the one before the move is written.
+**Post-schema routing.** After the designs, `assess()` runs the pipeline's post-schema routing, the same implementation the local pipeline uses: a statement a design reports unsupported, or its reviewer flags, moves (with the statements it moves with) to its best-scoring remaining engine among the ones the placement keeps, in the engine scope, never a cache. The move is a new assignment version, so `summary.assignment_version` rises, the statement's `reason_code` is `post_schema_reroute`, and its Move (pass `post_schema_flag`) is in `artifacts.assignment.moves`. Only the engines a move touches (the one it left and the one it joined) are designed again on the new version; the others' designs are carried forward, and the result, its designs and `summary.designed_engines` are those of the new version. A statement with no remaining engine in the scope is not moved: it stays on the engine whose design flagged it, with its reason code, and the result marks it in `statements[].post_schema_terminal` and counts it in `summary.post_schema_terminal_count` (see [Post-schema terminal statements](#post-schema-terminal-statements)). A redesign that fails fails the run (`AssessmentRunError`), after a version restating the one before the move is written.
 
 ## The request
 
@@ -123,11 +123,11 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns, and the design block `designs`) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
-- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
-- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
+- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
+- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
 - `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
 
@@ -280,6 +280,7 @@ An engine with no agreed stable shape yet (OpenSearch) is in `summary.designed_e
 
 - **`query_type`** and **`join_count`**: the statement's type (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `OTHER`) and its number of joins, as the library's parser reads them.
 - **`matched_patterns`**: the pattern catalog's patterns the statement matches on its assigned engine, as `{"id", "name"}` (for example `{"id": "key-value-lookup", "name": "Key-value lookup"}`). Only the assigned engine's: read another engine's fit from `fit`. Empty at `"analysis"` and for an unservable statement.
+- **`post_schema_terminal`**: set when a schema design flagged the statement and the post-schema routing could not move it (see [Post-schema terminal statements](#post-schema-terminal-statements)); `null` otherwise, and always `null` before `"schema_design"`.
 
 How to read it:
 
@@ -291,6 +292,26 @@ How to read it:
 - **`fit`** is the routing scorer's score for the statement on each engine it can be scored on: the same number routing compared. At `"analysis"` it is the score before anything is placed, so a capability that routing allows only once a table's writes are placed is not applied yet.
 - **`reason_text`** and every `reason` (including `summary.engines[].reason`, `summary.consolidations[].reason` and `summary.tables[].reason`) are customer-facing sentences. Show them or word your own from them; do not parse them. They can quote collection text (table names, for example), so escape them for the format you render them in.
 - **`ruleset_hash`** names the rules that produced the result. Scores compare only within one hash. Asking for an older ruleset is not supported: pin the library version to reproduce a result.
+
+### Post-schema terminal statements
+
+From `"schema_design"` on, a statement whose engine's design reports it unsupported, or whose reviewer flags it, is moved by the post-schema routing to its best remaining engine. When it cannot be moved, the router records it as terminal, and the result marks it:
+
+```json
+"post_schema_terminal": {
+  "engine": "dynamodb",
+  "flag_reason": "missing_feature",
+  "cause": "no_kept_engine",
+  "reason": "A design review found DynamoDB cannot serve this query (it needs a feature the engine lacks), and no other engine the plan keeps can take it, so it stays on DynamoDB."
+}
+```
+
+- **`engine`**: the engine whose design flagged it. The statement **stays on that engine**: its `engine` is the same, and its `reason_code` is the one it had before the flag (never `unservable` or `post_schema_reroute`), so it still counts in `statements_per_engine`. That engine's design (its `designs` entry and `artifacts.schema_designs.<engine>`) is the one that flagged it. The pipeline's deliverables show it as application-layer work on that engine.
+- **`flag_reason`**: the flag's reason category, one of `full_scan`, `client_side_join`, `missing_feature` (a design's unsupported pattern is always this one) or `other`. A new category is a MINOR change, so read it with a default branch.
+- **`cause`**: why it was not moved. `no_kept_engine`: no other engine the placement keeps, in the engine scope, can take it (a cache never takes one); widening `target_engines` can give it one. `depth_limit`: the routing reached its last pass (it moves statements for at most two passes, then only marks what is still flagged).
+- **`reason`**: a customer-facing sentence, the one the report states for the statement. Do not parse it.
+
+`summary.post_schema_terminal_count` is the number of marked statements; it is `0` when nothing is terminal and before `"schema_design"`. A marker holds only while the statement is on the flagged engine in the result's assignment version. The marker reports what the routing did; it changes no placement.
 
 ## Determinism
 
@@ -367,6 +388,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       "dynamodb": 1
     },
     "unservable_count": 0,
+    "post_schema_terminal_count": 0,
     "unique_delta_threshold": 15,
     "relational_engine": {
       "engine": "aurora_postgresql",
@@ -452,7 +474,8 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
         }
       ],
       "tied_engines": [],
-      "reason_text": "highest fit for Aurora PostgreSQL"
+      "reason_text": "highest fit for Aurora PostgreSQL",
+      "post_schema_terminal": null
     },
     {
       "query_id": "Q02",
@@ -486,7 +509,8 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
         }
       ],
       "tied_engines": [],
-      "reason_text": "highest fit for DynamoDB"
+      "reason_text": "highest fit for DynamoDB",
+      "post_schema_terminal": null
     }
   ],
   "groups": [],

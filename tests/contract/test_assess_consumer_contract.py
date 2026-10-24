@@ -416,6 +416,14 @@ def test_the_documented_phase_rules_hold(name: str, run_through: str, determinis
     assert result["options"]["run_through"] == run_through
     assert statements and summary["statement_count"] == len(statements)
     assert any(s["fit"] for s in statements)
+    # A post-schema terminal marker (#1497): only from 'schema_design' on, on a placed
+    # statement, on the engine it stays on, and counted once.
+    terminal = [s for s in statements if s["post_schema_terminal"] is not None]
+    assert summary["post_schema_terminal_count"] == len(terminal)
+    if run_through not in MODEL_PHASES:
+        assert terminal == []
+    for s in terminal:
+        assert s["engine"] == s["post_schema_terminal"]["engine"], s["query_id"]
     if PHASE_ORDER.index(run_through) < PHASE_ORDER.index(PLACEMENT_PHASE):
         assert summary["assignment_version"] is None
         assert summary["statements_per_engine"] == {}

@@ -19,7 +19,7 @@ import pytest
 from src.assessment import AssessmentResult, assess
 from src.assessment.runner import AssessmentRunError
 from src.storage.local_store import LocalArtifactStore
-from tests.assess_models import DESIGNER, models_patched, write_fake_design
+from tests.assess_models import DESIGNER, models_patched, report_unsupported, write_fake_design
 from tests.unit.assessment.conftest import collection
 
 DB = "wordpress"
@@ -52,33 +52,7 @@ class _FlaggingDesigner:
             self._report_unsupported(store, kw["database_name"], kw["job_id"], version)
 
     def _report_unsupported(self, store: Any, db: str, job_id: str, version: int) -> None:
-        from src.agents.referee.write_groups import assignment_placement_groups
-
-        prefix = f"{db}/{job_id}"
-        assignment = store.read_json(f"{prefix}/assignment/v{version}/assignment.json")
-        grouped = {m for g in assignment_placement_groups(assignment) if len(g) > 1 for m in g}
-        types = {
-            q["query_id"]: str(q.get("query_type") or "").upper()
-            for q in store.read_json(f"{prefix}/collector/output.json")["queries"]["query_patterns"]
-        }
-        self.flagged = sorted(
-            qa["query_id"]
-            for qa in assignment["query_assignments"]
-            if qa["assigned_engine"] == "dynamodb"
-            and qa.get("in_scope", True)
-            and qa["query_id"] not in grouped
-            and types.get(qa["query_id"]) == "SELECT"
-        )[0]
-        key = f"{prefix}/schema-dynamodb/v{version}/schema_output.json"
-        design = store.read_json(key)
-        design["unsupported_patterns"] = [
-            {
-                "query_ids": [self.flagged],
-                "pattern_type": "aggregation",
-                "recommendation": "needs a server-side aggregation",
-            }
-        ]
-        store.write_json(key, design)
+        self.flagged = report_unsupported(store, db, job_id, version)
 
     def at(self, version: int) -> list[str]:
         return sorted(engine for engine, v in self.calls if v == version)
