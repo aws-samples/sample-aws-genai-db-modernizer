@@ -18,9 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from src.shared.migration_risk_rules import backfill_report_risks
+from src.shared.routing_detail import load_routing_detail
 from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
 
-from . import executive_report, renderers
+from . import detailed_report, executive_report, renderers
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,8 @@ class FolderEntry:
     filename: str  # stable on-disk name, the same in every job
     title: str
     audience: str
+    # The routing record behind the reports (#1364): the index lists it apart.
+    audit: bool = False
 
 
 # The customer deliverables folder: one per job, holding the latest assignment
@@ -109,6 +112,14 @@ FOLDER_ENTRIES: tuple[FolderEntry, ...] = (
         "Assessment Data (JSON)",
         "Tools and scripts: the complete machine-readable assessment",
     ),
+    FolderEntry(
+        "engineering-report-detailed",
+        detailed_report.FILENAME,
+        "Detailed engineering report (Markdown)",
+        "Engineers auditing or debugging the result: the full routing detail per table, "
+        "query and group",
+        audit=True,
+    ),
 )
 FOLDER_FILENAMES: tuple[str, ...] = (
     *(e.filename for e in FOLDER_ENTRIES),
@@ -133,7 +144,11 @@ def render_folder_index(
 ) -> str:
     """The ``index.md`` of the deliverables folder: each file, what it is, who
     it is for, and the assignment version they were rendered from."""
-    rows = "\n".join(f"| `{e.filename}` | {e.title} | {e.audience} |" for e in written)
+
+    def rows(entries: Sequence[FolderEntry]) -> str:
+        return "\n".join(f"| `{e.filename}` | {e.title} | {e.audience} |" for e in entries)
+
+    audit = [e for e in written if e.audit]
     lines = [
         f"# Database Modernizer Assessment Tool: deliverables for {database_name}",
         "",
@@ -142,11 +157,23 @@ def render_folder_index(
         "",
         "| File | What it is | Who it is for |",
         "|---|---|---|",
-        rows,
+        rows([e for e in written if not e.audit]),
         "",
         "Every file is rendered from the same assessment data, so a figure in one "
         "matches the same figure in the others.",
     ]
+    if audit:
+        lines += [
+            "",
+            "## For auditing the routing",
+            "",
+            "The record behind the reports: why each query is on its engine, step by step. "
+            "You don't need it to read the assessment.",
+            "",
+            "| File | What it is | Who it is for |",
+            "|---|---|---|",
+            rows(audit),
+        ]
     missing = [e for e in FOLDER_ENTRIES if e not in written]
     if missing:
         lines += [
@@ -298,9 +325,38 @@ def render_deliverables(
         ),
     ]
 
+    collector = _collector_output(store, report_key)
+    try:
+        # #1364: the routing record behind the reports, read from the job's saved
+        # assignments, access-pattern record and analyses (never scored again). In the
+        # folder, not handed to the delivery channel: it is an audit file, and runs to
+        # megabytes on a large workload.
+        detailed = prov("engineering-report-detailed", "md")
+        detail = load_routing_detail(store, report_key, report, collector)
+        out.items.append(
+            Deliverable(
+                "engineering-report-detailed",
+                detailed_report.render_detailed_engineering_report_md(
+                    report, detail, prov=detailed
+                ).encode("utf-8"),
+                "MARKDOWN",
+                f"Detailed Engineering Report: {database_name}",
+                detailed["filename"],
+                publish=False,
+            )
+        )
+    except Exception as e:  # noqa: BLE001 - optional deliverable
+        out.errors.append(f"engineering-report-detailed: {type(e).__name__}: {e}")
+        logger.debug("deliverable skipped: engineering-report-detailed", exc_info=True)
+        logger.warning(
+            "deliverable skipped: engineering-report-detailed (%s at %s)",
+            type(e).__name__,
+            _raising_frame(e),
+        )
+
     try:
         pdf = executive_report.render_executive_report_pdf(
-            report, executive_report.collected_identifiers(_collector_output(store, report_key))
+            report, executive_report.collected_identifiers(collector)
         )
         out.items.append(
             # Fixed download name, unlike the other deliverables above: this is the

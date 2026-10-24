@@ -79,5 +79,6 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    Tell user where the deliverables are: the `deliverables_dir` the render step printed,
    <!-- deliverables-list -->`./artifacts/{database_name}/{job_id}/deliverables/`, holds
    `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report),
-   `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists each
+   `assessment-data.json` (Assessment Data, JSON), `engineering-report-detailed.md` (detailed
+   engineering report: the full routing detail, for auditing the result), and `index.md`, which lists each
    file, who it is for and the assignment version<!-- /deliverables-list -->.

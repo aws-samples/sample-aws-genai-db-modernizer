@@ -108,6 +108,7 @@ class TestSynthesisDeliverables:
         # names a local run uses; nothing lands next to report.json (#987).
         assert sorted(store.text_writes) == [
             "discourse/job-x/deliverables/assessment-data.json",
+            "discourse/job-x/deliverables/engineering-report-detailed.md",
             "discourse/job-x/deliverables/engineering-report.md",
         ]
         assert sorted(store.byte_writes) == ["discourse/job-x/deliverables/executive-report.pdf"]

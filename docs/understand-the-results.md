@@ -24,6 +24,7 @@ Every run puts its deliverables in one folder, `artifacts/<db>/<job>/deliverable
 | `executive-report.pdf` | Executive report (PDF): a landscape briefing with the recommendation, the numbers, why, the migration waves, the risks, the decisions needed and the next steps; no table names, totals only | Executives and stakeholders deciding whether to proceed |
 | `engineering-report.md` | Engineering report (Markdown): the same facts with implementation detail (schemas, migration waves, risks) | The team that will build it |
 | `assessment-data.json` | Assessment Data (JSON): the complete machine-readable assessment the other files are rendered from | Tools and scripts |
+| `engineering-report-detailed.md` | Detailed engineering report (Markdown): the routing record behind the reports, read from the saved assessment: per table its owner and every query touching it with its score on each engine; per query its scores by dimension, its move history with reasons, ties, close calls and the keys the redesign refused; per write group and co-dependency group the group score, the margin and the members that fit poorly, with the target-native guidance | Engineers auditing or debugging the result |
 | `index.md` | This list for the run, with the assignment version the files come from | Anyone opening the folder |
 
 `deliverables/` always holds the latest assignment version. The job's other folders hold the pipeline's working files (per-phase outputs, versioned assignments, model inputs and traces), which you don't need to read the assessment.

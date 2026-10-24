@@ -61,6 +61,7 @@ DOCUMENTED_FILES = {
     "executive-report.pdf",
     "engineering-report.md",
     "assessment-data.json",
+    "engineering-report-detailed.md",
     "index.md",
 }
 
