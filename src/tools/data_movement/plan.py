@@ -148,6 +148,15 @@ _MYSQL_MANAGED_SETTINGS = (
         "backups must be on for the binary log to be kept",
     ),
 )
+# MySQL settings only the initial-load handoff needs (#1427): it resumes from GTIDs.
+_MYSQL_HANDOFF_SETTINGS = (
+    (
+        "gtid_mode",
+        "Parameter group (cluster parameter group on Aurora) or server option: the "
+        "initial-load handoff resumes from the executed GTID set",
+    ),
+    ("enforce_gtid_consistency", "Required with gtid_mode=ON"),
+)
 _SETTINGS: dict[tuple[str, str], tuple[tuple[str, str, str], ...]] = {
     ("mysql", "managed"): _MYSQL_MANAGED_SETTINGS,
     ("mysql", "self_managed"): _MYSQL_SETTINGS,
@@ -860,6 +869,13 @@ def _debezium_capture(
     prefix = topic_prefix(job.inputs.job_id, wave_number)
     signal = f"{job.database}.{SIGNAL_TABLE}"
     settings = _settings(source_engine, dialect, _deployment(job, source_engine))
+    if dialect == "mysql" and handoff:
+        # The initial-load handoff resumes from the GTID set (#1427): without GTIDs a
+        # transaction written to the binlog but not yet visible to the load could be lost.
+        settings.extend(
+            SourceSetting(name=name, value="ON", note=note)
+            for name, note in _MYSQL_HANDOFF_SETTINGS
+        )
     settings.append(
         SourceSetting(
             name="signal table",

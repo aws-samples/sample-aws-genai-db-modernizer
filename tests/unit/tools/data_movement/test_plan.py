@@ -228,10 +228,11 @@ def test_later_waves_are_debezium_from_the_aurora_engine() -> None:
         assert plan.cdc.connector_class == "io.debezium.connector.mysql.MySqlConnector"
         assert plan.cdc.snapshot_mode == "no_data"
         assert plan.initial_load.position_capture == "binlog_position"
-        assert {s.name for s in plan.cdc.required_source_settings} >= {
-            "binlog_format",
-            "binlog_row_image",
-        }
+        settings = {s.name: s.value for s in plan.cdc.required_source_settings}
+        assert {"binlog_format", "binlog_row_image"} <= set(settings)
+        # The handoff resumes from the GTID set, so the plan asks for GTIDs (#1427).
+        assert settings["gtid_mode"] == "ON"
+        assert settings["enforce_gtid_consistency"] == "ON"
 
 
 def test_hub_keys_come_from_the_primary_key_or_a_not_null_unique_index() -> None:
@@ -539,6 +540,28 @@ def test_wave_one_settings_follow_the_source_deployment(
     wave1 = build_plans(_job(source_engine=engine, deployment_type=deployment), prices=None)[0]
     names = {s.name for s in wave1.cdc.required_source_settings}
     assert expected in names and absent not in names
+
+
+def test_only_the_mysql_handoff_waves_ask_for_gtids() -> None:
+    wave1, *later = _plans()
+    assert wave1.cdc.tool == "dms"
+    assert "gtid_mode" not in {s.name for s in wave1.cdc.required_source_settings}
+    for plan in later:
+        assert "gtid_mode" in {s.name for s in plan.cdc.required_source_settings}
+
+
+@pytest.mark.passes_on_main  # guards the negative case: GTIDs only on MySQL handoff waves
+def test_a_postgresql_handoff_wave_does_not_ask_for_gtids() -> None:
+    waves = _waves(first_engines=["aurora_postgresql"])
+    waves[0]["moves_from"] = ["postgresql"]
+    waves[1]["fronts"] = "aurora_postgresql"
+    waves[2]["moves_from"] = ["aurora_postgresql"]
+    later = build_plans(_job(waves=waves, source_engine="postgresql"), prices=None)[1:]
+    assert later and all(p.source.dialect == "postgresql" for p in later)
+    for plan in later:
+        assert plan.initial_load.position_capture == "replication_slot_lsn"
+        names = {s.name for s in plan.cdc.required_source_settings}
+        assert "gtid_mode" not in names and "enforce_gtid_consistency" not in names
 
 
 def test_an_rds_sql_server_source_enables_capture_through_the_rds_procedure() -> None:

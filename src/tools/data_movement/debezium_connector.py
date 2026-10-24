@@ -374,7 +374,13 @@ def _bounded(head: str, tail: str, limit: int, full: str) -> str:
 
 
 def connector_names(spec: DebeziumConnectorInput) -> ConnectorNames:
-    prefix, wave = spec.cdc.topic_prefix, spec.wave
+    return wave_connector_names(spec.cdc.topic_prefix, spec.wave)
+
+
+def wave_connector_names(prefix: str, wave: int) -> ConnectorNames:
+    """The per-wave names from the wave's ``topic.prefix`` and number alone, so the
+    initial-load handoff (``initial_load.py``) creates the slot and publication, and seeds
+    the offset of the connector, under the names this generator renders."""
     heartbeat_prefix = f"{HEARTBEAT_TOPIC_PREFIX}.wave-{wave}"
     pg = re.sub(r"[^a-z0-9_]", "_", prefix.lower())
     # PostgreSQL names: lower-case letters, digits and '_', at most 63 bytes.
