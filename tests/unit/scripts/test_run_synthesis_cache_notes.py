@@ -153,6 +153,49 @@ def test_the_gate_still_shows_the_candidates_after_synthesis_drops_some(tmp_path
     assert store.read_json(key)["cache_overlay"]["candidate_query_count"] == 2
 
 
+def test_the_gate_still_shows_the_candidates_after_synthesis_drops_all(tmp_path, capsys):
+    """#1400: a full drop leaves no covered read, but the stored overlay keeps the candidates,
+    so a reopened gate states them (and that none is designed) instead of showing no line."""
+    from scripts.run_assessment import _CACHE_OVERLAY_FIELDS
+    from src.report.printed_summary import render_gate_block
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _seed(store)
+    key = f"{DB}/{JOB}/assignment/v2/assignment.json"
+    gate_overlay = {
+        "engine": "elasticache",
+        "query_count": 2,
+        "calls_per_second": 8.0,
+        "call_share_percent": 100.0,
+        "owners": {},
+        "patterns": {},
+        "min_calls_per_second": 1.0,
+        "max_rows_avg": 100.0,
+    }
+    store.write_json(key, {**ASSIGNMENT, "cache_overlay": gate_overlay})
+    # The design covers neither hot read.
+    store.write_json(
+        f"{DB}/{JOB}/schema-elasticache/v2/schema_output.json", {"access_patterns": []}
+    )
+
+    run_synthesis.run_standard(store, JOB, DB, assignment_version=2, llm_mode="none")
+
+    overlay = store.read_json(key)["cache_overlay"]
+    assert overlay is not None
+    assert (overlay["engine"], overlay["query_count"]) == ("elasticache", 0)
+    assert (overlay["candidate_query_count"], overlay["candidate_call_share_percent"]) == (
+        2,
+        100.0,
+    )
+    gate = {"cache_overlay": {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}}
+    text = render_gate_block(gate, database_name=DB, job_id=JOB)
+    assert "has 2 cache candidates (100% of calls)" in text
+    assert "2 cache candidates, none designed; all 2 stay on their owner engine." in text
+    # A second run never overwrites the stored candidates.
+    run_synthesis.run_standard(store, JOB, DB, assignment_version=2, llm_mode="none")
+    assert store.read_json(key)["cache_overlay"]["candidate_query_count"] == 2
+
+
 def test_no_notes_when_nothing_was_dropped(tmp_path, capsys):
     store = LocalArtifactStore(base_dir=str(tmp_path))
     _seed(store)

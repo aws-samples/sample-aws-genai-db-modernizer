@@ -1434,7 +1434,12 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     """
     if not data.cache_overlay_dropped or assignment_version <= 0:
         return
-    from src.agents.referee.cache_overlay import candidate_summary, overlay_summary
+    from src.agents.referee.cache_overlay import (
+        CACHE_OVERLAY_ENGINES,
+        candidate_summary,
+        no_designed_overlay,
+        overlay_summary,
+    )
 
     key = f"{data.database_name}/{data.job_id}/assignment/v{assignment_version}/assignment.json"
     if not store.exists(key):
@@ -1459,6 +1464,12 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     # overlay as the gate showed it (or the flagged queries), and never overwritten.
     prior = raw.get("cache_overlay") or {}
     summary = overlay_summary(raw.get("query_assignments", []), data.source_queries)
+    if summary is None:
+        # #1400: a full drop keeps a zero-count overlay, so the candidates stay stored.
+        engine = prior.get("engine") or next(
+            iter(sorted(CACHE_OVERLAY_ENGINES & set(data.engines))), None
+        )
+        summary = no_designed_overlay(engine) if engine else None
     if summary is not None:
         if "candidate_query_count" in prior:
             summary["candidate_query_count"] = prior["candidate_query_count"]
