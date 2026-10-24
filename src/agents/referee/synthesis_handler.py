@@ -96,6 +96,7 @@ from src.shared.report_facts import (
 )
 from src.storage.artifact_store import ArtifactStore
 from src.tools.analysis.relational_gaps import detect_relational_gaps
+from src.tools.schema.dynamodb_cost_check import keys_only_fetch_load
 from src.tools.sql.query_facts import source_engine_of
 
 # ---------------------------------------------------------------------------
@@ -1600,6 +1601,8 @@ def _build_standard_schema_summary(schema):
         ],
         "access_pattern_count": len(access_patterns),
         "hot_partitions_at_risk": sum(1 for hp in hot_partition if hp.get("at_risk")),
+        # The base-table fetch behind KEYS_ONLY GSI reads, as the design check priced it (#1503).
+        "keys_only_fetch": keys_only_fetch_load(access_patterns, tables),
         "trade_offs": field_list(schema, "trade_offs"),
         "unsupported_patterns": field_list(schema, "unsupported_patterns"),
         "migration_notes": field_list(schema, "migration_notes"),

@@ -167,6 +167,8 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
 @tool
 def compute_performances_and_costs(
     hot_partition_entries_json: str,
+    access_patterns_json: str | None = None,
+    table_definitions_json: str | None = None,
 ) -> list[dict]:
     """Compute partition_limit, utilization_pct and at_risk for hot partition entries.
 
@@ -174,15 +176,24 @@ def compute_performances_and_costs(
     rcu_or_wcu_per_second, contributing_patterns and (when at risk) mitigation.
     Copy the returned partition_limit, utilization_pct and at_risk into the
     design's hot_partition_analysis; the final design is checked against them.
+    Pass access_patterns_json and table_definitions_json too: a read on a
+    KEYS_ONLY GSI fetches each full item from the base table, and the call
+    fails unless the base table's read entry includes those reads.
 
     Args:
         hot_partition_entries_json: JSON string of list[HotPartitionEntry]
+        access_patterns_json: JSON string of the design's access_patterns
+        table_definitions_json: JSON string of the design's table_definitions
 
     Returns:
         list of HotPartitionEntry dicts with the computed figures
     """
     # Same computation as `run_schema_design.py --check-costs` (external mode).
-    return compute_performances_and_costs_entries(json.loads(hot_partition_entries_json))
+    return compute_performances_and_costs_entries(
+        json.loads(hot_partition_entries_json),
+        json.loads(access_patterns_json) if access_patterns_json else None,
+        json.loads(table_definitions_json) if table_definitions_json else None,
+    )
 
 
 # ---------------------------------------------------------------------------

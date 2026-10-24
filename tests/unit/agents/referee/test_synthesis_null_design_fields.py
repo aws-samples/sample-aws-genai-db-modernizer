@@ -201,3 +201,39 @@ def test_effective_architecture_reads_a_null_group_pattern_list_as_empty() -> No
     )
     assert [e["engine"] for e in out["engines"]] == ["dynamodb"]
     assert out["engines"][0]["top_query_groups"] == []
+
+
+def test_standard_summary_reports_the_keys_only_fetch_the_check_priced() -> None:
+    """#1503: synthesis carries the base-table fetch behind KEYS_ONLY GSI reads."""
+    summary = _build_standard_schema_summary(
+        {
+            "table_definitions": [
+                {
+                    "table_name": "Posts",
+                    "item_size_bytes": 1000,
+                    "gsis": [{"gsi_name": "ByTag", "projection": "KEYS_ONLY"}],
+                }
+            ],
+            "access_patterns": [
+                {
+                    "pattern_id": "DDB-AP-1",
+                    "operation": "Query",
+                    "table_name": "Posts",
+                    "gsi_name": "ByTag",
+                    "design_rps": 10.0,
+                    "avg_items_returned": 20,
+                }
+            ],
+            "hot_partition_analysis": [],
+        }
+    )
+
+    assert summary["keys_only_fetch"] == [
+        {
+            "table_name": "Posts",
+            "gsi_name": "ByTag",
+            "pattern_ids": ["DDB-AP-1"],
+            "extra_reads_per_second": 200.0,
+            "extra_read_units_per_second": 100.0,
+        }
+    ]
