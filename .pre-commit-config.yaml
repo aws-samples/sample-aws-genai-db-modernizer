@@ -50,7 +50,20 @@ repos:
     hooks:
       - id: detect-secrets
         name: Detect secrets
-        args: ['--baseline', '.secrets.baseline']
+        # tests/fixtures/real_runs/ (#1409), a saved real-model run, stays scanned:
+        # a refreshed transcript keeps Bash commands and dispatch prompts whole, where
+        # a key would land. Only its known id shapes are filtered, by value: the
+        # model's message and tool-call ids, 64-hex query ids, and the sample's
+        # "wp_woocommerce_api_keys" table name.
+        args:
+          - '--baseline'
+          - '.secrets.baseline'
+          - '--exclude-secrets'
+          - '^(msg_bdrk_|toolu_)[A-Za-z0-9_]+$'
+          - '--exclude-secrets'
+          - '^[0-9a-f]{64}$'
+          - '--exclude-lines'
+          - '^\s*("[a-z_]+": )?"wp_woocommerce_api_keys"(: "[a-z_]+")?,?$'
         # tests/e2e/baselines/routing_snapshot.json (#497): a per-query routing
         # snapshot keyed by sha256-ish query ids -- real data, not a secret, but
         # high-entropy hex that would otherwise need baselining one entry per
