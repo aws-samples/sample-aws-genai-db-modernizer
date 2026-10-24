@@ -54,13 +54,16 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 import types
 import typing
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from src.contracts.synthesis_output import ReportFacts
+from src.shared.routing_detail_model import RoutingDetail
 
 REPO = Path(__file__).resolve().parents[3]
 REPORT = REPO / "src" / "report"
@@ -788,3 +791,32 @@ def test_the_shared_renderer_helpers_are_scanned(tmp_path: Path) -> None:
         "    return len(engines)\n"
     )
     assert _violations(probe)
+
+
+# The detailed engineering report's routing detail (#1364), built by the facts layer from
+# the saved routing records (``report_facts.routing_detail_facts``). Its figure names
+# (``score``, ``tables``, ``steps``, ...) mean other things in other renderers, so they
+# are owned in the detailed report's own renderer only.
+ROUTING_DETAIL_KEYS = frozenset(_figure_fields(RoutingDetail)) - NOT_A_FIGURE
+DETAILED_REPORT = REPORT / "detailed_report.py"
+
+
+def test_the_detailed_report_does_no_arithmetic_on_its_routing_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "OWNED_KEYS", OWNED_KEYS | ROUTING_DETAIL_KEYS)
+    assert _violations(DETAILED_REPORT) == []
+
+
+def test_a_recount_of_the_routing_detail_is_caught(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "OWNED_KEYS", OWNED_KEYS | ROUTING_DETAIL_KEYS)
+    bad = tmp_path / "bad_detailed.py"
+    bad.write_text(
+        "def f(detail):\n"
+        "    n = len(detail['queries'])\n"
+        "    gap = detail['write_groups'][0]['margin'] - 1\n"
+        "    return n, gap\n"
+    )
+    assert len(_violations(bad)) == 2

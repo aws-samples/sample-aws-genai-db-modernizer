@@ -428,6 +428,8 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
                 "REPLICA_READS_NAMED",
                 "TABLE_SOURCES_SHOWN",
                 "BRIEF_EXPOSURE_LIMIT",
+                # #1364: the places the detailed report shows a score to, as the trace does.
+                "_DETAIL_PLACES",
             }
         ),
         _BUDGET + "; CLOSE_CALL_MARGIN only decides which routed queries the report calls out",

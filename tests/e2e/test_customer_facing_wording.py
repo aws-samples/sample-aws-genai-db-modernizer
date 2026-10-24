@@ -103,6 +103,14 @@ def test_engineering_report_markdown_has_no_internal_wording(run: PipelineResult
     assert findings == [], _describe(findings)
 
 
+def test_detailed_engineering_report_has_no_internal_wording(run: PipelineResult) -> None:
+    """#1364: the routing detail is worded like the engineering report: display names and
+    the trace's sentences."""
+    findings = scan_markdown(run.deliverable("engineering-report-detailed.md").read_text())
+    findings = _filtered(findings, "engineering-report-detailed.md")
+    assert findings == [], _describe(findings)
+
+
 def test_executive_summary_pdf_has_no_internal_wording(run: PipelineResult) -> None:
     from pypdf import PdfReader
 

@@ -137,7 +137,12 @@ class TestAdventureWorksDeliverablesRender:
         out = dl.render_deliverables(store, JOB, DB, report_key, assignment_version=version)
         assert out.errors == []
         names = {d.name for d in out.items}
-        assert names == {"engineering-report", "assessment-data", "executive-report"}
+        assert names == {
+            "engineering-report",
+            "assessment-data",
+            "engineering-report-detailed",
+            "executive-report",
+        }
 
     @pytest.mark.passes_on_main  # the role guard, narrowed to the engine table (#1231)
     def test_the_chosen_aurora_engine_reads_migration_target(self, pipeline_report) -> None:

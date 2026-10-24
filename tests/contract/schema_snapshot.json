@@ -22047,6 +22047,111 @@
           ]
         }
       },
+      "carried_writes": {
+        "required": false,
+        "schema": {
+          "kind": "anyOf",
+          "members": [
+            {
+              "items": {
+                "kind": "object",
+                "properties": {
+                  "approach": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "docs": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "engine": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "floor": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  },
+                  "group_size": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "minimum": 2,
+                      "type": "integer"
+                    }
+                  },
+                  "intent": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "intent_name": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "intent_summary": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "query_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "score": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "number"
+                    }
+                  },
+                  "statement": {
+                    "required": false,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  },
+                  "table_id": {
+                    "required": true,
+                    "schema": {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "kind": "array"
+            },
+            {
+              "kind": "scalar",
+              "type": "null"
+            }
+          ]
+        }
+      },
       "considered_not_recommended": {
         "required": false,
         "schema": {
@@ -29404,8 +29509,8 @@
         }
       }
     },
-    "schema_hash": "6e3d1f2a80eb45fcbf422b9f569593e67157b94bc8f56aa6166543ed6ea44d91",
-    "version": "1.64"
+    "schema_hash": "4eafee525c23b4d47ab3e668313ed369b6476436b38a5bee958a020673a22734",
+    "version": "1.65"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

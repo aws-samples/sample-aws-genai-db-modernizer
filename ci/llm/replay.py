@@ -119,6 +119,7 @@ NEEDS_FULL_JOB: dict[str, str] = {
     "tests/e2e/test_customer_facing_wording.py::test_assignment_reasons_have_no_internal_wording[external]": _ASSIGNMENT,
     "tests/e2e/test_customer_facing_wording.py::test_reality_check_output_has_no_internal_wording[external]": _REALITY_CHECK,
     "tests/e2e/test_data_movement_plan.py::test_each_sample_job_gets_one_valid_plan_per_wave[external]": _ASSIGNMENT,
+    "tests/e2e/test_detailed_report.py::test_every_query_and_write_group_of_the_assignment_is_listed[external]": _ASSIGNMENT,
     "tests/e2e/test_data_movement_plan.py::test_the_plans_ignore_the_hash_seed[external]": _ASSIGNMENT,
     "tests/e2e/test_data_movement_plan.py::test_priced_plans_state_each_waves_monthly_cost[external]": _ASSIGNMENT,
     "tests/e2e/test_one_writer_per_table.py::test_no_table_has_writes_on_two_engines[external]": _ASSIGNMENT,

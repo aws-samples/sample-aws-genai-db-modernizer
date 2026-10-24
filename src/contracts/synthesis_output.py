@@ -532,6 +532,10 @@ Version History:
   source tables no in-scope query reads are stored on wave 1's Aurora engine, priced
   with its own tables, and a TCO assumption line names the engine (or says no engine
   stores them). Defaults to None and 0, so a report written before still loads.
+- 1.65 (2026-10-24, #1364): Added optional carried_writes
+  (analysis_output.CarriedWrite): the write-group members of the effective assignment
+  their engine serves poorly, with their intent and the target-native approach (#1362),
+  for the detailed engineering report; None in a report written before
 """
 
 from datetime import datetime
@@ -548,6 +552,7 @@ from src.contracts.assignment_models import (  # re-exported, see docstring belo
     UnservableQueryAssignment,
 )
 
+from .analysis_output import CarriedWrite
 from .query_trace import QueryTraceDigest, QueryTraceListing
 from .schema_design_output import TradeOff
 
@@ -2401,7 +2406,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.64",
+        default="1.65",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -2580,6 +2585,16 @@ class SynthesisOutputContract(BaseModel):
             "Queries no engine in the customer's engine scope can serve (#1329), from the "
             "effective assignment's unservable_queries, by query id. Empty with no scope "
             "and in a report written before them"
+        ),
+    )
+    carried_writes: list[CarriedWrite] | None = Field(
+        None,
+        description=(
+            "The write-group members of the effective assignment their engine serves "
+            "poorly (#1362), each with its intent and the target-native approach, as the "
+            "design.carried_writes risk counts them; the detailed engineering report lists "
+            "them under their write group (#1364). Empty list when none; None for a report "
+            "synthesized before this field existed."
         ),
     )
     post_schema_reroutes: list[PostSchemaReroute] | None = Field(

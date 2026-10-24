@@ -212,6 +212,7 @@ ID_FIELD_PATHS = frozenset(
         ("reality_check_decisions", "engine"),  # ReportFacts.reality_check_decisions (#595)
         ("engine_pairs", "engine"),  # ReportFacts.close_calls.engine_pairs[].engine (#730)
         ("relational_rows", "engine"),  # ReportFacts.query_group_counts.relational_rows (#1410)
+        ("carried_writes", "engine"),  # SynthesisOutputContract.carried_writes[] (#1364)
         ("engine_pairs", "alternative"),  # ReportFacts.close_calls.engine_pairs[] (#730)
         ("unresolved_names", "names"),  # UnresolvedNames.names, report.json's own key
         ("unresolved_table_names", "names"),  # UnresolvedNames.names, assignment.json's own key

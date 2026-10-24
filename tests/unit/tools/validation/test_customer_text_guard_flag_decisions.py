@@ -129,6 +129,9 @@ _TRACE_RENDERERS = {
     # #729: a query on a fallback engine, with its deciding step's sentence.
     "src/report/unservable.py",
     "src/ui/src/components/UnservableQueriesCallout.js",
+    # #1364: the detailed engineering report, with each trace step's and key
+    # candidate's sentence.
+    "src/report/detailed_report.py",
 }
 
 

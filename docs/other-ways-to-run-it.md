@@ -104,7 +104,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 `run_assessment.py --all` (in `--llm-mode none` and `bedrock` alike) ends with the same render step `/modernize` runs, `scripts/run_report.py`. It writes the deliverables into one folder, under the same names every time:
 
 <!-- deliverables-list -->
-`artifacts/<db>/<job>/deliverables/` holds `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), and `index.md`, which lists who each file is for and the assignment version.
+`artifacts/<db>/<job>/deliverables/` holds `executive-report.pdf` (executive report: a landscape briefing), `engineering-report.md` (engineering report), `assessment-data.json` (Assessment Data, JSON), `engineering-report-detailed.md` (detailed engineering report: the full routing detail, for auditing the result), and `index.md`, which lists who each file is for and the assignment version.
 <!-- /deliverables-list -->
 
 To render them again for a finished job, for example after an edit made a new assignment version:

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from ci.llm import judge_facts, replay, run
+from src.report.deliverables import FOLDER_FILENAMES
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE = replay.DEFAULT_FIXTURE
@@ -243,12 +244,13 @@ def test_prepare_lays_the_run_out_as_a_job_and_renders_it(tmp_path: Path) -> Non
     info = replay.prepare(FIXTURE, tmp_path)
     job = tmp_path / info["db"] / info["job_id"]
     assert (job / "synthesis" / "v1" / "report.json").is_file()
-    assert sorted(p.name for p in (job / "deliverables").iterdir()) == [
-        "assessment-data.json",
-        "engineering-report.md",
-        "executive-report.pdf",
-        "index.md",
-    ]
+    # Every file of the deliverables folder (FOLDER_FILENAMES, the one list), the
+    # detailed engineering report (#1364) included.
+    names = sorted(p.name for p in (job / "deliverables").iterdir())
+    assert names == sorted(FOLDER_FILENAMES)
+    # The saved run predates the routing records: its detailed report says so.
+    detailed = (job / "deliverables" / "engineering-report-detailed.md").read_text()
+    assert "## Records not available" in detailed
     # A second prepare starts from a clean job, not on top of the first.
     (job / "stray.json").write_text("{}")
     replay.prepare(FIXTURE, tmp_path)

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -3285,3 +3285,481 @@ def triage_signal_facts(triage: Mapping[str, Any] | None) -> dict[str, Any]:
             for s in signals[:5]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# The detailed engineering report's routing detail (#1364)
+# ---------------------------------------------------------------------------
+
+# The places a routing detail score is shown to, like every score of the trace.
+_DETAIL_PLACES = 1
+
+# Table names that stand for no table: the collector's placeholder and the dummy tables
+# a SELECT with no FROM names (``table_resolution.PSEUDO_TABLES`` and
+# ``synthesis_report._PLACEHOLDER_TABLES``, which the facts layer cannot import; a unit
+# test keeps this set covering both).
+PLACEHOLDER_TABLE_NAMES = frozenset(
+    {"unknown", "UNKNOWN", "None", "null", "DUAL", "SYSIBM.SYSDUMMY1"}
+)
+
+
+def _detail_round(x: Any) -> float | None:
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return round(float(x), _DETAIL_PLACES)
+    return None
+
+
+def _trace_steps(trace: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    first = trace.get("first_assignment")
+    steps = [first] if isinstance(first, Mapping) else []
+    return steps + [m for m in trace.get("moves") or [] if isinstance(m, Mapping)]
+
+
+def _latest_ladder(trace: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """The candidate ladder of the query's latest step that recorded one: each engine's
+    routed score or gate, as the Move stored it."""
+    for step in reversed(_trace_steps(trace)):
+        rungs = [c for c in step.get("candidates") or [] if isinstance(c, Mapping)]
+        if rungs:
+            return {
+                str(c.get("engine")): {
+                    "engine": str(c.get("engine")),
+                    "score": _detail_round(c.get("score")),
+                    "gate": c.get("gate"),
+                    "gate_text": c.get("gate_text"),
+                }
+                for c in rungs
+                if c.get("engine")
+            }
+    return {}
+
+
+def _score_cells(
+    engines: Iterable[str], ladder: Mapping[str, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    return [dict(ladder.get(e) or {"engine": e}) for e in engines]
+
+
+def _table_breakdowns(
+    analyses: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Mapping[str, Any]]]:
+    """``engine -> table -> score_breakdown`` from each engine's analysis."""
+    out: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for engine, analysis in analyses.items():
+        rows = (analysis or {}).get("table_recommendations") or []
+        out[engine] = {
+            str(r.get("table_id")): r.get("score_breakdown") or {}
+            for r in rows
+            if isinstance(r, Mapping) and r.get("table_id")
+        }
+    return out
+
+
+def _dimension_rows(
+    engines: list[str],
+    ladder: Mapping[str, Mapping[str, Any]],
+    row: Mapping[str, Any] | None,
+    breakdowns: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    tables: list[str],
+) -> list[dict[str, Any]]:
+    """A query's scores by dimension per analysed engine, as the artifacts hold them: the
+    routed score (the Move's ladder), the pattern dimension (its class score, and after
+    redesign), the intrinsic anti-pattern penalty, and each table's complexity and
+    performance in the engine's analysis."""
+    row = row or {}
+    written = row.get("class_scores") or {}
+    redesigned = (row.get("redesign") or {}).get("class_scores") or {}
+    anchors = row.get("parity_anchors") or {}
+    findings = [f for f in row.get("anti_pattern_findings") or [] if isinstance(f, Mapping)]
+    out = []
+    for engine in engines:
+        mine = [f for f in findings if f.get("engine") == engine]
+        intrinsic = [f for f in mine if f.get("kind") != "fixable"]
+        by_table = breakdowns.get(engine) or {}
+        out.append(
+            {
+                "engine": engine,
+                "routed": dict(ladder.get(engine) or {"engine": engine}),
+                "pattern_score": _detail_round(written.get(engine)),
+                "redesigned_pattern_score": _detail_round(redesigned.get(engine)),
+                "parity_anchor": anchors.get(engine),
+                # The biggest intrinsic penalty is the one routing applies (ADR-031
+                # Decision 8, ``query_scoring.build_anti_pattern_map``), never their sum.
+                "intrinsic_penalty": max(
+                    (
+                        float(f["penalty"])
+                        for f in intrinsic
+                        if isinstance(f.get("penalty"), (int, float))
+                        and not isinstance(f.get("penalty"), bool)
+                    ),
+                    default=0.0,
+                ),
+                "intrinsic_findings": [str(f.get("pattern") or "") for f in intrinsic],
+                "fixable_findings": [
+                    str(f.get("pattern") or "") for f in mine if f.get("kind") == "fixable"
+                ],
+                "tables": [
+                    {
+                        "table": t,
+                        "complexity": _detail_round(
+                            (by_table.get(t) or {}).get("complexity_score")
+                        ),
+                        "performance": _detail_round(
+                            (by_table.get(t) or {}).get("performance_score")
+                        ),
+                    }
+                    for t in tables
+                    if t in by_table
+                ],
+            }
+        )
+    return out
+
+
+def _group_placements(
+    lineage: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, tuple[int, Mapping[str, Any]]], dict[tuple[int, str], int]]:
+    """Each query's latest group Move (one with group scores) as ``(version, move)``, and
+    how many queries each ``(version, group_key)`` placement moved as one unit."""
+    latest: dict[str, tuple[int, Mapping[str, Any]]] = {}
+    units: dict[tuple[int, str], set[str]] = {}
+    for assignment in lineage:
+        version = int(assignment.get("version") or 0)
+        for move in assignment.get("moves") or []:
+            if not isinstance(move, Mapping) or not (move.get("evidence") or {}).get(
+                "group_scores"
+            ):
+                continue
+            qid = str(move.get("query_id") or "")
+            seen = latest.get(qid)
+            if seen is None or (version, int(move.get("seq") or 0)) >= (
+                seen[0],
+                int(seen[1].get("seq") or 0),
+            ):
+                latest[qid] = (version, move)
+            if move.get("group_key"):
+                units.setdefault((version, str(move["group_key"])), set()).add(qid)
+    return latest, {k: len(v) for k, v in units.items()}
+
+
+def _group_detail(
+    kind: str,
+    name: str,
+    members: list[str],
+    engine_of: Mapping[str, str],
+    traces: Mapping[str, Mapping[str, Any]],
+    placements: Mapping[str, tuple[int, Mapping[str, Any]]],
+    units: Mapping[tuple[int, str], int],
+    floor: float | None,
+    carried: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """One group's detail (``GroupDetail``). ``carried`` maps a member to its carried-write
+    record (#1362) when the report has them for a write group, else None: then a member
+    fits poorly when its own routed score is below ``floor``."""
+    placed = [placements[q] for q in members if q in placements]
+    version, move = max(placed, key=lambda vm: (vm[0], int(vm[1].get("seq") or 0)), default=(0, {}))
+    scores = {
+        str(e): round(float(s), _DETAIL_PLACES)
+        for e, s in ((move.get("evidence") or {}).get("group_scores") or {}).items()
+        if isinstance(s, (int, float))
+    }
+    winner = str(move.get("to_engine") or "") or None if move else None
+    others = sorted(
+        ((s, e) for e, s in scores.items() if e != winner), key=lambda se: (-se[0], se[1])
+    )
+    runner = others[0][1] if others else None
+    margin = (
+        round(scores[winner] - others[0][0], _DETAIL_PLACES)
+        if winner in scores and others
+        else None
+    )
+    rows = []
+    for qid in members:
+        own = _detail_round((traces.get(qid) or {}).get("final_score"))
+        record = (carried or {}).get(qid)
+        poor = (
+            record is not None
+            if carried is not None
+            else (floor is not None and own is not None and own < floor)
+        )
+        rows.append(
+            {
+                "query_id": qid,
+                "engine": engine_of.get(qid),
+                "own_score": own,
+                "poor_fit": poor,
+                "intent_name": (record or {}).get("intent_name"),
+                "approach": (record or {}).get("approach"),
+            }
+        )
+    key = str(move.get("group_key") or "") or None
+    return {
+        "kind": kind,
+        "name": name,
+        "member_count": len(members),
+        "engines": sorted({engine_of[q] for q in members if engine_of.get(q)}),
+        "placed_version": version or None,
+        "placed_seq": int(move["seq"]) if move.get("seq") is not None else None,
+        "placed_rule": move.get("reason_code"),
+        "placement_group_key": key,
+        "placement_member_count": units.get((version, key)) if key else None,
+        "group_scores": dict(sorted(scores.items(), key=lambda es: (-es[1], es[0]))),
+        "winner": winner,
+        "runner_up": runner,
+        "margin": margin,
+        "members": rows,
+        "poor_fit_count": sum(1 for r in rows if r["poor_fit"]),
+        "guidance_recorded": carried is not None,
+    }
+
+
+def routing_detail_facts(
+    report: Mapping[str, Any],
+    lineage: Sequence[Mapping[str, Any]],
+    traces: Mapping[str, Mapping[str, Any]],
+    access_record: Mapping[str, Any] | None,
+    analyses: Mapping[str, Mapping[str, Any]],
+    query_excerpts: Mapping[str, str] | None = None,
+    poor_fit_floor: float | None = None,
+) -> dict[str, Any]:
+    """The detailed engineering report's routing detail (``RoutingDetail``, #1364).
+
+    Read from the job's saved routing records, never re-scored: ``lineage`` is the
+    effective assignment's lineage, oldest first (its last entry the effective one),
+    ``traces`` each of its queries' decision trace (``QueryTraceResponse`` as JSON, built
+    from the Moves by ``src.shared.query_trace``), ``access_record`` the effective
+    version's access-pattern record, ``analyses`` each analysed engine's analysis, and
+    ``report`` the synthesis report (its owner lines, engine scope and carried writes).
+    ``poor_fit_floor`` is the catalog's carried-write floor (#1362). A record the job
+    does not have is an empty input; its ``has_*`` flag says so, so the report states the
+    absence.
+    """
+    from src.shared.routing_detail_model import RoutingDetail
+
+    effective = lineage[-1] if lineage else {}
+    qas = [
+        qa
+        for qa in effective.get("query_assignments") or []
+        if isinstance(qa, Mapping) and qa.get("query_id")
+    ]
+    rows = {
+        str(r.get("query_id")): r
+        for r in (access_record or {}).get("queries") or []
+        if isinstance(r, Mapping) and r.get("query_id")
+    }
+    # The engines routing scored: those of the Moves' ladders, among the analysed ones (an
+    # Aurora engine the heterogeneous engine choice dropped has an analysis but no rung).
+    laddered = {e for t in traces.values() for e in _latest_ladder(t)}
+    analyses = {e: a for e, a in analyses.items() if not laddered or e in laddered}
+    breakdowns = _table_breakdowns(analyses)
+    engines = sorted(analyses or laddered, key=lambda e: (display_engine(e), e))
+    facts_block = report.get("facts") if isinstance(report.get("facts"), Mapping) else {}
+    excerpts = query_excerpts or {}
+    floor = float(poor_fit_floor) if poor_fit_floor is not None else 0.0
+    # The close calls and settled ties as synthesis selected them (``query_traces.
+    # close_calls``, the rows ``close_call_facts`` counts), so the counts and each
+    # query's label match the engineering report; a report written before them has
+    # none, and the trace's own runner-up decides (a gap of 0 is a settled tie).
+    digest = report.get("query_traces")
+    stored_close = (
+        {
+            str(r["query_id"]): bool(r.get("settled_tie"))
+            for r in digest["close_calls"]
+            if isinstance(r, Mapping) and r.get("query_id")
+        }
+        if isinstance(digest, Mapping) and isinstance(digest.get("close_calls"), list)
+        else None
+    )
+
+    queries: list[dict[str, Any]] = []
+    by_table: dict[str, list[dict[str, Any]]] = {}
+    for qa in sorted(qas, key=lambda q: str(q["query_id"])):
+        qid = str(qa["query_id"])
+        trace = traces.get(qid) or {}
+        ladder = _latest_ladder(trace)
+        row = rows.get(qid)
+        tables = [
+            str(t)
+            for t in dict.fromkeys(qa.get("source_tables") or [])
+            if t and str(t) not in PLACEHOLDER_TABLE_NAMES
+        ]
+        record_tables = [str(t) for t in (row or {}).get("tables") or [] if t] or tables
+        redesign = (row or {}).get("redesign") or {}
+        engine = str(qa.get("assigned_engine") or "") or None
+        if stored_close is not None:
+            close = qid in stored_close
+            settled = bool(stored_close.get(qid))
+        else:
+            close = is_close_call(trace)
+            settled = close and (trace.get("runner_up") or {}).get("gap") == 0
+        queries.append(
+            {
+                "query_id": qid,
+                "excerpt": excerpts.get(qid),
+                "tables": tables,
+                "in_scope": bool(qa.get("in_scope", True)),
+                "engine": engine,
+                "final_score": _detail_round(trace.get("final_score")),
+                "pinned": trace.get("pinned") or qa.get("pinned"),
+                "access_class": (row or {}).get("class"),
+                "access_reason": (row or {}).get("reason"),
+                "redesign_class": redesign.get("class"),
+                "redesign_reason": redesign.get("reason"),
+                "assumed_keys": [
+                    str(k.get("column"))
+                    for k in redesign.get("assumed_keys") or []
+                    if isinstance(k, Mapping) and k.get("column")
+                ],
+                "dimensions": _dimension_rows(engines, ladder, row, breakdowns, record_tables),
+                "steps": [
+                    {
+                        "version": int(s.get("version") or 0),
+                        "seq": int(s.get("seq") or 0),
+                        "step": int(s.get("step") or 0),
+                        "rule": str(s.get("rule") or s.get("reason_code") or ""),
+                        "actor": str(s.get("actor") or ""),
+                        "from_engine": s.get("from_engine"),
+                        "to_engine": s.get("to_engine"),
+                        "explanation": str(s.get("explanation") or ""),
+                    }
+                    for s in _trace_steps(trace)
+                ],
+                "summary": str(trace.get("summary") or ""),
+                "tied_engines": [str(e) for e in trace.get("tied_engines") or []],
+                "close_call": close and not settled,
+                "settled_tie": settled,
+                "runner_up": (trace.get("runner_up") or {}).get("explanation"),
+                "outscored_by": [
+                    str(o.get("explanation") or "")
+                    for o in trace.get("outscored_by") or []
+                    if isinstance(o, Mapping)
+                ],
+                "key_candidates": [
+                    {
+                        "column": str(k.get("column") or ""),
+                        "outcome": str(k.get("outcome") or ""),
+                        "explanation": str(k.get("explanation") or ""),
+                    }
+                    for k in trace.get("key_candidates") or []
+                    if isinstance(k, Mapping)
+                ],
+            }
+        )
+        for table in tables:
+            by_table.setdefault(table, []).append(
+                {
+                    "query_id": qid,
+                    "engine": engine,
+                    "access_class": (row or {}).get("class"),
+                    "scores": _score_cells(engines, ladder),
+                }
+            )
+
+    usage = assignment_table_usage(effective)
+    stored = {
+        str(r.get("table")): r
+        for r in ((facts_block or {}).get("table_owner_lines") or {}).get("table_lines") or []
+        if isinstance(r, Mapping) and r.get("table")
+    }
+    waves = [w for w in report.get("migration_waves") or [] if isinstance(w, Mapping)]
+    retained = wave_retained_engine(waves)
+    tables_out = []
+    for table in sorted(by_table):
+        u = usage.get(table) or {}
+        # The owner line synthesis stored (#212); none is computed here when the report
+        # maps no table (no schema design): the report states the absence.
+        line = stored.get(table) or {}
+        tables_out.append(
+            {
+                "table": table,
+                "owner": line.get("owner"),
+                "owner_basis": line.get("owner_basis"),
+                "owner_reason": (
+                    table_owner_reason(
+                        line, u.get("writes") or {}, u.get("queries") or {}, retained
+                    )
+                    if line
+                    else None
+                ),
+                "also_read_by": [str(e) for e in line.get("also_read_by") or []],
+                "cached_by": line.get("cached_by"),
+                "query_count": len(by_table[table]),
+                "queries": by_table[table],
+            }
+        )
+
+    engine_of = {str(qa["query_id"]): str(qa.get("assigned_engine") or "") for qa in qas}
+    placements, units = _group_placements(lineage)
+    raw_carried = report.get("carried_writes")
+    carried_by_table: dict[str, dict[str, Mapping[str, Any]]] | None = None
+    carried_by_query: dict[str, Mapping[str, Any]] | None = None
+    if isinstance(raw_carried, list):
+        carried_by_table, carried_by_query = {}, {}
+        for c in raw_carried:
+            if isinstance(c, Mapping) and c.get("table_id") and c.get("query_id"):
+                carried_by_table.setdefault(str(c["table_id"]), {})[str(c["query_id"])] = c
+                carried_by_query[str(c["query_id"])] = c
+    write_groups = effective.get("write_groups") or {}
+    multi = {
+        str(t): [str(q) for q in dict.fromkeys(m or [])]
+        for t, m in write_groups.items()
+        if len(set(m or [])) > 1
+    }
+    write_out = [
+        _group_detail(
+            "write",
+            table,
+            members,
+            engine_of,
+            traces,
+            placements,
+            units,
+            floor,
+            None if carried_by_table is None else carried_by_table.get(table, {}),
+        )
+        for table, members in sorted(multi.items())
+    ]
+    co_out = [
+        _group_detail(
+            "co_dependency",
+            f"Co-dependency group {i}",
+            [str(q) for q in dict.fromkeys(g or [])],
+            engine_of,
+            traces,
+            placements,
+            units,
+            # A co-dependency member fits poorly only as a carried write (#1362), the
+            # one record of poor fits every deliverable states; no floor of its own.
+            None,
+            carried_by_query,
+        )
+        for i, g in enumerate(effective.get("co_dependency_groups") or [], start=1)
+        if isinstance(g, list)
+    ]
+    detail = RoutingDetail.model_validate(
+        {
+            "effective_version": int(effective["version"]) if effective.get("version") else None,
+            "has_ledger": any(t.get("has_ledger") for t in traces.values()),
+            "has_access_record": bool(rows),
+            "has_analysis": bool(analyses),
+            "has_carried_writes": carried_by_table is not None,
+            "analysed_engines": engines,
+            "engine_scope": list((facts_block or {}).get("engine_scope") or []),
+            "poor_fit_floor": poor_fit_floor,
+            "query_count": len(queries),
+            "table_count": len(tables_out),
+            "moved_query_count": sum(1 for t in traces.values() if trace_kinds(t).get("moved")),
+            "close_call_count": sum(1 for q in queries if q["close_call"]),
+            "settled_tie_count": sum(1 for q in queries if q["settled_tie"]),
+            "has_owner_lines": bool(stored),
+            "tied_query_count": sum(1 for q in queries if q["tied_engines"]),
+            "write_group_count": len(write_out),
+            "single_statement_write_group_count": len(write_groups) - len(multi),
+            "co_dependency_group_count": len(co_out),
+            "tables": tables_out,
+            "queries": queries,
+            "write_groups": write_out,
+            "co_dependency_groups": co_out,
+        }
+    )
+    return detail.model_dump(mode="json")

@@ -402,6 +402,9 @@ def run_synthesis_deterministic(
     )
     # #471: the relational move's gaps, read before the risks, which raise them (#1149).
     relational_gaps = _relational_gaps(data)
+    # #1362: the write-group members their engine serves poorly, read before the risks,
+    # which raise them; report.json keeps them for the detailed engineering report (#1364).
+    carried_writes = _carried_writes(store, database_name, job_id, data)
     # #950: the risks the migration's shape carries (tables kept in sync, close
     # calls, pending ties, design trade-offs, ...), from the facts built above,
     # before the summary states the risk count.
@@ -424,7 +427,7 @@ def run_synthesis_deterministic(
             relational_gaps=relational_gaps,
             scope_unservable=scope_unservable,
             redesign_requirements=redesign_requirements,
-            carried_writes=_carried_writes(store, database_name, job_id, data),
+            carried_writes=carried_writes,
             start_id=last_risk_number(risk_assessment.get("risks") or []),
             source_engine=source_engine_of(data.collector),
         ),
@@ -592,6 +595,7 @@ def run_synthesis_deterministic(
         "reality_check_summary": reality_check_summary,
         "flagged_unservable": flagged_unservable,
         "scope_unservable": scope_unservable,
+        "carried_writes": carried_writes,
         "relational_gaps": relational_gaps,
         "eliminated_engines": eliminated,
         "considered_not_recommended": considered,
@@ -1316,6 +1320,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         "flagged_unservable": result.get("flagged_unservable") or [],
         # #1329: queries no engine in the customer's engine scope can serve.
         "scope_unservable": result.get("scope_unservable") or [],
+        # #1364: the write-group members their engine serves poorly (#1362), with their
+        # intent and the target-native approach; None when the result predates them.
+        "carried_writes": result.get("carried_writes"),
         # #1146: the in-scope queries grouped by query pattern, for facts.query_pattern_counts.
         "query_pattern_groups": _query_pattern_groups(data),
     }
