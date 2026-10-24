@@ -23,7 +23,13 @@ from pathlib import Path
 
 import pytest
 
-from src.tools.validation.customer_text_guard import Finding, scan_json, scan_markdown, scan_text
+from src.tools.validation.customer_text_guard import (
+    Finding,
+    scan_json,
+    scan_markdown,
+    scan_text,
+    undeclared_engine_fields,
+)
 from tests.e2e.pipeline import PipelineResult
 
 # Accepted hits this run does not fix, each tracked by an open issue -- see that
@@ -63,16 +69,20 @@ def _describe(findings: list[Finding]) -> list[tuple[str, str, str]]:
 
 
 def test_report_json_has_no_internal_wording(run: PipelineResult) -> None:
-    findings = scan_json(json.loads(_effective_report_json(run).read_text()))
-    findings = _filtered(findings, "report.json")
+    report = json.loads(_effective_report_json(run).read_text())
+    findings = _filtered(scan_json(report), "report.json")
     assert findings == [], _describe(findings)
+    # #1409: an engine-named field holds an id, so it is declared as one even when
+    # this run's value happens to be empty or prose-shaped.
+    assert undeclared_engine_fields(report) == []
 
 
 def test_assignment_reasons_have_no_internal_wording(run: PipelineResult) -> None:
     for path in _assignment_jsons(run):
-        findings = scan_json(json.loads(path.read_text()))
-        findings = _filtered(findings, "assignment.json")
+        assignment = json.loads(path.read_text())
+        findings = _filtered(scan_json(assignment), "assignment.json")
         assert findings == [], (path.relative_to(run.job_dir()), _describe(findings))
+        assert undeclared_engine_fields(assignment) == [], path.relative_to(run.job_dir())
 
 
 def test_reality_check_output_has_no_internal_wording(run: PipelineResult) -> None:
@@ -81,9 +91,10 @@ def test_reality_check_output_has_no_internal_wording(run: PipelineResult) -> No
         # Nothing to scan: the run must then have no reality-check file at all.
         assert not list((run.job_dir() / "reality-check").glob("*.json"))
         return
-    findings = scan_json(json.loads(path.read_text()))
-    findings = _filtered(findings, "reality-check/output.json")
+    output = json.loads(path.read_text())
+    findings = _filtered(scan_json(output), "reality-check/output.json")
     assert findings == [], _describe(findings)
+    assert undeclared_engine_fields(output) == []
 
 
 def test_engineering_report_markdown_has_no_internal_wording(run: PipelineResult) -> None:

@@ -174,9 +174,10 @@ jobs:
           uv run coverage report --fail-under=65
 
   e2e-shard:
-    # The deterministic end-to-end suite (ci/e2e.sh) split seven ways (#956): the
+    # The deterministic end-to-end suite (ci/e2e.sh) split eight ways (#956): the
     # report checks of each sample, the two determinism suites, the report checks
-    # tied to no sample, and the UI smoke + help site checks. Only the `ui` shard builds the UI and the help
+    # tied to no sample, the UI smoke + help site checks, and the zero-token replay
+    # of the saved real-model run (ci/replay.sh, #1409). Only the `ui` shard builds the UI and the help
     # site; the report shards need neither. The required check is the `e2e` job
     # below, which waits for every shard.
     name: e2e-shard (${{ matrix.shard }})
@@ -187,7 +188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [wordpress, discourse, trailgear, hashseed, determinism, cross, ui]
+        shard: [wordpress, discourse, trailgear, hashseed, determinism, cross, ui, replay]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
@@ -212,7 +213,7 @@ jobs:
       - name: Cache Playwright browsers
         # Most runs then never download (#1346). The ui shard installs chromium
         # only, the others chromium and webkit, so they keep separate caches.
-        if: matrix.shard != 'hashseed' && matrix.shard != 'determinism'
+        if: matrix.shard != 'hashseed' && matrix.shard != 'determinism' && matrix.shard != 'replay'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/ms-playwright
