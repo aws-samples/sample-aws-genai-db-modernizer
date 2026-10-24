@@ -417,6 +417,51 @@ def assign_table_owners(
     return owned
 
 
+def name_groups(
+    groups: list[dict], db_name: str, resolver: TableNameResolver | None = None
+) -> list[dict]:
+    """Name every group after what it designs (#1386).
+
+    Run on the final list, after :func:`assign_table_owners`, the one point where
+    ownership is known. A group that owns tables takes the short name of the owned
+    table most of its queries have as their primary table (then the one they touch
+    most, then the name); a group that owns none takes its most-read context table.
+    Groups that end up with the same base name are numbered ``_part1``, ``_part2``...
+    in group order, so names are deterministic and unique. A group with no table at
+    all keeps the name it had.
+    """
+    bases: list[str] = []
+    for group in groups:
+        primary: Counter[str] = Counter()
+        touched: Counter[str] = Counter()
+        for q in group["queries"]:
+            primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
+            for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
+                touched[t] += 1
+        pool = group["primary_tables"] or group.get("context_tables") or []
+        if pool:
+            best = min(pool, key=lambda t: (-primary[t], -touched[t], t))
+            bases.append(_short_name(best))
+        else:
+            bases.append(group["group_name"])
+
+    totals = Counter(bases)
+    used: set[str] = set()
+    seen: Counter[str] = Counter()
+    named: list[dict] = []
+    for group, base in zip(groups, bases, strict=True):
+        name = base
+        if totals[base] > 1:
+            while True:
+                seen[base] += 1
+                name = f"{base}_part{seen[base]}"
+                if name not in used and name not in totals:
+                    break
+        used.add(name)
+        named.append({**group, "group_name": name})
+    return named
+
+
 def _qid(query: dict) -> str:
     return str(query.get("query_id") or query.get("query_text") or id(query))
 
@@ -562,9 +607,10 @@ def fit_groups_to_budget(
 
     ``measure(group)`` returns the size of the group's rendered input. A
     single-query group is kept whatever its size. Parts keep the group's
-    ``primary_tables`` and are named ``<group_name>_s1``, ``_s2``, ... Each
-    part is measured under the longest name it could get (``_s<query count>``),
-    so the written file is never larger than the size that was checked.
+    ``primary_tables`` and get a provisional ``<group_name>_s1``, ``_s2``, ... name that
+    :func:`name_groups` replaces (#1386). Each part is measured under the longest
+    final name it could get, so the written file is never larger than the size
+    that was checked.
     ``pattern_of`` (query id -> query pattern, #1146): a group is halved at the
     query-pattern boundary nearest its middle, inside a pattern only when the
     group is one pattern, unless that takes more parts than halving at the middle.
@@ -572,7 +618,12 @@ def fit_groups_to_budget(
     fitted: list[dict] = []
     for group in groups:
 
-        longest_name = f"{group['group_name']}_s{len(group['queries'])}"
+        # The final name (#1386) is a table's short name plus ``_part<n>``, set after
+        # the parts are owned: measure under the longest it could be.
+        longest_base = max(
+            [group["group_name"], *(_short_name(t) for t in group["primary_tables"])], key=len
+        )
+        longest_name = f"{longest_base}_part{len(group['queries'])}"
 
         def measure_part(qs: list[dict], base: dict = group, name: str = longest_name) -> int:
             return measure({**base, "group_name": name, "queries": qs})
@@ -747,8 +798,12 @@ def split_schema_input(
 
     pattern_of = query_pattern_index(design_queries, collector_output)
     # Halved parts copy their group's tables: give each table one owner again (#1243).
-    fitted = assign_table_owners(
-        fit_groups_to_budget(groups, measure, pattern_of=pattern_of), database_name, resolver
+    fitted = name_groups(
+        assign_table_owners(
+            fit_groups_to_budget(groups, measure, pattern_of=pattern_of), database_name, resolver
+        ),
+        database_name,
+        resolver,
     )
     for idx, group in enumerate(fitted):
         group_queries = group["queries"]

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess  # nosec B404 -- runs this interpreter on a fixed snippet
 import sys
 from collections import Counter
@@ -239,6 +240,74 @@ def test_a_sample_table_read_in_another_group_is_marked_context(sample_split) ->
         assert groups[n].get("context_tables", []) == expected, (sample, n)
         listed = {c["table"]: c["owner_group"] for c in data.get("group_context_tables") or []}
         assert listed == {t: owner[t] for t in expected}, (sample, n)
+
+
+def _base(name: str) -> str:
+    """A group name without its ``_partN`` suffix (#1386)."""
+    return re.sub(r"_part\d+$", "", name)
+
+
+def test_a_sample_group_is_named_after_a_table_it_designs(sample_split) -> None:
+    """#1386: an owning group takes a name from its owned tables, one that owns none from a
+    context table it reads, and every name is unique."""
+    sample, manifest, _, _ = sample_split
+    names = [g["group_name"] for g in manifest["groups"]]
+    assert len(set(names)) == len(names), sample
+    for g in manifest["groups"]:
+        short = lambda tables: {t.split(".")[-1] for t in tables}  # noqa: E731
+        pool = short(g["primary_tables"]) or short(g["context_tables"])
+        assert _base(g["group_name"]) in pool, (sample, g["group_name"])
+
+
+def _named(queries: list[dict], collector: dict, tmp_path: Path) -> list:
+    collector = {**collector, "queries": {"query_patterns": queries}}
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    return split_schema_input("j", "db", "dynamodb", collector, {}, queries, store).groups
+
+
+def test_each_group_is_named_after_the_table_it_owns(tmp_path: Path) -> None:
+    """Chunk 2 holds a's overflow and all of b: it owns ``b`` only, so it is not named ``a``."""
+    queries = [_q(f"a{i}", ["db.a"]) for i in range(25)] + [
+        _q(f"b{i}", ["db.b", "db.a"]) for i in range(5)
+    ]
+    entries = _named(queries, _fk_collector(("db.b", "db.a")), tmp_path)
+    assert {g.group_name: g.primary_tables for g in entries} == {"a": ["db.a"], "b": ["db.b"]}
+
+
+@pytest.mark.passes_on_main  # main already numbers a cluster's chunks
+def test_the_largest_owned_table_names_a_group_and_equal_names_get_part_numbers(
+    tmp_path: Path,
+) -> None:
+    queries = [_q(f"a{i}", ["db.a"]) for i in range(45)]
+    entries = _named(queries, _fk_collector(("db.a", "db.a")), tmp_path)
+    assert [g.group_name for g in entries] == ["a_part1", "a_part2", "a_part3"]
+    assert [g.primary_tables for g in entries] == [["db.a"], [], []]  # two own nothing
+
+
+@pytest.mark.passes_on_main  # old saved manifests must keep loading (#1386)
+def test_a_manifest_saved_with_the_old_group_names_still_loads() -> None:
+    from src.contracts.schema_design_input import SchemaDesignGroupsManifest
+
+    old = {
+        "job_id": "j",
+        "database_name": "db",
+        "target_engine": "dynamodb",
+        "total_queries": 1,
+        "total_groups": 1,
+        "groups": [
+            {
+                "group_index": 0,
+                "group_name": "remote_themes_part2",
+                "primary_tables": [],
+                "query_count": 1,
+                "table_count": 1,
+                "input_file": "input_group_0.json",
+            }
+        ],
+    }
+    assert (
+        SchemaDesignGroupsManifest.model_validate(old).groups[0].group_name == "remote_themes_part2"
+    )
 
 
 # ---------------------------------------------------------------------------
