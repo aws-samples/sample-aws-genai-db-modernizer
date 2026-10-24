@@ -1343,7 +1343,7 @@ class TestScoringBranches:
     # -----------------------------------------------------------------------
 
     def test_ts_high_write_ratio_gets_complexity_bonus(self):
-        """write_ratio >= 0.7 triggers +15 complexity bonus in TS adjustments (line 603)."""
+        """insert_ratio >= 0.7 triggers +15 complexity bonus in TS adjustments (#1392)."""
         from src.contracts.analysis_output import ScoreBreakdown
         from src.tools.analysis.opensearch_analysis_tools import (
             _apply_opensearch_timeseries_adjustments,
@@ -1357,7 +1357,8 @@ class TestScoringBranches:
             column_count=4,
             has_primary_key=True,
             foreign_key_count=0,
-            read_ratio=0.1,  # write_ratio = 0.9 >= 0.7
+            read_ratio=0.1,
+            insert_ratio=0.9,  # appends >= 0.7 (#1392)
             total_calls_per_second=20.0,
             pattern_types=["high-ingest"],
             avg_execution_time_ms=2.0,
@@ -1369,7 +1370,7 @@ class TestScoringBranches:
             cost_score=10,
         )
         result = _apply_opensearch_timeseries_adjustments(base_scores, profile)
-        # complexity started at 10; write_ratio bonus adds +15, FK bonus adds +10 → >= 35
+        # complexity started at 10; append bonus adds +15, FK bonus adds +10 → >= 35
         assert result.complexity_score >= 35
 
     # -----------------------------------------------------------------------
@@ -1622,7 +1623,7 @@ class TestHelperFunctionBranches:
     # -----------------------------------------------------------------------
 
     def test_build_rationale_ts_append_heavy_includes_data_streams_message(self):
-        """_build_rationale for TIMESERIES with write_ratio >= 0.7 mentions data streams (line 660)."""
+        """_build_rationale for TIMESERIES with insert_ratio >= 0.7 mentions data streams."""
         from src.contracts.analysis_output import Confidence, Pattern
         from src.tools.analysis.opensearch_analysis_tools import WorkloadType, _build_rationale
         from src.tools.analysis.scoring import TableProfile
@@ -1634,7 +1635,8 @@ class TestHelperFunctionBranches:
             column_count=4,
             has_primary_key=True,
             foreign_key_count=0,
-            read_ratio=0.1,  # write_ratio = 0.9 >= 0.7
+            read_ratio=0.1,
+            insert_ratio=0.9,  # appends >= 0.7 (#1392)
             total_calls_per_second=25.0,
             pattern_types=["high-ingest"],
         )
