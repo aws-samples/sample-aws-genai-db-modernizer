@@ -64,6 +64,7 @@ from reportlab.platypus import (
 
 from src.shared import catalog
 from src.shared.engine_names import display_engine
+from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import CACHE_LAYER
 from src.shared.risk_severity import severity_of
 from src.shared.target_databases import engine_scope_statement
@@ -1006,6 +1007,9 @@ def _why(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) -> l
         accents = [_engine_color(e["engine"]) for e in _architecture_engines(report)]
         flow.append(_table(st, ("Engine", "Role", "Why"), rows, (2, 1.6, 8.4), row_accents=accents))
         flow += [_gap(6), _para(WORKLOAD_FIT_DEFINITION, st["small"])]
+        if report_predates_pin_rule(report):
+            # #1389: the stored figures cannot be recounted here (ADR-032).
+            flow += [_gap(2), _para(PIN_RULE_PREDATES_NOTE, st["small"])]
         if any(e.get("role") == CACHE_LAYER for e in _architecture_engines(report)):
             flow += [_gap(2), _para(CACHE_FIT_DEFINITION, st["small"])]
     decisions = []

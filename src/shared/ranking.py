@@ -25,6 +25,30 @@ from typing import Any
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.workload_fit_labels import PINNED_UTILITY_LABEL
 
+#: Said once by every view of a report written before utility pins left the mean fit
+#: (#1373, #1389): its stored figures and traces cannot be recounted by a renderer
+#: (ADR-032), only by running synthesis again.
+PIN_RULE_PREDATES_NOTE = (
+    "This report was written before utility-pinned queries were left out of an "
+    "engine's mean fit, so its fit figures and query traces may still count them. "
+    "Run synthesis again to update them."
+)
+
+
+def report_predates_pin_rule(report: Mapping[str, Any]) -> bool:
+    """Whether ``report`` was written before ``routed_pinned_queries`` existed (#1389).
+
+    A routed ranking entry of a current report always carries the count (0 when it
+    holds no pin); an entry with a routed figure and no count was written before.
+    Reads what the file holds; counts nothing.
+    """
+    return any(
+        isinstance(e, Mapping)
+        and e.get("routed_queries") is not None
+        and e.get("routed_pinned_queries") is None
+        for e in report.get("ranking") or []
+    )
+
 
 def engine_confidence(entry: Mapping[str, Any]) -> float:
     """The confidence to show for a ranking entry: routed, else the analysis average.

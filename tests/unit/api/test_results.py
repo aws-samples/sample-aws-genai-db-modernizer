@@ -477,6 +477,21 @@ class TestResultsPageWording:
         body = client.get("/api/v1/assessments/job-1/results").json()
         assert "summary" not in body["synthesis"]
 
+    def test_payload_notes_a_report_written_before_utility_pins_left_the_mean(self, mock_services):
+        from src.shared.ranking import PIN_RULE_PREDATES_NOTE
+
+        mock_services["s3"].read_triage.return_value = None
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [{"target": "aurora_mysql", "routed_queries": 5}]
+        }
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["pin_rule_note"] == PIN_RULE_PREDATES_NOTE
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [{"target": "aurora_mysql", "routed_queries": 5, "routed_pinned_queries": 0}]
+        }
+        body = client.get("/api/v1/assessments/job-1/results").json()
+        assert body["pin_rule_note"] is None
+
     def test_payload_carries_the_shared_no_open_risks_sentence(self, mock_services):
         from src.report.risks import NO_OPEN_RISKS_CAVEAT
 

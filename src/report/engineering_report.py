@@ -7,6 +7,7 @@ from typing import Any
 from src.shared.design_text import design_text_item, unsupported_pattern_detail
 from src.shared.engine_names import canonical_engine_id, display_engine
 from src.shared.executive_brief import executive_brief_text
+from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import CACHE_LAYER, query_group_at
 from src.shared.target_databases import engine_scope_statement
 from src.shared.unsupported_pattern import (
@@ -659,6 +660,9 @@ def _target_engines_md(report: dict[str, Any]) -> list[str]:
         # all, even though "Target engines" above already shows the figure.
         out.append(f"*{escaping.md_text(WORKLOAD_FIT_DEFINITION)}*")
         out.append("")
+        if report_predates_pin_rule(report):
+            # #1389: the stored figures cannot be recounted here (ADR-032).
+            out += [f"*{escaping.md_text(PIN_RULE_PREDATES_NOTE)}*", ""]
         # #1291: a listed cache layer's figure is a cache fit of the reads it fronts,
         # not a workload fit; say so once, under the same table.
         if any(e.get("role") == CACHE_LAYER for e in target_engines):

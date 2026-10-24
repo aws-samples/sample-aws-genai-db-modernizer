@@ -20,6 +20,7 @@ from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
+from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
 from src.shared.report_facts import (
     analysis_overview_facts,
     routed_cache_fit_facts,
@@ -115,6 +116,8 @@ async def get_results(job_id: str = Depends(job_id_param)):
         # #996: the one definition of the no-open-risks sentence the engineering and
         # executive reports print; the results page shows it when no risk is open.
         "no_open_risks_caveat": NO_OPEN_RISKS_CAVEAT,
+        # #1389: set for a report written before utility pins left the mean fit.
+        "pin_rule_note": PIN_RULE_PREDATES_NOTE if report_predates_pin_rule(synthesis) else None,
     }
 
 

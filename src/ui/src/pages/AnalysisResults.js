@@ -45,6 +45,7 @@ import QueryRoutingTable from "../components/QueryRoutingTable";
 import CloseCallCallout from "../components/CloseCallCallout";
 import UnservableQueriesCallout from "../components/UnservableQueriesCallout";
 import NoOpenRisksNote from "../components/NoOpenRisksNote";
+import PinRuleNote from "../components/PinRuleNote";
 import NoOpenRisksSection from "../components/NoOpenRisksSection";
 import UnreviewedMovesNote from "../components/UnreviewedMovesNote";
 import EngineChoicesNote from "../components/EngineChoicesNote";
@@ -1921,6 +1922,7 @@ const AnalysisResultsPage = memo(() => {
                 <Box variant="div" fontSize="body-m">
                   {synthesis?.summary ? <ProseText text={synthesis.summary} paragraphs /> : 'No summary available.'}
                 </Box>
+                <PinRuleNote note={resultsData?.pin_rule_note} />
                 {summaryFallback.isFallback && (
                   <SummaryFallbackNotice
                     text={t('analysis-results.executive-summary.fallback-notice', {
