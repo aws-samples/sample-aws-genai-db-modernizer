@@ -133,6 +133,8 @@ NEEDS_FULL_JOB: dict[str, str] = {
     "tests/e2e/test_report_pdf.py::test_every_wave_its_counts_and_its_reason[external]": _ASSIGNMENT,
     "tests/e2e/test_report_pdf.py::test_no_collected_table_name_appears[external]": _COLLECTOR,
     "tests/e2e/test_report_pdf.py::test_nothing_is_cut[external]": _COLLECTOR,
+    "tests/e2e/test_schema_design_analysis_scope.py::test_the_external_request_names_only_the_engines_own_tables[external]": _ASSIGNMENT,
+    "tests/e2e/test_schema_design_analysis_scope.py::test_the_bedrock_input_names_only_the_engines_own_tables[external]": _ASSIGNMENT,
     "tests/e2e/test_table_profile_writes.py::test_every_profile_write_count_equals_its_write_group[external]": _ASSIGNMENT,
     "tests/e2e/test_table_profile_writes.py::test_only_writes_not_typed_as_dml_change_a_profile[external]": _ASSIGNMENT,
     "tests/e2e/test_utility_pin_label.py::test_every_utility_pin_is_labelled_in_the_review_and_the_journey[external]": _ASSIGNMENT,

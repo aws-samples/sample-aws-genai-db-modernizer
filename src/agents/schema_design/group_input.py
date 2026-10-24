@@ -20,8 +20,10 @@ contract shape but holds only what the group's design uses (issue #272):
   tables (the skill writes ``migration_notes`` for them), and no procedures,
   views or duplicate top-level ``tables``;
 - the analysis patterns and anti-patterns that touch the group's queries or
-  tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, the
-  aggregates and table recommendations for the group's tables, and the group's own
+  tables, with their ``query_ids`` / ``table_ids`` trimmed to the group's, and the
+  workload-wide ones that name neither, the aggregates and table recommendations
+  for the group's tables (``narrow_analysis``, the rule a single design call uses
+  too, #162), and the group's own
   ``key_scoped_writes`` (DynamoDB, #1061), ``key_scoped_counts`` (DynamoDB, #377) and
   ``redesign_requirements`` (every engine, #1231) and ``carried_writes`` (every
   engine, #1362);
@@ -50,6 +52,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design.group_trace import scope_decision_trace
 from src.contracts.analysis_output import (
     AggregateRecommendation,
@@ -189,13 +192,65 @@ def _slim_query(query: dict) -> dict:
     return slim
 
 
-def _trim_signal(signal: dict, fields: set[str], kind: str, query_ids: set[str], tables: set[str]):
-    """An analysis pattern trimmed to the group's queries and tables, or None if unrelated."""
-    qids = [q for q in signal.get("query_ids") or [] if q in query_ids]
-    tids = [t for t in signal.get("table_ids") or [] if t in tables]
-    if not qids and not tids:
-        return None
-    return _slim({**signal, "query_ids": qids, "table_ids": tids}, fields, kind)
+def narrow_analysis(
+    analysis_output: dict,
+    own_tables: set[str],
+    own_queries: set[str],
+    resolver: TableNameResolver | None,
+) -> dict:
+    """The analysis narrowed to one design call's tables and queries (#162): the rule
+    the single-call path (``handler.filter_analysis_for_assignment``) and each design
+    group (:func:`build_group_input`) share. Returns a new dict whose:
+
+    - ``table_recommendations`` are the ones for ``own_tables``;
+    - ``aggregate_recommendations`` are the ones with a member table in ``own_tables``;
+    - ``workload_analysis`` patterns and anti-patterns are the ones naming one of
+      ``own_queries`` or ``own_tables``, with their ``query_ids`` / ``table_ids``
+      trimmed to those; one naming no query and no table describes the whole
+      workload and is kept.
+
+    A table name matches when ``resolver`` resolves it (or, without one, the name
+    itself) to one of ``own_tables``. A bare name the resolver finds ambiguous never
+    matches, even when every table it could mean is the call's own, as on the
+    collector side (#319). Every other field is kept as is; nothing is mutated.
+    """
+
+    def own(name: object) -> bool:
+        text = str(name)
+        resolved = resolver.resolve(text) if resolver is not None else None
+        return (resolved or text) in own_tables
+
+    def trim(signal: dict) -> dict | None:
+        query_ids, table_ids = signal.get("query_ids"), signal.get("table_ids")
+        if not query_ids and not table_ids:
+            return signal
+        kept_queries = [q for q in query_ids or [] if str(q) in own_queries]
+        kept_tables = [t for t in table_ids or [] if own(t)]
+        if not kept_queries and not kept_tables:
+            return None
+        return {
+            **signal,
+            "query_ids": kept_queries if query_ids is not None else None,
+            "table_ids": kept_tables if table_ids is not None else None,
+        }
+
+    narrowed = dict(analysis_output)
+    narrowed["table_recommendations"] = [
+        r for r in analysis_output.get("table_recommendations") or [] if own(r.get("table_id"))
+    ]
+    aggregates = analysis_output.get("aggregate_recommendations")
+    if aggregates is not None:
+        narrowed["aggregate_recommendations"] = [
+            a for a in aggregates if any(own(m) for m in a.get("member_tables") or [])
+        ]
+    workload = analysis_output.get("workload_analysis")
+    if isinstance(workload, dict):
+        signals = dict(workload)
+        for key in ("patterns_detected", "anti_patterns_detected"):
+            if workload.get(key) is not None:
+                signals[key] = [s for s in (trim(x) for x in workload[key]) if s is not None]
+        narrowed["workload_analysis"] = signals
+    return narrowed
 
 
 CONTEXT_TABLE_RULE = (
@@ -300,22 +355,17 @@ def build_group_input(
         "metrics": collector_output.get("metrics"),
     }
 
-    workload = analysis_output.get("workload_analysis") or {}
+    # The same rule as a single design call (#162), on the group's tables and queries.
+    narrowed = narrow_analysis(
+        analysis_output, table_ids, query_ids, TableNameResolver.from_collector(collector_output)
+    )
+    workload = narrowed.get("workload_analysis") or {}
     patterns = [
-        p
-        for p in (
-            _trim_signal(x, _PATTERN_FIELDS, "pattern", query_ids, table_ids)
-            for x in workload.get("patterns_detected") or []
-        )
-        if p
+        _slim(x, _PATTERN_FIELDS, "pattern") for x in workload.get("patterns_detected") or []
     ]
     anti_patterns = [
-        p
-        for p in (
-            _trim_signal(x, _ANTI_PATTERN_FIELDS, "anti_pattern", query_ids, table_ids)
-            for x in workload.get("anti_patterns_detected") or []
-        )
-        if p
+        _slim(x, _ANTI_PATTERN_FIELDS, "anti_pattern")
+        for x in workload.get("anti_patterns_detected") or []
     ]
     group_workload: dict[str, Any] = {"patterns_detected": patterns}
     if anti_patterns:
@@ -338,14 +388,12 @@ def build_group_input(
     }
     group_analysis["table_recommendations"] = [
         _slim(r, _TABLE_REC_FIELDS, "table_rec")
-        for r in analysis_output.get("table_recommendations") or []
-        if r.get("table_id") in table_keys or r.get("table_name") in table_keys
+        for r in narrowed.get("table_recommendations") or []
     ]
     group_analysis["workload_analysis"] = group_workload
     aggregates = [
         _slim(a, _AGGREGATE_FIELDS, "aggregate")
-        for a in analysis_output.get("aggregate_recommendations") or []
-        if set(a.get("member_tables") or []) & table_ids
+        for a in narrowed.get("aggregate_recommendations") or []
     ]
     if aggregates:
         group_analysis["aggregate_recommendations"] = aggregates

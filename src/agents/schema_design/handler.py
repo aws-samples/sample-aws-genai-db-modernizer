@@ -34,6 +34,7 @@ from src.agents.referee.query_pattern import (
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
 from src.agents.schema_design.design_trace import write_design_trace
+from src.agents.schema_design.group_input import narrow_analysis
 from src.agents.schema_design.group_trace import scope_decision_trace
 from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
 from src.agents.schema_design.scope import (
@@ -283,6 +284,33 @@ def filter_collector_for_assignment(
     return filtered
 
 
+def filter_analysis_for_assignment(
+    analysis_output: dict, collector_output: dict, scoped_collector: dict
+) -> dict:
+    """The engine's analysis narrowed to one design call's tables and queries (#162).
+
+    ``scoped_collector`` is the call's assignment-filtered collector input
+    (:func:`filter_collector_for_assignment`), ``collector_output`` the whole
+    collection. The rule is ``group_input.narrow_analysis``, the one each DynamoDB
+    design group uses: recommendations of the call's own tables, aggregates with one
+    of its member tables, patterns naming one of its queries or tables (ids trimmed
+    to its own) and workload-wide patterns. Names resolve through
+    ``TableNameResolver`` on the whole collection, as the collector side does (#319).
+    """
+    own_tables = {
+        str(t["table_id"])
+        for t in (scoped_collector.get("database_schema") or {}).get("tables") or []
+        if t.get("table_id")
+    }
+    own_queries = {
+        str(q.get("query_id"))
+        for q in (scoped_collector.get("queries") or {}).get("query_patterns") or []
+    }
+    return narrow_analysis(
+        analysis_output, own_tables, own_queries, TableNameResolver.from_collector(collector_output)
+    )
+
+
 INVALIDATION_CONTEXT_NOTE = (
     "Read-only context, not design scope: the owner engines' write queries on the "
     "cached tables. Use their query_id values only in "
@@ -335,8 +363,9 @@ def prepare_schema_design_input(
     """Prepare the LLM input payload for schema design (external/seam mode).
 
     Reads collector output, analysis output, and (when assignment_version > 0)
-    assignment artifact from the store, filters collector to in-scope queries,
-    and returns a dict ready to be serialised as the LLM input.
+    assignment artifact from the store, filters collector to in-scope queries
+    and the analysis to the same tables and queries (#162), and returns a dict
+    ready to be serialised as the LLM input.
 
     Returns dict with keys:
       target_type, collector_output (filtered), analysis_output,
@@ -345,20 +374,24 @@ def prepare_schema_design_input(
       for DocumentDB and OpenSearch also decision_trace (the engine's analysis
       trace scoped to the filtered queries and tables, #1068) when one exists
     """
-    collector_output = read_collector_for_models(store, database_name, job_id)
+    full_collector = read_collector_for_models(store, database_name, job_id)
+    collector_output = full_collector
 
     if assignment_version > 0:
         assignment_key = (
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
         )
         assignment = store.read_json(assignment_key)
-        collector_output = filter_collector_for_assignment(
-            collector_output, assignment, target_type
-        )
+        collector_output = filter_collector_for_assignment(full_collector, assignment, target_type)
 
     analysis_output = _design_analysis_output(
         store, database_name, job_id, target_type, assignment_version
     )
+    if assignment_version > 0:
+        # Only this call's own tables and queries, as its collector input (#162).
+        analysis_output = filter_analysis_for_assignment(
+            analysis_output, full_collector, collector_output
+        )
     scoped = {
         "key_scoped_writes": key_scoped_writes_in_scope,
         "key_scoped_counts": key_scoped_counts_in_scope,
@@ -757,7 +790,8 @@ def run_schema_design(
         print(f"[schema-design/{target_type}] Loaded partial output from previous run")
 
     # --- Read collector output via ArtifactStore ---
-    collector_output = read_collector_for_models(store, database_name, job_id)
+    full_collector = read_collector_for_models(store, database_name, job_id)
+    collector_output = full_collector
     print(f"[schema-design/{target_type}] Loaded collector output")
 
     # --- Filter by assignment when versioned ---
@@ -766,9 +800,7 @@ def run_schema_design(
             f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
         )
         assignment = store.read_json(assignment_key)
-        collector_output = filter_collector_for_assignment(
-            collector_output, assignment, target_type
-        )
+        collector_output = filter_collector_for_assignment(full_collector, assignment, target_type)
         n_queries = len(collector_output.get("queries", {}).get("query_patterns", []))
         n_tables = len(collector_output.get("database_schema", {}).get("tables", []))
         print(
@@ -803,6 +835,11 @@ def run_schema_design(
     analysis_output = _design_analysis_output(
         store, database_name, job_id, target_type, assignment_version
     )
+    if assignment_version > 0:
+        # Only this call's own tables and queries, as its collector input (#162).
+        analysis_output = filter_analysis_for_assignment(
+            analysis_output, full_collector, collector_output
+        )
     print(f"[schema-design/{target_type}] Loaded analysis output")
 
     # --- Write to temp files for the Strands agent ---
@@ -1334,7 +1371,8 @@ def run_schema_design_with_injected(
     )
 
     # Read collector output
-    collector_output = read_collector_for_models(store, database_name, job_id)
+    full_collector = read_collector_for_models(store, database_name, job_id)
+    collector_output = full_collector
 
     # Filter by assignment + injected queries
     if assignment_version > 0:
@@ -1343,7 +1381,7 @@ def run_schema_design_with_injected(
         )
         assignment = store.read_json(assignment_key)
         collector_output = filter_collector_for_assignment(
-            collector_output,
+            full_collector,
             assignment,
             target_type,
             injected_query_ids=injected_query_ids,
@@ -1367,6 +1405,11 @@ def run_schema_design_with_injected(
     analysis_output = _design_analysis_output(
         store, database_name, job_id, target_type, assignment_version
     )
+    if assignment_version > 0:
+        # The engine's own and the injected queries' tables, as its collector input (#162).
+        analysis_output = filter_analysis_for_assignment(
+            analysis_output, full_collector, collector_output
+        )
 
     # Write to temp files and invoke agent
     collector_raw = json.dumps(collector_output, indent=2, default=str).encode()
