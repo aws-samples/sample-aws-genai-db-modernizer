@@ -150,8 +150,10 @@ def render_gate_block(
             f"Cache layer: {name} has {count} cache {plural_noun(count, 'candidate')} "
             f"({_percent(candidates['call_share_percent'])} of calls) and owns no queries. "
             "Schema design then confirms which ones it covers.",
-            "",
         ]
+        if candidates.get("change"):
+            lines.append(f"Cache layer note: {candidates['change']}")
+        lines.append("")
     patterns = [p for p in gate.get("architectural_patterns") or [] if isinstance(p, Mapping)]
     if patterns:
         lines.append("Architectural patterns:")
