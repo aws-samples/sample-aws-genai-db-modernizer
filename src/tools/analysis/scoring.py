@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from itertools import combinations
 
 from src.agents.referee.table_resolution import SourceScope
-from src.agents.referee.write_groups import written_tables
+from src.agents.referee.write_groups import inserted_tables, written_tables
 from src.contracts.analysis_output import MigrationComplexity, ScoreBreakdown, WorkloadAnalysis
 from src.shared.catalog import default_score_weights
 from src.tools.sql.query_facts import source_engine_of
@@ -32,7 +32,12 @@ class TableProfile:
     total_query_count: int = 0
     read_query_count: int = 0
     write_query_count: int = 0
+    # The writes that only append rows (``write_groups.inserted_tables``, #1392): a
+    # subset of ``write_query_count``, never a locking read, UPDATE, DELETE or upsert.
+    insert_query_count: int = 0
     read_ratio: float = 0.0
+    # ``insert_query_count`` over the same total as ``read_ratio`` (reads + writes).
+    insert_ratio: float = 0.0
     total_calls_per_second: float = 0.0
     total_db_load_percent: float = 0.0
     avg_execution_time_ms: float = 0.0
@@ -75,6 +80,9 @@ def build_table_profiles(
     source_scope = SourceScope.from_collector(collector_output)
     written: dict[int, set[str]] = {
         id(q): set(written_tables(q, source_engine, source_scope)) for q in queries
+    }
+    inserted: dict[int, set[str]] = {
+        id(q): set(inserted_tables(q, source_engine, source_scope)) for q in queries
     }
 
     # --- Group queries by table ---
@@ -121,6 +129,7 @@ def build_table_profiles(
         if tq:
             reads = 0
             writes = 0
+            inserts = 0
             total_cps = 0.0
             total_load = 0.0
             weighted_exec_sum = 0.0
@@ -131,6 +140,8 @@ def build_table_profiles(
             for q in tq:
                 if tid in written[id(q)]:
                     writes += 1
+                    if tid in inserted[id(q)]:
+                        inserts += 1
                 elif str(q.get("query_type") or "").upper() in _READ_QUERY_TYPES:
                     reads += 1
 
@@ -153,7 +164,9 @@ def build_table_profiles(
             profile.total_query_count = len(tq)
             profile.read_query_count = reads
             profile.write_query_count = writes
+            profile.insert_query_count = inserts
             profile.read_ratio = reads / total if total > 0 else 0.0
+            profile.insert_ratio = inserts / total if total > 0 else 0.0
             profile.total_calls_per_second = total_cps
             profile.total_db_load_percent = total_load
             profile.avg_execution_time_ms = weighted_exec_sum / total_cps if total_cps > 0 else 0.0

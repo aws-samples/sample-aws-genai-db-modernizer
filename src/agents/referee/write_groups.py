@@ -39,6 +39,7 @@ __all__ = [
     "assignment_unit_weights",
     "build_write_groups",
     "collector_write_groups",
+    "inserted_tables",
     "placement_groups",
     "sources_of_truth",
     "table_sources",
@@ -98,6 +99,34 @@ def written_tables(
     if is_locking_read(query, source_engine):
         out.extend(tables)
     return list(dict.fromkeys(out))
+
+
+def inserted_tables(
+    query: Mapping, source_engine: str = "", source: SourceScope | None = None
+) -> list[str]:
+    """The :func:`written_tables` ``query`` only appends rows to (#1392).
+
+    An append is a collected ``INSERT`` (MySQL's ``REPLACE`` arrives typed ``INSERT``)
+    that is no upsert (``QueryFacts.upsert``, read in ``source_engine``'s dialect: an
+    upsert overwrites a row it collides with), counted on its write targets only, never
+    on a table it only reads or locks. An ``UPDATE``, ``DELETE``, ``MERGE``, a locking
+    read and a data-modifying CTE collected as ``OTHER`` append nothing.
+    """
+    if str(query.get("query_type") or "").upper() != "INSERT":
+        return []
+    written = written_tables(query, source_engine, source)
+    if not written:
+        return []
+    facts = query_facts(str(query.get("query_text") or ""), source_engine)
+    if facts.upsert:
+        return []
+    targets = set(facts.write_targets)
+    matched = [t for t in written if _bare(t) in targets]
+    if matched:
+        return matched
+    # The target is none of the collected tables (``written_tables``' fallback): every
+    # written table, unless the statement also locks what it reads.
+    return [] if is_locking_read(query, source_engine) else written
 
 
 def build_write_groups(
