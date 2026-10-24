@@ -67,6 +67,7 @@ import re
 from dataclasses import dataclass
 
 from src.shared.sql_comments import block_comment_end, block_comments_nest
+from src.shared.sql_spans import scan_grammar_for
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -203,26 +204,13 @@ def without_comments_between_statements(text: str, source_engine: str | None) ->
 # Quote, comment and paren scanning
 # ---------------------------------------------------------------------------
 
-_QUOTE_CHARS = ("'", '"', "`")
-
-_POSTGRES_DIALECTS = frozenset({"postgresql", "postgres"})
 # SQL Server quotes a name in brackets: [a name]; ``]]`` is a literal ``]``.
 _BRACKET_DIALECTS = frozenset({"sqlserver", "tsql", "mssql"})
-# Oracle alternative quoting: q'[...]', q'(...)', q'{...}', q'<...>' or q'!...!' (and the
-# national nq'...' form); the text runs until the closing delimiter and a quote.
-_ORACLE_Q_QUOTE_RE = re.compile(r"(?:[nN])?[qQ]'(?P<d>[^\s])")
-_Q_CLOSERS = {"[": "]", "(": ")", "{": "}", "<": ">"}
 
 
-def _starts_token(text: str, i: int) -> bool:
-    """Whether ``text[i]`` begins a token (is not inside an identifier like ``name'``)."""
-    return i == 0 or not (text[i - 1].isalnum() or text[i - 1] in "_$#")
-
-
-# PostgreSQL dollar-quoting: $$...$$ or $tag$...$tag$. A tag, if present,
-# follows identifier rules (starts with a letter or underscore), which is
-# exactly what keeps this from ever matching a "$1"-style placeholder.
-_DOLLAR_TAG_RE = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$")
+# The closer a doubled copy of which is an escape; a span that "ends" right before one
+# has not ended (see ``_scan``).
+_DOUBLED_CLOSER = {"'": "'", '"': '"', "E'": "'", "e'": "'", "[": "]"}
 
 
 @dataclass(frozen=True)
@@ -244,177 +232,58 @@ def _scan(text: str, dialect: str, brackets: bool = False) -> _Scan:
     only, so a truncation check can look at the text with comments removed
     without also discarding quoted content.
 
-    Escaping conventions are dialect-gated: a doubled quote character
-    (``''``, ``""``, `` `` ``) is a literal quote inside the span for every
-    dialect (the ANSI SQL rule), but a backslash before the closing quote
-    only escapes it for the MySQL family -- PostgreSQL's default
-    ``standard_conforming_strings=on`` gives backslash no special meaning.
-    PostgreSQL (and anything outside the MySQL family) also gets
-    dollar-quoted strings (``$$...$$`` / ``$tag$...$tag$``), which have no
-    escaping at all: the span runs verbatim until the same delimiter
-    reappears.
-
-    Comments are recognized for every dialect (``--`` and ``/* */``), plus
-    ``#`` for the MySQL family only. A block comment nests for PostgreSQL and
-    SQL Server (``/* a /* b */ c */`` is one comment, so an inner opener leaves
-    it open) and ends at its first ``*/`` elsewhere (#825), as
-    :func:`src.shared.sql_comments.block_comments_nest` says; the depth is one
-    counter on the same forward pass. A line comment (``--``/``#``) that
-    runs to the end of the text is complete by grammar (no closing token
-    is required); only an unterminated ``/* ... */`` counts as a
-    truncation signal, the same way an unterminated quote does.
+    The spans are the shared grammar's (:func:`src.shared.sql_spans.scan_grammar_for`,
+    #1451), so this scan and the text facts read each dialect's comment, string and
+    identifier forms from one place: a doubled quote is a literal quote in every
+    dialect, a backslash escapes only for the MySQL family (PostgreSQL's default
+    ``standard_conforming_strings=on`` gives it no meaning, and ``E'...'`` is the
+    exception), PostgreSQL and the other non-MySQL dialects have dollar-quoted
+    strings, Oracle has ``q'[...]'``, and ``#`` starts a comment for the MySQL
+    family only. A block comment nests for PostgreSQL and SQL Server and ends at
+    its first ``*/`` elsewhere (#825). A line comment (``--``/``#``) that runs to
+    the end of the text is complete by grammar (no closing token is required);
+    a span with no closer runs to the end of the text, and an unterminated
+    ``/* ... */`` or quote counts as a truncation signal.
 
     ``brackets`` also reads a SQL Server ``[name]`` as quoted (off by default, so the
     other callers' masks stay as they were).
     """
-    is_mysql = dialect.lower() in _MYSQL_FAMILY_DIALECTS
-    is_oracle = dialect.lower() == "oracle"
-    is_pg = dialect.lower() in _POSTGRES_DIALECTS
-    nests = block_comments_nest(dialect)
-    comment_depth = 0
+    grammar = scan_grammar_for(dialect, brackets)
     n = len(text)
     mask = [False] * n
     comment_mask = [False] * n
     depth = 0
-    # None, or one of: a quote char ('/"/`), "--", "#", "/*", or a dollar
-    # delimiter such as "$$" / "$tag$".
-    state: str | None = None
+    unterminated_quote = unterminated_comment = False
+    last = 0
     i = 0
-
-    while i < n:
-        ch = text[i]
-
-        if state is None:
-            if text[i : i + 2] == "--":
-                state = "--"
-                mask[i] = mask[i + 1] = True
-                comment_mask[i] = comment_mask[i + 1] = True
-                i += 2
-                continue
-            if ch == "#" and is_mysql:
-                state = "#"
-                mask[i] = comment_mask[i] = True
-                i += 1
-                continue
-            if text[i : i + 2] == "/*":
-                state = "/*"
-                comment_depth = 1
-                mask[i] = mask[i + 1] = True
-                comment_mask[i] = comment_mask[i + 1] = True
-                i += 2
-                continue
-            if is_oracle and (m := _ORACLE_Q_QUOTE_RE.match(text, i)) and _starts_token(text, i):
-                # q'[...]' / nq'{...}': ends at the closing delimiter then a quote.
-                state = "q" + _Q_CLOSERS.get(m.group("d"), m.group("d")) + "'"
-                for j in range(i, m.end()):
-                    mask[j] = True
-                i = m.end()
-                continue
-            if is_pg and ch in "eE" and text[i + 1 : i + 2] == "'" and _starts_token(text, i):
-                # E'...': a backslash escapes the next character.
-                state = "E'"
-                mask[i] = mask[i + 1] = True
-                i += 2
-                continue
-            if ch in _QUOTE_CHARS or (brackets and ch == "["):
-                state = ch
-                mask[i] = True
-                i += 1
-                continue
-            if ch == "$" and not is_mysql:
-                m = _DOLLAR_TAG_RE.match(text, i)
-                if m:
-                    state = m.group(0)
-                    for j in range(i, m.end()):
-                        mask[j] = True
-                    i = m.end()
-                    continue
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-            i += 1
-            continue
-
-        # Inside a quote or comment span.
-        mask[i] = True
-
-        if state == "--" or state == "#":
-            comment_mask[i] = True
-            if ch == "\n":
-                state = None
-            i += 1
-            continue
-
-        if state == "/*":
-            comment_mask[i] = True
-            pair = text[i : i + 2]
-            if pair == "/*" and nests:
-                mask[i + 1] = True
-                comment_mask[i + 1] = True
-                comment_depth += 1
-                i += 2
-                continue
-            if pair == "*/":
-                mask[i + 1] = True
-                comment_mask[i + 1] = True
-                comment_depth -= 1
-                if comment_depth == 0:
-                    state = None
-                i += 2
-                continue
-            i += 1
-            continue
-
-        if state.startswith("$"):
-            delim = state
-            if text[i : i + len(delim)] == delim:
-                for j in range(i, i + len(delim)):
-                    mask[j] = True
-                state = None
-                i += len(delim)
-                continue
-            i += 1
-            continue
-
-        if state[0] == "q" and len(state) == 3:
-            if text[i : i + 2] == state[1:]:
-                mask[i + 1] = True
-                state = None
-                i += 2
-                continue
-            i += 1
-            continue
-
-        if state == "E'":
-            if ch == "\\" and i + 1 < n:
-                mask[i + 1] = True
-                i += 2
-                continue
-            if ch == "'":
-                if text[i + 1 : i + 2] == "'":
-                    mask[i + 1] = True
-                    i += 2
-                    continue
-                state = None
-            i += 1
-            continue
-
-        # Inside a '/"/` quoted span.
-        if is_mysql and ch == "\\" and state != "`" and i + 1 < n:
-            mask[i + 1] = True
-            i += 2
-            continue
-        if ch == ("]" if state == "[" else state):
-            if i + 1 < n and text[i + 1] == ch:
-                mask[i + 1] = True
-                i += 2
-                continue
-            state = None
-        i += 1
-
-    unterminated_quote = state is not None and state not in ("--", "#", "/*")
-    unterminated_comment = state == "/*"
+    while (match := grammar.opener.search(text, i)) is not None:
+        start, opener = match.start(), match.group()
+        depth += text.count("(", last, start) - text.count(")", last, start)
+        end = grammar.end(text, start, opener)
+        comment = opener in ("--", "#", "/*")
+        if end >= 0 and opener in _DOUBLED_CLOSER and text.startswith(_DOUBLED_CLOSER[opener], end):
+            # The text ends inside the span, on a doubled closer (``[a]]``): the grammar
+            # closes it at the first of the pair, as a regex would; a digest cut there is
+            # cut inside the span.
+            end = -1
+        if end < 0:
+            # No closer: the span runs to the end of the text.
+            end = n
+            unterminated_comment = opener == "/*"
+            unterminated_quote = not comment
+            last = n
+            mask[start:] = [True] * (n - start)
+            if comment:
+                comment_mask[start:] = [True] * (n - start)
+            break
+        if opener in ("--", "#") and end < n:
+            end += 1  # the newline that ends a line comment is part of it
+        mask[start:end] = [True] * (end - start)
+        if comment:
+            comment_mask[start:end] = [True] * (end - start)
+        last = i = end
+    else:
+        depth += text.count("(", last) - text.count(")", last)
     return _Scan(
         mask=mask,
         comment_mask=comment_mask,

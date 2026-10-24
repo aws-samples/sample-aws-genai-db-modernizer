@@ -26,6 +26,12 @@ Oracle                  no     no      no          no      no      no
 none known              no     no      yes         no      no      no
 ======================  =====  ======  ==========  ======  ======  =========
 
+Oracle also reads its alternative quoting, ``q'[...]'`` (and the national ``nq'[...]'``):
+the opener carries a delimiter, ``[ ( { <`` close with their mirror and any other
+printable character with itself, and the string ends at the closing delimiter followed by
+a quote (#1451). The delimiter is one of 94 printable characters, so the openers that can
+each fail once are a bounded set and the scan stays linear. Other dialects read ``q`` as a name and ``'...'`` as a string, as before.
+
 A doubled quote escapes a quote in every dialect (``''`` and ``""``, a doubled
 backtick in MySQL, ``]]`` in SQL Server). MySQL reads ``"..."`` as a string,
 every other dialect as an identifier. With no dialect known the grammar is the
@@ -40,6 +46,10 @@ Two grammars per dialect:
   `` `...` `` and ``[...]`` identifiers in every dialect, one scan that strips
   comments and literals and unquotes identifiers in source order
   (``query_shape``'s normalized text, #871).
+
+:func:`scan_grammar_for` is the third: the digest scan of ``src/tools/sql/normalize.py``,
+which masks every quoted span the same way (backticks in every dialect, ``\\`` only in the
+MySQL family, an optional SQL Server ``[...]``) and so reads its forms from here.
 
 :data:`QUOTED_IDENTIFIERS` reads ``"..."``, `` `...` `` and ``[...]`` alone, with no
 comment or literal awareness (``query_shape``'s former ``_QUOTED_IDENT_RE``).
@@ -73,6 +83,7 @@ __all__ = [
     "literals_and_comments_for",
     "opens_routine_body",
     "quoted_span_end",
+    "scan_grammar_for",
     "span_dialect",
     "spans",
     "sub_spans",
@@ -132,6 +143,12 @@ _DOLLAR_TOKEN_RE = re.compile(r"(?=(\$(?:[^\W\d]\w*)?\$))")
 # PostgreSQL's escape string, ``E'...'``: the one string there that reads ``\`` as an
 # escape. The ``E`` stands alone (``note'x'`` is a name and a string).
 _ESCAPE_STRING_OPENER = r"(?<![\w$])[Ee]'"
+# Oracle's alternative quoting, ``q'[...]'`` (and the national ``nq'[...]'``): the opener
+# carries its delimiter, a printable non-space ASCII character, and the string runs to
+# the closing delimiter followed by a quote. ``[ ( { <`` close with their mirror, every
+# other delimiter with itself. The ``q`` stands alone (``seq'x'`` is a name and a string).
+_Q_QUOTE_OPENER = r"(?<![\w$#])[nN]?[qQ]'[!-~]"
+_Q_CLOSERS = {"[": "]", "(": ")", "{": "}", "<": ">"}
 
 
 @lru_cache(maxsize=2)
@@ -175,16 +192,25 @@ def _line_end(text: str, start: int) -> int:
     return len(text) if newline < 0 else newline
 
 
-def _span_end(dialect: str, identifiers: bool, text: str, start: int, opener: str) -> int:
-    """Where the span ``opener`` opens at ``start`` ends, read the ``dialect``'s way."""
+@dataclass(frozen=True)
+class _Forms:
+    """How one reading of a dialect ends its spans (hashable, so a grammar is cached)."""
+
+    nests: bool  # a block comment nests
+    backslash: bool  # ``\\`` escapes in a ``'...'`` or ``"..."`` string
+    bracket_escape: bool  # ``]]`` is a ``]`` inside ``[...]``
+
+
+def _span_end(forms: _Forms, identifiers: bool, text: str, start: int, opener: str) -> int:
+    """Where the span ``opener`` opens at ``start`` ends, read the ``forms`` way."""
     if opener in ("--", "#"):
         return _line_end(text, start)
     if opener == "/*":
-        return block_comment_end(text, start, block_comments_nest(dialect))
+        return block_comment_end(text, start, forms.nests)
     if opener[0] == "$":
         return _dollar_end(text, start, opener)
     if opener == "[":
-        if dialect == "sqlserver":
+        if forms.bracket_escape:
             return quoted_span_end(text, start, "]", backslash=False)
         found = text.find("]", start + 1)
         return found + 1 if found >= 0 else -1
@@ -194,10 +220,19 @@ def _span_end(dialect: str, identifiers: bool, text: str, start: int, opener: st
         return found + 1 if found >= 0 else -1
     if opener in ("E'", "e'"):
         return quoted_span_end(text, start + 1, "'", backslash=True)
-    backslash = dialect in ("mysql", "")
+    if is_alternative_quote(opener):
+        delimiter = opener[-1]
+        found = text.find(_Q_CLOSERS.get(delimiter, delimiter) + "'", start + len(opener))
+        return found + 2 if found >= 0 else -1
+    backslash = forms.backslash
     if opener == '"' and identifiers:
         backslash = False
     return quoted_span_end(text, start, opener, backslash)
+
+
+def is_alternative_quote(opener: str) -> bool:
+    """Whether a span opener is an Oracle ``q'<delimiter>`` (or ``nq'``) opener."""
+    return len(opener) >= 3 and opener[-2] == "'"
 
 
 @cache
@@ -207,6 +242,8 @@ def _grammar(dialect: str, identifiers: bool) -> Grammar:
     parts = [r"/\*", "--"]
     if dialect == "mysql":
         parts.append("#")
+    if dialect == "oracle":
+        parts.append(_Q_QUOTE_OPENER)
     if dialect == "postgresql":
         parts.append(_ESCAPE_STRING_OPENER)
     quotes = "'\""
@@ -220,10 +257,47 @@ def _grammar(dialect: str, identifiers: bool) -> Grammar:
     named = {"`", "["}
     if identifiers or dialect != "mysql":
         named.add('"')
+    forms = _Forms(
+        nests=block_comments_nest(dialect),
+        backslash=dialect in ("mysql", ""),
+        bracket_escape=dialect == "sqlserver",
+    )
     return Grammar(
         re.compile("|".join(parts)),
-        partial(_span_end, dialect, identifiers),
+        partial(_span_end, forms, identifiers),
         frozenset(named),
+    )
+
+
+@cache
+def scan_grammar_for(source_engine: str | None, brackets: bool = False) -> Grammar:
+    """The grammar of ``normalize``'s digest scan, which masks every quoted span.
+
+    It reads the same forms as :func:`literals_and_comments_for` with the digest
+    scan's own settings: a backtick quotes in every dialect, ``\\`` escapes only in
+    MySQL and MariaDB (never in an unknown dialect), ``[...]`` is a name only with
+    ``brackets`` (and ``]]`` escapes a ``]``), a dollar quote opens in every dialect but
+    MySQL's, and a block comment nests as :func:`block_comments_nest` says for the raw
+    engine name (``aurora_postgresql`` included).
+    """
+    engine = (source_engine or "").strip().lower()
+    dialect = span_dialect(engine)
+    mysql = dialect == "mysql"
+    parts = [r"/\*", "--"]
+    if mysql:
+        parts.append("#")
+    if dialect == "oracle":
+        parts.append(_Q_QUOTE_OPENER)
+    if dialect == "postgresql":
+        parts.append(_ESCAPE_STRING_OPENER)
+    parts.append(r"['\"`\[]" if brackets else "['\"`]")
+    if not mysql:
+        parts.append(_DOLLAR_OPENER)
+    forms = _Forms(nests=block_comments_nest(engine), backslash=mysql, bracket_escape=True)
+    return Grammar(
+        re.compile("|".join(parts)),
+        partial(_span_end, forms, False),
+        frozenset({"`", "[", '"'} if not mysql else {"`", "["}),
     )
 
 
