@@ -15,15 +15,16 @@ adds where each statement runs, which statements move together and which engine 
 each table. Neither is a data model: partition and sort keys, indexes and target
 tables come only from schema design (``run_through="schema_design"``, which designs
 every engine the placement keeps with a model; ``"synthesis"`` adds the report). Both
-need ``deterministic=False``; their designs and report are in ``artifacts`` (with
-``include_artifacts=True``) until a stable design surface is agreed. The
+need ``deterministic=False``. A designed result's ``designs`` carries each designed
+engine's target tables, keys and indexes, copied from its design; the full designs and
+the report are in ``artifacts`` (with ``include_artifacts=True``). The
 deterministic analysis's own data-model guesses are inputs to that design, not
 results, and are never part of the stable surface.
 
 Stable surface (contract ``1.0``, semantic versioning): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
 result carries a data model), ``library_version``, ``ruleset_version``/``ruleset_hash``, ``options`` (as applied),
-``scope`` (echoed), ``summary``, ``statements[]`` and ``groups[]``. Read a statement's
+``scope`` (echoed), ``summary``, ``statements[]``, ``groups[]`` and ``designs``. Read a statement's
 engine from ``statements[].engine`` and a table's owner from ``summary.tables[].owner``;
 both are final for the run. ``reason_text`` and every ``reason`` (an engine's, a
 consolidation's, a table's) are customer-facing sentences: use ``reason_code`` and

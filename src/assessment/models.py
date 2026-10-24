@@ -7,11 +7,12 @@ contracts appear only in the optional ``artifacts`` block, verbatim and with no
 compatibility promise.
 
 The stable surface is for engine placement: which engine serves each statement, which
-statements move together and which engine owns each table. It is not a data model.
-Partition keys, sort keys, indexes and target tables come only from schema design
-(``run_through="schema_design"``, which needs a model); its designs are in the
-``artifacts`` block until a stable design surface is agreed, and nothing the
-deterministic analysis guesses about a data model is part of this surface.
+statements move together and which engine owns each table. Partition keys, sort keys,
+indexes and target tables come only from schema design (``run_through="schema_design"``,
+which needs a model): a designed result's ``designs`` carries each designed engine's
+target tables, keys and indexes, copied from its design (the full designs are in the
+``artifacts`` block). Nothing the deterministic analysis guesses about a data model is
+part of this surface.
 
 Engine ids are the engine catalog's active ids (``src/catalog/engines``). The request
 validates them; the result carries them as plain strings.
@@ -19,7 +20,7 @@ validates them; the result carries them as plain strings.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -62,7 +63,7 @@ OwnerBasis = Literal["writes", "split_writes", "most_queries", "retained", "desi
 #: What a result is, so a routing-only result is never read as a data model:
 #: ``analysis_only`` (scores, nothing placed), ``recommendation`` (engine placement, no
 #: data model) and ``designed`` (a schema design ran, with a model, for at least one
-#: engine; its data model is in ``artifacts``). A run through ``schema_design`` or
+#: engine; its data model is in ``designs``). A run through ``schema_design`` or
 #: ``synthesis`` that had no engine to design (``summary.designed_engines`` empty) stays
 #: ``recommendation``.
 ResultLabel = Literal["analysis_only", "recommendation", "designed"]
@@ -374,8 +375,9 @@ class Summary(_Strict):
     designed_engines: list[str] = Field(
         default_factory=list,
         description=(
-            "The engines with a schema design (in `artifacts.schema_designs`), in triage's "
-            "order; empty before 'schema_design', and when no engine could be designed"
+            "The engines with a schema design (in `designs` and "
+            "`artifacts.schema_designs`), in triage's order; empty before 'schema_design', "
+            "and when no engine could be designed"
         ),
     )
     design_note: str | None = Field(
@@ -468,6 +470,182 @@ class Group(_Strict):
     reason: str
 
 
+# --------------------------------------------------------------------------- designs
+#
+# The stable design block (#1493): per designed engine, only what a caller needs to
+# build on a data model. Every value is copied from that engine's schema design (the
+# designer's output, never the deterministic analysis); the full design stays in
+# ``artifacts.schema_designs``. Names come from the design (a model wrote them, from
+# collection text): treat them as data and escape them when rendering.
+
+
+class _Design(_Strict):
+    validation_passed: bool = Field(
+        ...,
+        description=(
+            "The design's own checks passed. False for a design that failed them (the "
+            "reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or "
+            "that records no result: check it before you build on the design"
+        ),
+    )
+
+
+class DynamoDBKey(_Strict):
+    """One key attribute."""
+
+    name: str
+    type: Literal["S", "N", "B"] = Field(..., description="DynamoDB attribute type")
+
+
+class DynamoDBIndex(_Strict):
+    """One global secondary index."""
+
+    name: str
+    partition_key: list[DynamoDBKey] = Field(
+        ..., description="Its partition key attributes, in order (1 to 4)"
+    )
+    sort_key: list[DynamoDBKey] = Field(
+        default_factory=list, description="Its sort key attributes, in order; empty for none"
+    )
+    projection: Literal["ALL", "KEYS_ONLY", "INCLUDE"]
+    projected_attributes: list[str] = Field(
+        default_factory=list,
+        description="The non-key attributes it projects when projection is INCLUDE; else empty",
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements the design serves from this index"
+    )
+
+
+class DynamoDBTable(_Strict):
+    """One target table."""
+
+    name: str
+    source_tables: list[str] = Field(
+        default_factory=list, description="The source tables it holds, as the design names them"
+    )
+    partition_key: DynamoDBKey
+    sort_key: DynamoDBKey | None = None
+    gsis: list[DynamoDBIndex] = Field(default_factory=list)
+    query_ids: list[str] = Field(
+        default_factory=list,
+        description="The statements the design serves from the table itself (not an index)",
+    )
+
+
+class DynamoDBDesign(_Design):
+    """A DynamoDB design: its target tables, their keys and indexes."""
+
+    engine: Literal["dynamodb"]
+    tables: list[DynamoDBTable] = Field(default_factory=list)
+
+
+class AuroraTable(_Strict):
+    """One target table."""
+
+    name: str
+    primary_key: list[str] = Field(default_factory=list, description="Its primary key columns")
+    indexes: list[str] = Field(
+        default_factory=list, description="Its secondary indexes, as the design's CREATE INDEX DDL"
+    )
+
+
+class AuroraDesign(_Design):
+    """An Aurora MySQL or Aurora PostgreSQL design: its target tables and indexes."""
+
+    engine: Literal["aurora_mysql", "aurora_postgresql"]
+    tables: list[AuroraTable] = Field(default_factory=list)
+    ddl_artifact_path: str = Field(
+        ...,
+        description=(
+            "Where the full generated DDL is: a dotted path in the result (with "
+            "include_artifacts=True), for example "
+            "'artifacts.schema_designs.aurora_mysql.generated_ddl'"
+        ),
+    )
+
+
+class DocumentDBEmbed(_Strict):
+    """How one source table is kept in a collection's documents."""
+
+    source_table: str
+    path: str = Field(..., description="Where in the parent document it is kept")
+    strategy: Literal["embed", "reference", "hybrid"] = Field(
+        ...,
+        description=(
+            "embed: kept inside the parent document; reference: kept apart and referenced "
+            "by id; hybrid: some fields embedded, the rest referenced"
+        ),
+    )
+
+
+class DocumentDBIndexKey(_Strict):
+    field: str
+    direction: int = Field(..., description="1 ascending, -1 descending")
+
+
+class DocumentDBIndex(_Strict):
+    name: str
+    keys: list[DocumentDBIndexKey] = Field(..., description="Its key fields, in order")
+    type: Literal["compound", "single", "text", "partial", "unique"]
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements the design names for this index"
+    )
+
+
+class DocumentDBCollection(_Strict):
+    """One target collection."""
+
+    name: str
+    source_tables: list[str] = Field(default_factory=list)
+    embedded: list[DocumentDBEmbed] = Field(
+        default_factory=list, description="The embed or reference choice per child table"
+    )
+    referenced_collections: list[str] = Field(
+        default_factory=list, description="Other collections its documents reference by id"
+    )
+    indexes: list[DocumentDBIndex] = Field(default_factory=list)
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements the design serves from it"
+    )
+
+
+class DocumentDBDesign(_Design):
+    """A DocumentDB design: its collections, their indexes and embed choices."""
+
+    engine: Literal["documentdb"]
+    collections: list[DocumentDBCollection] = Field(default_factory=list)
+
+
+class CacheKey(_Strict):
+    """One cache key pattern and what it caches."""
+
+    pattern: str = Field(..., description="The key pattern, for example 'wp_options:{option_name}'")
+    data_type: str = Field(..., description="The Valkey data type, for example 'string' or 'hash'")
+    ttl_seconds: int | None = Field(None, ge=0, description="Its TTL; None means no expiry")
+    source_tables: list[str] = Field(
+        default_factory=list, description="The source tables whose rows it caches"
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements whose reads it serves"
+    )
+
+
+class ElastiCacheDesign(_Design):
+    """An ElastiCache design: its key patterns, TTLs and what each key caches."""
+
+    engine: Literal["elasticache"]
+    keys: list[CacheKey] = Field(default_factory=list)
+
+
+#: One designed engine's stable design, discriminated by ``engine``. Adding an engine
+#: is a MINOR change of this contract: read it with a default branch.
+EngineDesign = Annotated[
+    DynamoDBDesign | AuroraDesign | DocumentDBDesign | ElastiCacheDesign,
+    Field(discriminator="engine"),
+]
+
+
 class Artifacts(BaseModel):
     """Internal contracts, verbatim. No compatibility promise; each keeps its own version.
 
@@ -485,7 +663,8 @@ class Artifacts(BaseModel):
 
 class AssessmentResult(_Strict):
     """One assessment's result: where each statement runs, which statements move
-    together and which engine owns each table (not a data model).
+    together and which engine owns each table, and, for a designed result, each
+    designed engine's data model (``designs``).
 
     Determinism: for run_through="analysis" (no model), the same collection, library
     version and engine scope give an identical result, in any process and under any
@@ -508,8 +687,8 @@ class AssessmentResult(_Strict):
             "analysis_only: scores, nothing placed; recommendation: engine placement, not "
             "a data model (also a 'schema_design' or 'synthesis' run with no engine to "
             "design: see summary.design_note); designed: engine placement and a schema "
-            "design's data model for summary.designed_engines (the designs are in "
-            "`artifacts`)"
+            "design's data model for summary.designed_engines (in `designs`; the full "
+            "designs are in `artifacts`)"
         ),
     )
     library_version: str
@@ -520,6 +699,15 @@ class AssessmentResult(_Strict):
     summary: Summary
     statements: list[StatementResult]
     groups: list[Group] = Field(default_factory=list)
+    designs: list[EngineDesign] | None = Field(
+        None,
+        description=(
+            "Set only when label is 'designed' (None otherwise): one entry per engine in "
+            "summary.designed_engines with a stable design shape, in that order, each "
+            "copied from the engine's schema design. An engine with no stable shape yet "
+            "(OpenSearch) has its design in `artifacts` only"
+        ),
+    )
     artifacts: Artifacts | None = None
 
     @model_validator(mode="after")
@@ -536,4 +724,6 @@ class AssessmentResult(_Strict):
                 f"label must be {expected!r} for run_through_reached={reached!r}"
                 f"{designed}, not {self.label!r}"
             )
+        if (self.designs is not None) != (self.label == "designed"):
+            raise ValueError("designs is set exactly when label is 'designed'")
         return self

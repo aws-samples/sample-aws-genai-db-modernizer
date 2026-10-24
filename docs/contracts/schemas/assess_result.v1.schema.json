@@ -98,6 +98,133 @@
       "title": "AssessmentOptions",
       "type": "object"
     },
+    "AuroraDesign": {
+      "additionalProperties": false,
+      "description": "An Aurora MySQL or Aurora PostgreSQL design: its target tables and indexes.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "enum": [
+            "aurora_mysql",
+            "aurora_postgresql"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/AuroraTable"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "ddl_artifact_path": {
+          "description": "Where the full generated DDL is: a dotted path in the result (with include_artifacts=True), for example 'artifacts.schema_designs.aurora_mysql.generated_ddl'",
+          "title": "Ddl Artifact Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "tables",
+        "ddl_artifact_path"
+      ],
+      "title": "AuroraDesign",
+      "type": "object"
+    },
+    "AuroraTable": {
+      "additionalProperties": false,
+      "description": "One target table.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_key": {
+          "description": "Its primary key columns",
+          "items": {
+            "type": "string"
+          },
+          "title": "Primary Key",
+          "type": "array"
+        },
+        "indexes": {
+          "description": "Its secondary indexes, as the design's CREATE INDEX DDL",
+          "items": {
+            "type": "string"
+          },
+          "title": "Indexes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "primary_key",
+        "indexes"
+      ],
+      "title": "AuroraTable",
+      "type": "object"
+    },
+    "CacheKey": {
+      "additionalProperties": false,
+      "description": "One cache key pattern and what it caches.",
+      "properties": {
+        "pattern": {
+          "description": "The key pattern, for example 'wp_options:{option_name}'",
+          "title": "Pattern",
+          "type": "string"
+        },
+        "data_type": {
+          "description": "The Valkey data type, for example 'string' or 'hash'",
+          "title": "Data Type",
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its TTL; None means no expiry",
+          "title": "Ttl Seconds"
+        },
+        "source_tables": {
+          "description": "The source tables whose rows it caches",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements whose reads it serves",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "pattern",
+        "data_type",
+        "ttl_seconds",
+        "source_tables",
+        "query_ids"
+      ],
+      "title": "CacheKey",
+      "type": "object"
+    },
     "Consolidation": {
       "additionalProperties": false,
       "description": "One reality-check consolidation: statements moved off an engine that added no\nunique value.",
@@ -129,6 +256,394 @@
         "reason"
       ],
       "title": "Consolidation",
+      "type": "object"
+    },
+    "DocumentDBCollection": {
+      "additionalProperties": false,
+      "description": "One target collection.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "embedded": {
+          "description": "The embed or reference choice per child table",
+          "items": {
+            "$ref": "#/$defs/DocumentDBEmbed"
+          },
+          "title": "Embedded",
+          "type": "array"
+        },
+        "referenced_collections": {
+          "description": "Other collections its documents reference by id",
+          "items": {
+            "type": "string"
+          },
+          "title": "Referenced Collections",
+          "type": "array"
+        },
+        "indexes": {
+          "items": {
+            "$ref": "#/$defs/DocumentDBIndex"
+          },
+          "title": "Indexes",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from it",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "embedded",
+        "referenced_collections",
+        "indexes",
+        "query_ids"
+      ],
+      "title": "DocumentDBCollection",
+      "type": "object"
+    },
+    "DocumentDBDesign": {
+      "additionalProperties": false,
+      "description": "A DocumentDB design: its collections, their indexes and embed choices.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "documentdb",
+          "title": "Engine",
+          "type": "string"
+        },
+        "collections": {
+          "items": {
+            "$ref": "#/$defs/DocumentDBCollection"
+          },
+          "title": "Collections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "collections"
+      ],
+      "title": "DocumentDBDesign",
+      "type": "object"
+    },
+    "DocumentDBEmbed": {
+      "additionalProperties": false,
+      "description": "How one source table is kept in a collection's documents.",
+      "properties": {
+        "source_table": {
+          "title": "Source Table",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where in the parent document it is kept",
+          "title": "Path",
+          "type": "string"
+        },
+        "strategy": {
+          "description": "embed: kept inside the parent document; reference: kept apart and referenced by id; hybrid: some fields embedded, the rest referenced",
+          "enum": [
+            "embed",
+            "reference",
+            "hybrid"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_table",
+        "path",
+        "strategy"
+      ],
+      "title": "DocumentDBEmbed",
+      "type": "object"
+    },
+    "DocumentDBIndex": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "keys": {
+          "description": "Its key fields, in order",
+          "items": {
+            "$ref": "#/$defs/DocumentDBIndexKey"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "compound",
+            "single",
+            "text",
+            "partial",
+            "unique"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "query_ids": {
+          "description": "The statements the design names for this index",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "keys",
+        "type",
+        "query_ids"
+      ],
+      "title": "DocumentDBIndex",
+      "type": "object"
+    },
+    "DocumentDBIndexKey": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "direction": {
+          "description": "1 ascending, -1 descending",
+          "title": "Direction",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "field",
+        "direction"
+      ],
+      "title": "DocumentDBIndexKey",
+      "type": "object"
+    },
+    "DynamoDBDesign": {
+      "additionalProperties": false,
+      "description": "A DynamoDB design: its target tables, their keys and indexes.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "dynamodb",
+          "title": "Engine",
+          "type": "string"
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/DynamoDBTable"
+          },
+          "title": "Tables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "tables"
+      ],
+      "title": "DynamoDBDesign",
+      "type": "object"
+    },
+    "DynamoDBIndex": {
+      "additionalProperties": false,
+      "description": "One global secondary index.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "partition_key": {
+          "description": "Its partition key attributes, in order (1 to 4)",
+          "items": {
+            "$ref": "#/$defs/DynamoDBKey"
+          },
+          "title": "Partition Key",
+          "type": "array"
+        },
+        "sort_key": {
+          "description": "Its sort key attributes, in order; empty for none",
+          "items": {
+            "$ref": "#/$defs/DynamoDBKey"
+          },
+          "title": "Sort Key",
+          "type": "array"
+        },
+        "projection": {
+          "enum": [
+            "ALL",
+            "KEYS_ONLY",
+            "INCLUDE"
+          ],
+          "title": "Projection",
+          "type": "string"
+        },
+        "projected_attributes": {
+          "description": "The non-key attributes it projects when projection is INCLUDE; else empty",
+          "items": {
+            "type": "string"
+          },
+          "title": "Projected Attributes",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from this index",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "partition_key",
+        "sort_key",
+        "projection",
+        "projected_attributes",
+        "query_ids"
+      ],
+      "title": "DynamoDBIndex",
+      "type": "object"
+    },
+    "DynamoDBKey": {
+      "additionalProperties": false,
+      "description": "One key attribute.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "description": "DynamoDB attribute type",
+          "enum": [
+            "S",
+            "N",
+            "B"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "DynamoDBKey",
+      "type": "object"
+    },
+    "DynamoDBTable": {
+      "additionalProperties": false,
+      "description": "One target table.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "description": "The source tables it holds, as the design names them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "partition_key": {
+          "$ref": "#/$defs/DynamoDBKey"
+        },
+        "sort_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DynamoDBKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gsis": {
+          "items": {
+            "$ref": "#/$defs/DynamoDBIndex"
+          },
+          "title": "Gsis",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from the table itself (not an index)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "partition_key",
+        "sort_key",
+        "gsis",
+        "query_ids"
+      ],
+      "title": "DynamoDBTable",
+      "type": "object"
+    },
+    "ElastiCacheDesign": {
+      "additionalProperties": false,
+      "description": "An ElastiCache design: its key patterns, TTLs and what each key caches.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "elasticache",
+          "title": "Engine",
+          "type": "string"
+        },
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/CacheKey"
+          },
+          "title": "Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "keys"
+      ],
+      "title": "ElastiCacheDesign",
       "type": "object"
     },
     "EngineLine": {
@@ -644,7 +1159,7 @@
           "type": "array"
         },
         "designed_engines": {
-          "description": "The engines with a schema design (in `artifacts.schema_designs`), in triage's order; empty before 'schema_design', and when no engine could be designed",
+          "description": "The engines with a schema design (in `designs` and `artifacts.schema_designs`), in triage's order; empty before 'schema_design', and when no engine could be designed",
           "items": {
             "type": "string"
           },
@@ -821,7 +1336,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table (not a data model).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
+  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
       "const": "1.0",
@@ -830,7 +1345,7 @@
       "type": "string"
     },
     "label": {
-      "description": "analysis_only: scores, nothing placed; recommendation: engine placement, not a data model (also a 'schema_design' or 'synthesis' run with no engine to design: see summary.design_note); designed: engine placement and a schema design's data model for summary.designed_engines (the designs are in `artifacts`)",
+      "description": "analysis_only: scores, nothing placed; recommendation: engine placement, not a data model (also a 'schema_design' or 'synthesis' run with no engine to design: see summary.design_note); designed: engine placement and a schema design's data model for summary.designed_engines (in `designs`; the full designs are in `artifacts`)",
       "enum": [
         "analysis_only",
         "recommendation",
@@ -882,6 +1397,45 @@
       "title": "Groups",
       "type": "array"
     },
+    "designs": {
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "aurora_mysql": "#/$defs/AuroraDesign",
+                "aurora_postgresql": "#/$defs/AuroraDesign",
+                "documentdb": "#/$defs/DocumentDBDesign",
+                "dynamodb": "#/$defs/DynamoDBDesign",
+                "elasticache": "#/$defs/ElastiCacheDesign"
+              },
+              "propertyName": "engine"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/DynamoDBDesign"
+              },
+              {
+                "$ref": "#/$defs/AuroraDesign"
+              },
+              {
+                "$ref": "#/$defs/DocumentDBDesign"
+              },
+              {
+                "$ref": "#/$defs/ElastiCacheDesign"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines with a stable design shape, in that order, each copied from the engine's schema design. An engine with no stable shape yet (OpenSearch) has its design in `artifacts` only",
+      "title": "Designs"
+    },
     "artifacts": {
       "anyOf": [
         {
@@ -905,6 +1459,7 @@
     "summary",
     "statements",
     "groups",
+    "designs",
     "artifacts"
   ],
   "type": "object"

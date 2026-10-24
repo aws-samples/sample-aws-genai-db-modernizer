@@ -12,7 +12,10 @@ edit here), and check what a caller relies on:
   reaches at least one value across the fixture's runs (a guard never passes vacuously);
 - every field of the result schema is guarded by at least one fixture;
 - the documented phase rules hold: fields a later phase fills are null or empty
-  before it, and filled from it on.
+  before it, and filled from it on (``designs`` only on a designed result).
+
+A guard on a list of a discriminated union (``designs``) names the variant:
+``designs[DynamoDBDesign].tables[].name`` is that field of every DynamoDB design.
 
 Removing, renaming or retyping a field, or changing an enum value, without a MAJOR
 bump is caught by ``test_assess_released_contract.py``, against the last released shape.
@@ -27,6 +30,7 @@ a model (``MODEL_PHASES``) run only with the model patched; their refusal with
 from __future__ import annotations
 
 import json
+import re
 from functools import cache
 from pathlib import Path
 from typing import Any, get_args
@@ -130,17 +134,20 @@ def _run(name: str, run_through: str, deterministic: bool) -> dict[str, Any]:
 # --------------------------------------------------------------------------- paths
 
 
+#: A path segment: a field name, ``[]`` (every item of a list), ``{}`` (every value of a
+#: map) or ``[Variant]`` (the items of a list of a discriminated union that are the
+#: schema's ``$defs`` entry ``Variant``, e.g. ``designs[DynamoDBDesign]``).
+_SEGMENT = re.compile(r"\[\]|\{\}|\[[A-Za-z0-9_]+\]|[^.\[\]{}]+")
+
+
 def _segments(path: str) -> list[str]:
     """``"statements[].fit{}"`` -> ``["statements", "[]", "fit", "{}"]``."""
-    out: list[str] = []
-    for part in path.split("."):
-        name = part.rstrip("[]{}")
-        out.append(name)
-        suffix = part[len(name) :]
-        while suffix:
-            out.append(suffix[:2])
-            suffix = suffix[2:]
-    return out
+    return _SEGMENT.findall(path)
+
+
+def _variant(segment: str) -> str | None:
+    """``"[DynamoDBDesign]"`` -> ``"DynamoDBDesign"``; None for any other segment."""
+    return segment[1:-1] if segment.startswith("[") and len(segment) > 2 else None
 
 
 def _deref(node: dict[str, Any]) -> dict[str, Any]:
@@ -156,12 +163,41 @@ def _non_null(node: dict[str, Any]) -> dict[str, Any]:
     return members[0] if len(members) == 1 else node
 
 
+def _union_items(node: dict[str, Any]) -> dict[str, Any] | None:
+    """A list node's items when they are a discriminated union (``oneOf``)."""
+    items = node.get("items", {}) if node.get("type") == "array" else {}
+    return items if "oneOf" in items and "discriminator" in items else None
+
+
+def _variant_values(segments: list[str], variant: str) -> tuple[str, set[str]]:
+    """The discriminator field of the union list at ``segments`` and the values that
+    select the ``$defs`` entry ``variant``."""
+    node = _schema_node(segments)
+    items = _union_items(_non_null(node)) if node is not None else None
+    assert items is not None, f"{'.'.join(segments)} is not a list of a union"
+    discriminator = items["discriminator"]
+    ref = f"#/$defs/{variant}"
+    return discriminator["propertyName"], {
+        value for value, target in discriminator["mapping"].items() if target == ref
+    }
+
+
 def _schema_at(path: str) -> dict[str, Any] | None:
     """The result schema's node for ``path``, or None when the schema has no such field."""
+    return _schema_node(_segments(path))
+
+
+def _schema_node(segments: list[str]) -> dict[str, Any] | None:
     node: dict[str, Any] = _result_schema()
-    for segment in _segments(path):
+    for segment in segments:
         node = _non_null(node)
-        if segment == "[]":
+        if (variant := _variant(segment)) is not None:
+            items = _union_items(node)
+            refs = [m.get("$ref") for m in (items or {}).get("oneOf", [])]
+            if f"#/$defs/{variant}" not in refs:
+                return None
+            node = _result_schema()["$defs"][variant]
+        elif segment == "[]":
             if node.get("type") != "array":
                 return None
             node = node.get("items", {})
@@ -196,7 +232,13 @@ def _schema_leaf_paths(node: dict[str, Any], path: str = "") -> set[str]:
     """Every field path of the result schema, down to its leaves."""
     node = _non_null(node)
     paths = {path} if path else set()
-    if node.get("type") == "array":
+    if (union := _union_items(node)) is not None:
+        # Each variant's fields are below ``<list>[<Variant>]``.
+        for member in union["oneOf"]:
+            variant = member["$ref"].rsplit("/", 1)[-1]
+            sub = f"{path}[{variant}]"
+            paths |= _schema_leaf_paths(_deref(member), sub) - {sub}
+    elif node.get("type") == "array":
         items = _non_null(node.get("items", {}))
         if items.get("properties"):
             # An item object's own path is its list's path; its fields are below it.
@@ -215,12 +257,22 @@ def _values_at(document: Any, path: str) -> tuple[list[Any], list[str]]:
     own guard checks that null is allowed there."""
     level: list[tuple[str, Any]] = [("", document)]
     missing: list[str] = []
-    for segment in _segments(path):
+    segments = _segments(path)
+    for n, segment in enumerate(segments):
         nxt: list[tuple[str, Any]] = []
+        variant = _variant(segment)
+        selector = _variant_values(segments[:n], variant) if variant else None
         for where, value in level:
             if value is None:
                 continue
-            if segment == "[]":
+            if selector is not None:
+                field, values = selector
+                nxt.extend(
+                    (f"{where}[{i}]", item)
+                    for i, item in enumerate(value)
+                    if item.get(field) in values
+                )
+            elif segment == "[]":
                 nxt.extend((f"{where}[{i}]", item) for i, item in enumerate(value))
             elif segment == "{}":
                 nxt.extend((f"{where}[{key!r}]", item) for key, item in value.items())
@@ -356,6 +408,7 @@ def test_the_documented_phase_rules_hold(name: str, run_through: str, determinis
     summary, statements = result["summary"], result["statements"]
     assert summary["run_through_reached"] == run_through
     assert result["label"] == result_label(run_through, summary["designed_engines"])
+    assert (result["designs"] is not None) == (result["label"] == "designed")
     if run_through in MODEL_PHASES:
         assert (summary["design_note"] is None) == bool(summary["designed_engines"])
     else:

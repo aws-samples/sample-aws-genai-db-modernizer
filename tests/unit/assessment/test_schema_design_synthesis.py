@@ -167,13 +167,15 @@ def test_schema_design_result_is_designed_and_carries_the_designs() -> None:
     assert "synthesis_report" not in blocks["artifact_keys"]
 
 
-def test_designs_are_only_in_the_artifacts_block() -> None:
-    """The designs stay out of the stable surface: without ``include_artifacts`` the
-    result carries none, only the placement and the label."""
+def test_full_designs_are_only_in_the_artifacts_block() -> None:
+    """The full designs stay out of the stable surface: without ``include_artifacts``
+    the result carries the placement, the label and the stable design block
+    (``designs``, #1493), never a design's internal contract."""
     result, models = _run("schema_design", job_id="nodesign")
     assert models.designer.called
     assert result.artifacts is None
     assert result.label == "designed"
+    assert result.designs is not None
     dumped = result.model_dump_json()
     assert "table_definitions" not in dumped
     assert "key_designs" not in dumped

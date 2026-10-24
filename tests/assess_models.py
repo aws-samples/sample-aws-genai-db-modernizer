@@ -4,7 +4,9 @@ what tests put in their place (tests never call a model).
 - the reality check's review: accept every consolidation, no model summary;
 - schema design (``run_schema_design_auto``, which ``run_schema_design_core`` calls):
   on the wordpress sample, the designed wordpress job's designs
-  (``tests/e2e/designed_run.py``); on any other database, a skipped placeholder, as a
+  (``tests/e2e/designed_run.py``; DynamoDB's with one global secondary index added, so
+  the stable design block has one) and a small DocumentDB design
+  (:func:`write_documentdb_design`); on any other database, a skipped placeholder, as a
   designer writes when it has nothing to design;
 - synthesis's executive summary: no model answer, so the deterministic one stays.
 
@@ -24,21 +26,137 @@ SYNTHESIS = "src.agents.referee.synthesis_handler"
 DESIGNER = "src.agents.schema_design.handler.run_schema_design_auto"
 
 
+#: The global secondary index the fake DynamoDB design adds to the table of its first
+#: access pattern, which it then serves.
+FAKE_GSI = {
+    "gsi_name": "ByStatus",
+    "partition_key": [{"attribute_name": "status", "attribute_type": "S"}],
+    "sort_key": [{"attribute_name": "updated_at", "attribute_type": "S"}],
+    "projection": "INCLUDE",
+    "projected_attributes": ["title"],
+    "item_count": 10,
+    "item_size_bytes": 100,
+}
+
+
+def write_dynamodb_design_with_gsi(
+    store: Any, database_name: str, job_id: str, assignment_version: int
+) -> None:
+    from tests.e2e.designed_run import write_dynamodb_design
+
+    write_dynamodb_design(store, database_name, job_id, assignment_version)
+    key = f"{database_name}/{job_id}/schema-dynamodb/v{assignment_version}/schema_output.json"
+    design = store.read_json(key)
+    patterns = design.get("access_patterns") or []
+    if patterns:
+        patterns[0]["gsi_name"] = FAKE_GSI["gsi_name"]
+        for table in design["table_definitions"]:
+            if table["table_name"] == patterns[0]["table_name"]:
+                table["gsis"] = [*table.get("gsis", []), dict(FAKE_GSI)]
+    store.write_json(key, design)
+
+
+def _bare(table: str) -> str:
+    return table.rsplit(".", 1)[-1]
+
+
+def write_documentdb_design(
+    store: Any, database_name: str, job_id: str, assignment_version: int
+) -> None:
+    """A DocumentDB design for the version's DocumentDB statements: one collection per
+    source table they read, the first embedding the second (and referencing the third),
+    an index on the first, and one access pattern per statement."""
+    from src.contracts.documentdb_model_output import DocumentDBModelOutputContract
+
+    assignment = store.read_json(
+        f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
+    )
+    queries = [
+        qa
+        for qa in assignment["query_assignments"]
+        if qa["assigned_engine"] == "documentdb" and qa.get("in_scope", True)
+    ]
+    tables = sorted({str(t) for qa in queries for t in qa.get("source_tables") or []})
+    names = [_bare(t) for t in tables] or ["documents"]
+    first = names[0]
+    collections = [
+        {
+            "collection_name": name,
+            "source_tables": [table],
+            "embedded_entities": (
+                [
+                    {
+                        "source_table": tables[1],
+                        "embed_path": names[1],
+                        "strategy": "embed",
+                        "avg_array_length": 3,
+                        "max_array_length_estimate": 50,
+                        "rationale": "Read with its parent.",
+                    }
+                ]
+                if name == first and len(tables) > 1
+                else []
+            ),
+            "referenced_collections": names[2:3] if name == first else [],
+            "indexes": (
+                [
+                    {
+                        "index_name": f"idx_{first}_status",
+                        "keys": {"status": 1, "updated_at": -1},
+                        "index_type": None,
+                        "purpose": "Lists by status, newest first.",
+                        "source_query_ids": [str(q["query_id"]) for q in queries[:1]],
+                    }
+                ]
+                if name == first
+                else []
+            ),
+            "document_examples": [{"_id": 1}],
+            "estimated_avg_doc_size_kb": 2,
+            "estimated_max_doc_size_kb": 40,
+        }
+        for table, name in zip(tables, names, strict=True)
+    ]
+    by_table = dict(zip(tables, names, strict=True))
+    design = DocumentDBModelOutputContract.model_validate(
+        {
+            "job_id": job_id,
+            "source_database": database_name,
+            "collections": collections,
+            "access_patterns": [
+                {
+                    "pattern_id": f"DOC-AP-{i + 1}",
+                    "description": "Read the documents of one parent",
+                    "operation": "find",
+                    "collection_name": by_table[str(qa["source_tables"][0])],
+                    "query_filter": {"status": "?"},
+                    "index_used": f"idx_{first}_status",
+                    "source_query_ids": [str(qa["query_id"])],
+                    "source_tables": [str(t) for t in qa["source_tables"]],
+                    "design_rps": 1.0,
+                }
+                for i, qa in enumerate(q for q in queries if q.get("source_tables"))
+            ],
+            "trade_offs": [{"description": "Embed the children", "impact": "One read."}],
+            "validation_passed": True,
+        }
+    )
+    key = f"{database_name}/{job_id}/schema-documentdb/v{assignment_version}/schema_output.json"
+    store.write_json(key, design.model_dump(mode="json"))
+
+
 def write_fake_design(
     job_id: str, database_name: str, target_type: str, store: Any, assignment_version: int
 ) -> None:
     from src.agents.schema_design.output_contract import write_schema_output
     from src.contracts.skipped_placeholders import SkippedSchemaOutput
-    from tests.e2e.designed_run import (
-        write_aurora_mysql_design,
-        write_dynamodb_design,
-        write_elasticache_design,
-    )
+    from tests.e2e.designed_run import write_aurora_mysql_design, write_elasticache_design
 
     writers: dict[str, Callable[..., Any]] = {
-        "dynamodb": write_dynamodb_design,
+        "dynamodb": write_dynamodb_design_with_gsi,
         "elasticache": write_elasticache_design,
         "aurora_mysql": write_aurora_mysql_design,
+        "documentdb": write_documentdb_design,
     }
     if database_name == "wordpress" and target_type in writers:
         writers[target_type](store, database_name, job_id, assignment_version)

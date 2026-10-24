@@ -48,7 +48,7 @@ Every problem raises `CollectionLoadError`, a `ValueError` subclass, with a mess
 
 The result is for **engine placement**: which engine serves each statement, which statements move together, and which engine owns each table.
 
-It is **not a data model**. Partition and sort keys, indexes and target tables come only from schema design (`run_through="schema_design"`), which always uses a model and has its own reviewer. Its designs are returned in the `artifacts` block (see [How far to run](#how-far-to-run-run_through)), not in the stable surface, until a stable design surface is agreed. The deterministic analysis does make first guesses about a data model, but they are inputs to that design, not results: they are never part of the stable surface, and a caller should not build on them.
+Placement alone is **not a data model**. Partition and sort keys, indexes and target tables come only from schema design (`run_through="schema_design"`), which always uses a model and has its own reviewer. A designed result carries them in the stable [design block](#the-design-block) (`designs`), copied from each engine's design; the full designs are in the `artifacts` block. The deterministic analysis does make first guesses about a data model, but they are inputs to that design, not results: they are never part of the stable surface, and a caller should not build on them.
 
 ## How far to run: `run_through`
 
@@ -58,7 +58,7 @@ Each value runs the phases before it too. From `"reality_check"` on, a later val
 |---|---|---|---|
 | `"analysis"` | A score per statement on every analysed engine; nothing placed (`label` `analysis_only`) | Never | Seconds (see below); no model spend |
 | `"reality_check"` (default) | The final engine placement: each statement's engine, the groups' engines, each table's owner (`label` `recommendation`) | Only with `deterministic: false` (a model reviews the consolidations) | Seconds with `deterministic: true` (see below); with `false`, plus the model calls that review the consolidations and write a summary |
-| `"schema_design"` | A schema design (the data model) for every engine the placement keeps, in `artifacts.schema_designs`; `summary.designed_engines` names them (`label` `designed`, or `recommendation` when no engine could be designed) | Always: send `deterministic: false` | Minutes, and model spend that grows with the statement count (see below) |
+| `"schema_design"` | A schema design (the data model) for every engine the placement keeps: its target tables, keys and indexes in `designs`, the full design in `artifacts.schema_designs`; `summary.designed_engines` names them (`label` `designed`, or `recommendation` when no engine could be designed) | Always: send `deterministic: false` | Minutes, and model spend that grows with the statement count (see below) |
 | `"synthesis"` | The report every deliverable renders, in `artifacts.synthesis_report`; `summary.tables` and `summary.engines[].reason` are the report's own lines (labelled as at `"schema_design"`) | Always: send `deterministic: false` | Schema design's, plus one executive-summary call |
 
 `"schema_design"` and `"synthesis"` with `deterministic: true` (the default) are refused when the request is validated, with a message that says the phase needs a model, before anything runs. Model access is configured as for the pipeline's `--llm-mode bedrock` ([Other ways to run it](../other-ways-to-run-it.md)): schema design uses the schema-design model role (Claude Opus by default), the summaries the summary role.
@@ -82,7 +82,10 @@ designed = assess(
         "options": {"run_through": "schema_design", "deterministic": False, "include_artifacts": True},
     }
 )
-dynamodb_design = designed.artifacts.schema_designs["dynamodb"]  # an internal contract
+for design in designed.designs:  # the stable design block
+    if design.engine == "dynamodb":
+        print([(t.name, t.partition_key.name) for t in design.tables])
+dynamodb_design = designed.artifacts.schema_designs["dynamodb"]  # the full design: an internal contract
 
 # The report too.
 reported = assess(
@@ -99,7 +102,7 @@ Which engines get a schema design: the ones the effective assignment keeps, owne
 
 `summary.designed_engines` lists the engines with a design. When the engine scope leaves no engine to design (for example `target_engines: ["elasticache"]`: a cache owns no statement, so every statement is unservable), no designer runs, `designed_engines` is empty, `summary.design_note` says so, and the result is labelled `recommendation`, not `designed`, because it has no data model. `summary.run_through_reached` still says how far the run got.
 
-The designs and the report are only in `artifacts`, so ask for `include_artifacts: true` (or pass your own `store`, where they stay under `<database_name>/<job_id>/`; `artifacts.artifact_keys` names each key). Without it, a designed result carries the placement and the label, but no design.
+A designed result always carries the [design block](#the-design-block) (`designs`). The full designs and the report are only in `artifacts`, so ask for `include_artifacts: true` for them (or pass your own `store`, where they stay under `<database_name>/<job_id>/`; `artifacts.artifact_keys` names each key).
 
 **Post-schema routing.** After the designs, `assess()` runs the pipeline's post-schema routing, the same implementation the local pipeline uses: a statement a design reports unsupported, or its reviewer flags, moves (with the statements it moves with) to its best-scoring remaining engine among the ones the placement keeps, in the engine scope, never a cache. The move is a new assignment version, so `summary.assignment_version` rises, the statement's `reason_code` is `post_schema_reroute`, and its Move (pass `post_schema_flag`) is in `artifacts.assignment.moves`. Only the engines a move touches (the one it left and the one it joined) are designed again on the new version; the others' designs are carried forward, and the result, its designs and `summary.designed_engines` are those of the new version. A statement with no remaining engine in the scope is not moved: it stays on the engine whose design flagged it, with its reason code, and the router records it as terminal in the job's `post-schema-router/router_output.json` (in your `store`; the result does not mark it yet, #1497). A redesign that fails fails the run (`AssessmentRunError`), after a version restating the one before the move is written.
 
@@ -120,16 +123,17 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, and `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `statements[].query_type`, `join_count` and `matched_patterns` as a list of named patterns, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
 - `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
 - `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines` and `reason_text`;
-- `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer).
+- `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
+- `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
 
 Consumer contract tests keep this surface (`tests/contract/test_assess_consumer_contract.py`, on the fixtures in `tests/contract/fixtures/assess_consumer_fixtures.json`, each with the fields it guards), and a removed or renamed field, a changed type or a removed or changed enum value fails the build without a MAJOR bump of `contract_version` against the shape the last release shipped (`tests/contract/test_assess_released_contract.py`). A new enum value in the result (a new `reason_code` or `role`, for example) is a MINOR change: read enums with a default branch, since an exhaustive match on today's values can meet a new one in a MINOR release. Each release lists the routing changes since the previous one (CONTRIBUTING.md's Releases section).
 
-Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`.
+Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`. Before `"schema_design"`, and when a model phase had no engine to design, `designs` is `null`.
 
 ### The label
 
@@ -139,7 +143,130 @@ Fields that come from a later phase are `null` (or empty) when `run_through` sto
 |---|---|---|
 | `analysis_only` | `run_through_reached` is `"analysis"` | Scores per statement; nothing placed |
 | `recommendation` | `run_through_reached` is `"reality_check"`, or a model phase that had no engine to design (`summary.designed_engines` empty) | Engine placement: where each statement runs, which engine owns each table. No data model |
-| `designed` | `run_through_reached` is `"schema_design"` or `"synthesis"` and `summary.designed_engines` is not empty | Placement plus a schema design's data model for each engine in `summary.designed_engines`, in `artifacts` (no compatibility promise until a stable design surface is agreed) |
+| `designed` | `run_through_reached` is `"schema_design"` or `"synthesis"` and `summary.designed_engines` is not empty | Placement plus a schema design's data model for each engine in `summary.designed_engines`: the stable design block `designs`, and the full designs in `artifacts` (no compatibility promise) |
+
+### The design block
+
+`designs` is set only on a `designed` result (`null` otherwise): one entry per engine in `summary.designed_engines`, in that order, discriminated by `engine`. Every value is copied from that engine's schema design, never recomputed and never taken from the deterministic analysis; the full design (attributes, item collections, access patterns, sizing, trade-offs) stays in `artifacts.schema_designs.<engine>`. The [design block proposal](assess-design-block.md) explains the choices.
+
+Every entry has `engine` and `validation_passed`: `false` for a design that failed its own checks (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result. Check it before you build on a design: a failed design is returned, not dropped. Then, per engine:
+
+| `engine` | Fields |
+|---|---|
+| `dynamodb` | `tables[]`: `name`, `source_tables`, `partition_key` and `sort_key` (`{"name", "type"}`, `type` `S`, `N` or `B`; `sort_key` `null` for none), `gsis[]` (`name`, `partition_key[]` and `sort_key[]` as ordered key attributes, `projection` `ALL`, `KEYS_ONLY` or `INCLUDE`, `projected_attributes` for `INCLUDE`, `query_ids`) and `query_ids` (the statements the design serves from the table itself; those served from an index are on the index) |
+| `aurora_mysql`, `aurora_postgresql` | `tables[]`: `name`, `primary_key` (columns) and `indexes` (the design's `CREATE INDEX` statements, verbatim); `ddl_artifact_path`, where the full generated DDL is in the result with `include_artifacts: true` (`artifacts.schema_designs.<engine>.generated_ddl`) |
+| `documentdb` | `collections[]`: `name`, `source_tables`, `embedded[]` (per child table: `source_table`, `path` in the parent document, `strategy` `embed`, `reference` or `hybrid`), `referenced_collections`, `indexes[]` (`name`, `keys[]` as ordered `{"field", "direction"}`, `type` `compound`, `single`, `text`, `partial` or `unique`, `query_ids`) and `query_ids` |
+| `elasticache` | `keys[]`: `pattern` (the key pattern), `data_type`, `ttl_seconds` (`null` for no expiry), `source_tables` and `query_ids` (what the key caches: the source tables and the statements whose reads it serves) |
+
+An engine with no agreed stable shape yet (OpenSearch) is in `summary.designed_engines`, and its design is in `artifacts`, but it has no `designs` entry. A new engine in `designs` is a MINOR change: read it with a default branch. Names (tables, keys, indexes) come from the design, which a model wrote from collection text: treat them as data and escape them when you render them.
+
+### Sample design block
+
+`designs` of a designed WordPress run (`run_through: "schema_design"`, no engine scope), trimmed to one or two entries per list:
+
+```json
+[
+  {
+    "validation_passed": true,
+    "engine": "aurora_mysql",
+    "tables": [
+      {
+        "name": "wp_actionscheduler_groups",
+        "primary_key": [
+          "group_id"
+        ],
+        "indexes": [
+          "CREATE INDEX `slug` ON `wp_actionscheduler_groups` (`slug`);"
+        ]
+      }
+    ],
+    "ddl_artifact_path": "artifacts.schema_designs.aurora_mysql.generated_ddl"
+  },
+  {
+    "validation_passed": true,
+    "engine": "dynamodb",
+    "tables": [
+      {
+        "name": "WpComments",
+        "source_tables": [
+          "wordpress.wp_comments"
+        ],
+        "partition_key": {
+          "name": "comment_id",
+          "type": "N"
+        },
+        "sort_key": null,
+        "gsis": [
+          {
+            "name": "CommentsByPost",
+            "partition_key": [
+              {
+                "name": "comment_post_id",
+                "type": "N"
+              }
+            ],
+            "sort_key": [
+              {
+                "name": "comment_approved",
+                "type": "S"
+              },
+              {
+                "name": "comment_date_gmt",
+                "type": "S"
+              }
+            ],
+            "projection": "KEYS_ONLY",
+            "projected_attributes": [],
+            "query_ids": [
+              "8c66eaee9125d49703cd068cdba72c305ac38bcbb8e1dab7f399e224cb40a7d6"
+            ]
+          }
+        ],
+        "query_ids": [
+          "7346ea7e6380af233fc40e0fa6427d3f17efe5fe63447f048542e8ff95f6a406",
+          "de9a7ba3598eaa8b41839c2fce3889985e5636fc7489653be3b59378bf4779da"
+        ]
+      },
+      {
+        "name": "WpWcReservedStock",
+        "source_tables": [
+          "wordpress.wp_wc_reserved_stock"
+        ],
+        "partition_key": {
+          "name": "order_id",
+          "type": "N"
+        },
+        "sort_key": {
+          "name": "product_id",
+          "type": "N"
+        },
+        "gsis": [],
+        "query_ids": [
+          "77cd1ad742e2533743bbe7069a7a0a6a58076e5c1a9f9d057191504007e39d1d"
+        ]
+      }
+    ]
+  },
+  {
+    "validation_passed": true,
+    "engine": "elasticache",
+    "keys": [
+      {
+        "pattern": "wp_options:{option_name}",
+        "data_type": "hash",
+        "ttl_seconds": 3600,
+        "source_tables": [
+          "wordpress.wp_options"
+        ],
+        "query_ids": [
+          "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+          "e223aefb06f2d48303ad26d2ee9f8aa957286f08174a6e92a6e583544f8099f0"
+        ]
+      }
+    ]
+  }
+]
+```
 
 ### Summary additions
 
@@ -363,6 +490,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
     }
   ],
   "groups": [],
+  "designs": null,
   "artifacts": null
 }
 ```

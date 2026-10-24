@@ -23,7 +23,9 @@ routing did not already decide:
   ``summary.consolidations`` are the reality check's consolidations;
 - a statement's ``matched_patterns`` are its assigned engine's decision-trace matches,
   named by the pattern catalog (``src/catalog/patterns``);
-- ``groups`` are the assignment's co-dependency groups and write groups.
+- ``groups`` are the assignment's co-dependency groups and write groups;
+- ``designs`` (a designed result only) are each designed engine's target tables, keys
+  and indexes, copied from its schema output (:func:`build_designs`).
 
 The builder is pure over :class:`RunState`, so the next phases and fields are each a
 small addition: a field reads one more input here, a phase loads one more artifact.
@@ -39,7 +41,21 @@ from src.assessment.models import (
     Artifacts,
     AssessmentRequest,
     AssessmentResult,
+    AuroraDesign,
+    AuroraTable,
+    CacheKey,
     Consolidation,
+    DocumentDBCollection,
+    DocumentDBDesign,
+    DocumentDBEmbed,
+    DocumentDBIndex,
+    DocumentDBIndexKey,
+    DynamoDBDesign,
+    DynamoDBIndex,
+    DynamoDBKey,
+    DynamoDBTable,
+    ElastiCacheDesign,
+    EngineDesign,
     EngineLine,
     Group,
     PatternRef,
@@ -746,6 +762,200 @@ def build_groups(state: RunState, statements: list[StatementResult]) -> list[Gro
     return groups
 
 
+# --------------------------------------------------------------------------- designs
+#
+# Each reads one engine's schema output (its internal contract) and copies the values a
+# caller needs; nothing is recomputed. Fields a design leaves out (an older or partial
+# design) read as empty; an entry with no name or no key is left out, since the stable
+# shape needs one.
+
+
+def _strs(values: Any) -> list[str]:
+    return [str(v) for v in values or [] if v is not None]
+
+
+def _ids(patterns: list[Mapping[str, Any]], field_name: str) -> list[str]:
+    """The query ids of ``patterns``, first seen first, each once."""
+    ids: dict[str, None] = {}
+    for p in patterns:
+        for q in _strs(p.get(field_name)):
+            ids.setdefault(q, None)
+    return list(ids)
+
+
+def _in_scope(design: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The design's access patterns it serves (``in_scope`` defaults to true)."""
+    return [
+        p
+        for p in design.get("access_patterns") or []
+        if isinstance(p, Mapping) and p.get("in_scope", True) is not False
+    ]
+
+
+def _dynamodb_key(key: Any) -> DynamoDBKey | None:
+    if not isinstance(key, Mapping) or not key.get("attribute_name"):
+        return None
+    return DynamoDBKey.model_validate(
+        {"name": str(key["attribute_name"]), "type": key.get("attribute_type")}
+    )
+
+
+def _dynamodb_keys(keys: Any) -> list[DynamoDBKey]:
+    return [k for k in (_dynamodb_key(key) for key in keys or []) if k is not None]
+
+
+def _dynamodb_design(design: Mapping[str, Any]) -> DynamoDBDesign:
+    patterns = _in_scope(design)
+
+    def served(table: str, gsi: str | None) -> list[str]:
+        return _ids(
+            [p for p in patterns if p.get("table_name") == table and p.get("gsi_name") == gsi],
+            "query_ids",
+        )
+
+    tables: list[DynamoDBTable] = []
+    for t in design.get("table_definitions") or []:
+        partition_key = _dynamodb_key(t.get("partition_key"))
+        if not t.get("table_name") or partition_key is None:
+            continue
+        name = str(t["table_name"])
+        gsis = [
+            DynamoDBIndex.model_validate(
+                {
+                    "name": str(g["gsi_name"]),
+                    "partition_key": _dynamodb_keys(g.get("partition_key")),
+                    "sort_key": _dynamodb_keys(g.get("sort_key")),
+                    "projection": g.get("projection"),
+                    "projected_attributes": _strs(g.get("projected_attributes")),
+                    "query_ids": served(name, str(g["gsi_name"])),
+                }
+            )
+            for g in t.get("gsis") or []
+            if isinstance(g, Mapping) and g.get("gsi_name")
+        ]
+        tables.append(
+            DynamoDBTable(
+                name=name,
+                source_tables=_strs(t.get("source_tables")),
+                partition_key=partition_key,
+                sort_key=_dynamodb_key(t.get("sort_key")),
+                gsis=gsis,
+                query_ids=served(name, None),
+            )
+        )
+    return DynamoDBDesign(
+        engine="dynamodb", validation_passed=design.get("validation_passed") is True, tables=tables
+    )
+
+
+def _aurora_design(engine: str, design: Mapping[str, Any]) -> AuroraDesign:
+    tables = [
+        AuroraTable(
+            name=str(t["table_name"]),
+            primary_key=_strs(t.get("primary_key")),
+            indexes=_strs(t.get("indexes")),
+        )
+        for t in design.get("table_definitions") or []
+        if isinstance(t, Mapping) and t.get("table_name")
+    ]
+    return AuroraDesign(
+        engine=engine,  # type: ignore[arg-type]
+        validation_passed=design.get("validation_passed") is True,
+        tables=tables,
+        ddl_artifact_path=f"artifacts.schema_designs.{engine}.generated_ddl",
+    )
+
+
+def _documentdb_design(design: Mapping[str, Any]) -> DocumentDBDesign:
+    patterns = _in_scope(design)
+    collections: list[DocumentDBCollection] = []
+    for c in design.get("collections") or []:
+        if not isinstance(c, Mapping) or not c.get("collection_name"):
+            continue
+        name = str(c["collection_name"])
+        collections.append(
+            DocumentDBCollection(
+                name=name,
+                source_tables=_strs(c.get("source_tables")),
+                embedded=[
+                    DocumentDBEmbed.model_validate(
+                        {
+                            "source_table": str(e["source_table"]),
+                            "path": str(e.get("embed_path") or ""),
+                            "strategy": e.get("strategy"),
+                        }
+                    )
+                    for e in c.get("embedded_entities") or []
+                    if isinstance(e, Mapping) and e.get("source_table")
+                ],
+                referenced_collections=_strs(c.get("referenced_collections")),
+                indexes=[
+                    DocumentDBIndex(
+                        name=str(i["index_name"]),
+                        keys=[
+                            DocumentDBIndexKey(field=str(f), direction=d)
+                            for f, d in (i.get("keys") or {}).items()
+                        ],
+                        # The contract's own rule: a null type reads as compound.
+                        type=i.get("index_type") or "compound",
+                        query_ids=_strs(i.get("source_query_ids")),
+                    )
+                    for i in c.get("indexes") or []
+                    if isinstance(i, Mapping) and i.get("index_name")
+                ],
+                query_ids=_ids(
+                    [p for p in patterns if p.get("collection_name") == name], "source_query_ids"
+                ),
+            )
+        )
+    return DocumentDBDesign(
+        engine="documentdb",
+        validation_passed=design.get("validation_passed") is True,
+        collections=collections,
+    )
+
+
+def _elasticache_design(design: Mapping[str, Any]) -> ElastiCacheDesign:
+    patterns = _in_scope(design)
+    keys = [
+        CacheKey(
+            pattern=str(k["key_pattern"]),
+            data_type=str(k.get("data_type") or ""),
+            ttl_seconds=k.get("ttl_seconds"),
+            source_tables=_strs(k.get("source_tables")),
+            query_ids=_ids(
+                [p for p in patterns if p.get("key_pattern") == k["key_pattern"]],
+                "source_query_ids",
+            ),
+        )
+        for k in design.get("key_designs") or []
+        if isinstance(k, Mapping) and k.get("key_pattern")
+    ]
+    return ElastiCacheDesign(
+        engine="elasticache", validation_passed=design.get("validation_passed") is True, keys=keys
+    )
+
+
+#: The engines with a stable design shape, and how each is read from its schema output.
+_DESIGN_READERS: dict[str, Callable[[Mapping[str, Any]], EngineDesign]] = {
+    "dynamodb": _dynamodb_design,
+    "aurora_mysql": lambda d: _aurora_design("aurora_mysql", d),
+    "aurora_postgresql": lambda d: _aurora_design("aurora_postgresql", d),
+    "documentdb": _documentdb_design,
+    "elasticache": _elasticache_design,
+}
+
+
+def build_designs(state: RunState, designed_engines: list[str]) -> list[EngineDesign]:
+    """One stable design per engine of ``designed_engines`` that has a stable shape, in
+    that order, from the engine's schema output at the effective version."""
+    return [
+        _DESIGN_READERS[engine](state.schema_designs[engine])
+        for engine in designed_engines
+        if engine in _DESIGN_READERS and engine in state.schema_designs
+    ]
+
+
 # --------------------------------------------------------------------------- artifacts
 
 
@@ -776,8 +986,9 @@ def build_artifacts(state: RunState) -> Artifacts:
 def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResult:
     statements = build_statements(state, request)
     summary = build_summary(state, statements)
+    label = result_label(state.run_through, summary.designed_engines)
     return AssessmentResult(
-        label=result_label(state.run_through, summary.designed_engines),  # type: ignore[arg-type]
+        label=label,  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),
         ruleset_hash=ruleset_hash(),
@@ -786,5 +997,6 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
         summary=summary,
         statements=statements,
         groups=build_groups(state, statements),
+        designs=build_designs(state, summary.designed_engines) if label == "designed" else None,
         artifacts=build_artifacts(state) if request.options.include_artifacts else None,
     )

@@ -145,6 +145,32 @@ def test_the_documented_samples_validate() -> None:
     assert parsed.label == "recommendation"
 
 
+def test_the_documented_design_block_validates() -> None:
+    """The trimmed real design block in docs/contracts/assess.md (#1493) is valid for
+    the result schema's ``designs`` and reads back through the models unchanged."""
+    from pydantic import TypeAdapter
+
+    from src.assessment.models import EngineDesign
+
+    text = DOC.read_text(encoding="utf-8")
+    match = re.search(r"^### Sample design block\n\n.*?```json\n(.*?)\n```", text, re.M | re.S)
+    assert match
+    sample = json.loads(match.group(1))
+    schema = _schema("assess_result")
+    Draft202012Validator({"$defs": schema["$defs"], **schema["properties"]["designs"]}).validate(
+        sample
+    )
+    adapter: TypeAdapter[list[EngineDesign]] = TypeAdapter(list[EngineDesign])
+    assert adapter.dump_python(adapter.validate_python(sample), mode="json") == sample
+    assert {d["engine"] for d in sample} == {"aurora_mysql", "dynamodb", "elasticache"}
+    # And the proposal's examples (docs/contracts/assess-design-block.md).
+    proposal = (DOC.parent / "assess-design-block.md").read_text(encoding="utf-8")
+    blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)\n```", proposal, re.S)]
+    assert len(blocks) == 2
+    for designs in (blocks[0], [blocks[1]]):
+        assert adapter.dump_python(adapter.validate_python(designs), mode="json") == designs
+
+
 def test_the_request_schema_accepts_the_minimal_request() -> None:
     _validator("assess_request").validate({"database_name": "shop", "collection": {"x": 1}})
 

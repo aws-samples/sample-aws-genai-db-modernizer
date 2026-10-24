@@ -368,6 +368,7 @@ def test_designed_only_with_a_schema_design() -> None:
         dumped["summary"]["run_through_reached"] = phase
         dumped["summary"]["designed_engines"] = ["dynamodb"]
         dumped["label"] = "designed"
+        dumped["designs"] = []  # a designed result carries the design block (#1493)
         assert AssessmentResult.model_validate(dumped).label == "designed"
         dumped["label"] = "recommendation"
         with pytest.raises(ValidationError, match="label must be 'designed'"):
@@ -375,6 +376,7 @@ def test_designed_only_with_a_schema_design() -> None:
         # No engine designed: the result carries no data model, so it stays a
         # recommendation (#1387 review).
         dumped["summary"]["designed_engines"] = []
+        dumped["designs"] = None
         assert AssessmentResult.model_validate(dumped).label == "recommendation"
         dumped["label"] = "designed"
         with pytest.raises(ValidationError, match="label must be 'recommendation'"):
