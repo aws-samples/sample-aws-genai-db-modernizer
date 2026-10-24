@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import boto3
 
+from src.shared.sql_spans import span_dialect
 from src.tools.database.collection_text import extract_json_object
 from src.tools.sql.query_type import statement_query_type
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
@@ -208,9 +209,13 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
     same ``query_hash``/``digest``. The collection scripts should already
     aggregate by digest, but offline collections may predate that fix (or
     come from an engine that doesn't group), so we merge here defensively
-    before building the patterns list. It only merges rows that already
-    share a digest: Oracle's ``SQL_ID`` differs per literal, so Oracle
-    literal variants are not merged here (tracked separately).
+    before building the patterns list. Rows merge when they share a digest.
+    For Oracle they also merge when their texts share a literal shape
+    (:func:`src.tools.sql.normalize.literal_shape`, #412): ``SQL_ID`` hashes the
+    exact text, so a collection made without ``FORCE_MATCHING_SIGNATURE`` has a
+    digest per literal value, and two signatures can differ only in the length
+    of an ``IN`` list. A merged Oracle row takes the digest of its costliest
+    variant. Statements that differ in structure never merge.
 
     Summable counters (execution_count, rows sent/examined/affected, total
     time, lock time, scan/index counters, errors/warnings) are summed across
@@ -238,6 +243,9 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
             order.append(key)
             groups[key] = []
         groups[key].append(r)
+
+    if span_dialect(source_engine) == "oracle":
+        order = _merge_oracle_shapes(groups, order)
 
     merged_variant_count = sum(len(variants) - 1 for variants in groups.values())
     if merged_variant_count:
@@ -308,6 +316,40 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
         merged_rows.append(merged)
 
     return merged_rows
+
+
+def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> list[str]:
+    """Fold digest groups whose texts share a literal shape into one group (in place).
+
+    The surviving key is the digest of the group's costliest variant (the first one on a
+    tie), so a merged row is named like the sample text it keeps. Returns the new order,
+    by first appearance. A group whose rows differ in shape (one digest, several shapes)
+    is left whole: a shared digest is already the collection's own statement of identity.
+    """
+    from src.tools.sql.normalize import literal_shape_digest
+
+    by_shape: dict[str, list[str]] = {}
+    for key in order:
+        shapes = {
+            literal_shape_digest(str(v.get("query_text") or ""), "oracle") for v in groups[key]
+        }
+        by_shape.setdefault(min(shapes) if len(shapes) == 1 else f"digest:{key}", []).append(key)
+
+    new_groups: dict[str, list[dict]] = {}
+    new_order: list[str] = []
+    for keys in by_shape.values():
+        variants = [v for key in keys for v in groups[key]]
+        name = keys[0]
+        if len(keys) > 1:
+            name = max(
+                keys, key=lambda k: max(float(v.get("total_time_ms") or 0) for v in groups[k])
+            )
+        new_groups[name] = variants
+        new_order.append(name)
+    groups.clear()
+    groups.update(new_groups)
+    # ``by_shape`` is in order of first appearance of each shape's first digest.
+    return new_order
 
 
 # Engines whose table names compare case-insensitively (#742): SQL Server's

@@ -42,49 +42,104 @@ DECLARE
 BEGIN
     v_owner := SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA');
 
-    -- Pre-compute total elapsed for db_load_contribution_percent
-    SELECT NVL(SUM(ELAPSED_TIME), 1) INTO v_total_elapsed
-    FROM V$SQL
-    WHERE EXECUTIONS >= 10 AND PARSING_SCHEMA_NAME = v_owner;
+    -- Pre-compute total elapsed for db_load_contribution_percent, over the same
+    -- statement shapes the queries section below emits (see there).
+    SELECT NVL(SUM(shape_elapsed), 1) INTO v_total_elapsed
+    FROM (
+        SELECT SUM(ELAPSED_TIME) AS shape_elapsed
+        FROM V$SQL
+        WHERE PARSING_SCHEMA_NAME = v_owner
+        GROUP BY CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END
+        HAVING SUM(EXECUTIONS) >= 10
+    );
 
     DBMS_OUTPUT.PUT_LINE('{');
 
     -- ===================================================================
     -- 1. Query Patterns (FIRST — avoid cache pollution from catalog queries)
     -- Field names: MySQL offline_parser convention
+    --
+    -- V$SQL keeps one row per distinct SQL text (per SQL_ID), so an application
+    -- that sends non-parameterized SQL gets a row per literal value
+    -- (WHERE id = 1, WHERE id = 2, ...). SQL_ID hashes the exact text, so it
+    -- cannot tell them apart from a different statement. FORCE_MATCHING_SIGNATURE
+    -- is the signature Oracle computes with literals replaced by binds (the one
+    -- CURSOR_SHARING=FORCE uses); literal variants share it. Oracle Database
+    -- Reference, V$SQL: "FORCE_MATCHING_SIGNATURE: The signature used when the
+    -- CURSOR_SHARING parameter is set to FORCE" (0 when the statement has none).
+    -- We group by it, so one row == one query shape, and fall back to the
+    -- SQL_ID when the signature is 0. The digest is 'fms_<signature>' or the
+    -- SQL_ID. Counters are SUMmed across variants, first_seen / last_seen take
+    -- MIN / MAX, and the query text is the variant with the highest
+    -- ELAPSED_TIME (SQL_ID breaks ties). The 10-execution floor and the
+    -- FETCH FIRST 1000 cap apply AFTER grouping, so the cap limits query shapes
+    -- rather than literal-variant rows. V$SQL has no per-execution min/max, so
+    -- those stay 0.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"queries": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
-            'digest' VALUE SQL_ID,
-            'query_text' VALUE REGEXP_REPLACE(DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1), '[[:cntrl:]]', ' '),
-            'execution_count' VALUE EXECUTIONS,
-            'total_time_ms' VALUE ROUND(ELAPSED_TIME / 1000, 3),
-            'avg_time_ms' VALUE ROUND(ELAPSED_TIME / GREATEST(EXECUTIONS, 1) / 1000, 3),
+            'digest' VALUE g.query_key,
+            'query_text' VALUE REGEXP_REPLACE(g.query_text, '[[:cntrl:]]', ' '),
+            'execution_count' VALUE g.executions,
+            'total_time_ms' VALUE ROUND(g.elapsed_time / 1000, 3),
+            'avg_time_ms' VALUE ROUND(g.elapsed_time / GREATEST(g.executions, 1) / 1000, 3),
             'min_time_ms' VALUE 0,
             'max_time_ms' VALUE 0,
-            'total_rows_sent' VALUE ROWS_PROCESSED,
-            'total_rows_examined' VALUE BUFFER_GETS,
+            'total_rows_sent' VALUE g.rows_processed,
+            'total_rows_examined' VALUE g.buffer_gets,
             'total_rows_affected' VALUE 0,
-            'lock_time_ms' VALUE ROUND(APPLICATION_WAIT_TIME / 1000, 3),
-            'total_cpu_time_ms' VALUE ROUND(CPU_TIME / 1000, 3),
-            'total_logical_reads' VALUE BUFFER_GETS,
-            'total_physical_reads' VALUE DISK_READS,
-            'db_load_contribution_percent' VALUE ROUND(ELAPSED_TIME / v_total_elapsed * 100, 2),
-            'first_seen' VALUE REPLACE(FIRST_LOAD_TIME, '/', ' '),
-            'last_seen' VALUE TO_CHAR(LAST_ACTIVE_TIME, 'YYYY-MM-DD HH24:MI:SS')
+            'lock_time_ms' VALUE ROUND(g.application_wait_time / 1000, 3),
+            'total_cpu_time_ms' VALUE ROUND(g.cpu_time / 1000, 3),
+            'total_logical_reads' VALUE g.buffer_gets,
+            'total_physical_reads' VALUE g.disk_reads,
+            'db_load_contribution_percent' VALUE ROUND(g.elapsed_time / v_total_elapsed * 100, 2),
+            'first_seen' VALUE REPLACE(g.first_load_time, '/', ' '),
+            'last_seen' VALUE TO_CHAR(g.last_active_time, 'YYYY-MM-DD HH24:MI:SS')
             RETURNING CLOB
         ) AS json_row
         FROM (
-            SELECT SQL_ID, SQL_FULLTEXT, EXECUTIONS, ELAPSED_TIME,
-                   ROWS_PROCESSED, BUFFER_GETS, CPU_TIME, DISK_READS,
-                   APPLICATION_WAIT_TIME, FIRST_LOAD_TIME, LAST_ACTIVE_TIME
-            FROM V$SQL
-            WHERE EXECUTIONS >= 10
-              AND PARSING_SCHEMA_NAME = v_owner
-            ORDER BY ELAPSED_TIME DESC
-            FETCH FIRST 1000 ROWS ONLY
-        )
+            SELECT v.query_key,
+                   SUM(v.executions) AS executions,
+                   SUM(v.elapsed_time) AS elapsed_time,
+                   SUM(v.rows_processed) AS rows_processed,
+                   SUM(v.buffer_gets) AS buffer_gets,
+                   SUM(v.cpu_time) AS cpu_time,
+                   SUM(v.disk_reads) AS disk_reads,
+                   SUM(v.application_wait_time) AS application_wait_time,
+                   MIN(v.first_load_time) AS first_load_time,
+                   MAX(v.last_active_time) AS last_active_time,
+                   MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+            FROM (
+                -- One row per cached statement (literal variant); variant_rank
+                -- picks the costliest variant per query_key as the sample text.
+                SELECT p.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY query_key
+                           ORDER BY ELAPSED_TIME DESC, SQL_ID
+                       ) AS variant_rank
+                FROM (
+                    SELECT SQL_ID,
+                           CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END AS query_key,
+                           DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1) AS query_text,
+                           EXECUTIONS AS executions,
+                           ELAPSED_TIME AS elapsed_time,
+                           ROWS_PROCESSED AS rows_processed,
+                           BUFFER_GETS AS buffer_gets,
+                           CPU_TIME AS cpu_time,
+                           DISK_READS AS disk_reads,
+                           APPLICATION_WAIT_TIME AS application_wait_time,
+                           FIRST_LOAD_TIME AS first_load_time,
+                           LAST_ACTIVE_TIME AS last_active_time
+                    FROM V$SQL
+                    WHERE PARSING_SCHEMA_NAME = v_owner
+                ) p
+            ) v
+            GROUP BY v.query_key
+        ) g
+        WHERE g.executions >= 10
+        ORDER BY g.elapsed_time DESC, g.query_key
+        FETCH FIRST 1000 ROWS ONLY
     ) LOOP
         DBMS_OUTPUT.PUT_LINE(rec.json_row || ',');
     END LOOP;

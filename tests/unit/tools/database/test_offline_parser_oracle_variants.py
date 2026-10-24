@@ -1,0 +1,142 @@
+"""Oracle literal variants merge into one query shape in the offline parser (#412).
+
+``V$SQL.SQL_ID`` hashes the exact SQL text, so a collection made before the script
+grouped by ``FORCE_MATCHING_SIGNATURE`` holds one row per literal value, each with its
+own ``digest``. The parser merges them by their literal-masked shape, for Oracle only.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from src.tools.database.offline_parser import _merge_query_variants, _transform_queries
+
+
+def _row(digest: str, text: str, **over: object) -> dict:
+    row = {
+        "digest": digest,
+        "query_text": text,
+        "execution_count": 10,
+        "total_time_ms": 100.0,
+        "avg_time_ms": 10.0,
+        "min_time_ms": 0,
+        "max_time_ms": 0,
+        "total_rows_sent": 10,
+        "total_rows_examined": 20,
+        "total_rows_affected": 0,
+        "lock_time_ms": 1.0,
+        "first_seen": "2026-01-10 00:00:00",
+        "last_seen": "2026-01-11 00:00:00",
+    }
+    row.update(over)
+    return row
+
+
+def _merged(rows: list[dict], engine: str = "oracle") -> list[dict]:
+    return _merge_query_variants(rows, engine)
+
+
+class TestOracleVariantsMerge:
+    def test_each_literal_kind_merges_to_one_row(self) -> None:
+        variants = [
+            "SELECT * FROM orders WHERE id = 1",
+            "SELECT * FROM orders WHERE id = 2",
+            "SELECT * FROM orders WHERE id = 3.5",
+        ]
+        rows = [_row(f"sql{i}", t) for i, t in enumerate(variants)]
+        out = _merged(rows)
+        assert len(out) == 1
+        assert out[0]["execution_count"] == 30
+
+    @pytest.mark.parametrize(
+        "variants",
+        [
+            ["status = 'A'", "status = 'it''s'", "status = q'[B]'", "status = q'!C!'"],
+            ["d > DATE '2024-01-01'", "d > DATE '2025-02-02'"],
+            ["id IN (1, 2)", "id IN (3)", "id IN (4, 5, 6, 7)"],
+        ],
+    )
+    def test_strings_dates_and_in_lists_merge(self, variants: list[str]) -> None:
+        rows = [_row(f"sql{i}", f"SELECT * FROM t WHERE {v}") for i, v in enumerate(variants)]
+        assert len(_merged(rows)) == 1
+
+    def test_counters_are_summed_and_timing_combined(self) -> None:
+        rows = [
+            _row("a", "SELECT * FROM t WHERE id = 1", execution_count=10, total_time_ms=100.0),
+            _row("b", "SELECT * FROM t WHERE id = 2", execution_count=30, total_time_ms=900.0),
+        ]
+        (m,) = _merged(rows)
+        assert m["execution_count"] == 40
+        assert m["total_time_ms"] == pytest.approx(1000.0)
+        assert m["avg_time_ms"] == pytest.approx(25.0)
+        assert m["total_rows_sent"] == 20
+        assert m["lock_time_ms"] == pytest.approx(2.0)
+        # The costliest variant is the sample text and names the merged row.
+        assert m["query_text"] == "SELECT * FROM t WHERE id = 2"
+        assert m["digest"] == "b"
+
+    @pytest.mark.passes_on_main
+    def test_a_row_that_never_varied_keeps_its_digest(self) -> None:
+        out = _merged([_row("only", "SELECT * FROM t WHERE id = 1")])
+        assert [r["digest"] for r in out] == ["only"]
+
+    def test_force_matching_digests_merge_by_shape_too(self) -> None:
+        # Two signatures that differ only in IN-list length still describe one shape.
+        rows = [
+            _row("fms_1", "SELECT * FROM t WHERE id IN (1, 2)"),
+            _row("fms_2", "SELECT * FROM t WHERE id IN (1, 2, 3)"),
+        ]
+        assert len(_merged(rows)) == 1
+
+    @pytest.mark.passes_on_main
+    def test_rows_sharing_a_digest_still_merge(self) -> None:
+        rows = [
+            _row("fms_1", "SELECT * FROM t WHERE id = 1"),
+            _row("fms_1", "select * from t where id = 9"),
+        ]
+        assert len(_merged(rows)) == 1
+
+    def test_order_is_first_appearance(self) -> None:
+        rows = [
+            _row("b1", "SELECT * FROM b WHERE id = 1"),
+            _row("a1", "SELECT * FROM a WHERE id = 1"),
+            _row("b2", "SELECT * FROM b WHERE id = 2"),
+        ]
+        out = _merged(rows)
+        assert [r["query_text"].split()[3] for r in out] == ["b", "a"]
+
+
+@pytest.mark.passes_on_main
+class TestStructuralVariantsStayApart:
+    @pytest.mark.parametrize(
+        "pair",
+        [
+            ("SELECT * FROM t WHERE a = 1", "SELECT * FROM t WHERE b = 1"),
+            ("SELECT * FROM t WHERE a = 1", "SELECT * FROM t WHERE a > 1"),
+            ("SELECT * FROM t WHERE a = 1", "SELECT * FROM u WHERE a = 1"),
+            ("SELECT a, b FROM t ORDER BY 1", "SELECT a, b FROM t ORDER BY 2"),
+            ("SELECT * FROM t WHERE a = :1", "SELECT * FROM t WHERE a = 1"),
+            ("INSERT INTO t VALUES (1, 2)", "INSERT INTO t VALUES (1, 2, 3)"),
+        ],
+    )
+    def test_structure_differs_so_no_merge(self, pair: tuple[str, str]) -> None:
+        rows = [_row("x", pair[0]), _row("y", pair[1])]
+        assert len(_merged(rows)) == 2
+
+
+@pytest.mark.passes_on_main
+class TestOtherDialectsAreUnchanged:
+    @pytest.mark.parametrize("engine", ["mysql", "postgresql", "sqlserver", "mariadb", ""])
+    def test_distinct_digests_are_not_merged_by_text(self, engine: str) -> None:
+        rows = [
+            _row("d1", "SELECT * FROM t WHERE id = 1"),
+            _row("d2", "SELECT * FROM t WHERE id = 2"),
+        ]
+        assert [r["digest"] for r in _merged(rows, engine)] == ["d1", "d2"]
+
+
+def test_transform_queries_counts_one_query_per_shape() -> None:
+    rows = [_row(f"s{i}", f"SELECT * FROM orders WHERE id = {i}") for i in range(5)]
+    patterns = _transform_queries(rows, "db", {"orders"}, source_engine="oracle")
+    assert len(patterns) == 1
+    assert patterns[0]["execution_count"] == 50

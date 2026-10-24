@@ -480,3 +480,57 @@ class TestTimeRangeFilter:
 
     def test_no_time_range(self):
         assert _has_time_range_filter("WHERE id = 42") is False
+
+
+class TestQueryPatternsGroupLiteralVariants:
+    """#412: V$SQL keeps one row per literal text (one SQL_ID each); the collection
+    groups by FORCE_MATCHING_SIGNATURE, falling back to SQL_ID when it is 0."""
+
+    def _sent_sql(self, collector, mock_ssm) -> str:
+        mock_ssm.run_sql_json.side_effect = [[{"s": "APPUSER"}], []]
+        collector.collect_query_patterns()
+        return str(mock_ssm.run_sql_json.call_args.kwargs["sql"])
+
+    def test_groups_by_force_matching_signature_with_sql_id_fallback(self, collector, mock_ssm):
+        sql = self._sent_sql(collector, mock_ssm)
+        assert "FORCE_MATCHING_SIGNATURE" in sql
+        assert "GROUP BY v.query_key" in sql
+        assert "SUM(v.executions)" in sql
+        assert "SUM(v.elapsed_time)" in sql
+        # A signature of 0 means the statement has none: its own SQL_ID is the group.
+        assert "FORCE_MATCHING_SIGNATURE, 0) <> 0" in sql
+
+    def test_floor_and_cap_apply_after_grouping(self, collector, mock_ssm):
+        sql = self._sent_sql(collector, mock_ssm)
+        assert sql.index("GROUP BY v.query_key") < sql.index("WHERE g.executions >= 10")
+        assert sql.index("WHERE g.executions >= 10") < sql.index("ROWNUM <= 1000")
+
+    def test_costliest_variant_is_the_sample_text(self, collector, mock_ssm):
+        sql = self._sent_sql(collector, mock_ssm)
+        assert "ROW_NUMBER() OVER" in sql
+        assert "PARTITION BY query_key" in sql
+        assert "ORDER BY ELAPSED_TIME DESC, SQL_ID" in sql
+
+    @pytest.mark.passes_on_main
+    def test_grouped_row_becomes_one_pattern(self, collector, mock_ssm):
+        mock_ssm.run_sql_json.side_effect = [
+            [{"s": "APPUSER"}],
+            [
+                {
+                    "query_id": "fms_123",
+                    "query_text": "SELECT * FROM orders WHERE id = 2",
+                    "execution_count": "300",
+                    "total_elapsed_us": "6000000",
+                    "total_cpu_us": "3000000",
+                    "total_logical_reads": "15000",
+                    "total_physical_reads": "30",
+                    "total_rows": "600",
+                    "first_seen": "2026-01-15 10:00:00",
+                    "last_seen": "2026-06-15 14:00:00",
+                }
+            ],
+        ]
+        (p,) = collector.collect_query_patterns()
+        assert p["query_id"] == "fms_123"
+        assert p["execution_count"] == 300
+        assert p["execution_time_ms_avg"] == pytest.approx(20.0)

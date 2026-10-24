@@ -67,7 +67,7 @@ import re
 from dataclasses import dataclass
 
 from src.shared.sql_comments import block_comment_end, block_comments_nest
-from src.shared.sql_spans import scan_grammar_for
+from src.shared.sql_spans import scan_grammar_for, spans
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -536,3 +536,84 @@ def normalize_digest_text(query_text: str, dialect: str) -> NormalizedQuery:
     substitutions.extend(applied)
 
     return NormalizedQuery(text, truncated, tuple(substitutions), incomplete)
+
+
+# ---------------------------------------------------------------------------
+# Literal shape (#412)
+# ---------------------------------------------------------------------------
+
+# A numeric literal: digits with an optional fraction or exponent and an Oracle
+# ``f``/``d`` suffix, or a leading-dot fraction. Not part of a name (``t1``, ``c$2``),
+# a bind variable (``:1``) or a qualified name.
+_NUMBER = r"(?<![\w$#:.])(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?[fFdD]?(?![\w$#])"
+# An ``ORDER BY`` / ``GROUP BY`` list of plain names and positions: ``ORDER BY 1`` and
+# ``ORDER BY 2`` sort by different columns, so the digits there are structure.
+_ORDER_ITEM = r"[\w.\"$#]+(?:\s+(?:ASC|DESC))?(?:\s+NULLS\s+(?:FIRST|LAST))?"
+_ORDERING = (
+    r"\b(?:ORDER|GROUP)\s+(?:SIBLINGS\s+)?BY\s+" + _ORDER_ITEM + r"(?:\s*,\s*" + _ORDER_ITEM + r")*"
+)
+_LITERAL_OR_ORDERING_RE = re.compile(f"(?P<keep>{_ORDERING})|(?P<num>{_NUMBER})", re.IGNORECASE)
+_IN_LIST_RE = re.compile(r"\bIN\s*\(\s*\?(?:\s*,\s*\?)*\s*\)")
+_NATIONAL_PREFIX_RE = re.compile(r"(?<![\w$#])[nN]$")
+_PLACEHOLDER = "?"
+
+
+def _mask_numbers(code: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        return match.group("keep") or _PLACEHOLDER
+
+    return _LITERAL_OR_ORDERING_RE.sub(repl, code).upper()
+
+
+def literal_shape(query_text: str, dialect: str) -> str:
+    """The statement with every literal value masked, so literal variants share one text.
+
+    String literals (in the dialect's own forms, via :mod:`src.shared.sql_spans`: doubled
+    quotes, Oracle ``q'[...]'``, ``N'...'``), numbers, and dates (``DATE '...'``, the
+    strings in ``TO_DATE('...', '...')``) become ``?``; an ``IN`` list of literals becomes
+    ``IN (?, ...)`` whatever its length; keyword case, whitespace, plain comments and a
+    trailing ``;`` are dropped. Everything that makes a statement a different shape is
+    kept: names (quoted identifiers keep their case), operators, the number of values
+    outside an ``IN`` list (``VALUES (?, ?)`` is not ``VALUES (?, ?, ?)``), ``ORDER BY`` /
+    ``GROUP BY`` positions, optimizer hints (``/*+ ... */``) and bind variables.
+
+    Oracle's ``SQL_ID`` hashes the exact text, so it cannot do this; its
+    ``FORCE_MATCHING_SIGNATURE`` does it in the database, and this is the same step for a
+    collection made without it.
+    """
+    grammar = scan_grammar_for(dialect)
+    out: list[str] = []
+    last = 0
+
+    def code(segment: str) -> None:
+        out.append(_mask_numbers(segment))
+
+    for start, end, opener in spans(query_text, grammar):
+        segment = query_text[last:start]
+        text = query_text[start:end]
+        is_comment = opener in ("--", "#", "/*")
+        if is_comment:
+            code(segment)
+            if text.startswith(("/*+", "--+")):
+                out.append(" " + text + " ")
+            else:
+                out.append(" ")
+        elif opener in grammar.identifiers:
+            code(segment)
+            out.append(text)
+        else:
+            out.append(_mask_numbers(_NATIONAL_PREFIX_RE.sub("", segment)))
+            out.append(_PLACEHOLDER)
+        last = end
+    code(query_text[last:])
+
+    shaped = " ".join("".join(out).split())
+    shaped = _IN_LIST_RE.sub("IN (?, ...)", shaped)
+    return shaped.rstrip("; ")
+
+
+def literal_shape_digest(query_text: str, dialect: str) -> str:
+    """A short stable digest of :func:`literal_shape`: equal for literal variants."""
+    import hashlib
+
+    return hashlib.sha256(literal_shape(query_text, dialect).encode()).hexdigest()[:16]

@@ -21,6 +21,13 @@ from src.tools.sql.query_type import statement_query_type
 logger = logging.getLogger(__name__)
 
 # Oracle internal schemas to exclude from collection.
+# The statement-shape key of a V$SQL row (#412): FORCE_MATCHING_SIGNATURE is the same for
+# literal variants of one statement, 0 when a statement has none (then its SQL_ID is the key).
+_ORACLE_QUERY_KEY = (
+    "CASE WHEN NVL(FORCE_MATCHING_SIGNATURE, 0) <> 0 "
+    "THEN 'fms_' || TO_CHAR(FORCE_MATCHING_SIGNATURE) ELSE SQL_ID END"
+)
+
 _SYSTEM_OWNERS = (
     "'SYS'",
     "'SYSTEM'",
@@ -342,7 +349,7 @@ class OracleRemoteCollector:
     def collect_query_patterns(
         self, min_executions: int = 10, limit: int = 1000, owner: str | None = None
     ) -> list[dict]:
-        """Collect query stats from V$SQL.
+        """Collect query stats from V$SQL, one row per statement shape.
 
         No AWR/Diagnostic Pack dependency. Only totals available — no min/max
         per-execution, so percentile estimation is not possible (left as None).
@@ -350,28 +357,73 @@ class OracleRemoteCollector:
 
         Note: V$SQLSTATS lacks PARSING_SCHEMA_NAME, so we query V$SQL which
         has the same metrics plus schema filtering capability.
+
+        V$SQL keeps one row per distinct SQL text (per SQL_ID), so a
+        non-parameterized query gets a row per literal value (#412). SQL_ID
+        hashes the exact text; FORCE_MATCHING_SIGNATURE is the signature Oracle
+        computes with literals replaced by binds, so literal variants share it
+        (Oracle Database Reference, V$SQL; 0 means the statement has none). We
+        group by it, falling back to the SQL_ID when it is 0, SUM the counters,
+        take MIN/MAX of the timestamps, and keep the text of the variant with
+        the highest ELAPSED_TIME (SQL_ID breaks ties). ``min_executions`` and
+        ``limit`` apply after grouping, so they cap query shapes rather than
+        literal-variant rows. This is the same grouping as
+        ``scripts/collect-oracle.sql``. It has not been run against an Oracle
+        database; the tests check the generated SQL and the row handling.
         """
         owner = owner or self.get_current_schema()
         raw = self._query(f"""
             SELECT *
             FROM (
                 SELECT
-                    SQL_ID AS query_id,
-                    REPLACE(REPLACE(
-                        DBMS_LOB.SUBSTR(SQL_FULLTEXT, 4000, 1),
-                        CHR(13), ' '), CHR(10), ' ') AS query_text,
-                    EXECUTIONS AS execution_count,
-                    ELAPSED_TIME AS total_elapsed_us,
-                    CPU_TIME AS total_cpu_us,
-                    BUFFER_GETS AS total_logical_reads,
-                    DISK_READS AS total_physical_reads,
-                    ROWS_PROCESSED AS total_rows,
-                    FIRST_LOAD_TIME AS first_seen,
-                    TO_CHAR(LAST_ACTIVE_TIME, 'YYYY-MM-DD HH24:MI:SS') AS last_seen
-                FROM V$SQL
-                WHERE EXECUTIONS >= {min_executions}
-                  AND PARSING_SCHEMA_NAME = '{owner}'
-                ORDER BY ELAPSED_TIME DESC
+                    g.query_key AS query_id,
+                    REPLACE(REPLACE(g.query_text, CHR(13), ' '), CHR(10), ' ') AS query_text,
+                    g.executions AS execution_count,
+                    g.elapsed_time AS total_elapsed_us,
+                    g.cpu_time AS total_cpu_us,
+                    g.buffer_gets AS total_logical_reads,
+                    g.disk_reads AS total_physical_reads,
+                    g.rows_processed AS total_rows,
+                    g.first_load_time AS first_seen,
+                    TO_CHAR(g.last_active_time, 'YYYY-MM-DD HH24:MI:SS') AS last_seen
+                FROM (
+                    SELECT v.query_key,
+                           SUM(v.executions) AS executions,
+                           SUM(v.elapsed_time) AS elapsed_time,
+                           SUM(v.cpu_time) AS cpu_time,
+                           SUM(v.buffer_gets) AS buffer_gets,
+                           SUM(v.disk_reads) AS disk_reads,
+                           SUM(v.rows_processed) AS rows_processed,
+                           MIN(v.first_load_time) AS first_load_time,
+                           MAX(v.last_active_time) AS last_active_time,
+                           MAX(CASE WHEN v.variant_rank = 1 THEN v.query_text END) AS query_text
+                    FROM (
+                        SELECT p.*,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY query_key
+                                   ORDER BY ELAPSED_TIME DESC, SQL_ID
+                               ) AS variant_rank
+                        FROM (
+                            SELECT
+                                SQL_ID,
+                                {_ORACLE_QUERY_KEY} AS query_key,
+                                DBMS_LOB.SUBSTR(SQL_FULLTEXT, 4000, 1) AS query_text,
+                                EXECUTIONS AS executions,
+                                ELAPSED_TIME AS elapsed_time,
+                                CPU_TIME AS cpu_time,
+                                BUFFER_GETS AS buffer_gets,
+                                DISK_READS AS disk_reads,
+                                ROWS_PROCESSED AS rows_processed,
+                                FIRST_LOAD_TIME AS first_load_time,
+                                LAST_ACTIVE_TIME AS last_active_time
+                            FROM V$SQL
+                            WHERE PARSING_SCHEMA_NAME = '{owner}'
+                        ) p
+                    ) v
+                    GROUP BY v.query_key
+                ) g
+                WHERE g.executions >= {min_executions}
+                ORDER BY g.elapsed_time DESC, g.query_key
             )
             WHERE ROWNUM <= {limit}
         """)  # nosec B608 — min_executions/limit are internal; owner from catalog
