@@ -436,10 +436,17 @@ def test_reality_check_status_line_has_the_distribution_for_the_approval_gate(
     # #1231 (an anti-pattern a redesign removes costs nothing): the whole read of the
     # 2-row wp_wc_tax_rate_classes keeps DynamoDB's 89 without the frequent-full-scan
     # penalty and is first-assigned there: documentdb -1, dynamodb +1.
+    # #1197 (a DocumentDB read with no hit ratio of its own is billed at the source's
+    # buffer-cache hit ratio, 99.99993% on wordpress, bounded: no host memory is reported,
+    # so only the floor applies and 1% of the reads are billed): the wp_options autoload
+    # read (``413c99e4...``) costs DocumentDB $0.08 a month instead of $8.20, so its
+    # DocumentDB score rises 78 -> 79 and breaks its tie with DynamoDB (78): dynamodb -1,
+    # documentdb +1. The reality check consolidates it back into DynamoDB, so its final
+    # engine is unchanged.
     assert rc["before_distribution"] == {
-        "dynamodb": 38,
+        "dynamodb": 37,
         "aurora_mysql": 59,
-        "documentdb": 9,
+        "documentdb": 10,
         "opensearch": 1,
     }
     assert sum(rc["before_distribution"].values()) == sum(rc["after_distribution"].values())

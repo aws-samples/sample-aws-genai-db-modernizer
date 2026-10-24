@@ -329,7 +329,14 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
     FROM wp_wc_tax_rate_classes ORDER BY NAME``, a whole read of a 2-row reference
     table) keeps DynamoDB's 89 without the frequent-full-scan penalty, so it is
     first-assigned to DynamoDB and is no longer a DocumentDB move: the check moves 7 to
-    Aurora MySQL and 2 to DynamoDB."""
+    Aurora MySQL and 2 to DynamoDB.
+
+    #1197 (a DocumentDB read with no hit ratio of its own is billed at the source's
+    buffer-cache hit ratio, bounded: wordpress reports no host memory, so only the floor
+    applies and 1% of its reads are billed): ``413c99e4`` (the wp_options autoload read)
+    costs DocumentDB $0.08 a month instead of $8.20, so DocumentDB rises 78 -> 79 and
+    leaves its tie with DynamoDB (78). DocumentDB first-assigns it and the check moves it
+    back to DynamoDB: the check moves 7 to Aurora MySQL and 3 to DynamoDB."""
 
     FLAGGED = "3a74580e"
 
@@ -343,7 +350,7 @@ class TestAFlagOnWordpressNeverBringsBackDocumentDB:
             if c["from_engine"] == "documentdb"
         ]
         moved = {q["query_id"]: c["to_engine"] for c in from_documentdb for q in c["moved_queries"]}
-        assert sorted(moved.values()).count("dynamodb") == 2
+        assert sorted(moved.values()).count("dynamodb") == 3
         assert sorted(moved.values()).count("aurora_mysql") == 7
         flagged = next(q for q in moved if q.startswith(self.FLAGGED))
         assert moved[flagged] == "dynamodb"

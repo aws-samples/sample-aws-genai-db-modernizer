@@ -22,7 +22,11 @@ sums a table's traffic over every query on it). It has two parts:
   ``row_count``, summed over the query's tables), rounded up to whole units, at least
   one unit. An engine whose reads are billed only on a buffer-cache miss
   (``reads_billed_on_cache_miss_only``) pays for the share the source's own cache did
-  not serve (``cache_hit_ratio_pct``). An engine billed by capacity has no per-request
+  not serve: the query's own ``cache_hit_ratio_pct``, else the collection's
+  instance-wide buffer-cache hit ratio (``metrics.source_host``, #1197) scaled down by
+  the engine's estimate instance memory over the source's, else none (every read billed);
+  at least 1% of every read is billed as a miss (:mod:`src.shared.source_cache`). An
+  engine billed by capacity has no per-request
   price, so its variable cost is 0: the capacity is what its standing cost pays for.
   Scaling that capacity with load is not modelled.
 
@@ -44,9 +48,11 @@ from dataclasses import dataclass, field
 
 from src.agents.referee.cache_overlay import is_write_query
 from src.shared import catalog
+from src.shared.source_cache import CollectionCache, read_hit_ratio
 from src.tools.sql.query_facts import source_engine_of
 
-# The month the per-request prices are multiplied over: the 30 days the cost estimates use.
+# The month the per-request prices are multiplied over: 30 days, the routing model's own
+# (the cost estimates bill a 730-hour month since #1208; one month for both is #1216).
 SECONDS_PER_MONTH = 30 * 24 * 3600
 _BYTES_PER_MB = 1024 * 1024
 
@@ -98,6 +104,9 @@ class QueryCostModel:
     widths: Mapping[str, float] = field(default_factory=dict)
     # The dialect the queries' text is read in (the write check, #1144).
     source_engine: str = field(kw_only=True)
+    # The collection's instance-wide buffer-cache hit ratio and the source's memory, for
+    # a read that reports none of its own (#1197); None when the collection reported none.
+    collection_cache: CollectionCache | None = field(default=None, kw_only=True)
     # engine -> the workload's query ids it could serve, filled the first time it is asked.
     _servable: dict[str, frozenset[str]] = field(default_factory=dict, compare=False, repr=False)
 
@@ -108,6 +117,7 @@ class QueryCostModel:
             workload=tuple(queries),
             widths=row_widths(collector_output),
             source_engine=source_engine_of(collector_output),
+            collection_cache=CollectionCache.from_collector(collector_output),
         )
 
     def workload_ids(self) -> tuple[str, ...]:
@@ -137,7 +147,9 @@ class QueryCostModel:
         units = max(1, math.ceil(rows * width / unit_bytes - 1e-9))
         billed = 1.0
         if not write and prices.reads_billed_on_cache_miss_only:
-            hit = min(100.0, _number(query.get("cache_hit_ratio_pct")))
+            hit, _basis = read_hit_ratio(
+                query, self.collection_cache, prices.estimate_instance_memory_gb
+            )
             billed = 1.0 - hit / 100.0
         return calls * SECONDS_PER_MONTH * units * billed * price / 1_000_000
 

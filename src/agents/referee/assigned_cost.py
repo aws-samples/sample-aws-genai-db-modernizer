@@ -20,6 +20,7 @@ from typing import Any
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES
 from src.contracts.analysis_output import CostEstimate
 from src.shared.catalog.prices import price_basis
+from src.shared.source_cache import CollectionCache
 from src.tools.analysis.cost_estimators import COST_ESTIMATORS
 
 ASSIGNED_QUERIES = "assigned_queries"
@@ -126,10 +127,15 @@ def sized_cost_estimate(
         for t in schema.get("tables") or []
         if isinstance(t, Mapping) and str(t.get("table_id") or "") in touched
     ]
-    subset = {
-        **collector,
-        "database_schema": {**schema, "tables": tables},
-        "queries": {**(collector.get("queries") or {}), "query_patterns": queries},
-    }
+    # The collection's buffer-cache figure is decided on the whole collection, as routing
+    # does (#1197), not again on this engine's few queries.
+    subset = CollectionCache.decided_in(
+        collector,
+        {
+            **collector,
+            "database_schema": {**schema, "tables": tables},
+            "queries": {**(collector.get("queries") or {}), "query_patterns": queries},
+        },
+    )
     estimate = estimator(subset, str(price_basis()["region"]))
     return estimate, _sizing(basis, queries, tables)

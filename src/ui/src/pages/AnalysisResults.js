@@ -2034,6 +2034,12 @@ const AnalysisResultsPage = memo(() => {
                       <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
                     </Box>
                   )}
+                  {/* #1197: the read I/O basis a figure rests on, a report fact (ADR-032) */}
+                  {(synthesis?.facts?.cost_basis_notes || []).map((note, idx) => (
+                    <Box key={`cost-basis-${idx}`} fontSize="body-s" color="text-body-secondary">
+                      <span data-figure="cost-basis">{note}</span>
+                    </Box>
+                  ))}
                 </SpaceBetween>
               </Container>
             )}
