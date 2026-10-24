@@ -46,10 +46,13 @@ The MySQL Collector Agent extracts comprehensive metadata, schema, query pattern
 
 ### Start Server
 
+From the repository root, start the local API on loopback only:
+
 ```bash
-cd code/
-python -m uvicorn src.api.app:app --host 0.0.0.0 --port 8000
+ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
+
+`make local-api` runs the same server (with `--reload`).
 
 ### Endpoints
 
