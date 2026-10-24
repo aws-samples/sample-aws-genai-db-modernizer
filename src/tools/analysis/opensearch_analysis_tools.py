@@ -571,6 +571,12 @@ def _apply_opensearch_search_adjustments(
     )
 
 
+def _append_heavy(profile: TableProfile) -> bool:
+    """At least 0.7 of the table's statements append rows (``TableProfile.insert_ratio``,
+    #1392): the data-stream credit's threshold, on appends only."""
+    return profile.insert_ratio >= 0.7
+
+
 def _apply_opensearch_timeseries_adjustments(
     scores: ScoreBreakdown,
     profile: TableProfile,
@@ -586,9 +592,10 @@ def _apply_opensearch_timeseries_adjustments(
     # pattern_match bonuses: the time-series fits' table_bonus (src/catalog/patterns, #921)
     pattern += catalog_patterns.table_bonuses("opensearch", pattern_types, "timeseries")[0]
 
-    # complexity: write ratio >= 0.7 (read_ratio <= 0.3) → +15
-    write_ratio = 1.0 - profile.read_ratio
-    if write_ratio >= 0.7:
+    # complexity: append-heavy (insert ratio >= 0.7) → +15. Appends only (#1392): a
+    # data stream takes appends, not the row locks, updates and deletes the write
+    # count also holds.
+    if _append_heavy(profile):
         complexity += 15
 
     # complexity: no foreign keys → +10
@@ -644,8 +651,7 @@ def _build_rationale(
                 "suits OpenSearch search scalability."
             )
     elif workload_type == WorkloadType.TIMESERIES:
-        write_ratio = 1.0 - profile.read_ratio
-        if write_ratio >= 0.7:
+        if _append_heavy(profile):
             parts.append("Append-heavy write pattern suits OpenSearch data streams.")
         if profile.total_calls_per_second >= 10:
             parts.append(
