@@ -85,6 +85,9 @@ from .formatting import (
     _fmt_usd,
     _retired_in_use_lines,
     cost_baseline_known,
+    cost_caveat_text,
+    cost_note_text,
+    cost_scope_text,
     cost_sizing_text,
     fmt_num,
     plural_noun,
@@ -879,6 +882,8 @@ def _recommendation(report: dict[str, Any], st: dict[str, ParagraphStyle], names
                 row_accents=[_engine_color(e["engine"]) for e in engines],
             )
         )
+        # #1474: the cost column is the whole plan's, never wave 1's.
+        flow += [_gap(4), _para(cost_note_text(facts), st["small"])]
         notes = " ".join(
             _engine_role_notes_md(engines, migrated, wave_one=heterogeneous_wave(report))
         )
@@ -910,6 +915,7 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
         if cost_baseline_known(tco)
         else []
     )
+    cost_lines.insert(0, cost_scope_text(facts))
     cost_lines += [f"Retired by this plan: {statement}" for statement, _, _ in retired]
     # #1329: the projection leaves out the queries with no engine in the scope.
     cost_lines += [cost_exclusion_text(facts)] if cost_exclusion_text(facts) else []
@@ -987,6 +993,8 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
             _gap(8),
             _para(f"{L_ASSUMPTIONS}: " + "; ".join(assumptions) + ".", st["small"]),
         ]
+    # #1474: the one caveat where the costs are stated.
+    flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     return flow
 
 

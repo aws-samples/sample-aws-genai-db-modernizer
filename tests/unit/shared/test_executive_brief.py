@@ -209,6 +209,31 @@ class TestTheChecks:
     def test_the_deterministic_summary_passes(self) -> None:
         assert self._reasons(_text()) == []
 
+    @pytest.mark.passes_on_main  # the wording a labelled summary may use stays accepted
+    @pytest.mark.parametrize(
+        "unlabelled",
+        [
+            "The projected cost of the full modernization is $505 per month",
+            "The projected cost of the full-modernization plan is $505 per month",
+        ],
+    )
+    def test_the_cost_called_the_full_modernization_passes(self, unlabelled: str) -> None:
+        text = _text().replace(
+            "The projected cost of the full modernization is $505 per month", unlabelled
+        )
+        assert self._reasons(text) == []
+
+    def test_a_cost_not_called_the_full_modernization_is_rejected(self) -> None:
+        """#1474: the monthly cost is the whole plan's; wave 1 costs less."""
+        text = _text().replace("The projected cost of the full modernization is", "The cost is")
+        (msg,) = self._reasons(text)
+        assert "does not call it the full modernization's" in msg
+
+    def test_the_label_in_another_sentence_does_not_count(self) -> None:
+        text = _text().replace("The projected cost of the full modernization is", "The cost is")
+        text += " That is the full modernization."
+        assert any("does not call it" in m for m in self._reasons(text))
+
     def test_missing_cost_is_rejected(self) -> None:
         reasons = self._reasons(_text().replace("$505 per month", "a modest sum"))
         assert reasons == [
@@ -253,7 +278,7 @@ class TestTheChecks:
         facts = _facts(projected_monthly_cost_whole_usd=1235)
         facts["projected_monthly_cost_usd"] = 1234.5
         text = _text(facts)
-        assert "The projected cost is $1,235 per month" in text
+        assert "The projected cost of the full modernization is $1,235 per month" in text
         for stated in ("$1,235", "$1235", "$1,234.50", "$1234.5"):
             assert self._reasons(text.replace("$1,235", stated), facts) == [], stated
 
@@ -276,14 +301,15 @@ class TestTheChecks:
         text = _text().replace("Risk: overall risk is medium.", risk)
         assert self._reasons(text) == []
 
+    @pytest.mark.passes_on_main  # a line without closing punctuation is still a sentence
     def test_a_line_without_closing_punctuation_is_a_sentence(self) -> None:
         text = (
-            "Recommendation: three AWS services at $505 per month\n\n"
+            "Recommendation: three AWS services, the full modernization, at $505 per month\n\n"
             "Risk: overall risk is medium\n\n"
             "Decision: approve wave 1."
         )
         assert self._reasons(text) == []
-        heading = "Cost: $505 per month\nOverall risk: medium\nDecision needed: approve wave 1"
+        heading = "Full modernization cost: $505 per month\nOverall risk: medium\nDecision needed: approve wave 1"
         assert self._reasons(heading) == []
 
     def test_missing_decision_is_rejected(self) -> None:

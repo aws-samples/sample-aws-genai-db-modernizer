@@ -225,6 +225,14 @@ def rationale_text(value: Any) -> str:
     return ""
 
 
+# #1474: every cost figure is the whole plan's, not wave 1's, and says what it rests on.
+COST_SCOPE_LABEL = "Full-modernization estimate: all waves done, every kept engine running."
+COST_CAVEAT = (
+    "Estimates from public on-demand list prices for the stated Region. Check them with "
+    "your own pricing in the AWS Pricing Calculator (https://calculator.aws/)."
+)
+
+
 def cost_assumptions(report: dict[str, Any]) -> list[str]:
     """The TCO's assumptions as every deliverable states them (#1195): its own
     ``tco_analysis.assumptions`` lines, text only, in order."""
@@ -3175,6 +3183,9 @@ def compute_report_facts(
         "price_list": dict(price_list) if price_list is not None else None,
         # #1195: the TCO's assumptions, stated once for every deliverable's cost section.
         "cost_assumptions": cost_assumptions(report),
+        # #1474: what every cost figure is, and the one caveat every deliverable prints.
+        "cost_scope_label": COST_SCOPE_LABEL,
+        "cost_caveat": COST_CAVEAT,
         # #1403: what the executive summary states: the risk level, its drivers, the decision.
         "executive_brief": executive_brief_facts(
             report,

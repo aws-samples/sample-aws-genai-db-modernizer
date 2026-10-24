@@ -287,3 +287,24 @@ describe('cache layer facts (#1252)', () => {
     expect(cacheLayerFactsOf(undefined)).toBeNull();
   });
 });
+
+// #1474: the full-modernization label and the one cost caveat (facts.cost_scope_label,
+// facts.cost_caveat); a report written before them gets the same words.
+describe('cost label and caveat', () => {
+  const { costScopeLabelOf, costCaveatOf, COST_SCOPE_LABEL, COST_CAVEAT } = require('../reportFacts');
+
+  test('print the stored words', () => {
+    const synthesis = { facts: { cost_scope_label: 'Whole plan.', cost_caveat: 'Check prices.' } };
+    expect(costScopeLabelOf(synthesis)).toBe('Whole plan.');
+    expect(costCaveatOf(synthesis)).toBe('Check prices.');
+  });
+
+  test('an older report gets the same words', () => {
+    [null, {}, { facts: {} }, { facts: { cost_scope_label: null, cost_caveat: null } }].forEach((synthesis) => {
+      expect(costScopeLabelOf(synthesis)).toBe(COST_SCOPE_LABEL);
+      expect(costCaveatOf(synthesis)).toBe(COST_CAVEAT);
+    });
+    expect(COST_SCOPE_LABEL).toBe('Full-modernization estimate: all waves done, every kept engine running.');
+    expect(COST_CAVEAT).toContain('https://calculator.aws/');
+  });
+});

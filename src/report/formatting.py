@@ -9,7 +9,11 @@ from typing import Any
 
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES, display_engine
 from src.shared.engines_in_use import retired_in_use_statement
-from src.shared.report_facts import cost_baseline_known  # noqa: F401  (#1403: one rule)
+from src.shared.report_facts import (  # noqa: F401  (#1403: one rule)
+    COST_CAVEAT,
+    COST_SCOPE_LABEL,
+    cost_baseline_known,
+)
 
 
 def artifact_stem(
@@ -225,6 +229,21 @@ def price_list_text(facts: dict[str, Any]) -> str:
     if undated:
         when += "; not recorded for " + ", ".join(display_engine(e) for e in undated)
     return f"{basis['source']}, {basis['region']} {basis['pricing_model']}, {when}"
+
+
+def cost_scope_text(facts: dict[str, Any]) -> str:
+    """The full-modernization label every cost figure carries (#1474), as the facts state it."""
+    return str(facts.get("cost_scope_label") or COST_SCOPE_LABEL)
+
+
+def cost_caveat_text(facts: dict[str, Any]) -> str:
+    """The one caveat printed where costs appear (#1474), as the facts state it."""
+    return str(facts.get("cost_caveat") or COST_CAVEAT)
+
+
+def cost_note_text(facts: dict[str, Any]) -> str:
+    """Label and caveat together, for a cost table that stands alone (#1474)."""
+    return f"{cost_scope_text(facts)} {cost_caveat_text(facts)}"
 
 
 def cost_sizing_text(sizing: Any) -> str:

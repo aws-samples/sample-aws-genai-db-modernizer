@@ -213,7 +213,8 @@ def _recommendation(facts: Mapping[str, Any], brief: Mapping[str, Any], database
     shown = _whole(brief, "projected_monthly_cost_whole_usd", cost)
     if isinstance(cost, (int, float)) and cost > 0 and shown:
         sentences.append(
-            f"The projected cost is {shown} per month {_price_basis(facts.get('price_list'))}."
+            f"The projected cost of the full modernization is {shown} per month "
+            f"{_price_basis(facts.get('price_list'))}."
         )
     current = brief.get("source_monthly_cost_usd")
     savings = brief.get("savings_percent")
@@ -382,6 +383,10 @@ _AMOUNT = re.compile(
 )
 
 
+# #1474: the sentence that states the projected cost says it is the whole plan's.
+_FULL_MODERNIZATION = re.compile(r"\bfull[\s-]+modernization\b", re.IGNORECASE)
+
+
 def _amounts(text: str) -> list[tuple[str, int]]:
     """Each dollar amount in ``text``: (as written, rounded half up to whole dollars)."""
     out = []
@@ -469,6 +474,7 @@ def check_summary_brief(summary: str, facts: Mapping[str, Any] | None) -> list[d
       ``about $505 a month``, ``$505.02``) rounds to the facts' whole-dollar projected
       cost (``executive_brief.projected_monthly_cost_whole_usd``);
     - a dollar amount rounds to no cost the facts state (``$510`` for ``$505.02``);
+    - the sentence that states that cost does not say "full modernization" (#1474);
     - no sentence names the overall risk level within two words of "risk";
     - no sentence asks the reader to approve the decision wave ("approve wave 1",
       "approve wave one", "approval of the first wave"), or the only one says not to;
@@ -498,6 +504,16 @@ def check_summary_brief(summary: str, facts: Mapping[str, Any] | None) -> list[d
                 _finding(
                     "executive structure: the summary leaves out the projected monthly cost "
                     f"{whole_usd(whole)}"
+                )
+            )
+        elif not any(
+            _FULL_MODERNIZATION.search(s) and any(r == whole for _, r in _amounts(s))
+            for s in sentences
+        ):
+            findings.append(
+                _finding(
+                    "executive structure: the sentence that states the projected monthly cost "
+                    "does not call it the full modernization's"
                 )
             )
     known = _fact_dollars(facts)

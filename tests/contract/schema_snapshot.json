@@ -22556,6 +22556,38 @@
                     "kind": "array"
                   }
                 },
+                "cost_caveat": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "cost_scope_label": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
                 "critical_high_risk_count": {
                   "required": false,
                   "schema": {
@@ -29509,8 +29541,8 @@
         }
       }
     },
-    "schema_hash": "4eafee525c23b4d47ab3e668313ed369b6476436b38a5bee958a020673a22734",
-    "version": "1.65"
+    "schema_hash": "3d0959d33ffb94e80f62de3b9168a0b793c104eca6bafa51cda9f41432d1f85a",
+    "version": "1.66"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

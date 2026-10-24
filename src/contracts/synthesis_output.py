@@ -536,6 +536,9 @@ Version History:
   (analysis_output.CarriedWrite): the write-group members of the effective assignment
   their engine serves poorly, with their intent and the target-native approach (#1362),
   for the detailed engineering report; None in a report written before
+- 1.66 (2026-10-24, #1474): Added optional facts.cost_scope_label and facts.cost_caveat:
+  the full-modernization label and the one caveat every deliverable prints where costs
+  appear; None for a report written before
 """
 
 from datetime import datetime
@@ -2347,6 +2350,21 @@ class ReportFacts(BaseModel):
             "cost section states them (#1195)"
         ),
     )
+    cost_scope_label: str | None = Field(
+        None,
+        description=(
+            "What every cost figure is: the full-modernization estimate, all waves done "
+            "(#1474); None for a report written before it"
+        ),
+    )
+    cost_caveat: str | None = Field(
+        None,
+        description=(
+            "The one caveat every deliverable prints where costs appear: public on-demand "
+            "list prices, to check against the customer's own pricing (#1474); None for a "
+            "report written before it"
+        ),
+    )
     price_list: PriceListFacts | None = Field(
         None,
         description=(
@@ -2406,7 +2424,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.65",
+        default="1.66",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

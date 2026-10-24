@@ -324,6 +324,9 @@ def test_backfill_gives_an_older_report_the_figures_this_run_stored(figure: str)
         assert read.pop("query_total_count") == stored["in_scope_query_count"]
     # #1195: facts.cost_assumptions, also added after the run was recorded.
     read.pop("cost_assumptions")
+    # #1474: facts.cost_scope_label and facts.cost_caveat, likewise.
+    read.pop("cost_scope_label")
+    read.pop("cost_caveat")
     # #1252: facts.cache_layer, likewise added after the run was recorded.
     if "cache_layer" not in stored:
         cache = read.pop("cache_layer")

@@ -44,7 +44,10 @@ def test_the_summary_has_the_three_parts_with_the_facts_figures(run: PipelineRes
     # No cents in the summary (#1403): the whole-dollar figure the facts computed.
     whole = brief["projected_monthly_cost_whole_usd"]
     assert whole == WHOLE_DOLLARS[run.db]
-    assert f"The projected cost is {whole_usd(whole)} per month" in recommendation
+    assert (
+        f"The projected cost of the full modernization is {whole_usd(whole)} per month"
+        in recommendation
+    )
     assert usd(facts["projected_monthly_cost_usd"]) not in report["summary"]
     assert facts["price_list"]["region"] in recommendation
     assert f"overall risk is {brief['overall_risk_level'].lower()}" in risk

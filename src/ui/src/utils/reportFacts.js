@@ -297,6 +297,22 @@ export function costSizingText(t, sizing) {
     : text;
 }
 
+// #1474: what every cost figure is, and the one caveat printed where costs appear
+// (facts.cost_scope_label, facts.cost_caveat). A report written before them gets the
+// same words (the Python constants COST_SCOPE_LABEL and COST_CAVEAT; a test keeps them equal).
+export const COST_SCOPE_LABEL = 'Full-modernization estimate: all waves done, every kept engine running.';
+export const COST_CAVEAT = 'Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator (https://calculator.aws/).';
+
+export function costScopeLabelOf(synthesis) {
+  const label = factsOf(synthesis) && factsOf(synthesis).cost_scope_label;
+  return typeof label === 'string' && label ? label : COST_SCOPE_LABEL;
+}
+
+export function costCaveatOf(synthesis) {
+  const caveat = factsOf(synthesis) && factsOf(synthesis).cost_caveat;
+  return typeof caveat === 'string' && caveat ? caveat : COST_CAVEAT;
+}
+
 // #1195: the TCO's assumption lines (facts.cost_assumptions), as every deliverable
 // states them; a hand-built report with no facts block shows its own list.
 export function costAssumptionsOf(synthesis) {

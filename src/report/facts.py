@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import Any
 
 from src.shared.report_facts import (
+    COST_CAVEAT,
+    COST_SCOPE_LABEL,
     access_pattern_facts,
     apply_cross_engine_wave_one,
     cache_layer_facts,
@@ -78,6 +80,10 @@ def report_facts(report: dict[str, Any]) -> dict[str, Any]:
         if "cost_assumptions" not in facts:
             # A block written before #1195: the TCO's own assumption lines.
             missing["cost_assumptions"] = cost_assumptions(report)
+        if not facts.get("cost_caveat") or not facts.get("cost_scope_label"):
+            # A block written before #1474: the same label and caveat.
+            missing["cost_scope_label"] = COST_SCOPE_LABEL
+            missing["cost_caveat"] = COST_CAVEAT
         if "cache_layer" not in facts:
             # A block written before #1252.
             missing["cache_layer"] = cache_layer_facts(report)

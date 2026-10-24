@@ -36,6 +36,7 @@ from .formatting import (
     _cost_baseline_text,
     _fmt_usd,
     cost_baseline_known,
+    cost_note_text,
     fmt_num,
     plural_noun,
 )
@@ -305,6 +306,7 @@ def render_final_summary(
     ]
     lines.append(f"- Target engines: {', '.join(labelled) if labelled else 'none'}")
     lines.append(f"- Projected monthly cost: {_fmt_usd(facts.get('projected_monthly_cost_usd'))}")
+    lines.append(f"- {cost_note_text(facts)}")
     if cost_baseline_known(tco):
         current, savings = _cost_baseline_text(tco)
         lines += [f"- Current monthly cost (source): {current}", f"- Savings: {savings}"]

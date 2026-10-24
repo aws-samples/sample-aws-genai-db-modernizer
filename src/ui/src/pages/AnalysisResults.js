@@ -70,7 +70,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -1943,6 +1943,8 @@ const AnalysisResultsPage = memo(() => {
                   noEngineInScope={noEngineInScopeOf(synthesis)}
                   queryPatterns={queryPatternCountsOf(synthesis)}
                   priceList={synthesis?.facts?.price_list}
+                  costScopeLabel={costScopeLabelOf(synthesis)}
+                  costCaveat={costCaveatOf(synthesis)}
                   targetEngines={(
                     <>
                       <Box fontSize="heading-m">
@@ -2004,6 +2006,9 @@ const AnalysisResultsPage = memo(() => {
             {costBreakdown.length > 0 && (
               <Container id="cost-breakdown-section" header={<Header variant="h2" description={t('analysis-results.cost-breakdown.description')}>{t('analysis-results.cost-breakdown.title')}</Header>}>
                 <SpaceBetween size="m">
+                  <Box fontSize="body-s" color="text-body-secondary">
+                    <span data-figure="cost-scope">{costScopeLabelOf(synthesis)}</span>
+                  </Box>
                   <ColumnLayout columns={costBreakdown.length} variant="text-grid">
                     {costBreakdown.map((cb, idx) => {
                       // #358: the cache layer's card is labeled the same way
@@ -2036,6 +2041,9 @@ const AnalysisResultsPage = memo(() => {
                       <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
                     </Box>
                   )}
+                  <Box fontSize="body-s" color="text-body-secondary">
+                    <span data-figure="cost-caveat">{costCaveatOf(synthesis)}</span>
+                  </Box>
                 </SpaceBetween>
               </Container>
             )}

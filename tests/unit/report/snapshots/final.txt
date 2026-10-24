@@ -11,6 +11,7 @@ A second paragraph.
 - Workload: 107 queries in 97 distinct query patterns
 - Target engines: Aurora MySQL, ElastiCache (cache layer)
 - Projected monthly cost: $582.76
+- Full-modernization estimate: all waves done, every kept engine running. Estimates from public on-demand list prices for the stated Region. Check them with your own pricing in the AWS Pricing Calculator (https://calculator.aws/).
 - Migration: 3 waves
 - Cache layer note: 15 cache candidates, 12 designed; 3 stay on their owner engine.
 

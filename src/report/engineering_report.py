@@ -43,6 +43,8 @@ from .formatting import (
     _retired_in_use_lines,
     access_pattern_scope,
     cost_baseline_known,
+    cost_caveat_text,
+    cost_scope_text,
     cost_sizing_text,
     fallback_withheld_reason,
     fmt_num,
@@ -986,7 +988,7 @@ def render_engineering_report_md(
         # #949 (#1028): with no source baseline the current-cost and savings lines are
         # left out, not "source cost not provided" / "not available".
         known = cost_baseline_known(tco)
-        out += ["## Cost", ""]
+        out += ["## Cost", "", escaping.md_text(cost_scope_text(facts)), ""]
         if known:
             out.append(f"- Current monthly (source): {escaping.md_text(current_cost_text)}")
         out.append(
@@ -1013,6 +1015,8 @@ def render_engineering_report_md(
         assumptions = facts.get("cost_assumptions") or []
         if assumptions:
             out += [f"Assumptions: {escaping.md_text('; '.join(assumptions))}.", ""]
+        # #1474: the one caveat where the costs are stated.
+        out += [escaping.md_text(cost_caveat_text(facts)), ""]
 
     mappings = [m for m in (report.get("table_mappings") or []) if isinstance(m, dict)]
     mapped = int((facts.get("table_basis") or {}).get("mapped_tables") or 0)

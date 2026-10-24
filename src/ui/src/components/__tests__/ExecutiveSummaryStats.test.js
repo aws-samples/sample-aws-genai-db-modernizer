@@ -252,3 +252,16 @@ test('estimates priced from different tables name each engine\'s date', () => {
     + '2026-07-01 (DynamoDB); not recorded for ElastiCache',
   );
 });
+
+// #1474: the projected-cost tile says it is the full-modernization estimate, with the caveat.
+test('the projected-cost tile labels the figure and states the caveat', () => {
+  render({ costScopeLabel: 'Full-modernization estimate: all waves done.', costCaveat: 'Check your own pricing.' });
+  expect(container.querySelector('[data-figure="cost-scope"]').textContent).toBe('Full-modernization estimate: all waves done.');
+  expect(container.querySelector('[data-figure="cost-caveat"]').textContent).toBe('Check your own pricing.');
+});
+
+test('no label or caveat is shown when none is given', () => {
+  render({});
+  expect(container.querySelector('[data-figure="cost-scope"]')).toBeNull();
+  expect(container.querySelector('[data-figure="cost-caveat"]')).toBeNull();
+});
