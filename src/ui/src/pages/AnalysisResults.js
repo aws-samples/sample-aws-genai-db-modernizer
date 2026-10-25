@@ -70,7 +70,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2472,6 +2472,7 @@ const AnalysisResultsPage = memo(() => {
                               const showMitigation = risk.mitigation
                                 && !mitigationRepeatsDescription(risk.mitigation, body);
                               const affectedTables = Array.isArray(risk.affected_tables) ? risk.affected_tables : [];
+                              const copySync = derivedCopySyncOf(synthesis, risk.risk_id);
                               return (
                                 <Box
                                   key={risk.risk_id || idx}
@@ -2500,6 +2501,16 @@ const AnalysisResultsPage = memo(() => {
                                       <Box fontSize="body-s" color="text-body-secondary">
                                         {t('analysis-results.risk-assessment.affected-tables')}: {affectedTables.join(', ')}
                                       </Box>
+                                    )}
+                                    {copySync && (
+                                      <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>
+                                        {copySync.lines.map((line, i) => (
+                                          <li key={i}><Box fontSize="body-s" color="text-body-secondary"><ProseText text={line} /></Box></li>
+                                        ))}
+                                        {copySync.basis && (
+                                          <li><Box fontSize="body-s" color="text-body-secondary">{t('analysis-results.risk-assessment.sync-basis')}: <ProseText text={copySync.basis} /></Box></li>
+                                        )}
+                                      </ul>
                                     )}
                                     {Array.isArray(risk.details) && risk.details.length > 0 && (
                                       <ul className="risk-details" style={{ margin: 0, paddingLeft: '1.25em' }}>

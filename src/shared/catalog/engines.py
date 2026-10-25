@@ -43,8 +43,10 @@ Fields:
   ``instance_hourly`` (instance type to hourly price), ``instance_memory_gib`` and
   ``backup_price_per_gb_month``, ``cross_az_transfer_price_per_gb``, and the per-request prices
   ``read_unit_price_per_million`` / ``write_unit_price_per_million`` (USD per million
-  units). ``read_unit_bytes`` / ``write_unit_bytes`` (the bytes one unit reads or
-  writes) stay in the engine file; an engine billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
+  units) and, for DynamoDB, ``streams_read_unit_price_per_million`` (a Streams read
+  request unit, #1527). ``read_unit_bytes`` / ``write_unit_bytes`` /
+  ``streams_read_unit_bytes`` (the bytes one unit reads or writes) stay in the engine
+  file; an engine billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
   the engine's buffer cache is not billed. ``estimate_instance_class`` /
   ``estimate_instance_memory_gb`` (a property): the instance an engine's cost estimate
   prices and its memory, read from the price table's ``instance_memory_gib`` for that
@@ -180,6 +182,8 @@ class EnginePricing(BaseModel):
     read_unit_bytes: int | None = Field(default=None, gt=0)
     write_unit_price_per_million: float | None = Field(default=None, ge=0)
     write_unit_bytes: int | None = Field(default=None, gt=0)
+    streams_read_unit_price_per_million: float | None = Field(default=None, ge=0)
+    streams_read_unit_bytes: int | None = Field(default=None, gt=0)
     reads_billed_on_cache_miss_only: bool = False
     estimate_instance_class: str | None = Field(default=None, min_length=1)
 
@@ -193,7 +197,7 @@ class EnginePricing(BaseModel):
 
     @model_validator(mode="after")
     def _a_unit_price_has_its_unit_size(self) -> EnginePricing:
-        for side in ("read", "write"):
+        for side in ("read", "write", "streams_read"):
             priced = getattr(self, f"{side}_unit_price_per_million") is not None
             sized = getattr(self, f"{side}_unit_bytes") is not None
             if priced != sized:
@@ -348,6 +352,7 @@ LIST_PRICE_FIELDS = frozenset(
         "cross_az_transfer_price_per_gb",
         "read_unit_price_per_million",
         "write_unit_price_per_million",
+        "streams_read_unit_price_per_million",
     }
 )
 

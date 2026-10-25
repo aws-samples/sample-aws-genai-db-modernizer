@@ -24,6 +24,9 @@ max_burden_per_unique_query = 100
 list_prices = "dynamodb.on_demand"
 read_unit_bytes = 4096
 write_unit_bytes = 1024
+# A Streams read request unit is one GetRecords call, which returns up to 1 MB (#1527,
+# aws.amazon.com/dynamodb/pricing/on-demand/).
+streams_read_unit_bytes = 1048576
 
 # Score-dimension weights (ADR-031 Decision 5). Cost is the same 10% for every engine
 # (#1002); the first profile is the engine's default.

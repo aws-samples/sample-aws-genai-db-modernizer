@@ -818,7 +818,7 @@ def entity_conflicts(homes: list[_Home]) -> list[str]:
     return failures
 
 
-_WRITE_OPERATIONS = frozenset(
+WRITE_OPERATIONS = frozenset(
     {"PutItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "TransactWriteItems"}
 )
 
@@ -929,7 +929,7 @@ def independent_homes(homes: list[_Home], access_patterns: list[dict]) -> list[d
         shown_copies = ", ".join(copies)
         shown_sources = ", ".join(sources)
         for ap in access_patterns:
-            if ap.get("operation") in _WRITE_OPERATIONS and any(
+            if ap.get("operation") in WRITE_OPERATIONS and any(
                 _on_rows(ap, c, normalised) for c in copies
             ):
                 _add_note(

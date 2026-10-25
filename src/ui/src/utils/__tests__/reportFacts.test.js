@@ -5,6 +5,7 @@
  */
 import {
   cacheLayerFactsOf,
+  derivedCopySyncOf,
   accessPatternTotals,
   closeCallsOf,
   currentTradeOffs,
@@ -306,5 +307,33 @@ describe('cost label and caveat', () => {
     });
     expect(COST_SCOPE_LABEL).toBe('Full-modernization estimate: all waves done, every kept engine running.');
     expect(COST_CAVEAT).toContain('https://calculator.aws/');
+  });
+});
+
+describe('derivedCopySyncOf (#1527)', () => {
+  const sync = (riskId, extra = {}) => ({
+    risk_id: riskId,
+    path_line: `Sync path ${riskId}`,
+    cost_line: `Sync cost ${riskId}`,
+    ...extra,
+  });
+  const withSyncs = {
+    facts: { derived_copy_sync: { syncs: [sync('RISK-002'), sync('RISK-005')], assumptions: ['One.', 'Two.'] } },
+  };
+
+  test('is the sync listed under the risk, with the basis on the first only', () => {
+    expect(derivedCopySyncOf(withSyncs, 'RISK-002')).toEqual({
+      lines: ['Sync path RISK-002', 'Sync cost RISK-002'],
+      basis: 'One. Two.',
+    });
+    expect(derivedCopySyncOf(withSyncs, 'RISK-005').basis).toBe('');
+  });
+
+  test('is null for another risk, a risk with no id, and a report without the fact', () => {
+    expect(derivedCopySyncOf(withSyncs, 'RISK-001')).toBeNull();
+    expect(derivedCopySyncOf(withSyncs, undefined)).toBeNull();
+    expect(derivedCopySyncOf({ facts: { derived_copy_sync: null } }, 'RISK-002')).toBeNull();
+    expect(derivedCopySyncOf({ facts: {} }, 'RISK-002')).toBeNull();
+    expect(derivedCopySyncOf({}, 'RISK-002')).toBeNull();
   });
 });

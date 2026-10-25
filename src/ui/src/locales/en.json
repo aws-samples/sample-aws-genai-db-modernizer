@@ -300,6 +300,7 @@
   "analysis-results.risk-assessment.no-risks-at-severity": "No open risks at this severity.",
   "analysis-results.risk-assessment.mitigation": "Mitigation",
   "analysis-results.risk-assessment.affected-tables": "Affects",
+  "analysis-results.risk-assessment.sync-basis": "Basis",
   "analysis-results.risk-assessment.resolved-title": "Resolved by the assignment",
   "analysis-results.risk-assessment.resolved-count_one": "{{count}} risk resolved by the assignment",
   "analysis-results.risk-assessment.resolved-count_other": "{{count}} risks resolved by the assignment",

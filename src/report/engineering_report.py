@@ -40,6 +40,7 @@ from .architecture import (
 )
 from .cache_layer import _cache_layer_md, cache_layer_text
 from .close_calls import close_calls_md
+from .derived_copy_sync import derived_copy_sync_md
 from .engine_choices import _reroutes_md, _tied_queries_md, auto_decided_md
 from .engine_roles import _RELATIONAL_ENGINES, SEARCH_READ_MODEL
 from .facts import report_facts
@@ -994,6 +995,8 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
                 affects = _affects_line(r)
                 if affects:
                     out.append(affects)
+                # #1527: a design conflict's derived copies, their sync and its cost.
+                out += derived_copy_sync_md(report, r.get("risk_id"))
                 # #950: the design texts the risk covers, in full (the executive
                 # report states only their count), each one once in this report.
                 out += _risk_details_md(report, r, eng)

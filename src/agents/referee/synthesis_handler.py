@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.aurora_choice import source_database_engine, source_database_version
 from src.agents.referee.capability_registry import triage_query_capabilities
+from src.agents.referee.derived_copy_sync import derived_copy_sync_facts
 from src.agents.referee.engine_scope import scope_of, scope_unservable_rows
 from src.agents.referee.flagged_unservable import flagged_unservable_records
 from src.agents.referee.migration_risks import (
@@ -1396,6 +1397,21 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
         engine_scope=scope_of(data.triage),
         # #1196: the price table each TCO figure was priced from; since #1195 the TCO
         # prices each kept engine itself, so each row records its own (ADR-032 Decision 6).
+        # #1527: the stream sync of the DynamoDB design's derived copies, by the design
+        # conflict risk it sits under.
+        derived_copy_sync=next(
+            (
+                found
+                for artifacts in data.engines.values()
+                if (
+                    found := derived_copy_sync_facts(
+                        artifacts.schema_design,
+                        (output_data.get("risk_assessment") or {}).get("risks") or [],
+                    )
+                )
+            ),
+            None,
+        ),
         price_list=estimates_price_basis(
             {
                 str(row.get("database")): row.get("price_list")

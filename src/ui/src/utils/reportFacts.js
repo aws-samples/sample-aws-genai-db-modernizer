@@ -320,3 +320,19 @@ export function costAssumptionsOf(synthesis) {
   if (Array.isArray(lines)) return lines;
   return (synthesis && synthesis.tco_analysis && synthesis.tco_analysis.assumptions) || [];
 }
+
+// #1527: the stream sync of a DynamoDB design conflict's derived copies
+// (facts.derived_copy_sync), printed under the risk it belongs to. The sentences are the
+// facts' own; `basis` is the figures' assumptions, carried by the first sync only.
+// Null for a risk with no sync and for a report written before the fact.
+export function derivedCopySyncOf(synthesis, riskId) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).derived_copy_sync;
+  const syncs = fact && Array.isArray(fact.syncs) ? fact.syncs : [];
+  const at = riskId ? syncs.findIndex(s => s.risk_id === riskId) : -1;
+  if (at < 0) return null;
+  const assumptions = Array.isArray(fact.assumptions) ? fact.assumptions : [];
+  return {
+    lines: [syncs[at].path_line, syncs[at].cost_line].filter(Boolean),
+    basis: at === 0 ? assumptions.join(' ') : '',
+  };
+}

@@ -86,7 +86,15 @@ class TestTheErrorsTheResearchFound:
             "read_unit_price_per_million": 0.125,
             "write_unit_price_per_million": 0.625,
             "storage_price_per_gb_month": 0.25,
+            "streams_read_unit_price_per_million": 0.2,
         }
+
+    def test_dynamodb_streams_price_skips_the_free_tier_row(self, prices) -> None:
+        """$0.0000002 a DynamoDB Streams read request unit beyond the free 2.5 million (#1527)."""
+        assert prices["dynamodb.on_demand"]["streams_read_unit_price_per_million"] == 0.2
+        both = rp.Selector("AmazonDynamoDB", {"usageType": "USE1-Streams-Requests"}, "Requests")
+        with pytest.raises(ValueError, match="2 different figures"):
+            rp._pick(both, rp.load_offers(FIXTURES), "dynamodb.on_demand.streams")
 
 
 class TestTheCommittedTable:

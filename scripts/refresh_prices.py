@@ -233,6 +233,14 @@ SPECS: dict[str, dict[str, object]] = {
         "write_unit_price_per_million": Selector(
             "AmazonDynamoDB", {"usageType": "WriteRequestUnits"}, "WriteRequestUnits", scale=1e6
         ),
+        # A DynamoDB Streams read request unit (one GetRecords call, #1527): the first 2.5
+        # million a month are free (StartingRange 0); the estimate bills from the first unit.
+        "streams_read_unit_price_per_million": Selector(
+            "AmazonDynamoDB",
+            {"usageType": "USE1-Streams-Requests", "StartingRange": "2500000"},
+            "Requests",
+            scale=1e6,
+        ),
         # The first 25 GB-months are free (StartingRange 0); the estimate bills from the first GB.
         "storage_price_per_gb_month": Selector(
             "AmazonDynamoDB",

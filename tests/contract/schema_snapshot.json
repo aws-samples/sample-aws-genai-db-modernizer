@@ -22781,6 +22781,195 @@
                     ]
                   }
                 },
+                "derived_copy_sync": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "assumptions": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "scalar",
+                                "type": "string"
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "prices": {
+                            "required": true,
+                            "schema": {
+                              "kind": "object",
+                              "properties": {
+                                "streams_read_unit_price_per_million": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "number"
+                                  }
+                                },
+                                "write_unit_price_per_million": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "minimum": 0,
+                                    "type": "number"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "syncs": {
+                            "required": false,
+                            "schema": {
+                              "items": {
+                                "kind": "object",
+                                "properties": {
+                                  "authoritative_home": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "copy_write_cost_usd": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "cost_line": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "derived": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "object",
+                                        "properties": {
+                                          "cost_usd": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "minimum": 0,
+                                              "type": "number"
+                                            }
+                                          },
+                                          "table": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "write_units_per_month": {
+                                            "required": false,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "minimum": 0,
+                                              "type": "number"
+                                            }
+                                          }
+                                        }
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "monthly_cost_usd": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "path_line": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "replayed_writes_per_second": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "risk_id": {
+                                    "required": true,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "source_tables": {
+                                    "required": false,
+                                    "schema": {
+                                      "items": {
+                                        "kind": "scalar",
+                                        "type": "string"
+                                      },
+                                      "kind": "array"
+                                    }
+                                  },
+                                  "stream_read_cost_usd": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "number"
+                                    }
+                                  },
+                                  "stream_read_units_per_month": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    }
+                                  },
+                                  "summary_line": {
+                                    "required": false,
+                                    "schema": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "kind": "array"
+                            }
+                          },
+                          "total_monthly_cost_usd": {
+                            "required": false,
+                            "schema": {
+                              "kind": "scalar",
+                              "minimum": 0,
+                              "type": "number"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "design_review_reroute_count": {
                   "required": false,
                   "schema": {
@@ -30035,8 +30224,8 @@
         }
       }
     },
-    "schema_hash": "8966ee1854995dada3ba5b3aaf626dca2ab75a809549afea4d120206d1634641",
-    "version": "1.68"
+    "schema_hash": "180bbed2515988ebc76ed02ff98046a9fa114bdf3004d06a860860936a115d04",
+    "version": "1.69"
   },
   "triage_output.TriageOutputContract": {
     "fields": {

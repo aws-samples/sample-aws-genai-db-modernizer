@@ -72,6 +72,7 @@ from src.shared.workload_fit_labels import CACHE_FIT_DEFINITION, WORKLOAD_FIT_DE
 
 from .architecture import _architecture_engines
 from .cache_layer import cache_change_notes, cache_layer_text
+from .derived_copy_sync import derived_copy_sync_pdf
 from .engine_choices import (
     AUTO_DECIDED_NOTE,
     PENDING_CHOICES_NOTE,
@@ -1162,6 +1163,9 @@ def _risks(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) ->
             m = without_table_names(mitigation, names)
             if m:
                 content.append(_labelled("Mitigation", m, st["small"]))
+        # #1527: a design conflict's derived copies, their sync and its cost.
+        for label, text in derived_copy_sync_pdf(report, r.get("risk_id")):
+            content.append(_labelled(label, text, st["small"]))
         if r.get("details") and "engineering report" not in body:
             content.append(_para(RISK_DETAILS_POINTER, st["small"]))
         flow += [_gap(10), _Panel(content, _severity_color(level_r))]

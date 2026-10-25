@@ -551,6 +551,8 @@ Version History:
   source_queries[].cached_read: the cache layer's patterns make their own groups, whose
   queries are cached reads, so the owners' groups are a partition of the queries they
   serve
+- 1.69 (2026-10-25, #1527): facts.derived_copy_sync: the DynamoDB derived copies' stream
+  sync, listed and priced; None in an older report
 """
 
 from datetime import datetime
@@ -1793,6 +1795,49 @@ class CacheLayerFacts(BaseModel):
     )
 
 
+class DerivedCopyFacts(BaseModel):
+    """One derived copy's share of a stream sync (#1527)."""
+
+    table: str = Field(..., description="The derived copy's DynamoDB table")
+    write_units_per_month: float = Field(0.0, ge=0, description="Write request units it applies")
+    cost_usd: float = Field(0.0, ge=0, description="Their on-demand cost a month")
+
+
+class DerivedCopySyncRow(BaseModel):
+    """One source table's stream sync: the authoritative home to its derived copies (#1527)."""
+
+    risk_id: str = Field(..., description="The design-conflict risk the deliverables print it by")
+    source_tables: list[str] = Field(default_factory=list)
+    authoritative_home: str
+    derived: list[DerivedCopyFacts] = Field(default_factory=list)
+    replayed_writes_per_second: float = Field(
+        0.0, ge=0, description="Writes a second on the source rows replayed to every copy"
+    )
+    stream_read_units_per_month: int = Field(0, ge=0)
+    stream_read_cost_usd: float = Field(0.0, ge=0)
+    copy_write_cost_usd: float = Field(0.0, ge=0)
+    monthly_cost_usd: float = Field(0.0, ge=0, description="Stream reads plus copy writes")
+    path_line: str = Field("", description="The sync path, as the engineering report states it")
+    cost_line: str = Field("", description="The sync cost, as the engineering report states it")
+    summary_line: str = Field(
+        "", description="The sync in one sentence naming no table (the executive report)"
+    )
+
+
+class DerivedCopyPrices(BaseModel):
+    streams_read_unit_price_per_million: float = Field(..., ge=0)
+    write_unit_price_per_million: float = Field(..., ge=0)
+
+
+class DerivedCopySyncFacts(BaseModel):
+    """The stream sync of DynamoDB derived copies, listed and priced (#1527)."""
+
+    syncs: list[DerivedCopySyncRow] = Field(default_factory=list)
+    total_monthly_cost_usd: float = Field(0.0, ge=0)
+    prices: DerivedCopyPrices
+    assumptions: list[str] = Field(default_factory=list)
+
+
 class RelationalGroupRow(BaseModel):
     """One "Queries on Aurora by table" row (#1410): a relational engine's own queries
     in one query group."""
@@ -2370,6 +2415,14 @@ class ReportFacts(BaseModel):
             "when the report has no cache_overlay"
         ),
     )
+    derived_copy_sync: DerivedCopySyncFacts | None = Field(
+        None,
+        description=(
+            "The stream sync of the DynamoDB derived copies (#1527): each copy's source "
+            "table, authoritative home and replayed writes, with the sync's cost; None "
+            "when the design has no derived copy (and in a report written before it)"
+        ),
+    )
     access_pattern_totals: AccessPatternFacts | None = Field(
         None,
         description=(
@@ -2502,7 +2555,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.68",
+        default="1.69",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
