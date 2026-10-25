@@ -132,10 +132,15 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
     invalidation_context = raw_collector.get("cache_invalidation_context")
 
     with open(analysis_path, encoding="utf-8") as f:
-        analysis = load_contract(AnalysisOutputContract, json.load(f), artifact=analysis_path)
+        raw_analysis = json.load(f)
+    analysis = load_contract(AnalysisOutputContract, raw_analysis, artifact=analysis_path)
 
     agent_collector, agent_analysis, agent_context = project_schema_design_input(
-        collector, analysis, query_pattern_groups=listed_query_patterns(raw_collector)
+        collector,
+        analysis,
+        query_pattern_groups=listed_query_patterns(raw_collector),
+        # The engines the effective assignment runs (#213), added by the design input.
+        effective_architecture=raw_analysis.get("effective_architecture"),
     )
 
     decision_trace: dict = {}

@@ -242,6 +242,12 @@ def _analysis_summary(analysis: AgentAnalysisInput | None) -> dict:
             }
             for c in analysis.carried_writes or []
         ],
+        # The engines the effective assignment runs, and the eliminated ones (#213).
+        **(
+            {"effective_architecture": analysis.effective_architecture.model_dump(mode="json")}
+            if analysis.effective_architecture is not None
+            else {}
+        ),
     }
 
 

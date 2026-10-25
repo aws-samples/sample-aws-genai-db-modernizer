@@ -363,6 +363,29 @@ class AgentCollectorInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class AgentEliminatedEngine(BaseModel):
+    """An engine the effective assignment no longer runs, and the one that took its work."""
+
+    engine: str
+    absorbed_by: str | None = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class AgentEffectiveArchitecture(BaseModel):
+    """The engines the effective assignment runs, and the eliminated ones (#213).
+
+    Not part of the analysis contract: the design input adds it from the assignment
+    version (``src/agents/schema_design/effective_architecture.py``), so a designer's
+    workaround names only an engine in ``engines``.
+    """
+
+    engines: list[str] = Field(default_factory=list)
+    eliminated_engines: list[AgentEliminatedEngine] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class AgentAnalysisInput(BaseModel):
     """Projection of AnalysisOutputContract for schema design."""
 
@@ -380,6 +403,8 @@ class AgentAnalysisInput(BaseModel):
     # The write-group members of this call its engine serves poorly, each with its
     # intent and the target-native approach (#1362).
     carried_writes: list[AgentCarriedWrite] | None = None
+    # The engines the effective assignment runs, and the eliminated ones (#213).
+    effective_architecture: AgentEffectiveArchitecture | None = None
 
     model_config = ConfigDict(extra="ignore")
 
@@ -499,6 +524,7 @@ def project_schema_design_input(
     analysis_output: AnalysisOutputContract,
     context: dict | None = None,
     query_pattern_groups: list[dict] | None = None,
+    effective_architecture: dict | None = None,
 ) -> tuple[AgentCollectorInput, AgentAnalysisInput, AgentContextInput]:
     """Project full contracts into validated schema design agent input.
 
@@ -513,6 +539,9 @@ def project_schema_design_input(
         query_pattern_groups: The input file's ``queries.query_pattern_groups``
             (#1146), which the collector contract does not carry; kept only for
             the projected queries.
+        effective_architecture: The input file's ``effective_architecture`` (#213),
+            which the analysis contract does not carry: the engines the effective
+            assignment runs and the eliminated ones.
 
     Returns:
         Tuple of (AgentCollectorInput, AgentAnalysisInput, AgentContextInput).
@@ -760,6 +789,11 @@ def project_schema_design_input(
             if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
         ]
         or None,
+        effective_architecture=(
+            AgentEffectiveArchitecture.model_validate(effective_architecture)
+            if isinstance(effective_architecture, dict)
+            else None
+        ),
     )
 
     # --- Context (defaults if not provided) ---

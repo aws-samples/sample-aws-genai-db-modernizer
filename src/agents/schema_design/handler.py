@@ -34,6 +34,10 @@ from src.agents.referee.query_pattern import (
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design import output_contract
 from src.agents.schema_design.design_trace import write_design_trace
+from src.agents.schema_design.effective_architecture import (
+    EFFECTIVE_ARCHITECTURE_KEY,
+    effective_architecture,
+)
 from src.agents.schema_design.group_input import narrow_analysis
 from src.agents.schema_design.group_trace import scope_decision_trace
 from src.agents.schema_design.output_contract import SchemaContractError, write_schema_output
@@ -113,7 +117,9 @@ def _design_analysis_output(
     (#1362). Every redesigned
     query is listed here; each design path keeps only its own queries'
     (``redesign_requirements_in_scope``, the Bedrock projection). A legacy version 0, or a
-    record written before the redesign existed, adds none."""
+    record written before the redesign existed, adds none. Also ``effective_architecture``
+    (#213): the engines the assignment version runs and the eliminated ones with their
+    absorbing engine, so a workaround names only an engine that remains."""
     analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
     analysis_output = store.read_json(analysis_key)
     if assignment_version <= 0:
@@ -126,6 +132,9 @@ def _design_analysis_output(
     carried = _carried_writes(store, database_name, job_id, target_type, assignment_version)
     if carried:
         analysis_output = {**analysis_output, "carried_writes": carried}
+    architecture = effective_architecture(store, database_name, job_id, assignment_version)
+    if architecture is not None:
+        analysis_output = {**analysis_output, EFFECTIVE_ARCHITECTURE_KEY: architecture}
     return analysis_output
 
 

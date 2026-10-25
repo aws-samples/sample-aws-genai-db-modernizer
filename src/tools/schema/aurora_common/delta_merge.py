@@ -667,7 +667,9 @@ def base_from_outputs(
     analysis = load_contract(
         AnalysisOutputContract, analysis_output, artifact=f"analysis-{engine} output"
     )
-    agent_collector, agent_analysis, _ = project_schema_design_input(collector, analysis)
+    agent_collector, agent_analysis, _ = project_schema_design_input(
+        collector, analysis, effective_architecture=analysis_output.get("effective_architecture")
+    )
     base = AuroraDesignBase.from_inputs(engine, agent_collector, collector_output)
     return base, agent_collector, agent_analysis
 

@@ -99,6 +99,8 @@ Return only an `AuroraDesignDeltaContract`: `delta_version` ("1.0"),
 
 ## Customer-facing text
 
+Name only engines that remain in the target architecture. `design_view.analysis.effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list.
+
 Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
 - No em dash (the long dash) and no spaced double hyphen: use a comma, a colon, parentheses or a new sentence. An en dash for a range (9 am - 5 pm, 30s-60s) is fine. Put commands, flags and code in backticks.

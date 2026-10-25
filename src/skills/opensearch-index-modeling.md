@@ -215,7 +215,7 @@ Translate the design into `OpenSearchModelOutputContract` (`src/contracts/opense
 
 - `source_query`: copy the SQL from collector.
 - `reason`: specific explanation (not generic).
-- `recommendation`: concrete alternative (e.g. "Keep in relational DB", "Use DynamoDB for transactional writes").
+- `recommendation`: concrete alternative (e.g. "Keep in relational DB", "Use DynamoDB for transactional writes"), naming only an engine in `effective_architecture.engines`.
 
 `trade_offs` — list of structured `TradeOff` objects. Each entry MUST be a JSON object:
 
@@ -244,6 +244,8 @@ Every trade-off must trace back to specific tables and queries. Common trade-off
 `validation_failures` — one string per failed check above when `validation_passed=false`.
 
 ## Customer-facing text
+
+Name only engines that remain in the target architecture. The analysis input's `effective_architecture` lists `engines`, the engines the effective assignment runs, and `eliminated_engines`, each with `absorbed_by`, the engine that took its work. A workaround, recommendation, trade-off or note that sends work to another engine names only an engine in `engines`, never one in `eliminated_engines` (its work now runs on `absorbed_by`). When no engine in `engines` fits, describe an application-layer approach instead. A job without `effective_architecture` (a legacy assignment) has no such list.
 
 Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaround`, `recommendation`) and migration notes (`application_logic_required`) reach the customer's report. Write them in plain prose and follow the plain-prose style list. Synthesis replaces dashes and swaps a field that uses anything else on it for a short deterministic sentence:
 
