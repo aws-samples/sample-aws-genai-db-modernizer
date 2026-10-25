@@ -66,7 +66,7 @@ EXPECTED_RULES: dict[str, list[str]] = {
     ],
 }
 # The open risks each sample lists (analysis risks and migration risks).
-EXPECTED_OPEN = {"wordpress": 4, "discourse": 14, "trailgear": 13}
+EXPECTED_OPEN = {"wordpress": 4, "discourse": 12, "trailgear": 13}
 
 DESIGNED_RULES = [
     "sync.wave",
@@ -327,6 +327,12 @@ def test_a_report_from_before_the_rule_renders_the_same_risks(
     fresh_risks = [
         r for r in report["risk_assessment"]["risks"] if r.get("rule") not in NOT_BACKFILLED
     ]
+    # #297: a broad gap's mitigation also names the tables to start with; a stored
+    # report's text, written before it, ends at the run-the-design sentence.
+    fresh_risks = [
+        {**r, "mitigation": str(r["mitigation"]).split(" Start with the tables")[0]}
+        for r in fresh_risks
+    ]
     assert [_as_stored(r) for r in backfilled] == [_as_stored(r) for r in fresh_risks]
     for b, f in zip(backfilled, fresh_risks, strict=True):
         if b.get("rule") in REWORDED:
@@ -400,3 +406,24 @@ def test_the_gap_risks_agree_with_the_relational_gap_facts(run: PipelineResult) 
         for g in gaps["gaps"]:
             if g["impact"] in severity:
                 assert norm(g["reason"]) not in pdf, g["rule_id"]
+
+
+GENERIC_MITIGATION = "to an engine that serves"
+
+
+def test_no_risk_is_broad_and_generic(run: PipelineResult) -> None:
+    """#297: a risk over more than BROAD_FLAGGED_QUERIES queries never carries the
+    "route them to an engine that serves them" advice, and every risk names a
+    table and a mitigation."""
+    from src.agents.referee.synthesis_report import BROAD_FLAGGED_QUERIES
+
+    for r in _report(run)["risk_assessment"]["risks"]:
+        assert r["affected_tables"] and r["mitigation"], r["risk_id"]
+        if r.get("rule"):
+            continue
+        broad = len(r.get("query_ids") or []) > BROAD_FLAGGED_QUERIES
+        if broad:
+            assert GENERIC_MITIGATION not in r["mitigation"] or "Start with" in r["mitigation"], r[
+                "risk_id"
+            ]
+            assert r.get("coverage_gap") or "Flagged by" not in r["description"], r["risk_id"]

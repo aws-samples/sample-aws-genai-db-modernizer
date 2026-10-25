@@ -398,7 +398,14 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         "not a routing rule",
     ),
     "src/agents/referee/synthesis_report.py": (
-        frozenset({"_RELATIONAL_REASON_MAX_CHARS", "_SQL_EXCERPT_CHARS"}),
+        frozenset(
+            {
+                "BROAD_FLAGGED_QUERIES",
+                "_RELATIONAL_REASON_MAX_CHARS",
+                "_SQL_EXCERPT_CHARS",
+                "_START_WITH_TABLES",
+            }
+        ),
         _BUDGET,
     ),
     "src/shared/job_status.py": (frozenset({"_MAX_MESSAGE_LEN"}), _BUDGET),

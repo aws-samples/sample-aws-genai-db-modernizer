@@ -1479,6 +1479,20 @@ def build_risk_assessment(
                         )
                     )
                     continue
+                if len(remaining) > BROAD_FLAGGED_QUERIES:
+                    # #297: a flag over this many queries is no bounded risk with its
+                    # own fix. The queries the design does not serve join the one gap
+                    # risk of the engine (or its "not checked" risk), which names the
+                    # tables to start with.
+                    gap = coverage_gaps.setdefault(target, {})
+                    for q in remaining:
+                        if _SEVERITY_ORDER.get(severity, 9) < _SEVERITY_ORDER.get(
+                            gap.get(q, "LOW"), 9
+                        ):
+                            gap[q] = severity
+                        else:
+                            gap.setdefault(q, severity)
+                    continue
                 risk_id += 1
                 pct_covered = round((1 - len(remaining) / len(ids)) * 100)
                 n_rem = len(remaining)
@@ -2070,6 +2084,31 @@ def _raise_moved_onto_unsupported_risks(
     return risk_id
 
 
+# #297: a flag over more queries than this is folded into its engine's one coverage
+# gap risk instead of standing as a risk of its own.
+BROAD_FLAGGED_QUERIES = 10
+# How many tables a broad gap's mitigation names as the place to start.
+_START_WITH_TABLES = 3
+
+
+def _start_with(ids: list[str], query_tables: dict[str, set[str]]) -> str:
+    """The "Start with ..." sentence naming the tables most of ``ids`` touch.
+
+    For a gap broad enough that "these queries" is no bounded set (#297); empty for a
+    small one."""
+    if len(ids) <= BROAD_FLAGGED_QUERIES:
+        return ""
+    counts: dict[str, int] = {}
+    for q in ids:
+        for t in query_tables.get(q, set()) - _PLACEHOLDER_TABLES:
+            counts[t] = counts.get(t, 0) + 1
+    top = sorted(counts, key=lambda t: (-counts[t], t))[:_START_WITH_TABLES]
+    if not top:
+        return ""
+    named = ", ".join(f"{t} ({counts[t]})" for t in top)
+    return f" Start with the tables the most of them touch: {named}."
+
+
 def _coverage_gap_risk(
     risk_id: str,
     engine: str,
@@ -2107,7 +2146,7 @@ def _coverage_gap_risk(
             "affected_tables": tables,
             "mitigation": (
                 f"Run the {name} schema design; any of these queries it does not serve "
-                "then becomes a schema design gap."
+                f"then becomes a schema design gap.{_start_with(ids, query_tables)}"
             ),
             "query_ids": ids,
             "coverage_gap": True,
@@ -2126,7 +2165,7 @@ def _coverage_gap_risk(
             f"Add in-scope access patterns for {'this query' if n == 1 else 'these queries'} "
             f"to the {name} schema design, or route "
             f"{'it' if n == 1 else 'them'} to an engine that serves "
-            f"{'it' if n == 1 else 'them'}."
+            f"{'it' if n == 1 else 'them'}.{_start_with(ids, query_tables)}"
         ),
         "query_ids": ids,
         "coverage_gap": True,

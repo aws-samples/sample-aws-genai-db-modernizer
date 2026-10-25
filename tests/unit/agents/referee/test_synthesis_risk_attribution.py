@@ -699,3 +699,90 @@ class TestALiftedFindingRaisesOneRisk:
     def test_nothing_lifted_keeps_the_risk(self) -> None:
         (risk,) = self._wide(set())
         assert sorted(risk["query_ids"]) == ["w1", "w2"]
+
+
+class TestABroadFlagIsOneGapNotARisk:
+    """#297: an anti-pattern flagged over dozens of queries now on one engine used to be
+    one risk per flag, each over every table with the same "route them elsewhere"
+    mitigation. The queries the engine's design does not serve are one gap risk per
+    engine that names the tables to start with; a small flag stays its own risk."""
+
+    @staticmethod
+    def _data(n_flagged: int, design: bool) -> SynthesisData:
+        ids = [f"q{i:02d}" for i in range(n_flagged)]
+        # q00 and q01 share a table; every other query has a table of its own.
+        tables = {q: f"wp.t{i if i > 1 else 0}" for i, q in enumerate(ids)}
+        analysis = {
+            "workload_analysis": {
+                "anti_patterns_detected": [
+                    {
+                        "anti_pattern_type": "high-frequency-pk-lookup",
+                        "description": "Hot primary-key reads.",
+                        "query_ids": ids,
+                        "table_ids": sorted(set(tables.values())),
+                        "severity_weight": 0.5,
+                        "recommendation": "Use a key-value engine.",
+                    }
+                ]
+            }
+        }
+        schema = (
+            {
+                "table_definitions": [],
+                "access_patterns": [
+                    {"pattern_id": "DDB-AP-1", "query_ids": ["other"], "in_scope": True}
+                ],
+            }
+            if design
+            else None
+        )
+        return SynthesisData(
+            job_id="j",
+            database_name="wp",
+            collector={
+                "queries": {
+                    "query_patterns": [{"query_id": q, "tables_accessed": [tables[q]]} for q in ids]
+                }
+            },
+            engines={
+                "aurora_mysql": EngineArtifacts("aurora_mysql", analysis=analysis),
+                "documentdb": EngineArtifacts("documentdb", schema_design=schema),
+            },
+            assignment={
+                "query_assignments": [_qa(q, "documentdb") for q in ids]
+                + [_qa("kept", "aurora_mysql")]
+            },
+        )
+
+    def test_a_broad_flag_raises_no_risk_of_its_own(self) -> None:
+        result = build_risk_assessment(self._data(12, design=True))
+        assert not _risks_by_type(result, "Flagged by the")
+        gaps = [r for r in result["risks"] if r.get("coverage_gap")]
+        assert len(gaps) == 1
+        assert len(gaps[0]["query_ids"]) == 12
+
+    def test_the_gap_names_the_tables_to_start_with(self) -> None:
+        gap = next(
+            r
+            for r in build_risk_assessment(self._data(12, design=True))["risks"]
+            if r.get("coverage_gap")
+        )
+        assert gap["mitigation"].endswith(
+            "Start with the tables the most of them touch: wp.t0 (2), wp.t10 (1), wp.t11 (1)."
+        )
+
+    def test_without_a_design_the_gap_is_not_checked_and_names_them_too(self) -> None:
+        result = build_risk_assessment(self._data(12, design=False))
+        assert not _risks_by_type(result, "Flagged by the")
+        (gap,) = [r for r in result["risks"] if r.get("coverage_gap")]
+        assert gap["severity"] == "LOW"
+        assert gap["description"].startswith("[documentdb] Not checked:")
+        assert "Start with the tables the most of them touch: wp.t0 (2)" in gap["mitigation"]
+
+    @pytest.mark.passes_on_main
+    def test_a_small_flag_stays_its_own_risk(self) -> None:
+        """What must not change: ten queries or fewer keep the flag and its advice."""
+        result = build_risk_assessment(self._data(10, design=True))
+        (risk,) = _risks_by_type(result, "Flagged by the")
+        assert len(risk["query_ids"]) == 10
+        assert not [r for r in result["risks"] if r.get("coverage_gap")]
