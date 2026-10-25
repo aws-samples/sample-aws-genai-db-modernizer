@@ -268,37 +268,34 @@ SPECS: dict[str, dict[str, object]] = {
 def _data_movement() -> dict[str, dict[str, object]]:
     """DMS, MSK and MSK Connect (#1424), priced for the data movement plan's cost.
 
-    These selectors are written from the price list's column conventions and have not been
-    run against the downloaded files: the first online refresh checks them, and a selector
-    that matches no row (or rows with different figures) stops it with the section named,
-    never a guess. Until the offer files are in ``tests/fixtures/price_list/`` and the table
-    holds the sections, the plan states no data movement cost."""
+    The selectors are written from the downloaded us-east-1 offer files (#1567), whose
+    columns differ from the other offers': the DMS file has no ``Deployment Option`` column
+    (the Single-AZ and Multi-AZ rows differ in their ``usageType``, ``InstanceUsg:`` against
+    ``Multi-AZUsg:``), its ``Instance Type`` has no ``dms.`` prefix, and its usage types
+    carry no region prefix; the MSK file has no ``Instance Type`` column, bills in ``hours``
+    (not ``Hrs``), and names MSK Connect's MCU row ``USE1-Kafka.mcu.general``. A selector that
+    matches no row (or rows with different figures) stops the refresh with the section named,
+    never a guess. Until the table holds the sections, the plan states no data movement
+    cost."""
     return {
         "dms.replication": {
             "instance_hourly": {
                 "dms.r6i.large": Selector(
                     "AWSDatabaseMigrationSvc",
-                    {
-                        "Instance Type": "dms.r6i.large",
-                        "Deployment Option": "Single-AZ",
-                        "usageType": "^USE1-InstanceUsg:",
-                    },
+                    {"Instance Type": "r6i.large", "usageType": "InstanceUsg:dms.r6i.large"},
                     "Hrs",
                 )
             },
-            # Replication instance storage is billed per GB-month beyond the included amount.
+            # Single-AZ replication instance storage is billed per GB-month beyond the
+            # included amount; the Multi-AZ row is DMS:Multi-AZ-GP2-Storage.
             "storage_price_per_gb_month": Selector(
-                "AWSDatabaseMigrationSvc",
-                {"Deployment Option": "Single-AZ", "usageType": "USE1-Storage:GP2"},
-                "GB-Mo",
+                "AWSDatabaseMigrationSvc", {"usageType": "DMS:GP2-Storage"}, "GB-Mo"
             ),
         },
         "msk.provisioned": {
             "instance_hourly": {
                 "kafka.m5.large": Selector(
-                    "AmazonMSK",
-                    {"Instance Type": "kafka.m5.large", "usageType": "^USE1-Kafka.m5.large"},
-                    "Hrs",
+                    "AmazonMSK", {"usageType": "USE1-Kafka.m5.large"}, "hours"
                 )
             },
             "storage_price_per_gb_month": Selector(
@@ -307,7 +304,7 @@ def _data_movement() -> dict[str, dict[str, object]]:
         },
         "msk_connect.workers": {
             "mcu_price_per_hour": Selector(
-                "AmazonMSK", {"usageType": "USE1-Connect-MCU-Hours"}, "Hrs"
+                "AmazonMSK", {"usageType": "USE1-Kafka.mcu.general"}, "hours"
             ),
         },
     }

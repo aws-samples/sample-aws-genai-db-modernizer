@@ -21,8 +21,15 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "price_list"
 
 
 @pytest.fixture(scope="module")
-def offers() -> dict[str, rp.OfferFile]:
+def all_offers() -> dict[str, rp.OfferFile]:
     return rp.load_offers(FIXTURES)
+
+
+@pytest.fixture(scope="module")
+def offers(all_offers) -> dict[str, rp.OfferFile]:
+    """The offers the committed table was read from: the data movement files (#1567) hold
+    the next refresh's sections and are not in the table yet."""
+    return {s: o for s, o in all_offers.items() if s not in rp.OPTIONAL_SERVICES}
 
 
 @pytest.fixture(scope="module")
@@ -246,39 +253,10 @@ def test_a_sku_that_changes_its_unit_stops_the_refresh(offers) -> None:
 
 
 class TestDataMovementPrices:
-    """DMS, MSK and MSK Connect (#1424): defined in the script, read only when their offer
-    files are there. The files below are synthetic, shaped like the price list's; their
-    figures are test inputs, not AWS prices."""
-
-    HEADER = "TermType,Unit,PricePerUnit,Instance Type,Deployment Option,usageType"
-
-    def _offer(self, code: str, rows: list[str]) -> list[str]:
-        meta = [
-            '"FormatVersion","v1.0"',
-            '"Disclaimer","synthetic"',
-            '"Publication Date","2026-11-01T00:00:00Z"',
-            '"Version","1"',
-            f'"OfferCode","{code}"',
-        ]
-        return [*meta, self.HEADER, *rows]
-
-    def _write(self, tmp_path: Path) -> Path:
-        dms = [
-            "OnDemand,Hrs,0.5,dms.r6i.large,Single-AZ,USE1-InstanceUsg:dms.r6i.large",
-            "OnDemand,GB-Mo,0.1,,Single-AZ,USE1-Storage:GP2",
-        ]
-        msk = [
-            "OnDemand,Hrs,0.2,kafka.m5.large,,USE1-Kafka.m5.large",
-            "OnDemand,GB-Mo,0.1,,,USE1-Kafka.Storage.GP2",
-            "OnDemand,Hrs,0.1,,,USE1-Connect-MCU-Hours",
-        ]
-        (tmp_path / "AWSDatabaseMigrationSvc.csv").write_text(
-            "\n".join(self._offer("AWSDatabaseMigrationSvc", dms))
-        )
-        (tmp_path / "AmazonMSK.csv").write_text("\n".join(self._offer("AmazonMSK", msk)))
-        for f in FIXTURES.glob("*.csv"):
-            (tmp_path / f.name).write_text(f.read_text())
-        return tmp_path
+    """DMS, MSK and MSK Connect (#1424, #1567): ``tests/fixtures/price_list/`` holds trimmed
+    rows of the real us-east-1 offer files, with the rows that look alike (Multi-AZ,
+    another instance size, serverless and tiered storage), so a selector written from the
+    wrong column conventions fails here, as it did on the first online refresh."""
 
     def test_the_script_defines_the_three_sections_the_plan_reads(self) -> None:
         assert {"dms.replication", "msk.provisioned", "msk_connect.workers"} <= set(rp.SPECS)
@@ -289,23 +267,48 @@ class TestDataMovementPrices:
         assert "dms.replication" not in rp.extract_prices(offers)
         assert "[dms." not in PRICES_FILE.read_text()
 
-    def test_a_refresh_with_the_offer_files_writes_them_with_their_dates(
-        self, tmp_path: Path
-    ) -> None:
-        offers = rp.load_offers(self._write(tmp_path))
-        prices = rp.extract_prices(offers)
+    def test_the_selectors_match_the_real_offer_files(self, all_offers) -> None:
+        prices = rp.extract_prices(all_offers)
         assert prices["dms.replication"] == {
-            "instance_hourly": {"dms.r6i.large": 0.5},
+            "instance_hourly": {"dms.r6i.large": 0.176},
+            "storage_price_per_gb_month": 0.115,
+        }
+        assert prices["msk.provisioned"] == {
+            "instance_hourly": {"kafka.m5.large": 0.21},
             "storage_price_per_gb_month": 0.1,
         }
-        assert prices["msk.provisioned"]["instance_hourly"] == {"kafka.m5.large": 0.2}
-        assert prices["msk_connect.workers"] == {"mcu_price_per_hour": 0.1}
-        table = rp.render_table(offers, dt.date(2026, 11, 2))
-        assert "AmazonMSK = 2026-11-01" in table and "AWSDatabaseMigrationSvc = 2026-11-01" in table
+        assert prices["msk_connect.workers"] == {"mcu_price_per_hour": 0.11}
+
+    def test_each_selector_matches_exactly_one_row(self, all_offers) -> None:
+        """Every data movement selector picks one row of the real files, so the lookalike
+        rows (Multi-AZ, another size, serverless and tiered storage) are never read."""
+
+        def selectors(spec: object) -> list[rp.Selector]:
+            if isinstance(spec, rp.Selector):
+                return [spec]
+            if isinstance(spec, dict):
+                return [s for v in spec.values() for s in selectors(v)]
+            return []
+
+        found = 0
+        for path in ("dms.replication", "msk.provisioned", "msk_connect.workers"):
+            for sel in selectors(rp.SPECS[path]):
+                rows = [r for r in all_offers[sel.service].rows if sel.matches(r)]
+                assert len(rows) == 1, (path, dict(sel.match), len(rows))
+                found += 1
+        assert found == 5
+
+    def test_the_table_with_the_sections_loads_with_their_dates(self, all_offers, tmp_path) -> None:
+        out = tmp_path / "prices.toml"
+        out.write_text(rp.render_table(all_offers, dt.date(2026, 11, 2)))
+        table = load_price_table(out)
+        assert table.published["AmazonMSK"] == all_offers["AmazonMSK"].published
+        assert table.published["AWSDatabaseMigrationSvc"] == dt.date(2026, 9, 11)
 
     def test_a_renamed_usage_type_stops_the_refresh(self, tmp_path: Path) -> None:
-        src = self._write(tmp_path)
-        text = (src / "AmazonMSK.csv").read_text().replace("Kafka.Storage.GP2", "Kafka.Storage.X")
-        (src / "AmazonMSK.csv").write_text(text)
+        for f in FIXTURES.glob("*.csv"):
+            (tmp_path / f.name).write_text(f.read_text())
+        path = tmp_path / "AmazonMSK.csv"
+        path.write_text(path.read_text().replace("Kafka.Storage.GP2", "Kafka.Storage.X"))
         with pytest.raises(ValueError, match="msk.provisioned.storage_price_per_gb_month"):
-            rp.extract_prices(rp.load_offers(src))
+            rp.extract_prices(rp.load_offers(tmp_path))
