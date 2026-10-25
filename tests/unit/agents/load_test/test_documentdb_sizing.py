@@ -320,6 +320,43 @@ class TestEstimateWorkingSet:
         assert regime == "no_metric"
 
 
+class TestEstimateWorkingSetFromCollectorSourceHost:
+    """Collector contract 3.5 carries the ratio and memory under ``metrics.source_host`` (#1225)."""
+
+    def _collector_35(self) -> dict[str, Any]:
+        return {
+            "metrics": {
+                "source_host": {"buffer_cache_hit_ratio_pct": 99.5, "physical_memory_gb": 64.0}
+            },
+            "source_database": {"database_size_gb": 100},
+        }
+
+    def test_source_host_ratio_and_memory_give_buffer_cache_ratio(self) -> None:
+        ws, method, regime = estimate_working_set_gb(self._collector_35())
+        assert method == "buffer_cache_ratio"
+        assert regime == "high_hit_ratio"
+        assert ws == 64 * 0.75
+
+    def test_memory_falls_back_to_rds_instance_metadata(self) -> None:
+        co = self._collector_35()
+        del co["metrics"]["source_host"]["physical_memory_gb"]
+        co["metadata"] = {"source_database": {"rds_instance_metadata": {"memory_gb": 32.0}}}
+        ws, method, _ = estimate_working_set_gb(co)
+        assert method == "buffer_cache_ratio"
+        assert ws == 32 * 0.75
+
+    def test_source_host_ratio_wins_over_legacy_path(self) -> None:
+        co = self._collector_35()
+        co["metrics"]["cache_hit_ratio_pct"] = 10.0
+        assert estimate_working_set_gb(co)[2] == "high_hit_ratio"
+
+    def test_has_complete_metrics_accepts_source_host_ratio_and_memory(self) -> None:
+        co = self._collector_35()
+        co["metrics"].update({"cpu_utilization_avg": 30.0, "max_connections": 100})
+        co["rds_metadata"] = {"instance_specs": {"vcpus": 8}}
+        assert has_complete_metrics(co) is True
+
+
 # =============================================================================
 # estimate_denorm_multiplier
 # =============================================================================

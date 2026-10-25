@@ -13,6 +13,8 @@ design discussion behind the heuristics in this module.
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
+from src.shared.source_cache import collection_hit_ratio_pct
+
 # =============================================================================
 # Constants — see ADR-022 for the rationale behind each value
 # =============================================================================
@@ -268,17 +270,44 @@ def _infer_field_type(field_name: str, collection: dict[str, Any]) -> str | None
 # =============================================================================
 
 
+def _source_hit_ratio_pct(collector_output: dict[str, Any]) -> float | None:
+    """The source's instance-wide hit ratio: ``metrics.source_host`` (collector contract
+    3.5), else the older ``metrics.cache_hit_ratio_pct`` (#1225)."""
+    ratio = collection_hit_ratio_pct(collector_output)
+    if ratio is not None:
+        return ratio
+    legacy: float | None = _safe_get(collector_output, "metrics", "cache_hit_ratio_pct")
+    return legacy
+
+
+def _source_memory_gb(collector_output: dict[str, Any]) -> float | None:
+    """The source's memory: ``metrics.source_host.physical_memory_gb``, else the RDS
+    instance's ``metadata.source_database.rds_instance_metadata.memory_gb``, else the older
+    ``rds_metadata.instance_specs.memory_gb`` (#1225)."""
+    for path in (
+        ("metrics", "source_host", "physical_memory_gb"),
+        ("metadata", "source_database", "rds_instance_metadata", "memory_gb"),
+        ("rds_metadata", "instance_specs", "memory_gb"),
+    ):
+        value = _safe_get(collector_output, *path)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return None
+
+
 def has_complete_metrics(collector_output: dict[str, Any]) -> bool:
     """Return True when all metrics needed for derived sizing are present."""
     required_paths = (
-        ("metrics", "cache_hit_ratio_pct"),
         ("metrics", "cpu_utilization_avg"),
         ("metrics", "max_connections"),
         ("source_database", "database_size_gb"),
-        ("rds_metadata", "instance_specs", "memory_gb"),
         ("rds_metadata", "instance_specs", "vcpus"),
     )
-    return all(_safe_get(collector_output, *path) is not None for path in required_paths)
+    return (
+        _source_hit_ratio_pct(collector_output) is not None
+        and _source_memory_gb(collector_output) is not None
+        and all(_safe_get(collector_output, *path) is not None for path in required_paths)
+    )
 
 
 # =============================================================================
@@ -303,10 +332,8 @@ def estimate_working_set_gb(
       - "thrashing"          — hit ratio < 80%, source undersized
       - "no_metric"          — hit ratio unavailable
     """
-    hit_ratio = _safe_get(collector_output, "metrics", "cache_hit_ratio_pct")
-    source_ram_gb = _safe_get(
-        collector_output, "rds_metadata", "instance_specs", "memory_gb", default=0.0
-    )
+    hit_ratio = _source_hit_ratio_pct(collector_output)
+    source_ram_gb = _source_memory_gb(collector_output) or 0.0
     total_data_gb = _safe_get(collector_output, "source_database", "database_size_gb", default=0.0)
 
     if hit_ratio is None:
@@ -626,7 +653,7 @@ def derive_cluster_config(
     All paths apply the cost ceiling and floor.
     """
     source_class = _safe_get(collector_output, "rds_metadata", "instance_class")
-    source_ram_gb = _safe_get(collector_output, "rds_metadata", "instance_specs", "memory_gb")
+    source_ram_gb = _source_memory_gb(collector_output)
     source_vcpu = _safe_get(collector_output, "rds_metadata", "instance_specs", "vcpus")
 
     metrics_complete = has_complete_metrics(collector_output)
