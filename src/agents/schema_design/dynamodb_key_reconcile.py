@@ -545,6 +545,18 @@ def canon_template(template: str, entity: dict) -> str:
     return _TOKEN_RE.sub(column, template)
 
 
+def unresolved_tokens(template: str, entity: dict) -> list[str]:
+    """The ``{token}`` names of ``template`` that no attribute of ``entity`` carries (#1532).
+
+    A token names a DynamoDB attribute, as :func:`canon_template` reads it, so a token that
+    matches an attribute (case-insensitively) is resolved through it: a direct attribute's
+    ``source_column`` is checked on its own, and a derived one is built by its join or
+    calculation. Only the tokens returned here have to be source columns. Both the schema
+    design's column check and the data movement plan use this one reading."""
+    named = {str(a.get("name")).lower() for a in _dicts(entity.get("attributes"))}
+    return [t for t in _TOKEN_RE.findall(template) if t.lower() not in named]
+
+
 def _entity_bucket(entity: dict) -> tuple[tuple[str, str], tuple[str, ...]]:
     """(rows, sort-key columns): entities in one bucket are the same rows, keyed alike."""
     sk = canon_template(str(entity.get("sk_template") or ""), entity)

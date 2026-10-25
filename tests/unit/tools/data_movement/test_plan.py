@@ -684,6 +684,43 @@ def test_a_dynamodb_item_collection_checks_its_entities() -> None:
     assert "shop.orders" not in unmapped and "shop.order_tags" not in unmapped
 
 
+def _post_design(pk: str, sk: str, attrs: list[dict]) -> dict:
+    return {
+        "contract_version": "1.0",
+        "table_definitions": [
+            {
+                "table_name": "Forum",
+                "source_tables": [],
+                "attributes": None,
+                "entities": [
+                    {
+                        "entity_type": "POST",
+                        "source_table": "shop.orders",
+                        "pk_template": pk,
+                        "sk_template": sk,
+                        "attributes": attrs,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_a_key_token_is_read_through_the_entity_attribute_not_as_a_column() -> None:
+    """``POST#{post_id}`` with ``post_id <- id`` (#1532): the token names an attribute, so the
+    source column spelled differently is not a gap; a token naming no attribute still is."""
+    attrs = [
+        {"name": "post_id", "source_table": "shop.orders", "source_column": "id"},
+        {"name": "Author", "source_table": "shop.orders", "source_column": "total"},
+    ]
+    ok = _post_design("POST#{post_id}", "BY#{author}", attrs)
+    wave3 = _plans(designs={"dynamodb": ("schema-dynamodb/v2/schema_output.json", ok)})[2]
+    assert _kinds(wave3, "key_design") == []
+    bad = _post_design("POST#{post_id}", "STATUS#{state}", attrs)
+    wave3 = _plans(designs={"dynamodb": ("schema-dynamodb/v2/schema_output.json", bad)})[2]
+    assert _kinds(wave3, "key_design") == [("shop.orders", "Forum#POST STATUS#{state}")]
+
+
 def test_a_job_with_no_aurora_wave_plans_no_dms_move() -> None:
     waves = [w for w in _waves() if w["wave"] != 1]
     for i, w in enumerate(waves, start=1):

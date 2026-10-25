@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.schema_design.dynamodb_key_reconcile import _TOKEN_RE, unresolved_tokens
 from src.contracts.data_movement_plan import (
     CdcSpec,
     DataMovementPlan,
@@ -225,7 +226,6 @@ _DESIGN_SECTIONS = (
     "data_stream_designs",
 )
 
-_PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _TOPIC_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 
 
@@ -466,7 +466,7 @@ def _design_gaps(
             if tables and resolved and not set(resolved) & tables:
                 continue
             table = resolved[0] if len(resolved) == 1 else None
-            missing = [p for p in _PLACEHOLDER.findall(pattern) if p.lower() not in cols]
+            missing = [p for p in _TOKEN_RE.findall(pattern) if p.lower() not in cols]
             if missing:
                 gaps.append(
                     UnsupportedItem(
@@ -511,7 +511,10 @@ def _design_gaps(
             cols = schema.columns(src) if src else {}
             for key in ("pk_template", "sk_template"):
                 template = str(entity.get(key) or "")
-                missing = [p for p in _PLACEHOLDER.findall(template) if p.lower() not in cols]
+                # A token names an attribute (#1532): only one that matches none is a column.
+                missing = [
+                    p for p in unresolved_tokens(template, dict(entity)) if p.lower() not in cols
+                ]
                 if missing:
                     gaps.append(
                         UnsupportedItem(

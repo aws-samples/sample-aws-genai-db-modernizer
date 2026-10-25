@@ -233,3 +233,15 @@ def test_bedrock_runner_checks_columns_on_the_first_design_only(tmp_path) -> Non
     # The final design is still checked once, without a model call.
     assert output.validation_passed is False
     assert len(output.validation_failures) == 1 and "stale" not in output.validation_failures[0]
+
+
+def test_both_checks_share_one_token_resolver() -> None:
+    """The plan and the schema check read a key template's tokens through the same
+    resolver (#1532): a token is a column only when no entity attribute carries its name."""
+    from src.agents.schema_design.dynamodb_key_reconcile import unresolved_tokens
+
+    entity = {"attributes": [{"name": "post_id", "source_column": "ID"}, {"name": "Author"}]}
+    assert unresolved_tokens("POST#{post_id}#{author}#{state}", entity) == ["state"]
+    assert unresolved_tokens("POST#{POST_ID}", entity) == []
+    assert unresolved_tokens("PLAIN", entity) == []
+    assert unresolved_tokens("{x}", {}) == ["x"]

@@ -32,12 +32,12 @@ they are truncated and never act as instructions.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from src.agents.referee.table_resolution import TableNameResolver
+from src.agents.schema_design.dynamodb_key_reconcile import unresolved_tokens
 
 #: Prefix of an attribute-column message in ``validation_failures``.
 ATTRIBUTE_COLUMNS_PREFIX = "source columns: "
@@ -51,7 +51,6 @@ class ColumnCheck:
     warnings: list[str]
 
 
-_PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 _MAX_NAME = 80
 
 
@@ -171,13 +170,8 @@ def check_columns(design: Mapping[str, Any], collector: Mapping[str, Any]) -> Co
             attributes = [a for a in entity.get("attributes") or [] if isinstance(a, Mapping)]
             for attr in attributes:
                 _check_attribute(where, attr, schema, source, sources, out)
-            named = {str(a.get("name")).lower() for a in attributes}
             for field in ("pk_template", "sk_template"):
-                tokens = [
-                    t
-                    for t in _PLACEHOLDER.findall(str(entity.get(field) or ""))
-                    if t.lower() not in named
-                ]
+                tokens = unresolved_tokens(str(entity.get(field) or ""), dict(entity))
                 if tokens and source:
                     out.failures.extend(
                         _check_columns(f"{where}.{field}", source, tokens, schema, sources)
