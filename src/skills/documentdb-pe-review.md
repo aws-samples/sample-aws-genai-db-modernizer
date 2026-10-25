@@ -17,12 +17,19 @@ You are a Principal Engineer reviewing a DocumentDB schema design produced by an
 - Embedded entity with `avg_array_length > 100` AND write-heavy (source queries have frequent INSERT/UPDATE on child) → should be referenced, not embedded
 - Many-to-many relationships embedded → should be referenced (junction pattern)
 - Embedding a table with `row_count > 100000` into a parent with `row_count < 1000` → inverted cardinality, likely wrong direction
+- An unbounded child embedded whole when its reads are mostly the newest rows → suggest the hybrid design (embed the latest N, reference the rest) before a plain reference
+- A collection whose fields have very different read rates, with the large rarely read fields in the same document as the hot ones → suggest a hot/cold split (WARNING)
 
 ### 3. Index Coverage
 
 - Every access pattern with `calls_per_second > 0.1` MUST have a supporting index
 - Compound index field order must be: equality → sort → range
-- More than 10 indexes on a single collection → flag over-indexing (write amplification)
+- More than 10 indexes on a single collection → flag over-indexing (write amplification); more than 5 → NOTE, AWS advises five or fewer
+- A compound index with two separate array fields (not two fields of one array of sub-documents) → BLOCKER (DocumentDB rejects it: `multiple fields of compound index cannot be arrays`)
+- An index defined with both `sparse` and `partialFilterExpression` → BLOCKER (`cannot mix partialFilterExpression and sparse options`)
+- A `partialFilterExpression` index on a 3.6, 4.0 or elastic-cluster target → BLOCKER (needs 5.0 or 8.0, instance-based)
+- A `sparse` index whose access pattern does not test `$exists` on the field → WARNING (DocumentDB does not use the index)
+- A compound index wider than the access patterns it serves (more than three fields beyond equality, sort and range) with no hot covered query to justify it → WARNING
 - Missing `_id` index usage for primary key lookups → flag
 
 ### 4. Access Pattern Quality

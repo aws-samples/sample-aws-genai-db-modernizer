@@ -116,6 +116,8 @@ Shard counts come from `design_metrics.opensearch_shards`; do not derive them yo
 
 Validation recomputes every `number_of_shards` from these figures and rejects one that differs.
 
+**Shards per node.** Size the cluster so that a data node holds no more than 25 shards per GiB of JVM heap, counting primaries and replicas of every index (a node with a 32 GiB heap holds at most 800). OpenSearch Service also caps a node at 1,000 shards on OpenSearch 1.1 to 2.15, and at 1,000 per 16 GB of heap up to 4,000 on 2.17 and later. This rarely binds when shards are sized by the rules above, so it matters for many small indexes (daily data streams, one index per tenant); when the design creates more indexes than the nodes can hold, say so in `trade_offs` and merge them (Amazon OpenSearch Service Developer Guide, "Choosing the number of shards" and "Operational best practices": shard strategy).
+
 ## Access Pattern Translation
 
 Translate every source SQL query from the collector into an OpenSearch DSL JSON string. Store the result in `AccessPattern.opensearch_dsl`.
@@ -157,6 +159,8 @@ Add structured `TradeOff` objects to `trade_offs` when any of these are detected
 - **`keyword` on high-cardinality text** — e.g., mapping a free-text `description` column as `keyword` prevents full-text search and wastes memory
 - **Missing `doc_values` for aggregation fields** — fields used in `terms` aggregations need `doc_values: true`
 - **`nested` when `flattened` suffices** — `nested` queries are expensive; use `flattened` for simple key-value lookups
+- **`fielddata: true` on a `text` field** — it loads every analyzed token of the field into heap memory for sorting, aggregations and scripts, and grows with the field's cardinality. Aggregate and sort on a `keyword` multi-field (`.keyword`) or a `keyword`/`doc_values` column instead; never enable `fielddata` (OpenSearch documentation, "Text field type": `fielddata`)
+- **Too many shards for the heap** — see the shards-per-heap rule under Shard Sizing Rules
 - **Missing `@timestamp`** — data streams without `@timestamp` will fail rollover
 - **Refresh interval too low for time-series** — `1s` refresh on high-throughput ingest causes segment fragmentation; use `30s`
 
