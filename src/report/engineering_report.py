@@ -550,6 +550,9 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
     if not current and not reversed_at:
         return []
     out = [f"## Migration trade-offs ({facts.get('trade_off_count', 0)})", ""]
+    # A model writes the same note on each index or table it applies to; the first
+    # trade-off keeps the sentence and a later one points back to it (#1563).
+    said = _SaidOnce()
     if current:
         by_engine: dict[str, list] = {}
         for t in current:
@@ -565,11 +568,13 @@ def _trade_offs_md(report: dict[str, Any], facts: dict[str, Any]) -> list[str]:
             for t in items:
                 desc = str(t.get("description", "")).strip()
                 impact = str(t.get("impact", "")).strip()
+                aff = list(t.get("source_tables") or [])
                 line = f"- **{escaping.md_text(desc)}**"
                 if impact and impact != desc:  # reality-check items repeat their title
-                    line += f": {escaping.md_text(impact)}"
+                    names = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:3])
+                    where = f"in the trade-off for {names}" if names else "above"
+                    line += ": " + said.line(escaping.md_text(impact), where)
                 out.append(line)
-                aff = list(t.get("source_tables") or [])
                 if aff:
                     shown = ", ".join(f"`{escaping.md_code(s)}`" for s in aff[:8])
                     more = f" (+{len(aff) - 8} more)" if len(aff) > 8 else ""

@@ -494,3 +494,41 @@ def test_the_blame_group_labels_match_synthesis() -> None:
     assert (
         report_facts.UNRESOLVED_TABLE_GROUP_LABEL == synthesis_report.UNRESOLVED_TABLE_GROUP_LABEL
     )
+
+
+_GSI_NOTE = (
+    "The index is eventually consistent: a lookup on it shows a write only after the "
+    "service has applied that write to the index structure."
+)
+
+
+def _two_gsi_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Two DynamoDB trade-offs, on two tables, whose impact opens with the same
+    model-written consistency note (a model run's flake, #1563)."""
+    ddb = [t for t in report["trade_offs"] if t.get("engine") == "dynamodb"][:2]
+    tables, tails = ("wp_options", "wp_api_keys"), ("First tail.", "Second tail.")
+    for t, table, tail in zip(ddb, tables, tails, strict=True):
+        t["impact"] = f"{_GSI_NOTE} {tail}"
+        t["source_tables"] = [f"wordpress.{table}"]
+    return report
+
+
+def test_a_model_note_two_trade_offs_share_is_stated_once(report: dict[str, Any]) -> None:
+    md = render_engineering_report_md(_two_gsi_report(report))
+    assert repeated_statements(md) == []
+    assert repeated_paragraphs(md) == []
+    body = section(md, "Migration trade-offs")
+    assert body.count("a lookup on it shows a write only after the service") == 1
+    # The later trade-off keeps its own tail, its tables, and a pointer to the first.
+    assert "Second tail." in body and "`wordpress.wp_api_keys`" in body
+    assert "Stated in the trade-off for `wordpress.wp_options`." in body
+
+
+@pytest.mark.passes_on_main
+def test_a_note_that_differs_is_kept_in_both_trade_offs(report: dict[str, Any]) -> None:
+    _two_gsi_report(report)
+    second = [t for t in report["trade_offs"] if t.get("engine") == "dynamodb"][1]
+    second["impact"] = second["impact"].replace("eventually", "only eventually")
+    body = section(render_engineering_report_md(report), "Migration trade-offs")
+    assert body.count("a lookup on it shows a write only after the service") == 2
+    assert "Stated " not in body
