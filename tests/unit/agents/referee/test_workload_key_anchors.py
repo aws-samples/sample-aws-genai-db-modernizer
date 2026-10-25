@@ -299,6 +299,40 @@ def _name(call: ast.Call) -> str:
     return func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
 
 
+_ANCHOR_FIELDS = {"key_columns", "workload_keys"}
+
+
+def _key_anchor_offenders(source: str) -> list[int]:
+    """Lines that build a ``TableKeys`` or assign one of its anchor fields.
+
+    A bare ``key_columns=`` keyword is not an offence: other concepts use the name
+    (the data movement load's hub topic, #1442). An assignment to a ``.key_columns``
+    or ``.workload_keys`` attribute counts only in a module that names ``TableKeys``.
+    """
+    tree = ast.parse(source)
+    lines = [c.lineno for c in _calls(tree) if _name(c) == "TableKeys"]
+    names_table_keys = any(
+        (isinstance(n, ast.Name) and n.id == "TableKeys")
+        or (isinstance(n, ast.alias) and n.name == "TableKeys")
+        for n in ast.walk(tree)
+    )
+    if names_table_keys:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = [node.target]
+            else:
+                continue
+            lines += [
+                t.lineno
+                for t in targets
+                if isinstance(t, ast.Attribute) and t.attr in _ANCHOR_FIELDS
+            ]
+    return sorted(lines)
+
+
+@pytest.mark.passes_on_main  # src/ has no second definition on main either
 def test_only_the_access_pattern_module_builds_a_tables_keys() -> None:
     """``TableKeys`` is built, and its ``key_columns``/``workload_keys`` set, in one
     module: every other reader takes them from ``SchemaKeys.from_collector``."""
@@ -307,11 +341,38 @@ def test_only_the_access_pattern_module_builds_a_tables_keys() -> None:
         rel = path.relative_to(_REPO).as_posix()
         if rel == _DEFINITION:
             continue
-        for call in _calls(ast.parse(path.read_text(encoding="utf-8"))):
-            keywords = {k.arg for k in call.keywords}
-            if _name(call) == "TableKeys" or keywords & {"key_columns", "workload_keys"}:
-                offenders.append(f"{rel}:{call.lineno}")
+        offenders += [
+            f"{rel}:{line}" for line in _key_anchor_offenders(path.read_text(encoding="utf-8"))
+        ]
     assert not offenders, f"a second key-anchor definition: {offenders}"
+
+
+class TestTheKeyAnchorGuardIsNarrow:
+    def test_a_new_table_keys_call_elsewhere_is_flagged(self) -> None:
+        assert _key_anchor_offenders("x = TableKeys(key_columns=frozenset())\n") == [1]
+        assert _key_anchor_offenders("x = mod.TableKeys()\n") == [1]
+
+    def test_assigning_an_anchor_field_of_a_table_keys_is_flagged(self) -> None:
+        source = (
+            "from src.agents.referee.access_pattern import TableKeys\n"
+            "def f(keys: TableKeys):\n"
+            "    keys.workload_keys = frozenset()\n"
+        )
+        assert _key_anchor_offenders(source) == [3]
+
+    def test_an_unrelated_dataclass_with_a_key_columns_field_passes(self) -> None:
+        source = (
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class HubTopic:\n"
+            "    key_columns: tuple[str, ...]\n"
+            "t = HubTopic(key_columns=('id',))\n"
+            "u = other(workload_keys=1)\n"
+        )
+        assert _key_anchor_offenders(source) == []
+
+    def test_an_attribute_assignment_in_a_module_without_table_keys_passes(self) -> None:
+        assert _key_anchor_offenders("self.key_columns = ('id',)\n") == []
 
 
 def test_the_write_shape_reads_keys_only_through_table_keys() -> None:
