@@ -11,7 +11,7 @@
     "values": [
       "DDB"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "access_pattern_id_prefixes.elasticache": {
     "module": "elasticache_model_output",
@@ -377,7 +377,7 @@
       "item_collection",
       "separate"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.DYNAMODB_ATTRIBUTE_TYPES": {
     "module": "dynamodb_model_output",
@@ -393,7 +393,7 @@
       "S",
       "SS"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.DYNAMODB_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -408,7 +408,7 @@
       "TransactWriteItems",
       "UpdateItem"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.PARTITION_OPERATIONS": {
     "module": "dynamodb_model_output",
@@ -416,7 +416,7 @@
       "read",
       "write"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.PROJECTION_TYPES": {
     "module": "dynamodb_model_output",
@@ -425,7 +425,7 @@
       "INCLUDE",
       "KEYS_ONLY"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.STORED_OBJECT_TYPES": {
     "module": "dynamodb_model_output",
@@ -434,7 +434,7 @@
       "trigger",
       "view"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_model_output.UNSUPPORTED_PATTERN_TYPES": {
     "module": "dynamodb_model_output",
@@ -442,7 +442,7 @@
       "aggregation",
       "text_search"
     ],
-    "version": "1.1"
+    "version": "1.2"
   },
   "dynamodb_pe_review.ChangeCategory": {
     "module": "dynamodb_pe_review",

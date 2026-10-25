@@ -72,3 +72,12 @@ def test_dynamodb_designer_prices_the_keys_only_fetch_and_states_the_sparse_thre
     assert ">90%" not in text
     # Callers with only the child's id are the identifying relationship's exception.
     assert "only the child's id" in text
+
+
+def test_dynamodb_designer_lists_the_attributes_each_read_returns() -> None:
+    """#1509: the cost check charges a GSI fetch only when the projection misses one."""
+    text = " ".join((SKILLS_DIR / "dynamodb-data-modeling.md").read_text().split())
+    assert "`returned_attributes`" in text
+    assert "select list" in text
+    assert "`[]` for a read that returns only key attributes" in text
+    assert "follow-up #1509" not in text

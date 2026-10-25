@@ -21,13 +21,19 @@ design copies. ``check_draft_costs`` reports a draft whose own values disagree
 (or are missing), and also compares each access pattern's ``design_rps`` with
 the group's ``design_metrics`` when the caller passes them.
 
-A read on a ``KEYS_ONLY`` GSI returns keys only, so a design that needs the full
-item fetches it from the base table: ``avg_items_returned`` extra item reads per
-call (#1503). :func:`keys_only_fetch_load` prices them (``design_rps ×
-avg_items_returned`` reads per second, each item rounded up to 4 KB and billed
-0.5 read unit per 4 KB eventually consistent, 1 strongly consistent), and
-:func:`keys_only_fetch_errors` rejects a design whose base-table read entry is
-below that load. ``INCLUDE`` and ``ALL`` projections add no fetch.
+A GSI read returns only what the index projects, so a read that returns an
+attribute the projection leaves out fetches each item from the base table:
+``avg_items_returned`` extra item reads per call (#1503). The designer lists what
+each read returns in ``returned_attributes`` (#1509), and only a read the
+projection does not cover is charged: ``KEYS_ONLY`` with any non-key attribute,
+``INCLUDE`` missing one, never ``ALL``. A read without the field (designs before
+#1509) keeps the #1503 rule: every ``KEYS_ONLY`` read is charged, ``INCLUDE`` is
+not, and the result names those reads. :func:`keys_only_fetch_load` prices the
+fetch (``design_rps × avg_items_returned`` reads per second, each item rounded
+up to 4 KB and billed 0.5 read unit per 4 KB eventually consistent, 1 strongly
+consistent), and :func:`keys_only_fetch_errors` rejects a design whose
+base-table read entry is below that load, or whose ``returned_attributes`` name
+an attribute its table does not define.
 
 This module deliberately has no Strands/Bedrock dependency.
 """
@@ -67,14 +73,68 @@ READ_UNIT_BYTES = 4096
 _READ_OPERATIONS = frozenset({"Query", "GetItem", "BatchGetItem", "TransactGetItems"})
 
 
-def keys_only_fetch_load(access_patterns: Any, table_definitions: Any) -> list[dict]:
-    """The base-table fetch load of in-scope reads on ``KEYS_ONLY`` GSIs.
+def _key_names(keys: Any) -> set[str]:
+    """Attribute names of a ``KeyDefinition`` or a list of them."""
+    keys = keys if isinstance(keys, list) else [keys]
+    return {
+        str(k["attribute_name"]) for k in keys if isinstance(k, dict) and k.get("attribute_name")
+    }
 
-    One row per ``(table_name, gsi_name)``: the reads' ``pattern_ids``,
-    ``extra_reads_per_second`` (``Σ design_rps × avg_items_returned``, a null
-    count being one item per call) and ``extra_read_units_per_second`` (each
-    read costs ``ceil(table item_size_bytes / 4096)`` units, times 0.5
-    eventually consistent or 1 when the pattern is ``strongly_consistent``).
+
+def _table_keys(table: dict) -> set[str]:
+    return _key_names(table.get("partition_key")) | _key_names(table.get("sort_key"))
+
+
+def _defined_attributes(table: dict) -> set[str] | None:
+    """Every attribute name the table defines (keys, attributes, entity attributes,
+    GSI keys); ``None`` when it lists no attributes, so nothing can be checked."""
+    attrs: list[Any] = list(table.get("attributes") or [])
+    for entity in table.get("entities") or []:
+        if isinstance(entity, dict):
+            attrs.extend(entity.get("attributes") or [])
+    if not attrs:
+        return None
+    names = {str(a["name"]) for a in attrs if isinstance(a, dict) and a.get("name")}
+    names |= _table_keys(table)
+    for gsi in table.get("gsis") or []:
+        if isinstance(gsi, dict):
+            names |= _key_names(gsi.get("partition_key")) | _key_names(gsi.get("sort_key"))
+    return names
+
+
+def _uncovered(returned: list[Any], table: dict, gsi: dict) -> list[str]:
+    """The returned attributes ``gsi``'s projection leaves out, sorted.
+
+    Every projection carries the table key and the index key; ``INCLUDE`` adds its
+    ``projected_attributes``; ``ALL`` carries everything.
+    """
+    projection = gsi.get("projection")
+    if projection == "ALL":
+        return []
+    covered = _table_keys(table) | _key_names(gsi.get("partition_key"))
+    covered |= _key_names(gsi.get("sort_key"))
+    if projection == "INCLUDE":
+        covered |= {str(a) for a in gsi.get("projected_attributes") or []}
+    return sorted({str(a) for a in returned} - covered)
+
+
+def keys_only_fetch_load(access_patterns: Any, table_definitions: Any) -> list[dict]:
+    """The base-table fetch load of in-scope GSI reads the projection does not cover.
+
+    A read fetches each returned item from the base table when its GSI does not
+    project an attribute in its ``returned_attributes`` (#1509): ``KEYS_ONLY`` with any
+    non-key attribute, ``INCLUDE`` missing one, never ``ALL``. A read with no
+    ``returned_attributes`` (designs before #1509) keeps the #1503 rule: charged on a
+    ``KEYS_ONLY`` index, not on ``INCLUDE``; its id goes in
+    ``assumed_full_item_pattern_ids`` so the result says so.
+
+    One row per ``(table_name, gsi_name)``: its ``projection``, the charged reads'
+    ``pattern_ids``, ``assumed_full_item_pattern_ids``, ``unprojected_attributes`` (the
+    returned attributes the index leaves out), ``extra_reads_per_second``
+    (``Σ design_rps × avg_items_returned``, a null count being one item per call) and
+    ``extra_read_units_per_second`` (each read costs ``ceil(table item_size_bytes /
+    4096)`` units, times 0.5 eventually consistent or 1 when the pattern is
+    ``strongly_consistent``). The name stays from #1503, when only ``KEYS_ONLY`` was charged.
     """
     if not isinstance(access_patterns, list) or not isinstance(table_definitions, list):
         return []
@@ -94,13 +154,18 @@ def keys_only_fetch_load(access_patterns: Any, table_definitions: Any) -> list[d
             ),
             None,
         )
-        if gsi is None or gsi.get("projection") != "KEYS_ONLY":
+        if gsi is None or table is None:
+            continue
+        returned = ap.get("returned_attributes")
+        assumed = not isinstance(returned, list)
+        missing = _uncovered(returned, table, gsi) if isinstance(returned, list) else []
+        if (assumed and gsi.get("projection") != "KEYS_ONLY") or (not assumed and not missing):
             continue
         try:
             rps = float(ap.get("design_rps") or 0)
             items = ap.get("avg_items_returned")
             items = 1.0 if items is None else float(items)
-            item_bytes = int(table.get("item_size_bytes") or 1)  # type: ignore[union-attr]
+            item_bytes = int(table.get("item_size_bytes") or 1)
         except (TypeError, ValueError):
             continue
         per_item = max(1, math.ceil(item_bytes / READ_UNIT_BYTES)) * (
@@ -111,12 +176,18 @@ def keys_only_fetch_load(access_patterns: Any, table_definitions: Any) -> list[d
             {
                 "table_name": str(ap["table_name"]),
                 "gsi_name": str(ap["gsi_name"]),
+                "projection": gsi.get("projection"),
                 "pattern_ids": [],
+                "assumed_full_item_pattern_ids": [],
+                "unprojected_attributes": [],
                 "extra_reads_per_second": 0.0,
                 "extra_read_units_per_second": 0.0,
             },
         )
         row["pattern_ids"].append(str(ap.get("pattern_id")))
+        if assumed:
+            row["assumed_full_item_pattern_ids"].append(str(ap.get("pattern_id")))
+        row["unprojected_attributes"] = sorted(set(row["unprojected_attributes"]) | set(missing))
         row["extra_reads_per_second"] += rps * items
         row["extra_read_units_per_second"] += rps * items * per_item
     for row in rows.values():
@@ -125,19 +196,69 @@ def keys_only_fetch_load(access_patterns: Any, table_definitions: Any) -> list[d
     return list(rows.values())
 
 
+#: At most this many attribute names are quoted per message (design text is data).
+_MAX_NAMES_SHOWN = 5
+
+
+def _names(names: list[str]) -> str:
+    shown = ", ".join(repr(n[:64]) for n in names[:_MAX_NAMES_SHOWN])
+    more = len(names) - _MAX_NAMES_SHOWN
+    return shown + (f" and {more} more" if more > 0 else "")
+
+
+def returned_attributes_errors(access_patterns: Any, table_definitions: Any) -> list[str]:
+    """One message per in-scope read whose ``returned_attributes`` names an attribute
+    its table does not define (keys, attributes, entity attributes or GSI keys)."""
+    if not isinstance(access_patterns, list) or not isinstance(table_definitions, list):
+        return []
+    tables = {t.get("table_name"): t for t in table_definitions if isinstance(t, dict)}
+    errors = []
+    for ap in access_patterns:
+        if not isinstance(ap, dict) or ap.get("in_scope") is False:
+            continue
+        returned = ap.get("returned_attributes")
+        if ap.get("operation") not in _READ_OPERATIONS or not isinstance(returned, list):
+            continue
+        table = tables.get(ap.get("table_name"))
+        defined = _defined_attributes(table) if isinstance(table, dict) else None
+        if defined is None:
+            continue
+        unknown = sorted({str(a) for a in returned} - defined)
+        if unknown:
+            errors.append(
+                f"access_patterns {str(ap.get('pattern_id'))[:64]!r}: returned_attributes "
+                f"names {_names(unknown)}, not an attribute of table "
+                f"{str(ap.get('table_name'))[:64]!r}; list only attributes the design defines"
+            )
+    return errors
+
+
 def keys_only_fetch_errors(
     entries: list[Any], access_patterns: Any, table_definitions: Any
 ) -> list[str]:
-    """One message per table whose base-table read entry leaves the fetch out.
+    """One message per table whose base-table read entry leaves the fetch out, then
+    one per read whose ``returned_attributes`` the design does not define.
 
     The fetch lands on the base table, so a base-table (no ``gsi_name``) read
     entry must carry at least its units; the entry may carry more (other reads).
     """
     totals: dict[str, float] = {}
+    why: dict[str, list[str]] = {}
     for row in keys_only_fetch_load(access_patterns, table_definitions):
-        totals[row["table_name"]] = totals.get(row["table_name"], 0.0) + (
-            row["extra_read_units_per_second"]
+        table = row["table_name"]
+        totals[table] = totals.get(table, 0.0) + row["extra_read_units_per_second"]
+        reason = (
+            f"{row['projection']} GSI {row['gsi_name']!r} does not project what "
+            f"{', '.join(row['pattern_ids'])} return"
         )
+        if row["unprojected_attributes"]:
+            reason += f" (it leaves out {_names(row['unprojected_attributes'])})"
+        if row["assumed_full_item_pattern_ids"]:
+            reason += (
+                f" ({', '.join(row['assumed_full_item_pattern_ids'])} carry no "
+                "returned_attributes, so the check takes them to read the full item)"
+            )
+        why.setdefault(table, []).append(reason)
     errors = []
     for table, needed in totals.items():
         base = [
@@ -153,12 +274,13 @@ def keys_only_fetch_errors(
         if have is None or have + slack < needed:
             shown = "no base-table read entry" if have is None else f"{have:g}"
             errors.append(
-                f"hot_partition_analysis {table}: the KEYS_ONLY GSI reads fetch each full item "
-                f"from the base table, adding {needed:g} read units/s "
-                f"(design_rps × avg_items_returned item reads, each item rounded up to 4 KB, "
-                f"0.5 unit per 4 KB eventually consistent); the base-table read entry has "
-                f"{shown}, so it must include them"
+                f"hot_partition_analysis {table}: {'; '.join(why[table])}, so each read "
+                f"fetches every returned item from the base table, adding {needed:g} read "
+                f"units/s (design_rps × avg_items_returned item reads, each item rounded up "
+                f"to 4 KB, 0.5 unit per 4 KB eventually consistent); the base-table read "
+                f"entry has {shown}, so it must include them"
             )
+    errors.extend(returned_attributes_errors(access_patterns, table_definitions))
     return errors
 
 
@@ -200,7 +322,8 @@ def compute_performances_and_costs_entries(
     entries as JSON-mode dicts, with the computed ``partition_limit``,
     ``utilization_pct`` and ``at_risk`` the design must use. With the design's
     ``access_patterns`` and ``table_definitions`` it also raises ``ValueError``
-    when a base-table read entry leaves out the ``KEYS_ONLY`` GSI fetch.
+    when a base-table read entry leaves out the GSI fetch, or a read's
+    ``returned_attributes`` name an attribute its table does not define.
     """
     computed = [computed_entry(e) for e in raw_entries]
     fetch_errors = keys_only_fetch_errors(computed, access_patterns, table_definitions)

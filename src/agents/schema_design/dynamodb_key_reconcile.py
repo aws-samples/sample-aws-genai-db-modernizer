@@ -435,6 +435,10 @@ def _rename_attributes(drafts: _Drafts, ref: _Ref, renames: dict[str, str]) -> N
         if gsi.get("sparse_attribute") in renames:
             gsi["sparse_attribute"] = renames[gsi["sparse_attribute"]]
     for ap in drafts.patterns(ref):
+        if isinstance(ap.get("returned_attributes"), list):  # #1509: what the read returns
+            ap["returned_attributes"] = list(
+                dict.fromkeys(renames.get(a, a) for a in ap["returned_attributes"])
+            )
         text = str(ap.get("key_condition") or "")
         said = [f"{old} is {new}" for old, new in renames.items() if _mentions(text, old)]
         if said:

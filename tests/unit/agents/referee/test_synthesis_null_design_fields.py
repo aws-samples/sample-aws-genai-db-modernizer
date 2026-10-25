@@ -232,7 +232,10 @@ def test_standard_summary_reports_the_keys_only_fetch_the_check_priced() -> None
         {
             "table_name": "Posts",
             "gsi_name": "ByTag",
+            "projection": "KEYS_ONLY",
             "pattern_ids": ["DDB-AP-1"],
+            "assumed_full_item_pattern_ids": ["DDB-AP-1"],
+            "unprojected_attributes": [],
             "extra_reads_per_second": 200.0,
             "extra_read_units_per_second": 100.0,
         }

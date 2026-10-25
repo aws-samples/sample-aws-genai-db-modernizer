@@ -12242,6 +12242,25 @@
                   "minItems": 1
                 }
               },
+              "returned_attributes": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "items": {
+                        "kind": "scalar",
+                        "type": "string"
+                      },
+                      "kind": "array"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
               "source_tables": {
                 "required": true,
                 "schema": {
@@ -14478,8 +14497,8 @@
         }
       }
     },
-    "schema_hash": "6c8366c465250e38c9a8e6f9dfa1c6ec3beebe5af26718382b13b4b70c1480fd",
-    "version": "1.1"
+    "schema_hash": "4fe4dcc956923f55ea9a92762fad1f24f387c567a4d9d17fd2326dc6852f44a5",
+    "version": "1.2"
   },
   "elasticache_decision_trace.ElastiCacheDecisionTrace": {
     "fields": {

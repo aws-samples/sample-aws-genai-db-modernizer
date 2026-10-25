@@ -2196,3 +2196,30 @@ class TestTableNamesThatDifferOnlyInCase:
 
         trace = store.read_json(f"{base}/design_trace.json")
         assert any("letter case" in n for n in trace["merge_reconciliation"])
+
+
+# ---------------------------------------------------------------------------
+# A renamed key attribute is renamed in the reads' returned_attributes (#1509)
+# ---------------------------------------------------------------------------
+
+
+def test_a_renamed_key_attribute_is_renamed_in_returned_attributes():
+    def orders(key: str) -> dict:
+        return _single(
+            "Orders",
+            ORDERS,
+            key,
+            attrs=[_attr(key, ORDERS, "order_id"), _attr("status", ORDERS, type_="S")],
+        )
+
+    read = _ap("DDB-AP-2", "Orders", "GetItem", "PK=orderId")
+    read["returned_attributes"] = ["orderId", "status"]
+    drafts = [
+        _draft([orders("order_id")], [_ap("DDB-AP-1", "Orders", "PutItem", "PK=order_id")]),
+        _draft([orders("orderId")], [read]),
+    ]
+
+    for order, merged in _every_order(drafts):
+        [table] = merged["table_definitions"]
+        assert table["partition_key"]["attribute_name"] == "order_id", order
+        assert _pattern(merged, "GetItem")["returned_attributes"] == ["order_id", "status"], order

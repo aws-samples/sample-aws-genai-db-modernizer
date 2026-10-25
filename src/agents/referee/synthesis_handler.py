@@ -1621,7 +1621,8 @@ def _build_standard_schema_summary(schema):
         ],
         "access_pattern_count": len(access_patterns),
         "hot_partitions_at_risk": sum(1 for hp in hot_partition if hp.get("at_risk")),
-        # The base-table fetch behind KEYS_ONLY GSI reads, as the design check priced it (#1503).
+        # The base-table fetch behind GSI reads the projection does not cover, as the design
+        # check priced it (#1503, #1509).
         "keys_only_fetch": keys_only_fetch_load(access_patterns, tables),
         "trade_offs": field_list(schema, "trade_offs"),
         "unsupported_patterns": field_list(schema, "unsupported_patterns"),

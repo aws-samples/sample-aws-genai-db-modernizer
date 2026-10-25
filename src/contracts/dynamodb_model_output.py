@@ -9,6 +9,9 @@ Version History:
                     ConditionExpression a write carries, so the group-draft
                     merge reads conditional writes from a field instead of
                     matching words in the pattern's text (#810).
+- 1.2 (2026-10-25, #1509): AccessPattern.returned_attributes (optional): the attributes
+  a read returns, so the cost check charges a GSI fetch only when the projection does
+  not cover them (#1509)
 """
 
 from typing import Annotated, Literal
@@ -518,6 +521,14 @@ class AccessPattern(BaseModel):
     )
     item_size_bytes: int = Field(..., ge=1)
     strongly_consistent: bool = Field(default=False)
+    returned_attributes: list[str] | None = Field(
+        None,
+        description="For a read, the attribute names it returns, from the source query's select "
+        "list: [] when it returns only key attributes. The cost check charges a base-table fetch "
+        "per returned item when the pattern's GSI does not project one of them (KEYS_ONLY with "
+        "any non-key attribute, INCLUDE missing one, never ALL). Null for writes; a read with "
+        "null is taken to return the full item on a KEYS_ONLY index (designs before #1509).",
+    )
     condition_expression: str | None = Field(
         None,
         description="The DynamoDB ConditionExpression this write carries, e.g. "
@@ -587,7 +598,7 @@ class DynamoDBModelOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.1",
+        default="1.2",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

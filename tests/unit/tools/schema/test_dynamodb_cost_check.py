@@ -159,7 +159,10 @@ def test_keys_only_fetch_is_priced_per_returned_item() -> None:
         {
             "table_name": "Posts",
             "gsi_name": "ByTag",
+            "projection": "KEYS_ONLY",
             "pattern_ids": ["DDB-AP-1"],
+            "assumed_full_item_pattern_ids": ["DDB-AP-1"],
+            "unprojected_attributes": [],
             "extra_reads_per_second": 200.0,
             "extra_read_units_per_second": 100.0,
         }
@@ -228,4 +231,193 @@ def test_tool_applies_the_same_check_when_given_the_design() -> None:
     assert (
         compute_performances_and_costs(json.dumps(entries), **args)[0]["rcu_or_wcu_per_second"]
         == 100.0
+    )
+
+
+# ---------------------------------------------------------------------------
+# returned_attributes: a fetch only when the projection does not cover the read (#1509)
+# ---------------------------------------------------------------------------
+
+
+def _covered_draft(projection: str, base_units: float, **pattern) -> dict:
+    """``_gsi_draft`` with keys and attributes, so ``returned_attributes`` can be checked.
+
+    Table key ``post_id``; GSI key ``tag`` / ``created_at``; other attributes ``title``
+    and ``body``; an ``INCLUDE`` index projects ``title``.
+    """
+    draft = _gsi_draft(projection, base_units, **pattern)
+    table = draft["table_definitions"][0]
+    table["partition_key"] = {"attribute_name": "post_id", "attribute_type": "S"}
+    table["attributes"] = [
+        {"name": n, "type": "S", "source_table": "posts", "source_column": n}
+        for n in ("post_id", "tag", "created_at", "title", "body")
+    ]
+    gsi = table["gsis"][0]
+    gsi["partition_key"] = [{"attribute_name": "tag", "attribute_type": "S"}]
+    gsi["sort_key"] = [{"attribute_name": "created_at", "attribute_type": "S"}]
+    return draft
+
+
+@pytest.mark.parametrize(
+    "returned", [[], ["post_id"], ["tag", "created_at"], ["post_id", "tag", "created_at"]]
+)
+def test_keys_only_read_that_returns_only_keys_adds_no_fetch(returned: list) -> None:
+    report = check_draft_costs(
+        _covered_draft("KEYS_ONLY", base_units=1.0, returned_attributes=returned)
+    )
+
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == []
+
+
+def test_keys_only_read_that_returns_a_non_key_attribute_is_charged() -> None:
+    draft = _covered_draft("KEYS_ONLY", base_units=100.0, returned_attributes=["post_id", "title"])
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == [
+        {
+            "table_name": "Posts",
+            "gsi_name": "ByTag",
+            "projection": "KEYS_ONLY",
+            "pattern_ids": ["DDB-AP-1"],
+            "assumed_full_item_pattern_ids": [],
+            "unprojected_attributes": ["title"],
+            "extra_reads_per_second": 200.0,
+            "extra_read_units_per_second": 100.0,
+        }
+    ]
+    draft["hot_partition_analysis"][0]["rcu_or_wcu_per_second"] = 99.0
+    assert check_draft_costs(draft)["passed"] is False
+
+
+@pytest.mark.passes_on_main
+def test_include_read_the_projection_covers_adds_no_fetch() -> None:
+    draft = _covered_draft("INCLUDE", base_units=1.0, returned_attributes=["post_id", "title"])
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == []
+
+
+def test_include_read_missing_a_returned_attribute_is_charged() -> None:
+    draft = _covered_draft("INCLUDE", base_units=99.0, returned_attributes=["title", "body"])
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is False
+    message = next(e["error"] for e in report["errors"] if "ByTag" in e["error"])
+    assert "INCLUDE" in message and "100" in message and "body" in message
+    assert report["keys_only_fetch"][0]["projection"] == "INCLUDE"
+    assert report["keys_only_fetch"][0]["extra_read_units_per_second"] == 100.0
+    draft["hot_partition_analysis"][0]["rcu_or_wcu_per_second"] = 100.0
+    assert check_draft_costs(draft)["passed"] is True
+
+
+@pytest.mark.passes_on_main
+def test_all_projection_is_never_charged() -> None:
+    draft = _covered_draft("ALL", base_units=1.0, returned_attributes=["title", "body"])
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == []
+
+
+def test_only_the_reads_the_projection_misses_are_charged() -> None:
+    draft = _covered_draft("KEYS_ONLY", base_units=50.0, returned_attributes=["post_id"])
+    full = {
+        **draft["access_patterns"][0],
+        "pattern_id": "DDB-AP-2",
+        "design_rps": 5.0,
+        "returned_attributes": ["body"],
+    }
+    draft["access_patterns"].append(full)
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is True, report["errors"]
+    [row] = report["keys_only_fetch"]
+    assert row["pattern_ids"] == ["DDB-AP-2"]
+    assert row["extra_read_units_per_second"] == 50.0  # 5 x 20 x 0.5
+
+
+def test_without_returned_attributes_keys_only_is_charged_and_says_it_assumed_so() -> None:
+    """Older designs: today's behaviour, every KEYS_ONLY read is a full-item fetch."""
+    draft = _covered_draft("KEYS_ONLY", base_units=99.0)
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is False
+    assert report["keys_only_fetch"][0]["assumed_full_item_pattern_ids"] == ["DDB-AP-1"]
+    message = next(e["error"] for e in report["errors"] if "ByTag" in e["error"])
+    assert "DDB-AP-1" in message and "returned_attributes" in message
+
+
+@pytest.mark.passes_on_main
+def test_without_returned_attributes_include_is_not_charged() -> None:
+    """Older designs: an INCLUDE index is taken to cover its reads, as before."""
+    report = check_draft_costs(_covered_draft("INCLUDE", base_units=1.0))
+
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == []
+
+
+def test_returned_attribute_the_design_does_not_define_fails() -> None:
+    draft = _covered_draft("ALL", base_units=1.0, returned_attributes=["title", "subtitle"])
+    report = check_draft_costs(draft)
+
+    assert report["passed"] is False
+    message = next(e["error"] for e in report["errors"] if "subtitle" in e["error"])
+    assert "DDB-AP-1" in message and "Posts" in message
+
+
+def test_returned_attributes_are_checked_against_item_collection_entities() -> None:
+    draft = _covered_draft("KEYS_ONLY", base_units=1.0, returned_attributes=["post_id"])
+    table = draft["table_definitions"][0]
+    table["entities"] = [{"entity_type": "POST", "attributes": table.pop("attributes")}]
+    assert check_draft_costs(draft)["passed"] is True
+    draft["access_patterns"][0]["returned_attributes"] = ["nope"]
+    assert check_draft_costs(draft)["passed"] is False
+
+
+def test_returned_attributes_on_a_base_table_read_are_checked_but_never_charged() -> None:
+    draft = _covered_draft("KEYS_ONLY", base_units=1.0, gsi_name=None, returned_attributes=["body"])
+    report = check_draft_costs(draft)
+    assert report["passed"] is True, report["errors"]
+    assert report["keys_only_fetch"] == []
+    draft["access_patterns"][0]["returned_attributes"] = ["nope"]
+    assert check_draft_costs(draft)["passed"] is False
+
+
+def test_tool_rejects_an_uncovered_include_read() -> None:
+    from src.tools.schema.dynamodb_schema_agent import compute_performances_and_costs
+
+    draft = _covered_draft("INCLUDE", base_units=99.0, returned_attributes=["body"])
+    args = {
+        "access_patterns_json": json.dumps(draft["access_patterns"]),
+        "table_definitions_json": json.dumps(draft["table_definitions"]),
+    }
+    with pytest.raises(ValueError, match="INCLUDE"):
+        compute_performances_and_costs(json.dumps(draft["hot_partition_analysis"]), **args)
+
+
+def test_access_pattern_contract_takes_returned_attributes_and_old_designs_still_load() -> None:
+    from src.contracts.dynamodb_model_output import AccessPattern
+
+    old = {
+        "pattern_id": "DDB-AP-1",
+        "pattern_group": "Post reads",
+        "query_ids": ["q1"],
+        "source_tables": ["posts"],
+        "description": "posts by tag",
+        "operation": "Query",
+        "table_name": "Posts",
+        "gsi_name": "ByTag",
+        "key_condition": "tag = :t",
+        "design_rps": 10.0,
+        "avg_items_returned": 20,
+        "item_size_bytes": 100,
+    }
+    assert AccessPattern.model_validate(old).returned_attributes is None
+    new = AccessPattern.model_validate({**old, "returned_attributes": ["post_id", "title"]})
+    assert new.returned_attributes == ["post_id", "title"]
+    assert (
+        AccessPattern.model_validate({**old, "returned_attributes": []}).returned_attributes == []
     )

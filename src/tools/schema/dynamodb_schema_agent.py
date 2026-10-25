@@ -176,9 +176,12 @@ def compute_performances_and_costs(
     rcu_or_wcu_per_second, contributing_patterns and (when at risk) mitigation.
     Copy the returned partition_limit, utilization_pct and at_risk into the
     design's hot_partition_analysis; the final design is checked against them.
-    Pass access_patterns_json and table_definitions_json too: a read on a
-    KEYS_ONLY GSI fetches each full item from the base table, and the call
-    fails unless the base table's read entry includes those reads.
+    Pass access_patterns_json and table_definitions_json too: a GSI read whose
+    returned_attributes the index does not project (KEYS_ONLY with any non-key
+    attribute, INCLUDE missing one, never ALL; a KEYS_ONLY read with no
+    returned_attributes counts as reading the full item) fetches each item from
+    the base table, and the call fails unless the base table's read entry
+    includes those reads, or when returned_attributes name an undefined attribute.
 
     Args:
         hot_partition_entries_json: JSON string of list[HotPartitionEntry]
