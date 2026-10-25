@@ -514,7 +514,7 @@ Job IDs are UUIDs: the API uses a full `uuid.uuid4()`; the local scripts and ski
 
 - FastAPI application, run locally with `uv run uvicorn src.api.main:app` (see [README.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/README.md))
 - Loopback-only by default — `HostAllowlistMiddleware` (`src/api/host_guard.py`) rejects requests not addressed to a loopback host name; `MODERNIZER_ALLOWED_HOSTS` overrides it
-- REST endpoints for job management; the UI is served separately (`npm start` / local build)
+- REST endpoints for job management; the UI is served separately (`npm start` with hot reload, or a local build and `npm run serve`)
 - CORS restricted to the local UI origin (`ALLOWED_ORIGIN`, default `http://localhost:3000`)
 - Progress is polled (`GET /{job_id}` and `/execution-history`), not pushed — there is no WebSocket endpoint
 

@@ -176,6 +176,8 @@ The local API only answers requests addressed to `localhost`, `127.0.0.1` or `::
 
 Then open `http://localhost:3000` to browse your modernization results.
 
+To work on the UI with hot reload, run `npm start` in `src/ui` instead of the build and serve steps. It uses `src/ui/scripts/start.js`, which adapts Create React App's dev server to the patched `webpack-dev-server` 5 pinned in `package.json`, binds to `localhost` (set `HOST` to change it), and proxies API calls to `http://localhost:8000` (the `proxy` field in `package.json`).
+
 ---
 
 ## Project Structure

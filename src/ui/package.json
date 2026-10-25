@@ -20,7 +20,7 @@
     "underscore": "^1.13.8"
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "node scripts/start.js",
     "build": "react-scripts build",
     "serve": "serve -s build -l 3000",
     "test": "react-scripts test",
