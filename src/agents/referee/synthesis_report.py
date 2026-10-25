@@ -51,7 +51,7 @@ from src.agents.referee.synthesis_grounding import (
 from src.agents.referee.table_resolution import PSEUDO_TABLES, SourceScope, TableNameResolver
 from src.agents.referee.triage import SOURCE_ENGINE_TO_AURORA
 from src.agents.referee.utility_statements import is_utility_statement
-from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps
+from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps, overlap_home
 from src.agents.schema_design.scope import covered_query_ids
 from src.contracts.executive_summary_response import (
     ExecutiveSummaryResponse,
@@ -2383,14 +2383,31 @@ def _design_conflict_risks(
                 "severity": "MEDIUM",
                 "description": f"[{engine}] {description}",
                 "affected_tables": sorted(sources),
-                "mitigation": (
-                    "Consolidate to one table per source table, or document the "
-                    "dual-write path and keep the copies in sync."
+                "mitigation": _overlap_mitigation(
+                    overlap_home(conflict, schema.get("access_patterns") or [])
                 ),
                 "query_ids": query_ids,
             }
         )
     return risk_id, risks
+
+
+def _overlap_mitigation(home: tuple[str, list[str]] | None) -> str:
+    """The step a DynamoDB overlap leaves to the customer (#1528): the merge already
+    chose the authoritative home (#333), so the copies need their sync, or a GSI of the
+    home instead."""
+    if home is None:
+        return (
+            "Consolidate to one table per source table, or document the "
+            "dual-write path and keep the copies in sync."
+        )
+    kept, copies = home
+    shown = " and ".join([", ".join(copies[:-1]), copies[-1]] if len(copies) > 1 else copies)
+    return (
+        f"Build the DynamoDB Streams consumer that keeps {shown} in sync from {kept}, the "
+        f"authoritative home, or move the access patterns on {shown} onto a global "
+        f"secondary index of {kept}."
+    )
 
 
 def _without_hedge(description: str) -> str:

@@ -855,6 +855,21 @@ def _authoritative(names: list[str], sources: set[str], access_patterns: list[di
     return min(range(len(names)), key=rank)
 
 
+def overlap_home(trade_off: dict, access_patterns: list[dict]) -> tuple[str, list[str]] | None:
+    """The authoritative home and the derived copies of an overlap trade-off
+    (:func:`merge_overlaps`), chosen as :func:`independent_homes` chose them
+    (:func:`_authoritative`) from the merged design's ``access_patterns``; None when
+    the trade-off names fewer than two target tables (#1528)."""
+    names = [t for t in trade_off.get("target_tables") or [] if isinstance(t, str)]
+    if len(names) < 2:
+        return None
+    sources = {
+        normalize_table_name(s) for s in trade_off.get("source_tables") or [] if isinstance(s, str)
+    }
+    kept = names[_authoritative(names, sources, _dicts(access_patterns))]
+    return kept, [n for n in names if n != kept]
+
+
 def _add_note(ap: dict, note: str) -> None:
     """Append ``note`` to ``ap``'s ``(merged design: ...)`` note, or start one."""
     text = str(ap.get("key_condition") or "")

@@ -13,9 +13,13 @@ so is the risk.
 
 from __future__ import annotations
 
+import re
+
+import pytest
+
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_report import build_risk_assessment
-from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX
+from src.agents.schema_design.dynamodb_merge import OVERLAP_PREFIX, merge_overlaps, overlap_home
 from src.agents.schema_design.group_merger import merge_group_drafts
 
 _SOURCE_TABLES = ["wp_posts", "wp_postmeta", "wp_termmeta"]
@@ -84,8 +88,14 @@ def test_unresolved_overlap_becomes_a_medium_risk() -> None:
     assert sorted(risk["affected_tables"]) == sorted(_SOURCE_TABLES)
     assert risk["query_ids"] == ["q1", "q2"]
     assert "q-unrelated" not in risk["query_ids"]
-    assert risk["mitigation"]
-    assert "consolidate" in risk["mitigation"].lower()
+    # #1528: the mitigation names the home the merge chose and the step left.
+    home, copies = overlap_home(_overlap_trade_off(), access_patterns)
+    assert (home, copies) == ("PostsAltTable", ["PostsTable"])
+    assert risk["mitigation"] == (
+        "Build the DynamoDB Streams consumer that keeps PostsTable in sync from "
+        "PostsAltTable, the authoritative home, or move the access patterns on PostsTable "
+        "onto a global secondary index of PostsAltTable."
+    )
 
 
 def test_unresolved_overlap_raises_overall_risk_level() -> None:
@@ -236,3 +246,57 @@ def test_real_merge_overlap_becomes_a_risk_with_only_its_own_queries() -> None:
     # Only the two patterns that actually read wp_posts, not DDB-AP-5 (wp_users)
     # which merely shares WpPosts as its target table.
     assert sorted(risk["query_ids"]) == ["q-DDB-AP-2-wp_posts", "q-DDB-AP-4-WpPosts"]
+
+
+def test_real_merge_mitigation_names_the_home_the_description_names() -> None:
+    """#1528: the same choice as the merge's own description (#333), never another."""
+    merged = merge_group_drafts(_posts_drafts(), "dynamodb")
+    (trade_off,) = merge_overlaps(merged)
+    m = re.search(r"keeps (\S+) as the authoritative home", trade_off["description"])
+    assert m, trade_off["description"]
+    kept = m.group(1)
+    (copy,) = [t for t in trade_off["target_tables"] if t != kept]
+    (risk,) = [
+        r
+        for r in build_risk_assessment(_data(merged))["risks"]
+        if r["risk_type"] == "DATA_CONSISTENCY"
+    ]
+    assert risk["mitigation"] == (
+        f"Build the DynamoDB Streams consumer that keeps {copy} in sync from {kept}, the "
+        f"authoritative home, or move the access patterns on {copy} onto a global secondary "
+        f"index of {kept}."
+    )
+    # The description stays as the merge wrote it.
+    assert (
+        risk["description"]
+        == "[dynamodb] " + trade_off["description"][len(OVERLAP_PREFIX) :].strip()
+    )
+
+
+def test_several_copies_are_named_together() -> None:
+    trade_off = {**_overlap_trade_off(), "target_tables": ["A", "B", "C"]}
+    aps = [{"table_name": "B", "source_tables": ["wp_posts"], "query_ids": ["q1", "q2"]}]
+    (risk,) = [
+        r
+        for r in build_risk_assessment(_data(_schema([trade_off], aps)))["risks"]
+        if r["risk_type"] == "DATA_CONSISTENCY"
+    ]
+    assert risk["mitigation"] == (
+        "Build the DynamoDB Streams consumer that keeps A and C in sync from B, the "
+        "authoritative home, or move the access patterns on A and C onto a global "
+        "secondary index of B."
+    )
+
+
+@pytest.mark.passes_on_main  # guards what must not change
+def test_an_overlap_with_one_target_keeps_the_general_mitigation() -> None:
+    trade_off = {**_overlap_trade_off(), "target_tables": ["PostsTable"]}
+    (risk,) = [
+        r
+        for r in build_risk_assessment(_data(_schema([trade_off])))["risks"]
+        if r["risk_type"] == "DATA_CONSISTENCY"
+    ]
+    assert risk["mitigation"] == (
+        "Consolidate to one table per source table, or document the "
+        "dual-write path and keep the copies in sync."
+    )
