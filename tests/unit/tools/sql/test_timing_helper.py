@@ -227,6 +227,9 @@ ALLOWED_CLOCKS = {
     "tests/graph/test_read_bounds.py": {"time.monotonic"},
     # waiting for the e2e servers to start
     "tests/e2e/conftest.py": {"time.time"},
+    # times one no-op install attempt in the same process; the hang limit is a multiple
+    # of it, so the check is a ratio against a same-process reference (#1529)
+    "tests/unit/ci/test_playwright_install_retry.py": {"time.monotonic"},
     # this file's self-tests of the helper's own clock
     "tests/unit/tools/sql/test_timing_helper.py": {"time.thread_time"},
 }

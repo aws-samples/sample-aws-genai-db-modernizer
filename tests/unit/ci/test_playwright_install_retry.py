@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import re
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -113,7 +116,35 @@ fi
 """
 
 
+# A hung attempt is stopped after a limit measured in whole seconds, and that limit
+# also covers the attempt's own process start. A fixed 1s limit stopped attempts
+# before the fake `uv` had counted itself on a loaded machine (#1529), so the limit is
+# a multiple of how long a trivial attempt took in this process, never below 1s.
+HANG_LIMIT_RATIO = 4
+
+
+def _scaled_limit(reference_seconds: float) -> int:
+    return max(1, math.ceil(HANG_LIMIT_RATIO * reference_seconds))
+
+
+def _hang_limit(tmp_path: Path) -> int:
+    """The attempt limit for this machine's current load: one successful no-op run, timed."""
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    started = time.monotonic()
+    proc, _ = _run(reference, fails=0)
+    assert proc.returncode == 0, proc.stderr
+    return _scaled_limit(time.monotonic() - started)
+
+
+def test_the_hang_limit_grows_with_the_measured_start_time():
+    assert _scaled_limit(0.05) == 1
+    assert _scaled_limit(0.5) == 2
+    assert _scaled_limit(2.0) == 8
+
+
 def _run_hanging(tmp_path: Path, hangs: int, **env: str):
+    limit = _hang_limit(tmp_path)
     bindir = tmp_path / "bin"
     bindir.mkdir()
     uv = bindir / "uv"
@@ -124,7 +155,7 @@ def _run_hanging(tmp_path: Path, hangs: int, **env: str):
         "FAKE_DIR": str(tmp_path),
         "FAKE_HANGS": str(hangs),
         "E2E_INSTALL_BACKOFF": "0",
-        "E2E_INSTALL_TIMEOUT": "1",
+        "E2E_INSTALL_TIMEOUT": str(limit),
         "HOME": str(tmp_path),
     }
     base.update(env)
@@ -141,16 +172,17 @@ def _run_hanging(tmp_path: Path, hangs: int, **env: str):
         capture_output=True,
         text=True,
         cwd=REPO,
-        timeout=50,
+        timeout=30 + 4 * limit,
     )
     return proc, int((tmp_path / "count").read_text())
 
 
+@pytest.mark.passes_on_main  # the flaky test itself: it fails on main only under load
 def test_a_hung_attempt_is_stopped_and_retried(tmp_path):
     proc, calls = _run_hanging(tmp_path, hangs=1)
     assert proc.returncode == 0, proc.stderr
     assert calls == 2
-    assert "still running after 1s" in proc.stderr
+    assert re.search(r"still running after \d+s", proc.stderr)
 
 
 def test_every_attempt_hanging_fails_instead_of_blocking(tmp_path):
