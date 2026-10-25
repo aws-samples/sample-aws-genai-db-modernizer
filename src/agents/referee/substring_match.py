@@ -54,6 +54,7 @@ from src.shared.engine_names import display_engine
 from src.tools.sql.query_facts import (
     RegexMatch,
     WildcardLike,
+    is_text_type,
     locate_column,
     query_facts,
     source_engine_of,
@@ -68,10 +69,6 @@ __all__ = [
     "substring_match_risks",
     "substring_matches",
 ]
-
-# Column types a word search runs on; a column the collector did not describe counts as
-# text, since a LIKE compares strings.
-_TEXT_TYPE_WORDS = ("char", "text", "clob", "string")
 
 
 @dataclass(frozen=True)
@@ -153,7 +150,7 @@ def _query_tables(query: Mapping, tables: Mapping[str, Mapping]) -> list[Mapping
     return found
 
 
-def _is_text_column(column: str | None, tables: list[Mapping]) -> bool:
+def _is_text_column(column: str | None, tables: list[Mapping], engine: str) -> bool:
     """The older reading, for a column not traced to a table: the type of the first
     query table that has a column of that name, text when none is described."""
     if column is None:
@@ -161,13 +158,18 @@ def _is_text_column(column: str | None, tables: list[Mapping]) -> bool:
     for table in tables:
         for col in table.get("columns") or []:
             if str(col.get("column_name") or "").lower() == column:
-                return _is_text_type(col.get("data_type"))
+                return _is_text(col, engine)
     return True
 
 
-def _is_text_type(data_type: object) -> bool:
-    kind = str(data_type or "").lower()
-    return not kind or any(word in kind for word in _TEXT_TYPE_WORDS)
+def _has_type(column: Mapping) -> bool:
+    return bool(column.get("data_type") or column.get("normalized_data_type"))
+
+
+def _is_text(column: Mapping, engine: str) -> bool:
+    """Whether a collected column is text in the source dialect (#1057); a column the
+    collector did not describe counts as text, since a LIKE compares strings."""
+    return not _has_type(column) or is_text_type(column, engine)
 
 
 def _rows(tables: list[Mapping]) -> int | None:
@@ -184,6 +186,7 @@ class _Schema:
     """The collected tables by id, and how a written table name finds its id."""
 
     def __init__(self, collector: Mapping) -> None:
+        self.engine = source_engine_of(collector)
         self.by_name = _tables_by_name(collector)
         self.resolver = TableNameResolver.from_collector(collector)
         self.by_id: dict[str, Mapping] = {}
@@ -231,15 +234,14 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
             )
     if table_id is None:
         if word:
-            word = _is_text_column(like.column, query_tables)
+            word = _is_text_column(like.column, query_tables, schema.engine)
         return _LikeReading(word, _rows(query_tables), tuple(notes))
     rows, unsized = _table_rows(schema, table_id)
     notes.extend(unsized)
     if word and like.column is not None:
-        column = schema.column(table_id, like.column)
-        data_type = column.get("data_type") if column is not None else None
-        word = _is_text_type(data_type)
-        if not data_type:
+        column = schema.column(table_id, like.column) or {}
+        word = _is_text(column, schema.engine)
+        if not _has_type(column):
             notes.append(f"column {like.column} has no collected type, so it is read as text")
     elif word:
         notes.append(

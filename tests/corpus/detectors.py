@@ -273,6 +273,7 @@ NOT_SQL_DETECTORS: dict[str, str] = {
     f"{_QUERY_FACTS}:query_facts": "the cached QueryFacts; each fact is registered",
     f"{_QUERY_FACTS}:read_timestamp_column": "QueryFacts.timestamp_column's schema step",
     f"{_QUERY_FACTS}:is_timestamp_type": "reads a column's collected type, not SQL",
+    f"{_QUERY_FACTS}:is_text_type": "reads a column's collected type, not SQL",
     f"{_QUERY_FACTS}:locate_column": "resolves a column to its table; reads no SQL",
     f"{_QUERY_FACTS}:timestamp_column_trace": "a trace over a collection, not a detector",
     f"{_QUERY_FACTS}:remember_stored_facts": "caches a stored reading",

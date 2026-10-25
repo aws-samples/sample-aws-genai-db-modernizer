@@ -773,3 +773,29 @@ class TestARegularExpressionIsSizedByTheTableOfItsColumn:
             )
             for note in notes.values():
                 assert scan_text(note, strict_reason_codes=False) == [], note
+
+
+class TestTheTextTypeIsReadInTheSourceDialect:
+    """#1057: whether the tested column is text comes from ``query_facts.is_text_type``,
+    in the source dialect and from the normalized type too, not a word list."""
+
+    @pytest.mark.parametrize(
+        "source,column_type",
+        [("postgresql", "name"), ("mysql", "enum('a','b')"), ("sqlserver", "sysname")],
+    )
+    def test_a_dialect_text_type_is_a_word_search(self, source, column_type) -> None:
+        collector = _collector(WORD, source=source, column_type=column_type)
+        assert set(_penalties(collector).values()) == {0}
+        assert substring_matches(collector)["q1"].word_search is True
+
+    def test_a_postgresql_array_of_text_is_not_a_text_column(self) -> None:
+        collector = _collector(WORD, source="postgresql", column_type="_text")
+        assert substring_matches(collector)["q1"].word_search is False
+
+    def test_the_normalized_type_is_read(self) -> None:
+        collector = _collector(WORD, source="postgresql", column_type="USER-DEFINED")
+        title = collector["database_schema"]["tables"][0]["columns"][2]
+        title["normalized_data_type"] = "text"
+        assert substring_matches(collector)["q1"].word_search is True
+        title["normalized_data_type"] = "integer"
+        assert substring_matches(collector)["q1"].word_search is False

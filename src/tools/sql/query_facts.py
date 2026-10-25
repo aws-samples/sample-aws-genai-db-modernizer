@@ -35,6 +35,9 @@ Each fact has one definition, and every reader uses it (#893; the guard is
   (``SqlFacts.columns``) are resolved to their tables through the collection's
   table names (:class:`ColumnTypes`), so a reader passes the collection's types
   (``facts.timestamp_column(types)``); the name list is read when it has none.
+- Whether a column holds text (:func:`is_text_type`, #1057) is read the same way,
+  from the collected type in the source dialect; the substring-match scan penalty
+  reads it for the column a leading-wildcard ``LIKE`` tests.
 
 A reader passes the collector's source engine
 (``metadata.source_database.engine``, :func:`source_engine_of`); a reader with
@@ -97,6 +100,7 @@ __all__ = [
     "RegexMatch",
     "TimestampColumnReading",
     "WildcardLike",
+    "is_text_type",
     "is_timestamp_type",
     "locate_column",
     "query_facts",
@@ -1271,12 +1275,16 @@ _SQLSERVER_ROW_VERSION_TYPES = frozenset({"timestamp", "rowversion"})
 _TYPE_ARGUMENTS_RE = re.compile(r"\s*\([^)]*\)")
 
 
+def _native_type(column: Mapping) -> str:
+    """A collected column's native type, lower case, its arguments dropped and its
+    spaces collapsed: ``TIMESTAMP(6)  WITH TIME ZONE`` is ``timestamp with time zone``."""
+    return " ".join(_TYPE_ARGUMENTS_RE.sub(" ", str(column.get("data_type") or "")).lower().split())
+
+
 def is_timestamp_type(column: Mapping, source_engine: str = "") -> bool:
     """Whether a collected column's type is a point in time (date, datetime or
     timestamp, in any dialect's spelling); its name is not read."""
-    native = " ".join(
-        _TYPE_ARGUMENTS_RE.sub("", str(column.get("data_type") or "")).lower().split()
-    )
+    native = _native_type(column)
     if (source_engine or "").strip().lower() == "sqlserver" and native in (
         _SQLSERVER_ROW_VERSION_TYPES
     ):
@@ -1286,6 +1294,75 @@ def is_timestamp_type(column: Mapping, source_engine: str = "") -> bool:
     if normalized:
         return normalized in _TIMESTAMP_NORMALIZED_TYPES
     return native in _TIMESTAMP_NATIVE_TYPES
+
+
+# ---------------------------------------------------------------------------
+# The text column, by collected type (#1057)
+#
+# Whether a column holds text, read the way :func:`is_timestamp_type` reads a
+# point in time: the collector's normalized type when it set one, else the native
+# type in the source dialect's spellings (arguments dropped, ``varchar(255)`` is
+# ``varchar``; a trailing modifier such as a character set is ignored). An array of
+# text (PostgreSQL ``_text``, ``text[]``) is not text. With no dialect known, every
+# dialect's spellings count.
+# ---------------------------------------------------------------------------
+
+_TEXT_NORMALIZED_TYPES = frozenset({"string", "text"})
+_COMMON_TEXT_TYPES = frozenset(
+    {
+        "char",
+        "character",
+        "varchar",
+        "character varying",
+        "nchar",
+        "national char",
+        "national character",
+        "nvarchar",
+        "national varchar",
+        "national character varying",
+        "text",
+        "string",
+    }
+)
+_TEXT_NATIVE_TYPES: dict[str, frozenset[str]] = {
+    "mysql": _COMMON_TEXT_TYPES
+    | {"tinytext", "mediumtext", "longtext", "long", "long varchar", "enum", "set"},
+    "postgresql": _COMMON_TEXT_TYPES | {"bpchar", "citext", "name"},
+    "sqlserver": _COMMON_TEXT_TYPES | {"ntext", "sysname"},
+    "oracle": _COMMON_TEXT_TYPES | {"varchar2", "nvarchar2", "clob", "nclob", "long"},
+}
+_TEXT_DIALECTS = {
+    "mariadb": "mysql",
+    "postgres": "postgresql",
+    "mssql": "sqlserver",
+    "tsql": "sqlserver",
+}
+_ANY_TEXT_TYPE = frozenset().union(*_TEXT_NATIVE_TYPES.values())
+# Oracle's ``LONG RAW`` and MySQL's ``LONG VARBINARY`` are binary, though they start with
+# a text type's name.
+_BINARY_LONG_TYPES = frozenset({"long raw", "long varbinary"})
+
+
+def is_text_type(column: Mapping, source_engine: str = "") -> bool:
+    """Whether a collected column's type is text (a string type in the source
+    dialect's spelling, or the normalized ``string``/``text``); its name is not read.
+    A column with no collected type is not known to be text: the caller says what
+    that counts as."""
+    normalized = column.get("normalized_data_type")
+    normalized = str(getattr(normalized, "value", normalized) or "").lower()
+    if normalized:
+        return normalized in _TEXT_NORMALIZED_TYPES
+    native = _native_type(column)
+    if not native or native.startswith("_") or native.endswith("]"):
+        return False
+    engine = (source_engine or "").strip().lower()
+    known = _TEXT_NATIVE_TYPES.get(_TEXT_DIALECTS.get(engine, engine), _ANY_TEXT_TYPE)
+    if native in _BINARY_LONG_TYPES:
+        return False
+    words = native.split()
+    # A leading phrase that names a text type: ``character varying``, or ``varchar`` in
+    # ``varchar character set utf8mb4``.
+    return any(" ".join(words[:size]) in known for size in range(len(words), 0, -1))
 
 
 @dataclass(frozen=True, eq=False)
