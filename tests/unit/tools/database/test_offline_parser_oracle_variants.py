@@ -179,3 +179,93 @@ class TestTruncatedOracleVariants:
 
         script = Path("scripts/collect-oracle.sql").read_text()
         assert f"SQL_FULLTEXT, {ORACLE_TEXT_CAP}, 1" in script
+
+
+_IN_HEAD = "SELECT * FROM orders WHERE " + " AND ".join(
+    f"col_{i:04d} IS NOT NULL" for i in range(8)
+)
+_FILLER = " AND ".join(f"col_{i:04d} IS NOT NULL" for i in range(200))
+
+
+def _in_statement(items: str, tail: str = "") -> str:
+    """A statement over 2000 characters with a whole ``IN`` list, cut at 2000."""
+    return f"{_IN_HEAD} AND code IN ({items}){tail} AND {_FILLER}"[:2000]
+
+
+def _cut_inside_list(fragment: str) -> str:
+    """The statement as an old collection holds it when the cap lands inside the list:
+    exactly 2000 characters, ending with ``fragment`` (spaces pad, so the shape is unchanged)."""
+    tail = f"code IN ({fragment}"
+    pad = " " * (2000 - len(_IN_HEAD) - len(" AND ") - len(tail))
+    text = f"{_IN_HEAD} AND {pad}{tail}"
+    assert len(text) == 2000
+    return text
+
+
+class TestCutInsideInList:
+    """A cut inside an ``IN (...)`` list still matches its sibling (#1541)."""
+
+    @pytest.mark.parametrize(
+        "cut_items",
+        [
+            "1, 2, 3, 4",
+            "1, 2, 3, 45",
+            "'AB', 'CD', 'E",
+            "q'[AB]', q'[C,D)]', q'[E",
+            "q'!AB!', q'!(C!', 'it''",
+            "(1, 2), (3, (4",
+            "1, 2, ",
+        ],
+    )
+    def test_cut_list_merges_with_whole_sibling(self, cut_items: str) -> None:
+        cut = _cut_inside_list(cut_items)
+        whole = _in_statement("7, 8, 9", " AND status = 'A'")
+        out = _merged([_row("a", cut), _row("b", whole)])
+        assert len(out) == 1
+        assert out[0]["execution_count"] == 20
+
+    @pytest.mark.passes_on_main
+    def test_cut_list_merges_with_longer_list_cut_elsewhere(self) -> None:
+        a = _in_statement(", ".join(str(n) for n in range(400)))
+        b = _in_statement(", ".join(str(n) for n in range(900, 1300)))
+        assert len(a) == len(b) == 2000
+        assert len(_merged([_row("a", a), _row("b", b)])) == 1
+
+    @pytest.mark.passes_on_main
+    @pytest.mark.parametrize(
+        "replacement",
+        [("FROM orders", "FROM invoices"), ("col_0003 IS NOT NULL", "col_0003 IS NULL")],
+    )
+    def test_structure_before_the_list_still_keeps_variants_apart(
+        self, replacement: tuple[str, str]
+    ) -> None:
+        a = _in_statement(", ".join(str(n) for n in range(400)))
+        b = _in_statement(", ".join(str(n) for n in range(900, 1300))).replace(*replacement)
+        assert len(_merged([_row("a", a), _row("b", b)])) == 2
+
+    @pytest.mark.passes_on_main
+    def test_different_operator_at_the_list_keeps_variants_apart(self) -> None:
+        a = _in_statement(", ".join(str(n) for n in range(400)))
+        b = _in_statement(", ".join(str(n) for n in range(900, 1300))).replace(
+            "code IN (", "code = ("
+        )
+        assert len(_merged([_row("a", a), _row("b", b)])) == 2
+
+
+class TestOpenInListStart:
+    @pytest.mark.parametrize(
+        ("shape", "expected"),
+        [
+            ("A IN (?, ?", 5),
+            ("A NOT IN (?, (?, ?), (?", 9),
+            ("A IN (?, ...) AND B IN (?", 23),
+            ("A IN (?, ...) AND B = ?", None),
+            ('A IN ("x(y", ?', 5),
+            ("A IN (/* ( */ ?", 5),
+            ("F(?, G(?", None),
+        ],
+    )
+    def test_start(self, shape: str, expected: int | None) -> None:
+        from src.tools.sql.normalize import open_in_list_start
+
+        assert open_in_list_start(shape, "oracle") == expected

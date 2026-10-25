@@ -354,9 +354,16 @@ _PARTIAL_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*$")
 
 
 def _stable_prefix(shape: str) -> str:
-    """A truncated shape without its last, possibly cut, word; ``\0`` (matches nothing)
-    when too little is left to compare."""
-    prefix = _PARTIAL_WORD_RE.sub("", shape.rstrip())
+    """A truncated shape without its last, possibly cut, word, or, when the cut falls inside
+    an ``IN (...)`` list, the text before that list (#1541); ``\0`` (matches nothing) when
+    too little is left to compare."""
+    from src.tools.sql.normalize import open_in_list_start
+
+    in_list = open_in_list_start(shape, "oracle")
+    if in_list is not None:
+        prefix = shape[: in_list + 1]
+    else:
+        prefix = _PARTIAL_WORD_RE.sub("", shape.rstrip())
     return prefix if len(prefix) >= _MIN_TRUNCATED_PREFIX else "\0"
 
 

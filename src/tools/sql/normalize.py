@@ -67,7 +67,7 @@ import re
 from dataclasses import dataclass
 
 from src.shared.sql_comments import block_comment_end, block_comments_nest
-from src.shared.sql_spans import scan_grammar_for, spans
+from src.shared.sql_spans import comments_literals_and_identifiers_for, scan_grammar_for, spans
 
 # ---------------------------------------------------------------------------
 # Public result type
@@ -610,6 +610,35 @@ def literal_shape(query_text: str, dialect: str) -> str:
     shaped = " ".join("".join(out).split())
     shaped = _IN_LIST_RE.sub("IN (?, ...)", shaped)
     return shaped.rstrip("; ")
+
+
+def _follows_in_keyword(code: str, paren: int) -> bool:
+    """Whether the ``(`` at ``paren`` directly follows an ``IN`` keyword."""
+    before = code[:paren].rstrip()
+    return before[-2:].upper() == "IN" and not _is_word_char(before[-3:-2] or " ")
+
+
+def open_in_list_start(shape: str, dialect: str) -> int | None:
+    """Where the outermost ``IN (`` list left open at the end of ``shape`` begins, or None.
+
+    A statement cut inside an ``IN`` list (``... id IN (?, ?, ?``) cannot collapse that list
+    the way :func:`literal_shape` does for a whole one, so a comparison with a variant stops
+    before the list (#1541). Strings, comments and quoted names are read with the
+    dialect's own spans (:mod:`src.shared.sql_spans`), so a parenthesis inside one is no
+    parenthesis. The index is that of the list's opening parenthesis.
+    """
+    grammar = comments_literals_and_identifiers_for(dialect)
+    chars = list(shape)
+    for start, end, _opener in spans(shape, grammar):
+        chars[start:end] = "_" * (end - start)
+    code = "".join(chars)
+    stack: list[int | None] = []  # per open parenthesis: its index if an IN list opens it
+    for i, ch in enumerate(code):
+        if ch == "(":
+            stack.append(i if _follows_in_keyword(code, i) else None)
+        elif ch == ")" and stack:
+            stack.pop()
+    return next((start for start in stack if start is not None), None)
 
 
 def literal_shape_digest(query_text: str, dialect: str) -> str:
