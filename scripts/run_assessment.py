@@ -58,6 +58,7 @@ from src.shared.collection_database_name import (  # noqa: E402
     resolve_database_name,
 )
 from src.shared.database_name import validate_database_name  # noqa: E402
+from src.shared.gate_facts import cache_candidate_reads  # noqa: E402
 from src.shared.job_id import validate_job_id  # noqa: E402
 from src.tools.database.collection_text import extract_json_object  # noqa: E402
 from src.tools.validation.ingestion_limits import (  # noqa: E402
@@ -713,6 +714,16 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
         overlay = store.read_json(assignment_path).get("cache_overlay")
         if overlay:
             out["cache_overlay"] = {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}
+            # #462: the hottest cached reads, named; the rest are counted.
+            from src.storage.collector_for_models import read_collector_for_models
+
+            collector = read_collector_for_models(store, db, job_id, missing_ok=True)
+            queries = (collector.get("queries") or {}).get("query_patterns") or []
+            reads = cache_candidate_reads(
+                store.read_json(assignment_path).get("query_assignments") or [], queries
+            )
+            if reads:
+                out["cache_reads"] = reads
     out["schema_design_engines"] = _schema_design_engines(store, job_id, db, version)
     out["pending_choices"] = _compact_pending_choices(store, job_id, db)
     return out

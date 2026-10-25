@@ -11,6 +11,8 @@ import {
   splitRankingByRole,
   getQueryCacheInfo,
   formatCacheLayerLine,
+  formatCacheReadLine,
+  formatCacheReadsMore,
   cacheChangeSentence,
   formatCachedByLine,
   targetEngineEntries,
@@ -618,5 +620,29 @@ describe('cacheLayerAccessPatterns (#429 part 2: the explorer must still be able
   test('handles a missing/undefined designs list', () => {
     expect(cacheLayerAccessPatterns(undefined, cacheOverlay)).toEqual([]);
     expect(cacheLayerAccessPatterns(null, cacheOverlay)).toEqual([]);
+  });
+});
+
+describe('formatCacheReadLine (#462)', () => {
+  const read = {
+    tables: ['wp_options'], owner: 'aurora_mysql', pattern: 'point_lookup', calls_per_second: 41.26, call_share_percent: 19.3,
+  };
+  const label = (e) => (e === 'aurora_mysql' ? 'Aurora MySQL' : e);
+
+  test('names the table, owner, pattern, rate and share as the chat gate does', () => {
+    expect(formatCacheReadLine(read, { t, engineLabel: label })).toBe(
+      'wp_options (Aurora MySQL, point lookup): 41.3 calls/s, 19.3% of calls',
+    );
+  });
+
+  test('says how many more tables a read touches', () => {
+    expect(formatCacheReadLine({ ...read, tables: ['wp_posts', 'a', 'b'] }, { t, engineLabel: label })).toMatch(
+      /^wp_posts and 2 more tables \(/,
+    );
+  });
+
+  test('"and N more" is empty when every candidate is listed', () => {
+    expect(formatCacheReadsMore(18, { t })).toBe('and 18 more');
+    expect(formatCacheReadsMore(0, { t })).toBeNull();
   });
 });

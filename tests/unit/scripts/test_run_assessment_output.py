@@ -884,3 +884,48 @@ def test_schema_design_lists_only_engines_with_output(monkeypatch, tmp_path, cap
     assert list(status["artifacts"]) == [engine]
     assert (tmp_path / status["artifacts"][engine]).is_file()
     assert engine not in status.get("skipped_engines", [])
+
+
+def test_reality_check_status_line_names_the_hottest_cached_reads(tmp_path, monkeypatch):
+    # #462: the gate names the cache candidates, hottest first, from the assignment and the
+    # collector's call rates; the status line keeps only the top few and counts the rest.
+    from src.storage.local_store import LocalArtifactStore
+
+    monkeypatch.chdir(tmp_path)
+    store = LocalArtifactStore("artifacts")
+    store.write_json(
+        "wordpress/job-1/reality-check/output.json",
+        {"before_distribution": {"dynamodb": 8}, "after_distribution": {"dynamodb": 8}},
+    )
+    ids = [f"q{i}" for i in range(8)]
+    store.write_json(
+        "wordpress/job-1/assignment/v1/assignment.json",
+        {
+            "version": 1,
+            "cache_overlay": {"engine": "elasticache", "query_count": 8},
+            "query_assignments": [
+                {
+                    "query_id": q,
+                    "assigned_engine": "dynamodb",
+                    "source_tables": [f"t{i}"],
+                    "cache_engine": "elasticache",
+                    "cache_pattern": "point_lookup",
+                }
+                for i, q in enumerate(ids)
+            ],
+        },
+    )
+    store.write_json(
+        "wordpress/job-1/collector/output.json",
+        {
+            "queries": {
+                "query_patterns": [
+                    {"query_id": q, "calls_per_second": float(i + 1)} for i, q in enumerate(ids)
+                ]
+            }
+        },
+    )
+    reads = run_assessment._reality_check_artifact(store, "job-1", "wordpress")["cache_reads"]
+    assert [r["query_id"] for r in reads["reads"]] == ["q7", "q6", "q5", "q4", "q3"]
+    assert reads["reads"][0]["call_share_percent"] == 22.2  # 8 of 36 calls/s
+    assert reads["more"] == 3

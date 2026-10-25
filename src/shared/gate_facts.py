@@ -7,7 +7,7 @@ the total. ``scripts/print_summary.py`` prints the block from this; the block's 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.shared.cache_change import cache_change_sentence
@@ -16,6 +16,47 @@ from src.shared.cache_engines import CACHE_ENGINES
 
 def _count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+# How many cache candidates the gate names; the rest are counted ("and N more").
+CACHE_READS_SHOWN = 5
+
+
+def cache_candidate_reads(
+    query_assignments: Iterable[Mapping[str, Any]],
+    queries: Iterable[Mapping[str, Any]],
+    limit: int = CACHE_READS_SHOWN,
+) -> dict[str, Any] | None:
+    """The hottest reads the cache overlay fronts, with their share of calls (#462).
+
+    ``reads`` holds the top ``limit`` in-scope cached queries by calls per second (ties by
+    query id), each with its tables, owner engine, cache pattern and share of the in-scope
+    workload's calls, the same denominator as the overlay's ``call_share_percent``; ``more``
+    counts the rest. None when nothing is cached. The chat gate and the UI gate both read this.
+    """
+    rate = {q.get("query_id"): float(q.get("calls_per_second") or 0) for q in queries}
+    in_scope = [qa for qa in query_assignments if qa.get("in_scope", True)]
+    cached = [qa for qa in in_scope if qa.get("cache_engine")]
+    if not cached:
+        return None
+    total = sum(rate.get(qa.get("query_id"), 0.0) for qa in in_scope)
+    ranked = sorted(
+        cached, key=lambda qa: (-rate.get(qa.get("query_id"), 0.0), str(qa["query_id"]))
+    )
+    reads = []
+    for qa in ranked[:limit]:
+        cps = rate.get(qa.get("query_id"), 0.0)
+        reads.append(
+            {
+                "query_id": qa["query_id"],
+                "tables": [str(t) for t in qa.get("source_tables") or []],
+                "owner": qa.get("assigned_engine", ""),
+                "pattern": qa.get("cache_pattern") or "",
+                "calls_per_second": round(cps, 3),
+                "call_share_percent": round(min(100.0, cps / total * 100), 1) if total else 0.0,
+            }
+        )
+    return {"reads": reads, "more": max(0, len(ranked) - len(reads))}
 
 
 def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
@@ -70,6 +111,9 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
                 "call_share_percent": overlay.get(
                     "candidate_call_share_percent", overlay.get("call_share_percent")
                 ),
+                # #462: the hottest of them, named; the rest counted.
+                "reads": list((gate.get("cache_reads") or {}).get("reads") or []),
+                "more": _count((gate.get("cache_reads") or {}).get("more")),
                 # #1400: what the design covers, once synthesis stored the candidates.
                 "change": (
                     cache_change_sentence(

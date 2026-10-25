@@ -56,6 +56,40 @@ MIN_LISTED_RISKS = 5
 _CODE_SPAN = re.compile(r"`[^`\n]*`")
 
 
+def _cache_read_lines(candidates: Mapping[str, Any]) -> list[str]:
+    """The hottest cache candidates, one line each, then "and N more" (#462)."""
+    reads = [r for r in candidates.get("reads") or [] if isinstance(r, Mapping)]
+    if not reads:
+        return []
+    lines = ["Hottest cache candidates:"]
+    for r in reads:
+        tables = [str(t) for t in r.get("tables") or []]
+        if tables:
+            more = len(tables) - 1
+            table = f"`{escaping.md_code(tables[0])}`" + (
+                f" and {more} more {plural_noun(more, 'table')}" if more else ""
+            )
+        else:
+            table = "a query with no table"
+        shape = ", ".join(
+            x
+            for x in (
+                display_engine(str(r["owner"])) if r.get("owner") else "",
+                str(r.get("pattern") or "").replace("_", " "),
+            )
+            if x
+        )
+        lines.append(
+            f"- {table}"
+            + (f" ({shape})" if shape else "")
+            + f": {float(r.get('calls_per_second') or 0):.1f} calls/s, "
+            f"{_percent(r.get('call_share_percent'))} of calls"
+        )
+    if candidates.get("more"):
+        lines.append(f"- and {candidates['more']} more")
+    return lines
+
+
 def prose(text: Any) -> str:
     """Escape untrusted text for flowing Markdown, leaving the inside of a code span as written.
 
@@ -154,6 +188,7 @@ def render_gate_block(
         ]
         if candidates.get("change"):
             lines.append(f"Cache layer note: {candidates['change']}")
+        lines += _cache_read_lines(candidates)
         lines.append("")
     patterns = [p for p in gate.get("architectural_patterns") or [] if isinstance(p, Mapping)]
     if patterns:

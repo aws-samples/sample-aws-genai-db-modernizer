@@ -330,6 +330,38 @@ export function formatCacheLayerLine(overlay, { t = defaultT, withLabel = true, 
 }
 
 /**
+ * One cache candidate of the gate's compact list (#462), from `cache_reads.reads[]` of the
+ * assignments response (`src/shared/gate_facts.py`; the chat gate prints the same line):
+ * "wp_options (Aurora MySQL, point lookup): 41.3 calls/s, 19.3% of calls". Formatting only.
+ */
+export function formatCacheReadLine(read, { t = defaultT, engineLabel = (e) => e } = {}) {
+  if (!read) return null;
+  const tables = read.tables || [];
+  const extra = tables.length - 1;
+  const table = tables.length === 0
+    ? t('cache-layer.read-no-table', { defaultValue: 'a query with no table' })
+    : `${tables[0]}${extra > 0 ? ` ${t('cache-layer.read-more-tables', {
+      count: extra,
+      defaultValue: extra === 1 ? 'and {{count}} more table' : 'and {{count}} more tables',
+    })}` : ''}`;
+  const shape = [read.owner ? engineLabel(read.owner) : '', (read.pattern || '').replace(/_/g, ' ')]
+    .filter(Boolean)
+    .join(', ');
+  const rate = t('cache-layer.read-rate', {
+    rate: Number(read.calls_per_second || 0).toFixed(1),
+    percent: Number(read.call_share_percent || 0).toFixed(1),
+    defaultValue: '{{rate}} calls/s, {{percent}}% of calls',
+  });
+  return `${table}${shape ? ` (${shape})` : ''}: ${rate}`;
+}
+
+/** "and 18 more" after the listed cache candidates (#462); null when there are none more. */
+export function formatCacheReadsMore(more, { t = defaultT } = {}) {
+  if (!(more > 0)) return null;
+  return t('cache-layer.reads-more', { count: more, defaultValue: 'and {{count}} more' });
+}
+
+/**
  * The one sentence that says the cache design covers fewer reads than the gate's candidates
  * (#1252, ADR-032), from `facts.cache_layer` (`cacheLayerFactsOf`): "20 cache candidates,
  * 14 designed; 6 stay on their owner engine." Null when the design covers every candidate.

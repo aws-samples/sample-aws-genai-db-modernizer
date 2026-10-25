@@ -47,7 +47,7 @@ import {
 import { sourceEngineOf } from "../utils/sqlLocking";
 import { ENGINE_STYLES, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
-import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
+import { getCacheOverlay, ownerDistribution, getQueryCacheInfo, formatCacheLayerLine, formatCacheReadLine, formatCacheReadsMore, formatCachedByLine, isCacheEngine, buildOverrideList, addCacheOverlayNode } from "../utils/cacheLayer";
 import { summaryFallbackInfo } from "../utils/summaryFallback";
 import { reroutedQueryIds, rowMoveKind } from "../utils/postSchemaReroutes";
 import { pinnedFitLabel } from "../utils/queryRouting";
@@ -339,6 +339,7 @@ const AssignmentGatePage = memo(() => {
   // artifacts (no cache_overlay, ElastiCache still a real owner) keep
   // rendering exactly as before.
   const cacheOverlay = useMemo(() => getCacheOverlay(assignmentData?.assignment), [assignmentData]);
+  const cacheReads = assignmentData?.cache_reads || null;
   // #381 review round 2: never offer the losing Aurora engine as a per-query
   // override target -- the server rejects it (LosingAuroraEngineOverride) with no
   // warning here otherwise.
@@ -842,6 +843,25 @@ const AssignmentGatePage = memo(() => {
           {cacheLayerLine && (
             <Box padding={{ top: 's' }} textAlign="center" color="text-body-secondary" fontSize="body-s">
               {cacheLayerLine}
+            </Box>
+          )}
+          {/* #462: the hottest cache candidates, the same compact list the chat gate prints
+              (assignments response `cache_reads`, from src/shared/gate_facts.py). */}
+          {cacheReads?.reads?.length > 0 && (
+            <Box padding={{ top: 'xs' }} color="text-body-secondary" fontSize="body-s">
+              <div className="cache-candidate-reads">
+                <strong>{t('cache-layer.hottest-reads', { defaultValue: 'Hottest cache candidates' })}</strong>
+                <ul>
+                  {cacheReads.reads.map(read => (
+                    <li key={read.query_id}>
+                      {formatCacheReadLine(read, { t, engineLabel: (e) => ENGINE_COLORS[e]?.label || e })}
+                    </li>
+                  ))}
+                  {formatCacheReadsMore(cacheReads.more, { t }) && (
+                    <li>{formatCacheReadsMore(cacheReads.more, { t })}</li>
+                  )}
+                </ul>
+              </div>
             </Box>
           )}
         </Container>

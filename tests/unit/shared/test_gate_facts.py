@@ -103,3 +103,80 @@ def test_without_a_cache_layer_there_is_no_cache_engine() -> None:
     facts = gate_block_facts({**GATE, "schema_design_engines": ["aurora_mysql", "dynamodb"]})
     assert facts["surviving"] == ["aurora_mysql", "dynamodb"]
     assert facts["cache_engine"] is None
+
+
+def _qa(
+    qid, owner="aurora_mysql", cached=True, tables=("t",), in_scope=True, pattern="point_lookup"
+):
+    return {
+        "query_id": qid,
+        "assigned_engine": owner,
+        "source_tables": list(tables),
+        "in_scope": in_scope,
+        "cache_engine": "elasticache" if cached else None,
+        "cache_pattern": pattern if cached else None,
+    }
+
+
+def test_cache_candidate_reads_list_the_hottest_first_with_their_share_of_calls() -> None:
+    from src.shared.gate_facts import cache_candidate_reads
+
+    qas = [
+        _qa("a"),
+        _qa("b", owner="dynamodb", tables=("x", "y")),
+        _qa("c"),
+        _qa("d", cached=False),
+    ]
+    queries = [
+        {"query_id": "a", "calls_per_second": 10},
+        {"query_id": "b", "calls_per_second": 30},
+        {"query_id": "c", "calls_per_second": 10},
+        {"query_id": "d", "calls_per_second": 50},
+    ]
+    out = cache_candidate_reads(qas, queries, limit=2)
+    assert [r["query_id"] for r in out["reads"]] == ["b", "a"]  # hottest, then id
+    assert out["reads"][0] == {
+        "query_id": "b",
+        "tables": ["x", "y"],
+        "owner": "dynamodb",
+        "pattern": "point_lookup",
+        "calls_per_second": 30.0,
+        "call_share_percent": 30.0,  # of all 100 in-scope calls/s, as the overlay's share is
+    }
+    assert out["more"] == 1
+
+
+def test_cache_candidate_reads_skip_out_of_scope_queries_and_empty_overlays() -> None:
+    from src.shared.gate_facts import cache_candidate_reads
+
+    assert cache_candidate_reads([_qa("a", cached=False)], [{"query_id": "a"}]) is None
+    out = cache_candidate_reads(
+        [_qa("a"), _qa("b", in_scope=False)],
+        [{"query_id": "a", "calls_per_second": 4}, {"query_id": "b", "calls_per_second": 99}],
+    )
+    assert [r["query_id"] for r in out["reads"]] == ["a"]
+    assert out["reads"][0]["call_share_percent"] == 100.0
+    assert out["more"] == 0
+
+
+def test_cache_candidate_reads_without_call_rates_show_zero_shares() -> None:
+    from src.shared.gate_facts import cache_candidate_reads
+
+    out = cache_candidate_reads([_qa("a")], [{"query_id": "a"}])
+    assert out["reads"][0]["call_share_percent"] == 0.0
+
+
+def test_the_gate_facts_carry_the_cache_candidate_reads() -> None:
+    reads = {"reads": [{"query_id": "a"}], "more": 3}
+    facts = gate_block_facts(
+        {
+            **GATE,
+            "cache_overlay": {"query_count": 4, "call_share_percent": 50.0},
+            "cache_reads": reads,
+        }
+    )
+    assert facts["cache_candidates"]["reads"] == reads["reads"]
+    assert facts["cache_candidates"]["more"] == 3
+    bare = gate_block_facts({**GATE, "cache_overlay": {"query_count": 4}})
+    assert bare["cache_candidates"]["reads"] == []
+    assert bare["cache_candidates"]["more"] == 0

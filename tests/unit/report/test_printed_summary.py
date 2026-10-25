@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from src.report.deliverables import FOLDER_ENTRIES
 from src.report.printed_summary import (
     MIN_LISTED_RISKS,
@@ -35,6 +37,27 @@ GATE: dict[str, Any] = {
     ],
     "sweep_kept": [{"engine": "opensearch", "reason": "Full-text search stays"}],
     "cache_overlay": {"query_count": 20, "call_share_percent": 83.4},
+    "cache_reads": {
+        "reads": [
+            {
+                "query_id": "q1",
+                "tables": ["wp_options"],
+                "owner": "aurora_mysql",
+                "pattern": "point_lookup",
+                "calls_per_second": 41.26,
+                "call_share_percent": 19.3,
+            },
+            {
+                "query_id": "q2",
+                "tables": ["wp_posts", "wp_postmeta"],
+                "owner": "dynamodb",
+                "pattern": "reference_read",
+                "calls_per_second": 12.0,
+                "call_share_percent": 5.6,
+            },
+        ],
+        "more": 18,
+    },
     "schema_design_engines": ["aurora_mysql", "dynamodb", "elasticache"],
     "pending_choices": [],
     "executive_summary": "Reality check removed DocumentDB and kept the rest.",
@@ -419,3 +442,21 @@ def test_the_summary_never_narrates_the_run() -> None:
     text = (_final(_report()) + _gate()).lower()
     for phrase in ("i haven't", "i did not", "didn't pull", "subagent", "phase ", "step "):
         assert phrase not in text
+
+
+def test_the_gate_lists_the_hottest_cache_candidates_compactly() -> None:
+    text = _gate()
+    assert "- `wp_options` (Aurora MySQL, point lookup): 41.3 calls/s, 19.3% of calls" in text
+    assert (
+        "- `wp_posts` and 1 more table (DynamoDB, reference read): 12.0 calls/s, 5.6% of calls"
+        in text
+    )
+    assert "- and 18 more" in text
+    assert text.index("`wp_options`") > text.index("Cache layer: ElastiCache has 20")
+
+
+@pytest.mark.passes_on_main
+def test_the_gate_lists_no_cache_candidates_when_the_status_data_has_none() -> None:
+    text = _gate(cache_reads=None)
+    assert "Cache layer: ElastiCache has 20 cache candidates" in text
+    assert "calls/s" not in text

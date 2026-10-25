@@ -27,8 +27,10 @@ from src.contracts.assignment_models import (
     ValidationResult,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.gate_facts import cache_candidate_reads
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import resolve_effective_assignment_version
+from src.storage.collector_for_models import read_collector_for_models
 
 router = APIRouter(prefix="/api/v1/assessments", tags=["assignments"])
 
@@ -122,6 +124,14 @@ class AssignmentResponse(BaseModel):
         default_factory=list,
         description="Engines with zero in-scope queries (schema design will be SKIPPED)",
     )
+    cache_reads: dict | None = Field(
+        None,
+        description=(
+            "The hottest cache candidates and how many more there are (#462): "
+            "{reads: [{query_id, tables, owner, pattern, calls_per_second, "
+            "call_share_percent}], more}; None when nothing is cached"
+        ),
+    )
     pending_choices: list[PendingEngineChoice] = Field(
         default_factory=list,
         description=(
@@ -151,6 +161,15 @@ def _read_assignment(store: ArtifactStore, db: str, job_id: str, version: int) -
     )
 
 
+def _cache_reads(store: ArtifactStore, db: str, job_id: str, assignment: Assignment):
+    """The gate's hottest cache candidates, from the assignment and the collector's rates."""
+    collector = read_collector_for_models(store, db, job_id, missing_ok=True)
+    patterns = (collector.get("queries") or {}).get("query_patterns") or []
+    return cache_candidate_reads(
+        [qa.model_dump(mode="json") for qa in assignment.query_assignments], patterns
+    )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -175,7 +194,11 @@ async def get_assignments(
 
     assignment = _read_assignment(store, database_name, job_id, version)
     choices, _ = pending_choices_for_job(store, database_name, job_id, version)
-    return AssignmentResponse(assignment=assignment, pending_choices=choices)
+    return AssignmentResponse(
+        assignment=assignment,
+        pending_choices=choices,
+        cache_reads=_cache_reads(store, database_name, job_id, assignment),
+    )
 
 
 @router.put("/{job_id}/assignments", response_model=AssignmentResponse)

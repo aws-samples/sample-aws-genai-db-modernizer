@@ -409,6 +409,10 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
         _BUDGET,
     ),
     "src/shared/job_status.py": (frozenset({"_MAX_MESSAGE_LEN"}), _BUDGET),
+    "src/shared/gate_facts.py": (
+        frozenset({"CACHE_READS_SHOWN"}),
+        _WORDING + ": how many cache candidates the approval gate names (#462)",
+    ),
     "src/agents/referee/co_dependency.py": (
         frozenset({"GROUP_SCORE_PLACES"}),
         "the precision a group's mean is compared at (#992 round 4): float noise in a "
