@@ -46,9 +46,10 @@ Fields:
   units). ``read_unit_bytes`` / ``write_unit_bytes`` (the bytes one unit reads or
   writes) stay in the engine file; an engine billed by capacity has none. ``reads_billed_on_cache_miss_only``: a read served from
   the engine's buffer cache is not billed. ``estimate_instance_class`` /
-  ``estimate_instance_memory_gb``: the instance an engine's cost estimate prices and its
-  memory, which bounds a read's buffer-cache hit ratio taken from the source (#1197,
-  ``src.shared.source_cache``); both or neither. The per-query cost dimension
+  ``estimate_instance_memory_gb`` (a property): the instance an engine's cost estimate
+  prices and its memory, read from the price table's ``instance_memory_gib`` for that
+  class (#1396; a class the table does not describe is an error). The memory bounds a
+  read's buffer-cache hit ratio taken from the source (#1197, ``src.shared.source_cache``). The per-query cost dimension
   (``src.agents.referee.query_cost``, #494) and the cost estimates read them. An engine
   with no ``pricing`` table gets the ``EnginePricing`` defaults.
 - ``score_weights`` (optional, #1002): the engine's score-dimension weights (ADR-031
@@ -181,7 +182,6 @@ class EnginePricing(BaseModel):
     write_unit_bytes: int | None = Field(default=None, gt=0)
     reads_billed_on_cache_miss_only: bool = False
     estimate_instance_class: str | None = Field(default=None, min_length=1)
-    estimate_instance_memory_gb: float | None = Field(default=None, gt=0)
 
     @property
     def configuration(self) -> str | None:
@@ -198,9 +198,23 @@ class EnginePricing(BaseModel):
             sized = getattr(self, f"{side}_unit_bytes") is not None
             if priced != sized:
                 raise ValueError(f"{side}_unit_price_per_million needs {side}_unit_bytes")
-        if (self.estimate_instance_class is None) != (self.estimate_instance_memory_gb is None):
-            raise ValueError("estimate_instance_class needs estimate_instance_memory_gb")
+        self.estimate_instance_memory_gb  # noqa: B018 - raises for a class the table lacks
         return self
+
+    @property
+    def estimate_instance_memory_gb(self) -> float | None:
+        """The memory (GiB) of ``estimate_instance_class``, from the price table's
+        ``instance_memory_gib`` (#1396); None when the engine names no class. A class the
+        table does not describe raises: the memory is never guessed."""
+        if self.estimate_instance_class is None:
+            return None
+        memory = self.instance_memory_gib.get(self.estimate_instance_class)
+        if memory is None or memory <= 0:
+            raise ValueError(
+                f"estimate_instance_class {self.estimate_instance_class!r} has no "
+                "instance_memory_gib in the price table (src/catalog/prices.toml)"
+            )
+        return float(memory)
 
 
 class Threshold(BaseModel):

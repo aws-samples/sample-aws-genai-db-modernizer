@@ -74,6 +74,13 @@ class TestTheErrorsTheResearchFound:
         assert prices["documentdb.standard"]["instance_hourly"]["db.r6g.large"] == 0.26315
         assert prices["documentdb.io_optimized"]["instance_hourly"]["db.r6g.large"] == 0.2895
 
+    def test_documentdb_instance_memory_comes_from_the_memory_column(self, prices) -> None:
+        for section in ("documentdb.standard", "documentdb.io_optimized"):
+            assert prices[section]["instance_memory_gib"] == {
+                "db.r6g.large": 16.0,
+                "db.r6g.xlarge": 32.0,
+            }
+
     def test_dynamodb_storage_skips_the_free_tier_row(self, prices) -> None:
         assert prices["dynamodb.on_demand"] == {
             "read_unit_price_per_million": 0.125,

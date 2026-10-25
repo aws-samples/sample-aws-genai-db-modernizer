@@ -61,6 +61,10 @@ storage_price_per_gb_month = 0.1
 "db.r6g.large" = 0.26315
 "db.r6g.xlarge" = 0.5263
 
+[documentdb.standard.instance_memory_gib]
+"db.r6g.large" = 16.0
+"db.r6g.xlarge" = 32.0
+
 [documentdb.io_optimized]
 read_unit_price_per_million = 0.0
 write_unit_price_per_million = 0.0
@@ -69,6 +73,10 @@ storage_price_per_gb_month = 0.3
 [documentdb.io_optimized.instance_hourly]
 "db.r6g.large" = 0.2895
 "db.r6g.xlarge" = 0.5789
+
+[documentdb.io_optimized.instance_memory_gib]
+"db.r6g.large" = 16.0
+"db.r6g.xlarge" = 32.0
 
 [dynamodb.on_demand]
 read_unit_price_per_million = 0.125

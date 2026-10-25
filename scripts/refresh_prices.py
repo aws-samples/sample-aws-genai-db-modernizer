@@ -161,11 +161,24 @@ def _documentdb(io_optimized: bool) -> dict[str, object]:
     else:
         io = Selector("AmazonDocDB", {"usageType": "StorageIOUsage"}, "IOs", scale=1e6)
         storage = Selector("AmazonDocDB", {"usageType": "StorageUsage"}, "GB-Mo")
+    # An instance's memory bounds the buffer-cache hit ratio taken from the source
+    # (#1197, #1396), so the engine file names an instance class and the table describes it.
+    memory = {
+        itype: Selector(
+            "AmazonDocDB",
+            {"Instance Type": itype, "usageType": sel.match["usageType"]},
+            "Hrs",
+            column="Memory",
+            parse=_gib,
+        )
+        for itype, sel in instances.items()
+    }
     return {
         "read_unit_price_per_million": io,
         "write_unit_price_per_million": io,
         "storage_price_per_gb_month": storage,
         "instance_hourly": instances,
+        "instance_memory_gib": memory,
     }
 
 

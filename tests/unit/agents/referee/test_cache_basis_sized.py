@@ -98,14 +98,13 @@ def test_the_estimate_with_no_decided_cache_still_decides_for_itself() -> None:
     assert estimate_documentdb_costs(old).cost_components["read_io_hit_ratio_basis"] == "collection"
 
 
+@pytest.mark.passes_on_main  # adjusts a test whose behaviour main already has
 def test_a_missing_estimate_instance_class_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
     real = catalog.pricing("documentdb")
     monkeypatch.setattr(
         docdb.catalog,
         "pricing",
-        lambda _e: real.model_copy(
-            update={"estimate_instance_class": None, "estimate_instance_memory_gb": None}
-        ),
+        lambda _e: real.model_copy(update={"estimate_instance_class": None}),
     )
     with pytest.raises(ValueError, match="estimate_instance_class"):
         estimate_documentdb_costs(_collector(_query("r")))
@@ -124,8 +123,26 @@ def test_an_instance_class_the_price_table_does_not_price_is_an_error(
         estimate_documentdb_costs(_collector(_query("r")))
 
 
-def test_an_instance_class_needs_its_memory() -> None:
-    with pytest.raises(ValidationError, match="estimate_instance_memory_gb"):
+def test_an_instance_class_needs_its_memory_in_the_price_table() -> None:
+    """#1396: the memory is the price table's ``instance_memory_gib`` for the class, never
+    a value written next to it; a class the table does not describe is refused."""
+    with pytest.raises(ValidationError, match="db.r6g.large.*instance_memory_gib"):
         EnginePricing(estimate_instance_class="db.r6g.large")
-    with pytest.raises(ValidationError, match="estimate_instance_class"):
-        EnginePricing(estimate_instance_memory_gb=16)
+    with pytest.raises(ValidationError, match="db.r6g.large.*instance_memory_gib"):
+        EnginePricing(
+            estimate_instance_class="db.r6g.large", instance_memory_gib={"db.r6g.xlarge": 32.0}
+        )
+    with pytest.raises(ValidationError):  # the hand-set field is gone
+        EnginePricing.model_validate(
+            {"estimate_instance_class": "db.r6g.large", "estimate_instance_memory_gb": 16}
+        )
+    described = EnginePricing(
+        estimate_instance_class="db.r6g.large", instance_memory_gib={"db.r6g.large": 16.0}
+    )
+    assert described.estimate_instance_memory_gb == 16.0
+    assert EnginePricing().estimate_instance_memory_gb is None  # no class, no memory
+
+
+def test_documentdb_memory_is_read_from_the_price_table() -> None:
+    prices = catalog.pricing("documentdb")
+    assert prices.estimate_instance_memory_gb == prices.instance_memory_gib["db.r6g.large"] == 16.0

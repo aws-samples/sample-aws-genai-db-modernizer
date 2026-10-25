@@ -17,8 +17,9 @@ I/O free.
 - Every read, whatever its basis, has at least ``MIN_BILLED_MISS_SHARE`` (1%) billed as
   a miss: a query's own ratio is used as reported, capped at 99%.
 - The collection's ratio is also scaled down, never up, by the target's memory over the
-  source's (the instance the engine's estimate prices, ``estimate_instance_memory_gb`` in
-  its engine file, over ``metrics.source_host.physical_memory_gb``):
+  source's (the instance the engine's estimate prices, ``estimate_instance_memory_gb``:
+  the price table's memory for its engine file's ``estimate_instance_class``, #1396; over
+  ``metrics.source_host.physical_memory_gb``):
   ``min(1, target / source)``. A hit ratio does not grow linearly with memory, so a
   smaller source never raises it. When either memory is unknown it is not scaled.
 """
