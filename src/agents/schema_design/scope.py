@@ -23,11 +23,16 @@ Only the fields that *design* something are violations, per engine contract
 - elasticache: ``key_designs[].source_tables``,
   ``access_patterns[].source_tables`` / ``source_query_ids``
 - aurora_mysql / aurora_postgresql: ``table_definitions[].table_name`` (Aurora
-  tables carry over 1:1 from the source, so the name is the source table)
+  tables carry over 1:1 from the source, so the name is the source table),
+  ``access_patterns[].source_tables`` / ``source_query_ids`` (#537)
 
 ``unsupported_patterns[]`` query IDs are only *warnings*: an unsupported entry
 designs nothing, it records that a query cannot be served, so naming an
 out-of-scope or unknown query there is noise to report, not a design to reject.
+An Aurora access pattern marked ``in_scope: false`` is exempt on the same ground:
+it records a routing fact (the query runs elsewhere), so its query IDs are
+warnings too. Every other Aurora pattern, ``in_scope: true`` or unmarked, is a
+designed pattern and is checked (#537).
 
 Never checked, because they legitimately name other engines' tables and
 queries: ``trade_offs``, ``migration_notes``, ElastiCache
@@ -63,7 +68,10 @@ _Spec = tuple[
     tuple[tuple[str, str | None, tuple[str, ...], tuple[str, ...]], ...],
 ]
 
-_AURORA: tuple[_Spec, ...] = (("table_definitions", "table_name", ("table_name",), (), ()),)
+_AURORA: tuple[_Spec, ...] = (
+    ("table_definitions", "table_name", ("table_name",), (), ()),
+    ("access_patterns", "pattern_id", ("source_tables",), ("source_query_ids",), ()),
+)
 
 _ENGINE_FIELDS: dict[str, tuple[_Spec, ...]] = {
     "dynamodb": (
@@ -102,12 +110,19 @@ _ENGINE_FIELDS: dict[str, tuple[_Spec, ...]] = {
     "aurora_postgresql": _AURORA,
 }
 
-# Warning-only references: ``unsupported_patterns[]`` query-id field per engine.
+# Warning-only references: ``unsupported_patterns[]`` query-id field per engine, and
+# Aurora's routing-fact access patterns (``in_scope: false``, see
+# :func:`_split_aurora_patterns`).
+_AURORA_ROUTING_FACTS: tuple[_Spec, ...] = (
+    ("access_patterns", "pattern_id", (), ("source_query_ids",), ()),
+)
 _WARNING_FIELDS: dict[str, tuple[_Spec, ...]] = {
     "dynamodb": (("unsupported_patterns", None, (), ("query_ids",), ()),),
     "documentdb": (("unsupported_patterns", None, (), ("source_query_ids",), ()),),
     "opensearch": (("unsupported_patterns", None, (), ("query_ids",), ()),),
     "elasticache": (("unsupported_patterns", None, (), ("source_query_ids",), ()),),
+    "aurora_mysql": _AURORA_ROUTING_FACTS,
+    "aurora_postgresql": _AURORA_ROUTING_FACTS,
 }
 
 
@@ -179,13 +194,6 @@ def _references(specs: tuple[_Spec, ...], schema_output: dict) -> Iterator[tuple
                             yield "query", value, sub_location
 
 
-# Aurora access patterns name their queries (``source_query_ids``) but carry their
-# tables as DDL, so the scope check does not read them; coverage does.
-_AURORA_COVERAGE: tuple[_Spec, ...] = (
-    ("access_patterns", "pattern_id", (), ("source_query_ids",), ()),
-)
-
-
 def covered_query_ids(engine: str, schema_output: dict) -> set[str]:
     """Return the query IDs a design of ``engine`` serves, from its design fields.
 
@@ -205,9 +213,23 @@ def covered_query_ids(engine: str, schema_output: dict) -> set[str]:
             ],
         }
     specs = _ENGINE_FIELDS.get(engine, ())
-    if specs is _AURORA:
-        specs = specs + _AURORA_COVERAGE
     return {value for kind, value, _ in _references(specs, schema_output) if kind == "query"}
+
+
+def _split_aurora_patterns(schema_output: dict) -> tuple[dict, dict]:
+    """``(designed, routing_facts)``: an Aurora design split on ``in_scope: false``.
+
+    ``designed`` is ``schema_output`` without its routing-fact access patterns (the
+    ones that only record that a query runs elsewhere), ``routing_facts`` holds just
+    those patterns. Only an explicit ``in_scope: false`` marks one: the contract's
+    default is ``true``, so an unmarked pattern is a designed one.
+    """
+    patterns = schema_output.get("access_patterns")
+    if not isinstance(patterns, list):
+        return schema_output, {}
+    facts = [ap for ap in patterns if isinstance(ap, dict) and ap.get("in_scope") is False]
+    designed = [ap for ap in patterns if not (isinstance(ap, dict) and ap.get("in_scope") is False)]
+    return {**schema_output, "access_patterns": designed}, {"access_patterns": facts}
 
 
 def _query_owners(assignment: dict) -> dict[str, str]:
@@ -272,7 +294,8 @@ def assess_schema_scope(engine: str, schema_output: dict, assignment: dict) -> S
 
     ``violations``: one message per source table or query ID a designed entity
     references outside the engine's scope. ``warnings``: out-of-scope or
-    unknown query IDs that only ``unsupported_patterns`` mention.
+    unknown query IDs that only ``unsupported_patterns`` (or, on Aurora, an
+    ``in_scope: false`` access pattern) mention.
 
     Never raises on a malformed design or assignment: unexpected shapes are
     skipped, since contract validation reports those separately.
@@ -286,6 +309,9 @@ def assess_schema_scope(engine: str, schema_output: dict, assignment: dict) -> S
     version = assignment.get("version")
     where = f"assignment v{version}" if version else "the assignment"
     query_owners = _query_owners(assignment)
+    warning_source = schema_output
+    if _ENGINE_FIELDS.get(engine) is _AURORA:
+        schema_output, warning_source = _split_aurora_patterns(schema_output)
 
     bad_tables, bad_queries = _collect(
         _ENGINE_FIELDS.get(engine, ()), schema_output, in_scope_tables, in_scope_queries
@@ -314,7 +340,7 @@ def assess_schema_scope(engine: str, schema_output: dict, assignment: dict) -> S
         )
 
     _, warn_queries = _collect(
-        _WARNING_FIELDS.get(engine, ()), schema_output, in_scope_tables, in_scope_queries
+        _WARNING_FIELDS.get(engine, ()), warning_source, in_scope_tables, in_scope_queries
     )
     warnings = [
         f"{SCOPE_WARNING_PREFIX}{engine}: query '{qid}' "

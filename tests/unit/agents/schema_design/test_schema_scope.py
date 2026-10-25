@@ -19,6 +19,7 @@ from src.agents.schema_design.scope import (
     SCOPE_WARNING_PREFIX,
     apply_scope_violations,
     assess_schema_scope,
+    covered_query_ids,
     validate_schema_scope,
 )
 
@@ -116,9 +117,21 @@ def _elasticache(table: str, query: str) -> dict:
     }
 
 
-def _aurora(table: str, _query: str) -> dict:
-    # Aurora tables carry over 1:1, so table_name is the source table name.
-    return {"table_definitions": [{"table_name": table.split(".")[-1]}]}
+def _aurora(table: str, query: str) -> dict:
+    # Aurora tables carry over 1:1, so table_name is the source table name. Its access
+    # patterns are derived from the query log (#157) and scope-checked like the other
+    # engines' (#537).
+    return {
+        "table_definitions": [{"table_name": table.split(".")[-1]}],
+        "access_patterns": [
+            {
+                "pattern_id": "AURORA-AP-1",
+                "source_query_ids": [query],
+                "source_tables": [table],
+                "in_scope": True,
+            }
+        ],
+    }
 
 
 _ENGINES = {
@@ -130,7 +143,7 @@ _ENGINES = {
     "aurora_postgresql": (_aurora, "dynamodb"),
 }
 
-_HAS_QUERY_IDS = {"dynamodb", "documentdb", "opensearch", "elasticache"}
+_HAS_QUERY_IDS = set(_ENGINES)
 
 
 @pytest.mark.parametrize("engine", sorted(_ENGINES))
@@ -289,6 +302,115 @@ def test_unsupported_pattern_ids_are_warnings_only(engine, qid, reason):
     assert len(report.warnings) == 1
     assert report.warnings[0].startswith(SCOPE_WARNING_PREFIX)
     assert qid in report.warnings[0] and reason in report.warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# Aurora access patterns (#537): designed patterns are checked, routing facts are not
+# ---------------------------------------------------------------------------
+
+_AURORA_ENGINES = ["aurora_mysql", "aurora_postgresql"]
+
+
+def _routing_fact(qid: str, table: str) -> dict:
+    """An Aurora pattern that only records where a query runs: ``in_scope: false``."""
+    return {
+        "pattern_id": qid,
+        "source_query_ids": [qid],
+        "source_tables": [table],
+        "in_scope": False,
+        "out_of_scope_reason": "Assigned to another engine",
+    }
+
+
+@pytest.mark.parametrize("engine", _AURORA_ENGINES)
+def test_aurora_designed_pattern_on_another_engines_query_is_flagged(engine):
+    design = _aurora("mydb.users", "q-users")
+    design["access_patterns"].append(
+        {
+            "pattern_id": "q-orders",
+            "source_query_ids": ["q-orders"],
+            "source_tables": ["mydb.orders"],
+        }
+    )
+
+    messages = validate_schema_scope(engine, design, _assignment(engine, "dynamodb"))
+
+    assert _mentions(messages, "q-orders", "access_patterns[q-orders]", "dynamodb")
+    assert _mentions(messages, "mydb.orders", "access_patterns[q-orders]", "dynamodb")
+    assert all("q-users" not in m for m in messages)
+
+
+@pytest.mark.parametrize("engine", _AURORA_ENGINES)
+@pytest.mark.parametrize(
+    "qid,table,reason",
+    [
+        ("q-orders", "mydb.orders", "assigned to"),
+        ("q-ghost", "mydb.ghost", "not in"),
+    ],
+)
+def test_aurora_routing_fact_pattern_is_a_warning_only(engine, qid, table, reason):
+    design = _aurora("mydb.users", "q-users")
+    design["access_patterns"].append(_routing_fact(qid, table))
+
+    report = assess_schema_scope(engine, design, _assignment(engine, "dynamodb"))
+
+    assert report.violations == []
+    assert len(report.warnings) == 1
+    assert report.warnings[0].startswith(SCOPE_WARNING_PREFIX)
+    assert qid in report.warnings[0] and reason in report.warnings[0]
+
+
+@pytest.mark.passes_on_main  # guards coverage, which already skips in_scope: false
+@pytest.mark.parametrize("engine", _AURORA_ENGINES)
+def test_aurora_routing_fact_does_not_count_as_coverage(engine):
+    design = _aurora("mydb.users", "q-users")
+    design["access_patterns"].append(_routing_fact("q-orders", "mydb.orders"))
+    assert covered_query_ids(engine, design) == {"q-users"}
+
+
+@pytest.mark.parametrize("engine", _AURORA_ENGINES)
+def test_aurora_pattern_without_in_scope_is_a_designed_pattern(engine):
+    """Only an explicit ``in_scope: false`` marks a routing fact; a missing flag is a
+    designed pattern (the contract default) and is checked."""
+    design = _aurora("mydb.users", "q-users")
+    design["access_patterns"].append({"pattern_id": "q-orders", "source_query_ids": ["q-orders"]})
+    messages = validate_schema_scope(engine, design, _assignment(engine, "dynamodb"))
+    assert _mentions(messages, "q-orders", "dynamodb")
+
+
+@pytest.mark.passes_on_main  # guards that the new check passes the real derivation
+def test_derived_aurora_patterns_of_a_scoped_collection_are_in_scope():
+    """The derivation (``derive_access_patterns``) marks every pattern of the engine's
+    own queries ``in_scope: true``, so they pass the check against that assignment."""
+    from src.contracts.schema_design_input import AgentQueryPattern, AgentTable
+    from src.tools.schema.aurora_common.access_patterns import derive_access_patterns
+
+    query = AgentQueryPattern.model_validate(
+        {
+            "query_id": "q-users",
+            "query_text": "SELECT * FROM users WHERE id = ?",
+            "query_type": "SELECT",
+            "tables_accessed": ["mydb.users"],
+            "frequency_per_hour": 36.0,
+            "filter_columns": ["id"],
+        }
+    )
+    table = AgentTable.model_validate(
+        {
+            "table_id": "mydb.users",
+            "table_name": "users",
+            "row_count": 10,
+            "columns": [],
+            "primary_key": ["id"],
+        }
+    )
+    patterns = derive_access_patterns([query], [table]).patterns
+    design = {"table_definitions": [{"table_name": "users"}], "access_patterns": patterns}
+
+    report = assess_schema_scope("aurora_mysql", design, _assignment("aurora_mysql", "dynamodb"))
+
+    assert patterns and all(p["in_scope"] is True for p in patterns)
+    assert report == ([], [])
 
 
 # ---------------------------------------------------------------------------
