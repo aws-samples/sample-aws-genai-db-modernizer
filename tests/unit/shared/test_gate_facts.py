@@ -81,6 +81,10 @@ def test_ties_sort_by_engine_id_and_an_empty_gate_has_no_rows_and_zero_shares() 
         "total_before": 0,
         "total_after": 0,
         "unchanged": True,
+        # #1574: no engine scope, so no query is left with no engine in it.
+        "engine_scope": None,
+        "unservable_query_count": 0,
+        "query_total_count": 0,
     }
 
 

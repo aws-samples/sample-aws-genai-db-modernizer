@@ -677,7 +677,8 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
     ``_compact_sweep_kept``; a removed one is covered by ``consolidations``
     already), ``cache_overlay`` (the final assignment's cache coverage,
     trimmed to the three fields the gate names) and
-    ``schema_design_engines`` (see ``_schema_design_engines``) are read here,
+    ``schema_design_engines`` (see ``_schema_design_engines``), and for a scoped
+    job ``engine_scope`` and ``unservable_queries`` (#1574), are read here,
     deterministically, so the orchestrator can present them, and dispatch
     schema design, without opening either file. Review of #329: keep this
     line's growth in check -- the full cache_overlay object (owners,
@@ -716,9 +717,21 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
         # removed one's.
         out["sweep_kept"] = _compact_sweep_kept(rc.get("sweep_decisions", []))
 
+    # #1574: the customer's engine scope, as triage recorded it, for the gate block.
+    from src.agents.referee.engine_scope import scope_from_store
+
+    scope = scope_from_store(store, db, job_id)
+    if scope is not None:
+        out["engine_scope"] = sorted(scope)
     assignment_path = assignment_artifact_path(db, job_id, version)
     if store.exists(assignment_path):
-        overlay = store.read_json(assignment_path).get("cache_overlay")
+        assignment = store.read_json(assignment_path)
+        unservable = len(assignment.get("unservable_queries") or [])
+        if unservable:
+            # #1329: the queries no engine in the scope can serve (no engine, so in no
+            # engine's count); the gate block states how many (#1574).
+            out["unservable_queries"] = unservable
+        overlay = assignment.get("cache_overlay")
         if overlay:
             out["cache_overlay"] = {k: overlay[k] for k in _CACHE_OVERLAY_FIELDS if k in overlay}
             # #462: the hottest cached reads, named; the rest are counted.
@@ -726,9 +739,7 @@ def _reality_check_artifact(store, job_id: str, db: str) -> dict:
 
             collector = read_collector_for_models(store, db, job_id, missing_ok=True)
             queries = (collector.get("queries") or {}).get("query_patterns") or []
-            reads = cache_candidate_reads(
-                store.read_json(assignment_path).get("query_assignments") or [], queries
-            )
+            reads = cache_candidate_reads(assignment.get("query_assignments") or [], queries)
             if reads:
                 out["cache_reads"] = reads
     out["schema_design_engines"] = _schema_design_engines(store, job_id, db, version)

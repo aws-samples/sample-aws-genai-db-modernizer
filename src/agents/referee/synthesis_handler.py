@@ -732,7 +732,8 @@ _BRIEF_ENGINE_KEEP = (
 def _executive_brief_input(facts: dict) -> dict:
     """The facts the executive summary's three parts state (#1403), copied as is:
     the projected cost with its price basis, each engine's share, the waves, the risk
-    level and its drivers, the wave to approve, whether any saving may be claimed."""
+    level and its drivers, the wave to approve, whether any saving may be claimed, and
+    the customer's engine scope with the queries no engine in it can serve (#1574)."""
     return {
         "projected_monthly_cost_usd": facts.get("projected_monthly_cost_usd"),
         "price_list": facts.get("price_list"),
@@ -745,6 +746,11 @@ def _executive_brief_input(facts: dict) -> dict:
         "retired_in_use_engines": facts.get("retired_in_use_engines") or [],
         "open_risk_count": facts.get("open_risk_count"),
         "open_risks_by_severity": facts.get("open_risks_by_severity"),
+        # #1574: the customer's engine scope (None: every engine) and the queries no
+        # engine in it can serve, with the total the summary states them against.
+        "engine_scope": facts.get("engine_scope"),
+        "no_engine_in_scope_query_count": int(facts.get("no_engine_in_scope_query_count") or 0),
+        "query_total_count": facts.get("query_total_count"),
         **(facts.get("executive_brief") or {}),
     }
 

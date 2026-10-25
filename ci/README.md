@@ -283,7 +283,12 @@ into one `results.json` row by `ci/llm/run.py results`.
 make e2e-llm                                        # both / wordpress (defaults)
 make e2e-llm E2E_LLM_MODE=ui E2E_LLM_FIXTURE=discourse
 ./ci/e2e-llm.sh chat wordpress                       # or invoke the script directly
+E2E_LLM_TARGET_DATABASES=dynamodb,aurora_postgresql E2E_LLM_MAX_BUDGET_USD=80 ./ci/e2e-llm.sh chat discourse   # a scoped run
 ```
+
+**Scoped runs** (#1574): `E2E_LLM_TARGET_DATABASES` (comma-separated engine ids, for example `dynamodb,aurora_postgresql`) is passed to the headless run as `/modernize ... --target-databases <ids>`, the customer's engine scope; unset, every engine is considered. A value that is not comma-separated engine ids exits 2 before the run. Discourse scoped to `dynamodb,aurora_postgresql` costs about $56 (44 DynamoDB design parts, designed twice when the post-schema reroute moves a query), above the default `E2E_LLM_MAX_BUDGET_USD` of 50: raise it for that run.
+
+**The model that answered** (#1574): after the run, the `check-model` step (`ci/llm/run.py check-model`) reads the model the transcript records (the session's `init` record, else the `modelUsage` model with the most output tokens) into `model.json` and fails the run with a clear message when it is not `ANTHROPIC_MODEL`. A `claude` wrapper script on `PATH` can choose its own model whatever `ANTHROPIC_MODEL` says; set `CLAUDE_BIN` to the claude CLI itself to run the model you asked for. `results.json`'s `model` is the same recorded model (it was always `null` before: the `result` lines carry none). Dry runs skip the step.
 
 **What it checks**: the transcript's final `type == "result"` line
 (`ci/llm/run.py check-transcript`) is healthy -- no `is_error`, no
@@ -314,6 +319,7 @@ deterministic job.
 - `transcript.jsonl` -- the full stream-json transcript.
 - `claude-exit.txt`, `summary.json` -- the claude process's exit code/duration,
   and `ci/llm/run.py check-transcript`'s parsed summary (or `{"error": ...}`).
+- `model.json` -- `ci/llm/run.py check-model`'s `{"model", "expected", "match"}` (not in a dry run).
 - `reports-junit.xml`, `ui-junit.xml` (ui/both only), `pw-reports/`, `pw-ui/` --
   same shapes as `e2e.sh`'s outputs, produced by the same pytest invocations.
 - `judge.json` -- `ci/llm/judge.py`'s rubric scores. The judge grades the same prompt `JUDGE_SAMPLES` times (default 3), one after another, with a pinned model (`JUDGE_MODEL` overrides it), and `scores` are the per-criterion medians the pass rule is applied to. Measured on saved main jobs (2026-10-18, Bedrock, the CLI's prompt cache warm after the first sample): wordpress (119K-char prompt) $0.29 and 96 s for three samples, discourse (145K) $0.32 and 95 s; the first sample costs about $0.20, later ones about $0.05, each about 30 s. It also records `model` (the model that answered, read from the CLI record's `modelUsage`; every `judge.json` before #952 has `null` there), `model_requested`, `model_matches_request` (false when a managed or user CLI setting answered with another model; such scores are not comparable), `rubric_version` and `rubric_sha256`, `samples` (each sample's scores, model, cost and `duration_s`), `spread` (max - min per criterion), `samples_failed`, `notes` (from the sample closest to the medians, `notes_from_sample`) and `defects` (one entry per defect the samples named, with criterion, kind, where, quote and how many samples named it). With `E2E_LLM_JUDGE_BASELINE` set to a saved main `judge.json`, `baseline` holds the per-criterion deltas when both were graded under the same `rubric_version` (otherwise `compared: false` with a note, never a failure), and the judge step fails when one criterion's median drops by 2 or more, or two or more criteria drop by 1: compare criteria, not the mean, because the mean hides moves that cancel; a single one-point drop is within noise. The judge measures the deliverables, not routing: routing quality is the answer-key benchmark's gate (`benchmarks/README.md`).
@@ -324,7 +330,7 @@ deterministic job.
   `local-ui-serve.log` (ui/both), each capped at its last 1 MB.
 - `steps.json` -- exit code of every step (`build-ui` (ui/both, run *before*
   the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
-  never builds inside a Bash tool call), `claude`, `check-transcript`,
+  never builds inside a Bash tool call), `claude`, `check-model` (not in a dry run), `check-transcript`,
   `token-usage`, `render`, `judge`, `install-browsers`, `report-tests`, `ui-tests`,
   `results`); a step failing never stops the script early. The judge runs before
   the browser tests (#1593), on the deliverables `render` re-renders the way the
@@ -358,7 +364,7 @@ version to install when `$CLAUDE_BIN` is missing, default pinned to
 deliberately), `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or*
 `CLAUDE_CODE_USE_BEDROCK` + `AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default
 3600), `E2E_LLM_MAX_TURNS` (default 200) and `E2E_LLM_MAX_BUDGET_USD`
-(default 50: a discourse run costs about $18-20, plus $3-5 when the DynamoDB merge needs a fix round), each only passed if the CLI's own `--help` mentions the flag,
+(default 50: a discourse run costs about $18-20, plus $3-5 when the DynamoDB merge needs a fix round; scoped to `dynamodb,aurora_postgresql` about $56), each only passed if the CLI's own `--help` mentions the flag, `E2E_LLM_TARGET_DATABASES` (a scoped run, see above),
 `E2E_LLM_JOB_BUDGET` (seconds, default 4800, see `steps.json` above),
 `E2E_LLM_ARTIFACT_ROOT` (dry-run only, default `$REPO_ROOT/artifacts`; see
 below), `E2E_OUTPUT` (as in `e2e.sh`).

@@ -372,6 +372,9 @@ ID_FIELD_PATHS = frozenset(
         ("sweep_decisions", "engine"),  # SweepDecision.engine (reality_check_output.py)
         ("price_list", "undated_engines"),  # ReportFacts.price_list.undated_engines
         ("unservable", "no_engine_in_scope_closest_engines"),  # UnservableFacts (#1329)
+        # #1574: the customer's engine scope (ReportFacts.engine_scope, #1328): engine ids
+        # every deliverable names through display_engine (engine_scope_statement).
+        ("facts", "engine_scope"),
     }
 )
 
@@ -391,7 +394,7 @@ ID_FIELD_PATHS = frozenset(
 # names besides the engine/owner ones are those that hold an engine id in report.json
 # today (each already declared).
 ENGINE_FIELD_NAME_RE = re.compile(
-    r"^(?:engines?|[a-z0-9_]+_engines?|owner|cached_by|also_read_by"
+    r"^(?:engines?|[a-z0-9_]+_engines?|engine_scope|owner|cached_by|also_read_by"
     r"|source_of_truth|moved_to|alternatives?|absorbed_by|moves_from|serves_from|fronts"
     r"|recommended_database|database|target|service)$"
 )

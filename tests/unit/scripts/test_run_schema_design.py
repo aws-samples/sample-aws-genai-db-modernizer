@@ -104,6 +104,9 @@ def _mock_store(artifacts: dict[str, dict]) -> MagicMock:
         written[path] = json.loads(data)
 
     store.read_json.side_effect = read_json
+    # exists() answers like read_json (a bare MagicMock is always truthy, #1574: the
+    # design step now asks whether the job's triage recorded an engine scope).
+    store.exists.side_effect = lambda path: any(pattern in path for pattern in artifacts)
     store.write_json.side_effect = write_json
     store.write_bytes.side_effect = write_bytes
     store._written = written

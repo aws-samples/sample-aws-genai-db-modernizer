@@ -57,6 +57,9 @@ SEARCH_AS_IS = " Use a search's output as is: never pipe, chain or post-process 
 COMMANDS_WITH_TOOL_USE_RULE = [
     "modernize.md",
     "collect.md",
+    "triage.md",
+    "analyze.md",
+    "assign.md",
     "reality-check.md",
     "synthesize.md",
     "design-schema-dynamodb.md",
@@ -557,7 +560,7 @@ def test_standalone_dynamodb_redoes_bad_drafts_at_most_once() -> None:
 
 def test_design_schema_never_dispatches_design_schema_dynamodb() -> None:
     text = (COMMANDS_DIR / "design-schema.md").read_text()
-    assert "one subagent per selected engine other than DynamoDB" in text
+    assert "one subagent per engine from step 1 other than DynamoDB" in text
     for match in re.finditer(r"/design-schema-dynamodb", text):
         before = text[max(0, match.start() - 40) : match.start()]
         assert "Never dispatch `" in before, before
@@ -1100,3 +1103,39 @@ def test_the_merge_fix_task_reads_check_costs_all_details_from_artifacts() -> No
     after = task[task.index("--check-costs-all\n```") :][:700]
     assert "`details`, a file under `artifacts/`" in after
     assert "Read that file with the Read tool; never pipe the command." in after
+
+
+def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
+    # A scoped discourse run (45 DynamoDB parts) ended after its last part reported:
+    # the orchestrator, told to write no progress text, kept no tally and replied
+    # "Still waiting on the remaining design subagents." 21 times with nothing left
+    # running, and never ran --status. Each report now runs the status command, and
+    # its line decides whether to wait or go on.
+    text = " ".join(_modernize_text().split())
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    assert "reply with no text and wait for the next report" not in text
+    assert "is never your own tally of reports: the status lines say it" in phase_6
+    design = phase_6.split("**Done signal.**", 1)[1].split("**6c.", 1)[0]
+    assert (
+        "After every design subagent's report, before anything else, run the DynamoDB `--status`"
+        in design
+    )
+    assert "names a group whose part has not reported yet: that part is still running" in design
+    assert "End the turn with no text" in design
+    assert "`merge_pending` (every group draft is written" in design
+    assert "Go on at once, in the same turn" in design
+    assert "name only groups whose part has already reported" in design
+    # #1594's short --status line: only the groups to redo, plus group_count and the
+    # manifest path; drafts_missing holds group indexes, so the part number is spelled out.
+    assert "`drafts_missing` (group indexes; part = index + 1)" in design
+    assert "`group_count`" in design and "`manifest` path" in design
+    assert "Never end a turn after a report without that status line" in design
+    review = phase_6.split("**6c.", 1)[1].split("**6d.", 1)[0]
+    assert (
+        "**Done signal.** After every review subagent's report, run the same `scripts/run_pe_review.py` command again"
+        in review
+    )
+    assert '`"status": "complete"` means every review is in: go on at once' in review
+    waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
+    assert "a subagent is still running only when the last status line" in waiting
+    assert TOOL_USE_RULE in _modernize_text()

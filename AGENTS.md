@@ -132,6 +132,8 @@ and `ci/e2e-llm.sh` build it for you.
 `ci/e2e-llm.sh` runs `claude -p "/modernize <collection.json> --auto --mode <chat|ui|both>"`
 with `--permission-mode dontAsk` and `.claude/settings.ci.json`.
 
+- `E2E_LLM_TARGET_DATABASES=dynamodb,aurora_postgresql` makes it a scoped run (`--target-databases`, the customer's engine scope); discourse scoped that way costs about $56 (44 DynamoDB parts), so raise `E2E_LLM_MAX_BUDGET_USD` for it.
+- After the run, `check-model` fails it when the transcript's model is not `ANTHROPIC_MODEL`: a `claude` wrapper script on `PATH` can choose its own model, and `CLAUDE_BIN` pointing at the claude CLI itself fixes it.
 - `--auto` never asks the user anything; `/modernize` never asks an
   experience-mode question at all. Default (and `--auto` alone) means `both`
   (chat + local UI); `--mode chat` is chat only, `--mode ui` is UI-first

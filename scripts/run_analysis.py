@@ -323,6 +323,18 @@ def main() -> None:
     _JOB.update(store=store, db=args.db, job_id=args.job_id, engine=args.engine)
     clear_failure_marker(store, args.db, args.job_id, _PHASE, engine=args.engine)
 
+    # #1574: an engine outside the customer's engine scope is never analysed (the
+    # /triage gate's modified selection included), so it can never be assigned.
+    from src.agents.referee.engine_scope import scope_from_store, scope_text
+
+    scope = scope_from_store(store, args.db, args.job_id)
+    if scope is not None and args.engine not in scope:
+        _error(
+            f"{args.engine} is outside the customer's engine scope ({scope_text(scope)}), "
+            "so it is not analysed. A job's scope is fixed once it starts: to use another "
+            "engine, start a new job whose scope adds it."
+        )
+
     # Engines without LLM support always run in "none" mode
     if args.engine not in _LLM_ENGINES:
         if args.finalize:

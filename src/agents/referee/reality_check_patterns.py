@@ -16,6 +16,8 @@ from src.shared.engines_in_use import engines_in_use as running_engines
 # Architectural patterns
 # ---------------------------------------------------------------------------
 
+# Each detected pattern also carries an ``example``, written for the plan's own engines
+# (:func:`pattern_example`).
 ARCHITECTURAL_PATTERNS: dict[str, dict] = {
     "CQRS": {
         "name": "Command Query Responsibility Segregation (CQRS)",
@@ -26,12 +28,6 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
             "query performance and flexibility."
         ),
         "when": "One engine handles most writes and another handles reads/search/analytics",
-        "example": (
-            "DynamoDB handles all CRUD operations (writes + simple reads). "
-            "OpenSearch serves as a read-optimized view for full-text search, "
-            "faceted filtering, and analytics queries. Data flows from DynamoDB "
-            "to OpenSearch via zero-ETL integration."
-        ),
     },
     "MATERIALIZED_VIEW": {
         "name": "Materialized View Pattern",
@@ -41,11 +37,6 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
             "is a read-only projection: all writes go through the primary."
         ),
         "when": "A secondary engine serves read-only queries on data owned by the primary",
-        "example": (
-            "DynamoDB is the source of truth for forum data. OpenSearch maintains "
-            "a materialized view of discussions + users for full-text search. "
-            "The view is automatically kept in sync via DynamoDB zero-ETL."
-        ),
     },
     "EVENT_SOURCING": {
         "name": "Event-Driven Sync",
@@ -55,12 +46,6 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
             "optimized representation of the data."
         ),
         "when": "Multiple engines need the same data in different shapes",
-        "example": (
-            "DynamoDB Streams captures all item changes. A Lambda function "
-            "transforms and routes changes to OpenSearch (for search) and "
-            "ElastiCache (for leaderboards). Each consumer shapes the data "
-            "for its specific access patterns."
-        ),
     },
     "POLYGLOT_PERSISTENCE": {
         "name": "Polyglot Persistence",
@@ -70,13 +55,58 @@ ARCHITECTURAL_PATTERNS: dict[str, dict] = {
             "best suited for its access patterns."
         ),
         "when": "Different parts of the application have fundamentally different data access needs",
-        "example": (
-            "User profiles and forum CRUD in DynamoDB (key-value + hierarchical). "
-            "Search and discovery in OpenSearch (full-text + relevance). "
-            "Real-time leaderboards in ElastiCache (sorted sets + pub/sub)."
-        ),
     },
 }
+
+
+def _names(engines: Iterable[str]) -> str:
+    """Display names joined for prose: "A", "A and B", "A, B and C"."""
+    names = [display_engine(str(e)) for e in engines]
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def pattern_example(key: str, applies_to: dict) -> str:
+    """The pattern's example for this plan, naming only its ``applies_to`` engines (#1574).
+
+    The examples were static text naming DynamoDB, OpenSearch and ElastiCache whatever the
+    plan was, so a scoped job's gate block and report named engines the plan never runs.
+    """
+    if key == "CQRS":
+        write = display_engine(str(applies_to["write_engine"]))
+        reads = list(applies_to.get("read_engines") or [])
+        verb = "serves" if len(reads) == 1 else "serve"
+        return (
+            f"{write} takes every write and the reads that need its latest state. "
+            f"{_names(reads)} {verb} the reads {'it is' if len(reads) == 1 else 'they are'} "
+            f"built for, from a copy kept in sync from {write}."
+        )
+    if key == "MATERIALIZED_VIEW":
+        source = display_engine(str(applies_to["source_engine"]))
+        view = display_engine(str(applies_to["view_engine"]))
+        return (
+            f"{source} is the source of truth and takes every write. {view} keeps a read-only, "
+            f"denormalized copy of the data its queries read, kept in sync from {source}."
+        )
+    if key == "EVENT_SOURCING":
+        source = display_engine(str(applies_to["source_engine"]))
+        return (
+            f"Change data capture on {source} carries each committed change to "
+            f"{_names(applies_to.get('target_engines') or [])}. Each consumer shapes the data "
+            "for its own access patterns."
+        )
+    return (
+        "Each part of the application keeps its data in the engine that fits its access "
+        f"patterns: {_names(applies_to.get('engines') or [])}."
+    )
+
+
+def _pattern(key: str, applies_to: dict) -> dict:
+    pattern = deepcopy(ARCHITECTURAL_PATTERNS[key])
+    pattern["example"] = pattern_example(key, applies_to)
+    pattern["applies_to"] = applies_to
+    return pattern
 
 
 # Which engines each pattern names, by catalog role (#1081): a read side for CQRS is a
@@ -124,37 +154,24 @@ def _detect_architectural_patterns(
 
     read_secondaries = [e for e in secondaries if e in CQRS_READ_ENGINES]
     if primary_has_writes and read_secondaries:
-        pattern = deepcopy(ARCHITECTURAL_PATTERNS["CQRS"])
-        pattern["applies_to"] = {
-            "write_engine": primary,
-            "read_engines": read_secondaries,
-        }
-        patterns.append(pattern)
+        patterns.append(
+            _pattern("CQRS", {"write_engine": primary, "read_engines": read_secondaries})
+        )
 
     # Check for Materialized View pattern: one per search read model in use
     for view in sorted(e for e in secondaries if e in VIEW_ENGINES):
-        pattern = deepcopy(ARCHITECTURAL_PATTERNS["MATERIALIZED_VIEW"])
-        pattern["applies_to"] = {
-            "source_engine": primary,
-            "view_engine": view,
-        }
-        patterns.append(pattern)
+        patterns.append(
+            _pattern("MATERIALIZED_VIEW", {"source_engine": primary, "view_engine": view})
+        )
 
     # If 3+ engines, suggest Polyglot Persistence
     if len(active_engines) >= 3:
-        pattern = deepcopy(ARCHITECTURAL_PATTERNS["POLYGLOT_PERSISTENCE"])
-        pattern["applies_to"] = {
-            "engines": list(active_engines.keys()),
-        }
-        patterns.append(pattern)
+        patterns.append(_pattern("POLYGLOT_PERSISTENCE", {"engines": list(active_engines.keys())}))
     elif len(active_engines) == 2 and primary not in NO_EVENT_SYNC_PRIMARY_ENGINES:
         # Event sourcing when using non-serverless primary
-        pattern = deepcopy(ARCHITECTURAL_PATTERNS["EVENT_SOURCING"])
-        pattern["applies_to"] = {
-            "source_engine": primary,
-            "target_engines": secondaries,
-        }
-        patterns.append(pattern)
+        patterns.append(
+            _pattern("EVENT_SOURCING", {"source_engine": primary, "target_engines": secondaries})
+        )
 
     return patterns
 

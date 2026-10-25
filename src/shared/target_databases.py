@@ -107,6 +107,22 @@ def engine_scope_statement(
     return f"Engines in scope: {names} (customer's choice)"
 
 
+def no_engine_in_scope_statement(count: int, total: int) -> str:
+    """ "42 of 1,696 queries have no engine in the customer's engine scope; a new assessment
+    whose scope adds an engine can serve them".
+
+    ``count`` and ``total`` are the facts' ``no_engine_in_scope_query_count`` and
+    ``query_total_count`` (the gate's from ``gate_block_facts``): the one wording the gate
+    block, the final summary and the deliverables index state (#1574).
+    """
+    one = count == 1
+    return (
+        f"{count:,} of {total:,} {'query' if total == 1 else 'queries'} "
+        f"{'has' if one else 'have'} no engine in the customer's engine scope; a new "
+        f"assessment whose scope adds an engine can serve {'it' if one else 'them'}"
+    )
+
+
 def engine_scope_display_order(engines: Iterable[str]) -> list[str]:
     """The scope's ids in the order the statement names them: by display name."""
     return sorted(set(engines), key=lambda e: (display_engine(e), e))

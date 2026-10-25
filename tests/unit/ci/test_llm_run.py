@@ -2291,3 +2291,128 @@ def test_e2e_llm_asks_the_cli_for_hook_events_when_it_lists_the_flag() -> None:
     script = (Path(__file__).resolve().parents[3] / "ci" / "e2e-llm.sh").read_text()
     assert "grep -q -- '--include-hook-events' <<<\"$HELP_TEXT\"" in script
     assert "CLAUDE_FLAGS+=(--include-hook-events)" in script
+
+
+# ---------------------------------------------------------------------------
+# #1574: the model the run actually used, and the scoped-run knob
+# ---------------------------------------------------------------------------
+
+
+def _model_transcript(tmp_path: Path, init_model: str | None, usage_models: dict) -> Path:
+    records: list[dict] = []
+    if init_model is not None:
+        records.append({"type": "system", "subtype": "init", "model": init_model})
+    records.append(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "MODERNIZE_RESULT: complete job_id=j1 db=wordpress mode=chat",
+            "modelUsage": {m: {"outputTokens": n} for m, n in usage_models.items()},
+        }
+    )
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return path
+
+
+def test_the_transcript_model_is_the_init_record_s(tmp_path: Path) -> None:
+    path = _model_transcript(tmp_path, "global.anthropic.claude-opus-5", {"other": 9})
+    assert run.transcript_model(run.iter_jsonl(path)) == "global.anthropic.claude-opus-5"
+
+
+def test_without_an_init_record_the_model_with_the_most_output_wins(tmp_path: Path) -> None:
+    path = _model_transcript(tmp_path, None, {"small-model": 10, "main-model": 900})
+    assert run.transcript_model(run.iter_jsonl(path)) == "main-model"
+
+
+def test_the_real_transcript_records_its_model() -> None:
+    # results.json recorded "model": null for every real run (no model field on the
+    # result lines); the init record names it.
+    records = run.iter_jsonl(FIXTURES / "real-chat-wordpress-failed.jsonl")
+    assert run.transcript_model(records)
+
+
+def test_check_model_fails_clearly_on_another_model(tmp_path: Path) -> None:
+    path = _model_transcript(tmp_path, "global.anthropic.claude-opus-5", {})
+    proc = subprocess.run(  # nosec B603 B607 -- fixed argv, this repo's own script
+        [
+            "uv",
+            "run",
+            "python",
+            "ci/llm/run.py",
+            "check-model",
+            str(path),
+            "--expected",
+            "m-sonnet",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 1
+    out = json.loads(proc.stdout)
+    assert out == {
+        "model": "global.anthropic.claude-opus-5",
+        "expected": "m-sonnet",
+        "match": False,
+    }
+    assert "not ANTHROPIC_MODEL=m-sonnet" in proc.stderr
+    assert "CLAUDE_BIN" in proc.stderr
+
+
+def test_check_model_passes_on_the_expected_model(tmp_path: Path) -> None:
+    path = _model_transcript(tmp_path, "m-sonnet", {})
+    assert run.check_model(run.iter_jsonl(path), "m-sonnet") == (True, "m-sonnet")
+    assert run.check_model(run.iter_jsonl(path), "m-opus") == (False, "m-sonnet")
+
+
+def test_e2e_llm_passes_the_target_databases_and_checks_the_model() -> None:
+    text = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    assert "E2E_LLM_TARGET_DATABASES" in text.split("source ", 1)[0]  # documented
+    assert "--target-databases $E2E_LLM_TARGET_DATABASES" in text
+    assert "ci/llm/run.py check-model" in text
+    assert '--expected "$ANTHROPIC_MODEL"' in text
+    assert '[ "$(step_status check-model)" = "0" ] || EXIT_CODE=1' in text
+
+
+def test_e2e_llm_refuses_a_malformed_target_databases(tmp_path: Path) -> None:
+    proc = _run_e2e_llm(tmp_path, {"E2E_LLM_TARGET_DATABASES": "dynamodb; rm -rf /"})
+    assert proc.returncode == 2, proc.stderr
+    assert "E2E_LLM_TARGET_DATABASES" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("used", "expected"),
+    [
+        ("global.anthropic.claude-sonnet-5-5", "global.anthropic.claude-sonnet-5-5"),
+        # The other provider's id for the same model.
+        ("global.anthropic.claude-sonnet-5-5", "claude-sonnet-5-5"),
+        ("claude-sonnet-5-5", "us.anthropic.claude-sonnet-5-5-v1:0"),
+        # A context-window or version suffix.
+        ("global.anthropic.claude-opus-5-5[1m]", "global.anthropic.claude-opus-5-5"),
+        ("global.anthropic.claude-opus-5-5", "claude-opus-5-5[1m]"),
+        ("anthropic.claude-haiku-5-v1:0", "claude-haiku-5"),
+        # An alias names the family.
+        ("global.anthropic.claude-sonnet-5-5", "sonnet"),
+    ],
+)
+def test_check_model_matches_the_same_model_under_another_id(
+    tmp_path: Path, used: str, expected: str
+) -> None:
+    path = _model_transcript(tmp_path, used, {})
+    assert run.check_model(run.iter_jsonl(path), expected) == (True, used)
+
+
+@pytest.mark.parametrize(
+    ("used", "expected"),
+    [
+        ("global.anthropic.claude-opus-5-5", "global.anthropic.claude-sonnet-5-5"),
+        ("global.anthropic.claude-sonnet-5", "claude-sonnet-5-5"),
+        ("global.anthropic.claude-opus-5-5", "sonnet"),
+    ],
+)
+def test_check_model_fails_on_a_different_model(tmp_path: Path, used: str, expected: str) -> None:
+    path = _model_transcript(tmp_path, used, {})
+    assert run.check_model(run.iter_jsonl(path), expected) == (False, used)

@@ -26,6 +26,7 @@ from src.agents.interaction import read_answers, read_partial_output
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.referee.cache_overlay import CACHE_OVERLAY_ENGINES, is_write_query
 from src.agents.referee.carried_writes import carried_write_records
+from src.agents.referee.engine_scope import scope_filtered_analysis, scope_from_store
 from src.agents.referee.query_pattern import (
     ACCESS_PATTERNS_FILE,
     read_analysis_outputs,
@@ -123,9 +124,13 @@ def _design_analysis_output(
     (``redesign_requirements_in_scope``, the Bedrock projection). A legacy version 0, or a
     record written before the redesign existed, adds none. Also ``effective_architecture``
     (#213): the engines the assignment version runs and the eliminated ones with their
-    absorbing engine, so a workaround names only an engine that remains."""
+    absorbing engine, so a workaround names only an engine that remains. Its prose keeps
+    no sentence naming an engine outside the customer's engine scope (#1574)."""
     analysis_key = f"{database_name}/{job_id}/analysis-{target_type}/analysis.json"
-    analysis_output = store.read_json(analysis_key)
+    # #1574: the analysis prose names no engine outside the customer's engine scope.
+    analysis_output = scope_filtered_analysis(
+        store.read_json(analysis_key), scope_from_store(store, database_name, job_id)
+    )
     if assignment_version <= 0:
         return analysis_output
     record_key = f"{database_name}/{job_id}/assignment/v{assignment_version}/{ACCESS_PATTERNS_FILE}"

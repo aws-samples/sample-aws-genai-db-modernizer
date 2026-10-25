@@ -12,6 +12,7 @@ from typing import Any
 
 from src.shared.cache_change import cache_change_sentence
 from src.shared.cache_engines import CACHE_ENGINES
+from src.shared.target_databases import engine_scope_display_order
 
 
 def _count(value: Any) -> int:
@@ -64,7 +65,8 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
 
     ``gate`` is the reality-check status data ``scripts/run_assessment.py`` prints
     (``before_distribution``, ``after_distribution``, ``eliminated_engines``,
-    ``consolidations``). A row's ``dropped`` comes from ``eliminated_engines`` only, never
+    ``consolidations``, and for a scoped job ``engine_scope`` and ``unservable_queries``,
+    the count of queries no engine in the scope can serve, #1574). A row's ``dropped`` comes from ``eliminated_engines`` only, never
     from a zero or nonzero count (an eliminated engine can keep a count for an out-of-scope
     query). Rows run from the largest final count down, ties by engine id.
     """
@@ -96,6 +98,7 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
     )
     designed = [str(e) for e in gate.get("schema_design_engines") or []]
     cache = [e for e in designed if e in CACHE_ENGINES]
+    unservable = _count(gate.get("unservable_queries"))
     overlay = gate.get("cache_overlay")
     return {
         "rows": rows,
@@ -133,4 +136,14 @@ def gate_block_facts(gate: Mapping[str, Any]) -> dict[str, Any]:
         "total_before": total_before,
         "total_after": total_after,
         "unchanged": unchanged,
+        # #1574: the customer's engine scope, in the order the deliverables name it, and
+        # the queries no engine in it can serve (no engine, so in no row), with the total
+        # of every query the statement counts them against.
+        "engine_scope": (
+            engine_scope_display_order(str(e) for e in gate["engine_scope"])
+            if gate.get("engine_scope")
+            else None
+        ),
+        "unservable_query_count": unservable,
+        "query_total_count": total_after + unservable,
     }

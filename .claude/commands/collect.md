@@ -16,6 +16,7 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 - A collector output JSON file exists (from running the collection SQL script against the source database)
 - The file path is provided as argument OR the user specifies it
 - Optional: `--engines-in-use <ids>`, comma-separated engine ids (for example `opensearch,elasticache`) of the other AWS databases the application already runs today. Never ask for it: absent means only the source engine counts.
+- Optional: `--target-databases <ids>`, comma-separated engine ids (for example `dynamodb,aurora_postgresql`): the customer's engine scope, the only engines the plan may route to. Never ask for it: absent means every engine. Triage records it for the job, so `/collect` passes it on to `/triage` (`/triage --target-databases <ids>`) and never to `run_collect.py`.
 - The path points at the `.json` file; a bundled sample's missing `.json` is extracted from its tracked `.zip` by the script, so no unzip step is needed
 
 ## Steps
@@ -57,3 +58,6 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
 
 5. **Update state**
    Set `current_phase` = "triage"
+
+6. **Next step**
+   Tell the user the next command is `/triage`, with `--target-databases <ids>` when it was given here.

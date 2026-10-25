@@ -1,15 +1,15 @@
 
 # /design-schema
 
-Dispatches schema design to all selected engines in parallel using subagents.
+Dispatches schema design, in parallel subagents, to exactly the engines in `schema_design_engines`, as `/modernize` Phase 6 does.
 
 ## Steps
 
-1. **Read state**
-   Read `.modernizer-state.json` for `selected_engines`.
+1. **Pick the engines**
+   Design exactly the engines in `schema_design_engines` from the `reality_check` status line (or the `engine_choices` line, when engine choices were settled), never re-derived from `after_distribution` (it lists owners only, so the cache-layer engine would be dropped). When neither line is in this session, read `selected_engines` from `.modernizer-state.json`: `scripts/run_assessment.py` sets it to the same list after the reality check and after each `--choose` or `--decide-for-me` (triage's selection, inside the customer's engine scope, filtered to the engines with an in-scope query, the cache layer included).
 
 2. **Launch parallel subagents**
-   Launch one subagent per selected engine other than DynamoDB in a SINGLE message:
+   Launch one subagent per engine from step 1 other than DynamoDB in a SINGLE message:
    - Each subagent invokes `/design-schema-{engine}`, with every `_` in the engine id replaced by `-` (`aurora_mysql` → `/design-schema-aurora-mysql`, `aurora_postgresql` → `/design-schema-aurora-postgresql`)
    - Every task text ends with: "Do not dispatch subagents yourself. Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it."
 

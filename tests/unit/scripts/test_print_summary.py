@@ -271,3 +271,40 @@ def test_a_job_whose_only_reality_check_is_another_lineages_is_a_json_error(
     proc = _run(root, "--gate")
     assert proc.returncode == 1
     assert "run reality check first" in json.loads(proc.stdout)["message"]
+
+
+def test_a_scoped_job_s_gate_states_the_scope_and_its_queries_with_no_engine(
+    run_root: Path, tmp_path: Path
+) -> None:
+    # #1574: the gate's status data carries the scope triage recorded and the effective
+    # assignment's unservable count, and the printed block states both.
+    import shutil
+
+    from scripts import run_assessment
+    from src.storage.assignment_versioning import (
+        assignment_artifact_path,
+        resolve_downstream_assignment_version,
+    )
+    from src.storage.local_store import LocalArtifactStore
+
+    root = tmp_path / "artifacts"
+    shutil.copytree(run_root, root)
+    store = LocalArtifactStore(base_dir=str(root))
+    triage_key = "wordpress/ps-job/referee-triage/triage.json"
+    triage = store.read_json(triage_key)
+    triage["engine_scope"] = sorted(
+        {a["agent_type"] for a in triage["selected_agents"]} | {"dynamodb"}
+    )
+    store.write_json(triage_key, triage)
+    version = resolve_downstream_assignment_version(store, "wordpress", "ps-job")
+    key = assignment_artifact_path("wordpress", "ps-job", version)
+    assignment = store.read_json(key)
+    assignment["unservable_queries"] = [{"query_id": "q-x"}, {"query_id": "q-y"}]
+    store.write_json(key, assignment)
+
+    gate = run_assessment._reality_check_artifact(store, "ps-job", "wordpress")
+    assert gate["engine_scope"] == triage["engine_scope"]
+    assert gate["unservable_queries"] == 2
+    out = _run(root, "--gate").stdout
+    assert "Engines in scope: " in out and "(customer's choice)." in out
+    assert "queries have no engine in the customer's engine scope" in out

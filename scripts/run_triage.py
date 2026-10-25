@@ -2,10 +2,18 @@
 """Run triage to select target NoSQL engines based on workload signals.
 
 Usage:
-    uv run python scripts/run_triage.py --job-id <id> --db <name> [--artifact-root ./artifacts]
+    uv run python scripts/run_triage.py --job-id <id> --db <name> [--target-databases <ids>]
+        [--artifact-root ./artifacts]
+
+``--target-databases`` (#1574) is the customer's engine scope, the same setting as
+``run_assessment.py --target-databases``: recorded as the job's
+``decisions/engine_scope.json`` before triage runs, and left out, the job keeps the scope
+it recorded (none: every engine).
 
 Outputs JSON to stdout:
-    {"status": "complete", "selected": [...], "skipped": [...], "deferred": [...]}
+    {"status": "complete", "selected": [...], "skipped": [...], "deferred": [...],
+     "skipped_reasons": [{"engine", "reason"}, ...], "signals": [...]}
+plus ``"engine_scope": [...]`` when the job has one.
 """
 
 import argparse
@@ -46,6 +54,16 @@ def main() -> None:
     parser.add_argument("--job-id", required=True, help="Job identifier")
     parser.add_argument("--db", required=True, help="Database name")
     parser.add_argument(
+        "--target-databases",
+        default=None,
+        metavar="ENGINES",
+        help=(
+            "Comma-separated engine ids the plan may route to, the customer's engine scope "
+            "(for example dynamodb,aurora_postgresql). Active engines only. Recorded as the "
+            "job's decisions/engine_scope.json; left out, the job keeps the scope it recorded"
+        ),
+    )
+    parser.add_argument(
         "--artifact-root",
         default="./artifacts",
         help="Root directory for local artifacts (default: ./artifacts)",
@@ -60,10 +78,12 @@ def main() -> None:
 
     from src.shared.database_name import validate_database_name
     from src.shared.job_id import validate_job_id
+    from src.shared.target_databases import parse_target_databases_option
 
     try:
         args.db = validate_database_name(args.db)
         args.job_id = validate_job_id(args.job_id)
+        scope = parse_target_databases_option(args.target_databases)
     except ValueError as exc:
         _error(str(exc))
 
@@ -79,6 +99,13 @@ def main() -> None:
     if not store.exists(collector_path):
         _error(f"Collector output not found at {collector_path}. Run /collect first.")
 
+    if scope is not None:
+        # #1574: the customer's engine scope, recorded the way run_assessment.py records
+        # it; triage reads it.
+        from src.agents.referee.engine_scope import record_engine_scope
+
+        record_engine_scope(store, args.db, args.job_id, scope, via="cli")
+
     # Run triage
     from src.agents.referee.triage_handler import run_triage
 
@@ -91,6 +118,7 @@ def main() -> None:
     selected = [a["agent_type"] for a in triage_output.get("selected_agents", [])]
     skipped = [a["agent_type"] for a in triage_output.get("skipped_agents", [])]
     deferred = [a["agent_type"] for a in triage_output.get("deferred_agents", [])]
+    recorded_scope = triage_output.get("engine_scope")
 
     _output(
         {
@@ -98,6 +126,12 @@ def main() -> None:
             "selected": selected,
             "skipped": skipped,
             "deferred": deferred,
+            # #1574: why each engine was skipped ("Not in the customer's engine scope").
+            "skipped_reasons": [
+                {"engine": a["agent_type"], "reason": a.get("reason", "")}
+                for a in triage_output.get("skipped_agents", [])
+            ],
+            **({"engine_scope": recorded_scope} if recorded_scope is not None else {}),
             "signals": [
                 {
                     "signal": s.get("signal", ""),

@@ -3,9 +3,13 @@
 
 Maps each query pattern to the best-fit target engine based on analysis results. Fully deterministic.
 
+## Tool Use
+
+Read files with the Read tool (use `offset`/`limit` for large files). Search file contents with `uv run python scripts/search_artifacts.py <regex> <path>` (or the Grep tool if this session has one). Use Bash only for the documented `uv run python scripts/…` commands; never use `cat`, `jq`, `python3 -c`, `sed`, `ls`, `cd` chains, heredocs or `grep`. Use a search's output as is: never pipe, chain or post-process it.
+
 ## Prerequisites
 
-- Analysis phase complete for all selected engines
+- Analysis phase complete for every engine in `selected_engines` (the engines triage selected, inside the customer's engine scope when the job has one)
 
 ## Steps
 
@@ -22,6 +26,7 @@ Maps each query pattern to the best-fit target engine based on analysis results.
    Show:
    - Query distribution per engine (count and percentage)
    - Total queries assigned
+   - When the line has `unservable_queries`: that many queries have no engine, because no engine in the customer's engine scope can serve them. They are in no engine's count and not in the total, the risk register lists them as a high risk, and a new assessment whose scope adds an engine can serve them. State the number as printed; it is not a failure.
    - Any queries with low workload fit that may need review
 
 4. **Decision gate**

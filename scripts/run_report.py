@@ -22,7 +22,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _write_deliverables_folder(job_dir, db: str, job_id: str, version: int, rendered):
+def _write_deliverables_folder(
+    job_dir, db: str, job_id: str, version: int, rendered, facts: dict | None = None
+):
     """Write the customer files into ``<job_dir>/deliverables/`` under their stable
     names and write the index. A documented file this round did not render is
     removed, so the folder never mixes rounds, and so is a retired deliverable an
@@ -48,7 +50,12 @@ def _write_deliverables_folder(job_dir, db: str, job_id: str, version: int, rend
         (folder / entry.filename).write_bytes(item.content)
     (folder / INDEX_FILENAME).write_text(
         render_folder_index(
-            db, job_id, version, [entry for entry, _ in files], commit=rendered.commit
+            db,
+            job_id,
+            version,
+            [entry for entry, _ in files],
+            commit=rendered.commit,
+            facts=facts,
         ),
         encoding="utf-8",
     )
@@ -88,9 +95,17 @@ def run(job_id: str, db: str, artifact_root: str, assignment_version: int | None
     try:
         from src.report.deliverables import render_deliverables
 
+        from src.report.facts import report_facts
+
         rendered = render_deliverables(store, job_id, db, report_key, assignment_version=version)
         folder = _write_deliverables_folder(
-            Path(artifact_root, db, job_id), db, job_id, version, rendered
+            Path(artifact_root, db, job_id),
+            db,
+            job_id,
+            version,
+            rendered,
+            # #1574: the index states the scope from the same facts the reports read.
+            facts=report_facts(store.read_json(report_key)),
         )
         return {
             "status": "partial" if rendered.errors else "complete",

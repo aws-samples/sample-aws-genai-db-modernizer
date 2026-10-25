@@ -75,11 +75,11 @@ A saving for retiring an engine counts only if you run that engine today, so the
 
 ### Limit the engines the plan may use
 
-By default every engine is considered. To limit the plan to the engines you want, give the engine scope: `/modernize <database>-collection.json --target-databases dynamodb,aurora_postgresql`, or the same `--target-databases` option on `uv run python scripts/run_assessment.py --file <database>-collection.json --db <database>`. The Assessments API takes it as `target_databases`, and the create-analysis form's target database checkboxes send it.
+By default every engine is considered. To limit the plan to the engines you want, give the engine scope: `/modernize <database>-collection.json --target-databases dynamodb,aurora_postgresql`, or the same `--target-databases` option on `uv run python scripts/run_assessment.py --file <database>-collection.json --db <database>`. The Assessments API takes it as `target_databases`, and the create-analysis form's target database checkboxes send it. Step by step, `/triage --target-databases <ids>` records it through `scripts/run_triage.py`.
 
 The ids are the active engine ids (`dynamodb`, `aurora_postgresql`, `aurora_mysql`, `documentdb`, `opensearch`, `elasticache`), in any case, each counted once; an empty list, the legacy `aurora`, a planned engine (`neptune`, `keyspaces`) or an unknown id is refused with the reason. The scope is recorded in the job's `decisions/engine_scope.json`, and every deliverable states it ("Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)"). A MySQL source scoped to DynamoDB and Aurora PostgreSQL moves its relational queries to Aurora PostgreSQL.
 
-When no engine in the scope can serve a query (for example DynamoDB alone for a relational workload), the run still finishes: those queries get no engine, stay out of every migration wave and schema design, and the risk register lists them as a high risk that names an engine that could serve them. A job's scope is fixed once it starts, so start a new run with an engine added to the scope to place them. Jobs started through AWS Transform take no scope yet (#1356).
+When no engine in the scope can serve a query (for example DynamoDB alone for a relational workload), the run still finishes: those queries get no engine and stay out of every migration wave and schema design; the approval gate, the final summary and the deliverables (`index.md` included) state how many, and the risk register lists them as a high risk that names an engine that could serve them. A job's scope is fixed once it starts, so start a new run with an engine added to the scope to place them. Jobs started through AWS Transform take no scope yet (#1356).
 
 ## Optional: attach an Amazon Bedrock Guardrail
 

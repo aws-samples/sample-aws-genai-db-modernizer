@@ -20,11 +20,19 @@
 #                            feature-detection" below). Default: 200.
 #   E2E_LLM_MAX_BUDGET_USD - only passed as --max-budget-usd if --help mentions
 #                            it. Default: 50 (a discourse run costs about $18-20, plus
-#                            $3-5 when the DynamoDB merge needs a fix round).
+#                            $3-5 when the DynamoDB merge needs a fix round; scoped to
+#                            dynamodb,aurora_postgresql it costs about $56, so raise it).
+#   E2E_LLM_TARGET_DATABASES - optional comma-separated engine ids (for example
+#                            dynamodb,aurora_postgresql): the customer's engine scope,
+#                            passed as /modernize --target-databases. Unset: every engine.
 #   CLAUDE_BIN             - the claude CLI to invoke. Default: claude.
 #   CLAUDE_CODE_VERSION    - npm version to install when $CLAUDE_BIN is missing.
 #                            Default: 2.1.288 (pinned; bump deliberately).
-#   ANTHROPIC_MODEL        - model id for the headless run.
+#   ANTHROPIC_MODEL        - model id for the headless run. After the run, the
+#                            check-model step reads the model the transcript records
+#                            (the init record, else modelUsage) and fails when it is
+#                            another one: a claude wrapper script on PATH can choose its
+#                            own model, and CLAUDE_BIN pointing at the CLI itself fixes it.
 #   JUDGE_MODEL            - judge model id. Default: pinned in ci/llm/judge.py
 #                            (the Bedrock or Anthropic API id of the same model).
 #   JUDGE_SAMPLES          - judge samples per run, median reported. Default: 3.
@@ -88,6 +96,15 @@ case "$FIXTURE" in
     exit 2
     ;;
 esac
+
+# The customer's engine scope for a scoped run (#1574): engine ids only, so the value
+# can never carry anything else into the prompt.
+TARGET_DATABASES="${E2E_LLM_TARGET_DATABASES:-}"
+if [ -n "$TARGET_DATABASES" ] && ! [[ "$TARGET_DATABASES" =~ ^[a-z_]+(,[a-z_]+)*$ ]]; then
+  echo "error: E2E_LLM_TARGET_DATABASES must be comma-separated engine ids such as" \
+    "dynamodb,aurora_postgresql (got '$TARGET_DATABASES')" >&2
+  exit 2
+fi
 
 OUT="${E2E_OUTPUT:-test-results}/llm-${MODE}-${FIXTURE}"
 mkdir -p "$OUT"
@@ -292,7 +309,11 @@ else
 
   CLAUDE_CMD=(env MODERNIZER_CI_SANDBOX=1)
   [ -n "$TIMEOUT_BIN" ] && CLAUDE_CMD+=("$TIMEOUT_BIN" "${E2E_LLM_TIMEOUT:-3600}")
-  CLAUDE_CMD+=("$CLAUDE_BIN" -p "/modernize $WORK/$FIXTURE-collection.json --auto --mode $MODE" "${CLAUDE_FLAGS[@]}")
+  PROMPT="/modernize $WORK/$FIXTURE-collection.json --auto --mode $MODE"
+  if [ -n "$TARGET_DATABASES" ]; then
+    PROMPT="$PROMPT --target-databases $E2E_LLM_TARGET_DATABASES"
+  fi
+  CLAUDE_CMD+=("$CLAUDE_BIN" -p "$PROMPT" "${CLAUDE_FLAGS[@]}")
 
   run_claude() {
     local start_ts rc
@@ -312,6 +333,18 @@ else
   step claude run_claude
 fi
 PHASE="after-claude"
+
+# --- the model that answered (#1574) ------------------------------------------
+
+if [ "$DRY_RUN" != "1" ]; then
+  # A claude wrapper script on PATH can run another model than ANTHROPIC_MODEL; the
+  # transcript records the one it ran.
+  run_check_model() {
+    uv run python ci/llm/run.py check-model "$OUT/transcript.jsonl" --expected "$ANTHROPIC_MODEL" \
+      >"$OUT/model.json"
+  }
+  step check-model run_check_model
+fi
 
 # --- transcript health + mode assertion -------------------------------------
 
@@ -435,6 +468,9 @@ cat "$OUT/results.json" 2>/dev/null || echo "(no results.json produced)"
 EXIT_CODE=0
 [ "$(step_status claude)" = "0" ] || EXIT_CODE=1
 [ "$(step_status results)" = "0" ] || EXIT_CODE=1
+if step_status check-model >/dev/null; then
+  [ "$(step_status check-model)" = "0" ] || EXIT_CODE=1
+fi
 if [ "$EXIT_CODE" -ne 0 ]; then
   log "e2e-llm failed -- see $OUT/steps.json and $OUT/results.json"
 fi

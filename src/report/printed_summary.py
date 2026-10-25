@@ -25,6 +25,7 @@ from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.gate_facts import gate_block_facts
 from src.shared.risk_severity import severity_of, severity_rank
+from src.shared.target_databases import engine_scope_statement, no_engine_in_scope_statement
 
 from . import escaping
 from .cache_layer import cache_change_notes, cache_layer_text
@@ -157,6 +158,17 @@ def render_gate_block(
         f"Total: {facts['total_after']} {plural_noun(facts['total_after'], 'query', 'queries')}.",
         "",
     ]
+    # #1574: the customer's engine scope and the queries no engine in it can serve.
+    if facts["engine_scope"]:
+        lines += [engine_scope_statement(facts["engine_scope"], escaping.md_text) + ".", ""]
+    if facts["unservable_query_count"]:
+        lines += [
+            no_engine_in_scope_statement(
+                facts["unservable_query_count"], facts["query_total_count"]
+            )
+            + ".",
+            "",
+        ]
     consolidations = [c for c in gate.get("consolidations") or [] if isinstance(c, Mapping)]
     if facts["unchanged"]:
         lines += ["Reality check changed nothing: the assignment stays as routed.", ""]
@@ -302,6 +314,14 @@ def _risk_lines(report: Mapping[str, Any], facts: Mapping[str, Any]) -> list[str
     return lines
 
 
+def _no_engine_lines(facts: Mapping[str, Any]) -> list[str]:
+    """The At a glance line for the queries with no engine in the scope (#1329, #1574)."""
+    count, total = facts.get("no_engine_in_scope_query_count"), facts.get("query_total_count")
+    if not isinstance(count, int) or count <= 0 or not isinstance(total, int):
+        return []
+    return [f"- {no_engine_in_scope_statement(count, total)}"]
+
+
 def render_final_summary(
     report: Mapping[str, Any],
     *,
@@ -340,6 +360,10 @@ def render_final_summary(
         for e in engines
     ]
     lines.append(f"- Target engines: {', '.join(labelled) if labelled else 'none'}")
+    # #1574: the customer's engine scope and the queries no engine in it can serve.
+    if facts.get("engine_scope"):
+        lines.append(f"- {engine_scope_statement(facts['engine_scope'], escaping.md_text)}")
+    lines += _no_engine_lines(facts)
     lines.append(f"- Projected monthly cost: {_fmt_usd(facts.get('projected_monthly_cost_usd'))}")
     lines.append(f"- {cost_note_text(facts)}")
     if cost_baseline_known(tco):

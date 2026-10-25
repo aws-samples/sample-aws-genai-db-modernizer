@@ -239,3 +239,14 @@ def test_the_real_model_report_json_declares_every_engine_field() -> None:
     assert report["facts"]["cache_layer"]["engine"]  # #1399's field, present
     assert guard.undeclared_engine_fields(report) == []
     assert guard.scan_json(report) == []
+
+
+def test_the_engine_scope_is_an_id_field() -> None:
+    # #1574: facts.engine_scope holds the customer's engine ids (each deliverable names
+    # them through display_engine); the guard flagged them as raw ids in a scoped run.
+    report = {"facts": {"engine_scope": ["aurora_postgresql", "dynamodb"]}}
+    assert guard.scan_json(report) == []
+    assert guard.ENGINE_FIELD_NAME_RE.match("engine_scope")
+    assert guard.undeclared_engine_fields(report) == []
+    # The same name elsewhere is still scanned.
+    assert guard.scan_json({"other": {"engine_scope": ["aurora_postgresql"]}})

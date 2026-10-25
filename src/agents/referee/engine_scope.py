@@ -23,6 +23,7 @@ edit of an unservable query.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -392,3 +393,95 @@ def without_unservable_groups(
         [g for g in groups if not set(g) <= ids],
         {t: m for t, m in writes.items() if not set(m) <= ids},
     )
+
+
+# ---------------------------------------------------------------------------
+# Analysis text a designer reads, inside the scope (#1574)
+# ---------------------------------------------------------------------------
+
+# A concern's leading anti-pattern label: "single-access-pattern-table: ..." (Aurora,
+# DynamoDB) or "[full-text-search] ..." (DocumentDB).
+_LABEL = re.compile(r"^((?:[a-z0-9][a-z0-9_-]*:|\[[a-z0-9][a-z0-9_-]*\])\s+)")
+
+
+def scope_filtered_text(text: str | None, scope: Iterable[str] | None) -> str | None:
+    """``text`` without the sentences that name an engine outside ``scope``.
+
+    The catalog's guidance suggests other engines ("If it's a hot lookup, ElastiCache is
+    more appropriate"); a designer of a scoped job must not read a suggestion the scope
+    rules out. A leading ``label: `` is kept with the text after it; text with nothing
+    left in scope is ``""``. With no scope, or no engine outside it named, ``text`` is
+    returned as is.
+    """
+    if scope is None or not text:
+        return text
+    from src.agents.referee.synthesis_grounding import (  # import cycle
+        engine_mentions,
+        split_sentences,
+    )
+
+    allowed = set(scope)
+
+    def inside(part: str) -> bool:
+        return {e for e, _, _ in engine_mentions(part)} <= allowed
+
+    if inside(text):
+        return text
+    if "\n" in text:
+        # Line by line, so a bullet inside the scope survives next to one outside it
+        # and the field keeps its lines.
+        lines = [scope_filtered_text(line, allowed) or "" for line in text.split("\n")]
+        return "\n".join(line for line in lines if line.strip())
+    m = _LABEL.match(text)
+    label = m.group(1) if m else ""
+    kept = [s for s in split_sentences(text[len(label) :]) if inside(s)]
+    return label + " ".join(kept) if kept else ""
+
+
+def scope_filtered_analysis(
+    analysis: Mapping[str, Any], scope: Iterable[str] | None
+) -> dict[str, Any]:
+    """A copy of an engine's ``analysis.json`` whose prose names no engine outside
+    ``scope`` (:func:`scope_filtered_text`): each table recommendation's ``rationale``
+    and ``concerns`` and each detected pattern's and anti-pattern's ``description`` and
+    ``recommendation``. A concern left empty is dropped; an emptied field is None. With
+    no scope the analysis is returned unchanged."""
+    if scope is None:
+        return dict(analysis)
+    allowed = tuple(scope)
+
+    def text(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return scope_filtered_text(value, allowed) or None
+
+    def rec(r: Any) -> Any:
+        if not isinstance(r, Mapping):
+            return r
+        out = dict(r)
+        if "rationale" in out:
+            out["rationale"] = text(out["rationale"])
+        if isinstance(out.get("concerns"), list):
+            out["concerns"] = [c for c in (text(c) for c in out["concerns"]) if c]
+        return out
+
+    def pattern(p: Any) -> Any:
+        if not isinstance(p, Mapping):
+            return p
+        out = dict(p)
+        for key in ("description", "recommendation"):
+            if key in out:
+                out[key] = text(out[key])
+        return out
+
+    out = dict(analysis)
+    if isinstance(out.get("table_recommendations"), list):
+        out["table_recommendations"] = [rec(r) for r in out["table_recommendations"]]
+    workload = out.get("workload_analysis")
+    if isinstance(workload, Mapping):
+        workload = dict(workload)
+        for key in ("patterns_detected", "anti_patterns_detected"):
+            if isinstance(workload.get(key), list):
+                workload[key] = [pattern(p) for p in workload[key]]
+        out["workload_analysis"] = workload
+    return out

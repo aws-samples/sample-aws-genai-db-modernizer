@@ -13,16 +13,17 @@ import json
 import logging
 import re
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.report_facts import build_commit, build_commit_line
 from src.shared.routing_detail import load_routing_detail
+from src.shared.target_databases import engine_scope_statement, no_engine_in_scope_statement
 from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
 
-from . import detailed_report, executive_report, renderers
+from . import detailed_report, escaping, executive_report, renderers
 
 logger = logging.getLogger(__name__)
 
@@ -137,16 +138,30 @@ RETIRED_FOLDER_FILENAMES: tuple[str, ...] = (
 )
 
 
+def _scope_lines(facts: Mapping[str, Any]) -> list[str]:
+    """The index's engine-scope lines (#1574), from the report's facts; none unscoped."""
+    lines: list[str] = []
+    if facts.get("engine_scope"):
+        lines.append(engine_scope_statement(facts["engine_scope"], escaping.md_text) + ".")
+    count, total = facts.get("no_engine_in_scope_query_count"), facts.get("query_total_count")
+    if isinstance(count, int) and count > 0 and isinstance(total, int):
+        lines.append(no_engine_in_scope_statement(count, total) + ".")
+    return [*lines, ""] if lines else []
+
+
 def render_folder_index(
     database_name: str,
     job_id: str,
     assignment_version: int,
     written: Sequence[FolderEntry],
     commit: str = "",
+    facts: Mapping[str, Any] | None = None,
 ) -> str:
     """The ``index.md`` of the deliverables folder: each file, what it is, who
     it is for, the assignment version they were rendered from and, when given, the
-    code commit of the render (``DeliverableSet.commit``, #1166)."""
+    code commit of the render (``DeliverableSet.commit``, #1166). With the report's
+    ``facts``, a scoped job's index also states the customer's engine scope and the
+    queries no engine in it can serve (#1574)."""
 
     def rows(entries: Sequence[FolderEntry]) -> str:
         return "\n".join(f"| `{e.filename}` | {e.title} | {e.audience} |" for e in entries)
@@ -159,6 +174,7 @@ def render_folder_index(
         f"Assignment version: v{assignment_version}",
         *([f"Code commit: {commit}"] if commit else []),
         "",
+        *_scope_lines(facts or {}),
         "| File | What it is | Who it is for |",
         "|---|---|---|",
         rows([e for e in written if not e.audit]),

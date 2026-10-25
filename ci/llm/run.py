@@ -8,6 +8,7 @@ Usage:
         --judge judge.json --mode chat|ui|both --fixture wordpress|discourse
     uv run python ci/llm/run.py collect-logs --artifact-root artifacts --out DIR \
         [--db DB --job JOB] [--extra-log .local-ui/api.log ...]
+    uv run python ci/llm/run.py check-model TRANSCRIPT --expected MODEL_ID
 
 Transcript shapes
 ------------------
@@ -149,6 +150,8 @@ from typing import Any
 from defusedxml import ElementTree as ET
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:  # run as a script: ci.llm.judge is importable too
+    sys.path.insert(0, str(REPO_ROOT))
 
 _COMPLETE_RE = re.compile(r"MODERNIZE_RESULT:\s*complete\s+job_id=(\S+)\s+db=(\S+)\s+mode=(\S+)")
 _FAILED_RE = re.compile(r"MODERNIZE_RESULT:\s*failed\s+phase=(\S+)\s+reason=(.+)")
@@ -703,6 +706,55 @@ def _aggregate_result_fields(result_recs: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def transcript_model(records: list[dict[str, Any]]) -> str | None:
+    """The model the headless session ran on (#1574).
+
+    The session's ``system``/``init`` record names the model the CLI resolved, after any
+    setting or wrapper script chose it; a transcript without one falls back to its
+    ``result`` lines: a ``model`` field (older or synthetic transcripts), else the
+    ``modelUsage`` model with the most output tokens (a background model the CLI uses
+    for small tasks writes far less). None when the transcript names no model.
+    """
+    for rec in records:
+        if rec.get("type") == "system" and rec.get("subtype") == "init":
+            if isinstance(rec.get("model"), str) and rec["model"]:
+                return str(rec["model"])
+    output: dict[str, float] = {}
+    for rec in records:
+        if rec.get("type") != "result":
+            continue
+        if isinstance(rec.get("model"), str) and rec["model"]:
+            return str(rec["model"])
+        for model, usage in (rec.get("modelUsage") or {}).items():
+            tokens = usage.get("outputTokens") if isinstance(usage, dict) else None
+            output[str(model)] = output.get(str(model), 0.0) + (
+                float(tokens) if _is_number(tokens) else 0.0
+            )
+    return max(output, key=lambda m: (output[m], m)) if output else None
+
+
+def same_model(used: str | None, expected: str) -> bool:
+    """Whether ``used`` is the model ``expected`` names: compared as ``canonical_model``
+    ids (``ci/llm/judge.py``), so the Bedrock and Anthropic API ids, a ``[1m]`` or
+    ``-v1:0`` suffix and a Region prefix all match; an alias (``sonnet``, ``opus``)
+    matches the model of that family."""
+    from ci.llm.judge import canonical_model
+
+    got, want = canonical_model(used), canonical_model(expected)
+    if not got or not want:
+        return False
+    if got == want:
+        return True
+    # An alias names a family, not a version: "sonnet" is any claude-sonnet-*.
+    return "-" not in want and want.isalpha() and got.startswith(f"claude-{want}-")
+
+
+def check_model(records: list[dict[str, Any]], expected: str) -> tuple[bool, str | None]:
+    """Whether the run used ``expected`` (``ANTHROPIC_MODEL``), and the model it used."""
+    used = transcript_model(records)
+    return same_model(used, expected), used
+
+
 def _denial_input(denial: dict[str, Any]) -> dict[str, Any]:
     """The tool input of a ``permission_denials`` entry. The confirmed real
     shape nests it under ``tool_input``; ``input`` is also checked in case a
@@ -1049,6 +1101,8 @@ def check_transcript(
         raise TranscriptError('no line with type == "result" found in the transcript')
 
     fields = _aggregate_result_fields(result_recs)
+    # #1574: the result lines carry no model; the init record (or modelUsage) does.
+    fields["model"] = transcript_model(records)
 
     def fail(message: str) -> TranscriptError:
         return TranscriptError(message, partial=fields)
@@ -1464,6 +1518,20 @@ def cmd_check_transcript(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
+def cmd_check_model(args: argparse.Namespace) -> None:
+    ok, used = check_model(iter_jsonl(Path(args.transcript)), args.expected)
+    print(json.dumps({"model": used, "expected": args.expected, "match": ok}))
+    if not ok:
+        print(
+            f"error: the headless run used model {used or '(none recorded)'}, not "
+            f"ANTHROPIC_MODEL={args.expected}. A claude wrapper script on PATH can choose "
+            "its own model: set CLAUDE_BIN to the claude CLI itself, then run again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    sys.exit(0)
+
+
 def cmd_results(args: argparse.Namespace) -> None:
     row = build_results_row(
         mode=args.mode,
@@ -1595,6 +1663,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to the token_usage.json from ci/llm/token_usage.py (optional)",
     )
     p2.set_defaults(func=cmd_results)
+
+    p4 = sub.add_parser(
+        "check-model",
+        help="Fail when the transcript's model is not the expected one (ANTHROPIC_MODEL).",
+    )
+    p4.add_argument("transcript")
+    p4.add_argument("--expected", required=True)
+    p4.set_defaults(func=cmd_check_model)
 
     p3 = sub.add_parser(
         "collect-logs", help="Copy the job's _logs/ and other small logs into the output dir."

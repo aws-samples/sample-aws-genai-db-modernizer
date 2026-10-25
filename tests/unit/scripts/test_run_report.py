@@ -196,3 +196,18 @@ def test_a_rerender_drops_stale_documented_files_and_keeps_others(
     index = (folder / "index.md").read_text()
     assert "`executive-report.pdf`" not in index.split("Not rendered")[0]
     assert "executive-report.pdf" in index.split("Not rendered")[1]
+
+
+def test_the_index_of_a_scoped_job_states_its_engine_scope(tmp_path: Path) -> None:
+    # #1574: the index states the customer's engine scope from the report's facts.
+    from src.report.facts import report_facts
+
+    report = json.loads(FIXTURE.read_text())
+    report["facts"] = {**report_facts(report), "engine_scope": ["aurora_postgresql", "dynamodb"]}
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    store.write_json(f"{DB}/{JOB}/synthesis/v2/report.json", report)
+
+    run_report.run(JOB, DB, str(tmp_path), assignment_version=None)
+
+    index = (tmp_path / DB / JOB / "deliverables" / "index.md").read_text()
+    assert "Engines in scope: Aurora PostgreSQL, DynamoDB (customer's choice)." in index
