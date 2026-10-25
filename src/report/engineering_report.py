@@ -47,6 +47,7 @@ from .formatting import (
     _fmt_usd,
     _retired_in_use_lines,
     access_pattern_scope,
+    commit_footer,
     cost_baseline_known,
     cost_caveat_text,
     cost_scope_text,
@@ -1376,4 +1377,6 @@ def render_engineering_report_md(
         "Assessment Data (JSON) artifact.",
         "",
     ]
+    # #1166: the code commit of the render, the file's last line.
+    out += commit_footer(prov)
     return "\n".join(out)

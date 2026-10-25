@@ -84,6 +84,9 @@ deterministic and finish in minutes. Synthesis renders two audience-shaped
 reports (the executive report PDF and a build-team Engineering Report)
 alongside the raw report JSON, publishes all three to the WebApp Artifacts
 panel, and keeps a durable copy of each as the job's `deliverables/` folder.
+Each file names the code commit it was rendered from; a deployment with no git
+checkout sets it with the `MODERNIZER_BUILD_COMMIT` environment variable
+(otherwise the files say `unknown`).
 
 ## How the orchestrator drives a subagent (A2A)
 

@@ -24,6 +24,7 @@ from src.report.formatting import _cost_baseline_text, _fmt_usd, cost_baseline_k
 from src.report.risks import _severity_counts_text, filtered_risks
 from src.report.roadmap import _wave_headline_stats, resolve_migration_waves
 from src.shared.engine_names import display_engine
+from src.shared.report_facts import build_commit_line
 from src.tools.validation.customer_text_guard import scan_text
 from tests.branding import hits as found
 from tests.e2e.pipeline import PipelineResult
@@ -65,6 +66,14 @@ def _collected(run: PipelineResult) -> dict[str, Any]:
     return data
 
 
+def _commit_line(run: PipelineResult) -> str:
+    """The commit line the render step printed (#1166): from the folder's identity
+    block, empty for a folder rendered before the deliverables named their commit."""
+    data = json.loads(run.deliverable("assessment-data.json").read_text())
+    commit = (data.get("_artifact") or {}).get("commit")
+    return build_commit_line(commit) if commit else ""
+
+
 def _names(run: PipelineResult) -> set[str]:
     """The names the render step keeps out: the report's own and the collector's."""
     return table_names(_report(run)) | collected_identifiers(_collected(run))
@@ -78,8 +87,9 @@ def test_the_file_is_report_json_rendered_byte_for_byte(run: PipelineResult) -> 
     renders of it are byte-identical."""
     report = _report(run)
     names = collected_identifiers(_collected(run))
-    first = executive_report.render_executive_report_pdf(report, names)
-    assert first == executive_report.render_executive_report_pdf(report, names)
+    line = _commit_line(run)
+    first = executive_report.render_executive_report_pdf(report, names, commit_line=line)
+    assert first == executive_report.render_executive_report_pdf(report, names, commit_line=line)
     assert _pdf(run).read_bytes() == first
 
 
@@ -96,8 +106,11 @@ def test_the_cover_and_the_page_furniture(run: PipelineResult) -> None:
     pages = page_texts(_pdf(run))
     assert executive_report.PRODUCT_NAME in pages[0]
     assert f"Source database {run.db}" in pages[0]
+    line = _commit_line(run)
     for n, page in enumerate(pages, start=1):
         assert page.count(executive_report.COPYRIGHT) == 1, f"page {n}"
+        # #1166: the code commit of the render on every page, the cover's included.
+        assert not line or line in page, f"page {n}"
         if n > 1:
             assert f"Page {n} of {len(pages)}" in page, f"page {n}"
             assert any(h in page for h in executive_report.SECTION_HEADINGS), f"page {n}"

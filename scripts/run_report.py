@@ -47,7 +47,9 @@ def _write_deliverables_folder(job_dir, db: str, job_id: str, version: int, rend
     for entry, item in files:
         (folder / entry.filename).write_bytes(item.content)
     (folder / INDEX_FILENAME).write_text(
-        render_folder_index(db, job_id, version, [entry for entry, _ in files]),
+        render_folder_index(
+            db, job_id, version, [entry for entry, _ in files], commit=rendered.commit
+        ),
         encoding="utf-8",
     )
     return folder

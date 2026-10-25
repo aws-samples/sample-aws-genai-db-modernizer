@@ -12,6 +12,7 @@ from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.report_facts import (  # noqa: F401  (#1403: one rule)
     COST_CAVEAT,
     COST_SCOPE_LABEL,
+    build_commit_line,
     cost_baseline_known,
 )
 
@@ -494,12 +495,15 @@ def provenance(
     job_id: str = "",
     source_artifact: str = "",
     version: int | None = None,
+    commit: str = "",
 ) -> dict[str, str]:
     """Identity block for one rendered deliverable.
 
     Carried inside the file (meta tags / front matter / ``_artifact`` envelope) so a
     download named after a UUID is still traceable to a database and a job. See
-    ``artifact_stem`` for why the filename itself cannot be set.
+    ``artifact_stem`` for why the filename itself cannot be set. ``commit`` is the
+    code commit of the render (``report_facts.build_commit``, #1166), left out when
+    not given.
     """
     db = str(report.get("database_name") or "database")
     jid = job_id or str(report.get("job_id") or "")
@@ -511,4 +515,13 @@ def provenance(
         "generated": now.isoformat(timespec="seconds"),
         "filename": f"{artifact_stem(db, artifact, jid, now, version)}.{ext}",
         "source_artifact": source_artifact,
+        **({"commit": commit} if commit else {}),
     }
+
+
+def commit_footer(prov: dict[str, str] | None) -> list[str]:
+    """A Markdown deliverable's last line, after the blank line its body ends with: the
+    code commit of the render (#1166), from its identity block; nothing when the block
+    names none."""
+    commit = (prov or {}).get("commit")
+    return [build_commit_line(commit), ""] if commit else []

@@ -13,6 +13,7 @@ from pypdf import PdfReader
 from reportlab.pdfbase import pdfmetrics
 
 from src.report import executive_report
+from src.shared.report_facts import build_commit_line
 
 
 def normalize(text: str) -> str:
@@ -46,7 +47,10 @@ def body_text(data: bytes | Path, db: str) -> str:
     for page in page_texts(data):
         for f in furniture:
             page = page.replace(f, " ")
-        out.append(re.sub(r"Page \d+ of \d+", " ", page))
+        page = re.sub(r"Page \d+ of \d+", " ", page)
+        # #1166: the code commit of the render, on every page's footer.
+        pattern = re.escape(build_commit_line("COMMIT")).replace("COMMIT", r"\S+?")
+        out.append(re.sub(pattern, " ", page))
     return normalize(" ".join(out))
 
 

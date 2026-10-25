@@ -31,9 +31,12 @@ an old report gets one answer per figure.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess  # nosec B404 - one fixed git command, no shell (build_commit)
 from collections.abc import Iterable, Mapping, Sequence
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any
 
 from src.shared import catalog
@@ -3843,3 +3846,49 @@ def routing_detail_facts(
         }
     )
     return detail.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# The code commit a render was built from (#1166)
+# ---------------------------------------------------------------------------
+
+BUILD_COMMIT_ENV = "MODERNIZER_BUILD_COMMIT"
+UNKNOWN_COMMIT = "unknown"
+# A commit or a tag (v0.3.0-beta.1): safe as is in Markdown, YAML and the PDF.
+_COMMIT_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.-]{0,39}")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _git_head() -> str | None:
+    """The checkout's short ``HEAD``, or None outside a git checkout."""
+    try:
+        done = subprocess.run(  # nosec B603 B607 - fixed arguments, no shell
+            ["git", "-C", str(_REPO_ROOT), "rev-parse", "--short=12", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None
+
+
+def build_commit() -> str:
+    """The code commit a set of deliverables is rendered from: ``$MODERNIZER_BUILD_COMMIT``
+    when set (a deployment with no git checkout), else the checkout's short ``HEAD``,
+    else ``unknown``. A value that is not a plain commit-like token is ignored.
+
+    Computed once per render (``render_deliverables``) and printed by every renderer,
+    never counted. Identity, not a figure: it never goes into ``report.json`` or its
+    facts, so the figures stay deterministic across builds.
+    """
+    for value in (os.environ.get(BUILD_COMMIT_ENV, "").strip(), _git_head()):
+        if value and _COMMIT_PATTERN.fullmatch(value):
+            return value
+    return UNKNOWN_COMMIT
+
+
+def build_commit_line(commit: str) -> str:
+    """The one sentence every deliverable prints for ``commit``."""
+    return f"Built from code commit {commit}."

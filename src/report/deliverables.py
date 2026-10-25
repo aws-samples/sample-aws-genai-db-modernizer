@@ -4,7 +4,7 @@ Single entry point shared by the local scripts and the AWS Transform integration
 It only renders; the caller decides where items go: every item is a file of the
 job's ``deliverables/`` folder (``FOLDER_ENTRIES``), and ``publish`` marks the ones
 handed to a delivery channel. No LLM calls; content is a pure function of the
-report apart from the provenance timestamp.
+report apart from the provenance timestamp and the code commit of the render (#1166).
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from src.shared.migration_risk_rules import backfill_report_risks
+from src.shared.report_facts import build_commit, build_commit_line
 from src.shared.routing_detail import load_routing_detail
 from src.tools.validation.customer_text_guard import STYLE_AUDIT_FIELDS
 
@@ -141,9 +142,11 @@ def render_folder_index(
     job_id: str,
     assignment_version: int,
     written: Sequence[FolderEntry],
+    commit: str = "",
 ) -> str:
     """The ``index.md`` of the deliverables folder: each file, what it is, who
-    it is for, and the assignment version they were rendered from."""
+    it is for, the assignment version they were rendered from and, when given, the
+    code commit of the render (``DeliverableSet.commit``, #1166)."""
 
     def rows(entries: Sequence[FolderEntry]) -> str:
         return "\n".join(f"| `{e.filename}` | {e.title} | {e.audience} |" for e in entries)
@@ -154,6 +157,7 @@ def render_folder_index(
         "",
         f"Job: {job_id}",
         f"Assignment version: v{assignment_version}",
+        *([f"Code commit: {commit}"] if commit else []),
         "",
         "| File | What it is | Who it is for |",
         "|---|---|---|",
@@ -238,6 +242,8 @@ def folder_key(database_name: str, job_id: str, filename: str) -> str:
 class DeliverableSet:
     items: list[Deliverable] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # The code commit every item was rendered from (#1166), for the folder index.
+    commit: str = ""
 
     def folder_files(self) -> list[tuple[FolderEntry, Deliverable]]:
         """Each rendered item with the folder entry it is written as, in
@@ -284,6 +290,8 @@ def render_deliverables(
     # #1148: a report synthesized before a report-only risk rule existed shows
     # the same risk a new synthesis writes (the same function, ADR-032).
     report = backfill_report_risks(store.read_json(report_key))
+    # #1166: one commit for the whole set; each renderer only prints it.
+    commit = build_commit()
 
     def prov(artifact: str, ext: str) -> dict:
         return renderers.provenance(
@@ -293,9 +301,10 @@ def render_deliverables(
             job_id=job_id,
             source_artifact=report_key,
             version=assignment_version,
+            commit=commit,
         )
 
-    out = DeliverableSet()
+    out = DeliverableSet(commit=commit)
 
     engineering = prov("engineering-report", "md")
     data = prov("assessment-data", "json")
@@ -361,7 +370,9 @@ def render_deliverables(
 
     try:
         pdf = executive_report.render_executive_report_pdf(
-            report, executive_report.collected_identifiers(collector)
+            report,
+            executive_report.collected_identifiers(collector),
+            commit_line=build_commit_line(commit),
         )
         out.items.append(
             # The folder copy keeps the stable name; the published download name

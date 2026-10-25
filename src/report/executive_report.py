@@ -1388,19 +1388,25 @@ class _NumberedCanvas(Canvas):
         super().save()
 
 
-def _footer(c: Canvas, db: str) -> None:
+def _footer(c: Canvas, db: str, commit_line: str = "") -> None:
     c.setFont(font_for(True), 7.5)
     c.setFillColor(MUTED)
     c.drawString(MARGIN_X, 30, printable(f"{PRODUCT_NAME} · {db}"))
     c.setFont(font_for(False), 6.5)
     c.drawString(MARGIN_X, 18, FOOTER)
+    if commit_line:
+        # #1166: the code commit of the render, above the page number.
+        c.drawRightString(PAGE_W - MARGIN_X, 30, printable(commit_line))
 
 
 class _Doc(BaseDocTemplate):
-    def __init__(self, *args: Any, db: str, report: dict[str, Any], **kw: Any) -> None:
+    def __init__(
+        self, *args: Any, db: str, report: dict[str, Any], commit_line: str = "", **kw: Any
+    ) -> None:
         super().__init__(*args, **kw)
         self.db = db
         self.report = report
+        self.commit_line = commit_line
         self.section: str | None = None
         self.section_here = False
 
@@ -1444,7 +1450,7 @@ def _page_end(c: Canvas, doc: _Doc) -> None:
         _draw_title(c, doc.section + CONTINUED)
     doc.section_here = False
     c.saveState()
-    _footer(c, doc.db)
+    _footer(c, doc.db, doc.commit_line)
     c.restoreState()
 
 
@@ -1491,6 +1497,8 @@ def _cover(c: Canvas, doc: _Doc) -> None:
     c.setFont(font_for(False), 6.5)
     c.setFillColor(PAPER)
     c.drawString(64, 30, FOOTER)
+    if doc.commit_line:
+        c.drawRightString(PAGE_W - 64, 30, printable(doc.commit_line))
     c.restoreState()
 
 
@@ -1508,12 +1516,16 @@ def build_story(report: dict[str, Any], identifiers: Iterable[str] = ()) -> list
     return story
 
 
-def render_executive_report_pdf(report: dict[str, Any], identifiers: Iterable[str] = ()) -> bytes:
+def render_executive_report_pdf(
+    report: dict[str, Any], identifiers: Iterable[str] = (), *, commit_line: str = ""
+) -> bytes:
     """Render the executive report from ``report.json`` and return its bytes.
 
     ``identifiers`` are the collector's names (``collected_identifiers``), kept out of
     the text with the ones the report names itself. Every figure comes from the
-    report's facts layer. Deterministic for a given report and identifier set.
+    report's facts layer. ``commit_line`` (``report_facts.build_commit_line``, #1166)
+    goes on every page's footer, the cover's included. Deterministic for a given
+    report, identifier set and commit line.
     """
     db = str(report.get("database_name") or "?")
     story = build_story(report, identifiers)
@@ -1522,6 +1534,7 @@ def render_executive_report_pdf(report: dict[str, Any], identifiers: Iterable[st
         buf,
         db=db,
         report=report,
+        commit_line=commit_line,
         pagesize=(PAGE_W, PAGE_H),
         leftMargin=MARGIN_X,
         rightMargin=MARGIN_X,

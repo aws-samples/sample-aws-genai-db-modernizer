@@ -22,7 +22,7 @@ from src.shared.report_facts import CLOSE_CALL_MARGIN
 from src.shared.target_databases import engine_scope_statement
 
 from . import escaping
-from .formatting import fmt_num, plural_noun
+from .formatting import commit_footer, fmt_num, plural_noun
 
 FILENAME = "engineering-report-detailed.md"
 
@@ -402,7 +402,8 @@ def render_detailed_engineering_report_md(
     if absent:
         out += ["## Records not available", ""] + [f"- {a}" for a in absent] + [""]
     if not version:
-        return "\n".join(out)
+        # #1166: the code commit of the render, the file's last line.
+        return "\n".join(out + commit_footer(prov))
     engines = [str(e) for e in detail.get("analysed_engines") or []]
     out += [
         "Analysed engines: " + (", ".join(_engine_text(e) for e in engines) or "none") + ".",
@@ -418,4 +419,4 @@ def render_detailed_engineering_report_md(
     out += _tables_md(detail, engines)
     out += _queries_md(detail)
     out += _groups_md(detail)
-    return "\n".join(out)
+    return "\n".join(out + commit_footer(prov))
