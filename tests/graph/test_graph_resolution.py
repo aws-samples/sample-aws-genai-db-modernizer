@@ -4,6 +4,7 @@ Every handle handed to a read endpoint is read-only; building uses a separate,
 short-lived read-write handle that is closed before the upload.
 """
 
+import hashlib
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -30,7 +31,8 @@ def _write_populated(path: str) -> None:
 def _stamp(store: GraphStore) -> None:
     """Stamp the current schema revision, as rebuild_graph does (a saved graph without it is stale)."""
     store.execute(next(ddl for ddl in NODE_TABLES if "GraphMeta" in ddl))
-    stamp_graph_meta(store)
+    # The mocked artifact store holds nothing, so its inputs digest is that of no input.
+    stamp_graph_meta(store, inputs_digest=hashlib.sha256().hexdigest())
 
 
 def _fake_rebuild(calls):

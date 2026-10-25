@@ -16,7 +16,9 @@ from src.graph.store import GraphStore
 #   as a key for the query (the effective version's access-pattern record).
 # - 3 (#1373): MIGRATES_TO.pinned (a utility pin), and confidence follows the
 #   query's engine; a graph built before keeps stale figures, so it is rebuilt.
-GRAPH_SCHEMA_REVISION = 3
+# - 4 (#847): ``GraphMeta.inputs_digest``, a digest of the artifacts the graph
+#   was built from, so a re-run on the same assignment version rebuilds it.
+GRAPH_SCHEMA_REVISION = 4
 GRAPH_META_ID = "graph"
 
 NODE_TABLES = [
@@ -92,7 +94,7 @@ NODE_TABLES = [
     # One node (id GRAPH_META_ID): the schema revision the graph was built
     # with and the effective assignment version it was built from (0: none).
     """CREATE NODE TABLE IF NOT EXISTS GraphMeta (
-        id STRING, schema_revision INT64, effective_version INT64,
+        id STRING, schema_revision INT64, effective_version INT64, inputs_digest STRING,
         PRIMARY KEY (id)
     )""",
 ]
@@ -137,11 +139,19 @@ REL_TABLES = [
 ]
 
 
-def stamp_graph_meta(store: GraphStore, effective_version: int = 0) -> None:
-    """Record the schema revision and the effective assignment version on the graph."""
+def stamp_graph_meta(
+    store: GraphStore, effective_version: int = 0, inputs_digest: str = ""
+) -> None:
+    """Record the schema revision, the effective assignment version and the inputs digest."""
     store.execute(
-        "MERGE (m:GraphMeta {id: $id}) SET m.schema_revision = $rev, m.effective_version = $ver",
-        {"id": GRAPH_META_ID, "rev": GRAPH_SCHEMA_REVISION, "ver": int(effective_version)},
+        "MERGE (m:GraphMeta {id: $id}) SET m.schema_revision = $rev, "
+        "m.effective_version = $ver, m.inputs_digest = $digest",
+        {
+            "id": GRAPH_META_ID,
+            "rev": GRAPH_SCHEMA_REVISION,
+            "ver": int(effective_version),
+            "digest": inputs_digest,
+        },
     )
 
 

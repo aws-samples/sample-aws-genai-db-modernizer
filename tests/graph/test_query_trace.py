@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from src.agents.referee.move_ledger import replay
 from src.api.models.graph_responses import QueryTraceResponse
 from src.api.routes import graph as graph_routes
 from src.contracts.move_ledger import Move
+from src.graph.inputs_digest import graph_inputs_digest
 from src.graph.populators import (
     assignment_lineage,
     populate_from_assignment,
@@ -407,10 +409,16 @@ class TestGraphSavedBeforeThisChange:
         path = str(tmp_path / "new.lbug")
         store = GraphStore(path)
         initialize_schema(store)
-        rebuild_graph("wordpress", "job", _DirStore(TestRebuild()._files(sample)), store)
+        files = copy.deepcopy(TestRebuild()._files(sample))  # the build edits the dicts it reads
+        expected = graph_inputs_digest(_DirStore(files), "wordpress", "job")
+        rebuild_graph("wordpress", "job", _DirStore(files), store)
         meta = store.graph_meta()
         store.close()
-        assert meta == {"schema_revision": GRAPH_SCHEMA_REVISION, "effective_version": 2}
+        assert meta == {
+            "schema_revision": GRAPH_SCHEMA_REVISION,
+            "effective_version": 2,
+            "inputs_digest": expected,
+        }
         assert graph_routes._is_populated_file(path) is True
 
     def test_trace_endpoint_on_an_old_graph(self, tmp_path, sample):
@@ -446,6 +454,9 @@ class _DirStore:
 
     def read_json(self, path: str) -> dict:
         return self.files[path]
+
+    def read_bytes(self, path: str) -> bytes:
+        return json.dumps(self.files[path], sort_keys=True).encode()
 
     def exists(self, path: str) -> bool:
         return path in self.files
@@ -498,7 +509,11 @@ class TestRebuild:
         store.fail_reads["wordpress/job/assignment/v2/assignment.json"] = 1
         stats = rebuild_graph("wordpress", "job", store, graph_store)
         assert (stats["complete"], stats["failed_reads"]) == (False, 1)
-        assert graph_store.graph_meta() == {"schema_revision": 0, "effective_version": 0}
+        assert graph_store.graph_meta() == {
+            "schema_revision": 0,
+            "effective_version": 0,
+            "inputs_digest": "",
+        }
 
     def test_missing_artifacts_of_a_partial_run_still_stamp(self, graph_store, sample):
         # No triage, analysis, reality check or synthesis: a partial run, not a failure.
@@ -614,6 +629,7 @@ class TestSavedGraphFollowsTheAssignment:
         monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 0.0)
         monkeypatch.setattr(graph_routes, "REBUILD_BACKOFF_S", 0.0)
         graph_routes._effective_versions.clear()
+        graph_routes._inputs_digests.clear()
         graph_routes._rebuild_failures.clear()
         graph_routes._refresh_locks.clear()
         app = FastAPI()
@@ -622,6 +638,7 @@ class TestSavedGraphFollowsTheAssignment:
         yield TestClient(app), files, cache
         cache.close_all()
         graph_routes._effective_versions.clear()
+        graph_routes._inputs_digests.clear()
         graph_routes._rebuild_failures.clear()
         graph_routes._refresh_locks.clear()
 
@@ -738,15 +755,106 @@ class TestSavedGraphFollowsTheAssignment:
         monkeypatch.setattr(graph_routes.time, "monotonic", lambda: clock[0])
         monkeypatch.setattr(graph_routes, "EFFECTIVE_VERSION_TTL_S", 3.0)
         graph_routes._effective_versions.clear()
+        graph_routes._inputs_digests.clear()
         listings = self.store.listings
         for _ in range(5):
             self._trace(client, qid)
-        assert self.store.listings == listings + 1  # one listing for five reads
+        # One listing for the version and one for the inputs digest, for five reads.
+        assert self.store.listings == listings + 2
 
         self._customer_edit(files, sample, qid)
         assert self._trace(client, qid)["effective_version"] == 2  # still within the TTL
         clock[0] += 3.5
         assert self._trace(client, qid)["effective_version"] == 3
+
+    @staticmethod
+    def _design(title: str) -> dict:
+        return {
+            "access_patterns": [
+                {
+                    "pattern_id": "DDB-AP-1",
+                    "pattern_group": title,
+                    "query_ids": [],
+                    "description": title,
+                    "operation": "GetItem",
+                    "table_name": "t",
+                    "design_rps": 1.0,
+                    "in_scope": True,
+                }
+            ],
+            "trade_offs": [],
+        }
+
+    @staticmethod
+    def _groups(client_store) -> list[str]:
+        return sorted(
+            r["g"]
+            for r in client_store.query("MATCH (a:AccessPattern) RETURN a.pattern_group AS g")
+        )
+
+    def test_a_rerun_on_the_same_version_replaces_the_stale_nodes(self, served, sample):
+        """#847: schema design re-run on assignment v2 rewrites its record in place."""
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        key = "wordpress/job/schema-dynamodb/v2/schema_output.json"
+        files[key] = self._design("first design")
+        self._trace(client, qid)
+        assert self._groups_now(cache) == ["first design"]
+
+        files[key] = self._design("second design")  # same assignment version, same key
+        self._trace(client, qid)
+        assert self._groups_now(cache) == ["second design"]  # replaced, not added to
+
+    def test_a_late_artifact_on_the_same_version_appears(self, served, sample):
+        """#847: a load test or synthesis written after the graph was built shows up."""
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        assert self._groups_now(cache) == []
+        files["wordpress/job/schema-dynamodb/v2/schema_output.json"] = self._design("late")
+        self._trace(client, qid)
+        assert self._groups_now(cache) == ["late"]
+
+    def test_an_in_place_approval_stamp_rebuilds(self, served, sample, monkeypatch):
+        client, files, _ = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        builds: list[str] = []
+        real = graph_routes._build_graph_file
+
+        def _counting(db: str, job: str, path: str) -> Any:
+            builds.append(job)
+            return real(db, job, path)
+
+        monkeypatch.setattr(graph_routes, "_build_graph_file", _counting)
+        key = "wordpress/job/assignment/v2/assignment.json"
+        files[key] = {**files[key], "customer_approved": True}
+        self._trace(client, qid)
+        assert builds == ["job"]
+
+    def test_a_saved_file_is_rebuilt_on_open_after_a_rerun(self, served, sample):
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        key = "wordpress/job/schema-dynamodb/v2/schema_output.json"
+        files[key] = self._design("first design")
+        self._trace(client, qid)
+        cache.close_all()  # as after an API restart: only the saved file is left
+        files[key] = self._design("second design")
+        self._trace(client, qid)
+        assert self._groups_now(cache) == ["second design"]
+
+    def test_an_unreadable_digest_serves_the_current_graph(self, served, sample):
+        client, files, cache = served
+        qid = _settled_with_runner_up(sample)
+        self._trace(client, qid)
+        files["wordpress/job/schema-dynamodb/v2/schema_output.json"] = self._design("late")
+        self.store.fail_listing = True
+        self._trace(client, qid)  # served, not an error
+        assert self._groups_now(cache) == []
+
+    def _groups_now(self, cache) -> list[str]:
+        with cache.reader("wordpress", "job", lambda path: None) as graph:
+            return self._groups(graph)
 
     def test_a_downloaded_copy_of_an_earlier_version_is_rebuilt_and_uploaded(
         self, served, sample, tmp_path

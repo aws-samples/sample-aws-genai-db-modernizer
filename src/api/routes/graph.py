@@ -31,6 +31,7 @@ from src.api.services.local_execution import LocalExecutionService
 from src.graph import GraphStoreCache
 from src.graph import queries as graph_queries
 from src.graph.cypher_guard import DisallowedStatementError, bound_result_rows
+from src.graph.inputs_digest import graph_inputs_digest
 from src.graph.persistence import GraphPersistence
 from src.graph.populators import rebuild_graph
 from src.graph.raw_query_worker import RawQueryError, run_raw_query
@@ -77,6 +78,9 @@ REBUILD_BACKOFF_S = 2.0
 MAX_TRACKED_JOBS = 128
 _effective_versions: OrderedDict[tuple[str, str], tuple[float, int]] = OrderedDict()
 _effective_versions_lock = threading.Lock()
+# The digest of the job's graph input artifacts, cached like the version (#847).
+_inputs_digests: OrderedDict[tuple[str, str], tuple[float, str]] = OrderedDict()
+_inputs_digests_lock = threading.Lock()
 _rebuild_failures: OrderedDict[tuple[str, str], float] = OrderedDict()
 _rebuild_failures_lock = threading.Lock()
 # One refresh of an open graph per job at a time, so concurrent reads after a
@@ -114,7 +118,9 @@ def _services() -> tuple[GraphStoreCache, ArtifactStore, GraphPersistence]:
     return graph_cache, artifact_store, graph_persistence
 
 
-def _is_populated_file(path: str, effective_version: int | None = None) -> bool:
+def _is_populated_file(
+    path: str, effective_version: int | None = None, inputs_digest: str | None = None
+) -> bool:
     """True when ``path`` holds a readable, current graph with at least one node.
 
     Current means built with this code's schema revision (``GraphMeta``): a
@@ -122,7 +128,10 @@ def _is_populated_file(path: str, effective_version: int | None = None) -> bool:
     caller rebuilds it from the artifacts instead of serving it (ADR-023).
     When ``effective_version`` is given, the graph must also have been built
     from that assignment version: a graph saved before a customer edit or any
-    later assignment version is stale too (#819).
+    later assignment version is stale too (#819). When ``inputs_digest`` is
+    given, it must match the digest of the artifacts the graph was built from:
+    a phase re-run on the same version rewrites artifacts without a new
+    version (#847).
     """
     if not Path(path).exists():
         return False
@@ -152,9 +161,48 @@ def _is_populated_file(path: str, effective_version: int | None = None) -> bool:
                 effective_version,
             )
             return False
+        if inputs_digest is not None and meta["inputs_digest"] != inputs_digest:
+            logger.info("graph at %s was built from older artifacts: rebuilding", path)
+            return False
         return True
     finally:
         probe.close()
+
+
+def _inputs_digest(db_name: str, job_id: str) -> str | None:
+    """Digest of the job's graph input artifacts (#847), cached like the effective version.
+
+    None when the store cannot be read: the caller serves the graph it has.
+    """
+    key = (db_name, job_id)
+    now = time.monotonic()
+    with _inputs_digests_lock:
+        hit = _inputs_digests.get(key)
+        if hit is not None:
+            if 0 <= now - hit[0] < EFFECTIVE_VERSION_TTL_S:
+                _inputs_digests.move_to_end(key)
+                return hit[1]
+            del _inputs_digests[key]
+    _, store, _ = _services()
+    try:
+        digest = graph_inputs_digest(store, db_name, job_id)
+    except Exception as exc:  # noqa: BLE001 - never fail a read on the freshness check
+        logger.warning(
+            "could not digest the graph inputs of %s/%s, serving the current graph: %s",
+            db_name,
+            job_id,
+            exc,
+        )
+        return None
+    with _inputs_digests_lock:
+        for old_key, (ts, _) in list(_inputs_digests.items()):
+            if not (0 <= now - ts < EFFECTIVE_VERSION_TTL_S):
+                del _inputs_digests[old_key]
+        _inputs_digests[key] = (now, digest)
+        _inputs_digests.move_to_end(key)
+        while len(_inputs_digests) > MAX_TRACKED_JOBS:
+            _inputs_digests.popitem(last=False)
+    return digest
 
 
 def _effective_assignment_version(db_name: str, job_id: str) -> int | None:
@@ -238,6 +286,10 @@ def _build_graph_file(db_name: str, job_id: str, path: str) -> dict:
     rename checkpoints the new file.
     """
     _, store, persistence = _services()
+    # The build digests the inputs itself: a digest cached before it must not
+    # judge the new graph stale.
+    with _inputs_digests_lock:
+        _inputs_digests.pop((db_name, job_id), None)
     building = f"{path}.building"
     for leftover in _sidecars(building):
         Path(leftover).unlink(missing_ok=True)
@@ -301,10 +353,13 @@ def _prepare_graph_file(db_name: str, job_id: str, path: str, *, refreshed: bool
         if _in_rebuild_backoff(db_name, job_id)
         else _effective_assignment_version(db_name, job_id)
     )
-    if _is_populated_file(path, version):
+    digest = None if version is None else _inputs_digest(db_name, job_id)
+    if _is_populated_file(path, version, digest):
         return
     _, _, persistence = _services()
-    if persistence.download_if_exists(db_name, job_id, path) and _is_populated_file(path, version):
+    if persistence.download_if_exists(db_name, job_id, path) and _is_populated_file(
+        path, version, digest
+    ):
         return
     # Cache miss or unusable download: build fresh, then upload (self-healing).
     _build_graph_file(db_name, job_id, path)
@@ -385,16 +440,19 @@ def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> boo
     if not cache.is_open(db_name, job_id) or _in_rebuild_backoff(db_name, job_id):
         return False
     version = _effective_assignment_version(db_name, job_id)
-    if version is None or _open_graph_is_current(cache, db_name, job_id, version):
+    if version is None:
+        return False
+    digest = _inputs_digest(db_name, job_id)
+    if _open_graph_is_current(cache, db_name, job_id, version, digest):
         return False
     with _refresh_lock(db_name, job_id):
         # Another request may have rebuilt it (or failed and backed off) while this one waited.
         if _in_rebuild_backoff(db_name, job_id) or _open_graph_is_current(
-            cache, db_name, job_id, version
+            cache, db_name, job_id, version, digest
         ):
             return False
         with cache.exclusive(db_name, job_id) as path:
-            if not _is_populated_file(path, version):
+            if not _is_populated_file(path, version, digest):
                 logger.info(
                     "graph for %s/%s is behind assignment v%s: rebuilding",
                     db_name,
@@ -407,13 +465,20 @@ def _refresh_if_behind(cache: GraphStoreCache, db_name: str, job_id: str) -> boo
         return True
 
 
-def _open_graph_is_current(cache: GraphStoreCache, db_name: str, job_id: str, version: int) -> bool:
-    """True when the job's graph carries this code's schema revision and ``version``'s stamp."""
+def _open_graph_is_current(
+    cache: GraphStoreCache, db_name: str, job_id: str, version: int, digest: str | None = None
+) -> bool:
+    """True when the job's graph carries this code's schema revision, ``version``'s stamp
+    and, when known, the digest of the current input artifacts (#847)."""
     with cache.reader(
         db_name, job_id, lambda path: _prepare_graph_file(db_name, job_id, path)
     ) as store:
         meta = store.graph_meta()
-    return meta == {"schema_revision": GRAPH_SCHEMA_REVISION, "effective_version": version}
+    return (
+        meta["schema_revision"] == GRAPH_SCHEMA_REVISION
+        and meta["effective_version"] == version
+        and (digest is None or meta["inputs_digest"] == digest)
+    )
 
 
 def _refresh_lock(db_name: str, job_id: str) -> threading.Lock:

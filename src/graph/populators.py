@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 
 from src.contracts.move_ledger import Move
+from src.graph.inputs_digest import graph_inputs_digest
 from src.graph.schema import initialize_schema, stamp_graph_meta
 from src.graph.store import GraphStore
 from src.shared.engine_names import display_engine
@@ -677,6 +678,15 @@ def rebuild_graph(
 
     prefix = f"{db_name}/{job_id}"
 
+    # The digest of the inputs, taken before any is read: an artifact rewritten
+    # during the build leaves the graph behind the digest, so the next read
+    # rebuilds it (#847).
+    try:
+        inputs_digest: str | None = graph_inputs_digest(artifact_store, db_name, job_id)
+    except Exception as exc:  # noqa: BLE001 - an unreadable store: build unstamped
+        logger.warning("graph rebuild could not digest the inputs of %s: %s", prefix, exc)
+        inputs_digest = None
+
     # Artifacts that exist but could not be read (a throttled or failing
     # store). A missing artifact is a partial run, not a failure.
     failed_reads: list[str] = []
@@ -801,8 +811,8 @@ def rebuild_graph(
     # another revision is rebuilt before it is read) and its assignment version.
     # Only a complete build is stamped (#819): a graph missing an artifact that
     # exists must not count as current, so the next read rebuilds it.
-    if not failed_reads:
-        stamp_graph_meta(graph_store, assignment_version)
+    if not failed_reads and inputs_digest is not None:
+        stamp_graph_meta(graph_store, assignment_version, inputs_digest)
 
     duration_ms = int((time.time() - start) * 1000)
     node_count = graph_store.query("MATCH (n) RETURN COUNT(n) AS c")[0]["c"]
@@ -812,8 +822,8 @@ def rebuild_graph(
         "nodes_created": node_count,
         "edges_created": edge_count,
         "duration_ms": duration_ms,
-        "complete": not failed_reads,
-        "failed_reads": len(failed_reads),
+        "complete": not failed_reads and inputs_digest is not None,
+        "failed_reads": len(failed_reads) + (inputs_digest is None),
     }
 
 

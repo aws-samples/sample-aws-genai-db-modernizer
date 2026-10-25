@@ -260,23 +260,25 @@ class GraphStore:
             return False
 
     def graph_meta(self) -> dict:
-        """The GraphMeta stamp: ``schema_revision`` and ``effective_version``.
+        """The GraphMeta stamp: ``schema_revision``, ``effective_version``, ``inputs_digest``.
 
         A graph saved before GraphMeta existed (or never stamped) reads as
         revision 0, so it is stale under any current revision.
         """
-        empty = {"schema_revision": 0, "effective_version": 0}
+        empty = {"schema_revision": 0, "effective_version": 0, "inputs_digest": ""}
         if not self.has_table("GraphMeta"):
             return empty
         rows = self.query(
             "MATCH (m:GraphMeta) RETURN m.schema_revision AS schema_revision, "
-            "m.effective_version AS effective_version ORDER BY m.id LIMIT 1"
+            "m.effective_version AS effective_version, m.inputs_digest AS inputs_digest "
+            "ORDER BY m.id LIMIT 1"
         )
         if not rows:
             return empty
         return {
             "schema_revision": int(rows[0].get("schema_revision") or 0),
             "effective_version": int(rows[0].get("effective_version") or 0),
+            "inputs_digest": str(rows[0].get("inputs_digest") or ""),
         }
 
     def is_populated(self) -> bool:
