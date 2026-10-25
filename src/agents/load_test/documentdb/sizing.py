@@ -10,7 +10,7 @@ See ``docs/architecture/decisions/ADR-022-documentdb-cluster-sizing.md`` for the
 design discussion behind the heuristics in this module.
 """
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from src.shared.source_cache import collection_hit_ratio_pct
@@ -204,6 +204,10 @@ class SizingRationale:
     chosen_class_reason: str
     replicas_count: int
     replicas_reason: str
+    # Sizing inputs the collection did not report (#1540), by name; empty when all are.
+    missing_inputs: list[str] = field(default_factory=list)
+    # Where each reported input was read from, by input name.
+    input_sources: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to plain dict for JSON output."""
@@ -270,44 +274,116 @@ def _infer_field_type(field_name: str, collection: dict[str, Any]) -> str | None
 # =============================================================================
 
 
-def _source_hit_ratio_pct(collector_output: dict[str, Any]) -> float | None:
-    """The source's instance-wide hit ratio: ``metrics.source_host`` (collector contract
-    3.5), else the older ``metrics.cache_hit_ratio_pct`` (#1225)."""
-    ratio = collection_hit_ratio_pct(collector_output)
-    if ratio is not None:
-        return ratio
-    legacy: float | None = _safe_get(collector_output, "metrics", "cache_hit_ratio_pct")
-    return legacy
-
-
-def _source_memory_gb(collector_output: dict[str, Any]) -> float | None:
-    """The source's memory: ``metrics.source_host.physical_memory_gb``, else the RDS
-    instance's ``metadata.source_database.rds_instance_metadata.memory_gb``, else the older
-    ``rds_metadata.instance_specs.memory_gb`` (#1225)."""
-    for path in (
+# Where each sizing input is read, first match wins (#1540). The first paths are what
+# the collector contract writes; the last is the older shape saved before it.
+_INPUT_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "cpu_utilization_avg_pct": (
+        ("metrics", "rds_cloudwatch_metrics", "cpu_utilization", "avg"),
+        ("metrics", "cpu_utilization_avg"),
+    ),
+    "vcpus": (
+        ("metadata", "source_database", "rds_instance_metadata", "vcpu_count"),
+        ("metrics", "source_host", "cpu_count"),
+        ("rds_metadata", "instance_specs", "vcpus"),
+    ),
+    "memory_gb": (
         ("metrics", "source_host", "physical_memory_gb"),
         ("metadata", "source_database", "rds_instance_metadata", "memory_gb"),
         ("rds_metadata", "instance_specs", "memory_gb"),
-    ):
+    ),
+    "max_connections": (
+        ("metrics", "performance_metrics", "active_connections_max"),
+        ("metrics", "rds_cloudwatch_metrics", "database_connections", "max"),
+        ("metrics", "max_connections"),
+    ),
+    "database_size_gb": (
+        ("metadata", "source_database", "database_size_gb"),
+        ("source_database", "database_size_gb"),
+    ),
+    "read_replica_count": (
+        ("metadata", "source_database", "rds_instance_metadata", "read_replica_count"),
+        ("rds_metadata", "read_replica_count"),
+    ),
+    "multi_az": (
+        ("metadata", "source_database", "rds_instance_metadata", "multi_az"),
+        ("rds_metadata", "multi_az"),
+    ),
+    "instance_class": (
+        ("metadata", "source_database", "rds_instance_metadata", "instance_class"),
+        ("rds_metadata", "instance_class"),
+    ),
+}
+# The inputs ``has_complete_metrics`` needs (the hit ratio is read separately).
+_REQUIRED_INPUTS = (
+    "cpu_utilization_avg_pct",
+    "vcpus",
+    "memory_gb",
+    "max_connections",
+    "database_size_gb",
+)
+_BOOL_INPUTS = frozenset({"multi_az"})
+_STR_INPUTS = frozenset({"instance_class"})
+# These may legitimately be zero (no replicas, an empty database, an idle source).
+_ZERO_OK = frozenset({"cpu_utilization_avg_pct", "database_size_gb", "read_replica_count"})
+
+
+def _usable(name: str, value: Any) -> bool:
+    if name in _BOOL_INPUTS:
+        return isinstance(value, bool)
+    if name in _STR_INPUTS:
+        return isinstance(value, str) and bool(value.strip())
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return value >= 0 if name in _ZERO_OK else value > 0
+
+
+def resolve_source_input(collector_output: dict[str, Any], name: str) -> tuple[Any, str | None]:
+    """The sizing input ``name`` and the dotted path it was read from, or ``(None, None)``
+    when no path holds a usable value (#1540)."""
+    for path in _INPUT_PATHS[name]:
         value = _safe_get(collector_output, *path)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-            return float(value)
-    return None
+        if _usable(name, value):
+            return value, ".".join(path)
+    return None, None
+
+
+def _source_hit_ratio_pct(collector_output: dict[str, Any]) -> tuple[float | None, str | None]:
+    """The instance-wide hit ratio and where it came from: ``metrics.source_host``, else
+    the older ``metrics.cache_hit_ratio_pct``."""
+    ratio = collection_hit_ratio_pct(collector_output)
+    if ratio is not None:
+        return ratio, "metrics.source_host.buffer_cache_hit_ratio_pct"
+    legacy = _safe_get(collector_output, "metrics", "cache_hit_ratio_pct")
+    if isinstance(legacy, (int, float)) and not isinstance(legacy, bool) and legacy >= 0:
+        return float(legacy), "metrics.cache_hit_ratio_pct"
+    return None, None
+
+
+def source_inputs(collector_output: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Every sizing input as ``(values, sources)``. ``values`` holds only the inputs the
+    collection reported; ``sources`` names the path each came from (#1540)."""
+    values: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    for name in _INPUT_PATHS:
+        value, source = resolve_source_input(collector_output, name)
+        if source is not None:
+            values[name], sources[name] = value, source
+    ratio, source = _source_hit_ratio_pct(collector_output)
+    if source is not None:
+        values["cache_hit_ratio_pct"], sources["cache_hit_ratio_pct"] = ratio, source
+    return values, sources
+
+
+def missing_source_inputs(collector_output: dict[str, Any]) -> list[str]:
+    """Names of the sizing inputs the collection did not report, in a stable order."""
+    values, _ = source_inputs(collector_output)
+    return [name for name in ("cache_hit_ratio_pct", *_INPUT_PATHS) if name not in values]
 
 
 def has_complete_metrics(collector_output: dict[str, Any]) -> bool:
     """Return True when all metrics needed for derived sizing are present."""
-    required_paths = (
-        ("metrics", "cpu_utilization_avg"),
-        ("metrics", "max_connections"),
-        ("source_database", "database_size_gb"),
-        ("rds_metadata", "instance_specs", "vcpus"),
-    )
-    return (
-        _source_hit_ratio_pct(collector_output) is not None
-        and _source_memory_gb(collector_output) is not None
-        and all(_safe_get(collector_output, *path) is not None for path in required_paths)
-    )
+    values, _ = source_inputs(collector_output)
+    return all(name in values for name in ("cache_hit_ratio_pct", *_REQUIRED_INPUTS))
 
 
 # =============================================================================
@@ -332,9 +408,11 @@ def estimate_working_set_gb(
       - "thrashing"          — hit ratio < 80%, source undersized
       - "no_metric"          — hit ratio unavailable
     """
-    hit_ratio = _source_hit_ratio_pct(collector_output)
-    source_ram_gb = _source_memory_gb(collector_output) or 0.0
-    total_data_gb = _safe_get(collector_output, "source_database", "database_size_gb", default=0.0)
+    inputs, _ = source_inputs(collector_output)
+    hit_ratio = inputs.get("cache_hit_ratio_pct")
+    # A missing memory or size is stated in the rationale's ``missing_inputs``.
+    source_ram_gb = inputs.get("memory_gb", 0.0)
+    total_data_gb = inputs.get("database_size_gb", 0.0)
 
     if hit_ratio is None:
         return total_data_gb * WORKING_SET_FRACTION_DEFAULT, "data_fraction", "no_metric"
@@ -461,9 +539,7 @@ def estimate_target_data_size_gb(
             total_bytes += parent_rows * avg_doc_size_kb * 1024
         return total_bytes / (1024**3)
 
-    source_data_gb = float(
-        _safe_get(collector_output, "source_database", "database_size_gb", default=0.0) or 0.0
-    )
+    source_data_gb = float(source_inputs(collector_output)[0].get("database_size_gb", 0.0))
     multiplier = estimate_denorm_multiplier(schema_output)
     return source_data_gb * scale_factor * multiplier
 
@@ -512,8 +588,9 @@ def compute_vcpu_constraint(
         / 1000.0
     )
 
-    source_vcpu = _safe_get(collector_output, "rds_metadata", "instance_specs", "vcpus", default=0)
-    source_cpu_pct = _safe_get(collector_output, "metrics", "cpu_utilization_avg", default=0.0)
+    inputs, _ = source_inputs(collector_output)
+    source_vcpu = inputs.get("vcpus", 0)
+    source_cpu_pct = inputs.get("cpu_utilization_avg_pct", 0.0)
     source_observed_vcpu = source_vcpu * (source_cpu_pct / 100.0) * VCPU_HEADROOM
 
     floor_class = INSTANCE_CLASS_BY_NAME[FLOOR_INSTANCE_CLASS]
@@ -532,7 +609,7 @@ def compute_conn_constraint(
     test_config: Any,
 ) -> tuple[int, dict[str, int]]:
     """Compute connections needed. Returns (conns, breakdown)."""
-    source_max = _safe_get(collector_output, "metrics", "max_connections", default=0) or 0
+    source_max = source_inputs(collector_output)[0].get("max_connections", 0)
     test_concurrency = int(getattr(test_config, "max_concurrent_vus", 0) or 0)
 
     conns = int(max(source_max * CONNECTION_HEADROOM, test_concurrency))
@@ -607,15 +684,16 @@ def compute_replicas(
 
     Returns (replica_count, reason).
     """
-    source_replicas = (
-        _safe_get(collector_output, "rds_metadata", "read_replica_count", default=0) or 0
-    )
-    source_multi_az = _safe_get(collector_output, "rds_metadata", "multi_az", default=False)
+    inputs, _ = source_inputs(collector_output)
+    source_replicas = int(inputs.get("read_replica_count", 0))
+    source_multi_az = inputs.get("multi_az", False)
 
     if source_replicas > 0:
         return source_replicas, f"matches source replica count ({source_replicas})"
     if source_multi_az:
         return 1, "matches source multi-az topology"
+    if "read_replica_count" not in inputs and "multi_az" not in inputs:
+        return 0, "source topology not reported; assuming single-instance"
     return 0, "source is single-instance"
 
 
@@ -652,9 +730,10 @@ def derive_cluster_config(
 
     All paths apply the cost ceiling and floor.
     """
-    source_class = _safe_get(collector_output, "rds_metadata", "instance_class")
-    source_ram_gb = _source_memory_gb(collector_output)
-    source_vcpu = _safe_get(collector_output, "rds_metadata", "instance_specs", "vcpus")
+    inputs, input_sources = source_inputs(collector_output)
+    source_class = inputs.get("instance_class")
+    source_ram_gb = inputs.get("memory_gb")
+    source_vcpu = inputs.get("vcpus")
 
     metrics_complete = has_complete_metrics(collector_output)
 
@@ -698,6 +777,9 @@ def derive_cluster_config(
     denorm = estimate_denorm_multiplier(schema_output)
 
     chosen_reason = _build_chosen_reason(strategy, chosen, binding, ram_gb, vcpu, source_class)
+    missing = missing_source_inputs(collector_output)
+    if strategy != "derived" and missing:
+        chosen_reason += f"; the collection did not report: {', '.join(missing)}"
 
     rationale = SizingRationale(
         source_instance_class=source_class,
@@ -721,6 +803,8 @@ def derive_cluster_config(
         chosen_class_reason=chosen_reason,
         replicas_count=replica_count,
         replicas_reason=replica_reason,
+        missing_inputs=missing_source_inputs(collector_output),
+        input_sources=input_sources,
     )
 
     return ClusterConfig(
