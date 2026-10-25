@@ -17,6 +17,7 @@ import time
 from src.agents.referee.assignment_resolver import AssignmentResolver
 from src.agents.referee.assignment_validator import AssignmentValidator
 from src.agents.referee.query_pattern import write_access_patterns
+from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import remember_collected_facts
 
@@ -33,20 +34,20 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     7. Write assignment and validation artifacts
     """
     start_time = time.time()
-    print(f"[assignment] Starting assignment resolution for {database_name}")
+    say(f"[assignment] Starting assignment resolution for {database_name}")
 
     # --- Read triage output ---
     triage_key = f"{database_name}/{job_id}/referee-triage/triage.json"
     triage = store.read_json(triage_key)
     selected_agents = [a["agent_type"] for a in triage.get("selected_agents", [])]
-    print(f"[assignment] Selected engines from triage: {selected_agents}")
+    say(f"[assignment] Selected engines from triage: {selected_agents}")
 
     # --- Read collector output ---
     collector_key = f"{database_name}/{job_id}/collector/output.json"
     collector_output = store.read_json(collector_key)
     remember_collected_facts(collector_output)
     queries = collector_output.get("queries", {}).get("query_patterns", [])
-    print(f"[assignment] Loaded collector: {len(queries)} queries")
+    say(f"[assignment] Loaded collector: {len(queries)} queries")
 
     # --- Read analysis outputs for each selected engine ---
     analysis_outputs: dict[str, dict] = {}
@@ -54,20 +55,20 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
         analysis_key = f"{database_name}/{job_id}/analysis-{engine}/analysis.json"
         if store.exists(analysis_key):
             analysis_outputs[engine] = store.read_json(analysis_key)
-            print(f"[assignment] Loaded analysis for {engine}")
+            say(f"[assignment] Loaded analysis for {engine}")
         else:
-            print(f"[assignment] WARNING: No analysis found for {engine}")
+            say(f"[assignment] WARNING: No analysis found for {engine}")
 
     # --- Determine version number ---
     version = _next_version(store, database_name, job_id)
-    print(f"[assignment] Assignment version: {version}")
+    say(f"[assignment] Assignment version: {version}")
 
     # --- Resolve assignment ---
     resolver = AssignmentResolver()
     assignment = resolver.resolve(triage, analysis_outputs, collector_output)
     # Override version from resolver (which defaults to 1)
     assignment = assignment.model_copy(update={"version": version})
-    print(
+    say(
         f"[assignment] Resolved: {len(assignment.query_assignments)} queries, "
         f"{len(assignment.table_assignments)} tables, "
         f"{len(assignment.co_dependency_groups)} co-dep groups, "
@@ -77,7 +78,7 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     # --- Validate assignment ---
     validator = AssignmentValidator()
     validation = validator.validate(assignment, collector_output, analysis_outputs)
-    print(
+    say(
         f"[assignment] Validation: valid={validation.valid}, "
         f"{len(validation.warnings)} warnings, {len(validation.errors)} errors"
     )
@@ -89,20 +90,20 @@ def run_assignment_resolver(job_id: str, database_name: str, store: ArtifactStor
     assignment_key = f"{database_name}/{job_id}/assignment/v{version}/assignment.json"
     store.write_json(assignment_key, assignment.model_dump(mode="json"))
 
-    print(f"[assignment] Assignment written to {assignment_key}")
+    say(f"[assignment] Assignment written to {assignment_key}")
 
     validation_key = f"{database_name}/{job_id}/assignment/v{version}/validation.json"
     store.write_json(validation_key, validation.model_dump(mode="json"))
-    print(f"[assignment] Validation written to {validation_key}")
+    say(f"[assignment] Validation written to {validation_key}")
 
     # --- The access-pattern class of each query, as routing scored it (#728, #936) ---
     record_key = write_access_patterns(
         store, database_name, job_id, version, collector_output, analysis_outputs
     )
-    print(f"[assignment] Access-pattern record written to {record_key}")
+    say(f"[assignment] Access-pattern record written to {record_key}")
 
     elapsed = time.time() - start_time
-    print(f"[assignment] ✅ Complete in {elapsed:.1f}s — version {version}")
+    say(f"[assignment] ✅ Complete in {elapsed:.1f}s — version {version}")
 
 
 def _next_version(store: ArtifactStore, database_name: str, job_id: str) -> int:

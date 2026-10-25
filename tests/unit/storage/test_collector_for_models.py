@@ -43,6 +43,7 @@ _NOT_READS = {
     "debug",
     "error",
     "print",
+    "say",
     "_path",
     "_log_artifact",
 }

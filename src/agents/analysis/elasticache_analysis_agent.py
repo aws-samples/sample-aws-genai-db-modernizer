@@ -29,6 +29,7 @@ from src.contracts.decision_trace_base import (
     TraceSummary,
 )
 from src.contracts.elasticache_decision_trace import ElastiCacheDecisionTrace
+from src.shared.progress import say
 from src.tools.analysis.redis_analysis_tools import (
     analyze_caching_patterns,
     analyze_redis_use_cases,
@@ -51,7 +52,7 @@ def analyze_for_elasticache(
 
     tables = collector_output.get("database_schema", {}).get("tables", [])
     if not tables:
-        print("WARNING: No tables in collector output — producing empty recommendations")
+        say("WARNING: No tables in collector output — producing empty recommendations")
 
     workload_analysis = analyze_redis_use_cases(collector_output)
     table_recommendations = analyze_caching_patterns(collector_output, workload_analysis)

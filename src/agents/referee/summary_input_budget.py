@@ -63,6 +63,7 @@ from collections.abc import Callable
 from typing import Any
 
 from src.agents.prompt_framing import with_untrusted_notice
+from src.shared.progress import say
 
 logger = logging.getLogger(__name__)
 
@@ -328,8 +329,8 @@ def apply_summary_input_budget(
     )
     if status["within_budget"]:
         logger.info(message)
-        print(f"[synthesis] {message}")
+        say(f"[synthesis] {message}")
     else:
         logger.warning("%s; still over the budget", message)
-        print(f"[synthesis] WARNING: {message}; still over the budget")
+        say(f"[synthesis] WARNING: {message}; still over the budget")
     return capped

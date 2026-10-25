@@ -9,8 +9,12 @@ sets no path, so ``publish`` uses the client-direct sequence instead.
 
 from __future__ import annotations
 
+import importlib.abc
+import logging
 import sys
 import types
+
+import pytest
 
 from src.atx_orchestrator.runtime import artifacts
 
@@ -145,6 +149,76 @@ class TestPublish:
 
         assert result == {}  # no context -> no-op, never raises
         assert client.create_calls == []
+
+    @pytest.mark.passes_on_main  # guards that the decision keeps this WARNING
+    def test_no_agent_context_is_still_a_warning(self, monkeypatch, caplog) -> None:
+        _inject_sdk(monkeypatch, _FakeClient(), have_runtime=False)
+        with caplog.at_level(logging.INFO, logger=artifacts.logger.name):
+            artifacts.publish([(b"x", "HTML", "Sample Report", "CUSTOMER_OUTPUT")])
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+
+class _SdkAbsent(importlib.abc.MetaPathFinder):
+    """Finds no ``agent_builder_sdk``, as when the package is not installed."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] == "agent_builder_sdk":
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+class TestPublishWithoutTheSdk:
+    """The SDK not installed means not the ATX runtime (a local run, a library call):
+    INFO, not WARNING. Any other import failure is a real publishing problem."""
+
+    def _publish(self, caplog) -> tuple[dict, list[logging.LogRecord]]:
+        with caplog.at_level(logging.INFO, logger=artifacts.logger.name):
+            result = artifacts.publish([(b"x", "HTML", "Sample Report", "CUSTOMER_OUTPUT")])
+        return result, [r for r in caplog.records if r.name == artifacts.logger.name]
+
+    def test_a_missing_sdk_is_logged_at_info(self, monkeypatch, caplog) -> None:
+        # The import fails as for an uninstalled package (ModuleNotFoundError, name
+        # "agent_builder_sdk"), even where the SDK is installed and imported already.
+        for name in [m for m in sys.modules if m.split(".")[0] == "agent_builder_sdk"]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.setattr(sys, "meta_path", [_SdkAbsent(), *sys.meta_path])
+        result, records = self._publish(caplog)
+        assert result == {}
+        assert [r.levelno for r in records] == [logging.INFO]
+        assert "skipped outside the ATX runtime" in records[0].getMessage()
+
+    @pytest.mark.passes_on_main  # guards that the decision keeps this WARNING
+    def test_another_import_failure_stays_a_warning(self, monkeypatch, caplog) -> None:
+        _inject_sdk(monkeypatch, _FakeClient())
+        monkeypatch.setitem(sys.modules, "agent_builder_types", None)
+        result, records = self._publish(caplog)
+        assert result == {}
+        assert [r.levelno for r in records] == [logging.WARNING]
+        assert "agent_builder_types" in records[0].getMessage()
+
+    @pytest.mark.passes_on_main  # guards that an incompatible SDK keeps this WARNING
+    def test_an_installed_but_incompatible_sdk_stays_a_warning(self, monkeypatch, caplog) -> None:
+        """The SDK is there, but a name publish() imports is not (another SDK version):
+        a real failure inside the runtime, not "outside the runtime"."""
+        _inject_sdk(monkeypatch, _FakeClient())
+        common = sys.modules["agent_builder_sdk.agentic_framework.common"]
+        monkeypatch.delattr(common, "calculate_digest")
+        result, records = self._publish(caplog)
+        assert result == {}
+        assert [r.levelno for r in records] == [logging.WARNING]
+        assert "calculate_digest" in records[0].getMessage()
+
+    def test_only_the_missing_sdk_package_counts_as_missing(self) -> None:
+        assert artifacts._is_sdk_missing(ModuleNotFoundError(name="agent_builder_sdk"))
+        # An installed SDK with a missing submodule or name is incompatible, not absent.
+        assert not artifacts._is_sdk_missing(ModuleNotFoundError(name="agent_builder_sdk.env_var"))
+        assert not artifacts._is_sdk_missing(
+            ImportError(name="agent_builder_sdk.agentic_framework.common")
+        )
+        assert not artifacts._is_sdk_missing(ImportError(name="agent_builder_sdk"))
+        assert not artifacts._is_sdk_missing(ModuleNotFoundError(name="agent_builder_types"))
+        assert not artifacts._is_sdk_missing(ModuleNotFoundError(name="agent_builder_sdk_other"))
+        assert not artifacts._is_sdk_missing(ImportError("no name"))
 
 
 class TestDefaultPath:

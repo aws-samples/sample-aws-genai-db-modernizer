@@ -34,6 +34,7 @@ from src.contracts.model_flag import RoutingFlagEntry
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
+from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.analysis.documentdb_analysis_tools import (
     DOCUMENTDB_TARGET_CLUSTER,
@@ -229,7 +230,7 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
         check_contract_version(raw_trace, DocumentDBDecisionTrace, artifact=trace_path)
         decision_trace = raw_trace
 
-    print(
+    say(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "
         f"{len(agent_collector.queries.query_patterns)} patterns, "
         f"{len(agent_analysis.aggregate_recommendations or [])} aggregates, "
@@ -315,7 +316,7 @@ def _invoke_pe_reviewer(
     pe_skill_path: str | None = None,
 ) -> PEReviewResult:
     """Invoke the PE reviewer agent on a design output."""
-    print("[schema-design/documentdb][pe-review] Invoking PE reviewer...")
+    say("[schema-design/documentdb][pe-review] Invoking PE reviewer...")
     pe_prompt_text = _load_skill(pe_skill_path or DEFAULT_PE_SKILL_PATH)
 
     pe_agent = Agent(
@@ -349,7 +350,7 @@ def _invoke_pe_reviewer(
     result = pe_agent(prompt)
     output = getattr(result, "structured_output", None)
     if isinstance(output, PEReviewResult):
-        print(
+        say(
             f"[schema-design/documentdb][pe-review] Verdict: {output.verdict.value} | "
             f"Changes: {len(output.change_requests)} | "
             f"Strengths: {len(output.strengths)}"
@@ -413,13 +414,13 @@ def run_documentdb_schema_agent(
     )
 
     # Load input eagerly — don't rely on LLM calling the tool.
-    print("[schema-design/documentdb] Loading agent input...")
+    say("[schema-design/documentdb] Loading agent input...")
     agent_input = load_agent_input(paths)
 
     # Compact input to fit within Bedrock token limits.
     _compact_agent_input(agent_input)
     input_json = json.dumps(agent_input, indent=2, default=str)
-    print(f"[schema-design/documentdb] Compacted input: {len(input_json):,} chars")
+    say(f"[schema-design/documentdb] Compacted input: {len(input_json):,} chars")
 
     designer = Agent(
         model=model,

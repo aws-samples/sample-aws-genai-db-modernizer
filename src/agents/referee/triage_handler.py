@@ -12,6 +12,7 @@ from src.contracts.triage_output import (
     TriageOutputContract,
     TriageSignalRecord,
 )
+from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.tools.sql.query_facts import remember_collected_facts
 
@@ -33,7 +34,7 @@ def run_triage(
 
     start_time = time.time()
 
-    print(f"[triage] Starting triage for {database_name}")
+    say(f"[triage] Starting triage for {database_name}")
 
     # Read collector output
     collector_key = f"{database_name}/{job_id}/collector/output.json"
@@ -41,27 +42,27 @@ def run_triage(
     remember_collected_facts(collector_output)
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
-    print(f"[triage] Loaded collector: {len(tables)} tables, {len(queries)} queries")
+    say(f"[triage] Loaded collector: {len(tables)} tables, {len(queries)} queries")
 
     if engine_scope is None:
         from src.agents.referee.engine_scope import recorded_engine_scope
 
         engine_scope = recorded_engine_scope(store, database_name, job_id)
         if engine_scope is not None:
-            print(f"[triage] Customer's engine scope: {', '.join(engine_scope)}")
+            say(f"[triage] Customer's engine scope: {', '.join(engine_scope)}")
 
     # Run triage
-    print("[triage] Analyzing workload signals...")
+    say("[triage] Analyzing workload signals...")
     result = triage(collector_output, engine_scope=engine_scope)
 
-    print(f"[triage] Signals detected: {len(result.signals)}")
+    say(f"[triage] Signals detected: {len(result.signals)}")
     for sig in result.signals:
-        print(f"[triage]   {sig.signal} → {sig.targets} ({sig.evidence[:80]})")
+        say(f"[triage]   {sig.signal} → {sig.targets} ({sig.evidence[:80]})")
 
-    print(f"[triage] Selected: {list(result.selected.keys())}")
-    print(f"[triage] Skipped: {list(result.skipped.keys())}")
+    say(f"[triage] Selected: {list(result.selected.keys())}")
+    say(f"[triage] Skipped: {list(result.skipped.keys())}")
     if result.deferred:
-        print(f"[triage] Deferred: {list(result.deferred.keys())}")
+        say(f"[triage] Deferred: {list(result.deferred.keys())}")
 
     triage_output = TriageOutputContract(
         job_id=job_id,
@@ -90,8 +91,8 @@ def run_triage(
     store.write_json(key, triage_output.model_dump(mode="json"))
     elapsed = time.time() - start_time
     confidence = _compute_triage_confidence(result)
-    print(f"[triage] Confidence: {confidence}%")
-    print(
+    say(f"[triage] Confidence: {confidence}%")
+    say(
         f"[triage] ✅ Complete in {elapsed:.1f}s — {len(result.selected)} selected, {len(result.skipped)} skipped"
     )
 

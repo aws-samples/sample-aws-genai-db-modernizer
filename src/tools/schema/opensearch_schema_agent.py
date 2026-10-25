@@ -37,6 +37,7 @@ from src.contracts.schema_design_output import TradeOff
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
+from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.base_schema_agent import AgentInputPaths, enforce_design_numbers
 from src.tools.schema.design_metrics import (
@@ -252,7 +253,7 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
         check_contract_version(raw_trace, OpenSearchDecisionTrace, artifact=trace_path)
         decision_trace = raw_trace
 
-    print(
+    say(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "
         f"{len(agent_collector.queries.query_patterns)} patterns, "
         f"{len(decision_trace.get('workload_classifications', []))} workload classifications"
@@ -290,7 +291,7 @@ def _invoke_pe_reviewer(
     pe_skill_path: str | None = None,
 ) -> PEReviewResult:
     """Invoke the PE reviewer agent on a design output."""
-    print("[schema-design/opensearch][pe-review] Invoking PE reviewer...")
+    say("[schema-design/opensearch][pe-review] Invoking PE reviewer...")
     pe_prompt_text = _load_skill(pe_skill_path or DEFAULT_PE_SKILL_PATH)
 
     pe_agent = Agent(
@@ -322,7 +323,7 @@ def _invoke_pe_reviewer(
     result = pe_agent(prompt)
     output = getattr(result, "structured_output", None)
     if isinstance(output, PEReviewResult):
-        print(
+        say(
             f"[schema-design/opensearch][pe-review] Verdict: {output.verdict.value} | "
             f"Changes: {len(output.change_requests)} | "
             f"Strengths: {len(output.strengths)}"
@@ -440,12 +441,12 @@ def run_opensearch_schema_agent(
         )
 
     # --- Iteration 0: initial design ---
-    print(f"[schema-design/opensearch] === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
+    say(f"[schema-design/opensearch] === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
     t0 = time.time()
     design_output = _designed(designer_prompt)
     elapsed = time.time() - t0
     trace.log_designer(0, elapsed, design_output)
-    print(f"[schema-design/opensearch] Designer iteration 1 complete in {elapsed:.0f}s")
+    say(f"[schema-design/opensearch] Designer iteration 1 complete in {elapsed:.0f}s")
 
     input_summary = {
         "table_count": len(design_output.index_designs) + len(design_output.data_stream_designs)
@@ -454,7 +455,7 @@ def run_opensearch_schema_agent(
     # --- PE review loop ---
     routing_flags: list[dict] = []  # the last PE review's, for the router (#629)
     for iteration in range(MAX_PE_ITERATIONS):
-        print(f"[schema-design/opensearch] === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
+        say(f"[schema-design/opensearch] === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
 
         routing_flags = []  # only a review of this design counts (#713 review)
         try:
@@ -478,7 +479,7 @@ def run_opensearch_schema_agent(
             break
 
         if review.verdict == ReviewVerdict.APPROVED:
-            print(f"[schema-design/opensearch] PE approved on iteration {iteration + 1}")
+            say(f"[schema-design/opensearch] PE approved on iteration {iteration + 1}")
             if review.pe_notes:
                 design_output.trade_offs.extend(
                     TradeOff(
@@ -491,7 +492,7 @@ def run_opensearch_schema_agent(
             break
 
         if iteration + 1 >= MAX_PE_ITERATIONS:
-            print("[schema-design/opensearch] Max PE iterations — accepting with notes")
+            say("[schema-design/opensearch] Max PE iterations — accepting with notes")
             if review.pe_notes:
                 design_output.trade_offs.extend(
                     TradeOff(
@@ -517,7 +518,7 @@ def run_opensearch_schema_agent(
             "OpenSearchModelOutputContract."
         )
 
-        print(
+        say(
             f"[schema-design/opensearch] === Designer revision {iteration + 2}/{MAX_PE_ITERATIONS}"
             f" ({len(review.change_requests)} changes requested) ==="
         )

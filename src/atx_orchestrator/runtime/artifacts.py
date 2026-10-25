@@ -203,8 +203,20 @@ def publish(items: list[PublishItem]) -> dict[str, str]:
                     category,
                     exc,
                 )
+    except ImportError as exc:
+        if not _is_sdk_missing(exc):
+            logger.warning("Artifact publishing unavailable, S3 copies still written: %s", exc)
+        else:
+            # The SDK is not installed: not the ATX runtime (a local run, a library call).
+            logger.info("Artifact publishing skipped outside the ATX runtime: %s", exc)
     except Exception as exc:  # noqa: BLE001
-        # Expected outside the ATX runtime (no agent context env vars), e.g. local
-        # runs and tests. Also catches SDK or client construction failure.
+        # Inside the runtime with no agent context env vars, or an SDK or client
+        # construction failure.
         logger.warning("Artifact publishing unavailable, S3 copies still written: %s", exc)
     return published
+
+
+def _is_sdk_missing(exc: ImportError) -> bool:
+    """``exc`` says the ``agent_builder_sdk`` package itself is not installed. An
+    installed SDK that lacks a module or a name (an incompatible version) is not."""
+    return isinstance(exc, ModuleNotFoundError) and exc.name == "agent_builder_sdk"

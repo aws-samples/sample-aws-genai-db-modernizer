@@ -22,6 +22,7 @@ from src.contracts.analysis_output import (
     TargetDatabase,
 )
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
+from src.shared.progress import say
 from src.tools.analysis.documentdb_analysis_tools import (
     LlmDocumentDBAdvisor,
     _fallback_embedding_strategy,
@@ -55,7 +56,7 @@ def analyze_for_documentdb_deterministic(
 
     tables = collector_output.get("database_schema", {}).get("tables", [])
     if not tables:
-        print("WARNING: No tables in collector output — producing empty recommendations")
+        say("WARNING: No tables in collector output — producing empty recommendations")
 
     # === Deterministic detection ===
     workload_analysis = analyze_documentdb_use_cases(collector_output)

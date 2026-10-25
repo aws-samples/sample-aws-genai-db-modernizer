@@ -33,6 +33,7 @@ from src.agents.schema_design.scope import normalize_table_name
 from src.contracts.schema_design_input import ExcludedQuery
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.contract_versioning import ContractVersionError
+from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.storage.collector_for_models import read_collector_for_models
 
@@ -347,7 +348,7 @@ def merge_schema_groups(
             )
             skipped = placeholder.model_dump(mode="json")
             skipped = write_schema_output(store, f"{base_key}/schema_output.json", skipped, engine)
-            print(
+            say(
                 f"[schema-merge/{engine}] No groups to merge: all "
                 f"{len(excluded_queries)} assigned queries touch no source table. "
                 "Wrote a skipped schema_output.json."
@@ -370,7 +371,7 @@ def merge_schema_groups(
             missing.append(idx)
 
     if missing:
-        print(f"[schema-merge/{engine}] Warning: missing drafts for groups: {missing}")
+        say(f"[schema-merge/{engine}] Warning: missing drafts for groups: {missing}")
 
     if not drafts:
         raise ValueError(f"No group drafts found to merge for {engine}")
@@ -436,7 +437,7 @@ def merge_schema_groups(
         notes if engine == "dynamodb" else None,
     )
 
-    print(
+    say(
         f"[schema-merge/{engine}] Merged {len(drafts)} group drafts"
         + (f" (skipped {len(missing)} missing)" if missing else "")
     )

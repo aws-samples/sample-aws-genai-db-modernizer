@@ -43,6 +43,7 @@ from strands import Agent
 from src.agents.prompt_framing import frame_untrusted
 from src.contracts.schema_design_output import TradeOff
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
+from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.dynamodb_attribute_columns import ATTRIBUTE_COLUMNS_PREFIX
 
@@ -205,7 +206,7 @@ def enforce_design_numbers[Out: BaseModel](
     for _ in range(NUMBERS_CORRECTION_ROUNDS):
         if not errors:
             return output
-        print(f"{prefix} {len(errors)} design check(s) failed; asking for a fix")
+        say(f"{prefix} {len(errors)} design check(s) failed; asking for a fix")
         output = invoke(numbers_correction_prompt(errors))
         errors = check(output)
     if errors:
@@ -318,12 +319,12 @@ class SchemaDesignRunner:
         prefix = f"[schema-design/{self.target_type}]"
 
         # --- Iteration 0: initial design ---
-        print(f"{prefix} === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
+        say(f"{prefix} === Designer iteration 1/{MAX_PE_ITERATIONS} ===")
         t0 = time.time()
         design_output: T = self._checked(self._invoke_designer(designer_prompt))
         elapsed = time.time() - t0
         self.trace.log_designer(0, elapsed, design_output)
-        print(f"{prefix} Designer iteration 1 complete in {elapsed:.0f}s")
+        say(f"{prefix} Designer iteration 1 complete in {elapsed:.0f}s")
 
         if input_summary is None:
             input_summary = {}
@@ -335,7 +336,7 @@ class SchemaDesignRunner:
         previous_change_keys: set[str] = set()
 
         for iteration in range(MAX_PE_ITERATIONS):
-            print(f"{prefix} === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
+            say(f"{prefix} === PE review {iteration + 1}/{MAX_PE_ITERATIONS} ===")
 
             # Only the flags of a review that saw THIS design count (#713 review):
             # a later review that errors leaves none, never an earlier review's.
@@ -351,7 +352,7 @@ class SchemaDesignRunner:
                     f.model_dump(mode="json") if hasattr(f, "model_dump") else dict(f)
                     for f in getattr(review, "routing_flags", None) or []
                 ]
-                print(f"{prefix} PE review {iteration + 1} complete in {elapsed:.0f}s")
+                say(f"{prefix} PE review {iteration + 1} complete in {elapsed:.0f}s")
             except (GuardrailIntervened, GuardrailConfigError):
                 raise
             except Exception as exc:
@@ -368,7 +369,7 @@ class SchemaDesignRunner:
             # Check verdict — compare the string value for cross-model compat
             verdict_value = getattr(review.verdict, "value", str(review.verdict))
             if verdict_value.upper() == "APPROVED":
-                print(f"{prefix} ✅ PE approved on iteration {iteration + 1}")
+                say(f"{prefix} ✅ PE approved on iteration {iteration + 1}")
                 if getattr(review, "pe_notes", None):
                     self._append_trade_offs(
                         design_output, [f"[PE note] {n}" for n in review.pe_notes]
@@ -390,7 +391,7 @@ class SchemaDesignRunner:
 
             overlap = current_change_keys & previous_change_keys
             if overlap and len(overlap) >= len(current_change_keys) * 0.7:
-                print(
+                say(
                     f"{prefix} ⚠️ PE requesting same changes as last iteration "
                     f"({len(overlap)}/{len(current_change_keys)} overlap) — accepting design"
                 )
@@ -412,7 +413,7 @@ class SchemaDesignRunner:
 
             # --- Max iterations check ---
             if iteration + 1 >= MAX_PE_ITERATIONS:
-                print(f"{prefix} ⚠️ Max PE iterations reached — accepting with notes")
+                say(f"{prefix} ⚠️ Max PE iterations reached — accepting with notes")
                 if getattr(review, "pe_notes", None):
                     self._append_trade_offs(
                         design_output, [f"[PE note] {n}" for n in review.pe_notes]
@@ -425,7 +426,7 @@ class SchemaDesignRunner:
                 if self._format_pe_feedback
                 else self._default_format_feedback(review)
             )
-            print(f"{prefix} PE feedback ({len(change_requests)} changes):")
+            say(f"{prefix} PE feedback ({len(change_requests)} changes):")
             for cr in change_requests:
                 sev = getattr(getattr(cr, "severity", ""), "value", "?")
                 cat = getattr(getattr(cr, "category", ""), "value", "?")
@@ -446,7 +447,7 @@ class SchemaDesignRunner:
                 f"Return the complete revised output."
             )
 
-            print(
+            say(
                 f"{prefix} === Designer revision {iteration + 2}/{MAX_PE_ITERATIONS} "
                 f"({len(change_requests)} changes requested) ==="
             )
@@ -456,7 +457,7 @@ class SchemaDesignRunner:
             )
             elapsed = time.time() - t0
             self.trace.log_designer(iteration + 1, elapsed, design_output)
-            print(f"{prefix} Designer revision {iteration + 2} complete in {elapsed:.0f}s")
+            say(f"{prefix} Designer revision {iteration + 2} complete in {elapsed:.0f}s")
 
         return design_output, self._trace_dict()
 
@@ -500,18 +501,18 @@ class SchemaDesignRunner:
         while regular_failures < regular_max and throttle_failures < throttle_max:
             attempt += 1
             try:
-                print(f"{prefix} Invoking model (attempt {attempt})...")
+                say(f"{prefix} Invoking model (attempt {attempt})...")
                 result = self.designer(prompt)
                 output = getattr(result, "structured_output", None)
                 if isinstance(output, self.output_model):
-                    print(f"{prefix} Valid structured output")
+                    say(f"{prefix} Valid structured output")
                     return output  # type: ignore[return-value]
 
                 raw_text = str(result)
                 last_partial_text = raw_text
                 parsed = json.loads(raw_text)
                 validated = self.output_model.model_validate(parsed)
-                print(f"{prefix} Parsed from text")
+                say(f"{prefix} Parsed from text")
                 return validated  # type: ignore[return-value]
 
             except (GuardrailIntervened, GuardrailConfigError):
@@ -534,12 +535,12 @@ class SchemaDesignRunner:
                 )
                 if regular_failures >= regular_max or throttle_failures >= throttle_max:
                     break
-                print(f"{prefix} Retry after {backoff:.1f}s")
+                say(f"{prefix} Retry after {backoff:.1f}s")
                 time.sleep(backoff)  # nosemgrep: arbitrary-sleep
 
         # --- Graceful fallback ---
         if previous_output is not None:
-            print(f"{prefix} ⚠️ All retries failed — returning previous valid output")
+            say(f"{prefix} ⚠️ All retries failed — returning previous valid output")
             self._append_trade_offs(
                 previous_output,
                 [
@@ -555,7 +556,7 @@ class SchemaDesignRunner:
             try:
                 partial = json.loads(last_partial_text)
                 salvaged = self.output_model.model_validate(partial)
-                print(f"{prefix} ⚠️ Salvaged partial output")
+                say(f"{prefix} ⚠️ Salvaged partial output")
                 self._append_trade_offs(
                     salvaged, ["[WARNING] Schema design produced from partial LLM output."]
                 )

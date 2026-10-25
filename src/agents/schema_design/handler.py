@@ -56,6 +56,7 @@ from src.contracts.analysis_output import (
 from src.contracts.aurora_design_delta import is_design_delta
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
+from src.shared.progress import in_context, say
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import engine_scope, read_assignment
 from src.storage.collector_for_models import read_collector_for_models
@@ -100,7 +101,7 @@ def _read_decision_trace(
         return None
     trace_key = f"{database_name}/{job_id}/analysis-{target_type}/decision-trace.json"
     if not store.exists(trace_key):
-        print(f"[schema-design/{target_type}] Decision trace not found: {trace_key}")
+        say(f"[schema-design/{target_type}] Decision trace not found: {trace_key}")
         return None
     # Only a missing trace is skipped. A trace at another contract MAJOR (or one the
     # store cannot read) raises, and stops the designer like every other checked read.
@@ -202,7 +203,7 @@ SCHEMA_DESIGN_SKIPPED_NONE_MODE = (
 
 
 def _skip_without_model(target_type: str) -> ScopeReport:
-    print(f"[schema-design/{target_type}] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
+    say(f"[schema-design/{target_type}] {SCHEMA_DESIGN_SKIPPED_NONE_MODE}")
     return EMPTY_REPORT
 
 
@@ -823,7 +824,7 @@ def run_schema_design(
         input_key = f"{prefix}/schema-{target_type}/v{version}/llm_input.json"
         # The file says its content is data, not instructions (#1317).
         store.write_json(input_key, with_untrusted_notice(llm_input))
-        print(f"[schema-design/{target_type}] external mode — input written to {input_key}")
+        say(f"[schema-design/{target_type}] external mode — input written to {input_key}")
         return EMPTY_REPORT
 
     import time
@@ -831,20 +832,20 @@ def run_schema_design(
     start_time = time.time()
     agent_name = f"schema-{target_type}"
 
-    print(f"[schema-design/{target_type}] Starting for {database_name}")
+    say(f"[schema-design/{target_type}] Starting for {database_name}")
 
     # --- Check for answers from a previous exit-code-2 run ---
     answers = read_answers(store, database_name, job_id, agent_name)
     partial = read_partial_output(store, database_name, job_id, agent_name)
     if answers is not None:
-        print(f"[schema-design/{target_type}] Resuming with answers from previous run")
+        say(f"[schema-design/{target_type}] Resuming with answers from previous run")
     if partial is not None:
-        print(f"[schema-design/{target_type}] Loaded partial output from previous run")
+        say(f"[schema-design/{target_type}] Loaded partial output from previous run")
 
     # --- Read collector output via ArtifactStore ---
     full_collector = read_collector_for_models(store, database_name, job_id)
     collector_output = full_collector
-    print(f"[schema-design/{target_type}] Loaded collector output")
+    say(f"[schema-design/{target_type}] Loaded collector output")
 
     # --- Filter by assignment when versioned ---
     if assignment_version > 0:
@@ -855,17 +856,17 @@ def run_schema_design(
         collector_output = filter_collector_for_assignment(full_collector, assignment, target_type)
         n_queries = len(collector_output.get("queries", {}).get("query_patterns", []))
         n_tables = len(collector_output.get("database_schema", {}).get("tables", []))
-        print(
+        say(
             f"[schema-design/{target_type}] Filtered to {n_queries} queries, "
             f"{n_tables} tables (assignment v{assignment_version})"
         )
     else:
-        print(f"[schema-design/{target_type}] Legacy mode — using all queries")
+        say(f"[schema-design/{target_type}] Legacy mode — using all queries")
 
     # --- Check if there's anything to design ---
     filtered_tables = collector_output.get("database_schema", {}).get("tables", [])
     if not filtered_tables and assignment_version > 0:
-        print(f"[schema-design/{target_type}] No tables assigned — skipping schema design")
+        say(f"[schema-design/{target_type}] No tables assigned — skipping schema design")
         # A placeholder of its own contract, not the design (#1023).
         placeholder = SkippedSchemaOutput(
             target_type=target_type,
@@ -880,7 +881,7 @@ def run_schema_design(
         else:
             out_key = f"{database_name}/{job_id}/schema-{target_type}/schema_output.json"
         write_schema_output(store, out_key, placeholder.model_dump(mode="json"), target_type)
-        print(f"[schema-design/{target_type}] Placeholder written to {out_key}")
+        say(f"[schema-design/{target_type}] Placeholder written to {out_key}")
         return EMPTY_REPORT
 
     # --- Read analysis output via ArtifactStore ---
@@ -892,7 +893,7 @@ def run_schema_design(
         analysis_output = filter_analysis_for_assignment(
             analysis_output, full_collector, collector_output
         )
-    print(f"[schema-design/{target_type}] Loaded analysis output")
+    say(f"[schema-design/{target_type}] Loaded analysis output")
 
     # --- Write to temp files for the Strands agent ---
     collector_raw = json.dumps(collector_output, indent=2, default=str).encode()
@@ -912,7 +913,7 @@ def run_schema_design(
     try:
         if full_trace is not None:
             trace_tmp_path = _write_trace_tmp(scope_decision_trace(full_trace, collector_output))
-            print(f"[schema-design/{target_type}] Loaded decision trace")
+            say(f"[schema-design/{target_type}] Loaded decision trace")
         output_json, trace_json = _dispatch_schema_agent(
             target_type,
             collector_path=collector_tmp.name,
@@ -954,14 +955,14 @@ def run_schema_design(
 
     elapsed = time.time() - start_time
     if report.violations:
-        print(
+        say(
             f"[schema-design/{target_type}] ❌ {len(report.violations)} scope violation(s) "
             f"in {elapsed:.1f}s — output written to {output_key}:"
         )
         for message in report.violations:
-            print(f"  - {message}")
+            say(f"  - {message}")
     else:
-        print(
+        say(
             f"[schema-design/{target_type}] ✅ Complete in {elapsed:.1f}s — "
             f"output written to {output_key}"
         )
@@ -987,7 +988,7 @@ def run_schema_split(
     from src.agents.schema_design.group_splitter import split_schema_input
 
     start_time = time.time()
-    print(f"[schema-split/{target_type}] Starting for {database_name}")
+    say(f"[schema-split/{target_type}] Starting for {database_name}")
 
     # Read collector output
     collector_output = read_collector_for_models(store, database_name, job_id)
@@ -1007,13 +1008,13 @@ def run_schema_split(
             collector_output, assignment, target_type
         )
         queries = collector_output.get("queries", {}).get("query_patterns", [])
-        print(
+        say(
             f"[schema-split/{target_type}] Filtered to {len(queries)} queries "
             f"(assignment v{assignment_version})"
         )
 
     if not queries:
-        print(f"[schema-split/{target_type}] No queries assigned — skipping split")
+        say(f"[schema-split/{target_type}] No queries assigned — skipping split")
         return
 
     # Read analysis output
@@ -1039,12 +1040,12 @@ def run_schema_split(
     )
 
     elapsed = time.time() - start_time
-    print(
+    say(
         f"[schema-split/{target_type}] ✅ Split into {manifest.total_groups} groups "
         f"({manifest.total_queries} queries) in {elapsed:.1f}s"
     )
     for g in manifest.groups:
-        print(
+        say(
             f"  Group {g.group_index:2d}: {g.query_count:4d} queries, "
             f"{g.table_count:3d} tables  [{g.group_name}]"
         )
@@ -1089,7 +1090,7 @@ def run_schema_merge(
     )
 
     start_time = time.time()
-    print(f"[schema-merge/{target_type}] Starting for {database_name}")
+    say(f"[schema-merge/{target_type}] Starting for {database_name}")
 
     artifact_version = assignment_version if assignment_version > 0 else 1
 
@@ -1106,12 +1107,12 @@ def run_schema_merge(
         # if the engine were designed: the local orchestrator, the schema-merge
         # entrypoint and ATX fail the phase with these errors, and the external
         # --merge turns them into a correction turn.
-        print(
+        say(
             f"[schema-merge/{target_type}] ❌ merged design fails the output contract "
             f"({len(exc.errors)} error(s)); nothing written:"
         )
         for message in exc.errors:
-            print(f"  - {message}")
+            say(f"  - {message}")
         raise
 
     # merge_schema_groups also consolidates the per-group design traces into
@@ -1140,17 +1141,17 @@ def run_schema_merge(
     for field in ENGINE_LIST_FIELDS.get(target_type, []):
         items = merged.get(field, [])
         if items:
-            print(f"[schema-merge/{target_type}]   {field}: {len(items)}")
+            say(f"[schema-merge/{target_type}]   {field}: {len(items)}")
 
     if violations:
-        print(
+        say(
             f"[schema-merge/{target_type}] ❌ {len(violations)} validation failure(s) "
             f"in {elapsed:.1f}s:"
         )
         for message in violations:
-            print(f"  - {message}")
+            say(f"  - {message}")
     else:
-        print(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
+        say(f"[schema-merge/{target_type}] ✅ Complete in {elapsed:.1f}s")
     return report
 
 
@@ -1206,7 +1207,7 @@ def run_schema_design_auto(
     # Aurora stays single-pass (ADR-027 amendment): its generated_ddl script does
     # not merge across groups and a relational engine gains nothing from grouping.
     if target_type in _NON_GROUPED_ENGINES:
-        print(f"[schema-design/{target_type}] Aurora engine — running single-pass (no grouping)")
+        say(f"[schema-design/{target_type}] Aurora engine — running single-pass (no grouping)")
         return run_schema_design(
             job_id,
             database_name,
@@ -1233,7 +1234,7 @@ def run_schema_design_auto(
         queries = collector_output.get("queries", {}).get("query_patterns", [])
 
     if len(queries) <= MAX_GROUP_SIZE:
-        print(
+        say(
             f"[schema-design/{target_type}] {len(queries)} queries <= {MAX_GROUP_SIZE} "
             f"— running single-pass"
         )
@@ -1247,7 +1248,7 @@ def run_schema_design_auto(
         )
 
     # Split into groups
-    print(
+    say(
         f"[schema-design/{target_type}] {len(queries)} queries > {MAX_GROUP_SIZE} "
         f"— splitting into groups"
     )
@@ -1267,7 +1268,7 @@ def run_schema_design_auto(
     groups = manifest.get("groups", [])
 
     if not groups:
-        print(f"[schema-design/{target_type}] No groups produced — falling back to single-pass")
+        say(f"[schema-design/{target_type}] No groups produced — falling back to single-pass")
         return run_schema_design(
             job_id,
             database_name,
@@ -1280,7 +1281,7 @@ def run_schema_design_auto(
     # Run schema design per group (parallel)
     import time
 
-    print(f"[schema-design/{target_type}] Designing {len(groups)} groups in parallel")
+    say(f"[schema-design/{target_type}] Designing {len(groups)} groups in parallel")
     start = time.time()
 
     # Read once; each group gets its own slice (DocumentDB and OpenSearch only).
@@ -1299,7 +1300,7 @@ def run_schema_design_auto(
         # into dozens), and under a tight Bedrock quota that re-work is exactly what
         # we cannot afford. Draft writes are per-group, so completed groups persist.
         if store.exists(draft_key):
-            print(f"[schema-design/{target_type}] Group {idx} already designed — reusing draft")
+            say(f"[schema-design/{target_type}] Group {idx} already designed — reusing draft")
             return
         input_key = (
             f"{database_name}/{job_id}/schema-{target_type}"
@@ -1362,7 +1363,7 @@ def run_schema_design_auto(
             )
             write_design_trace(store, trace_key, json.loads(trace_json))
         n_q = len(group_collector.get("queries", {}).get("query_patterns", []))
-        print(
+        say(
             f"[schema-design/{target_type}] Group {idx} done ({group['group_name']}, {n_q} queries)"
         )
 
@@ -1375,11 +1376,9 @@ def run_schema_design_auto(
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     max_workers = min(_group_concurrency(), len(groups))
-    print(
-        f"[schema-design/{target_type}] Running {len(groups)} groups (max {max_workers} parallel)"
-    )
+    say(f"[schema-design/{target_type}] Running {len(groups)} groups (max {max_workers} parallel)")
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_design_group, g): g for g in groups}
+        futures = {pool.submit(in_context(_design_group), g): g for g in groups}
         for future in as_completed(futures):
             group = futures[future]
             try:
@@ -1389,7 +1388,7 @@ def run_schema_design_auto(
                 raise
 
     elapsed = time.time() - start
-    print(f"[schema-design/{target_type}] All {len(groups)} groups done in {elapsed:.1f}s")
+    say(f"[schema-design/{target_type}] All {len(groups)} groups done in {elapsed:.1f}s")
 
     # Merge group drafts
     return run_schema_merge(
@@ -1423,7 +1422,7 @@ def run_schema_design_with_injected(
     import time
 
     start_time = time.time()
-    print(
+    say(
         f"[schema-design/{target_type}] Starting CASCADE pass "
         f"with {len(injected_query_ids)} injected queries"
     )
@@ -1450,13 +1449,13 @@ def run_schema_design_with_injected(
 
     n_queries = len(collector_output.get("queries", {}).get("query_patterns", []))
     n_tables = len(collector_output.get("database_schema", {}).get("tables", []))
-    print(
+    say(
         f"[schema-design/{target_type}] Cascade input: {n_queries} queries, "
         f"{n_tables} tables ({len(injected_query_ids)} injected)"
     )
 
     if n_queries == 0:
-        print(f"[schema-design/{target_type}] No queries for cascade — skipping")
+        say(f"[schema-design/{target_type}] No queries for cascade — skipping")
         return
 
     # Read analysis output
@@ -1512,12 +1511,12 @@ def run_schema_design_with_injected(
     if store.exists(output_key):
         existing = store.read_json(output_key)
         output_data = _merge_cascade_output(existing, output_data, target_type)
-        print(f"[schema-design/{target_type}] Merged cascade output with existing schema")
+        say(f"[schema-design/{target_type}] Merged cascade output with existing schema")
 
     write_schema_output(store, output_key, output_data, target_type)
 
     elapsed = time.time() - start_time
-    print(
+    say(
         f"[schema-design/{target_type}] ✅ Cascade complete in {elapsed:.1f}s — "
         f"output written to {output_key}"
     )
@@ -1651,7 +1650,7 @@ def _dispatch_schema_agent(
             return mysql_result.model_dump_json(indent=2), json.dumps(mysql_trace, indent=2)
 
         case _:
-            print(
+            say(
                 f"WARNING: {target_type} schema design agent not yet "
                 "implemented — writing placeholder"
             )

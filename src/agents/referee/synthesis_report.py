@@ -71,6 +71,7 @@ from src.shared.engines_in_use import retired_in_use_statement
 from src.shared.migration_risk_rules import risk_sentence
 from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
+from src.shared.progress import say
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
 from src.shared.report_facts import (
     analysis_overview_facts,
@@ -3793,7 +3794,7 @@ def generate_executive_summary(
             callback_handler=None,
         )
 
-        print("[synthesis] Generating executive summary with LLM...")
+        say("[synthesis] Generating executive summary with LLM...")
         result = agent(prompt)
         structured = getattr(result, "structured_output", None)
         raw: object = (
@@ -3802,9 +3803,7 @@ def generate_executive_summary(
             else {"executive_summary": str(result).strip()}
         )
         response = parse_executive_summary_response(raw)
-        print(
-            "[synthesis] Executive summary generated " f"({len(response.executive_summary)} chars)"
-        )
+        say("[synthesis] Executive summary generated " f"({len(response.executive_summary)} chars)")
         return response
 
     except GuardrailConfigError:
@@ -3812,13 +3811,13 @@ def generate_executive_summary(
     except GuardrailIntervened as exc:
         # Not retried: the deterministic summary stands.
         logger.error("%s", exc)
-        print(f"[synthesis] ERROR: {exc} Falling back to the deterministic summary.")
+        say(f"[synthesis] ERROR: {exc} Falling back to the deterministic summary.")
     except ValidationError as exc:
         logger.error(
             "LLM executive summary is off the contract (%s) — using deterministic",
             validation_error_note(exc),
         )
-        print("[synthesis] ERROR: LLM summary did not match the response contract")
+        say("[synthesis] ERROR: LLM summary did not match the response contract")
     except Exception as exc:
         model_id = resolve_model_id(Role.SUMMARY)
         # The underlying error from an LLM call can carry prompt/response
@@ -3831,11 +3830,11 @@ def generate_executive_summary(
             model_id,
             type(exc).__name__,
         )
-        print(
+        say(
             f"[synthesis] ERROR: LLM summary failed with model '{model_id}' "
             f"({type(exc).__name__})"
         )
-        print(
+        say(
             "[synthesis] Set SUMMARY_MODEL_ID env var to override. Falling back to deterministic summary."
         )
 

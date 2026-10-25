@@ -87,6 +87,7 @@ from src.shared.contract_versioning import stamp_artifact_version
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.executive_brief import check_summary_brief, executive_brief_text
+from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, replace_dashes
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.shared.report_facts import (
@@ -213,9 +214,9 @@ def run_synthesis_deterministic(
         (deterministic fallback),
         data (internal SynthesisData — for use by apply_synthesis_llm_output)
     """
-    print("[synthesis] Loading all pipeline artifacts...")
+    say("[synthesis] Loading all pipeline artifacts...")
     data = load_synthesis_data(store, job_id, database_name, assignment_version)
-    print(
+    say(
         f"[synthesis] Loaded: {len(data.engines)} engines, "
         f"{len(data.source_tables)} source tables, "
         f"{len(data.source_queries)} queries"
@@ -230,17 +231,17 @@ def run_synthesis_deterministic(
         store, database_name, job_id, assignment_version
     )
     if reality_check_output is not None:
-        print(
+        say(
             f"[synthesis] Reality check loaded: "
             f"{len(reality_check_output.get('consolidations', []))} consolidations, "
             f"{len(reality_check_output.get('architectural_patterns', []))} patterns"
         )
 
-    print("[synthesis] Building ranking...")
+    say("[synthesis] Building ranking...")
     ranking = build_ranking(data)
-    print("[synthesis] Building table mappings...")
+    say("[synthesis] Building table mappings...")
     table_mappings = build_table_mappings(data)
-    print("[synthesis] Building query groups...")
+    say("[synthesis] Building query groups...")
     query_groups = build_query_groups(data)
     # Engines the reality check removed from the effective assignment, mapped to the
     # engine that absorbed them.
@@ -260,7 +261,7 @@ def run_synthesis_deterministic(
             store, database_name, job_id, reality_check_output, data.assignment
         ),
     )
-    print("[synthesis] Building TCO analysis...")
+    say("[synthesis] Building TCO analysis...")
     # #380: a retired engine's own analysed cost, read directly -- ``data.engines``
     # has already dropped it (ADR-029 Layer E, #202) by this point, so a dollar figure
     # a recommendation quotes for it is also traceable in the TCO facts, not just prose.
@@ -302,11 +303,11 @@ def run_synthesis_deterministic(
     redesign_requirements = _redesign_requirements(
         store, database_name, job_id, assignment_version, data.assignment
     )
-    print("[synthesis] Building risk assessment...")
+    say("[synthesis] Building risk assessment...")
     risk_assessment = build_risk_assessment(
         data, eliminated, lifted=_lifted_findings(store, database_name, job_id, assignment_version)
     )
-    print("[synthesis] Building architecture recommendation...")
+    say("[synthesis] Building architecture recommendation...")
     architecture = build_architecture_recommendation(data, ranking, table_mappings)
     # Intentionally the analysis average (confidence_score), not routed_confidence
     # (#152): this flag asks for a deeper *analysis* of an engine, a property of the
@@ -318,7 +319,7 @@ def run_synthesis_deterministic(
     )
     trade_offs = _collect_trade_offs(data)
 
-    print("[synthesis] Building migration waves...")
+    say("[synthesis] Building migration waves...")
     cache_overlay = build_cache_overlay(data)
     assignment = data.assignment or {}
     raw_table_assignments = assignment.get("table_assignments") or []
@@ -915,7 +916,7 @@ def apply_synthesis_llm_output(
     deterministic_result["summary_llm"] = raw_summary
     deterministic_result["summary_validation_warnings"] = [f["message"] for f in findings]
     for f in findings:
-        print(f"[synthesis] WARNING: {f['message']}")
+        say(f"[synthesis] WARNING: {f['message']}")
     if any(f["high_confidence"] for f in findings):
         # The customer sees the deterministic executive summary (#1403), worded from the
         # facts; a result with no facts (an older caller) gets the short narrative built
@@ -1444,7 +1445,7 @@ def _write_synthesis_report(
     else:
         key = f"{database_name}/{job_id}/referee-synthesis/report.json"
     store.write_json(key, output.model_dump(mode="json"))
-    print(f"[synthesis] Report written to {key}")
+    say(f"[synthesis] Report written to {key}")
 
     ranking = result["ranking"]
     # Routed confidence (#152), the analysis average alongside for audit
@@ -1453,7 +1454,7 @@ def _write_synthesis_report(
         f"(analysis {r['confidence_score']}%)"
         for r in ranking
     )
-    print(f"[synthesis] Ranking: [{ranking_str}]")
+    say(f"[synthesis] Ranking: [{ranking_str}]")
     if data.assignment:
         workload_parts = []
         for r in ranking:
@@ -1461,14 +1462,14 @@ def _write_synthesis_report(
             wp = r.get("workload_percent", 0)
             workload_parts.append(f"{r['target']}={aq} queries ({wp}%)")
         workload_str = ", ".join(workload_parts)
-        print(f"[synthesis] Workload: {workload_str}")
+        say(f"[synthesis] Workload: {workload_str}")
     architecture = result["architecture"]
-    print(f"[synthesis] Architecture: {architecture['architecture_type']}")
-    print(f"[synthesis] Table mappings: {len(result['table_mappings'])}")
-    print(f"[synthesis] Query groups: {len(result['query_groups'])}")
+    say(f"[synthesis] Architecture: {architecture['architecture_type']}")
+    say(f"[synthesis] Table mappings: {len(result['table_mappings'])}")
+    say(f"[synthesis] Query groups: {len(result['query_groups'])}")
     risk_count = len(result["risk_assessment"]["risks"])
     risk_level = result["risk_assessment"]["overall_risk_level"]
-    print(f"[synthesis] Risks: {risk_count} ({risk_level})")
+    say(f"[synthesis] Risks: {risk_count} ({risk_level})")
 
 
 def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: int) -> None:
@@ -1532,7 +1533,7 @@ def _persist_cache_safety_net(store: ArtifactStore, data, assignment_version: in
     raw["cache_overlay"] = summary
     # A rewrite in place, at today's version, not the one read (#1018).
     store.write_json(key, stamp_artifact_version(key, raw))
-    print(f"[synthesis] Cache overlay dropped for {len(dropped)} queries, written to {key}")
+    say(f"[synthesis] Cache overlay dropped for {len(dropped)} queries, written to {key}")
 
 
 # ---------------------------------------------------------------------------
@@ -1562,7 +1563,7 @@ def run_synthesis(
     result = run_synthesis_deterministic(job_id, database_name, store, assignment_version)
 
     if not result["data"].engines:
-        print("[synthesis] ERROR: No engine artifacts found")
+        say("[synthesis] ERROR: No engine artifacts found")
         _write_empty_report(store, database_name, job_id, assignment_version)
         return
 
@@ -1587,7 +1588,7 @@ def run_synthesis(
                 "rejected_summary": result.get("summary_llm"),
                 "warnings": list(result.get("summary_validation_warnings") or []),
             }
-            print("[synthesis] Summary rejected by the post-checks; asking for one rewrite.")
+            say("[synthesis] Summary rejected by the post-checks; asking for one rewrite.")
             rewritten = generate_executive_summary(llm_input, rejection=rejection)
             if rewritten is not None:
                 result = apply_synthesis_llm_output(result, rewritten)
@@ -1603,7 +1604,7 @@ def run_synthesis(
         # The file says its content is data, not instructions (#1317); the Bedrock
         # prompt frames the same payload with frame_untrusted instead.
         store.write_json(llm_input_key, with_untrusted_notice(llm_input))
-        print(f"[synthesis] LLM input written to {llm_input_key}")
+        say(f"[synthesis] LLM input written to {llm_input_key}")
 
     # llm_mode == "none" — keep the deterministic summary already set
 

@@ -7,6 +7,11 @@ effective assignment keeps and run the post-schema routing on the designs, then
 synthesise the report. No routing rule lives here. Each phase is one entry of
 :data:`PHASES`, run in order until ``options.run_through``, so a later phase is one
 more entry.
+
+The phases report their progress with ``src.shared.progress.say``, which prints for
+the command line. A library call writes nothing to its caller's stdout: inside a run
+those lines go to the :data:`PROGRESS_LOGGER` logger, one INFO record per line. Only
+the run's own code is affected (a context variable); no other thread's output is.
 """
 
 from __future__ import annotations
@@ -21,8 +26,13 @@ from typing import Any
 from src.assessment.models import AssessmentRequest, AssessmentResult
 from src.assessment.result_builder import build_result, load_run_state
 from src.shared import model_usage
+from src.shared.progress import in_context, to_logger
 
 logger = logging.getLogger(__name__)
+
+#: The logger that receives the phases' progress lines (INFO), in place of stdout.
+PROGRESS_LOGGER = "src.assessment.progress"
+_progress = logging.getLogger(PROGRESS_LOGGER)
 
 
 class AssessmentRunError(RuntimeError):
@@ -125,7 +135,7 @@ def _design_schemas(job: _Job) -> None:
 
     failed: list[str] = []
     with ThreadPoolExecutor(max_workers=max(1, len(engines))) as pool:
-        futures = {engine: pool.submit(design, engine) for engine in engines}
+        futures = {engine: pool.submit(in_context(design), engine) for engine in engines}
         for engine, future in futures.items():
             try:
                 future.result()
@@ -197,6 +207,11 @@ def assess(
     which needs model access; ``run_through="schema_design"`` and ``"synthesis"`` need
     it (they are refused with ``deterministic=True``) and call a model for every
     designed engine and for the report's executive summary.
+
+    The run writes nothing to stdout: the phases' progress lines go to the
+    :data:`PROGRESS_LOGGER` logger at INFO, each record carrying the run's ``job_id``
+    (``record.job_id``). ``sys.stdout`` is never replaced, so
+    another thread's prints during a run still reach stdout.
     """
     from src.atx_orchestrator.runtime.store import upgrade_store
     from src.shared.job_id import validate_job_id
@@ -210,8 +225,7 @@ def assess(
     job_id = validate_job_id(job_id) if job_id is not None else uuid.uuid4().hex[:8]
     run_through = req.options.run_through
 
-    def run(target_store: Any) -> AssessmentResult:
-        job = _Job(target_store, req.database_name, job_id, req)
+    def run_phases(job: _Job) -> AssessmentResult:
         model_usage.LEDGER.reset()
         try:
             for phase, work in PHASES:
@@ -221,9 +235,13 @@ def assess(
                     break
         finally:
             # Even a failed run records what it spent (None, no file, with no model call).
-            model_usage.write_usage(target_store, req.database_name, job_id)
-        state = load_run_state(target_store, req.database_name, job_id, run_through)
+            model_usage.write_usage(job.store, req.database_name, job_id)
+        state = load_run_state(job.store, req.database_name, job_id, run_through)
         return build_result(state, req)
+
+    def run(target_store: Any) -> AssessmentResult:
+        with to_logger(_progress, extra={"job_id": job_id}):
+            return run_phases(_Job(target_store, req.database_name, job_id, req))
 
     # The analyses also write text artifacts (diagrams), which need ``write_text``.
     if store is not None:

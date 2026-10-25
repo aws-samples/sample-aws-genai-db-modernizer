@@ -22,6 +22,7 @@ from src.contracts.analysis_output import (
     TargetDatabase,
 )
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
+from src.shared.progress import say
 from src.tools.analysis.dynamodb_analysis_tools import (
     LlmAdvisor,
     analyze_dynamodb_patterns,
@@ -59,7 +60,7 @@ def analyze_for_dynamodb_deterministic(
     # Validate minimum viable input
     tables = collector_output.get("database_schema", {}).get("tables", [])
     if not tables:
-        print("WARNING: No tables in collector output — producing empty recommendations")
+        say("WARNING: No tables in collector output — producing empty recommendations")
 
     # === Deterministic flow ===
     workload_analysis = analyze_dynamodb_use_cases(collector_output)

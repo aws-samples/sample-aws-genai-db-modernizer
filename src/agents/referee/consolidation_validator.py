@@ -71,6 +71,7 @@ from src.shared.models import (
     profile_for,
     resolve_model_id,
 )
+from src.shared.progress import say
 from src.shared.skill_sections import skill_sections, skill_subsections
 
 logger = logging.getLogger(__name__)
@@ -849,7 +850,7 @@ def sanity_sweep(
                 if any(u["rule"] == BLOCKING_RULE_CUSTOMER_PIN for u in blocked_units)
                 else "not every query has a serviceable committed engine"
             )
-            print(
+            say(
                 f"[reality-check] Sanity sweep: kept {display_engine(engine)} "
                 f"({count} queries) -- {kept_because}: {'; '.join(blocked_notes)}"
             )
@@ -945,7 +946,7 @@ def sanity_sweep(
         records, decision = sweep_outcome(engine, count, ledger.moves[first_move:])
         for record in records:
             consolidations.append(record)
-            print(
+            say(
                 f"[reality-check] Sanity sweep: {display_engine(engine)} ({count} queries) "
                 f"→ {record['query_count']} to {display_engine(record['to_engine'])} "
                 "(best-scoring committed engine)"
@@ -1101,13 +1102,13 @@ def _report(from_engine: str, to_engine: str, queries: list[dict], flagged: list
     if flagged:
         # Raw entries, not yet validated: the console narration stays to the
         # entry count (the explanation is model text, DEBUG only, #143).
-        print(
+        say(
             f"[reality-check] LLM returned {len(flagged)} flag(s) on {len(queries)} queries "
             f"moved to {to_engine}"
         )
         logger.debug("[reality-check] flags on %s: %s", to_engine, flagged)
     else:
-        print(f"[reality-check] LLM confirmed all {len(queries)} queries OK on {to_engine}")
+        say(f"[reality-check] LLM confirmed all {len(queries)} queries OK on {to_engine}")
 
 
 def _validator_model_id() -> str:
@@ -1164,7 +1165,7 @@ def _try_strands_validator(
             callback_handler=None,
         )
 
-        print(
+        say(
             f"[reality-check] Validating {len(queries)} queries "
             f"moved {from_engine} → {to_engine}..."
         )
@@ -1226,7 +1227,7 @@ def _try_boto3_validator(
         logger.error("boto3 validation failed (%s)", _error_label(exc))
         raise ValidationFailed(f"boto3: {_error_label(exc)}") from exc
 
-    print(f"[reality-check] Validating {len(queries)} queries moved {from_engine} → {to_engine}...")
+    say(f"[reality-check] Validating {len(queries)} queries moved {from_engine} → {to_engine}...")
     answer = _tool_answer(response)
     flagged = None if answer is None else _structured_flags(answer)
     if flagged is None:

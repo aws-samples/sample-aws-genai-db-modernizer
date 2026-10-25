@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from src.shared.engine_names import display_engine
+from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers, find_style_hits, replace_dashes
 
 # Engine names as a summary writes them, longest first so "Aurora MySQL" wins over
@@ -414,8 +415,8 @@ def finalize_executive_summary(result: dict, eliminated: set[str] | None = None)
     result["executive_summary_validation_warnings"] = findings
     if findings:
         for finding in findings:
-            print(f"[reality-check] WARNING: {finding}")
-        print("[reality-check] Executive summary replaced by one built from the final records")
+            say(f"[reality-check] WARNING: {finding}")
+        say("[reality-check] Executive summary replaced by one built from the final records")
         result["executive_summary"] = build_final_summary(before, after, consolidations, eliminated)
         result["executive_summary_source"] = "deterministic_fallback"
     else:

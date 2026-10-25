@@ -31,6 +31,7 @@ from src.contracts.collector_output import CollectorOutputContract
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.contract_versioning import check_contract_version, load_contract
 from src.shared.models import Role, build_bedrock_model
+from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.aurora_common.bedrock_delta import designer_prompt as build_designer_prompt
 from src.tools.schema.aurora_common.bedrock_delta import (
@@ -157,7 +158,7 @@ def load_agent_input(paths: AgentInputPaths | None = None) -> dict:
         check_contract_version(raw_trace, AuroraDecisionTrace, artifact=trace_path)
         decision_trace = raw_trace
 
-    print(
+    say(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "
         f"{len(agent_collector.queries.query_patterns)} patterns"
     )
@@ -184,7 +185,7 @@ def _invoke_pe_reviewer(
     pe_skill_path: str | None = None,
 ) -> PEReviewResult:
     """Invoke the PE reviewer agent on a design output."""
-    print("[schema-design/aurora_postgresql][pe-review] Invoking PE reviewer...")
+    say("[schema-design/aurora_postgresql][pe-review] Invoking PE reviewer...")
     pe_prompt_text = _load_skill(pe_skill_path or DEFAULT_PE_SKILL_PATH)
 
     pe_agent = Agent(
@@ -200,7 +201,7 @@ def _invoke_pe_reviewer(
     result = pe_agent(prompt)
     output = getattr(result, "structured_output", None)
     if isinstance(output, PEReviewResult):
-        print(
+        say(
             f"[schema-design/aurora_postgresql][pe-review] Verdict: {output.verdict.value} | "
             f"Changes: {len(output.change_requests)} | "
             f"Strengths: {len(output.strengths)}"
@@ -270,7 +271,7 @@ def run_aurora_postgresql_schema_agent(
     )
 
     # Load input eagerly — don't rely on LLM calling the tool.
-    print("[schema-design/aurora_postgresql] Loading agent input...")
+    say("[schema-design/aurora_postgresql] Loading agent input...")
     agent_input = load_agent_input(paths)
 
     # Issue #273: the designer sees a compact view of the deterministic draft
@@ -282,7 +283,7 @@ def run_aurora_postgresql_schema_agent(
             "there is no draft to design against."
         )
         raise ValueError("Aurora PostgreSQL schema design has no tables to design")
-    print(
+    say(
         f"[schema-design/aurora_postgresql] Design view: "
         f"{len(json.dumps(view, default=str)):,} chars for {len(base.tables)} tables"
     )

@@ -82,6 +82,7 @@ from src.shared.engine_elimination import eliminated_engines as settled_eliminat
 from src.shared.engine_names import PLACEHOLDER_ENGINES
 from src.shared.engines_in_use import engines_in_use
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
+from src.shared.progress import say
 from src.shared.query_citations import QueryCitations, collector_query_ids, named_query_ids
 from src.shared.skill_sections import skill_sections
 from src.storage.artifact_store import ArtifactStore
@@ -424,7 +425,7 @@ def run_reality_check_handler(
             store, database_name, job_id, marker_fails_open=True
         )
         if previous_run is not None:
-            print(
+            say(
                 f"[reality-check] Already ran for this lineage (v{previous_run.input_version}"
                 f" -> {previous_run.output_version or 'unchanged'}); skipping so later "
                 "customer edits are not re-consolidated"
@@ -432,19 +433,19 @@ def run_reality_check_handler(
             return _skipped(previous_run)
         assignment_version = resolve_reality_check_input_version(store, database_name, job_id)
 
-    print(f"[reality-check] Starting for {database_name} (assignment v{assignment_version})")
+    say(f"[reality-check] Starting for {database_name} (assignment v{assignment_version})")
 
     # Step 1: always run deterministic logic
     det = run_reality_check_deterministic(job_id, database_name, store, assignment_version)
 
-    print(f"[reality-check] Before: {det['before_distribution']}")
-    print(f"[reality-check] After:  {det['after_distribution']}")
+    say(f"[reality-check] Before: {det['before_distribution']}")
+    say(f"[reality-check] After:  {det['after_distribution']}")
 
     for line in removal_log_lines(det["consolidations"]):
-        print(f"[reality-check] {line}")
+        say(f"[reality-check] {line}")
 
     for p in det["architectural_patterns"]:
-        print(f"[reality-check] Pattern: {p['name']}")
+        say(f"[reality-check] Pattern: {p['name']}")
 
     # Step 2: LLM phase — determined by llm_mode. Bedrock validates the
     # consolidations here; its summary is written after the sweep (step 3b).
@@ -463,7 +464,7 @@ def run_reality_check_handler(
         awaiting_key = f"{database_name}/{job_id}/reality-check/awaiting_llm.json"
         marker = RealityCheckMarker(status=MarkerStatus.AWAITING_LLM, input_key=llm_input_key)
         store.write_json(awaiting_key, marker.model_dump(mode="json", exclude_none=True))
-        print(f"[reality-check] LLM input written to {llm_input_key} — awaiting external LLM")
+        say(f"[reality-check] LLM input written to {llm_input_key} — awaiting external LLM")
 
     # llm_mode == "none": skip LLM entirely, use det as-is
 
@@ -487,7 +488,7 @@ def run_reality_check_handler(
     )
 
     elapsed = time.time() - start_time
-    print(f"[reality-check] Complete in {elapsed:.1f}s")
+    say(f"[reality-check] Complete in {elapsed:.1f}s")
     return {
         "status": "awaiting_llm" if awaiting else "complete",
         "input_version": assignment_version,
@@ -592,7 +593,7 @@ def write_reality_check_result(
 
     if new_version is None:
         if not result["consolidations"]:
-            print("[reality-check] No consolidations — assignment unchanged")
+            say("[reality-check] No consolidations — assignment unchanged")
         return None
 
     moves = _ledger(result).moves
@@ -648,7 +649,7 @@ def write_reality_check_result(
         result["collector_output"],
         result["analysis_outputs"],
     )
-    print(
+    say(
         f"[reality-check] Revised assignment v{assignment_version} written to v{new_version} "
         f"({len(result['consolidations'])} consolidations)"
     )
@@ -1005,7 +1006,7 @@ def _restore_customer_overrides(result: dict) -> None:
         revised.append(qa)
     if not restored:
         return
-    print(f"[reality-check] Kept {restored} customer-overridden queries on their chosen engine")
+    say(f"[reality-check] Kept {restored} customer-overridden queries on their chosen engine")
     result["revised_assignments"] = revised
     after: dict[str, int] = defaultdict(int)
     for qa in revised:
@@ -1050,13 +1051,13 @@ def _run_bedrock_llm_phase(det: dict, database_name: str) -> None:
     if incomplete:
         # Batches with no verdict keep their moves; record them for audit
         det["validation_incomplete"] = incomplete
-        print(
+        say(
             f"[reality-check] WARNING: {len(incomplete)} validation batch(es) got no "
             "verdict; their moves stand unreviewed"
         )
     if corrections:
         # The same contract and the same path as the external response (#647).
-        print(f"[reality-check] LLM flagged {len(corrections)} queries — re-routing by score")
+        say(f"[reality-check] LLM flagged {len(corrections)} queries — re-routing by score")
         apply_reality_check_llm_output(
             det,
             RealityCheckModelResponse(
@@ -1137,7 +1138,7 @@ def _generate_executive_summary(det: dict) -> str | None:
             callback_handler=None,
         )
 
-        print("[reality-check] Generating executive summary with LLM...")
+        say("[reality-check] Generating executive summary with LLM...")
         result = agent(prompt)
         structured = getattr(result, "structured_output", None)
         raw: object = (
@@ -1147,7 +1148,7 @@ def _generate_executive_summary(det: dict) -> str | None:
         )
         narrative = (parse_reality_check_response(raw).executive_summary or "").strip()
         if len(narrative) > 20:
-            print(f"[reality-check] Executive summary generated ({len(narrative)} chars)")
+            say(f"[reality-check] Executive summary generated ({len(narrative)} chars)")
             return narrative
 
     except GuardrailConfigError:
@@ -1155,7 +1156,7 @@ def _generate_executive_summary(det: dict) -> str | None:
     except GuardrailIntervened as exc:
         # Not retried: the deterministic summary stands.
         logger.error("%s", exc)
-        print(f"[reality-check] ERROR: {exc}")
+        say(f"[reality-check] ERROR: {exc}")
     except ValidationError as exc:
         logger.error("LLM executive summary is off the contract (%s)", validation_error_note(exc))
     except Exception as exc:
@@ -1164,9 +1165,9 @@ def _generate_executive_summary(det: dict) -> str | None:
         # fragments (#143): full text at DEBUG only.
         logger.debug("LLM executive summary failed (model=%s): %s", model_id, exc)
         logger.error("LLM executive summary failed (model=%s): %s", model_id, type(exc).__name__)
-        print(
+        say(
             f"[reality-check] ERROR: LLM summary failed with model '{model_id}' ({type(exc).__name__})"
         )
-        print("[reality-check] Set SUMMARY_MODEL_ID env var to override the model.")
+        say("[reality-check] Set SUMMARY_MODEL_ID env var to override the model.")
 
     return None

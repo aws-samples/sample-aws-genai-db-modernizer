@@ -38,6 +38,7 @@ from src.contracts.dynamodb_pe_review import PEReviewResult, ReviewVerdict  # no
 from src.contracts.schema_design_input import project_schema_design_input
 from src.shared.contract_versioning import load_contract
 from src.shared.models import Role, build_bedrock_model
+from src.shared.progress import say
 from src.shared.role_bedrock_model import RoleBedrockModel
 from src.tools.schema.base_schema_agent import AgentInputPaths, SchemaDesignRunner
 from src.tools.schema.design_metrics import (
@@ -164,7 +165,7 @@ def _project_input(paths: AgentInputPaths | None = None) -> dict:
         effective_architecture=raw_analysis.get("effective_architecture"),
     )
 
-    print(
+    say(
         f"[load_agent_input] Projected: {len(agent_collector.tables)} tables, "
         f"{len(agent_collector.queries.query_patterns)} patterns, "
         f"{len(agent_analysis.aggregate_recommendations or [])} aggregates"
@@ -245,7 +246,7 @@ def _invoke_pe_reviewer(
     pe_skill_path: str | None = None,
 ) -> PEReviewResult:
     """Invoke the PE reviewer agent on a design output."""
-    print("[schema-design/dynamodb][pe-review] Invoking PE reviewer...")
+    say("[schema-design/dynamodb][pe-review] Invoking PE reviewer...")
     pe_prompt_text = load_skill(pe_skill_path or DEFAULT_PE_SKILL_PATH)
 
     pe_agent = Agent(
@@ -278,7 +279,7 @@ def _invoke_pe_reviewer(
     result = pe_agent(prompt)
     output = getattr(result, "structured_output", None)
     if isinstance(output, PEReviewResult):
-        print(
+        say(
             f"[schema-design/dynamodb][pe-review] Verdict: {output.verdict.value} | "
             f"Changes: {len(output.change_requests)} | "
             f"Strengths: {len(output.strengths)}"

@@ -23,6 +23,7 @@ from src.agents.referee.synthesis_prose import clean_schema_design_prose
 from src.agents.schema_design.design_trace import read_design_trace
 from src.contracts.schema_design_trace import DesignTrace
 from src.shared.engine_names import PLACEHOLDER_ENGINES
+from src.shared.progress import say
 from src.shared.prose_style import collector_identifiers
 from src.storage.artifact_store import ArtifactStore
 from src.storage.assignment_versioning import (
@@ -365,7 +366,7 @@ def _read_design_trace(
         logger.log(missing_level, "Optional artifact missing: %s", path)
         return None
     trace = read_design_trace(store, path)
-    print(f"[synthesis] Read {path}")
+    say(f"[synthesis] Read {path}")
     return trace
 
 
@@ -380,7 +381,7 @@ def _read_artifact(  # type: ignore[type-arg]
             logger.log(missing_level, "Optional artifact missing: %s", path)
             return {}
         data: dict = store.read_json(path)  # type: ignore[type-arg]
-        print(f"[synthesis] Read {path}")
+        say(f"[synthesis] Read {path}")
         return data
     except RuntimeError:
         raise

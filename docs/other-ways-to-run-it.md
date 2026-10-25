@@ -106,6 +106,8 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     `"analysis"` and `"reality_check"` (the default) need no model and take seconds. `"schema_design"` adds a data model per kept engine (the `designs` block) and `"synthesis"` adds the report every deliverable renders; both always use a model through Amazon Bedrock (set `"deterministic": False`). `options.target_engines` is the engine scope. The full contract, with every field, the cost of a designed run and what is stable across releases, is in [`docs/contracts/assess.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/contracts/assess.md).
 
+    To see every feature run on a bundled sample, free and offline by default, try the [library demo](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/examples/library): `uv run python docs/examples/library/demo_assess.py`.
+
 === "Local UI on its own"
 
     Start the local API and the React UI with one command, without Claude Code (it needs Node 22, and the first start builds the UI, which takes a few minutes):

@@ -14,6 +14,7 @@ from datetime import datetime
 
 from src.contracts.analysis_input import AnalysisInput
 from src.contracts.analysis_output import AgentMetadata, AnalysisOutputContract, TargetDatabase
+from src.shared.progress import say
 from src.tools.analysis.opensearch_analysis_tools import (
     analyze_opensearch_patterns,
     analyze_opensearch_use_cases,
@@ -42,7 +43,7 @@ def analyze_for_opensearch(
 
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     if not tables:
-        print("WARNING: No tables in collector output — producing empty recommendations")
+        say("WARNING: No tables in collector output — producing empty recommendations")
 
     # === 1. Pattern detection ===
     workload_analysis = analyze_opensearch_use_cases(collector_output)

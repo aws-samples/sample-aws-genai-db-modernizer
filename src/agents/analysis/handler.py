@@ -10,6 +10,7 @@ from src.contracts.analysis_output import (
     TargetDatabase,
     WorkloadAnalysis,
 )
+from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.storage.collector_for_models import read_collector_for_models
 from src.tools.sql.query_facts import remember_collected_facts
@@ -27,14 +28,14 @@ def run_analysis(
 
     start_time = time.time()
 
-    print(f"[analysis/{agent_type}] Starting analysis for {database_name}")
+    say(f"[analysis/{agent_type}] Starting analysis for {database_name}")
 
     # Read collector output
     collector_output = read_collector_for_models(store, database_name, job_id)
     remember_collected_facts(collector_output)
     tables = collector_output.get("database_schema", {}).get("tables", [])
     queries = collector_output.get("queries", {}).get("query_patterns", [])
-    print(f"[analysis/{agent_type}] Loaded collector: {len(tables)} tables, {len(queries)} queries")
+    say(f"[analysis/{agent_type}] Loaded collector: {len(tables)} tables, {len(queries)} queries")
 
     # Dispatch to target-specific agent
     match agent_type:
@@ -42,7 +43,7 @@ def run_analysis(
             from src.agents.analysis.dynamodb_analysis_agent import analyze_for_dynamodb
             from src.contracts.analysis_input import AnalysisInput
 
-            print(
+            say(
                 f"[analysis/{agent_type}] Running DynamoDB analysis (deterministic + LLM advisor)..."
             )
             analysis_input = AnalysisInput(
@@ -58,31 +59,31 @@ def run_analysis(
             recs = result.table_recommendations
             patterns = result.workload_analysis.patterns_detected
             anti = result.workload_analysis.anti_patterns_detected or []
-            print(
+            say(
                 f"[analysis/{agent_type}] Results: {len(recs)} table recommendations, "
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
-            print(
+                say(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
+            say(
                 f"[analysis/{agent_type}] Cost estimate: ${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
 
             # Write decision trace (through its contract, #973)
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"[analysis/{agent_type}] Decision trace written")
+            say(f"[analysis/{agent_type}] Decision trace written")
 
             # Write Mermaid ER diagram as JSON wrapper
             mermaid_key = f"{database_name}/{job_id}/analysis-{agent_type}/er-diagram.json"
             store.write_json(mermaid_key, {"content": mermaid_diagram})
-            print(f"[analysis/{agent_type}] ER diagram written")
+            say(f"[analysis/{agent_type}] ER diagram written")
 
         case "documentdb":
             from src.agents.analysis.documentdb_analysis_agent import analyze_for_documentdb
             from src.contracts.analysis_input import AnalysisInput
 
-            print(
+            say(
                 f"[analysis/{agent_type}] Running DocumentDB analysis "
                 "(deterministic + LLM advisor)..."
             )
@@ -98,24 +99,24 @@ def run_analysis(
             recs = result.table_recommendations
             patterns = result.workload_analysis.patterns_detected
             anti = result.workload_analysis.anti_patterns_detected or []
-            print(
+            say(
                 f"[analysis/{agent_type}] Results: {len(recs)} table recommendations, "
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
-            print(
+                say(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
+            say(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
 
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"[analysis/{agent_type}] Decision trace written")
+            say(f"[analysis/{agent_type}] Decision trace written")
 
             mermaid_key = f"{database_name}/{job_id}/analysis-{agent_type}/er-diagram.json"
             store.write_json(mermaid_key, {"content": mermaid_diagram})
-            print(f"[analysis/{agent_type}] ER diagram written")
+            say(f"[analysis/{agent_type}] ER diagram written")
 
         case "opensearch":
             from src.agents.analysis.opensearch_analysis_agent import analyze_for_opensearch
@@ -131,14 +132,14 @@ def run_analysis(
             # Write decision trace as separate artifact
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"Decision trace written to {trace_key}")
+            say(f"Decision trace written to {trace_key}")
             # No Mermaid ER diagram for OpenSearch — skipped intentionally
 
         case "elasticache":
             from src.agents.analysis.elasticache_analysis_agent import analyze_for_elasticache
             from src.contracts.analysis_input import AnalysisInput
 
-            print(f"[analysis/{agent_type}] Running ElastiCache/Redis analysis...")
+            say(f"[analysis/{agent_type}] Running ElastiCache/Redis analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
@@ -149,26 +150,26 @@ def run_analysis(
             recs = result.table_recommendations
             patterns = result.workload_analysis.patterns_detected
             anti = result.workload_analysis.anti_patterns_detected or []
-            print(
+            say(
                 f"[analysis/{agent_type}] Results: {len(recs)} table recommendations, "
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
-            print(
+                say(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
+            say(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
 
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"[analysis/{agent_type}] Decision trace written")
+            say(f"[analysis/{agent_type}] Decision trace written")
 
         case "aurora_postgresql":
             from src.agents.analysis.aurora_pg_analysis_agent import analyze_for_aurora_pg
             from src.contracts.analysis_input import AnalysisInput
 
-            print(f"[analysis/{agent_type}] Running Aurora PostgreSQL analysis...")
+            say(f"[analysis/{agent_type}] Running Aurora PostgreSQL analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
@@ -179,26 +180,26 @@ def run_analysis(
             recs = result.table_recommendations
             patterns = result.workload_analysis.patterns_detected
             anti = result.workload_analysis.anti_patterns_detected or []
-            print(
+            say(
                 f"[analysis/{agent_type}] Results: {len(recs)} table recommendations, "
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
-            print(
+                say(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
+            say(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
 
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"[analysis/{agent_type}] Decision trace written")
+            say(f"[analysis/{agent_type}] Decision trace written")
 
         case "aurora_mysql":
             from src.agents.analysis.aurora_mysql_analysis_agent import analyze_for_aurora_mysql
             from src.contracts.analysis_input import AnalysisInput
 
-            print(f"[analysis/{agent_type}] Running Aurora MySQL analysis...")
+            say(f"[analysis/{agent_type}] Running Aurora MySQL analysis...")
             analysis_input = AnalysisInput(
                 job_id=job_id,
                 collector_output=collector_output,
@@ -209,23 +210,23 @@ def run_analysis(
             recs = result.table_recommendations
             patterns = result.workload_analysis.patterns_detected
             anti = result.workload_analysis.anti_patterns_detected or []
-            print(
+            say(
                 f"[analysis/{agent_type}] Results: {len(recs)} table recommendations, "
                 f"{len(patterns)} patterns, {len(anti)} anti-patterns"
             )
             for r in recs:
-                print(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
-            print(
+                say(f"[analysis/{agent_type}]   {r.table_id}: {r.confidence_score}% fit")
+            say(
                 f"[analysis/{agent_type}] Cost estimate: "
                 f"${result.cost_estimate.monthly_cost_usd:.2f}/mo"
             )
 
             trace_key = f"{database_name}/{job_id}/analysis-{agent_type}/decision-trace.json"
             write_decision_trace(store, trace_key, decision_trace)
-            print(f"[analysis/{agent_type}] Decision trace written")
+            say(f"[analysis/{agent_type}] Decision trace written")
 
         case _:
-            print(f"[analysis/{agent_type}] ⚠️ Agent not implemented — writing placeholder")
+            say(f"[analysis/{agent_type}] ⚠️ Agent not implemented — writing placeholder")
             try:
                 target_db = TargetDatabase(agent_type)
             except ValueError:
@@ -250,4 +251,4 @@ def run_analysis(
     key = f"{database_name}/{job_id}/analysis-{agent_type}/analysis.json"
     store.write_json(key, result.model_dump(mode="json"))
     elapsed = time.time() - start_time
-    print(f"[analysis/{agent_type}] ✅ Complete in {elapsed:.1f}s — output written")
+    say(f"[analysis/{agent_type}] ✅ Complete in {elapsed:.1f}s — output written")

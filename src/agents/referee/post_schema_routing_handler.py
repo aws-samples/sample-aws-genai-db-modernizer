@@ -24,6 +24,7 @@ from src.agents.referee.engine_scope import check_in_scope, scope_from_store
 from src.agents.referee.query_pattern import write_access_patterns
 from src.agents.referee.write_groups import assignment_placement_groups, assignment_unit_weights
 from src.shared.contract_versioning import stamp_artifact_version
+from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,7 @@ class PostSchemaRouting:
             job_id, database_name, run["selected_engines"], run["start_version"]
         )
         for depth in range(POST_SCHEMA_MAX_DEPTH + 1):
-            print(f"\n[router] === Routing pass {depth} ===")
+            say(f"\n[router] === Routing pass {depth} ===")
             routed = self._post_schema_routing_pass(job_id, database_name, run, depth, scoring)
             if routed is None:
                 return run
@@ -177,9 +178,9 @@ class PostSchemaRouting:
                 router_output.routings,
             )
 
-            print(f"[router] Cascade pass {depth} complete — checking for new unsupported...")
+            say(f"[router] Cascade pass {depth} complete — checking for new unsupported...")
 
-        print(f"[router] Max cascade depth ({POST_SCHEMA_MAX_DEPTH}) reached — stopping")
+        say(f"[router] Max cascade depth ({POST_SCHEMA_MAX_DEPTH}) reached — stopping")
         return run
 
     def _post_schema_routing_start(self, job_id: str, database_name: str) -> dict:
@@ -276,7 +277,7 @@ class PostSchemaRouting:
                     break
 
         if not schema_outputs:
-            print("[router] No schema outputs found — skipping routing")
+            say("[router] No schema outputs found — skipping routing")
             return None
 
         already_routed = set(run["already_routed"])
@@ -363,28 +364,28 @@ class PostSchemaRouting:
         )
 
         if router_output.held_queries:
-            print(
+            say(
                 f"[router] {len(router_output.held_queries)} flagged queries held in place: "
                 "their table's writes include a write the customer pinned"
             )
         if not router_output.routings:
             if router_output.terminal_queries:
-                print(
+                say(
                     f"[router] {len(router_output.terminal_queries)} terminal queries "
                     f"(application-layer): {router_output.terminal_queries[:5]}"
                 )
             else:
-                print("[router] No unsupported queries — all queries have a home")
+                say("[router] No unsupported queries — all queries have a home")
             return None
 
         # Log what's being routed
         by_target = Counter(r.to_engine for r in router_output.routings if r.to_engine)
-        print(f"[router] Routing {len(router_output.routings)} queries:")
+        say(f"[router] Routing {len(router_output.routings)} queries:")
         for engine, count in by_target.most_common():
             reasons = {r.reason[:50] for r in router_output.routings if r.to_engine == engine}
-            print(f"[router]   {count} → {engine} ({', '.join(reasons)})")
+            say(f"[router]   {count} → {engine} ({', '.join(reasons)})")
         if router_output.terminal_queries:
-            print(f"[router]   {len(router_output.terminal_queries)} → application-layer")
+            say(f"[router]   {len(router_output.terminal_queries)} → application-layer")
         already_routed.update(r.query_id for r in router_output.routings if r.to_engine)
         run["already_routed"] = sorted(already_routed)
         return router_output, assignment
@@ -715,7 +716,7 @@ class PostSchemaRouting:
         write_access_patterns(self.store, database_name, job_id, new_version)
         diff = assignment_engine_diff(self.store, database_name, job_id, version, new_version)
         designed = self._schema_engines(job_id, database_name, version)
-        print(
+        say(
             f"[router] Assignment v{version} -> v{new_version}: "
             f"{len([r for r in routings if r.to_engine])} rerouted queries; "
             f"redesigning {', '.join(diff['affected']) or 'nothing'}"
@@ -845,13 +846,13 @@ class PostSchemaRouting:
         depth = int(run["next_depth"])
         routed = None
         if depth <= POST_SCHEMA_MAX_DEPTH:
-            print(f"\n[router] === Routing pass {depth} ===")
+            say(f"\n[router] === Routing pass {depth} ===")
             scoring = self._router_scoring_inputs(
                 job_id, database_name, run["selected_engines"], run["start_version"]
             )
             routed = self._post_schema_routing_pass(job_id, database_name, run, depth, scoring)
         else:
-            print(f"[router] Max cascade depth ({POST_SCHEMA_MAX_DEPTH}) reached — stopping")
+            say(f"[router] Max cascade depth ({POST_SCHEMA_MAX_DEPTH}) reached — stopping")
         if routed is None:
             run["status"] = "complete"
             self.store.write_json(key, run)
