@@ -80,16 +80,41 @@ def test_folder_key_is_the_jobs_deliverables_folder() -> None:
     )
 
 
+@pytest.mark.passes_on_main  # content types and the engineering report's name stem
 def test_content_types_and_filenames(store) -> None:
     out = {d.name: d for d in dl.render_deliverables(store, JOB, DB, KEY).items}
 
     assert out["executive-report"].content.startswith(b"%PDF")
-    assert out["executive-report"].filename == "executive-report.pdf"
-    # The label still carries the round (#146); #147 tracks the download name too.
-    assert "(v1)" in out["executive-report"].label
     assert out["engineering-report"].content.startswith(b"---")
     assert out["engineering-report"].filename.startswith("discourse_engineering-report_job-x_")
     assert json.loads(out["assessment-data"].content)["_artifact"]["artifact"] == "assessment-data"
+
+
+def test_published_names_and_labels_carry_the_assignment_version(store) -> None:
+    """#147: the panel is a flat list, so each round's download name and label
+    state the assignment version, the executive report's name included."""
+    by_round = {
+        v: {
+            d.name: d
+            for d in dl.render_deliverables(store, JOB, DB, KEY, assignment_version=v).items
+        }
+        for v in (1, 3)
+    }
+    for v, out in by_round.items():
+        assert out["executive-report"].filename == f"executive-report_v{v}.pdf"
+        assert f"_v{v}_" in out["engineering-report"].filename
+        assert f"_v{v}_" in out["assessment-data"].filename
+        for name in ("executive-report", "engineering-report", "assessment-data"):
+            assert out[name].label.endswith(f"(v{v})"), name
+    # The version is also in the identity block inside the JSON file.
+    artifact = json.loads(by_round[3]["assessment-data"].content)["_artifact"]
+    assert "_v3_" in artifact["filename"]
+    # Two rounds never share a published name.
+    for name in ("executive-report", "engineering-report", "assessment-data"):
+        assert by_round[1][name].filename != by_round[3][name].filename
+    # The folder keeps its stable names.
+    rendered = dl.render_deliverables(store, JOB, DB, KEY, assignment_version=3)
+    assert [e.filename for e, _ in rendered.folder_files()][0] == "executive-report.pdf"
 
 
 def test_a_failing_optional_deliverable_is_reported_not_raised(store, monkeypatch) -> None:

@@ -121,8 +121,8 @@ class TestSynthesisDeliverables:
         items = captured["items"]
         assert [it[1] for it in items] == ["MARKDOWN", "JSON", "PDF"]
         assert [it[2] for it in items] == [
-            "Engineering Report: discourse",
-            "Assessment Data (raw): discourse",
+            "Engineering Report: discourse (v1)",
+            "Assessment Data (raw): discourse (v1)",
             "Executive Report: discourse (v1)",
         ]
         assert {it[3] for it in items} == {"CUSTOMER_OUTPUT"}
@@ -132,9 +132,9 @@ class TestSynthesisDeliverables:
         # after the artifact UUID -- a regression no other assertion here would catch.
         assert all(len(it) == 5 for it in items)
         assert [it[4] for it in items] == [
-            f"discourse_engineering-report_job-x_{day}.md",
-            f"discourse_assessment-data_job-x_{day}.json",
-            "executive-report.pdf",
+            f"discourse_engineering-report_job-x_v1_{day}.md",
+            f"discourse_assessment-data_job-x_v1_{day}.json",
+            "executive-report_v1.pdf",
         ]
 
     def test_publishes_all_three_on_json_only_store(self, report: dict) -> None:

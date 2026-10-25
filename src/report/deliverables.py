@@ -287,7 +287,12 @@ def render_deliverables(
 
     def prov(artifact: str, ext: str) -> dict:
         return renderers.provenance(
-            report, artifact, ext, job_id=job_id, source_artifact=report_key
+            report,
+            artifact,
+            ext,
+            job_id=job_id,
+            source_artifact=report_key,
+            version=assignment_version,
         )
 
     out = DeliverableSet()
@@ -299,7 +304,7 @@ def render_deliverables(
             "engineering-report",
             renderers.render_engineering_report_md(report, prov=engineering).encode("utf-8"),
             "MARKDOWN",
-            f"Engineering Report: {database_name}",
+            f"Engineering Report: {database_name} (v{assignment_version})",
             engineering["filename"],
             publish=True,
         ),
@@ -319,7 +324,7 @@ def render_deliverables(
                 indent=2,
             ).encode("utf-8"),
             "JSON",
-            f"Assessment Data (raw): {database_name}",
+            f"Assessment Data (raw): {database_name} (v{assignment_version})",
             data["filename"],
             publish=True,
         ),
@@ -340,7 +345,7 @@ def render_deliverables(
                     report, detail, prov=detailed
                 ).encode("utf-8"),
                 "MARKDOWN",
-                f"Detailed Engineering Report: {database_name}",
+                f"Detailed Engineering Report: {database_name} (v{assignment_version})",
                 detailed["filename"],
                 publish=False,
             )
@@ -359,17 +364,15 @@ def render_deliverables(
             report, executive_report.collected_identifiers(collector)
         )
         out.items.append(
-            # Fixed download name, unlike the other deliverables above: this is the
-            # reusable executive deliverable, called the same thing in every
-            # engagement. The label still carries the round (#146, #147 tracks the
-            # download name too) so the panel can tell rounds apart without
-            # opening the file.
+            # The folder copy keeps the stable name; the published download name
+            # and label state the round (#146, #147) so the flat panel tells
+            # rounds apart.
             Deliverable(
                 "executive-report",
                 pdf,
                 "PDF",
                 f"Executive Report: {database_name} (v{assignment_version})",
-                executive_report.FILENAME,
+                f"{executive_report.FILENAME.removesuffix('.pdf')}_v{assignment_version}.pdf",
                 publish=True,
             )
         )

@@ -21,8 +21,13 @@ def artifact_stem(
     artifact: str,
     job_id: str,
     generated: datetime | None = None,
+    version: int | None = None,
 ) -> str:
-    """Canonical filename stem: ``{database}_{artifact}_{job8}_{YYYYMMDD}``.
+    """Canonical filename stem: ``{database}_{artifact}_{job8}[_v{N}]_{YYYYMMDD}``.
+
+    ``version`` is the assignment version (#147): the Artifacts panel is a flat
+    list and cannot replace a published file, so each re-entry round's name
+    states its version and two rounds never share a name.
 
     The customer downloads ``1e8ec29e-0227-4ae4-9523-306d4a622c47.html`` and cannot
     tell which database, job or report it is. That is not an S3 problem — the keys
@@ -43,7 +48,8 @@ def artifact_stem(
     """
     db = re.sub(r"[^a-z0-9]+", "-", database_name.lower()).strip("-") or "database"
     day = (generated or datetime.now(UTC)).strftime("%Y%m%d")
-    return f"{db}_{artifact}_{job_id[:8]}_{day}"
+    round_part = f"_v{version}" if version else ""
+    return f"{db}_{artifact}_{job_id[:8]}{round_part}_{day}"
 
 
 def plural_noun(n: Any, singular: str, plural: str | None = None) -> str:
@@ -487,6 +493,7 @@ def provenance(
     ext: str,
     job_id: str = "",
     source_artifact: str = "",
+    version: int | None = None,
 ) -> dict[str, str]:
     """Identity block for one rendered deliverable.
 
@@ -502,6 +509,6 @@ def provenance(
         "database": db,
         "job_id": jid,
         "generated": now.isoformat(timespec="seconds"),
-        "filename": f"{artifact_stem(db, artifact, jid, now)}.{ext}",
+        "filename": f"{artifact_stem(db, artifact, jid, now, version)}.{ext}",
         "source_artifact": source_artifact,
     }
