@@ -519,6 +519,26 @@ class SQLServerRemoteCollector:
             "total_transactions": int(r.get("total_transactions") or 0),
         }
 
+    def collect_os_stats(self) -> dict:
+        """Host CPU and memory from ``sys.dm_os_sys_info`` (#1224).
+
+        Needs VIEW SERVER STATE (VIEW SERVER PERFORMANCE STATE on SQL Server 2022+).
+        ``physical_memory_kb`` and ``committed_kb`` exist from SQL Server 2012; an
+        older server fails the query and the figures stay empty. Reads no table rows.
+        """
+        rows = self._query("""
+            SELECT cpu_count, physical_memory_kb, committed_kb
+            FROM sys.dm_os_sys_info
+        """)
+        if not rows:
+            return {}
+        r = rows[0]
+        return {
+            "cpu_count": _int_or_none(r.get("cpu_count")),
+            "physical_memory_gb": _kb_to_gb(r.get("physical_memory_kb")),
+            "committed_memory_gb": _kb_to_gb(r.get("committed_kb")),
+        }
+
     # -------------------------------------------------------------------
     # Sample data
     # -------------------------------------------------------------------
@@ -534,6 +554,20 @@ class SQLServerRemoteCollector:
 # Module-level helpers (mirrors the duplicated pattern in mysql_tools and
 # postgres_tools — to be extracted to a shared module in a follow-up PR).
 # -----------------------------------------------------------------------
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _kb_to_gb(value: object) -> float | None:
+    try:
+        return round(float(value) / 1024 / 1024, 2)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_tables(sql: str) -> list[str]:

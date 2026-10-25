@@ -31,6 +31,7 @@ from src.agents.collector.mysql_collector import (
     _collect_schema_raw,
     _enrich_patterns_from_pi_and_cw,
     _init_checkpoint_store,
+    _live_os_stats,
     _merge_into_queries,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
@@ -120,7 +121,9 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
     # #1197: the instance-wide buffer-cache hit ratio, kept once, not copied per query.
-    metrics.source_host = _build_source_host({"global_stats": pi_counters})
+    metrics.source_host = _build_source_host(
+        {"global_stats": pi_counters, "os_stats": _live_os_stats(schema_raw)}, rds_meta
+    )
 
     return _build_output(
         inp,

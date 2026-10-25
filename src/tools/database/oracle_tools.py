@@ -526,6 +526,25 @@ class OracleRemoteCollector:
             "total_transactions": int(r.get("user_commits") or 0),
         }
 
+    def collect_os_stats(self) -> dict:
+        """Host CPU and memory from ``V$OSSTAT`` (NUM_CPUS, PHYSICAL_MEMORY_BYTES) (#1224).
+
+        Reads two statistic rows, the same ones the offline script reads. Oracle's
+        view has no committed-memory figure, so that one stays empty.
+        """
+        rows = self._query("""
+            SELECT STAT_NAME AS stat_name, VALUE AS value
+            FROM V$OSSTAT
+            WHERE STAT_NAME IN ('NUM_CPUS', 'PHYSICAL_MEMORY_BYTES')
+        """)
+        stats = {str(r.get("stat_name") or r.get("STAT_NAME")).upper(): r for r in rows}
+        cpus = _num((stats.get("NUM_CPUS") or {}).get("value"))
+        mem = _num((stats.get("PHYSICAL_MEMORY_BYTES") or {}).get("value"))
+        return {
+            "cpu_count": int(cpus) if cpus is not None else None,
+            "physical_memory_gb": round(mem / 1024**3, 2) if mem is not None else None,
+        }
+
     # -------------------------------------------------------------------
     # Sample data
     # -------------------------------------------------------------------
@@ -542,6 +561,13 @@ class OracleRemoteCollector:
 # -----------------------------------------------------------------------
 # Module-level helpers
 # -----------------------------------------------------------------------
+
+
+def _num(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def _hash(text: str) -> str:

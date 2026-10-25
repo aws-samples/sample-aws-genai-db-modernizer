@@ -388,7 +388,11 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(
-        queries, cw_metrics, source_host=_build_source_host({"global_stats": pi_counters})
+        queries,
+        cw_metrics,
+        source_host=_build_source_host(
+            {"global_stats": pi_counters, "os_stats": _live_os_stats(schema_raw)}, rds_meta
+        ),
     )
 
     return _build_output(
@@ -432,7 +436,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     rds_meta = _build_rds_metadata(aws_raw.get("rds_metadata"))
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(
-        queries, cw_metrics, source_host=_build_source_host({"global_stats": pi_counters})
+        queries, cw_metrics, source_host=_build_source_host({"global_stats": pi_counters}, rds_meta)
     )
 
     return _build_output(
@@ -1155,7 +1159,15 @@ def _gigabytes(value: object) -> float | None:
     return number if math.isfinite(number) and number >= 0 else None
 
 
-def _build_source_host(parsed: dict) -> SourceHost | None:
+def _live_os_stats(schema_raw: object) -> dict | None:
+    """The host figures a live collector read from the database's own views (#1224)."""
+    stats = schema_raw.get("os_stats") if isinstance(schema_raw, dict) else None
+    return stats if isinstance(stats, dict) else None
+
+
+def _build_source_host(
+    parsed: dict, rds_meta: RDSInstanceMetadata | None = None
+) -> SourceHost | None:
     """The instance-wide buffer-cache and host figures of a parsed collection (#1197).
 
     ``parsed`` is :func:`src.tools.database.offline_parser.parse_offline_collection`'s
@@ -1167,6 +1179,11 @@ def _build_source_host(parsed: dict) -> SourceHost | None:
     not reported at all is the given ``cache_hit_ratio_pct`` used (Performance
     Insights reports the rate itself). A host figure that is not a number in range is
     left out. None when nothing usable was reported.
+
+    ``rds_meta`` (live and DDL modes, #1224): an RDS source's instance class gives the
+    vCPU count and memory when the database's own views gave none (a figure the
+    database reported wins). Nothing is estimated: a figure neither source has stays
+    empty.
     """
     stats = parsed.get("global_stats") or {}
     os_stats = parsed.get("os_stats") or {}
@@ -1187,6 +1204,11 @@ def _build_source_host(parsed: dict) -> SourceHost | None:
         physical_memory_gb=_gigabytes(os_stats.get("physical_memory_gb")),
         committed_memory_gb=_gigabytes(os_stats.get("committed_memory_gb")),
     )
+    if rds_meta is not None:
+        if host.cpu_count is None and rds_meta.vcpu_count:
+            host.cpu_count = rds_meta.vcpu_count
+        if host.physical_memory_gb is None and rds_meta.memory_gb:
+            host.physical_memory_gb = rds_meta.memory_gb
     if all(v is None for v in host.model_dump().values()):
         return None
     return host

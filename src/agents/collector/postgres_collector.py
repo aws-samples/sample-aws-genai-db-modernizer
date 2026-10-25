@@ -23,6 +23,7 @@ from src.agents.collector.mysql_collector import (
     _collect_offline,
     _dict_to_query_pattern,
     _enrich_patterns_from_pi_and_cw,
+    _live_os_stats,
     _parse_ddl_raw,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
@@ -184,7 +185,9 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
     # #1197: the instance-wide buffer-cache hit ratio, kept once, not copied per query.
-    metrics.source_host = _build_source_host({"global_stats": pi_counters})
+    metrics.source_host = _build_source_host(
+        {"global_stats": pi_counters, "os_stats": _live_os_stats(schema_raw)}, rds_meta
+    )
 
     elapsed = time.monotonic() - start
     version_str = meta_raw["version"]
@@ -239,7 +242,7 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     cw_metrics = _build_cloudwatch(cw_raw)
     metrics = _build_metrics(queries, cw_metrics)
     # #1197: the instance-wide buffer-cache hit ratio, kept once, not copied per query.
-    metrics.source_host = _build_source_host({"global_stats": pi_counters})
+    metrics.source_host = _build_source_host({"global_stats": pi_counters}, rds_meta)
 
     elapsed = time.monotonic() - start
     return CollectorOutputContract(
