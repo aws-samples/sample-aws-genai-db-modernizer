@@ -59,15 +59,20 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
         }
 
     # #963: the other AWS engines the application already runs, declared by the operator.
+    # The assessment request's list (#1071) is read from the job's metadata.
     declared = os.environ.get("ENGINES_IN_USE", "")
-    if declared.strip():
-        from src.shared.engines_in_use import parse_engines_in_use_option
+    from src.shared.engines_in_use import merge_engines_in_use, parse_engines_in_use_option
 
-        try:
-            input_data["engines_in_use"] = parse_engines_in_use_option(declared)
-        except ValueError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            sys.exit(1)
+    try:
+        in_use = merge_engines_in_use(
+            parse_engines_in_use_option(declared) if declared.strip() else [],
+            _requested_engines_in_use(store, database_name, job_id),
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if in_use:
+        input_data["engines_in_use"] = in_use
 
     if region:
         input_data["aws_config"] = {
@@ -98,6 +103,24 @@ def run_collector(job_id: str, database_name: str, store: ArtifactStore) -> None
     print(
         f"Tables: {len(result.database_schema.tables)}, Queries: {len(result.queries.query_patterns)}"
     )
+
+
+def _requested_engines_in_use(store: ArtifactStore, database_name: str, job_id: str) -> list[str]:
+    """``engines_in_use`` the assessment request stored in the job's ``_meta.json``
+    (#1071), validated; an absent or unreadable record declares nothing."""
+    from src.shared.engines_in_use import parse_engines_in_use_option
+
+    try:
+        key = f"{database_name}/{job_id}/_meta.json"
+        meta = store.read_json(key) if store.exists(key) else None
+    except Exception:  # noqa: BLE001 - a missing record must not stop a collection
+        return []
+    declared = (
+        ((meta or {}).get("input") or {}).get("engines_in_use") if isinstance(meta, dict) else None
+    )
+    if not isinstance(declared, list) or not declared:
+        return []
+    return parse_engines_in_use_option(",".join(str(e) for e in declared))
 
 
 def _offline_collection(bucket: str, region: str) -> dict:

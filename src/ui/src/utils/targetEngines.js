@@ -32,3 +32,17 @@ export const targetDatabasesScope = (selection) => {
   const ticked = selectedTargetEngines(selection);
   return ticked.length === SELECTABLE_TARGET_ENGINES.length ? null : ticked;
 };
+
+// The engines the multi-select on the offline form offers for "databases the application
+// runs today" (#1071): the same active catalog engines, as select options.
+export const enginesInUseOptions = () => SELECTABLE_TARGET_ENGINES.map((id) => ({
+  label: ENGINE_LABELS[id],
+  value: id,
+}));
+
+// The request's `engines_in_use`: the chosen engine ids, in catalog order, each once.
+// An id that is not a selectable engine never reaches the request. Empty declares nothing.
+export const enginesInUseParam = (selectedOptions) => {
+  const chosen = new Set((selectedOptions || []).map((option) => option?.value));
+  return SELECTABLE_TARGET_ENGINES.filter((id) => chosen.has(id));
+};

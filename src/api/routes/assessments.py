@@ -230,6 +230,9 @@ async def create_assessment(request: AssessmentRequest):
         # The engine scope (#1328), already normalized; None (left out) is every engine.
         # start_execution records it as the job's decisions/engine_scope.json.
         "target_databases": request.target_databases,
+        # The other AWS databases the application runs today (#1071); the collector
+        # merges them with the collection's own list.
+        "engines_in_use": request.engines_in_use or [],
         "full_analysis": request.full_analysis,
         "synthesis_iteration": 0,
         "collection_mode": request.collection_mode,

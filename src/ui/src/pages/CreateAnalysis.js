@@ -10,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
 import FormField from "@cloudscape-design/components/form-field";
 import Select from "@cloudscape-design/components/select";
+import Multiselect from "@cloudscape-design/components/multiselect";
 import Input from "@cloudscape-design/components/input";
 import RadioGroup from "@cloudscape-design/components/radio-group";
 import Toggle from "@cloudscape-design/components/toggle";
@@ -36,7 +37,7 @@ import AppHeader from "../components/AppHeader";
 import ApiManager from "../classes/ApiManager";
 import { isValidDatabaseName, normalizeDatabaseName } from "../utils/databaseName";
 import { buildConnection } from "../utils/connectionPayload";
-import { selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
+import { enginesInUseOptions, enginesInUseParam, selectedTargetEngines, targetDatabasesScope, targetEngineSelection } from "../utils/targetEngines";
 import TargetEngineCheckboxes from "../components/TargetEngineCheckboxes";
 function SourceDatabaseSection({ formData, setFormData, errors }) {
   const { t } = useTranslation();
@@ -699,6 +700,7 @@ function DatabaseAnalysisForm() {
   const [offlineTargetDatabases, setOfflineTargetDatabases] = useState(
     () => ({ ...targetEngineSelection(true), elasticache: false }),
   );
+  const [offlineEnginesInUse, setOfflineEnginesInUse] = useState([]); // #1071
   const [uploadState, setUploadState] = useState("idle"); // idle, preparing, uploading, confirming, ready, submitting
   const [uploadProgress, setUploadProgress] = useState(0);
   const [preparedJob, setPreparedJob] = useState(null); // { job_id, upload_url, upload_key }
@@ -990,6 +992,7 @@ function DatabaseAnalysisForm() {
           collection_mode: "offline",
           offline_s3_key: preparedJob.upload_key,
           target_databases: targetDatabasesArray,
+          engines_in_use: enginesInUseParam(offlineEnginesInUse),
           full_analysis: false,
         }
       }]);
@@ -1023,7 +1026,7 @@ function DatabaseAnalysisForm() {
     } finally {
       setLoading(false);
     }
-  }, [preparedJob, offlineDatabaseName, offlineSourceType, offlineTargetDatabases, addFlashbarMessage, navigate]);
+  }, [preparedJob, offlineDatabaseName, offlineSourceType, offlineTargetDatabases, offlineEnginesInUse, addFlashbarMessage, navigate]);
 
 
   //##-- Create assessment for online mode
@@ -1344,6 +1347,15 @@ function DatabaseAnalysisForm() {
                           { label: "Oracle", value: "oracle" },
                         ]}
                         disabled={uploadState !== "idle"}
+                      />
+                    </FormField>
+                    <FormField label={t("create-analysis.offline.database-info.engines-in-use-label")} description={t("create-analysis.offline.database-info.engines-in-use-description")}>
+                      <Multiselect
+                        selectedOptions={offlineEnginesInUse}
+                        onChange={({ detail }) => setOfflineEnginesInUse(detail.selectedOptions)}
+                        options={enginesInUseOptions()}
+                        placeholder={t("create-analysis.offline.database-info.engines-in-use-placeholder")}
+                        disabled={uploadState === "submitting"}
                       />
                     </FormField>
                   </ColumnLayout>

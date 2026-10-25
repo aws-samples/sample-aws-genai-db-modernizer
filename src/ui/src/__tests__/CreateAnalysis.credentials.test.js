@@ -57,6 +57,7 @@ jest.mock('@cloudscape-design/components/form-field', () => ({
     </div>
   ),
 }));
+jest.mock('@cloudscape-design/components/multiselect', () => ({ __esModule: true, default: () => null }));
 jest.mock('@cloudscape-design/components/select', () => ({ __esModule: true, default: () => <select /> }));
 jest.mock('@cloudscape-design/components/input', () => ({
   __esModule: true,

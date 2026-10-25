@@ -270,6 +270,14 @@ class AssessmentRequest(BaseModel):
             "engine; an empty list, or a legacy, planned or unknown id, is a 422"
         ),
     )
+    engines_in_use: list[str] | None = Field(
+        None,
+        description=(
+            "The other AWS databases the application runs today (#1071): active engine "
+            'ids, for example ["opensearch", "elasticache"]. The collector merges them '
+            "with the collection's own list; left out declares nothing"
+        ),
+    )
     full_analysis: bool = False
     collection_mode: Literal["live", "ddl", "offline"] = "live"
     offline_s3_key: str | None = None
@@ -306,6 +314,20 @@ class AssessmentRequest(BaseModel):
         if value is None:
             return value
         return normalize_target_databases([validate_name(v, "target_databases") for v in value])
+
+    @field_validator("engines_in_use")
+    @classmethod
+    def _check_engines_in_use(cls, value: list[str] | None) -> list[str] | None:
+        """Engine ids the source runs today, as ``--engines-in-use`` reads them (#1071)."""
+        if value is None:
+            return value
+        from src.shared.engines_in_use import parse_engines_in_use_option
+
+        ids = [validate_name(v, "engines_in_use") for v in value]
+        try:
+            return parse_engines_in_use_option(",".join(ids))
+        except ValueError as exc:
+            raise ValueError(str(exc).replace("--engines-in-use", "engines_in_use")) from exc
 
     @field_validator("cluster_id")
     @classmethod
