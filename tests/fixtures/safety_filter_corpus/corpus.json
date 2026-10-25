@@ -1,0 +1,57 @@
+{
+  "_comment": "{pw} stands for a sample password and {creds} for user:password, both filled in by the test, so the file holds no credential-shaped literal (secret scanners). Strings for the safety filters (#1161). 'benign' must pass unchanged; 'known_bad' must still be caught. Add every reported false positive or miss here with the fix.",
+  "secret_guard": {
+    "benign": [
+      "UPDATE users SET password_changed_at = NOW() WHERE id = 1",
+      "SELECT password_hash FROM users WHERE id = ?",
+      "ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(64)",
+      "CREATE INDEX idx_users_password_changed_at ON users (password_changed_at)",
+      "SELECT * FROM api_keys WHERE token_expires_at < NOW()",
+      "INSERT INTO sessions (user_id, token) VALUES (?, ?)",
+      "SELECT COUNT(*) FROM users WHERE password_changed_at IS NULL",
+      "We rotate the database password every 90 days",
+      "Passwords are stored in Secrets Manager and referenced by ARN",
+      "The token bucket allows 100 requests per second",
+      "mysql -h db.example.com -u admin -p",
+      "psql -h db.example.com -U app -d orders",
+      "curl -s https://api.example.com/health",
+      "git clone https://github.com/example/repo.git",
+      "aws secretsmanager get-secret-value --secret-id prod/db",
+      "postgres://app@db.example.com:5432/orders",
+      "Contact admin@example.com for access to the replica",
+      "Our login flow reads the user row, then updates last_login_at"
+    ],
+    "known_bad": [
+      "mysql -h db.example.com -u root -p{pw}",
+      "postgres://admin:{pw}@db.example.com/orders",
+      "SET PASSWORD FOR 'app'@'%' = '{pw}'",
+      "CREATE USER app IDENTIFIED BY '{pw}'",
+      "the password is {pw}",
+      "curl -u {creds} https://api.example.com/v1"
+    ],
+    "known_bad_keys": ["password", "api_secret", "AWS_SECRET_ACCESS_KEY"]
+  },
+  "prose_style": {
+    "benign": [
+      "Prices range from $100-$200 per month.",
+      "The window is 5-10 minutes long.",
+      "Use e.g. a secondary index on the status column.",
+      "Table wp_posts has 12 columns and 3 indexes, i.e. a small footprint.",
+      "Order IDs such as ORD-2024-001 stay unique.",
+      "Pass `--job-id` to select the run.",
+      "Run `uv run python scripts/run_assessment.py --file x.json` first.",
+      "Aurora PostgreSQL 16 supports JSONB columns.",
+      "Reads dominate: 95 percent of the queries are SELECT statements.",
+      "The p99 latency is 12 ms for the lookup.",
+      "Three engines remain: Aurora, DynamoDB, ElastiCache.",
+      "Estimated cost is about $1,200 vs. $3,400 per month."
+    ],
+    "known_bad": [
+      "DocumentDB adds nothing — 25 queries move.",
+      "A robust design.",
+      "Reads typically hit the cache.",
+      "Let's start with DynamoDB.",
+      "Open CRITICAL/HIGH risks: 0"
+    ]
+  }
+}

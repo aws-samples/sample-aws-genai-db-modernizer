@@ -279,6 +279,16 @@ repos:
         files: '(src/assessment/.*\.py|scripts/render_contract_schemas\.py|docs/contracts/schemas/.*\.json)'
         pass_filenames: false
 
+  # Any change to a heuristic safety filter runs its benign-input corpus (#1161)
+  - repo: local
+    hooks:
+      - id: safety-filter-corpus
+        name: Safety filters pass the benign-input corpus
+        entry: uv run pytest tests/unit/safety_filters -q -p no:xdist -p no:cacheprovider
+        language: system
+        files: '(src/api/secret_guard\.py|src/shared/prose_style\.py|tests/unit/safety_filters/.*|tests/fixtures/safety_filter_corpus/.*)'
+        pass_filenames: false
+
   # The price table's age (#1196): warns only, so an old table never blocks a commit
   - repo: local
     hooks:
