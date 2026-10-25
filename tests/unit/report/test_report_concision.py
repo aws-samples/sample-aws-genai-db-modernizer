@@ -31,6 +31,7 @@ from tests.report_concision import (
     md_sections,
     raw_labels,
     repeated_sentences,
+    repeated_statements,
     section,
 )
 
@@ -170,9 +171,11 @@ def test_the_gate_refers_to_the_lists_its_section_shows_in_full(md: str, saved) 
     assert "  - 39 queries, independent: the wave's source tables above" in wave.splitlines()
 
 
-def test_a_kept_list_longer_than_the_line_shows_is_printed_in_the_gate(report) -> None:
-    """The kept-in-sync line shows 15 names, then "+N more"; a gate list of more
-    tables than that is printed whole, so every table is still named in the wave."""
+def test_a_kept_list_longer_than_the_line_shows_is_listed_once_in_full(report) -> None:
+    """The kept-in-sync line shows 15 names, then "+N more". When the gate lists the
+    same tables, the line shows them all and the gate refers to it (#1574): the gate
+    used to print the whole list after the line's 15, so those 15 were named twice
+    (the scoped discourse run's wave 2: 64 tables). Every table is still named once."""
     wave, facts = _wave3(report)
     extra = [f"wordpress.wp_extra_{i:02d}" for i in range(14)]
     facts["kept_in_sync"] = facts["kept_in_sync"] + [
@@ -186,10 +189,28 @@ def test_a_kept_list_longer_than_the_line_shows_is_printed_in_the_gate(report) -
         for p in wave["gate_parts"]
     )
     body = _wave(render_engineering_report_md(report), 3)
-    assert "(+2 more)" in body
-    assert "the tables kept in sync above" not in body
+    gate = _gate(body)
+    assert "(+2 more)" not in body
+    assert "\\(the tables kept in sync above\\)" in gate
+    kept_line = next(ln for ln in body.splitlines() if "kept in sync from their owner" in ln)
     for table in items:
-        assert md_text(table) in body or f"`{table}`" in body, table
+        assert f"`{table}`" in kept_line, table
+        assert md_text(table) not in gate, table
+    assert repeated_statements(body) == []
+
+
+@pytest.mark.passes_on_main  # the negative case: the cap stays without a gate list
+def test_a_kept_list_the_gate_does_not_list_stays_capped(report) -> None:
+    # The negative case: with no gate list of those tables, the line keeps its cap.
+    wave, facts = _wave3(report)
+    extra = [f"wordpress.wp_extra_{i:02d}" for i in range(14)]
+    facts["kept_in_sync"] = facts["kept_in_sync"] + [
+        {"table": t, "owner": "aurora_mysql", "sync": "CDC"} for t in extra
+    ]
+    facts["kept_in_sync_tables"] = len(facts["kept_in_sync"])
+    del wave["gate_parts"]
+    body = _wave(render_engineering_report_md(report), 3)
+    assert "(+2 more)" in body
 
 
 def test_a_wave_table_list_longer_than_shown_is_not_referred_to(report) -> None:
@@ -297,3 +318,54 @@ def test_without_its_trade_off_there_is_no_pointer(report) -> None:
     assert POINTER not in appendix
     # With no pointer, each consolidation step keeps its own reason (#1220).
     assert "which adds too little over the engines kept" in appendix
+
+
+# --- a sentence a migration note states is not stated again (#1574) -----------------
+
+_NO_TRIGGERS = (
+    "DynamoDB has no triggers: the application write path for CategorySettings rejects "
+    "that attribute, or the attribute is dropped from the item."
+)
+
+
+def _trigger_note(name: str, column: str) -> dict[str, Any]:
+    return {
+        "object_name": name,
+        "object_type": "trigger",
+        "source_table": "discourse.category_settings",
+        "application_logic_required": (
+            "The BEFORE INSERT and BEFORE UPDATE triggers raise an error when the "
+            f"deprecated {column} column is written. {_NO_TRIGGERS}"
+        ),
+    }
+
+
+def test_a_sentence_two_notes_and_a_mitigation_share_is_stated_once(report) -> None:
+    """The scoped discourse run printed the model's "DynamoDB has no triggers: ..."
+    sentence 3 times: in two migration notes (the model wrote it for both triggers)
+    and in the risk mitigation synthesis builds from the first note. Each long sentence
+    is stated once; a later line points at the first."""
+    notes = [
+        _trigger_note("cs_reply_readonly", "require_reply_approval"),
+        _trigger_note("cs_topic_readonly", "require_topic_approval"),
+    ]
+    report["schema_designs"]["dynamodb"]["migration_notes"] = notes
+    report["risk_assessment"]["risks"] = [
+        {
+            "risk_id": "RISK-003",
+            "risk_type": "OPERATIONAL_RISK",
+            "severity": "MEDIUM",
+            "description": "[dynamodb] trigger: cs_reply_readonly needs application-side logic on DynamoDB.",
+            "mitigation": f"Implement as application logic: {notes[0]['application_logic_required']}",
+            "affected_tables": ["discourse.category_settings"],
+        }
+    ]
+    md = render_engineering_report_md(report)
+    assert [s for s, _ in repeated_statements(md) if "has no triggers" in s] == []
+    assert md.count(md_text(_NO_TRIGGERS).rstrip(".")) == 1
+    second = next(ln for ln in md.splitlines() if "cs\\_topic\\_readonly:" in ln)
+    assert "Stated in the cs\\_reply\\_readonly migration note." in second
+    mitigation = next(ln for ln in md.splitlines() if "Mitigation: Implement as application" in ln)
+    assert "Stated in the cs\\_reply\\_readonly migration note." in mitigation
+    # The sentence each note states on its own is kept.
+    assert "deprecated require\\_topic\\_approval column is written." in second

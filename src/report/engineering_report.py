@@ -357,7 +357,7 @@ def _unsupported_pattern_md(u: dict[str, Any]) -> str:
     return head or body or "(no detail provided)"
 
 
-def _migration_note_md(mn: dict[str, Any]) -> str:
+def _migration_note_md(mn: dict[str, Any], said: _SaidOnce | None = None) -> str:
     """One readable Markdown bullet for a schema-design ``migration_notes`` entry.
 
     ``migration_notes`` is a list of dicts (``object_name``, ``object_type``,
@@ -368,6 +368,9 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
     the Python list/dict repr verbatim (e.g.
     ``[{'object_name': 'x', 'object_type': 'trigger', ...}]``); this renders
     one bullet per note instead, tolerant of any of the fields being absent.
+
+    ``said`` (#1574) is the report's ledger of long sentences: a sentence an earlier
+    note stated (a model often words two triggers' logic the same) points at that note.
     """
     object_type = str(mn.get("object_type") or "").strip()
     object_name = str(mn.get("object_name") or "").strip()
@@ -380,6 +383,9 @@ def _migration_note_md(mn: dict[str, Any]) -> str:
         head_bits.append(escaping.md_text(object_name))
     head = " ".join(head_bits)
     body = escaping.md_text(logic)
+    if said is not None and body:
+        where = f"in the {escaping.md_text(object_name)} migration note" if object_name else "above"
+        body = said.line(body, where)
 
     if head and body:
         return f"{head}: {body}"
@@ -950,11 +956,14 @@ def _close_call_body(body: str, risk: dict[str, Any], listed: bool) -> str:
     return f"{lead}, listed by engine pair under Close calls. {tail}"
 
 
-def _risk_register_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Risk register" and "Resolved by the assignment" sections."""
+def _risk_register_md(report: dict[str, Any], said: _SaidOnce | None = None) -> list[str]:
+    """Engineering Report "Risk register" and "Resolved by the assignment" sections.
+
+    ``said`` is the report's ledger of long sentences, shared with the migration notes
+    (#1574): a mitigation built from a note's logic points at the note."""
     facts = report_facts(report)
     out: list[str] = []
-    said = _SaidOnce()
+    said = said if said is not None else _SaidOnce()
     close_calls = bool(close_calls_md(report))
     risks = filtered_risks(report)
     if risks:
@@ -1232,6 +1241,9 @@ def render_engineering_report_md(
     out += _roadmap_md(report)
     out += sources_of_truth_md(report)
 
+    # #1454, #1574: one ledger of long sentences for the migration notes and the risk
+    # register, so a sentence is stated once in the report.
+    said = _SaidOnce()
     designs = _completed_designs(report)
     if designs:
         out += ["## Target schemas by engine", ""]
@@ -1327,7 +1339,7 @@ def render_engineering_report_md(
             if notes:
                 out += ["**Migration notes:**", ""]
                 out += [
-                    f"- {_migration_note_md(mn) if isinstance(mn, dict) else escaping.md_text(mn)}"
+                    f"- {_migration_note_md(mn, said) if isinstance(mn, dict) else escaping.md_text(mn)}"
                     for mn in notes
                 ]
                 out.append("")
@@ -1408,7 +1420,7 @@ def render_engineering_report_md(
     out += _aurora_queries_by_table_md(report)
 
     out += _risk_posture_md(report)
-    out += _risk_register_md(report)
+    out += _risk_register_md(report, said)
     out += _mitigation_strategies_md(report)
 
     out += _trade_offs_md(report, facts)

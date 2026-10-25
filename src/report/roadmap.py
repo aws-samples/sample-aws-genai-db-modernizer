@@ -134,18 +134,22 @@ _OWNERS_SHOWN = 15
 _TABLES_SHOWN = 20
 
 
-def _owner_list_md(owners: list[dict[str, Any]], cap: int = _OWNERS_SHOWN) -> str:
+def _owner_list_md(owners: list[dict[str, Any]], cap: int | None = _OWNERS_SHOWN) -> str:
+    """The owner list, the first ``cap`` names then "+N more" (``None``: every name)."""
     shown = ", ".join(
         f"`{escaping.md_code(o['table'])}` -> {escaping.md_text(display_engine(o['owner']))} "
         f"({escaping.md_text(o.get('sync', ''))})"
         for o in owners[:cap]
     )
-    return shown + (f" (+{len(owners) - cap} more)" if len(owners) > cap else "")
+    if cap is None or not owners[cap:]:
+        return shown
+    return shown + f" (+{len(owners) - cap} more)"
 
 
-def _owner_lines_md(wf: dict[str, Any]) -> list[str]:
+def _owner_lines_md(wf: dict[str, Any], kept_in_full: bool = False) -> list[str]:
     """The kept-in-sync line (owners outside the wave) and, for the merged
-    wave, the tables one wave engine serves from the other (#581)."""
+    wave, the tables one wave engine serves from the other (#581). ``kept_in_full``:
+    the gate refers to the kept-in-sync tables, so the line names every one (#1574)."""
     out: list[str] = []
     kept = wf.get("kept_in_sync") or []
     if kept:
@@ -155,7 +159,7 @@ def _owner_lines_md(wf: dict[str, Any]) -> list[str]:
         # owner elsewhere this wave keeps a synced copy of, so say that.
         out.append(
             f"- {n} {plural_noun(n, 'table')} kept in sync from their owner: "
-            f"{_owner_list_md(kept)}"
+            f"{_owner_list_md(kept, None if kept_in_full else _OWNERS_SHOWN)}"
         )
     shared = wf.get("shared_in_wave") or []
     if shared:
@@ -187,19 +191,33 @@ def _replicated_by_source(report: dict[str, Any]) -> dict[str, list[str]]:
     return out
 
 
+def _kept_list(wf: dict[str, Any]) -> list[Any]:
+    return [o.get("table") for o in wf.get("kept_in_sync") or [] if isinstance(o, dict)]
+
+
+def _gate_lists_kept(w: dict[str, Any], wf: dict[str, Any]) -> bool:
+    """Whether a part of the wave's gate lists exactly its kept-in-sync tables (#1574)."""
+    kept = _kept_list(wf)
+    parts = w.get("gate_parts")
+    return isinstance(parts, list) and any(
+        isinstance(p, dict) and _same_tables(p.get("items") or [], kept) for p in parts
+    )
+
+
 def _gate_text(w: dict[str, Any], wf: dict[str, Any], replicated: dict[str, list[str]]) -> str:
     """A wave's gate, each table list named once (#1170).
 
     The gate's parts (``gate_parts``, #1028) join back to the stored gate. A list
     the section already gives in full is referred to instead of repeated: the
-    wave's kept-in-sync tables, the wave's own table list, or the tables the
-    wave's engines write that "Sources of truth and replicas" lists. Any other
-    list, and a gate with no parts, is printed as stored.
+    wave's kept-in-sync tables (which that line then names in full, however many,
+    #1574), the wave's own table list, or the tables the wave's engines write that
+    "Sources of truth and replicas" lists. Any other list, and a gate with no parts,
+    is printed as stored.
     """
     parts = w.get("gate_parts")
     if not isinstance(parts, list) or not parts:
         return str(w.get("gate") or "")
-    kept = [o.get("table") for o in wf.get("kept_in_sync") or [] if isinstance(o, dict)]
+    kept = _kept_list(wf)
     tables = w.get("tables") or []
     written = [t for e in w.get("engines") or [] for t in replicated.get(str(e), [])]
     out: list[str] = []
@@ -210,7 +228,8 @@ def _gate_text(w: dict[str, Any], wf: dict[str, Any], replicated: dict[str, list
         if not items:
             continue
         # Only a list shown in full above is referred to; a capped one is printed here.
-        if not kept[_OWNERS_SHOWN:] and _same_tables(items, kept):
+        # The kept-in-sync line is never capped when this list is it (#1574).
+        if _same_tables(items, kept):
             out.append(" (the tables kept in sync above)")
         elif not tables[_TABLES_SHOWN:] and _same_tables(items, tables):
             out.append(" (the tables listed above)")
@@ -323,7 +342,7 @@ def _roadmap_md(report: dict[str, Any]) -> list[str]:
                 "- Synced from (durable owner): "
                 + ", ".join(escaping.md_text(display_engine(e)) for e in w["serves_from"])
             )
-        out += _owner_lines_md(wf)
+        out += _owner_lines_md(wf, kept_in_full=_gate_lists_kept(w, wf))
         out.append(f"- Why: {escaping.md_text(w.get('rationale') or '-')}")
         gate = _gate_text(w, wf, replicated)
         out.append(f"- Gate before the next wave: {escaping.md_text(gate or '-')}")
