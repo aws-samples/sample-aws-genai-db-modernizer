@@ -89,6 +89,12 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   refused before it ran: it is ``prevented_by_hook`` (count and commands in
   summary.json and results.json), warns, and never fails the run. A violation
   that was not refused still fails as above.
+* a ``PreToolUse`` hook that ended in a non-blocking error (a crash, a timeout, ``uv``
+  missing: any exit but 0 and 2) means enforcement was off for that call, because the
+  hooks fail open by design. It is recorded as ``hook_errors: {count, hooks}``, warns,
+  and fails the run only when the hook is one that must run (``_MUST_RUN_HOOKS``) (#747).
+  A denial found only in ``tool_result`` text is labelled ``<Tool>: <text>`` like the
+  rest, the tool taken from the ``tool_use`` it answers (``unknown`` if none matches).
 * the ``MODERNIZE_RESULT`` line's ``job_id``/``db`` aren't a single
   ``[A-Za-z0-9_.-]+`` path component -- fail (they become paths and argv
   downstream).
@@ -540,12 +546,28 @@ def _ui_start_error_reason(records: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def tool_result_permission_errors(records: list[dict[str, Any]]) -> list[str]:
-    """Texts of ``tool_result`` blocks flagged ``is_error`` that mention
+def tool_result_permission_denials(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """``(tool, text)`` for each ``tool_result`` block flagged ``is_error`` that mentions
     "permission" -- a denied tool call as the model saw it, which may not
     (depending on CLI version) also land in the result line's
-    ``permission_denials``."""
-    found: list[str] = []
+    ``permission_denials``. ``tool`` is the name of the ``tool_use`` the result answers
+    (matched by ``tool_use_id``), ``unknown`` when none matches."""
+    tool_names: dict[str, str] = {}
+    for rec in records:
+        content = (
+            rec.get("message", {}).get("content") if isinstance(rec.get("message"), dict) else None
+        )
+        if rec.get("type") != "assistant" or not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and isinstance(block.get("id"), str)
+                and isinstance(block.get("name"), str)
+            ):
+                tool_names[block["id"]] = block["name"]
+    found: list[tuple[str, str]] = []
     for rec in records:
         if rec.get("type") != "user" or not isinstance(rec.get("message"), dict):
             continue
@@ -560,7 +582,73 @@ def tool_result_permission_errors(records: list[dict[str, Any]]) -> list[str]:
             ):
                 text = _text_from_content(block.get("content"))
                 if "permission" in text.lower():
-                    found.append(text[:300])
+                    tool = tool_names.get(str(block.get("tool_use_id")), "unknown")
+                    found.append((tool, text[:300]))
+    return found
+
+
+def tool_result_permission_errors(records: list[dict[str, Any]]) -> list[str]:
+    """Texts of the denied ``tool_result`` blocks (see ``tool_result_permission_denials``)."""
+    return [text for _tool, text in tool_result_permission_denials(records)]
+
+
+# Hooks whose absence silently changes what a run may do. A non-blocking error from one of
+# these fails the run; any other hook's error only warns (#747).
+_MUST_RUN_HOOKS = ("require_gate_shown.py",)
+
+
+def pre_tool_use_hook_errors(records: list[dict[str, Any]]) -> list[str]:
+    """One line per ``PreToolUse`` hook that ended in a non-blocking error: a crash, a timeout
+    or a missing ``uv`` (any exit but 0 and 2). Our hooks fail open by design, so such an error
+    means enforcement was off for that call. Records that carry it:
+
+    * the stream (``--include-hook-events``, which ``ci/e2e-llm.sh`` passes when the CLI lists
+      it): ``{"type": "system", "subtype": "hook_response", "hook_event", "hook_name",
+      "outcome": "success" | "error" | "cancelled", "exit_code"?, "stderr", ...}`` (documented
+      in the Agent SDK reference). ``outcome`` ``error`` and ``cancelled`` count;
+    * the CLI's own session log: an ``attachment`` of type ``hook_non_blocking_error``
+      (``hookName``, ``command``, ``stderr``, ``exitCode``) and one of type ``hook_cancelled``
+      with ``timedOut`` true (a hook killed at its timeout).
+
+    A blocking exit (2) is a refusal, handled as ``prevented_by_hook``. The stream's record has
+    no ``command``, so it does not name the script; only a record that does can trip the
+    must-run check."""
+    found: list[str] = []
+    for rec in records:
+        detail: dict[str, Any] | None = None
+        if rec.get("type") == "system" and rec.get("subtype") == "hook_response":
+            if rec.get("outcome") in ("error", "cancelled"):
+                detail = {
+                    "name": rec.get("hook_event") or rec.get("hook_name"),
+                    "command": rec.get("command") or rec.get("hook_name"),
+                    "stderr": rec.get("stderr"),
+                    "exit": rec.get("exit_code", rec.get("outcome")),
+                }
+        elif rec.get("type") == "attachment":
+            attachment = rec.get("attachment")
+            kind = attachment.get("type") if isinstance(attachment, dict) else None
+            if isinstance(attachment, dict) and (
+                kind == "hook_non_blocking_error"
+                or (kind == "hook_cancelled" and attachment.get("timedOut") is True)
+            ):
+                detail = {
+                    "name": attachment.get("hookEvent") or attachment.get("hookName"),
+                    "command": attachment.get("command") or attachment.get("hookName"),
+                    "stderr": attachment.get("stderr"),
+                    "exit": attachment.get("exitCode", "timed out"),
+                }
+        if detail is None or detail["exit"] == 2:
+            continue
+        name = str(detail["name"] or "")
+        if not name.startswith("PreToolUse"):
+            continue
+        parts = [name]
+        if detail["command"] and detail["command"] != detail["name"]:
+            parts.append(str(detail["command"]))
+        parts.append(f"exit {detail['exit']}")
+        if detail["stderr"]:
+            parts.append(str(detail["stderr"]).strip())
+        found.append(_truncate(": ".join(parts), 300))
     return found
 
 
@@ -1010,14 +1098,33 @@ def check_transcript(
     else:
         # No command text is available from tool_result denial text.
         classified = [
-            (f"tool_result: {text}", _classify_denial(text, allow_prefixes))
-            for text in tool_result_permission_errors(records)
+            (_denial_label(tool, text), _classify_denial(text, allow_prefixes))
+            for tool, text in tool_result_permission_denials(records)
         ]
     pipeline_denials = [cmd for cmd, kind in classified if kind == "allowlist"]
     rule_violations = [cmd for cmd, kind in classified if kind == "rule_violation"]
     other_denials = [cmd for cmd, kind in classified if kind == "other"]
     unlisted_tool_denials = [cmd for cmd, kind in classified if kind == "unlisted_tool"]
     prevented = [cmd for cmd, kind in classified if kind == "prevented_by_hook"]
+
+    hook_errors = pre_tool_use_hook_errors(records)
+    if hook_errors:
+        hook_summary = {
+            "count": len(hook_errors),
+            "hooks": [_truncate(line) for line in hook_errors[:20]],
+        }
+        print(
+            f"warning: {len(hook_errors)} PreToolUse hook(s) ended in a non-blocking error, so "
+            f"enforcement was off for those calls: {hook_summary['hooks']!r}",
+            file=sys.stderr,
+        )
+        fields = {**fields, "hook_errors": hook_summary}
+        must_run = [line for line in hook_errors if any(h in line for h in _MUST_RUN_HOOKS)]
+        if must_run:
+            raise fail(
+                f"{len(must_run)} hook(s) that must run did not "
+                f"({', '.join(_MUST_RUN_HOOKS)}): {[_truncate(line) for line in must_run[:5]]!r}"
+            )
 
     if prevented:
         prevented_summary = {
@@ -1227,6 +1334,7 @@ def build_results_row(
     rule_violations: dict[str, Any] | None = None
     unlisted_tool_denials: dict[str, Any] | None = None
     prevented_by_hook: dict[str, Any] | None = None
+    hook_errors: dict[str, Any] | None = None
 
     summary = _load_json(transcript_summary_path)
     if summary is None:
@@ -1259,6 +1367,8 @@ def build_results_row(
         unlisted_tool_denials = unlisted_raw if isinstance(unlisted_raw, dict) else None
         prevented_raw = summary.get("prevented_by_hook")
         prevented_by_hook = prevented_raw if isinstance(prevented_raw, dict) else None
+        hook_errors_raw = summary.get("hook_errors")
+        hook_errors = hook_errors_raw if isinstance(hook_errors_raw, dict) else None
 
     report_junit = pytest_junit_paths[0] if pytest_junit_paths else None
     ui_junit = pytest_junit_paths[1] if len(pytest_junit_paths) > 1 else None
@@ -1328,6 +1438,7 @@ def build_results_row(
         "rule_violations": rule_violations,
         "unlisted_tool_denials": unlisted_tool_denials,
         "prevented_by_hook": prevented_by_hook,
+        "hook_errors": hook_errors,
         "token_usage": _load_token_usage(token_usage_path),
         "judge": judge_section,
         "pass": overall_pass,

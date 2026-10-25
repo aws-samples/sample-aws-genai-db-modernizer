@@ -2099,3 +2099,195 @@ def test_a_missing_ui_pointer_no_longer_leaves_a_warning_field(tmp_path: Path) -
         git_sha="abc",
     )
     assert "ui_pointer_warning" not in row
+
+
+# --- non-blocking hook errors and one denial label format (#747) -------------
+
+
+def _tool_use_record(tool_use_id: str, name: str, tool_input: dict) -> dict:
+    return {
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "tool_use", "id": tool_use_id, "name": name, "input": tool_input}]
+        },
+    }
+
+
+def _denied_tool_result(tool_use_id: str, text: str) -> dict:
+    return {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "is_error": True,
+                    "content": text,
+                }
+            ]
+        },
+    }
+
+
+def test_fallback_denial_label_carries_the_tool_prefix(tmp_path: Path) -> None:
+    """With no permission_denials on any result line, the tool_result fallback labels a
+    denial `<Tool>: <text>` like the main path, so denials.commands has one format."""
+    records = [
+        _tool_use_record("tu-9", "Bash", {"command": "cat a.json"}),
+        _denied_tool_result("tu-9", "Permission to use Bash has been denied."),
+        _result_line("MODERNIZE_RESULT: complete job_id=fallback1 db=wordpress mode=chat"),
+    ]
+    summary = run.check_transcript(_transcript(tmp_path, records), "chat")
+    assert summary["denials"] == {
+        "count": 1,
+        "commands": ["Bash: Permission to use Bash has been denied."],
+    }
+
+
+def test_fallback_denial_without_a_matching_tool_use_is_labelled_unknown(tmp_path: Path) -> None:
+    records = [
+        _denied_tool_result("tu-none", "Permission denied for that call."),
+        _result_line("MODERNIZE_RESULT: complete job_id=fallback2 db=wordpress mode=chat"),
+    ]
+    summary = run.check_transcript(_transcript(tmp_path, records), "chat")
+    assert summary["denials"]["commands"] == ["unknown: Permission denied for that call."]
+
+
+def _hook_error_records(hook: str, *, shape: str, exit_code: int = 1) -> list[dict]:
+    command = f'uv run --no-project python -I "$CLAUDE_PROJECT_DIR/scripts/hooks/{hook}"'
+    error: dict[str, object]
+    if shape == "attachment":
+        error = {
+            "type": "attachment",
+            "attachment": {
+                "type": "hook_non_blocking_error",
+                "hookName": "PreToolUse:Bash",
+                "command": command,
+                "stderr": "uv: command not found",
+                "exitCode": exit_code,
+            },
+        }
+    else:
+        error = {
+            "type": "system",
+            "subtype": "hook_response",
+            "hook_event": "PreToolUse",
+            "hook_name": "PreToolUse:Bash",
+            "outcome": "error",
+            "exit_code": exit_code,
+            "stderr": "uv: command not found",
+        }
+    return [
+        error,
+        _result_line("MODERNIZE_RESULT: complete job_id=hookerr1 db=wordpress mode=chat"),
+    ]
+
+
+@pytest.mark.parametrize("shape", ["attachment", "system"])
+def test_non_blocking_pre_tool_use_hook_error_is_flagged_as_a_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], shape: str
+) -> None:
+    records = _hook_error_records("block_commit_bypass.py", shape=shape)
+    summary = run.check_transcript(_transcript(tmp_path, records), "chat")
+    assert summary["hook_errors"]["count"] == 1
+    assert summary["hook_errors"]["hooks"][0].startswith("PreToolUse")
+    assert "enforcement was off" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("shape", ["attachment", "system"])
+@pytest.mark.passes_on_main  # negative case: what must not be reported
+def test_a_blocking_exit_is_not_a_hook_error(tmp_path: Path, shape: str) -> None:
+    records = _hook_error_records("block_commit_bypass.py", shape=shape, exit_code=2)
+    assert "hook_errors" not in run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+@pytest.mark.passes_on_main  # negative case: what must not be reported
+def test_post_tool_use_hook_error_is_not_reported(tmp_path: Path) -> None:
+    records = _hook_error_records("remind_llm_run.py", shape="system")
+    records[0]["hook_name"] = records[0]["hook_event"] = "Stop"
+    assert "hook_errors" not in run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+def test_gate_hook_that_did_not_run_fails_the_run(tmp_path: Path) -> None:
+    """Only a record that names the script can trip the must-run check; the stream's
+    hook_response carries no command, so it warns (see the next test)."""
+    shape = "attachment"
+    records = _hook_error_records("require_gate_shown.py", shape=shape)
+    with pytest.raises(run.TranscriptError, match="require_gate_shown.py"):
+        run.check_transcript(_transcript(tmp_path, records), "chat")
+
+
+def test_results_carry_hook_errors(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    _write_summary(summary, hook_errors={"count": 1, "hooks": ["PreToolUse:Bash: x"]})
+    row = run.build_results_row(
+        mode="chat",
+        fixture="wordpress",
+        transcript_summary_path=summary,
+        pytest_junit_paths=[tmp_path / "missing.xml"],
+        judge_path=tmp_path / "missing.json",
+        git_sha="abc",
+    )
+    assert row["hook_errors"] == {"count": 1, "hooks": ["PreToolUse:Bash: x"]}
+
+
+def test_stream_hook_error_without_a_script_name_only_warns(tmp_path: Path) -> None:
+    records = _hook_error_records("require_gate_shown.py", shape="system")
+    assert run.check_transcript(_transcript(tmp_path, records), "chat")["hook_errors"]["count"] == 1
+
+
+def test_cancelled_stream_hook_and_timed_out_attachment_are_flagged(tmp_path: Path) -> None:
+    done = _result_line("MODERNIZE_RESULT: complete job_id=hookerr2 db=wordpress mode=chat")
+    stream = {
+        "type": "system",
+        "subtype": "hook_response",
+        "hook_event": "PreToolUse",
+        "hook_name": "PreToolUse:Bash",
+        "outcome": "cancelled",
+        "stderr": "",
+    }
+    timed_out = {
+        "type": "attachment",
+        "attachment": {
+            "type": "hook_cancelled",
+            "hookEvent": "PreToolUse",
+            "hookName": "PreToolUse:Bash",
+            "command": 'uv run --no-project python -I "$CLAUDE_PROJECT_DIR/scripts/hooks/block_commit_bypass.py"',
+            "timedOut": True,
+        },
+    }
+    summary = run.check_transcript(_transcript(tmp_path, [stream, timed_out, done]), "chat")
+    assert summary["hook_errors"]["count"] == 2
+    assert "timed out" in summary["hook_errors"]["hooks"][1]
+
+
+@pytest.mark.passes_on_main  # negative case: what must not be reported
+def test_a_cancelled_hook_that_did_not_time_out_is_not_a_hook_error(tmp_path: Path) -> None:
+    done = _result_line("MODERNIZE_RESULT: complete job_id=hookerr3 db=wordpress mode=chat")
+    cancelled = {
+        "type": "attachment",
+        "attachment": {"type": "hook_cancelled", "hookEvent": "PreToolUse", "timedOut": False},
+    }
+    assert "hook_errors" not in run.check_transcript(
+        _transcript(tmp_path, [cancelled, done]), "chat"
+    )
+
+
+@pytest.mark.passes_on_main  # negative case: what must not be reported
+def test_success_stream_hook_response_is_not_a_hook_error(tmp_path: Path) -> None:
+    done = _result_line("MODERNIZE_RESULT: complete job_id=hookerr4 db=wordpress mode=chat")
+    ok = {
+        "type": "system",
+        "subtype": "hook_response",
+        "hook_event": "PreToolUse",
+        "hook_name": "PreToolUse:Bash",
+        "outcome": "success",
+        "exit_code": 0,
+    }
+    assert "hook_errors" not in run.check_transcript(_transcript(tmp_path, [ok, done]), "chat")
+
+
+def test_e2e_llm_asks_the_cli_for_hook_events_when_it_lists_the_flag() -> None:
+    script = (Path(__file__).resolve().parents[3] / "ci" / "e2e-llm.sh").read_text()
+    assert "grep -q -- '--include-hook-events' <<<\"$HELP_TEXT\"" in script
+    assert "CLAUDE_FLAGS+=(--include-hook-events)" in script

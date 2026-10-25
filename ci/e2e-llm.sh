@@ -247,6 +247,11 @@ else
   if grep -q -- '--verbose' <<<"$HELP_TEXT"; then
     CLAUDE_FLAGS+=(--verbose)
   fi
+  # Hook lifecycle events (system/hook_response) in the stream, so check-transcript can flag a
+  # PreToolUse hook that ended in a non-blocking error (#747).
+  if grep -q -- '--include-hook-events' <<<"$HELP_TEXT"; then
+    CLAUDE_FLAGS+=(--include-hook-events)
+  fi
   {
     printf 'flags:'
     printf ' %q' "${CLAUDE_FLAGS[@]}"
