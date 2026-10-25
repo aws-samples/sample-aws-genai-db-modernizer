@@ -257,7 +257,8 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
 2. **Run all tests**
 
    ```bash
-   make test        # or: ./ci/test.sh
+   ./ci/pre_merge.sh --quick   # fetch, conflicts, contract versions, lint
+   uv run pytest <paths> -n 4  # targeted tests for what you touched
    make e2e         # deterministic end-to-end (needs the `e2e` extra, Node 22,
                      # Playwright browsers, and a UI build -- ci/e2e.sh handles
                      # all of that); or: ./ci/e2e.sh
@@ -268,8 +269,10 @@ A follow-up commit that leaves the issue open ends with `Refs #123` instead of `
                      # skills, or ci/llm/*.
    ```
 
-   `make test` also runs the `atx_orchestrator` tests, which need the AWS
-   Transform SDK (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`;
+   The full unit, contract and property suites (`make test`, or
+   `./ci/test.sh`) run on CI only; they are slow on a laptop, so run targeted
+   tests locally with at most 4 workers. `make test` also runs the
+   `atx_orchestrator` tests, which need the AWS Transform SDK (`uv pip install "agent-builder-sdk-aws-transform>=1.0.0"`;
    see `tests/unit/atx_orchestrator/conftest.py`).
 
 3. **Verify linters pass** (pre-commit runs these automatically on commit, but you can run manually):
@@ -302,7 +305,7 @@ Smaller PRs are reviewed faster and merged more easily.
 
 ### Labels
 
-- **`good first issue`**: small, standalone fixes with a suggested fix, good for a first contribution. They are never part of an epic or a feature, never change a contract, and nothing else waits on them. Before opening the PR, run `make lint` (or `./ci/lint.sh`) and `make test`: the same checks run in CI, and a PR can't merge until they pass.
+- **`good first issue`**: small, standalone fixes with a suggested fix, good for a first contribution. They are never part of an epic or a feature, never change a contract, and nothing else waits on them. Before opening the PR, run `make lint` (or `./ci/lint.sh`) and the tests for what you touched: CI runs the full suites, and a PR can't merge until they pass.
 - **`help wanted`**: well-scoped issues that need more context in the codebase; contributions welcome.
 - **`Maintainer Decision`**: the issue or PR is waiting for a maintainer to decide. While a PR carries this label, the `maintainer-decision-gate` check fails and the PR can't be merged. A maintainer removes the label once the decision is made, and the check passes on the next run. A PR opened before this check existed has no result for it until it gets a new push, a label change, or is closed and reopened.
 - **`scope: internal`**: exempts a pull request from the `issue-assignment-gate` check below (maintenance/internal work that isn't tied to a contributor-facing issue).
