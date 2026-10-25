@@ -30,7 +30,7 @@ def test_routing_shape_matches_the_baseline(run: PipelineResult) -> None:
     problems = compare(baseline["samples"][run.db], actual, baseline["tolerance_pp"])
     assert not problems, f"{run.db}: routing moved beyond the baseline:\n- " + "\n- ".join(
         problems
-    ) + "\nIf intended, regenerate: uv run python -m tests.e2e.routing_baseline --write " '--reason "..."\nactual: ' + json.dumps(
+    ) + "\nIf intended, regenerate: uv run python -m tests.e2e.routing_baseline --write " '--reason "..."\nTo regenerate every stale generated baseline at once: uv run python scripts/regenerate_baselines.py --reason "..."\nactual: ' + json.dumps(
         actual, indent=2
     )
 

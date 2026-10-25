@@ -188,6 +188,12 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/validate_schemas.py", "validate_schema_file", "schema"): "JSON Schema files",
     ("scripts/contract_schema_snapshot.py", "main", "<expr>"): "the contract schema snapshot",
     ("scripts/contract_value_snapshot.py", "main", "<expr>"): "the contract value snapshot",
+    ("scripts/regenerate_baselines.py", "_contract_schema_stale", "committed"): (
+        "the contract schema snapshot, compared with a fresh rebuild"
+    ),
+    ("scripts/regenerate_baselines.py", "_value_set_stale", "committed"): (
+        "the contract value snapshot, compared with a fresh rebuild"
+    ),
     ("scripts/start_local_ui.py", "read_pids", "data"): "the local UI's pid file",
     ("scripts/start_local_ui.py", "ui_build_is_current", "stamp"): "the UI build stamp",
     ("scripts/hooks/enforce_tool_use_rule.py", "allowed_rules", "<expr>"): "Claude Code settings",

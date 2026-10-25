@@ -96,6 +96,9 @@ and `ci/e2e-llm.sh` build it for you.
   then parallelize the rest.
 - Regenerate generated baselines (the routing snapshot, the contract schema
   snapshot) on top of main on every rebase; never hand-merge them.
+  `uv run python scripts/regenerate_baselines.py --check` names the stale ones
+  and their commands; `uv run python scripts/regenerate_baselines.py --reason
+  "why it moved (#NNN)"` regenerates the stale ones (#1163).
 
 ## Which test tier for which change
 

@@ -50,6 +50,8 @@ def test_routing_snapshot_matches_the_baseline(run: PipelineResult) -> None:
         + "\nThe snapshot is out of date, not necessarily wrong -- if this PR means to "
         "change routing, regenerate it and paste this diff into the PR description: "
         'uv run python -m tests.e2e.routing_snapshot --write --reason "..."'
+        "\nTo regenerate every stale generated baseline at once: "
+        'uv run python scripts/regenerate_baselines.py --reason "..."'
     )
 
 

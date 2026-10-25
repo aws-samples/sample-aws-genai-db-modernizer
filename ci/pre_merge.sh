@@ -143,7 +143,7 @@ check_generated() {  # check_generated NAME "path|path" command...
   if "$@" >/dev/null 2>&1; then
     note "ok   generated: $name differs from main and its generator check passes"
   else
-    note "warn generated: $name differs from main but its generator check fails; regenerate it on top of main, never hand-merge ($*)"
+    note "warn generated: $name differs from main but its generator check fails; regenerate it on top of main, never hand-merge ($*); name every stale baseline: uv run python scripts/regenerate_baselines.py --check"
   fi
 }
 check_generated "routing snapshot" "tests/e2e/baselines/routing_snapshot.json" \

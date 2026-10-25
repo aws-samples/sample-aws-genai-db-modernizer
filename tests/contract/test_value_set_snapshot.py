@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+import pytest
+
 from scripts.contract_bumps import load_pending, pending_kinds, pending_module_kinds
 from scripts.contract_value_snapshot import (
     REGENERATE_COMMAND,
@@ -20,6 +22,11 @@ from scripts.contract_value_snapshot import (
     build_snapshot,
     evaluate_snapshot,
     unversioned_value_sets,
+)
+
+_ALL_STALE_HINT = (
+    "\nTo regenerate every stale generated baseline at once: "
+    "uv run python scripts/regenerate_baselines.py"
 )
 
 
@@ -30,10 +37,11 @@ def _load_committed() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(SNAPSHOT_PATH.read_text()))
 
 
+@pytest.mark.passes_on_main  # only the failure message changed
 def test_value_set_snapshot_matches_a_fresh_rebuild() -> None:
     pending = pending_module_kinds(pending_kinds(load_pending()))
     problems = evaluate_snapshot(_load_committed(), build_snapshot(), pending)
-    assert not problems, "\n".join(problems)
+    assert not problems, "\n".join(problems) + _ALL_STALE_HINT
 
 
 def test_every_published_value_set_has_a_version_to_bump() -> None:

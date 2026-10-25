@@ -35,6 +35,8 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
+import pytest
+
 from scripts.contract_bumps import load_pending, pending_kinds
 from scripts.contract_schema_snapshot import (
     EXCLUDED_NO_DEFAULT,
@@ -46,6 +48,11 @@ from scripts.contract_schema_snapshot import (
     unallowlisted_unversioned_contracts,
 )
 
+_ALL_STALE_HINT = (
+    "\nTo regenerate every stale generated baseline at once: "
+    "uv run python scripts/regenerate_baselines.py"
+)
+
 
 def _load_committed() -> dict[str, Any]:
     assert (
@@ -54,6 +61,7 @@ def _load_committed() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(SNAPSHOT_PATH.read_text()))
 
 
+@pytest.mark.passes_on_main  # only the failure message changed
 def test_schema_snapshot_file_matches_a_fresh_rebuild() -> None:
     """The committed snapshot must be exactly what rebuilding it now produces.
 
@@ -68,7 +76,7 @@ def test_schema_snapshot_file_matches_a_fresh_rebuild() -> None:
     # A bump a pending file declares is accepted until it is resolved (ADR-008
     # Decision 8); the merge queue refuses a pending file, so main never holds one.
     problems = evaluate_snapshot(committed, actual, pending_kinds(load_pending()))
-    assert not problems, "\n".join(problems)
+    assert not problems, "\n".join(problems) + _ALL_STALE_HINT
 
 
 def test_unversioned_contract_models_are_allowlisted() -> None:

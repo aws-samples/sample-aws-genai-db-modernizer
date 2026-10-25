@@ -443,6 +443,8 @@ uv run python -m tests.e2e.routing_baseline --write --reason "why it moved (#NNN
 uv run python -m tests.e2e.routing_snapshot --write --reason "why it moved (#NNN)"
 ```
 
+After a rebase, or when CI reports a stale baseline, one command covers every generated baseline (the routing baseline and snapshot, the contract schema and value-set snapshots, the `assess()` JSON Schemas, the rendered rule catalog). `uv run python scripts/regenerate_baselines.py --check` writes nothing, names each stale baseline with its own command and exits 1 if any is stale; `uv run python scripts/regenerate_baselines.py --reason "why it moved (#NNN)"` regenerates the stale ones by calling those same commands (`--only <name>` limits it). A baseline that is already fresh is left alone, so a clean tree changes nothing. Never hand-merge or hand-edit them.
+
 ---
 
 ## Documentation
