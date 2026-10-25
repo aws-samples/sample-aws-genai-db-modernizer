@@ -45,6 +45,10 @@ from src.tools.schema.design_metrics import (
     design_metrics_from_projection,
     unfiltered_pattern_count,
 )
+from src.tools.schema.dynamodb_attribute_columns import (
+    ATTRIBUTE_COLUMNS_PREFIX,
+    check_attribute_columns,
+)
 from src.tools.schema.dynamodb_cost_check import compute_performances_and_costs_entries
 from src.tools.sql.query_pattern_groups import listed_query_patterns
 
@@ -121,6 +125,14 @@ def _input_tool(paths: AgentInputPaths) -> Any:
         return _project_input(paths)
 
     return load_agent_input
+
+
+def _collector_for_columns(paths: AgentInputPaths) -> dict:
+    """The group's collector output, for the source-column check (#1431)."""
+    with open(str(paths.collector), encoding="utf-8") as f:
+        raw = json.load(f)
+    collector = load_contract(CollectorOutputContract, raw, artifact=str(paths.collector))
+    return collector.model_dump(mode="json")
 
 
 def _project_input(paths: AgentInputPaths | None = None) -> dict:
@@ -517,6 +529,23 @@ def run_dynamodb_schema_agent(
     # The numbers check reads this call's own input (#1054). An unreadable input
     # is an error here, never a silently skipped check.
     metrics: dict | None = _project_input(paths)["design_metrics"]
+    # The designer's source columns are checked against the group's collector (#1431).
+    collector = _collector_for_columns(paths)
+    # Column findings drive correction turns on the first design only: every PE revision
+    # would otherwise pay for its own rounds of full-design calls (#1431). The final
+    # output is checked once more below and any findings recorded without a model call.
+    first_design = {"pending": True}
+
+    def check_output(out: DynamoDBModelOutputContract) -> list[str]:
+        design = out.model_dump(mode="json")
+        messages = check_design_numbers("dynamodb", design, metrics)
+        if first_design["pending"]:
+            first_design["pending"] = False
+            messages += [
+                f"{ATTRIBUTE_COLUMNS_PREFIX}{m}" for m in check_attribute_columns(design, collector)
+            ]
+        return messages
+
     runner = SchemaDesignRunner(
         target_type="dynamodb",
         output_model=DynamoDBModelOutputContract,
@@ -525,13 +554,21 @@ def run_dynamodb_schema_agent(
         pe_skill_path=pe_skill_path or DEFAULT_PE_SKILL_PATH,
         pe_reviewer_fn=_invoke_pe_reviewer,
         format_pe_feedback_fn=_format_pe_feedback,
-        output_check_fn=lambda out: check_design_numbers(
-            "dynamodb", out.model_dump(mode="json"), metrics
-        ),
+        output_check_fn=check_output,
     )
 
     # The PE reviewer gets the same context-table rule (#1243): a review must not ask
     # a context group for the owner's writes.
-    return runner.run(
+    output: DynamoDBModelOutputContract
+    output, trace = runner.run(
         designer_prompt, {"context_tables": context_tables} if context_tables else None
     )
+    failures = [
+        f"{ATTRIBUTE_COLUMNS_PREFIX}{m}"
+        for m in check_attribute_columns(output.model_dump(mode="json"), collector)
+    ]
+    kept = [f for f in output.validation_failures if not f.startswith(ATTRIBUTE_COLUMNS_PREFIX)]
+    output.validation_failures = kept + failures
+    if failures:
+        output.validation_passed = False
+    return output, trace

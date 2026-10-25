@@ -632,7 +632,11 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
     """
     if engine == "dynamodb":
         from src.agents.schema_design.group_merger import merge_failures, merge_warnings
-        from src.agents.schema_design.handler import ScopeReport, apply_schema_scope
+        from src.agents.schema_design.handler import (
+            ScopeReport,
+            apply_attribute_columns,
+            apply_schema_scope,
+        )
         from src.agents.schema_design.output_contract import contract_errors, write_schema_output
 
         base_key = f"{db}/{job_id}/schema-{engine}/v{assignment_version}"
@@ -655,13 +659,17 @@ def run_finalize(store, job_id: str, db: str, engine: str, assignment_version: i
             )
             return
         checked, report = apply_schema_scope(store, db, job_id, engine, merged, assignment_version)
+        # Unknown source columns (#1431) fail the design's validation_passed, not the phase.
+        checked, column_failures, column_notes = apply_attribute_columns(
+            store, db, job_id, checked, assignment_version
+        )
         if checked != merged:  # new violations, or stale ones cleared after a hand fix
             write_schema_output(store, output_key, checked, engine)
         # Merge failures (#223) recorded by --merge fail finalize too; they clear
         # only by fixing the group drafts and re-running --merge.
         report = ScopeReport(
             report.violations + merge_failures(checked),
-            report.warnings + merge_warnings(checked),
+            report.warnings + merge_warnings(checked) + column_failures + column_notes,
         )
         _output({**_scope_fields(report, output_key), "assignment_version": assignment_version})
         return

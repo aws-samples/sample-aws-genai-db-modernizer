@@ -117,6 +117,7 @@ def test_the_bedrock_designer_hands_its_context_tables_to_the_pe_review(tmp_path
         patch.object(agent, "_build_model", return_value=object()),
         patch.object(agent, "Agent", lambda **_: object()),
         patch.object(agent, "_project_input", lambda _p: {"design_metrics": None}),
+        patch.object(agent, "_collector_for_columns", lambda _p: {}),
         patch.object(agent.SchemaDesignRunner, "run", run),
     ):
         try:

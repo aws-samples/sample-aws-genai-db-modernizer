@@ -65,6 +65,8 @@ E2E_LLM: tuple[str, ...] = (
     "src/tools/analysis/key_access.py",
     # Decide which queries and numbers the designer sees (prepare_schema_design_input).
     "src/tools/schema/design_metrics.py",
+    # Decides which DynamoDB designs are sent back for unknown source columns (#1431).
+    "src/tools/schema/dynamodb_attribute_columns.py",
     "src/tools/sql/query_pattern_groups.py",  # queries.query_pattern_groups (#1146)
     # analysis_output.redesign_findings' evidence text (#1231), read from the
     # access-pattern record through query_pattern.fixable_findings.

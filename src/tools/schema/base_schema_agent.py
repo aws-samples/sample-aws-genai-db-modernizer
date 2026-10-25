@@ -44,6 +44,7 @@ from src.agents.prompt_framing import frame_untrusted
 from src.contracts.schema_design_output import TradeOff
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.role_bedrock_model import RoleBedrockModel
+from src.tools.schema.dynamodb_attribute_columns import ATTRIBUTE_COLUMNS_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +174,16 @@ def numbers_correction_prompt(errors: list[str]) -> str:
     listed = "\n".join(f"- {e}" for e in errors)
     return (
         "Some numbers in your design disagree with the pipeline-computed values in "
-        "design_metrics (or with the arithmetic rule they follow):\n"
+        "design_metrics (or with the arithmetic rule they follow), or some source tables "
+        "or columns that an attribute maps from are not in the collected schema:\n"
         # The messages quote table, collection and pattern names from the input.
-        + frame_untrusted(listed, label="numbers that disagree (names are customer data)")
+        + frame_untrusted(listed, label="design checks that failed (names are customer data)")
         + "\n\n"
-        + "Correct exactly these numbers (copy them from design_metrics instead of "
-        "recomputing them), keep everything else unchanged, and return the complete output."
+        + "Correct exactly these items. Copy numbers from design_metrics instead of "
+        "recomputing them. For a source column that is not in the collected schema, fix the "
+        "attribute's source_table and source_column mapping to a real column; keep the "
+        "DynamoDB attribute and key names as they are. Keep everything else unchanged, and "
+        "return the complete output."
     )
 
 
@@ -200,16 +205,19 @@ def enforce_design_numbers[Out: BaseModel](
     for _ in range(NUMBERS_CORRECTION_ROUNDS):
         if not errors:
             return output
-        print(f"{prefix} {len(errors)} number(s) disagree with design_metrics; asking for a fix")
+        print(f"{prefix} {len(errors)} design check(s) failed; asking for a fix")
         output = invoke(numbers_correction_prompt(errors))
         errors = check(output)
     if errors:
-        logger.warning("%s %d number(s) still disagree with design_metrics", prefix, len(errors))
+        logger.warning("%s %d design check(s) still fail", prefix, len(errors))
         if hasattr(output, "validation_passed"):
             output.validation_passed = False  # type: ignore[attr-defined]
         failures = getattr(output, "validation_failures", None)
         if isinstance(failures, list):
-            failures.extend(f"design_metrics: {e}" for e in errors)
+            failures.extend(
+                e if e.startswith(ATTRIBUTE_COLUMNS_PREFIX) else f"design_metrics: {e}"
+                for e in errors
+            )
     return output
 
 

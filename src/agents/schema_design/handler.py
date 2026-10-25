@@ -62,6 +62,10 @@ from src.tools.schema.design_metrics import (
     design_metrics_from_collector,
     in_scope_pattern_count,
 )
+from src.tools.schema.dynamodb_attribute_columns import (
+    ATTRIBUTE_COLUMNS_PREFIX,
+    check_columns,
+)
 from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
 from src.tools.sql.query_pattern_groups import repeated_query_patterns
@@ -523,6 +527,12 @@ def finalize_schema_design(
         ]
         output = _apply_number_mismatches(output, number_warnings)
 
+    if target_type == "dynamodb":
+        output, _, column_warnings = apply_attribute_columns(
+            store, database_name, job_id, output, assignment_version
+        )
+        number_warnings = [*number_warnings, *column_warnings]
+
     output, report = apply_schema_scope(
         store, database_name, job_id, target_type, output, assignment_version
     )
@@ -545,8 +555,41 @@ def finalize_schema_design(
 NUMBERS_PREFIX = "design_metrics: "
 
 
+def apply_attribute_columns(
+    store: ArtifactStore,
+    database_name: str,
+    job_id: str,
+    output: dict,
+    assignment_version: int,
+) -> tuple[dict, list[str], list[str]]:
+    """``output`` with its source-column verdict applied (#1431), plus the messages.
+
+    Returns ``(output, failures, warnings)``. Failures replace any earlier
+    ``source columns:`` entries in ``validation_failures`` and set
+    ``validation_passed=false``; warnings are only returned, for the status. The
+    collector is the one filtered to the assignment, as the designer saw it, in
+    external and Bedrock mode alike. Like design_metrics mismatches, a failure
+    never fails the phase.
+    """
+    collector = read_collector_for_models(store, database_name, job_id, missing_ok=True)
+    if collector and assignment_version > 0:
+        assignment = store.read_json(
+            f"{database_name}/{job_id}/assignment/v{assignment_version}/assignment.json"
+        )
+        collector = filter_collector_for_assignment(collector, assignment, "dynamodb")
+    check = check_columns(output, collector)
+    failures = [f"{ATTRIBUTE_COLUMNS_PREFIX}{m}" for m in check.failures]
+    warnings = [f"{ATTRIBUTE_COLUMNS_PREFIX}{m}" for m in check.warnings]
+    return _apply_mismatches(output, failures, ATTRIBUTE_COLUMNS_PREFIX), failures, warnings
+
+
 def _apply_number_mismatches(output: dict, mismatches: list[str]) -> dict:
-    """``output`` with its design_metrics mismatches replaced by ``mismatches``.
+    """``output`` with its design_metrics mismatches replaced by ``mismatches``."""
+    return _apply_mismatches(output, mismatches, NUMBERS_PREFIX)
+
+
+def _apply_mismatches(output: dict, mismatches: list[str], prefix: str) -> dict:
+    """``output`` with its ``prefix`` messages replaced by ``mismatches``.
 
     Like the scope verdict: earlier ``design_metrics:`` messages are dropped
     first, new ones set ``validation_passed=false``, and a design whose only
@@ -554,7 +597,7 @@ def _apply_number_mismatches(output: dict, mismatches: list[str]) -> dict:
     """
     existing = output.get("validation_failures")
     failures = [f for f in existing if isinstance(f, str)] if isinstance(existing, list) else []
-    kept = [f for f in failures if not f.startswith(NUMBERS_PREFIX)]
+    kept = [f for f in failures if not f.startswith(prefix)]
     if mismatches:
         return {**output, "validation_passed": False, "validation_failures": kept + mismatches}
     if len(kept) != len(failures):
@@ -1069,12 +1112,18 @@ def run_schema_merge(
     checked, report = apply_schema_scope(
         store, database_name, job_id, target_type, merged, assignment_version
     )
+    column_warnings: list[str] = []
+    if target_type == "dynamodb":
+        checked, column_failures, column_notes = apply_attribute_columns(
+            store, database_name, job_id, checked, assignment_version
+        )
+        column_warnings = [*column_failures, *column_notes]
     if checked != merged:
         merged = checked
         output_key = f"{base_key}/schema_output.json"
         write_schema_output(store, output_key, merged, target_type)
     violations = report.violations + merge_failures(merged)
-    report = ScopeReport(violations, report.warnings + merge_warnings(merged))
+    report = ScopeReport(violations, report.warnings + merge_warnings(merged) + column_warnings)
 
     elapsed = time.time() - start_time
 
