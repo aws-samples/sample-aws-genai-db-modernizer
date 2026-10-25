@@ -13,7 +13,8 @@ token (``$1=$2``, never inside an identifier such as ``price$1usd``), and
 T-SQL's ``DELETE``/``UPDATE``/``INSERT TOP (n)`` row limit is dropped when it
 is a number, ``@variable`` or ``?``, and a MySQL ``REPLACE INTO`` is read as the
 ``INSERT INTO`` it is for access (sqlglot reads ``REPLACE`` only as a generic
-command; #986). Each rewrite runs only outside string
+command; #986), and an Oracle ``q'[...]'`` string is written as the plain ``'...'``
+string it is (sqlglot cannot read the alternative quoting; #1481). Each rewrite runs only outside string
 literals, quoted identifiers and comments, and none can add, remove or
 rename a table name (tests pin each case).
 
@@ -63,6 +64,7 @@ import sqlglot
 from sqlglot import exp
 
 from src.shared.sql_comments import block_comments_nest, strip_comments, strip_leading_comments
+from src.shared.sql_spans import is_alternative_quote, literals_and_comments_for, spans
 from src.tools.sql.normalize import (
     NormalizedQuery,
     normalize_digest_text,
@@ -568,6 +570,7 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
     text = normalized.text
     dml_top_dropped = False
     if dialect == "oracle":
+        text = _plain_oracle_strings(text)
         text = _sub_outside_quotes(_ORACLE_POSITIONAL_BIND_RE, r":b\1", text, source_engine)
     elif dialect == "postgres":
         text = _sub_outside_quotes(_PG_PLACEHOLDER_RE, r"\1 ", text, source_engine)
@@ -595,6 +598,32 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
         statements=tuple(statements),
         dml_top_dropped=dml_top_dropped,
     )
+
+
+def _plain_oracle_strings(text: str) -> str:
+    """``text`` with each Oracle ``q'[...]'`` (``nq'[...]'``) string written as the plain
+    ``'...'`` (``N'...'``) string it is, its quotes doubled (#1481).
+
+    sqlglot's Oracle reader cannot read the alternative quoting, so a statement holding
+    one would fall back to the regex reading, which reads the text inside as SQL. The
+    spans are the shared Oracle grammar's (:mod:`src.shared.sql_spans`), so a ``q'`` in a
+    comment, a plain string or a quoted name is left as written. The string's value is
+    unchanged, so no table name or fact can move but the ones the fallback misread.
+    """
+    out: list[str] = []
+    last = 0
+    for start, end, opener in spans(text, literals_and_comments_for("oracle")):
+        if not is_alternative_quote(opener):
+            continue
+        body = text[start + len(opener) : end - 2]
+        national = "N" if opener[0] in "nN" else ""
+        out.append(text[last:start])
+        out.append(national + "'" + body.replace("'", "''") + "'")
+        last = end
+    if not out:
+        return text
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _parse_or_none(text: str, dialect: str) -> list[exp.Expr] | None:

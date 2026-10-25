@@ -312,8 +312,10 @@ class TestOnlyARealCutIsRepaired:
 
         assert not normalize_digest_text(self.ORACLE, "oracle").truncated
         facts = access_facts(self.ORACLE, "oracle")
-        # sqlglot cannot read it either: it stays unparsed, as on main, never a prefix.
-        assert not facts.truncated_read and not facts.scopes
+        # The facade reads it as the plain string it is (#1481): the whole statement,
+        # never a cut-short prefix.
+        assert facts.parsed_by == "sqlglot"
+        assert not facts.truncated_read and len(facts.scopes) == 1
 
     @pytest.mark.parametrize("closer", ["[ ]", "( )", "{ }", "< >", "! !"])
     def test_every_oracle_delimiter_and_the_national_form(self, closer):

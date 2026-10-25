@@ -49,7 +49,7 @@ __all__ = [
 ]
 
 # The code whose answer the stored facts are (under ``src/``): the facade, its regex
-# fallback, the digest normalizer and the comment scanner it uses, and this codec. A
+# fallback, the digest normalizer, the comment scanner and span grammar it uses, and this codec. A
 # change to any of them changes the version.
 _READER_SOURCES = (
     "tools/sql/facade.py",
@@ -57,6 +57,7 @@ _READER_SOURCES = (
     "tools/sql/regex_facts.py",
     "tools/sql/normalize.py",
     "shared/sql_comments.py",
+    "shared/sql_spans.py",
     "tools/sql/stored_facts.py",
 )
 

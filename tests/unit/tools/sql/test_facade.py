@@ -365,6 +365,42 @@ def test_quoting_does_not_split_one_reference_in_two():
     assert [r.name for r in refs.tables] == ["topics"]
 
 
+class TestOracleAlternativeQuote:
+    """#1481: sqlglot cannot read Oracle's ``q'[...]'`` strings, so the facade writes each
+    one as the plain string it is before the parse; the text inside is never SQL."""
+
+    REPRO = "SELECT id FROM t WHERE note = q'{it's a JOIN u, GROUP BY x}' AND id = 1"
+
+    def test_the_issue_repro_parses_and_reads_the_string_as_a_literal(self):
+        facts = sql_facts(self.REPRO, "oracle")
+        assert facts.parsed_by == "sqlglot"
+        assert facts.join_count == 0 and not facts.group_by and not facts.has_aggregation
+        assert _names(self.REPRO, "oracle") == ["t"]
+
+    @pytest.mark.parametrize("closer", ["[ ]", "( )", "{ }", "< >", "! !", "# #"])
+    @pytest.mark.parametrize("prefix", ["q", "Q", "nq", "NQ"])
+    def test_every_delimiter_and_the_national_form(self, closer, prefix):
+        a, b = closer.split()
+        sql = f"SELECT * FROM orders WHERE note LIKE {prefix}'{a}%it's FROM ghost{b}'"
+        facts = sql_facts(sql, "oracle")
+        assert facts.parsed_by == "sqlglot", sql
+        assert _names(sql, "oracle") == ["orders"], sql
+        # The string's value is kept, quote included: a leading wildcard still reads as one.
+        assert facts.wildcard_leading, sql
+
+    @pytest.mark.passes_on_main  # guards what the bridge must not touch
+    def test_a_q_quote_inside_a_string_or_comment_is_left_alone(self):
+        sql = "SELECT 'q''[x]''' AS s FROM t -- q'[JOIN u]'\nWHERE id = :1"
+        assert sql_facts(sql, "oracle").parsed_by == "sqlglot"
+        assert _names(sql, "oracle") == ["t"]
+
+    @pytest.mark.passes_on_main  # guards what the bridge must not touch
+    def test_other_dialects_do_not_read_the_form(self):
+        """``q'[x]'`` is a name and a string outside Oracle: the bridge is Oracle's only."""
+        sql = "SELECT * FROM t WHERE a = q'[x JOIN u]'"
+        assert sql_facts(sql, "postgresql").parsed_by == "regex"
+
+
 class TestSizeCap:
     @staticmethod
     def _insert(n: int) -> str:

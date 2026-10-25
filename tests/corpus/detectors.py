@@ -57,60 +57,6 @@ def _bug(issue: int, *ids: str, dialects: tuple[str, ...] = ALL_DIALECTS) -> dic
     return {f"{i}@{d}": issue for i in ids for d in by_id[i].dialects if d in dialects}
 
 
-# Oracle q'[...]' strings (#1451): sqlglot cannot read one, so the facade falls back to
-# the raw-text regex reading, which counts the text inside the string as SQL. The span
-# grammar and the text facts read it right; these detectors answer through the facade and
-# are wrong until #1481 lands. Detector name -> the entries it answers wrongly.
-_Q_ENTRIES = tuple(
-    e.id for e in SQL_ENTRIES if e.id.startswith(("oracle_q_quote_", "oracle_national_"))
-)
-_APOSTROPHE_ONLY = ("oracle_q_quote_with_apostrophe",)
-_Q_FACADE_WRONG: dict[str, tuple[str, ...]] = {
-    **dict.fromkeys(
-        (
-            "QueryFacts.group_by",
-            "QueryFacts.aggregation",
-            "QueryFacts.join_count",
-            "QueryFacts.needs_aggregation",
-            "src/tools/sql/facade.py:sql_facts",
-            "src/tools/sql/facade.py:table_references",
-            "src/tools/sql/facade.py:access_facts",
-            "src/agents/referee/query_shape.py:single_table_access_shape",
-            "src/agents/referee/query_shape.py:is_single_table_crud",
-        ),
-        _Q_ENTRIES,
-    ),
-    **dict.fromkeys(
-        (
-            f"QueryFacts.{fact}"
-            for fact in (
-                "aggregate_function_count",
-                "leading_wildcard_like",
-                "wildcard_likes",
-                "like_parameter",
-                "fulltext_search",
-                "pattern_match",
-                "similarity_match",
-                "text_search",
-                "window_function",
-                "windowed_aggregate",
-                "order_by",
-                "row_limit",
-                "top_n",
-                "multi_table_write",
-                "json_access",
-                "timestamp_column",
-            )
-        ),
-        _APOSTROPHE_ONLY,
-    ),
-}
-
-
-def _q_quote_bugs(name: str) -> dict[str, int]:
-    return {f"{entry}@oracle": 1481 for entry in _Q_FACADE_WRONG.get(name, ())}
-
-
 # ---------------------------------------------------------------------------
 # Detectors
 # ---------------------------------------------------------------------------
@@ -235,21 +181,15 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
             f"QueryFacts.{name}",
             _fact(name),
             expect=_FACT_EXPECT.get(name, {}),
-            bugs=_q_quote_bugs(f"QueryFacts.{name}"),
         )
         for name in _public_facts()
     ),
-    SqlDetector(
-        f"{_FACADE}:sql_facts", _sql_facts_shape, bugs=_q_quote_bugs(f"{_FACADE}:sql_facts")
-    ),
+    SqlDetector(f"{_FACADE}:sql_facts", _sql_facts_shape),
     SqlDetector(
         f"{_FACADE}:table_references",
         lambda text, dialect: facade.table_references(text, dialect).tables,
-        bugs=_q_quote_bugs(f"{_FACADE}:table_references"),
     ),
-    SqlDetector(
-        f"{_FACADE}:access_facts", _access_shape, bugs=_q_quote_bugs(f"{_FACADE}:access_facts")
-    ),
+    SqlDetector(f"{_FACADE}:access_facts", _access_shape),
     SqlDetector(f"{_FACADE}:sql_tokens", _tokens),
     SqlDetector(
         f"{_REGEX}:scan_sql",
@@ -294,14 +234,12 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: query_shape.single_table_access_shape(
             _query(text, dialect), ["id"], None, SourceScope(engine=dialect)
         ),
-        bugs=_q_quote_bugs(f"{_SHAPE}:single_table_access_shape"),
     ),
     SqlDetector(
         f"{_SHAPE}:is_single_table_crud",
         lambda text, dialect: query_shape.is_single_table_crud(
             _query(text, dialect), ["id"], None, SourceScope(engine=dialect)
         ),
-        bugs=_q_quote_bugs(f"{_SHAPE}:is_single_table_crud"),
     ),
     SqlDetector(
         f"{_TRANSACTION}:transaction_shape",

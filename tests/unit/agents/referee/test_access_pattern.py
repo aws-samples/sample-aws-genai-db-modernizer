@@ -817,11 +817,12 @@ class TestACutShortDigest:
         assert result.name == AD_HOC_FILTER
         assert result.reason.endswith(TRUNCATED_NOTE)
 
-    def test_a_complete_oracle_statement_with_an_alternative_quote_stays_unparsed(self):
-        """Review of #986: a complete statement is never read as a cut-short prefix."""
+    def test_a_complete_oracle_statement_with_an_alternative_quote_is_read_whole(self):
+        """Review of #986: a complete statement is never read as a cut-short prefix. Since
+        #1481 the facade reads the ``q'[...]'`` string, so the statement is classed whole."""
         sql = "SELECT * FROM orders o WHERE o.id = :1 AND o.note = q'[don't AND stop]'"
         result = self._result(sql, "oracle")
-        assert result.name == UNPARSED and TRUNCATED_NOTE not in result.reason
+        assert result.name != UNPARSED and TRUNCATED_NOTE not in result.reason
 
     def test_a_cut_short_write_is_classed_without_its_outer_where(self):
         sql = "UPDATE orders SET total = ( SELECT max(qty) FROM order_items WHERE order_id = orders.id AND"
