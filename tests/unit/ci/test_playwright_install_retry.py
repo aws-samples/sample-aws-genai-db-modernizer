@@ -109,7 +109,8 @@ n=$(( $(cat "$FAKE_DIR/count" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$FAKE_DIR/count"
 if [ "$n" -le "$FAKE_HANGS" ]; then
   # Like node spawning sudo apt-get: a child that outlives a kill of its parent.
-  if [ -n "$FAKE_IGNORE_TERM" ]; then (trap '' TERM; exec sleep 60) & else sleep 60 & fi
+  # The hang must outlast the attempt limit, which grows with the machine's load.
+  if [ -n "$FAKE_IGNORE_TERM" ]; then (trap '' TERM; exec sleep "$FAKE_HANG_SECONDS") & else sleep "$FAKE_HANG_SECONDS" & fi
   echo $! >> "$FAKE_DIR/children"
   wait
 fi
@@ -156,6 +157,7 @@ def _run_hanging(tmp_path: Path, hangs: int, **env: str):
         "FAKE_HANGS": str(hangs),
         "E2E_INSTALL_BACKOFF": "0",
         "E2E_INSTALL_TIMEOUT": str(limit),
+        "FAKE_HANG_SECONDS": str(limit + 30),
         "HOME": str(tmp_path),
     }
     base.update(env)
