@@ -627,3 +627,66 @@ class TestTheTestedColumnOfARegularExpression:
         assert restored is not None
         assert restored[0].regex_matches == sql_facts(sql, "postgresql").regex_matches
         assert restored[0].regex_matches[0].use is not None
+
+
+class TestAppendTargets:
+    """#1459: the tables a statement only appends rows to, read from its ``INSERT``
+    nodes in the source dialect, whatever its collected type."""
+
+    @pytest.mark.parametrize(
+        "sql,engine,expected",
+        [
+            ("INSERT INTO events (id) VALUES (?)", "mysql", ("events",)),
+            ("INSERT IGNORE INTO events (id) VALUES (?)", "mysql", ("events",)),
+            (
+                "INSERT INTO events (id) VALUES ($1) ON CONFLICT DO NOTHING",
+                "postgresql",
+                ("events",),
+            ),
+            (
+                "INSERT INTO events (id) VALUES ($1) ON CONFLICT (id) DO NOTHING",
+                "postgresql",
+                ("events",),
+            ),
+            (
+                "WITH w AS (INSERT INTO events (id) SELECT id FROM staging RETURNING id) "
+                "SELECT count(*) FROM w",
+                "postgresql",
+                ("events",),
+            ),
+            ("INSERT INTO [Events] (id) SELECT id FROM staging", "sqlserver", ("events",)),
+            ("INSERT INTO app.events (id) VALUES (:1)", "oracle", ("events",)),
+            # Overwrites, never appends.
+            ("REPLACE INTO events (id) VALUES (?)", "mysql", ()),
+            ("INSERT INTO events (id) VALUES (?) ON DUPLICATE KEY UPDATE id = id", "mysql", ()),
+            (
+                "INSERT INTO events (id) VALUES ($1) ON CONFLICT (id) DO UPDATE SET id = 1",
+                "postgresql",
+                (),
+            ),
+            (
+                "MERGE INTO events t USING staging s ON t.id = s.id "
+                "WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)",
+                "sqlserver",
+                (),
+            ),
+            ("UPDATE events SET n = 1 WHERE id = ?", "mysql", ()),
+            ("SELECT 'INSERT INTO events' FROM t", "postgresql", ()),
+        ],
+    )
+    def test_each_form(self, sql, engine, expected):
+        facts = sql_facts(sql, engine)
+        assert facts.parsed_by == "sqlglot", sql
+        assert facts.append_targets == expected, sql
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            ("INSERT INTO events (id) VALUES (?) ON CONFLICT DO NOTHING", ("events",)),
+            ("INSERT INTO events (id) VALUES (?) ON CONFLICT (id) DO UPDATE SET id = 1", ()),
+            ("REPLACE INTO events (id) VALUES (?)", ()),
+            ("INSERT INTO events (id) VALUES (?) -- DO UPDATE", ("events",)),
+        ],
+    )
+    def test_the_regex_fallback_reads_the_same(self, sql, expected):
+        assert regex_reading(sql, "postgresql", "parse_error").facts.append_targets == expected

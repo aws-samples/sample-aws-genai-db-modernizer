@@ -274,6 +274,27 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         "the national form nq'[...]'",
     ),
     SqlEntry(
+        "insert_in_cte_string",
+        "WITH w AS (SELECT 'INSERT INTO u (id) VALUES (1)' AS s FROM t) SELECT s FROM w",
+        "WITH w AS (SELECT 'x' AS s FROM t) SELECT s FROM w",
+        ALL_DIALECTS,
+        "an INSERT inside a string in a CTE: the statement appends nothing (#1459)",
+    ),
+    SqlEntry(
+        "do_update_in_comment_after_do_nothing",
+        "INSERT INTO t (id) VALUES (1) ON CONFLICT DO NOTHING -- ON CONFLICT DO UPDATE SET id = 2",
+        "INSERT INTO t (id) VALUES (1) ON CONFLICT DO NOTHING",
+        ("postgresql",),
+        "an overwriting clause in a comment after ON CONFLICT DO NOTHING, an append (#1459)",
+    ),
+    SqlEntry(
+        "duplicate_key_update_in_string",
+        "INSERT INTO t (id, note) VALUES (1, 'ON DUPLICATE KEY UPDATE id = 2')",
+        "INSERT INTO t (id, note) VALUES (1, 'x')",
+        ("mysql",),
+        "an overwriting clause inside a string literal of a plain insert (#1459)",
+    ),
+    SqlEntry(
         "line_comment",
         f"SELECT id FROM t -- {_IN_COMMENT}\nWHERE id = 1",
         "SELECT id FROM t\nWHERE id = 1",

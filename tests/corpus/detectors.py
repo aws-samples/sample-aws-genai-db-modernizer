@@ -318,6 +318,7 @@ for _fn in (
     "regex_json_access",
     "regex_multi_table_write",
     "regex_write_targets",
+    "regex_append_targets",
     "regex_range_predicate",
 ):
     NOT_SQL_DETECTORS[f"{_REGEX}:{_fn}"] = _REGEX_FALLBACK_REASON

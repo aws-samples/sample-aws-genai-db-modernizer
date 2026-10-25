@@ -106,26 +106,30 @@ def inserted_tables(
 ) -> list[str]:
     """The :func:`written_tables` ``query`` only appends rows to (#1392).
 
-    An append is a collected ``INSERT`` (MySQL's ``REPLACE`` arrives typed ``INSERT``)
-    that is no upsert (``QueryFacts.upsert``, read in ``source_engine``'s dialect: an
-    upsert overwrites a row it collides with), counted on its write targets only, never
-    on a table it only reads or locks. An ``UPDATE``, ``DELETE``, ``MERGE``, a locking
-    read and a data-modifying CTE collected as ``OTHER`` append nothing.
+    An append is an ``INSERT`` target the statement names (``QueryFacts.append_targets``,
+    read in ``source_engine``'s dialect, #1459): a data-modifying CTE's insert counts
+    whatever the collected ``query_type`` (the collector types ``WITH w AS (INSERT ...)
+    SELECT ...`` as ``OTHER``), and so does ``ON CONFLICT DO NOTHING``, which never
+    overwrites a row; an insert that can overwrite the row it collides with (``ON
+    CONFLICT ... DO UPDATE``, ``ON DUPLICATE KEY UPDATE``, MySQL's ``REPLACE``) does not.
+    It is counted on its write targets only, never on a table the statement only reads
+    or locks. An ``UPDATE``, ``DELETE``, ``MERGE`` and a locking read append nothing.
     """
-    if str(query.get("query_type") or "").upper() != "INSERT":
-        return []
     written = written_tables(query, source_engine, source)
     if not written:
         return []
     facts = query_facts(str(query.get("query_text") or ""), source_engine)
-    if facts.upsert:
-        return []
-    targets = set(facts.write_targets)
+    targets = set(facts.append_targets)
     matched = [t for t in written if _bare(t) in targets]
     if matched:
         return matched
-    # The target is none of the collected tables (``written_tables``' fallback): every
-    # written table, unless the statement also locks what it reads.
+    if str(query.get("query_type") or "").upper() != "INSERT":
+        return []
+    if not targets and (facts.write_targets or facts.upsert):
+        return []  # the text names its target, and it overwrites (an upsert, a REPLACE)
+    # The target is none of the collected tables, or the text names none
+    # (``written_tables``' fallback): every written table, unless the statement also
+    # locks what it reads.
     return [] if is_locking_read(query, source_engine) else written
 
 

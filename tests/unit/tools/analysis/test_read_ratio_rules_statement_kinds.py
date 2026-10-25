@@ -319,3 +319,116 @@ def test_a_locking_insert_whose_target_is_not_collected_appends_to_nothing() -> 
     profiles = build_table_profiles(collector, WorkloadAnalysis(patterns_detected=[]))
     assert profiles["staging"].write_query_count == 1
     assert profiles["staging"].insert_query_count == 0
+
+
+# -- Appends the collected type or the upsert flag hid (#1459) -------------------
+
+# Each one only adds rows, whatever its collected ``query_type``: a data-modifying CTE
+# that inserts and ends in a SELECT is collected as OTHER, and ``ON CONFLICT DO NOTHING``
+# never overwrites the row it collides with.
+_HIDDEN_APPENDS: dict[str, tuple[str, str, str]] = {
+    "cte_insert": (
+        "postgresql",
+        "OTHER",
+        "WITH w AS (INSERT INTO events (id, n) VALUES (?, ?) RETURNING id) SELECT id FROM w",
+    ),
+    "on_conflict_do_nothing": (
+        "postgresql",
+        "INSERT",
+        "INSERT INTO events (id, n) VALUES (?, ?) ON CONFLICT DO NOTHING",
+    ),
+    "on_conflict_on_constraint_do_nothing": (
+        "postgresql",
+        "INSERT",
+        "INSERT INTO events (id, n) VALUES (?, ?) ON CONFLICT ON CONSTRAINT events_pk DO NOTHING",
+    ),
+    "on_conflict_keys_do_nothing": (
+        "postgresql",
+        "INSERT",
+        "INSERT INTO events (id, n) VALUES (?, ?) ON CONFLICT (id) DO NOTHING",
+    ),
+}
+
+
+def _one_kind_profile(engine: str, qtype: str, text: str) -> TableProfile:
+    """One plain read and three statements ``text`` on the events table."""
+    queries = [
+        {
+            "query_id": "r0",
+            "query_type": "SELECT",
+            "query_text": "SELECT id, n FROM events WHERE ts > ?",
+            "tables_accessed": [_TABLE],
+        }
+    ] + [
+        {
+            "query_id": f"w{i}",
+            "query_type": qtype,
+            "query_text": text,
+            "tables_accessed": [_TABLE],
+        }
+        for i in range(3)
+    ]
+    collector = {
+        "metadata": {"source_database": {"engine": engine}},
+        "database_schema": {"tables": [{"table_id": _TABLE, "columns": []}]},
+        "queries": {"query_patterns": queries},
+    }
+    return build_table_profiles(collector, WorkloadAnalysis(patterns_detected=[]))[_TABLE]
+
+
+@pytest.mark.parametrize("kind", list(_HIDDEN_APPENDS))
+def test_a_cte_insert_and_on_conflict_do_nothing_are_appends(kind: str) -> None:
+    engine, qtype, text = _HIDDEN_APPENDS[kind]
+    profile = _one_kind_profile(engine, qtype, text)
+    assert profile.insert_query_count == 3
+    assert profile.insert_ratio == pytest.approx(0.75)
+
+
+@pytest.mark.passes_on_main  # what must stay no append
+@pytest.mark.parametrize(
+    ("engine", "qtype", "text"),
+    [
+        ("mysql", "INSERT", "REPLACE INTO events (id, n) VALUES (?, ?)"),
+        (
+            "postgresql",
+            "OTHER",
+            "WITH w AS (INSERT INTO events (id, n) VALUES (?, ?) "
+            "ON CONFLICT (id) DO UPDATE SET n = 1 RETURNING id) SELECT id FROM w",
+        ),
+        (
+            "postgresql",
+            "OTHER",
+            "WITH w AS (UPDATE events SET n = 1 WHERE id = ? RETURNING id) SELECT id FROM w",
+        ),
+        ("postgresql", "OTHER", "WITH w AS (SELECT 'INSERT INTO events' AS s) SELECT s FROM w"),
+    ],
+)
+def test_an_overwrite_or_a_cte_that_inserts_nothing_is_no_append(
+    engine: str, qtype: str, text: str
+) -> None:
+    assert _one_kind_profile(engine, qtype, text).insert_query_count == 0
+
+
+def test_a_cte_insert_appends_to_its_target_only() -> None:
+    """``WITH w AS (INSERT INTO events ... SELECT ... FROM staging) SELECT ...``: the
+    table the CTE reads gets no append."""
+    collector = {
+        "metadata": {"source_database": {"engine": "postgresql"}},
+        "database_schema": {"tables": [{"table_id": "events"}, {"table_id": "staging"}]},
+        "queries": {
+            "query_patterns": [
+                {
+                    "query_id": "w",
+                    "query_type": "OTHER",
+                    "query_text": (
+                        "WITH w AS (INSERT INTO events (id) SELECT id FROM staging "
+                        "RETURNING id) SELECT count(*) FROM w"
+                    ),
+                    "tables_accessed": ["events", "staging"],
+                }
+            ]
+        },
+    }
+    profiles = build_table_profiles(collector, WorkloadAnalysis(patterns_detected=[]))
+    assert profiles["events"].insert_query_count == 1
+    assert profiles["staging"].insert_query_count == 0

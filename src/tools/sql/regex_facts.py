@@ -67,6 +67,10 @@ count:
   output, as a bare lower-cased name, and each table a multi-table ``UPDATE``'s ``SET``
   columns name; a MySQL ``DELETE a FROM t a`` or a SQL Server ``UPDATE a SET ...
   FROM t a`` names the aliased table;
+- ``append_targets``: the tables named after ``INSERT [IGNORE] [INTO]``, as
+  ``write_targets`` reads them, or none when the text can overwrite a row it collides
+  with (``ON DUPLICATE KEY UPDATE``, ``DO UPDATE``, ``REPLACE [INTO]``): the scan can't
+  tell which insert such a clause belongs to (#1459);
 - ``range_predicate`` (the fallback of the access facts' ranges): ``BETWEEN``,
   ``<``, ``<=``, ``>``, ``>=`` (not ``<>``, ``->``, ``@>`` or ``<@``).
 """
@@ -698,6 +702,29 @@ def regex_write_targets(query_text: str, source_engine: str | None = None) -> tu
         if unqualified or not qualifiers:
             out.append(written)
     return tuple(dict.fromkeys(out))
+
+
+# An insert that can overwrite the row it collides with: MySQL's ``ON DUPLICATE KEY
+# UPDATE`` and ``REPLACE``, PostgreSQL's ``ON CONFLICT ... DO UPDATE``.
+_OVERWRITING_INSERT_RE = re.compile(
+    r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b|\bDO\s+UPDATE\b"
+    r"|\bREPLACE(?:\s+(?:LOW_PRIORITY|DELAYED))*\s+INTO\b",
+    re.IGNORECASE,
+)
+
+
+def regex_append_targets(query_text: str, source_engine: str | None = None) -> tuple[str, ...]:
+    """The tables a statement only appends rows to, by the ``INSERT`` before each table
+    name (the fallback of ``SqlFacts.append_targets``)."""
+    text = scan_sql(query_text or "", source_engine)
+    if _OVERWRITING_INSERT_RE.search(text):
+        return ()
+    out = [
+        _bare(m.group("table"))
+        for m in _WRITE_TARGET_RE.finditer(text)
+        if not m.group("pre") and m.group(0).lstrip().lower().startswith("insert")
+    ]
+    return tuple(dict.fromkeys(name for name in out if name not in _NOT_AN_ALIAS))
 
 
 _OUTPUT_INTO_RE = re.compile(

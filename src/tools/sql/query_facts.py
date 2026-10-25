@@ -975,6 +975,18 @@ class QueryFacts:
         return reading
 
     @cached_property
+    def append_targets(self) -> tuple[str, ...]:
+        """The :attr:`write_targets` the statement only appends rows to, lower-cased
+        bare names: each ``INSERT`` target, a data-modifying CTE's included, whatever the
+        collected ``query_type``, never one that can overwrite the row it collides with
+        (``ON CONFLICT ... DO UPDATE``, ``ON DUPLICATE KEY UPDATE``, ``REPLACE``);
+        ``ON CONFLICT DO NOTHING`` appends (``SqlFacts.append_targets``, #1459).
+        """
+        if not self._has("insert"):
+            return ()
+        return self._parsed.append_targets
+
+    @cached_property
     def multi_table_write(self) -> bool:
         """An UPDATE or DELETE whose rows come from a join with another table, in any
         dialect (``SqlFacts.multi_table_write``).

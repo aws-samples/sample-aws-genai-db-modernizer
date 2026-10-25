@@ -78,6 +78,7 @@ from src.tools.sql.regex_facts import (
     RegexMatch,
     WildcardLike,
     regex_aggregate_function_count,
+    regex_append_targets,
     regex_fulltext_search,
     regex_group_by,
     regex_grouping_sets,
@@ -352,6 +353,13 @@ class SqlFacts:
             multi-table ``UPDATE a JOIN b ... SET a.x = ?, b.y = ?`` writes every
             table its ``SET`` columns name; a table the write only reads (``INSERT ... SELECT ... FROM b``, an
             ``UPDATE ... FROM b``, a ``MERGE``'s ``USING`` source) is not one.
+        append_targets: The :attr:`write_targets` the text only appends rows to (#1459),
+            lower-cased bare names in first-seen order: each ``INSERT`` target, a
+            data-modifying CTE's included, whatever the statement's collected type, but
+            not one that can overwrite the row it collides with (``ON CONFLICT ... DO
+            UPDATE``, ``ON DUPLICATE KEY UPDATE``, MySQL's ``REPLACE``). ``ON CONFLICT
+            DO NOTHING`` and ``INSERT IGNORE`` keep the row there and append. A
+            ``MERGE``'s ``WHEN NOT MATCHED THEN INSERT`` is the ``MERGE``'s, an upsert.
     """
 
     join_count: int
@@ -384,6 +392,7 @@ class SqlFacts:
     wildcard_likes: tuple[WildcardLike, ...] = ()
     regex_matches: tuple[RegexMatch, ...] = ()
     write_targets: tuple[str, ...] = ()
+    append_targets: tuple[str, ...] = ()
 
     @property
     def timestamp_column(self) -> bool:
@@ -524,6 +533,9 @@ class _Parsed:
     # A T-SQL ``DELETE``/``UPDATE``/``INSERT TOP (n)`` the bridge dropped before
     # parsing: a row limit the tree no longer shows (``SqlFacts.row_limit``).
     dml_top_dropped: bool = False
+    # A MySQL ``REPLACE INTO`` the bridge read as ``INSERT INTO``: the first statement
+    # overwrites by key, so it appends nothing (``SqlFacts.append_targets``).
+    replace_read_as_insert: bool = False
     # The digest was cut short and does not parse, but its prefix up to the last
     # complete predicate does (:func:`_repair_truncated`); only the access facts
     # read it (#986). Empty when there is none.
@@ -568,7 +580,7 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
     if not normalized.text.strip():
         return fallback("empty")
     text = normalized.text
-    dml_top_dropped = False
+    dml_top_dropped = replace_read_as_insert = False
     if dialect == "oracle":
         text = _plain_oracle_strings(text)
         text = _sub_outside_quotes(_ORACLE_POSITIONAL_BIND_RE, r":b\1", text, source_engine)
@@ -580,7 +592,9 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
     elif dialect == "mysql":
         # After the statement's leading comments (#1178): a tagged REPLACE is one too.
         body = strip_leading_comments(text, hash_comments=True, mysql_executable=True)
-        text = text[: len(text) - len(body)] + _MYSQL_REPLACE_RE.sub(r"\1INSERT", body, count=1)
+        bridged = _MYSQL_REPLACE_RE.sub(r"\1INSERT", body, count=1)
+        replace_read_as_insert = bridged != body
+        text = text[: len(text) - len(body)] + bridged
     try:
         statements = [s for s in sqlglot.parse(text, read=dialect or None) if s]
     except Exception:  # noqa: BLE001 -- any parser failure falls back, by contract
@@ -597,6 +611,7 @@ def _parse(sql: str, source_engine: str) -> _Parsed:
         truncated=normalized.truncated,
         statements=tuple(statements),
         dml_top_dropped=dml_top_dropped,
+        replace_read_as_insert=replace_read_as_insert,
     )
 
 
@@ -681,7 +696,12 @@ def _tables(parsed: _Parsed) -> TableReferences:
 def _facts(parsed: _Parsed) -> SqlFacts:
     if parsed.fallback_reason is not None:
         return _regex_facts(parsed.sql, parsed.fallback_reason, parsed.dialect)
-    return _facts_from_statements(parsed.statements, parsed.dialect, parsed.dml_top_dropped)
+    return _facts_from_statements(
+        parsed.statements,
+        parsed.dialect,
+        parsed.dml_top_dropped,
+        replace_read_as_insert=parsed.replace_read_as_insert,
+    )
 
 
 def regex_answer(sql: str, source_engine: str, reason: FallbackReason) -> TableReferences:
@@ -928,6 +948,7 @@ def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
         json_access=regex_json_access(sql),
         multi_table_write=regex_multi_table_write(sql),
         write_targets=regex_write_targets(sql, dialect),
+        append_targets=regex_append_targets(sql, dialect),
     )
 
 
@@ -942,7 +963,11 @@ def _is_grouping_sets(node: exp.Expr) -> bool:
 
 
 def _facts_from_statements(
-    statements: tuple[exp.Expr, ...], dialect: str, dml_top_dropped: bool = False
+    statements: tuple[exp.Expr, ...],
+    dialect: str,
+    dml_top_dropped: bool = False,
+    *,
+    replace_read_as_insert: bool = False,
 ) -> SqlFacts:
     """The facts of parsed statements (see :class:`SqlFacts`)."""
     nodes = [node for statement in statements for node in statement.walk()]
@@ -995,6 +1020,7 @@ def _facts_from_statements(
         json_access=any(_is_json_access(node) for node in nodes),
         multi_table_write=any(_is_multi_table_write(node) for node in nodes),
         write_targets=_write_targets(statements),
+        append_targets=_append_targets(statements, replace_read_as_insert),
     )
 
 
@@ -1223,6 +1249,34 @@ def _write_targets(statements: Iterable[exp.Expr]) -> tuple[str, ...]:
                     name = aliases[name]
                 out.append(name)
     return tuple(dict.fromkeys(out))
+
+
+def _append_targets(
+    statements: tuple[exp.Expr, ...], replace_read_as_insert: bool
+) -> tuple[str, ...]:
+    """The tables the statements only append rows to (``SqlFacts.append_targets``)."""
+    out: list[str] = []
+    for index, statement in enumerate(statements):
+        for node in statement.find_all(exp.Insert):
+            if replace_read_as_insert and index == 0 and node is statement:
+                continue  # MySQL's REPLACE: it deletes the row with the same key first
+            if _overwrites_on_conflict(node):
+                continue
+            target = node.this.this if isinstance(node.this, exp.Schema) else node.this
+            # A MERGE's ``WHEN NOT MATCHED THEN INSERT`` names columns, not a table.
+            if isinstance(target, exp.Table) and target.name:
+                out.append(target.name.lower())
+    return tuple(dict.fromkeys(out))
+
+
+def _overwrites_on_conflict(insert: exp.Insert) -> bool:
+    """``ON DUPLICATE KEY UPDATE`` or ``ON CONFLICT ... DO UPDATE``; ``DO NOTHING`` keeps
+    the row that is there."""
+    conflict = insert.args.get("conflict")
+    if not isinstance(conflict, exp.OnConflict):
+        return False
+    action = str(getattr(conflict.args.get("action"), "this", "") or "").upper()
+    return bool(conflict.args.get("duplicate")) or action != "DO NOTHING"
 
 
 def _set_column(assignment: exp.Expr) -> exp.Column | None:
