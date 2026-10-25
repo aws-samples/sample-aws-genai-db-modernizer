@@ -491,30 +491,25 @@ def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> Coll
     parsed = ckpt.load_or_run(
         "offline_schema",
         lambda: parse_offline_collection(
-            raw
-            if raw is not None
-            else fetch_offline_json(
-                bucket=inp.offline_config.s3_bucket,
-                key=inp.offline_config.s3_key,
-                region=region,
-            )
+            (
+                raw
+                if raw is not None
+                else fetch_offline_json(
+                    bucket=inp.offline_config.s3_bucket,
+                    key=inp.offline_config.s3_key,
+                    region=region,
+                )
+            ),
+            database_name=inp.database_name,
         ),
     )
 
     # Stage 2: AWS metrics
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
-    # Use the database name from the offline JSON (metadata.database_name) rather than
-    # the user-supplied inp.database_name. The offline JSON contains the real database
-    # name used to prefix table IDs (e.g. "forum_db.users"). Using inp.database_name
-    # here would create a mismatch (e.g. "mydb.users") that breaks downstream agents.
-    offline_meta = parsed.get("metadata", {})
-    actual_db_name = (
-        offline_meta.get("database_name") if isinstance(offline_meta, dict) else None
-    ) or inp.database_name
-    return build_offline_contract(
-        parsed, inp, table_database_name=actual_db_name, aws_raw=aws_raw or {}
-    )
+    # The table ids take the database the collection holds, as its statements'
+    # table references do, never inp.database_name alone (#1572).
+    return build_offline_contract(parsed, inp, aws_raw=aws_raw or {})
 
 
 # ---------------------------------------------------------------------------
@@ -1369,9 +1364,12 @@ def _build_output(
     procedures=None,
     triggers=None,
     engines_in_use=None,
+    database_name: str | None = None,
 ) -> CollectorOutputContract:
     """``engines_in_use`` (#949): the engine ids an offline collection records as
-    already running next to the source; anything but a list of strings is ignored."""
+    already running next to the source; anything but a list of strings is ignored.
+    ``database_name``: the collected database's name, the table ids' qualifier
+    (#1572); ``inp.database_name`` when not given."""
     elapsed = time.monotonic() - start
     return CollectorOutputContract(
         job_id=inp.job_id,
@@ -1383,7 +1381,7 @@ def _build_output(
                 engine=inp.engine.value,  # type: ignore[arg-type]
                 version=version,
                 hostname=inp.cluster_endpoint,
-                database_name=inp.database_name,
+                database_name=database_name or inp.database_name,
                 database_size_gb=db_size,
                 deployment_type=DeploymentType.rds_instance if inp.aws_config else None,
                 rds_instance_metadata=rds_meta,

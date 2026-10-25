@@ -4,9 +4,9 @@
 
 No table rows. The collection scripts are read-only: they run `SELECT` on the catalog and statistics views only, and the collection holds the schema, query shapes and counters. Query text and view, procedure and trigger definitions can still carry literal values, so review a collection before you share it. A collection made before this rule that still carries table rows has them dropped, with a count, from every copy the tool writes.
 
-## All my queries went to Aurora
+## Does the database name have to match the collection?
 
-Check the database name. `/modernize` takes it from the file name (`shop-collection.json` becomes `shop`), and `scripts/run_assessment.py` from `--db`. Today a name that differs from the collected database's own name routes every query to Aurora ([#1572](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1572)): name the file `<database>-collection.json`, or pass the collected database's name as `--db`.
+No. `/modernize` names the run from the file name (`shop-collection.json` becomes `shop`), and `scripts/run_assessment.py` from `--db`, but the tables are keyed by the database name the collection records, so any name gives the same plan. When the two differ, the `collect` line also shows the collected name as `collected_database_name`. One case stops the run with an error: a collection that records no database name and whose statements belong to several databases, none of them the name you gave; name the run after the database you collected.
 
 ## Amazon Bedrock model access
 

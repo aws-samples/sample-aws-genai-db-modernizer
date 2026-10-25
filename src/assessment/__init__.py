@@ -77,6 +77,7 @@ from src.assessment.models import (
     WorkloadScope,
 )
 from src.assessment.runner import assess
+from src.tools.database.offline_parser import DatabaseNameMismatchError
 
 __all__ = [
     "CONTRACT_VERSION",
@@ -87,6 +88,7 @@ __all__ = [
     "AssessmentResult",
     "CollectionLoadError",
     "Consolidation",
+    "DatabaseNameMismatchError",
     "EngineLine",
     "EngineRole",
     "FlagReasonCode",

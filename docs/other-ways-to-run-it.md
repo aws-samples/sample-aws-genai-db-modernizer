@@ -95,7 +95,7 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
     collection = load_collection(Path("docs/examples/wordpress/wordpress.zip"))
     result = assess(
         AssessmentRequest(
-            database_name="wordpress",  # must equal the collected database's own name
+            database_name="wordpress",  # names the run; the collection's own name keys its tables
             collection=collection,
             options={"run_through": "reality_check"},
         )
@@ -138,7 +138,7 @@ The folder always holds the latest assignment version; an older version's `repor
 
 ## Analyzing your own database
 
-Every option above accepts a collector output file in place of the sample. See [Use Claude Code → Analyzing your own database](use-claude-code.md#analyzing-your-own-database) for the collection scripts, and pass the collected database's name as `--db`.
+Every option above accepts a collector output file in place of the sample. See [Use Claude Code → Analyzing your own database](use-claude-code.md#analyzing-your-own-database) for the collection scripts; `--db` names the run, and the collection's own database name keys its tables.
 
 ## Run it for you (early, opt-in)
 

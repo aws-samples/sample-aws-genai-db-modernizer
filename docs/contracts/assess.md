@@ -111,7 +111,7 @@ A designed result always carries the [design block](#the-design-block) (`designs
 | Field | Meaning |
 |---|---|
 | `contract_version` | `"1.1"` (the default). A request written for `"1.0"` is read the same way |
-| `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. Use the collected database's own name: today a different name routes every statement to Aurora ([#1572](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1572)) |
+| `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. It names the run; it need not match the collection's own database name (see below) |
 | `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
 | `options.target_engines` | Engine scope, as engine catalog ids; `null` means every engine the workload warrants. Unknown, legacy and planned ids, and an empty list, are refused |
@@ -120,6 +120,8 @@ A designed result always carries the [design block](#the-design-block) (`designs
 | `scope` | Informational: what a cut workload left out. Echoed back; no rule reads it. Statements in `scope.rewritten_query_ids` are marked `rewritten_by_caller` |
 
 Unknown fields are refused, so a misspelt option never runs silently with a default.
+
+`database_name` names the run (and, with your own `store`, its folder `<database_name>/<job_id>/`); it does not have to match the database name the collection records. When the collection records its database name, that name wins: table ids (`summary.tables[].table_id`, `groups[].tables`) keep it, so one collection gives the same result whatever name you pass. That holds too when `database_name` names another database the collection's statements belong to (SQL Server's collection records each statement's database): that database's statements are left out either way, and a warning is logged. When the collection records no database name, the table ids take the one database its statements name, if they name exactly one, and `database_name` otherwise. One case is refused as ambiguous: the collection records no database name and its statements belong to several databases, none of them `database_name`. `assess()` then raises `DatabaseNameMismatchError`, a `ValueError` subclass whose message names the databases, and builds no result. The error is the library's, not a field of the result, so it does not change `contract_version`.
 
 ## The stable surface
 

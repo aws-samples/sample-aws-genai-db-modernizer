@@ -193,6 +193,7 @@ def main() -> None:
 
     store = LocalArtifactStore(base_dir=args.artifact_root)
     job_id = args.job_id or str(uuid.uuid4())[:8]
+    other_name: dict[str, str] = {}  # #1572: the collected name, when the run's differs
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
     sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
 
@@ -221,7 +222,10 @@ def main() -> None:
         store.write_json(upload_path, input_data)
 
         # Parse using offline parser
-        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.database.offline_parser import (
+            DatabaseNameMismatchError,
+            parse_offline_collection,
+        )
         from src.tools.sql.shadow import TableShadow, write_shadow_artifact
 
         try:
@@ -229,8 +233,8 @@ def main() -> None:
             # its fallback (#553); the regex also runs as a cross-check, and
             # both counts go on the collect status line (``table_refs``).
             sql_shadow = TableShadow()
-            parsed = parse_offline_collection(input_data, shadow=sql_shadow)
-        except IngestionLimitError as exc:
+            parsed = parse_offline_collection(input_data, shadow=sql_shadow, database_name=db_name)
+        except (IngestionLimitError, DatabaseNameMismatchError) as exc:
             _error(str(exc))
         write_shadow_artifact(store, db_name, job_id, sql_shadow)
         table_refs = sql_shadow.status_summary()
@@ -241,6 +245,10 @@ def main() -> None:
         collector_data = build_offline_collector_output(
             parsed, job_id=job_id, database_name=db_name, s3_key=upload_path
         )
+        # #1572: the database the collection holds, when the run is named otherwise.
+        collected_name = parsed.get("collected_database_name")
+        if collected_name and collected_name != db_name:
+            other_name = {"collected_database_name": collected_name}
 
     # Write collector output
     collector_path = f"{db_name}/{job_id}/collector/output.json"
@@ -262,6 +270,7 @@ def main() -> None:
             "database_name_source": db_source,
             "tables": len(tables),
             "queries": len(queries),
+            **other_name,
             **({"table_refs": table_refs} if table_refs is not None else {}),
             **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
         }

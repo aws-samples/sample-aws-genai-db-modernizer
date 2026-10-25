@@ -64,16 +64,30 @@ def resolve_offline_engine(
     return engine, port, None
 
 
+def table_database_name(parsed: dict[str, Any], database_name: str) -> str:
+    """The qualifier of ``parsed``'s table ids: the database the parser qualified the
+    statements' table references with (``collected_database_name``, #1572), so every
+    statement matches its tables whatever the run is named. ``database_name`` (the
+    run's name) only when the collection names no database, or for a parse saved
+    before the parser recorded it (the collection's own name first, as then)."""
+    if "collected_database_name" in parsed:
+        return str(parsed["collected_database_name"] or database_name)
+    meta = parsed.get("metadata")
+    stated = meta.get("database_name") if isinstance(meta, dict) else None
+    return str(stated or database_name)
+
+
 def build_offline_contract(
     parsed: dict[str, Any],
     inp: CollectorInput,
     *,
-    table_database_name: str,
     aws_raw: dict[str, Any] | None = None,
 ) -> CollectorOutputContract:
     """The collector output for ``parsed`` (``parse_offline_collection``'s result).
 
-    ``table_database_name`` prefixes the table ids. ``aws_raw`` is what the
+    The table ids are prefixed with ``table_database_name(parsed, ...)``, never
+    ``inp.database_name`` alone (the run's name, #1572), and
+    ``metadata.source_database.database_name`` is that same name. ``aws_raw`` is what the
     collector handler gathered from the account (RDS metadata, CloudWatch,
     Performance Insights); when it is given, those metrics are merged in and the
     collection's own instance counters, wait events and I/O stats enrich the query
@@ -101,7 +115,10 @@ def build_offline_contract(
     offline_meta = parsed.get("metadata") or {}
     if not isinstance(offline_meta, dict):
         offline_meta = {}
-    tables = _build_tables(parsed["tables"], table_database_name)
+    # One name for the table ids and the source database (#1572): the system-schema
+    # check (#835) and schema design read the latter to tell the database from a schema.
+    collected_name = table_database_name(parsed, inp.database_name)
+    tables = _build_tables(parsed["tables"], collected_name)
     views = _build_views(parsed.get("views", []))
     procedures = _build_procedures(parsed.get("procedures", []))
     triggers = _build_triggers(parsed.get("triggers", []))
@@ -153,6 +170,7 @@ def build_offline_contract(
         triggers=triggers,
         # #949: AWS engines the application already runs next to the source.
         engines_in_use=offline_meta.get("engines_in_use"),
+        database_name=collected_name,
     )
 
 
@@ -229,7 +247,5 @@ def build_offline_collector_output(
             "offline_config": {"s3_bucket": s3_bucket, "s3_key": s3_key},
         }
     )
-    output: dict[str, Any] = json.loads(
-        build_offline_contract(parsed, inp, table_database_name=database_name).model_dump_json()
-    )
+    output: dict[str, Any] = json.loads(build_offline_contract(parsed, inp).model_dump_json())
     return output

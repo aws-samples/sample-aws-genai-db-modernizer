@@ -30,6 +30,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DatabaseNameMismatchError(ValueError):
+    """The name a run gives the database is ambiguous for its collection (#1572).
+
+    Raised only when the collection states no database name and its statements
+    belong to several databases, none of them the given name: routing never
+    guesses which database such a run is about."""
+
+
+def _quoted_list(names: list[str]) -> str:
+    return ", ".join(f"'{n}'" for n in names)
+
+
+def collected_database_name(
+    metadata: object, rows: list[dict], database_name: str | None = None
+) -> str | None:
+    """The database ``rows`` (a raw collection's statements) and its tables belong
+    to, the qualifier of every table id (``<database>.<table>``, #1572); None
+    when neither the collection nor ``database_name`` names one.
+
+    The collection's own ``metadata.database_name`` always wins: ``database_name``
+    (the name the run was given: ``--db``, the collection file name, ``assess()``'s
+    ``database_name``) only names the run, so a different name routes the same. A
+    run named after another database the statements belong to (SQL Server's
+    statistics are server-wide, #382) logs a warning; that database's statements
+    are dropped either way. With no stated name, ``database_name`` names the
+    database, unless the statements say otherwise: one database is that database;
+    several, none of them ``database_name``, are ambiguous.
+
+    Raises:
+        DatabaseNameMismatchError: no stated name, and the statements belong to
+            several databases, none of them ``database_name``.
+    """
+    stated = metadata.get("database_name") if isinstance(metadata, dict) else None
+    stated = str(stated) if stated not in (None, "") else None
+    if database_name is None or (
+        stated is not None and database_name.casefold() == stated.casefold()
+    ):
+        return stated
+    by_fold: dict[str, str] = {}
+    for row in rows:
+        name = row.get("database_name") if isinstance(row, dict) else None
+        if name:
+            by_fold.setdefault(str(name).casefold(), str(name))
+    if stated is not None:
+        if database_name.casefold() in by_fold:
+            logger.warning(
+                "offline_parser: the run is named %r, another database the collection's "
+                "statements belong to; the collection is of %r, which keys its tables, "
+                "and %r's statements are dropped",
+                database_name,
+                stated,
+                by_fold[database_name.casefold()],
+            )
+        return stated
+    if not by_fold or database_name.casefold() in by_fold:
+        return database_name
+    others = sorted(by_fold.values(), key=str.casefold)
+    if len(others) == 1:
+        return others[0]
+    raise DatabaseNameMismatchError(
+        f"The collection states no database name, its statements belong to the "
+        f"databases {_quoted_list(others)}, and this run names it '{database_name}', "
+        "none of them. Name the run after the database the collection was taken from."
+    )
+
+
 def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict:
     """Download the offline collection JSON from S3.
 
@@ -68,10 +134,17 @@ def fetch_offline_json(bucket: str, key: str, region: str = "us-east-1") -> dict
     return result
 
 
-def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> dict:
+def parse_offline_collection(
+    data: dict, shadow: TableShadow | None = None, *, database_name: str | None = None
+) -> dict:
     """
     Transform the flat offline JSON into the nested structure expected
     by mysql_collector's builder functions.
+
+    ``database_name`` is the name the run gives the database (#1572). It never
+    replaces the collection's own name: table references are qualified with the
+    database the collection holds (:func:`collected_database_name`), recorded as
+    ``collected_database_name`` for the builder to key the tables the same way.
 
     Every query's table references and its ``has_joins``/``join_count``/
     ``has_aggregations``/``has_subqueries`` facts come from the sqlglot facade
@@ -89,6 +162,8 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
         IngestionLimitError: the collection's table or query count exceeds the
             configured ingestion limit (#142). Checked here, before the more
             expensive nested column/index/FK/PK structures are built below.
+        DatabaseNameMismatchError: ``database_name`` is ambiguous for the
+            collection (see :func:`collected_database_name`).
     """
     check_collection_counts(
         table_count=len(data.get("tables") or []),
@@ -144,8 +219,10 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
     for pk in data.get("primary_keys", []):
         pks_by_table.setdefault(pk["table_name"], []).append(pk["column_name"])
 
-    # Assemble tables with nested children
-    db_name = metadata.get("database_name", "unknown") if isinstance(metadata, dict) else "unknown"
+    # Assemble tables with nested children. The one qualifier of every table id,
+    # here and in the builder (#1572).
+    collected = collected_database_name(metadata, data.get("queries") or [], database_name)
+    db_name = collected or "unknown"
     known_table_names: set[str] = set()
     table_schemas: dict[str, set[str]] = {}
     tables = []
@@ -197,6 +274,7 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
         **other_db_note,
         **sample_rows_note,
         "metadata": metadata,
+        "collected_database_name": collected,
         "tables": tables,
         "views": data.get("views", []),
         "procedures": data.get("procedures", []),

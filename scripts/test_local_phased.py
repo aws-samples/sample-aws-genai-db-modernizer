@@ -154,9 +154,16 @@ def main():
 
         # Step 2: Parse offline collection locally (same as collector agent offline mode)
         print("[collector] Parsing raw collection output (offline mode)...")
-        from src.tools.database.offline_parser import parse_offline_collection
+        from src.tools.database.offline_parser import (
+            DatabaseNameMismatchError,
+            parse_offline_collection,
+        )
 
-        parsed = parse_offline_collection(input_data)
+        try:
+            parsed = parse_offline_collection(input_data, database_name=db_name)
+        except DatabaseNameMismatchError as exc:
+            print(f"ERROR: {exc}")
+            sys.exit(1)
 
         # Build collector contract output with the shared builder (#1177)
         from src.agents.collector.offline_ingest import build_offline_collector_output
