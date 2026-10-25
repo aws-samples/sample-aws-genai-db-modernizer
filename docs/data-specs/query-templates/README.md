@@ -52,11 +52,9 @@ These query templates provide SQL queries for collector agents to gather compreh
 - Wait statistics
 - Lock information
 
-### 6. Sample Data
+### 6. No Row Data
 
-- Sample rows (PII anonymization is [ROADMAP])
-- Data distribution
-- Cardinality estimates
+No query reads table rows (#387); data values are never collected.
 
 ## 🔑 Database-Specific Features
 
@@ -179,9 +177,6 @@ Database object definitions
 ## Performance Metrics
 Connection stats, resource usage
 
-## Sample Data Collection
-Sample row queries
-
 ## Notes
 Important considerations and requirements
 ```
@@ -195,7 +190,6 @@ Recommended order for executing queries:
 3. **Query Patterns** - Can be slow, may need filtering
 4. **Database Objects** - Moderate speed
 5. **Performance Metrics** - Quick, current state
-6. **Sample Data** - Can be slow, optional
 
 ## ⚠️ Important Considerations
 

@@ -361,15 +361,6 @@ class MySQLRemoteCollector:
         reader.log_fallbacks()
         return patterns
 
-    # -------------------------------------------------------------------
-    # Sample data
-    # -------------------------------------------------------------------
-
-    def collect_sample_data(self, table_name: str, limit: int = 10) -> list[dict]:
-        return self._query(
-            f"SELECT * FROM `{table_name}` LIMIT {limit}"  # nosec B608 — table_name from information_schema, not user input
-        )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

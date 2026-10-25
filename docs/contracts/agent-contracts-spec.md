@@ -212,7 +212,7 @@ class CollectorOutput(BaseModel):
 class CollectorInput(BaseModel):
     job_id: str
     source_database: SourceDatabase  # engine, endpoint, credentials
-    collection_options: CollectionOptions  # PII anonymization, sample data
+    collection_options: CollectionOptions  # query patterns, query log days (no row data, #387)
     aws_config: Optional[AWSConfig] = None  # RDS-specific config
     engines_in_use: list[str] = []  # 3.1 (#963): other AWS engines already running
 ```
@@ -261,7 +261,7 @@ class CollectorOutput(BaseModel):
 **Key Features:**
 
 - Comprehensive metadata (collection timestamp, version, source database info)
-- Schema information (tables, columns, indexes, foreign keys, sample data)
+- Schema information (tables, columns, indexes, foreign keys); no table rows (#387)
 - Views, stored procedures, and triggers
 - Query patterns with performance metrics
 - RDS-specific metadata (instance class, storage type, Multi-AZ, Performance Insights)

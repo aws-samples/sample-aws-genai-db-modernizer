@@ -13,7 +13,6 @@ import Select from "@cloudscape-design/components/select";
 import Multiselect from "@cloudscape-design/components/multiselect";
 import Input from "@cloudscape-design/components/input";
 import RadioGroup from "@cloudscape-design/components/radio-group";
-import Toggle from "@cloudscape-design/components/toggle";
 import Slider from "@cloudscape-design/components/slider";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Textarea from "@cloudscape-design/components/textarea";
@@ -216,36 +215,6 @@ function SourceDatabaseSection({ formData, setFormData, errors }) {
 }
 function CollectionOptionsSection({ formData, setFormData }) {
   const { t } = useTranslation();
-  const sampleSizeOptions = [
-    {
-      label: "100 rows",
-      value: "100",
-    },
-    {
-      label: "500 rows",
-      value: "500",
-    },
-    {
-      label: "1,000 rows",
-      value: "1000",
-    },
-    {
-      label: "2,500 rows",
-      value: "2500",
-    },
-    {
-      label: "5,000 rows",
-      value: "5000",
-    },
-    {
-      label: "7,500 rows",
-      value: "7500",
-    },
-    {
-      label: "10,000 rows",
-      value: "10000",
-    },
-  ];
   const queryLogPeriodOptions = [
     {
       label: "1 day",
@@ -301,82 +270,6 @@ function CollectionOptionsSection({ formData, setFormData }) {
   ];
   return (
     <SpaceBetween size="l">
-      <FormField
-        description={t("create-analysis.collection.anonymize-pii.description")}
-        label={t("create-analysis.collection.anonymize-pii.label")}
-      >
-        <Toggle
-          checked={formData.anonymizePii}
-          onChange={({ detail }) =>
-            setFormData({
-              ...formData,
-              anonymizePii: detail.checked,
-            })
-          }
-        >
-          {t("create-analysis.collection.anonymize-pii.toggle-label")}
-        </Toggle>
-      </FormField>
-
-      <FormField
-        description={t("create-analysis.collection.include-sample-data.description")}
-        label={t("create-analysis.collection.include-sample-data.label")}
-      >
-        <Toggle
-          checked={formData.includeSampleData}
-          onChange={({ detail }) =>
-            setFormData({
-              ...formData,
-              includeSampleData: detail.checked,
-            })
-          }
-        >
-          {t("create-analysis.collection.include-sample-data.toggle-label")}
-        </Toggle>
-      </FormField>
-
-      {formData.includeSampleData && (
-        <FormField
-          constraintText={t("create-analysis.collection.sample-size.constraint-text")}
-          description={t("create-analysis.collection.sample-size.description")}
-          label={t("create-analysis.collection.sample-size.label")}
-          stretch
-        >
-          <SpaceBetween direction="horizontal" size="l">
-            <Slider
-              max={10000}
-              min={100}
-              referenceValues={[2500, 5000, 7500]}
-              step={100}
-              tickMarks
-              value={formData.sampleSize}
-              onChange={({ detail }) =>
-                setFormData({
-                  ...formData,
-                  sampleSize: detail.value,
-                })
-              }
-            />
-            <FormField stretch>
-              <Select
-                options={sampleSizeOptions}
-                selectedOption={
-                  sampleSizeOptions.find(
-                    (opt) => opt.value === String(formData.sampleSize),
-                  ) || sampleSizeOptions[2]
-                }
-                onChange={({ detail }) =>
-                  setFormData({
-                    ...formData,
-                    sampleSize: parseInt(detail.selectedOption.value),
-                  })
-                }
-              />
-            </FormField>
-          </SpaceBetween>
-        </FormField>
-      )}
-
       <FormField
         constraintText={t("create-analysis.collection.query-log-period.constraint-text")}
         description={t("create-analysis.collection.query-log-period.description")}
@@ -669,9 +562,6 @@ function DatabaseAnalysisForm() {
     secretArn: "",
     secretName: "",
     // Collection options
-    anonymizePii: true,
-    includeSampleData: true,
-    sampleSize: 1000,
     queryLogPeriod: 7,
     queryLogSource: {
       label: "Performance Insights (recommended)",
@@ -1057,9 +947,6 @@ function DatabaseAnalysisForm() {
 
       // Build options object
       const options = {
-        anonymize_pii: formData.anonymizePii,
-        include_sample_data: formData.includeSampleData,
-        sample_size: formData.sampleSize,
         query_log_period_days: formData.queryLogPeriod,
         query_log_source: formData.queryLogSource.value,
         top_sql_queries: parseInt(formData.topSqlQueries),

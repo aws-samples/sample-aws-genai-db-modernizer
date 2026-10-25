@@ -104,19 +104,7 @@ This example shows what a MySQL collector would output for a production e-commer
           }
         ],
         "primary_key": ["user_id"],
-        "foreign_keys": [],
-        "sample_data": [
-          {
-            "user_id": 1,
-            "email": "user1@example.com",
-            "created_at": "2024-01-15T10:30:00Z"
-          },
-          {
-            "user_id": 2,
-            "email": "user2@example.com",
-            "created_at": "2024-01-16T14:22:00Z"
-          }
-        ]
+        "foreign_keys": []
       },
       {
         "table_id": "ecommerce.orders",
@@ -185,8 +173,7 @@ This example shows what a MySQL collector would output for a production e-commer
             "on_delete": "CASCADE",
             "on_update": "CASCADE"
           }
-        ],
-        "sample_data": null
+        ]
       }
     ],
     "views": [],

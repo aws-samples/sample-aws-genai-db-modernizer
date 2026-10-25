@@ -333,22 +333,12 @@ WHERE waiting_tasks_count > 0
 ORDER BY wait_time_ms DESC;
 ```
 
-## Sample Data Collection
-
-### Sample Rows
-
-```sql
--- Get sample rows from a table (with PII anonymization consideration)
-SELECT TOP 1000 *
-FROM [{schema_name}].[{table_name}];
-```
-
 ## Notes
 
 - All queries use parameterized placeholders (@schema_name, @table_name) where values are dynamic
 - DMV queries require VIEW SERVER STATE permission
 - Some queries require specific privileges (SELECT, VIEW DEFINITION, etc.)
-- Sample data collection should respect PII anonymization settings
+- No query reads table rows (#387): data values are never collected
 - DMV statistics are cumulative since last server restart
 
 ## Query Execution Order
@@ -358,7 +348,6 @@ FROM [{schema_name}].[{table_name}];
 3. Query patterns (DMVs)
 4. Views, procedures, triggers
 5. Performance metrics
-6. Sample data (if enabled)
 
 ---
 

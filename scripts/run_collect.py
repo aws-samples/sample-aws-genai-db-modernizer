@@ -194,6 +194,7 @@ def main() -> None:
     store = LocalArtifactStore(base_dir=args.artifact_root)
     job_id = args.job_id or str(uuid.uuid4())[:8]
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
 
     # No --db: the file's own valid metadata name, else one derived from its file
     # name (#1096). The status line says which.
@@ -206,11 +207,16 @@ def main() -> None:
     _set_job_context(store, db_name, job_id)
 
     if is_contract:
-        # Already in collector contract format — use directly
-        collector_data = input_data
+        # Already in collector contract format: used as is, less any table rows (#387)
+        from src.shared.sample_rows import collector_output_without_sample_rows
+
+        collector_data, sample_rows_dropped = collector_output_without_sample_rows(input_data)
     else:
         # Raw collection script output — parse with offline parser
-        # Upload raw file
+        # Keep a copy of the raw file, less any table rows (#387)
+        from src.shared.sample_rows import raw_collection_without_sample_rows
+
+        input_data, sample_rows_dropped = raw_collection_without_sample_rows(input_data)
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         store.write_json(upload_path, input_data)
 
@@ -257,6 +263,7 @@ def main() -> None:
             "tables": len(tables),
             "queries": len(queries),
             **({"table_refs": table_refs} if table_refs is not None else {}),
+            **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
         }
     )
 

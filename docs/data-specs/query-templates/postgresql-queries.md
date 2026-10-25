@@ -324,23 +324,12 @@ AND query_start < now() - interval '1 minute'
 ORDER BY duration DESC;
 ```
 
-## Sample Data Collection
-
-### Sample Rows
-
-```sql
--- Get sample rows from a table (with PII anonymization consideration)
-SELECT *
-FROM {schema_name}.{table_name}
-LIMIT 1000;
-```
-
 ## Notes
 
 - All queries use parameterized placeholders ($1, $2, etc.) where values are dynamic
 - pg_stat_statements extension must be enabled for query pattern collection
 - Some queries require specific privileges (SELECT, pg_read_all_stats, etc.)
-- Sample data collection should respect PII anonymization settings
+- No query reads table rows (#387): data values are never collected
 - Statistics are cumulative since last server restart or stats reset
 
 ## Query Execution Order
@@ -350,7 +339,6 @@ LIMIT 1000;
 3. Query patterns (pg_stat_statements)
 4. Views, procedures, triggers
 5. Performance metrics
-6. Sample data (if enabled)
 
 ---
 

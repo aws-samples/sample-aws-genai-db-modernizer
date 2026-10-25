@@ -256,16 +256,6 @@ class TestSchemaCollection:
         assert "OBJECTPROPERTY" in sent_sql
         assert "is_ms_shipped = 0" in sent_sql
 
-    def test_collect_sample_data_uses_top_n(
-        self, collector: SQLServerRemoteCollector, mock_ssm: MagicMock
-    ) -> None:
-        mock_ssm.run_sql_json.return_value = []
-        collector.collect_sample_data("dbo.Orders", limit=25)
-        sent_sql = mock_ssm.run_sql_json.call_args.kwargs["sql"]
-        assert "TOP 25" in sent_sql
-        assert "LIMIT" not in sent_sql
-        assert "[dbo].[Orders]" in sent_sql
-
 
 # ---------------------------------------------------------------------
 # Query patterns

@@ -6,8 +6,9 @@ MINOR only adds optional fields, Decision 5) and refuses a different MAJOR
 with a :class:`ContractVersionError` that names the artifact, the stored
 version and the version this code reads, unless ``_ADAPTERS`` below holds an
 adapter from that MAJOR (one should ship in the same change as the bump, per the
-amendment to Decision 4; the only one, RealityCheckOutputContract 1.x, is a
-retrofit in #971 for the 2.0 bump of #790). A payload with no ``contract_version`` was written before #972
+amendment to Decision 4): RealityCheckOutputContract 1.x, a retrofit in #971 for
+the 2.0 bump of #790, and CollectorOutputContract 3.x, whose table rows it drops
+(#387). A payload with no ``contract_version`` was written before #972
 gave every contract one; it is read as legacy, with a debug log.
 
 - :func:`load_contract` checks the version and parses the model. The loaded
@@ -109,8 +110,25 @@ def _reality_check_from_1(payload: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in payload.items() if k != "lightweight_recommendations"}
 
 
+def _collector_output_from_3(payload: dict[str, Any]) -> dict[str, Any]:
+    """CollectorOutputContract's MAJOR bump for #387 removed ``Table.sample_data``: no
+    table rows are kept, so an older collector output's rows are dropped (counted at
+    debug level: a job reads the file many times, and ingest reports the count once);
+    every other 3.x field reads as it was."""
+    from src.shared.sample_rows import collector_output_without_sample_rows
+
+    out, dropped = collector_output_without_sample_rows(payload)
+    if dropped:
+        logger.debug(
+            "collector output: dropped %d sample row(s) an older collection carried (#387)",
+            dropped,
+        )
+    return out
+
+
 _ADAPTERS: dict[str, dict[int, Adapter]] = {
     "src.contracts.reality_check_output:RealityCheckOutputContract": {1: _reality_check_from_1},
+    "src.contracts.collector_output:CollectorOutputContract": {3: _collector_output_from_3},
 }
 
 

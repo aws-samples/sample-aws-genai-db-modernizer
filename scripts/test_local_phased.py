@@ -108,8 +108,10 @@ def main():
     job_id = str(uuid.uuid4())[:8]
 
     if is_contract:
-        # Already processed — use directly
-        collector_data = input_data
+        # Already processed: used as is, less any table rows (#387)
+        from src.shared.sample_rows import collector_output_without_sample_rows
+
+        collector_data, _ = collector_output_without_sample_rows(input_data)
         db_name = db_name_override or (
             collector_data.get("metadata", {})
             .get("source_database", {})
@@ -141,7 +143,11 @@ def main():
         print(f"  Artifacts:    ./artifacts/{db_name}/{job_id}/")
         print(f"{'='*60}\n")
 
-        # Step 1: Upload raw file to uploads path (mimics presigned URL upload)
+        # Step 1: Upload raw file to uploads path (mimics presigned URL upload), less
+        # any table rows (#387)
+        from src.shared.sample_rows import raw_collection_without_sample_rows
+
+        input_data, _ = raw_collection_without_sample_rows(input_data)
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         store.write_json(upload_path, input_data)
         print(f"[prepare] Raw collection uploaded to {upload_path}")

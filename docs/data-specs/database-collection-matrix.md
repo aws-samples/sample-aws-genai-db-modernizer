@@ -396,25 +396,9 @@ user_seeks, user_scans, user_lookups, user_updates
 | `curr_connections` | Current connections | Last 7 days |
 | `new_connections` | New connections | Last 7 days |
 
-### **Redis Sample Data Collection**
+### **Redis Data Values**
 
-**Data Structure Sampling Strategy:**
-
-| Data Type | Sampling Method | Max Samples | Notes |
-|-----------|----------------|-------------|-------|
-| **String** | `GET` command | 1000 keys | Truncate values >1KB |
-| **Hash** | `HGETALL` command | 1000 keys | Limit to 100 fields per hash |
-| **List** | `LRANGE 0 99` | 1000 keys | First 100 elements only |
-| **Set** | `SMEMBERS` or `SSCAN` | 1000 keys | Limit to 100 members |
-| **Sorted Set** | `ZRANGE 0 99` | 1000 keys | First 100 elements with scores |
-| **Stream** | `XRANGE` | 100 keys | Last 100 entries only |
-
-**Anonymization Rules:**
-
-- Key names: Preserve pattern structure, anonymize identifiers (user:123 → user:XXX)
-- String values: Detect and anonymize email, phone, SSN patterns
-- Hash fields: Anonymize field values, preserve field names
-- Large values: Truncate and store size metadata
+Not collected: key values are never read (#387).
 
 ---
 

@@ -4597,21 +4597,7 @@
         "schema": {
           "kind": "object",
           "properties": {
-            "anonymize_pii": {
-              "required": false,
-              "schema": {
-                "kind": "scalar",
-                "type": "boolean"
-              }
-            },
             "collect_query_patterns": {
-              "required": false,
-              "schema": {
-                "kind": "scalar",
-                "type": "boolean"
-              }
-            },
-            "collect_sample_data": {
               "required": false,
               "schema": {
                 "kind": "scalar",
@@ -4624,15 +4610,6 @@
                 "kind": "scalar",
                 "maximum": 30,
                 "minimum": 1,
-                "type": "integer"
-              }
-            },
-            "sample_row_count": {
-              "required": false,
-              "schema": {
-                "kind": "scalar",
-                "maximum": 100,
-                "minimum": 0,
                 "type": "integer"
               }
             }
@@ -4806,8 +4783,8 @@
         }
       }
     },
-    "schema_hash": "782c0a5d476629862732d35d5e44795bfc3fbf16a45795c4bcbc3313e05f46d8",
-    "version": "3.1"
+    "schema_hash": "d760124d61e809f3940b163a028c1604b5931b39338af770981d78287786e2c2",
+    "version": "4.0"
   },
   "collector_output.CollectorOutputContract": {
     "fields": {
@@ -5530,25 +5507,6 @@
                         "kind": "scalar",
                         "minimum": 0,
                         "type": "integer"
-                      }
-                    },
-                    "sample_data": {
-                      "required": false,
-                      "schema": {
-                        "kind": "anyOf",
-                        "members": [
-                          {
-                            "items": {
-                              "kind": "object"
-                            },
-                            "kind": "array",
-                            "maxItems": 1000
-                          },
-                          {
-                            "kind": "scalar",
-                            "type": "null"
-                          }
-                        ]
                       }
                     },
                     "schema_name": {
@@ -8560,8 +8518,8 @@
         }
       }
     },
-    "schema_hash": "84a215a9653b84b0100f3268ef3f2258d81d9cfc42076a3596afc1bb28eaeaaa",
-    "version": "3.6"
+    "schema_hash": "8d1aa6898e41efd675c46541f6b5824b3e0d00ec3c9138703812fd878f28f72e",
+    "version": "4.0"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

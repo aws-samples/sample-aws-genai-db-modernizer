@@ -64,15 +64,13 @@ class OfflineConfig(BaseModel):
 
 
 class CollectionOptions(BaseModel):
-    """Options controlling what data to collect."""
+    """Options controlling what data to collect.
 
-    anonymize_pii: bool = Field(default=True, description="Anonymize PII in sample data")
-    collect_sample_data: bool = Field(
-        default=True, description="Collect sample rows (LIVE mode only)"
-    )
-    sample_row_count: int = Field(
-        default=10, ge=0, le=100, description="Number of sample rows per table"
-    )
+    No option reads table rows: the collectors take schema, query shapes and counters
+    only (#387). A request that still sets the removed ``anonymize_pii``,
+    ``collect_sample_data`` or ``sample_row_count`` is accepted and they are ignored.
+    """
+
     collect_query_patterns: bool = Field(
         default=True, description="Collect query patterns (LIVE: performance_schema, DDL: PI only)"
     )
@@ -138,10 +136,13 @@ class CollectorInput(BaseModel):
       the application already runs next to the source. The collector copies them to
       the collection's ``metadata.engines_in_use`` (CollectorOutputContract 3.2).
       Backward compatible: defaults to empty.
+    - 4.0 (2026-10-25, #387): Removed CollectionOptions.anonymize_pii,
+      collect_sample_data and sample_row_count: no collector reads table rows. Requests
+      that still set them are accepted and the options ignored (extra=ignore).
     """
 
     contract_version: str = Field(
-        default="3.1", pattern=r"^\d+\.\d+$", description="Contract version"
+        default="4.0", pattern=r"^\d+\.\d+$", description="Contract version"
     )
     job_id: str = Field(description="Unique job identifier")
 

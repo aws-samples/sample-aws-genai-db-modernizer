@@ -206,9 +206,8 @@ class ConnectionDetails(BaseModel):
 
 
 class CollectionOptions(BaseModel):
-    anonymize_pii: bool = True
-    include_sample_data: bool = True
-    sample_size: int = Field(default=1000, ge=100, le=10000)
+    # No option reads table rows (#387): a request that still sends the removed
+    # anonymize_pii, include_sample_data or sample_size is accepted and they are ignored.
     query_log_period_days: int = Field(default=7, ge=1, le=30)
     query_log_source: str = "performance-insights"
     include_table_patterns: str | None = None

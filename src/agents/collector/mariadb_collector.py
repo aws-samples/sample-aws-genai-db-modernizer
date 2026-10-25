@@ -89,7 +89,7 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
         "metadata",
         lambda: {"version": db.get_version(), "db_size_gb": db.get_database_size_gb()},
     )
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, inp.collection_options))
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
     queries_raw = ckpt.load_or_run(
         "queries", lambda: _collect_queries_raw(db, inp.collection_options)
     )

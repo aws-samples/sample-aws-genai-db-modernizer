@@ -261,3 +261,18 @@ test('no credentials choice in the form sends a password, whatever is typed', as
     expect(sent).not.toMatch(/pass|pwd|username/i);
   }
 });
+
+// #387: no table rows are collected and nothing claims an anonymization that does not
+// happen, so the form offers neither and the request sends neither.
+test('the form offers no sample-row or anonymization option and the request sends none', async () => {
+  expect(container.textContent).not.toMatch(/sample data|sample size|anonymi[sz]/i);
+  fillSource();
+  type(field(en['create-analysis.source.secret-arn.label']), SECRET_ARN);
+  await submit();
+
+  const { options } = sentRequest().params;
+  expect(options).toBeDefined();
+  ['anonymize_pii', 'include_sample_data', 'sample_size'].forEach((key) => {
+    expect(options).not.toHaveProperty(key);
+  });
+});

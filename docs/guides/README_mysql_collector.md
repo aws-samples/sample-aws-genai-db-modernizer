@@ -164,7 +164,6 @@ curl -X POST http://localhost:8000/api/v1/analyses \
 - No DB connection needed (no `live_config`)
 - Schema parsed from `CREATE TABLE` statements
 - `row_count` and `size_mb` are 0 (not available from DDL)
-- No `sample_data`
 - Query patterns come from PI only (not performance_schema)
 
 ---
@@ -240,7 +239,6 @@ Status values: `PENDING` → `RUNNING` → `COMPLETED` or `FAILED`
 | `indexes` | `information_schema.statistics` via SSM | Grouped by index, composite-aware |
 | `primary_key` | `information_schema.key_column_usage` via SSM | |
 | `foreign_keys` | `key_column_usage + referential_constraints` via SSM | Grouped by constraint |
-| `sample_data` | `SELECT * LIMIT N` via SSM | Configurable (default 10 rows) |
 | `views` | `information_schema.views` via SSM | Definition, is_updatable |
 | `procedures` | `information_schema.routines` via SSM | Name, type, definition |
 | `triggers` | `information_schema.triggers` via SSM | Event, timing, definition |
@@ -426,7 +424,7 @@ curl -s "http://localhost:8000/api/v1/analyses/$JOB_ID" | jq '.result' > output.
 
 | Data Source | Connection Method | What It Provides |
 |-------------|------------------|------------------|
-| **MySQL DB** | SSM Run Command → mysql CLI | Schema, query patterns, global stats, sample data |
+| **MySQL DB** | SSM Run Command → mysql CLI | Schema, query patterns, global stats (never table rows, #387) |
 | **Secrets Manager** | boto3 (direct) | Database credentials |
 | **RDS API** | boto3 (direct) | Instance metadata (class, storage, Multi-AZ) |
 | **CloudWatch Metrics** | boto3 (direct) | CPU, memory, IOPS, latency, connections (7-day) |

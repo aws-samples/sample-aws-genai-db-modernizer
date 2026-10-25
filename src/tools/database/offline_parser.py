@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import boto3
 
+from src.shared.sample_rows import without_sample_rows
 from src.shared.sql_spans import span_dialect
 from src.tools.database.collection_text import extract_json_object
 from src.tools.sql.query_type import statement_query_type
@@ -148,7 +149,10 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
     known_table_names: set[str] = set()
     table_schemas: dict[str, set[str]] = {}
     tables = []
-    for t in data.get("tables") or []:
+    # #387: no row data is kept. A collection written before #387 (or edited by hand)
+    # may carry sample rows on its tables; they are dropped here and counted.
+    raw_tables, sample_rows_dropped = without_sample_rows(data.get("tables") or [])
+    for t in raw_tables:
         tbl_name = t["table_name"]
         table_id = t.get("table_id") or f"{db_name}.{tbl_name}"
         known_table_names.add(tbl_name)
@@ -162,7 +166,6 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
                 "indexes": list(indexes_by_table.get(tbl_name, {}).values()),
                 "foreign_keys": list(fks_by_table.get(tbl_name, {}).values()),
                 "primary_key": pks_by_table.get(tbl_name, []),
-                "sample_data": None,
             }
         )
 
@@ -181,9 +184,18 @@ def parse_offline_collection(data: dict, shadow: TableShadow | None = None) -> d
 
     raw_queries, dropped_other_db = _drop_other_database_queries(data.get("queries") or [], db_name)
     other_db_note = {"queries_dropped_other_database": dropped_other_db} if dropped_other_db else {}
+    sample_rows_note: dict[str, int] = {}
+    if sample_rows_dropped:
+        logger.warning(
+            "offline_parser: dropped %d sample row(s) from the collection's tables; "
+            "no output of the parser holds them (#387)",
+            sample_rows_dropped,
+        )
+        sample_rows_note = {"sample_rows_dropped": sample_rows_dropped}
 
     return {
         **other_db_note,
+        **sample_rows_note,
         "metadata": metadata,
         "tables": tables,
         "views": data.get("views", []),

@@ -333,11 +333,17 @@ def phase_collect(
             input_data, collector_file, from_file_name=from_file_name
         )
     table_refs: dict | None = None  # parser counts, raw collections only (#553)
+    sample_rows_dropped = 0  # #387: rows an older collection carried, never kept
 
     if is_contract:
-        collector_data = input_data
+        from src.shared.sample_rows import collector_output_without_sample_rows
+
+        collector_data, sample_rows_dropped = collector_output_without_sample_rows(input_data)
     elif is_raw:
-        # Upload raw file
+        # Keep a copy of the raw file, less any table rows (#387)
+        from src.shared.sample_rows import raw_collection_without_sample_rows
+
+        input_data, sample_rows_dropped = raw_collection_without_sample_rows(input_data)
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
         store.write_json(upload_path, input_data)
 
@@ -391,6 +397,7 @@ def phase_collect(
             "queries": len(queries),
             "artifact": artifact,
             **({"table_refs": table_refs} if table_refs is not None else {}),
+            **({"sample_rows_dropped": sample_rows_dropped} if sample_rows_dropped else {}),
         },
     )
     return job_id, db_name

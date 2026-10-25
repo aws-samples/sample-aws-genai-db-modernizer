@@ -907,3 +907,59 @@ class TestQueriesOfOtherDatabases:
         result = parse_offline_collection(data)
         assert len(result["queries"]) == 1
         assert result["queries"][0]["execution_count"] == 20
+
+
+class TestSampleRowsDropped:
+    """#387: no customer row data is kept. The collection scripts never emit rows, but
+    a collection written before #387 (or edited by hand) may carry ``sample_data`` on
+    its tables: the parser drops it and states how many rows it dropped."""
+
+    @staticmethod
+    def _collection(tables: list[dict]) -> dict:
+        return {
+            "collection_version": 1,
+            "metadata": {"database_name": "shop", "version": "8.0.36"},
+            "tables": tables,
+            "columns": [
+                {
+                    "table_name": t["table_name"],
+                    "column_name": "id",
+                    "data_type": "int",
+                    "is_nullable": "NO",
+                    "ordinal_position": 1,
+                }
+                for t in tables
+            ],
+            "queries": [],
+        }
+
+    def test_rows_are_dropped_and_counted(self, caplog):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        data = self._collection(
+            [
+                {"table_name": "orders", "sample_data": [{"id": 1}, {"id": 2}]},
+                {"table_name": "users", "sample_data": [{"email": "a@example.com"}]},
+                {"table_name": "audit"},
+            ]
+        )
+        with caplog.at_level("WARNING"):
+            result = parse_offline_collection(data)
+        assert [t["table_name"] for t in result["tables"]] == ["orders", "users", "audit"]
+        assert all("sample_data" not in t for t in result["tables"])
+        assert result["sample_rows_dropped"] == 3
+        assert "dropped 3 sample row(s)" in caplog.text
+        assert "a@example.com" not in json.dumps(result)
+        # The caller's collection is not changed.
+        assert data["tables"][0]["sample_data"] == [{"id": 1}, {"id": 2}]
+
+    def test_no_count_when_there_are_no_rows(self):
+        from src.tools.database.offline_parser import parse_offline_collection
+
+        result = parse_offline_collection(
+            self._collection(
+                [{"table_name": "orders"}, {"table_name": "users", "sample_data": None}]
+            )
+        )
+        assert "sample_rows_dropped" not in result
+        assert all("sample_data" not in t for t in result["tables"])

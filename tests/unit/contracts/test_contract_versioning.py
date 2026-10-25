@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -123,13 +124,28 @@ def test_a_model_without_a_version_default_is_a_programming_error() -> None:
             current_version(model)
 
 
+def _collector_major() -> int:
+    return int(current_version(CollectorOutputContract).split(".", 1)[0])
+
+
+def _another_collector_major() -> str:
+    """A collector output MAJOR this code has no adapter for: the next one."""
+    return f"{_collector_major() + 1}.0"
+
+
+@pytest.mark.passes_on_main
 def test_carries_contract_tells_a_contract_from_a_raw_collection() -> None:
-    assert carries_contract({"contract_version": "3.0"}, CollectorOutputContract, artifact="f")
+    current = current_version(CollectorOutputContract)
+    assert carries_contract({"contract_version": current}, CollectorOutputContract, artifact="f")
+    # 3.x is read through its adapter (#387), so it is a contract too, not a refusal.
+    assert carries_contract({"contract_version": "3.6"}, CollectorOutputContract, artifact="f")
     assert not carries_contract(
         {"collection_version": "1.0"}, CollectorOutputContract, artifact="f"
     )
     with pytest.raises(ContractVersionError):
-        carries_contract({"contract_version": "4.0"}, CollectorOutputContract, artifact="f")
+        carries_contract(
+            {"contract_version": _another_collector_major()}, CollectorOutputContract, artifact="f"
+        )
 
 
 # ------------------------------------------------------------------- registry
@@ -417,18 +433,22 @@ def _collector_upload(version: str) -> dict:
     }
 
 
+@pytest.mark.passes_on_main
 def test_ingest_refuses_an_uploaded_collector_output_at_another_major() -> None:
-    """A 4.0 collector output was once taken for a raw collection (``startswith("3")``)."""
+    """A collector output at another MAJOR was once taken for a raw collection
+    (``startswith("3")``)."""
     from src.atx_orchestrator import core
 
     class _Store:
         def write_json(self, path: str, data: dict) -> None:
             raise AssertionError("nothing is written for a refused upload")
 
-    with pytest.raises(ContractVersionError, match=r"testdb/job-1 upload.*'4\.0'"):
-        core.ingest_offline_collection(_Store(), "job-1", "testdb", _collector_upload("4.0"))
+    other = _another_collector_major()
+    with pytest.raises(ContractVersionError, match=rf"testdb/job-1 upload.*'{re.escape(other)}'"):
+        core.ingest_offline_collection(_Store(), "job-1", "testdb", _collector_upload(other))
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("script", ["run_collect", "run_assessment"])
 def test_the_collect_scripts_refuse_an_uploaded_collector_output_at_another_major(
     script: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
@@ -439,7 +459,8 @@ def test_the_collect_scripts_refuse_an_uploaded_collector_output_at_another_majo
 
     module = {"run_collect": run_collect, "run_assessment": run_assessment}[script]
     upload = tmp_path / "upload.json"
-    upload.write_text(json.dumps(_collector_upload("4.0")))
+    other = _another_collector_major()
+    upload.write_text(json.dumps(_collector_upload(other)))
     if script == "run_collect":
         argv = ["run_collect.py", "--file", str(upload), "--db", "testdb"]
         argv += ["--artifact-root", str(tmp_path / "artifacts")]
@@ -451,7 +472,7 @@ def test_the_collect_scripts_refuse_an_uploaded_collector_output_at_another_majo
         with pytest.raises(SystemExit):
             module.phase_collect(str(upload), "testdb", store)
     out = capsys.readouterr()
-    assert "'4.0'" in out.out + out.err
+    assert f"'{other}'" in out.out + out.err
     assert not (tmp_path / "artifacts" / "testdb").exists()
 
 

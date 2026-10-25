@@ -166,6 +166,7 @@ def test_an_old_query_pattern_without_tags_loads() -> None:
     assert (p.query_tags, p.query_tags_dropped) == ([], 0)
 
 
+@pytest.mark.passes_on_main
 def test_a_collector_output_from_the_previous_minor_loads() -> None:
     """A saved collector output written before ``query_tags`` (the previous MINOR,
     no tag fields) loads, with no tags; the same file with them keeps them."""
@@ -183,12 +184,15 @@ def test_a_collector_output_from_the_previous_minor_loads() -> None:
     [q] = new["queries"]["query_patterns"]
     assert (q["query_tags"], q["query_tags_dropped"]) == (["a"], 0)
 
-    major, minor = current_version(CollectorOutputContract).split(".")
+    # The MINOR before query_tags was 3.4 (3.5 added them, #1180). Since #387 a 3.x
+    # file is a previous MAJOR, read through its adapter; the loaded model then says
+    # the current version.
     old = copy.deepcopy(new)
-    old["contract_version"] = f"{major}.{int(minor) - 1}"
+    old["contract_version"] = "3.4"
     for pattern in old["queries"]["query_patterns"]:
         del pattern["query_tags"], pattern["query_tags_dropped"]
     loaded = load_contract(CollectorOutputContract, old, artifact="collector/output.json")
+    assert loaded.contract_version == current_version(CollectorOutputContract)
     [p] = loaded.queries.query_patterns
     assert (p.query_tags, p.query_tags_dropped) == ([], 0)
     assert p.query_text == f"/* a */ {SQL}"

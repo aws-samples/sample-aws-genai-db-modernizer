@@ -539,16 +539,6 @@ class SQLServerRemoteCollector:
             "committed_memory_gb": _kb_to_gb(r.get("committed_kb")),
         }
 
-    # -------------------------------------------------------------------
-    # Sample data
-    # -------------------------------------------------------------------
-
-    def collect_sample_data(self, table_name: str, limit: int = 10) -> list[dict]:
-        schema, table = self._split_qualified(table_name)
-        # SQL Server uses TOP N rather than LIMIT N.
-        sql = f"SELECT TOP {limit} * FROM [{schema}].[{table}]"  # nosec B608 — schema/table from sys catalog, not user input
-        return self._query(sql)
-
 
 # -----------------------------------------------------------------------
 # Module-level helpers (mirrors the duplicated pattern in mysql_tools and

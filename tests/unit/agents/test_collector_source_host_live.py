@@ -172,11 +172,10 @@ def test_schema_stage_keeps_os_stats_and_survives_a_denied_view(module: Any, cls
     db = MagicMock()
     db.collect_tables.return_value = []
     db.collect_os_stats.return_value = {"cpu_count": 2}
-    opts = MagicMock(sample_data=False, collect_sample_data=False)
-    ok = module._collect_schema_raw(db, opts)
+    ok = module._collect_schema_raw(db)
     assert ok["os_stats"] == {"cpu_count": 2}
     db.collect_os_stats.side_effect = RuntimeError("VIEW SERVER STATE permission denied")
-    assert module._collect_schema_raw(db, opts)["os_stats"] == {}
+    assert module._collect_schema_raw(db)["os_stats"] == {}
 
 
 # --- the builder ------------------------------------------------------------------------

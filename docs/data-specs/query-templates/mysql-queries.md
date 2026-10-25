@@ -258,23 +258,12 @@ SHOW STATUS LIKE 'Slow_queries';
 SHOW STATUS LIKE 'Qcache%';
 ```
 
-## Sample Data Collection
-
-### Sample Rows
-
-```sql
--- Get sample rows from a table (with PII anonymization consideration)
-SELECT *
-FROM {table_name}
-LIMIT 1000;
-```
-
 ## Notes
 
 - All queries use parameterized placeholders (?) where table names are dynamic
 - Performance schema queries require `performance_schema` to be enabled
 - Some queries require specific privileges (SELECT, SHOW VIEW, etc.)
-- Sample data collection should respect PII anonymization settings
+- No query reads table rows (#387): data values are never collected
 - Query execution counts and times are cumulative since last server restart
 
 ## Query Execution Order
@@ -284,7 +273,6 @@ LIMIT 1000;
 3. Query patterns (performance_schema)
 4. Views, procedures, triggers
 5. Performance metrics
-6. Sample data (if enabled)
 
 ---
 

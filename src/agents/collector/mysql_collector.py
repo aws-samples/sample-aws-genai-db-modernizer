@@ -351,7 +351,7 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     )
 
     # Stage 2: schema
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, inp.collection_options))
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
 
     # Stage 3: queries from performance_schema
     queries_raw = ckpt.load_or_run(
@@ -522,18 +522,12 @@ def _collect_offline(inp: CollectorInput, ckpt, raw: dict | None = None) -> Coll
 # ---------------------------------------------------------------------------
 
 
-def _collect_schema_raw(db: MySQLRemoteCollector, opts) -> dict:
+def _collect_schema_raw(db: MySQLRemoteCollector) -> dict:
     """Collect raw schema data via SSM as serializable dict."""
     raw_tables = db.collect_tables()
     tables = []
     for t in raw_tables:
         name = t["table_name"]
-        sample = None
-        if opts.collect_sample_data:
-            try:
-                sample = db.collect_sample_data(name, limit=opts.sample_row_count)
-            except Exception:
-                logger.warning("Failed to collect sample data for %s", name)
         tables.append(
             {
                 **t,
@@ -541,7 +535,6 @@ def _collect_schema_raw(db: MySQLRemoteCollector, opts) -> dict:
                 "indexes": db.collect_indexes(name),
                 "foreign_keys": db.collect_foreign_keys(name),
                 "primary_key": db.collect_primary_key(name),
-                "sample_data": sample,
             }
         )
 
@@ -742,7 +735,6 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 indexes=indexes,
                 primary_key=t.get("primary_key") or None,
                 foreign_keys=fks,
-                sample_data=t.get("sample_data"),
                 # #471: the MySQL family reports both (information_schema.TABLES);
                 # the relational-move gap check reads them.
                 storage_engine=_text_or_none(t.get("engine")),

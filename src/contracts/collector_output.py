@@ -29,6 +29,9 @@ Version History:
   buffer-cache hit ratio (and the counts it comes from) and the host CPU count and
   memory the collection script reported. Backward compatible: defaults to None (not
   reported), and a cost estimate then has no collection-wide hit ratio to fall back on.
+- 4.0 (2026-10-25, #387): Removed Table.sample_data: no collector reads table rows;
+  older collector outputs load through a MAJOR 3 adapter that drops their rows.
+  Descriptions no longer claim an anonymization nothing performs.
 """
 
 import re
@@ -193,9 +196,7 @@ class RDSInstanceMetadata(BaseModel):
 class SourceDatabase(BaseModel):
     engine: DatabaseEngine = Field(..., description="Database engine type")
     version: str = Field(..., description="Database engine version (e.g., '8.0.32', '14.7')")
-    hostname: str = Field(
-        ..., description="Database hostname (anonymized if PII protection enabled)"
-    )
+    hostname: str = Field(..., description="Database hostname, as the collection reports it")
     database_name: str | None = Field(None, description="Database/schema name")
     database_size_gb: float | None = Field(
         None, ge=0, description="Total database size in gigabytes"
@@ -389,9 +390,6 @@ class Table(BaseModel):
     foreign_keys: list[ForeignKey] | None = Field(
         None, description="List of foreign key constraints"
     )
-    sample_data: list[dict[str, Any]] | None = Field(
-        None, max_length=1000, description="Sample rows (anonymized if PII protection enabled)"
-    )
     storage_engine: str | None = Field(
         None,
         description=(
@@ -433,7 +431,7 @@ class Procedure(BaseModel):
     schema_name: str | None = Field(None, description="Schema or database name")
     procedure_type: ProcedureType = Field(..., description="Type of database routine")
     definition: str | None = Field(
-        None, description="Procedure/function SQL definition (anonymized if PII protection enabled)"
+        None, description="Procedure/function SQL definition, as the source reports it"
     )
     language: str | None = Field(None, description="Language (e.g., SQL, PL/pgSQL, T-SQL)")
     return_type: str | None = Field(
@@ -466,7 +464,7 @@ class Trigger(BaseModel):
         None, description="Whether trigger fires per row or per statement"
     )
     definition: str | None = Field(
-        None, description="Trigger SQL definition (anonymized if PII protection enabled)"
+        None, description="Trigger SQL definition, as the source reports it"
     )
     is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
     execution_stats: TriggerExecutionStats | None = Field(
@@ -499,7 +497,11 @@ class QueryPattern(BaseModel):
         description="Unique identifier for this query pattern (Performance Insights digest or query hash)",
     )
     query_text: str = Field(
-        ..., description="Normalized query text (anonymized if PII protection enabled)"
+        ...,
+        description=(
+            "Query text as the source reports it: normalized (literals replaced) where the "
+            "source normalizes it"
+        ),
     )
     query_type: QueryType | None = Field(None, description="Primary operation type")
     query_tags: list[str] = Field(
@@ -774,7 +776,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="3.6",
+        default="4.0",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

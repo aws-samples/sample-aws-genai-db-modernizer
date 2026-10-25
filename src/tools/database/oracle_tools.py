@@ -545,18 +545,6 @@ class OracleRemoteCollector:
             "physical_memory_gb": round(mem / 1024**3, 2) if mem is not None else None,
         }
 
-    # -------------------------------------------------------------------
-    # Sample data
-    # -------------------------------------------------------------------
-
-    def collect_sample_data(
-        self, table_name: str, limit: int = 10, owner: str | None = None
-    ) -> list[dict]:
-        own, tbl = self._split_qualified(table_name)
-        own = own or (owner or self.get_current_schema())
-        sql = f'SELECT * FROM "{own}"."{tbl}" WHERE ROWNUM <= {limit}'  # nosec B608
-        return self._query(sql)
-
 
 # -----------------------------------------------------------------------
 # Module-level helpers

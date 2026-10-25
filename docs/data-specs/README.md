@@ -75,11 +75,9 @@ Each query template document provides SQL queries for collecting:
 - Wait statistics
 - I/O statistics
 
-### 6. Sample Data
+### 6. No Row Data
 
-- Sample rows (PII anonymization is [ROADMAP])
-- Data distribution
-- Cardinality estimates
+No collector reads table rows (#387), and column statistics are limited to counts such as cardinality estimates. Query text and view, procedure and trigger definitions can still carry literal values until #1550 and #1551 land. A collection that still carries table rows (written before #387) has them dropped, with a count, from every copy the tool writes; a file uploaded through the API or AWS Transform is kept as the customer sent it, and only what is derived from it drops the rows.
 
 ## 🚀 Quick Start
 
@@ -104,7 +102,7 @@ Each query template document provides SQL queries for collecting:
 1. **Read-Only Access** - All queries use SELECT only
 2. **Minimal Impact** - Queries designed for minimal performance impact
 3. **Comprehensive Coverage** - Collect all metadata needed for analysis
-4. **PII Protection** - [ROADMAP] Support for anonymizing sensitive data
+4. **No Row Data** - Table rows are never read; the collection holds schema metadata, query shapes and counters
 5. **Configurable Depth** - Allow users to control collection scope
 
 ### Query Template Structure
@@ -138,8 +136,6 @@ Each query template follows this structure:
 - Connection statistics
 - Query performance
 
-## Sample Data Collection
-- Sample rows
 ```
 
 ### Database-Specific Features
@@ -233,9 +229,7 @@ def collect_postgresql_queries(connection):
    ↓
 6. Collect performance metrics
    ↓
-7. Collect sample data (if enabled)
-   ↓
-8. Validate and return results
+7. Validate and return results
 ```
 
 ### Error Handling
@@ -309,7 +303,7 @@ To add support for a new database:
 ### Security Considerations
 
 - **Read-only access**: Use read-only database users
-- **PII anonymization**: [ROADMAP] Anonymize sensitive data in sample rows
+- **No row data**: Table rows are never read (#387)
 - **Credential encryption**: Encrypt credentials at rest
 - **TLS connections**: Use encrypted connections
 - **Audit logging**: Log all data collection activities

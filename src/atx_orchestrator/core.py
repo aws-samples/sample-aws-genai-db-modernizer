@@ -316,6 +316,7 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     from src.agents.collector.offline_ingest import build_offline_collector_output
     from src.contracts.collector_output import CollectorOutputContract
     from src.shared.contract_versioning import carries_contract, stamp_artifact_version
+    from src.shared.sample_rows import collector_output_without_sample_rows
     from src.tools.database.offline_parser import parse_offline_collection
     from src.tools.validation.ingestion_limits import check_collection_counts
 
@@ -333,7 +334,13 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
             query_count=len((raw_input.get("queries") or {}).get("query_patterns") or []),
             source=f"{database_name}/{job_id}",
         )
-        collector_data = raw_input
+        # #387: an older collector output may carry table rows; none are kept.
+        collector_data, sample_rows_dropped = collector_output_without_sample_rows(raw_input)
+        if sample_rows_dropped:
+            logger.warning(
+                "ingest: dropped %d sample row(s) the collector output carried (#387)",
+                sample_rows_dropped,
+            )
     else:
         parsed = parse_offline_collection(raw_input)
         # The one source-engine detector (#1177): this path used to guess on its own

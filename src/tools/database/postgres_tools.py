@@ -364,15 +364,6 @@ class PostgreSQLRemoteCollector:
             "total_transactions": int(r.get("total_transactions") or 0),
         }
 
-    # -------------------------------------------------------------------
-    # Sample data
-    # -------------------------------------------------------------------
-
-    def collect_sample_data(self, table_name: str, limit: int = 10) -> list[dict]:
-        return self._query(
-            f'SELECT * FROM public."{table_name}" LIMIT {limit}'  # nosec B608 — table_name from information_schema, not user input
-        )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

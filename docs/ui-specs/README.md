@@ -115,8 +115,6 @@ Database Modernizer Assessment needs a user-friendly interface that allows users
 │  │   Exclude tables: [temp_*, backup_*]                    ││
 │  │                                                          ││
 │  │ Advanced Options:                                        ││
-│  │   ☑️ Include sample data                                ││
-│  │   ☑️ Anonymize PII                                      ││
 │  │   Query log days: [7]                                   ││
 │  └─────────────────────────────────────────────────────────┘│
 │                                                             │

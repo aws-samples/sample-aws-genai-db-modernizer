@@ -170,7 +170,7 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     )
 
     # Stage 2: schema
-    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db, inp.collection_options))
+    schema_raw = ckpt.load_or_run("schema", lambda: _collect_schema_raw(db))
 
     # Stage 3: queries
     queries_raw = ckpt.load_or_run(
@@ -284,20 +284,13 @@ def _collect_ddl(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 # ---------------------------------------------------------------------------
 
 
-def _collect_schema_raw(db: OracleRemoteCollector, opts) -> dict:
+def _collect_schema_raw(db: OracleRemoteCollector) -> dict:
     raw_tables = db.collect_tables()
     tables = []
     for t in raw_tables:
         owner = t.get("schema_name", "")
         table_name = t["table_name"]
         qualified = f"{owner}.{table_name}" if owner else table_name
-
-        sample = None
-        if opts.collect_sample_data:
-            try:
-                sample = db.collect_sample_data(qualified, limit=opts.sample_row_count)
-            except Exception:
-                logger.warning("Failed to collect sample data for %s", qualified)
 
         tables.append(
             {
@@ -306,7 +299,6 @@ def _collect_schema_raw(db: OracleRemoteCollector, opts) -> dict:
                 "indexes": db.collect_indexes(qualified),
                 "foreign_keys": db.collect_foreign_keys(qualified),
                 "primary_key": db.collect_primary_key(qualified),
-                "sample_data": sample,
             }
         )
 
@@ -416,7 +408,6 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 indexes=indexes,
                 primary_key=t.get("primary_key") or None,
                 foreign_keys=fks,
-                sample_data=t.get("sample_data"),
             )
         )
     return tables
