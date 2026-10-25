@@ -17,7 +17,7 @@ import json
 import logging
 import re
 from collections.abc import Callable, Collection, Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -820,22 +820,16 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
 
         # Some assignments carry more than one query_assignments row for the
         # same query_id (one per table a multi-table query touches, seen on
-        # the AdventureWorks sample: 657 rows, 79 distinct queries) --
-        # tracked per group so a duplicate row for a query already recorded
-        # under this exact table group does not double its design_rps or add
-        # a second, redundant entry. The same query can still land in a
-        # *different* group legitimately (one row per table it touches).
+        # the AdventureWorks sample: 657 rows, 79 distinct queries).
+        # ``_rows_per_query`` merges them into one entry per query (#1522);
+        # the per-group set below still guards a repeated pattern id.
         seen_pattern_ids: dict[str, set[str]] = {}
-        for qa in (data.assignment or {}).get("query_assignments", []):
-            if qa.get("assigned_engine") != engine:
-                continue
-            qid = qa.get("query_id")
+        # #1522: one entry per query, its rows' tables together, so a query with one
+        # row per table it touches is listed by one group, named by all of them.
+        for qa, row_tables in _rows_per_query(data.assignment, engine):
+            qid = str(qa["query_id"])
             src_query = source_queries.get(qid)
-            raw_tables = (
-                qa.get("source_tables")
-                or (src_query.get("tables_accessed") if src_query else [])
-                or []
-            )
+            raw_tables = row_tables or (src_query.get("tables_accessed") if src_query else []) or []
             clean_tables = sorted({t for t in raw_tables if t and t not in PSEUDO_TABLES})
             if clean_tables:
                 group_name = ", ".join(clean_tables)
@@ -939,9 +933,69 @@ def build_query_groups(data: SynthesisData) -> list[dict]:
                     }
                 )
 
+    _list_each_query_once(groups, data.assignment)
     # Sort by total RPS descending
     result = sorted(groups.values(), key=lambda g: g["total_design_rps"], reverse=True)
     return result
+
+
+def _rows_per_query(assignment: dict | None, engine: str) -> list[tuple[dict[str, Any], list[str]]]:
+    """``engine``'s ``query_assignments`` rows, one per query (its first row), with the
+    tables of all its rows in first-seen order (#1522). A row with no query id is left
+    out: no query to list."""
+    first: dict[str, dict[str, Any]] = {}
+    tables: dict[str, list[str]] = {}
+    for qa in (assignment or {}).get("query_assignments", []):
+        if qa.get("assigned_engine") != engine or not qa.get("query_id"):
+            continue
+        qid = str(qa["query_id"])
+        first.setdefault(qid, qa)
+        merged = tables.setdefault(qid, [])
+        merged += [t for t in qa.get("source_tables") or [] if t not in merged]
+    return [(qa, tables[qid]) for qid, qa in first.items()]
+
+
+def _list_each_query_once(groups: dict[tuple[str, bool], dict], assignment: dict | None) -> None:
+    """Each query is listed in one owner group's ``source_queries`` (#1522).
+
+    A query two groups list (two ``pattern_group`` values of one design citing it, or a
+    design citing a query the assignment routed to another engine) stays listed by the
+    first group of its assigned engine, else by the first group that lists it, so it is
+    never dropped. The other groups' patterns still cite it in ``query_ids``; the kept
+    listing links to every pattern of its engine that does. The cache layer's groups
+    list cached reads, never served queries, and are left as they are (#226).
+    """
+    owner = {
+        qa["query_id"]: qa.get("assigned_engine")
+        for qa in reversed((assignment or {}).get("query_assignments", []))
+        if qa.get("query_id")
+    }
+    listings: dict[str, list[dict]] = {}
+    for (_, cached), group in groups.items():
+        if not cached:
+            for sq in group["source_queries"]:
+                listings.setdefault(sq["query_id"], []).append(group)
+    for qid, listed in listings.items():
+        if len(listed) < 2:
+            continue
+        home = next((g for g in listed if owner.get(qid) in g["engines"]), listed[0])
+        engine = owner.get(qid) if owner.get(qid) in home["engines"] else None
+        kept = next(sq for sq in home["source_queries"] if sq["query_id"] == qid)
+        for group in listed:
+            if group is home:
+                continue
+            group["source_queries"] = [
+                sq for sq in group["source_queries"] if sq["query_id"] != qid
+            ]
+            if "linked_patterns" not in kept:
+                continue
+            for ap in group["access_patterns"]:
+                if (
+                    qid in (ap.get("query_ids") or [])
+                    and (engine is None or ap.get("engine") == engine)
+                    and ap.get("pattern_id") not in kept["linked_patterns"]
+                ):
+                    kept["linked_patterns"].append(ap.get("pattern_id"))
 
 
 def build_tco_analysis(
