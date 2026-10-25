@@ -345,6 +345,21 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
     return merged_rows
 
 
+# The collection script cuts Oracle statement text at this many characters
+# (``DBMS_LOB.SUBSTR(SQL_FULLTEXT, 2000, 1)`` in scripts/collect-oracle.sql).
+ORACLE_TEXT_CAP = 2000
+# A truncated shape shorter than this is too little to call two statements the same.
+_MIN_TRUNCATED_PREFIX = 100
+_PARTIAL_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$#]*$")
+
+
+def _stable_prefix(shape: str) -> str:
+    """A truncated shape without its last, possibly cut, word; ``\0`` (matches nothing)
+    when too little is left to compare."""
+    prefix = _PARTIAL_WORD_RE.sub("", shape.rstrip())
+    return prefix if len(prefix) >= _MIN_TRUNCATED_PREFIX else "\0"
+
+
 def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> list[str]:
     """Fold digest groups whose texts share a literal shape into one group (in place).
 
@@ -353,14 +368,36 @@ def _merge_oracle_shapes(groups: dict[str, list[dict]], order: list[str]) -> lis
     by first appearance. A group whose rows differ in shape (one digest, several shapes)
     is left whole: a shared digest is already the collection's own statement of identity.
     """
-    from src.tools.sql.normalize import literal_shape_digest
+    from src.tools.sql.normalize import literal_shape
 
     by_shape: dict[str, list[str]] = {}
+    truncated: set[str] = set()
     for key in order:
-        shapes = {
-            literal_shape_digest(str(v.get("query_text") or ""), "oracle") for v in groups[key]
-        }
-        by_shape.setdefault(min(shapes) if len(shapes) == 1 else f"digest:{key}", []).append(key)
+        shapes = {literal_shape(str(v.get("query_text") or ""), "oracle") for v in groups[key]}
+        if len(shapes) != 1:
+            by_shape.setdefault(f"digest:{key}", []).append(key)
+            continue
+        (shape,) = shapes
+        by_shape.setdefault(shape, []).append(key)
+        if all(len(str(v.get("query_text") or "")) >= ORACLE_TEXT_CAP for v in groups[key]):
+            truncated.add(shape)
+
+    # Old collections cut every statement at the cap, so two literal variants of a long
+    # statement are cut at different points and their masked texts differ at the end (#1518).
+    # Merge truncated shapes that agree up to the shorter cut, shortest first.
+    anchors: list[str] = []
+    for shape in sorted(truncated, key=len):
+        anchor = next((a for a in anchors if shape.startswith(_stable_prefix(a))), None)
+        if anchor is None:
+            anchors.append(shape)
+            continue
+        by_shape[anchor].extend(by_shape.pop(shape))
+    # Keep the row order of the variants and of the merged shapes.
+    order_of = {key: i for i, key in enumerate(order)}
+    by_shape = {
+        shape: sorted(keys, key=order_of.__getitem__)
+        for shape, keys in sorted(by_shape.items(), key=lambda kv: min(order_of[k] for k in kv[1]))
+    }
 
     new_groups: dict[str, list[dict]] = {}
     new_order: list[str] = []

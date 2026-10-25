@@ -140,3 +140,42 @@ def test_transform_queries_counts_one_query_per_shape() -> None:
     patterns = _transform_queries(rows, "db", {"orders"}, source_engine="oracle")
     assert len(patterns) == 1
     assert patterns[0]["execution_count"] == 50
+
+
+def _long_statement(literal: str) -> str:
+    """A statement over 2000 characters, cut at 2000 as the collection script cuts it."""
+    filler = " AND ".join(f"col_{i:04d} IS NOT NULL" for i in range(200))
+    return f"SELECT * FROM orders WHERE name = '{literal}' AND {filler}"[:2000]
+
+
+class TestTruncatedOracleVariants:
+    """Variants cut at the script's 2000-character cap merge on the text both keep (#1518)."""
+
+    def test_variants_cut_at_different_points_merge(self) -> None:
+        rows = [
+            _row("a", _long_statement("AB")),
+            _row("b", _long_statement("ABCDEFGHIJKLMNOPQRSTUVWXYZ")),
+        ]
+        assert all(len(r["query_text"]) == 2000 for r in rows)
+        out = _merged(rows)
+        assert len(out) == 1
+        assert out[0]["execution_count"] == 20
+
+    @pytest.mark.passes_on_main
+    def test_truncated_variants_with_different_structure_stay_apart(self) -> None:
+        other = _long_statement("AB").replace("FROM orders", "FROM invoices")
+        out = _merged([_row("a", _long_statement("AB")), _row("b", other)])
+        assert len(out) == 2
+
+    @pytest.mark.passes_on_main
+    def test_short_statements_are_never_prefix_merged(self) -> None:
+        rows = [_row("a", "SELECT * FROM t WHERE id = 1"), _row("b", "SELECT * FROM t")]
+        assert len(_merged(rows)) == 2
+
+    def test_cap_matches_the_collection_script(self) -> None:
+        from pathlib import Path
+
+        from src.tools.database.offline_parser import ORACLE_TEXT_CAP
+
+        script = Path("scripts/collect-oracle.sql").read_text()
+        assert f"SQL_FULLTEXT, {ORACLE_TEXT_CAP}, 1" in script
