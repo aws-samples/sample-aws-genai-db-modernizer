@@ -8,7 +8,8 @@
 # generated files, list the new and changed tests that pass on main's code, then
 # lint, the zero-token replay of the saved real-model run, tests (skipped by
 # --quick) and the needs_llm_run verdict. Exits non-zero on a refused author, a
-# conflict, a lint, replay or test failure, a contract version problem, or (with
+# conflict, a lint, replay or test failure, a contract version problem, a behaviour change
+# under src/agents/referee/ or src/shared/ with no ADR edit and no "No ADR change" line, or (with
 # --strict-main-tests) a new or changed test that passes on main.
 # shellcheck source=lib.sh source-path=SCRIPTDIR
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -20,7 +21,7 @@ for arg in "$@"; do
     --quick) quick=1 ;;
     --strict-main-tests) main_tests=strict ;;
     --no-main-tests) main_tests=skip ;;
-    -h | --help) sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: ci/pre_merge.sh [--quick] [--strict-main-tests | --no-main-tests]" >&2; exit 2 ;;
   esac
 done
@@ -117,6 +118,19 @@ else
   fail "contracts: a contract changed without a version bump or a pending bump"
   printf '%s\n' "$against_out" | grep -v '^ok\|^pending' | sed 's/^/       /'
 fi
+
+# d2. ADR touch rule (#1154): behaviour under src/agents/referee/ or src/shared/ edits the ADR
+# it touches, or the PR body (the ADR field) or a commit message says "No ADR change: <reason>".
+pr_body_file="$(mktemp)"
+if command -v gh >/dev/null 2>&1; then
+  gh pr view --json body -q .body > "$pr_body_file" 2>/dev/null || : > "$pr_body_file"
+fi
+if adr_out="$(PR_BODY_FILE="$pr_body_file" helper adr "$base")"; then
+  note "ok   adr: ${adr_out#ok: }"
+else
+  fail "adr: ${adr_out#error: }"
+fi
+rm -f "$pr_body_file"
 
 # e. Generated files that differ from main must still match their generator.
 check_generated() {  # check_generated NAME "path|path" command...

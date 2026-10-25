@@ -21,6 +21,10 @@ Closes #
 
 <!-- Link the issue comment where the maintainer decision was recorded, or write "None". This is a recorded decision, not the "Maintainer Decision" label. The reviewer checks this PR against that text. -->
 
+## ADR
+
+<!-- A change to behaviour under src/agents/referee/ or src/shared/ edits the ADR it touches. Write "ADR-0xx edited" (name the ADR), or "No ADR change: <reason>". ci/pre_merge.sh fails without one of them. -->
+
 ## Evidence
 
 <!-- For each behavior claim above, paste the command and its output (trimmed) or a rendered excerpt. Do not assert behavior in prose. -->

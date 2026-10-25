@@ -124,3 +124,58 @@ def test_pending_bumps_reads_each_file_and_flags_invalid_ones():
         ("src/contracts/pending/c.z.toml", "invalid"),
         ("src/contracts/pending/d.z.toml", "invalid"),
     ]
+
+
+# --- ADR touch rule (#1154) ---------------------------------------------------
+
+REFEREE = "src/agents/referee/routing.py"
+ADR = "docs/architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md"
+
+
+def test_adr_rule_ignores_branches_that_change_no_behaviour():
+    from ci.pre_merge import check_adr
+
+    changed = ["tests/unit/agents/referee/test_x.py", "ci/lib.sh", "src/agents/collector/a.py"]
+    assert check_adr(changed, "")[0] == "ok"
+
+
+def test_adr_rule_fails_on_referee_or_shared_behaviour_without_an_adr_or_a_statement():
+    from ci.pre_merge import check_adr
+
+    for path in (REFEREE, "src/shared/engine_names.py"):
+        level, message = check_adr([path, "tests/unit/x.py"], "fix: something\n")
+        assert level == "error", path
+        assert path in message
+
+
+def test_adr_rule_passes_when_an_adr_is_edited():
+    from ci.pre_merge import check_adr
+
+    assert check_adr([REFEREE, ADR], "")[0] == "ok"
+
+
+def test_adr_rule_passes_on_a_stated_reason_in_text():
+    from ci.pre_merge import check_adr
+
+    assert check_adr([REFEREE], "body\n\nNo ADR change: pure refactor, same decisions\n")[0] == "ok"
+
+
+def test_adr_rule_rejects_the_unfilled_template_placeholder_and_an_empty_reason():
+    from ci.pre_merge import check_adr
+
+    assert check_adr([REFEREE], "No ADR change: <reason>")[0] == "error"
+    assert check_adr([REFEREE], "No ADR change:   \n")[0] == "error"
+
+
+def test_adr_rule_does_not_count_non_python_files_under_the_paths():
+    from ci.pre_merge import check_adr
+
+    assert check_adr(["src/shared/README.md"], "")[0] == "ok"
+
+
+def test_the_pr_template_has_an_adr_field_that_pre_merge_accepts():
+    template = (
+        Path(__file__).resolve().parents[3] / ".github" / "pull_request_template.md"
+    ).read_text(encoding="utf-8")
+    assert "## ADR" in template
+    assert "No ADR change: <reason>" in template

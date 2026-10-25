@@ -14,10 +14,14 @@ Subcommands (all print to stdout; a non-zero exit means a problem):
   ``contract_version`` with the one on BASE_REF (exit 1 on a version problem).
 * ``pending``: list the pending contract bumps HEAD carries
   (``src/contracts/pending/*.toml``, ADR-008 Decision 8), one ``contract kind`` per line.
+* ``adr BASE_REF``: a branch that changes ``src/agents/referee/`` or ``src/shared/`` edits
+  an ADR or says ``No ADR change: <reason>`` in a commit message or the pull request
+  body (``PR_BODY_FILE``, #1154; exit 1 when it does neither).
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess  # nosec B404 -- runs git with fixed argv
 import sys
@@ -217,6 +221,53 @@ def _contracts(base_ref: str, files: list[str]) -> int:
     return worst
 
 
+# Behaviour that the ADRs describe (#1154). Tests and docs under these names do not count.
+ADR_BEHAVIOUR_PREFIXES = ("src/agents/referee/", "src/shared/")
+ADR_DIR = "docs/architecture/decisions/"
+# "No ADR change: <reason>" with a real reason; the template's `<reason>` placeholder is not one.
+_NO_ADR_CHANGE = re.compile(r"No ADR change:[ \t]*(?!<)\S", re.IGNORECASE)
+
+
+def check_adr(changed: list[str], text: str) -> tuple[str, str]:
+    """The ADR touch rule: ``(level, message)`` for a branch's changed files and its
+    commit messages plus pull request body."""
+    behaviour = [f for f in changed if f.startswith(ADR_BEHAVIOUR_PREFIXES) and f.endswith(".py")]
+    if not behaviour:
+        return "ok", "no behaviour under src/agents/referee/ or src/shared/ changed"
+    edited = [f for f in changed if f.startswith(ADR_DIR)]
+    if edited:
+        return "ok", f"{len(behaviour)} behaviour file(s) changed, ADR edited: {', '.join(edited)}"
+    if _NO_ADR_CHANGE.search(text):
+        return "ok", "behaviour changed, the PR states 'No ADR change: <reason>'"
+    return "error", (
+        f"{len(behaviour)} file(s) under src/agents/referee/ or src/shared/ changed "
+        f"(first: {behaviour[0]}) and no ADR in {ADR_DIR} was edited. Edit the ADR it touches, "
+        "or write 'No ADR change: <reason>' in the PR body (the ADR field) or a commit message"
+    )
+
+
+def _adr(base_ref: str) -> int:
+    changed = subprocess.run(  # nosec B603 B607 -- fixed argv
+        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.split()
+    messages = subprocess.run(  # nosec B603 B607 -- fixed argv
+        ["git", "log", "--format=%B", f"{base_ref}..HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    body_file = os.environ.get("PR_BODY_FILE")
+    body = (
+        open(body_file, encoding="utf-8").read() if body_file and os.path.exists(body_file) else ""
+    )
+    level, message = check_adr(changed, f"{messages}\n{body}")
+    print(f"{level}: {message}")
+    return 1 if level == "error" else 0
+
+
 def main(argv: list[str]) -> int:
     cmd, rest = (argv[0], argv[1:]) if argv else ("", [])
     if cmd == "pick-remote":
@@ -230,6 +281,8 @@ def main(argv: list[str]) -> int:
         for contract, kind in _head_pending():
             print(f"{contract} {kind}")
         return 0
+    if cmd == "adr" and rest:
+        return _adr(rest[0])
     if cmd == "contracts" and rest:
         return _contracts(rest[0], rest[1:])
     print(__doc__, file=sys.stderr)
