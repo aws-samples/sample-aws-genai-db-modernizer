@@ -481,6 +481,27 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         ("postgresql", "oracle"),
         "keywords as double-quoted identifiers",
     ),
+    SqlEntry(
+        "where_as_double_quoted_identifier",
+        'SELECT "where", "a = 1 AND b IN (2)" FROM t',
+        "SELECT c1, c2 FROM t",
+        ("postgresql", "oracle"),
+        "a WHERE and a key equality as double-quoted names, no real WHERE (#1478)",
+    ),
+    SqlEntry(
+        "where_as_backtick_identifier",
+        "SELECT `where`, `a = 1 AND b IN (2)` FROM t",
+        "SELECT c1, c2 FROM t",
+        ("mysql",),
+        "a WHERE and a key equality as backtick-quoted MySQL names, no real WHERE (#1478)",
+    ),
+    SqlEntry(
+        "where_as_bracket_identifier",
+        "SELECT [where], [a = 1 AND b IN (2)] FROM t",
+        "SELECT c1, c2 FROM t",
+        ("sqlserver",),
+        "a WHERE and a key equality as bracket-quoted SQL Server names, no real WHERE (#1478)",
+    ),
 )
 
 

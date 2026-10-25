@@ -14,7 +14,7 @@ import pytest
 
 from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.utility_statements import is_utility_statement
-from src.shared.sql_spans import code_text
+from src.shared.sql_spans import NEUTRAL_NAME, code_text, keyword_text
 from src.tools.sql.query_facts import QueryFacts
 
 
@@ -162,3 +162,61 @@ class TestUtilityStatement:
     )
     def test_a_real_catalog_read_is_still_utility(self, text, engine):
         assert is_utility_statement(text, ["unknown"], SourceScope(engine=engine)) is True
+
+
+class TestAKeywordAsAQuotedNameIsAName:
+    """#1478: the facts that look for a keyword read ``sql_spans.keyword_text``, where each
+    quoted identifier is a neutral name; the facts that read a name keep it."""
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ('SELECT "where" FROM t', "postgresql"),
+            ('SELECT "where" FROM t', "oracle"),
+            ("SELECT `where` FROM t", "mysql"),
+            ("SELECT [where] FROM t", "sqlserver"),
+        ],
+    )
+    def test_the_issue_repro_has_no_where(self, sql, engine):
+        facts = QueryFacts(sql, engine)
+        assert not facts.where_word and not facts.keyed_after_where
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ('SELECT "is null", "count(*)", "not in" FROM t', "postgresql"),
+            ("SELECT `is null`, `count(*)`, `not in` FROM t", "mysql"),
+            ("SELECT [is null], [count(*)], [not in] FROM t", "sqlserver"),
+        ],
+    )
+    def test_no_keyword_fact_reads_a_quoted_name(self, sql, engine):
+        facts = QueryFacts(sql, engine)
+        assert not (facts.is_null or facts.count_star_or_one or facts.negation_word), sql
+
+    def test_keyword_text_writes_each_quoted_name_as_the_neutral_name(self):
+        assert keyword_text('SELECT "where" FROM "app"."t"', "postgresql") == (
+            f'SELECT "{NEUTRAL_NAME}" FROM "{NEUTRAL_NAME}"."{NEUTRAL_NAME}"'
+        )
+        assert keyword_text("SELECT [where] FROM [t]", "sqlserver") == (
+            f"SELECT [{NEUTRAL_NAME}] FROM [{NEUTRAL_NAME}]"
+        )
+        # MySQL's "..." is a string, so it is a placeholder, as in code_text.
+        assert keyword_text('SELECT `where` FROM t WHERE a = "x"', "mysql") == (
+            f"SELECT `{NEUTRAL_NAME}` FROM t WHERE a = ?"
+        )
+
+    @pytest.mark.passes_on_main  # the names the name-reading facts must keep
+    def test_a_name_reading_fact_keeps_the_name(self):
+        assert QueryFacts('SELECT "latitude" FROM t', "postgresql").geospatial_keyword
+        assert QueryFacts("SELECT id FROM t WHERE [SessionToken] = @p", "sqlserver").session_key
+
+    def test_a_quoted_function_name_is_still_a_call(self):
+        """A quoted name before ``(`` names the function called, not a column."""
+        for sql in ('SELECT "count"(*) FROM t', 'SELECT "count" (*) FROM t'):
+            assert keyword_text(sql, "postgresql") == sql
+        assert QueryFacts("SELECT `FOUND_ROWS`()", "mysql").found_rows
+
+    @pytest.mark.passes_on_main  # a real keyword next to a quoted name still reads
+    def test_a_real_where_after_a_quoted_name_still_reads(self):
+        facts = QueryFacts('SELECT "where" FROM t WHERE "id" = $1', "postgresql")
+        assert facts.where_word and facts.keyed_after_where

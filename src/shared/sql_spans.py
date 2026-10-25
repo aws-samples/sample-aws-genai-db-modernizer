@@ -56,6 +56,8 @@ comment or literal awareness (``query_shape``'s former ``_QUOTED_IDENT_RE``).
 
 :func:`code_text` is the text as the engine runs it; a PostgreSQL ``DO`` block or
 ``AS $$ ... $$`` routine body is code there, not a string (:func:`opens_routine_body`).
+:func:`keyword_text` is the same text with each quoted identifier's name a neutral one
+(:data:`NEUTRAL_NAME`), for a scan that looks for keywords: a name is never one (#1478).
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ from src.shared.sql_comments import block_comment_end, block_comments_nest
 __all__ = [
     "COMMENTS_LITERALS_AND_IDENTIFIERS",
     "LITERALS_AND_COMMENTS",
+    "NEUTRAL_NAME",
     "MYSQL_COMMENTS_LITERALS_AND_IDENTIFIERS",
     "MYSQL_LITERALS_AND_COMMENTS",
     "POSTGRES_COMMENTS_LITERALS_AND_IDENTIFIERS",
@@ -80,6 +83,7 @@ __all__ = [
     "Grammar",
     "code_text",
     "comments_literals_and_identifiers_for",
+    "keyword_text",
     "literals_and_comments_for",
     "opens_routine_body",
     "quoted_span_end",
@@ -378,7 +382,32 @@ def opens_routine_body(code_before: str) -> bool:
     return bool(ROUTINE_BODY_OPENER_RE.search(code_before))
 
 
-def code_text(text: str, source_engine: str | None) -> str:
+# What :func:`keyword_text` writes inside a quoted identifier: a name that is no keyword in
+# any dialect. The quotes stay, so a scan reads a quoted name where one stood, as before.
+NEUTRAL_NAME = "quoted_name"
+_CLOSERS = {"[": "]"}
+# A ``(`` after a quoted name: the name is a function's, and the call is SQL.
+_CALL_PAREN_RE = re.compile(r"\s*\(")
+
+
+def _quoted(opener: str, name: str) -> str:
+    return f"{opener}{name}{_CLOSERS.get(opener, opener)}"
+
+
+def keyword_text(text: str, source_engine: str | None) -> str:
+    """:func:`code_text` with each quoted identifier's name :data:`NEUTRAL_NAME`, in its
+    quotes (``"where"`` reads ``"quoted_name"``, #1478).
+
+    A keyword used as a quoted name (`` `where` `` in MySQL, ``"where"`` in PostgreSQL or
+    Oracle, ``[where]`` in SQL Server) is a name, never SQL, so a fact that looks for a
+    keyword reads this text; a fact that needs the names (a table, a ``latitude``
+    column, a session key) reads :func:`code_text`. A quoted name followed by ``(`` names
+    the function a call runs, so it is kept (`` `FOUND_ROWS`() `` is that call).
+    """
+    return code_text(text, source_engine, neutral_name=NEUTRAL_NAME)
+
+
+def code_text(text: str, source_engine: str | None, *, neutral_name: str | None = None) -> str:
     """``text`` as the source engine runs it (#1415): each comment a space, each string
     literal a ``?`` placeholder, each quoted identifier as written.
 
@@ -394,6 +423,9 @@ def code_text(text: str, source_engine: str | None) -> str:
     it is read as code, the same way, between two spaces (#1416): a ``CALL`` or an
     ``IN (SELECT`` in it is one. Every other dollar-quoted string is a literal, and a
     string inside a body is still a string (``RAISE NOTICE 'call x()'`` calls nothing).
+
+    With ``neutral_name``, each quoted identifier holds that token instead of its name
+    (:func:`keyword_text`).
     """
     text = text or ""
     grammar = literals_and_comments_for(source_engine)
@@ -405,7 +437,11 @@ def code_text(text: str, source_engine: str | None) -> str:
         if opener in ("--", "/*", "#"):
             out.append(" ")
         elif opener in grammar.identifiers:
-            out.append(text[start:end])
+            # A quoted name before ``(`` is the function called: kept, as a call.
+            if neutral_name is None or _CALL_PAREN_RE.match(text, end) is not None:
+                out.append(text[start:end])
+            else:
+                out.append(_quoted(opener, neutral_name))
         elif (
             opener[0] == "$"
             and end - start >= 2 * len(opener)
@@ -413,7 +449,7 @@ def code_text(text: str, source_engine: str | None) -> str:
             and opens_routine_body("".join(out[-4:]))
         ):
             body = text[start + len(opener) : end - len(opener)]
-            out.append(f" {code_text(body, source_engine)} ")
+            out.append(f" {code_text(body, source_engine, neutral_name=neutral_name)} ")
         else:
             out.append("?")
     out.append(text[last:])

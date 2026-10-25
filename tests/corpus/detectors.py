@@ -157,6 +157,15 @@ _KEEPS_IDENTIFIER_NAMES = {
     "backtick_identifiers": _IDENTIFIER_NAMES,
     "bracket_identifiers": _IDENTIFIER_NAMES,
     "double_quoted_identifiers": _IDENTIFIER_NAMES,
+    # A keyword as a quoted name (#1478): the name is kept, the keyword facts read none.
+    **dict.fromkeys(
+        (
+            "where_as_double_quoted_identifier",
+            "where_as_backtick_identifier",
+            "where_as_bracket_identifier",
+        ),
+        ("IN",),
+    ),
 }
 
 # A PostgreSQL routine body is code (``sql_spans.code_text``, #1416): the fact in it counts,
