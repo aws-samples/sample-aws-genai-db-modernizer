@@ -149,11 +149,16 @@ def test_aurora_choice_is_a_close_call_tipped_by_workload_features(
     7286. A table that a write statement only reads (a ``MERGE``/``UPDATE`` source in a
     CTE or a FROM) no longer carries that write in its profile, so its read share rises
     and both Aurora engines gain the same 5 points from the table-level scores. The
-    30-point lead is unchanged and the features still decide."""
+    30-point lead is unchanged and the features still decide.
+
+    #483 (``ALTER INDEX ... ON [StockMovement]`` names its table): 7256 to 7258 and 7286
+    to 7288. The maintenance query now counts on ``StockMovement``, which lifts the table
+    level scores of that table's queries on both Aurora engines by the same 2 points; the
+    30-point lead is unchanged and no query changes engine."""
     choice = _assignment(trailgear_run, 1)["aurora_engine_choice"]
     assert choice["source_engine"] == "sqlserver"
     mysql, pg = choice["totals"]["aurora_mysql"], choice["totals"]["aurora_postgresql"]
-    assert (mysql, pg) == (7256.0, 7286.0)
+    assert (mysql, pg) == (7258.0, 7288.0)
     assert abs(pg - mysql) <= 0.05 * max(mysql, pg), "close enough for features to decide"
     assert choice["margin"] == round(pg - mysql, 2)
     assert choice["engine"] == "aurora_postgresql"

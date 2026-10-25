@@ -117,6 +117,66 @@ def test_no_table_is_unknown():
 
 
 @pytest.mark.parametrize(
+    "engine,sql,expected",
+    [
+        # #483: a catalog table the statement reads is named, schema-qualified.
+        (
+            "postgresql",
+            "SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1",
+            ["information_schema.schemata"],
+        ),
+        (
+            "mysql",
+            "SELECT column_default IS NOT NULL FROM information_schema.columns WHERE x = ?",
+            ["information_schema.columns"],
+        ),
+        ("sqlserver", "SELECT name FROM sys.objects WHERE type = 'U'", ["sys.objects"]),
+        (
+            "sqlserver",
+            "SELECT o.name FROM sys.objects o JOIN orders ON 1 = 1",
+            ["sys.objects", "shop.orders"],
+        ),
+        # Maintenance statements: the table is named, as a collected table's id.
+        ("sqlserver", "ALTER INDEX [IX_orders] ON [orders] REORGANIZE", ["shop.orders"]),
+        ("sqlserver", "UPDATE STATISTICS [dbo].[orders]", ["shop.orders"]),
+        ("mysql", "OPTIMIZE TABLE orders, users", ["shop.orders", "shop.users"]),
+        ("mysql", "ALTER TABLE `orders` ADD INDEX i (id)", ["shop.orders"]),
+        ("postgresql", "VACUUM ANALYZE public.orders", ["shop.orders"]),
+        ("postgresql", "TRUNCATE orders", ["shop.orders"]),
+        ("oracle", "TRUNCATE TABLE orders", ["shop.orders"]),
+    ],
+)
+def test_a_statement_that_names_a_table_does_not_report_unknown(engine, sql, expected):
+    assert _tables([sql], engine) == [expected]
+
+
+@pytest.mark.passes_on_main
+@pytest.mark.parametrize(
+    "engine,sql",
+    [
+        ("postgresql", "SET client_min_messages TO 'warning'"),
+        ("postgresql", "SHOW search_path"),
+        ("postgresql", "BEGIN"),
+        ("postgresql", "VACUUM"),
+        ("postgresql", "SELECT pg_get_serial_sequence($1, $2)"),
+        ("postgresql", "CREATE EXTENSION IF NOT EXISTS hstore"),
+        ("mysql", "SELECT FOUND_ROWS()"),
+        ("sqlserver", "EXEC [dbo].[usp_PlaceOrder] @CustomerID = @CustomerID"),
+        ("sqlserver", "SELECT NEXT VALUE FOR [dbo].[OrderNumberSeq] AS [N]"),
+    ],
+)
+def test_a_statement_with_no_table_stays_unknown(engine, sql):
+    assert _tables([sql], engine) == [["unknown"]]
+
+
+@pytest.mark.passes_on_main
+def test_an_unlisted_sequence_read_stays_unknown():
+    # #783: a sequence is not a schema table.
+    sql = "SELECT last_value FROM public.badges_id_seq"
+    assert _tables([sql]) == [["unknown"]]
+
+
+@pytest.mark.parametrize(
     "engine,expected",
     [
         ("postgresql", "postgresql"),

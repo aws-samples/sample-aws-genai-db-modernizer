@@ -490,7 +490,10 @@ def _resolve_table_ids(
 ) -> list[str]:
     """Resolve ``(qualifiers, table)`` references to collection table ids.
 
-    System catalogs (``sys``, ``information_schema``) are skipped, a qualified
+    A system catalog table (``information_schema.columns``, ``sys.objects``) is a
+    table the statement reads, so it is named as written (#483): routing and the
+    waves already treat it as an engine object
+    (``table_resolution.is_engine_system_object``). A qualified
     reference goes through ``_resolve_qualified_table`` (#653), a bare name the
     collection knows becomes ``<database>.<table>``, and anything else is kept as
     written. A qualified and a bare reference to one table resolve to the same id,
@@ -501,9 +504,7 @@ def _resolve_table_ids(
     """
     tables_accessed: list[str] = []
     for qualifiers, table in refs:
-        # Skip system catalogs / RDS-internal references
-        if qualifiers and qualifiers[-1].lower() in ("sys", "information_schema"):
-            continue
+        # A bare ``sys`` or ``information_schema`` is a schema name read as a table
         if table.lower() in ("sys", "information_schema"):
             continue
         if qualifiers:

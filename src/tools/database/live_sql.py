@@ -20,8 +20,10 @@ before), so its downstream consumers see no format change:
   removed), the way the offline parser keeps a name it can't resolve;
 - PostgreSQL drops a ``public.`` qualifier (``public.topics`` is ``topics``);
 - Oracle lower-cases the name;
-- references into a system catalog (``sys``, ``information_schema``) are
-  skipped, the offline parser's rule.
+- a system catalog table (``information_schema.columns``, ``sys.objects``) is a
+  table the query reads and is named like any other, the offline parser's rule
+  (#483); only a bare ``sys`` or ``information_schema``, a schema read as a
+  table, is skipped.
 
 Resolving a name to a collection table id (``<database>.<table>``) stays with
 the pipeline (``TableNameResolver``); a live collector reads its queries
@@ -68,8 +70,8 @@ def read(sql: str, source_engine: str, query_id: str = "", *, log_trace: bool = 
 
 
 def table_names(refs: TableReferences, source_engine: str) -> list[str]:
-    """The live spelling of each table reference, system catalogs skipped,
-    duplicates collapsed in first-seen order."""
+    """The live spelling of each table reference, duplicates collapsed in
+    first-seen order."""
     names: list[str] = []
     for ref in refs.tables:
         if _is_system_catalog(ref):
@@ -87,9 +89,8 @@ def extract_tables(
 
 
 def _is_system_catalog(ref: TableRef) -> bool:
-    if ref.qualifiers and ref.qualifiers[-1].lower() in _SYSTEM_CATALOGS:
-        return True
-    return ref.name.lower() in _SYSTEM_CATALOGS
+    """A bare ``sys`` or ``information_schema``: a schema name read as a table."""
+    return not ref.qualifiers and ref.name.lower() in _SYSTEM_CATALOGS
 
 
 def _live_name(ref: TableRef, source_engine: str) -> str:

@@ -80,7 +80,6 @@ _Q_FACADE_WRONG: dict[str, tuple[str, ...]] = {
         ),
         _Q_ENTRIES,
     ),
-    "QueryFacts.range_predicate": (*_APOSTROPHE_ONLY, "oracle_q_quote_angle_brackets"),
     **dict.fromkeys(
         (
             f"QueryFacts.{fact}"

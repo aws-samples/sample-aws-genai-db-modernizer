@@ -489,10 +489,10 @@ class TestHelpers:
         assert "dbo.Orders" in tables
         assert "Customers" in tables
 
-    def test_extract_tables_excludes_system(self) -> None:
-        # 'sys' should be filtered out as a referenced table name
+    def test_extract_tables_names_a_system_catalog_table(self) -> None:
+        # #483: a catalog table the query reads is named, like the offline parser does.
         sql = "SELECT * FROM sys.tables WHERE schema_id = 1"
-        assert _extract_tables(sql) == []
+        assert _extract_tables(sql) == ["sys.tables"]
 
     def test_extract_tables_ignores_a_parameter_named_from(self) -> None:
         # #663: T-SQL's @From is a parameter, never a FROM clause.

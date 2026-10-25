@@ -241,7 +241,7 @@ CASES = [
         {"EventLog"},
         ["db.EventLog"],
     ),
-    ("sqlserver", "SELECT * FROM sys.tables WHERE schema_id = 1", {"Orders"}, []),
+    ("sqlserver", "SELECT * FROM sys.tables WHERE schema_id = 1", {"Orders"}, ["sys.tables"]),
     # SQL Server temp tables (#tmp, ##tmp) and table variables (@t) are
     # query-local, never a collected table, on both paths.
     (
@@ -386,13 +386,13 @@ def test_a_facade_error_logs_its_stack_trace_once_per_collection(monkeypatch, ca
     [
         # Each module's own name spelling stays: MySQL and SQL Server keep a
         # qualifier as written, PostgreSQL drops a ``public.`` one, Oracle
-        # lower-cases; system catalogs are skipped everywhere.
+        # lower-cases; a system catalog table is named like any other (#483).
         (
             "mysql",
             "SELECT * FROM wordpress.wp_posts JOIN wp_users",
             ["wordpress.wp_posts", "wp_users"],
         ),
-        ("mysql", "SELECT * FROM information_schema.tables", ["unknown"]),
+        ("mysql", "SELECT * FROM information_schema.tables", ["information_schema.tables"]),
         (
             "postgresql",
             "SELECT * FROM public.topics JOIN audit.events ON 1=1",

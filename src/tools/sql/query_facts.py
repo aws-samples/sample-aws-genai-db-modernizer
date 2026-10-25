@@ -1011,7 +1011,7 @@ class QueryFacts:
             return False
         if self._access.parsed_by == "sqlglot":
             return any(scope.ranges for scope in self._access.scopes)
-        return regex_range_predicate(self._text)
+        return regex_range_predicate(self._code)
 
     # -- Text facts ------------------------------------------------------------
 

@@ -23,6 +23,10 @@ FROM clause (#663). Upsert clauses that use ``UPDATE`` for a column
 assignment are skipped (#552), and ``FROM``/``JOIN`` references to a
 ``WITH``-defined CTE name are dropped (#682).
 
+A maintenance statement sqlglot cannot read (``ALTER INDEX ... ON t``, ``UPDATE
+STATISTICS t``, ``VACUUM t``, ``LOCK TABLES t``, ...) names its tables in
+:mod:`src.tools.sql.maintenance` (#483).
+
 A bulk load (``COPY <table> FROM ...``, ``LOAD DATA ... INTO TABLE <table>``)
 and a ``COPY <table> TO ...`` export name exactly one table, their target
 (:mod:`src.tools.sql.bulk_load`, #777): the scan would otherwise read
@@ -37,6 +41,7 @@ import re
 from src.shared.sql_comments import block_comments_nest, strip_leading_comments
 from src.tools.database.sql_cte import drop_cte_references
 from src.tools.sql.bulk_load import bulk_load_table, copy_table
+from src.tools.sql.maintenance import maintenance_tables
 from src.tools.sql.normalize import without_comments_between_statements
 
 
@@ -68,6 +73,9 @@ def regex_table_refs(query_text: str, source_engine: str = "") -> list[tuple[lis
     target = copy_table(query_text, source_engine) or bulk_load_table(query_text, source_engine)
     if target is not None:
         return [target]
+    maintained = maintenance_tables(query_text, source_engine)
+    if maintained is not None:
+        return maintained
     is_merge = is_merge_statement(query_text, source_engine)
     using = r"|USING" if is_merge else ""
     table_re = re.compile(

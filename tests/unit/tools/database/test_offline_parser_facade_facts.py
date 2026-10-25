@@ -53,9 +53,10 @@ def test_regex_misreads_are_gone(sql, changed):
     assert {k: facts[k] for k in changed} == changed
 
 
+@pytest.mark.passes_on_main
 def test_a_fallback_keeps_the_regex_facts():
     # REFRESH MATERIALIZED VIEW is a generic Command node in sqlglot.
-    assert _facts("REFRESH MATERIALIZED VIEW mv_count -- join select select") == {
+    assert _facts("REFRESH MATERIALIZED VIEW mv_count WITH DATA join select select") == {
         "has_joins": True,
         "join_count": 1,
         "has_aggregations": False,

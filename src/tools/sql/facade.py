@@ -62,7 +62,7 @@ from typing import Literal
 import sqlglot
 from sqlglot import exp
 
-from src.shared.sql_comments import strip_leading_comments
+from src.shared.sql_comments import block_comments_nest, strip_comments, strip_leading_comments
 from src.tools.sql.normalize import (
     NormalizedQuery,
     normalize_digest_text,
@@ -178,7 +178,19 @@ _STATEMENT_TYPES = (
     exp.Transaction,
     exp.Commit,
     exp.Rollback,
+    # Statements that name a table the schema holds (#483): sqlglot reads them
+    # fully, but they are not exp.DDL, so they used to fall back to a regex
+    # scan that found no table in them.
+    exp.Alter,
+    exp.Drop,
+    exp.TruncateTable,
+    exp.Analyze,
+    exp.Describe,
+    exp.Comment,
 )
+
+# The kinds of ALTER and DROP that act on a table or a view.
+_TABLE_KINDS = frozenset({"TABLE", "VIEW"})
 
 # Pseudo-tables that name no stored data.
 _PSEUDO_TABLES = frozenset({"dual"})
@@ -695,7 +707,7 @@ def _from_statements(statements: list[exp.Expr], dialect: str, truncated: bool) 
     for statement in statements:
         cte_names.extend(c.alias_or_name.lower() for c in statement.find_all(exp.CTE))
         aliases = _table_aliases(statement)
-        for table in statement.find_all(exp.Table):
+        for table in _statement_tables(statement):
             ref = _ref_from_node(table)
             if ref is None or _is_temp_table(table) or _is_cte_reference(table, ref):
                 continue
@@ -711,6 +723,31 @@ def _from_statements(statements: list[exp.Expr], dialect: str, truncated: bool) 
         dialect=dialect,
         truncated=truncated,
     )
+
+
+def _statement_tables(statement: exp.Expr) -> list[exp.Table]:
+    """The table nodes of one statement that name a table or view.
+
+    Almost every statement names its tables with every table node in it. ``ALTER``
+    and ``DROP`` use table nodes for other names too: the new name of ``ALTER
+    TABLE a RENAME TO b``, the index of ``DROP INDEX i ON t`` (sqlglot reads an
+    index name as a table node; the table is in the ``ON`` clause), a sequence or a
+    function. Only a table or view they act on is a reference (#483).
+    """
+    if isinstance(statement, exp.Alter):
+        target = statement.this
+        kind = str(statement.args.get("kind") or "").upper()
+        return [target] if isinstance(target, exp.Table) and kind in _TABLE_KINDS else []
+    if isinstance(statement, exp.Drop):
+        kind = str(statement.args.get("kind") or "").upper()
+        if kind in _TABLE_KINDS:
+            return [t for t in statement.args.get("tables") or [] if isinstance(t, exp.Table)]
+        if kind == "INDEX":
+            on = statement.args.get("cluster")  # DROP INDEX i ON t (MySQL, T-SQL)
+            target = on.this if isinstance(on, exp.OnProperty) else None
+            return [target] if isinstance(target, exp.Table) else []
+        return []
+    return list(statement.find_all(exp.Table))
 
 
 def _ref_from_regex(qualifiers: list[str], table: str) -> TableRef:
@@ -825,7 +862,11 @@ _LIKE_NODES: tuple[type[exp.Expr], ...] = (exp.Like, exp.ILike)
 
 
 def _regex_facts(sql: str, reason: FallbackReason, dialect: str) -> SqlFacts:
-    """The regex facts (:mod:`src.tools.sql.regex_facts`), labelled as a fallback."""
+    """The regex facts (:mod:`src.tools.sql.regex_facts`), labelled as a fallback.
+
+    Read from the text without its comments, as sqlglot reads it: a keyword in a
+    comment is not part of the statement (#483)."""
+    sql = strip_comments(sql, nested=block_comments_nest(dialect), hash_comments=dialect == "mysql")
     return SqlFacts(
         join_count=regex_join_count(sql),
         has_joins=regex_has_joins(sql),
@@ -1552,7 +1593,7 @@ def _text_search_kind(node: exp.Expr) -> TextSearchKind | None:
 
     ``leading_wildcard`` and ``parameter``: a ``LIKE``/``ILIKE`` (:func:`_like_kind`;
     a prefix or any other pattern is no text search). ``fulltext``: ``MATCH ...
-    AGAINST``, ``@@``, ``CONTAINS`` or a full-text function. ``pattern``: a
+    AGAINST``, ``@@``, ``CONTAINS``, a full-text function or a ``tsvector`` column type. ``pattern``: a
     regular-expression or ``SIMILAR TO`` match. ``similarity``: a trigram
     similarity function.
     """
@@ -1561,6 +1602,8 @@ def _text_search_kind(node: exp.Expr) -> TextSearchKind | None:
         return kind if kind in ("leading_wildcard", "parameter") else None  # type: ignore[return-value]
     if isinstance(node, _FULLTEXT_NODES):
         return "fulltext"
+    if isinstance(node, exp.DataType) and str(node.args.get("kind") or "").lower() == "tsvector":
+        return "fulltext"  # ADD COLUMN search_vec tsvector (#483): sqlglot has no such type
     if isinstance(node, _PATTERN_MATCH_NODES):
         return "pattern"
     if isinstance(node, exp.Func):
