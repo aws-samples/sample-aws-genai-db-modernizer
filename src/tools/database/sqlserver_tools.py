@@ -604,7 +604,7 @@ def _normalize_index_type(raw: object) -> str:
 
     SQL Server's sys.indexes.type_desc returns values like ``CLUSTERED``,
     ``NONCLUSTERED``, ``XML``, ``SPATIAL``, ``CLUSTERED COLUMNSTORE``, etc.
-    The contract enum is engine-neutral (btree/hash/gist/gin/fulltext/spatial/other).
+    The contract enum is engine-neutral (``IndexType`` in src.contracts.collector_output).
     Most SQL Server B-tree indexes (clustered + nonclustered + non-unique +
     unique) map cleanly to ``btree``. Specialized types map to spatial,
     fulltext, or fall through to ``other``.

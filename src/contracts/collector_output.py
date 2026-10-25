@@ -32,6 +32,9 @@ Version History:
 - 4.0 (2026-10-25, #387): Removed Table.sample_data: no collector reads table rows;
   older collector outputs load through a MAJOR 3 adapter that drops their rows.
   Descriptions no longer claim an anonymization nothing performs.
+- 4.1 (2026-10-25, #293): Added IndexType members spgist and brin, PostgreSQL access
+  methods the collectors already capture; they used to be coerced to other offline and
+  rejected live.
 """
 
 import re
@@ -105,6 +108,8 @@ class IndexType(str, Enum):
     hash = "hash"
     gist = "gist"
     gin = "gin"
+    spgist = "spgist"
+    brin = "brin"
     fulltext = "fulltext"
     spatial = "spatial"
     other = "other"
@@ -776,7 +781,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="4.0",
+        default="4.1",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

@@ -789,6 +789,16 @@ def test_every_rule_has_a_case() -> None:
     assert set(CASES) == {r.id for r in gap_rules()}
 
 
+@pytest.mark.parametrize("method", ["spgist", "brin"])
+def test_postgresql_index_methods_names_the_methods_added_in_293(method: str) -> None:
+    """Typed ``other`` before #293, they matched the rule by accident; now by name."""
+    collector = _collector(
+        "postgresql", tables=[_table("db.t", indexes=[_index(index_type=method)])]
+    )
+
+    assert "postgresql-index-methods" in _ids(detect_relational_gaps(collector, "aurora_mysql"))
+
+
 @pytest.mark.parametrize("rule_id", sorted(CASES))
 def test_positive(rule_id: str) -> None:
     engine, target, positive, _ = CASES[rule_id]

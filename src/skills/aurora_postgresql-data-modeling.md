@@ -12,7 +12,7 @@ script's work.
   `tables` (per table: `row_count`, `read_qps`/`write_qps`, `primary_key`,
   `columns` as `name TYPE [NOT NULL] [AI] [DEFAULT x]` lines, residual columns
   marked `(residual; source <data_type>)` and changed types `(source <data_type>)`,
-  `indexes` as `name [UNIQUE] (columns)` and `foreign_keys` as `col -> table(col)`),
+  `indexes` as `name [UNIQUE] (columns) [USING method]` and `foreign_keys` as `col -> table(col)`),
   `residual_types` (residual columns grouped by source data type),
   `hot_queries` (busiest in-scope queries with tables and filter/sort columns),
   `analysis` (detected patterns, anti-patterns) and `source_features`

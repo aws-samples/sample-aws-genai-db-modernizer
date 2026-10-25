@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from src.contracts.aurora_design_delta import validate_aurora_type
+from src.contracts.aurora_design_delta import INDEX_METHODS, validate_aurora_type
 from src.contracts.schema_design_input import AgentColumn, AgentIndex, AgentTable
 from src.tools.schema.aurora_common.constraint_translator import (
     DefaultTranslation,
@@ -114,8 +114,9 @@ class DdlResult:
     tables: list[TableDDL]
     full_ddl: str
     residuals: list[dict]
-    # Source indexes the draft could not carry over as written (a partial-index
-    # predicate Aurora cannot take): {"table", "index", "reason"}.
+    # Source indexes the draft could not carry over as written: a partial-index
+    # predicate Aurora cannot take, or an access method it cannot create or the
+    # collector cannot describe (#293): {"table", "index", "reason"}.
     index_notes: list[dict] = field(default_factory=list)
     # Columns that carry over but need a look: {"table", "column", "kind", "reason"};
     # kind "default" (a source default the draft dropped, or turned into an
@@ -343,12 +344,144 @@ def _text_columns(columns: list[ColumnDDL]) -> set[str]:
     }
 
 
+# #293: the PostgreSQL access methods a source index can keep. ``btree`` needs no USING;
+# ``fulltext`` and ``spatial`` (MySQL and SQL Server sources) and ``other`` have no
+# PostgreSQL spelling, so they stay a plain B-tree index as before.
+_PG_INDEX_METHODS = frozenset(INDEX_METHODS) - {"btree"}
+# What PostgreSQL builds, which a source index from another engine can break: only a
+# B-tree is UNIQUE, a hash or SP-GiST index takes one column, and a GIN or GiST index needs
+# a default operator class for every column. These draft types have one (GIN also takes
+# any array; GiST takes none); HSTORE, GEOMETRY and GEOGRAPHY bring theirs with the
+# extension the column already needs. For any other column the source index used an
+# operator class the collector does not record. Review of #1506.
+_PG_ONE_COLUMN_METHODS = frozenset({"hash", "spgist"})
+_PG_DEFAULT_OPCLASS_TYPES = {
+    "gin": frozenset({"TSVECTOR", "JSONB", "HSTORE"}),
+    "gist": frozenset(
+        {
+            "TSVECTOR",
+            "TSQUERY",
+            "HSTORE",
+            "POINT",
+            "BOX",
+            "POLYGON",
+            "CIRCLE",
+            "INT4RANGE",
+            "INT8RANGE",
+            "NUMRANGE",
+            "TSRANGE",
+            "TSTZRANGE",
+            "DATERANGE",
+            "GEOMETRY",
+            "GEOGRAPHY",
+        }
+    ),
+}
+# The methods Aurora MySQL cannot create and no B-tree stands in for: a B-tree on the
+# same columns would not serve the full-text, containment or geometric queries the index
+# exists for, and can fail to build on long values. The draft notes such an index instead
+# of rendering one. A BRIN index is rendered as a B-tree, which serves the same range
+# scans, with a note.
+_MYSQL_DROPPED_METHODS = frozenset({"gin", "gist", "spgist"})
+
+
+def index_method(index: AgentIndex) -> str | None:
+    """The source index's access method, or None for an input written before #293."""
+    return index.index_type.value if index.index_type else None
+
+
+def _has_default_opclass(method: str, aurora_type: str) -> bool:
+    if aurora_type.endswith("[]"):
+        return method == "gin"
+    base = aurora_type.split("(")[0].strip().upper()
+    return base in _PG_DEFAULT_OPCLASS_TYPES[method]
+
+
+def _pg_index_method(index: AgentIndex, columns: list[ColumnDDL]) -> tuple[str | None, str]:
+    """The method an Aurora PostgreSQL draft keeps for ``index`` (None: a plain B-tree) and,
+    when it cannot keep the source's, the index note that says why ("" otherwise)."""
+    method = index_method(index)
+    if method is None or method not in _PG_INDEX_METHODS:
+        return None, ""
+    why = ""
+    if index.is_unique:  # nosemgrep: is-function-without-parentheses
+        why = "only a B-tree index can be UNIQUE in PostgreSQL"
+    elif method in _PG_ONE_COLUMN_METHODS and len(index.columns) > 1:
+        why = f"a PostgreSQL {method} index takes one column, and this one has {len(index.columns)}"
+    elif method in _PG_DEFAULT_OPCLASS_TYPES:
+        types = {c.name.lower(): c.aurora_type for c in columns}
+        lacking = [
+            f"{name} ({types.get(name.lower(), 'unknown type')})"
+            for name in index.columns
+            if not _has_default_opclass(method, types.get(name.lower(), ""))
+        ]
+        if lacking:
+            why = (
+                f"no default {method} operator class covers {', '.join(lacking)}, and the "
+                "collector does not record the one the source index used (such as "
+                f"{method}_trgm_ops from pg_trgm on text, or btree_{method} on a scalar)"
+            )
+    if why:
+        return None, f"{method.upper()} index carried over as a B-tree: {why}."
+    return method, ""
+
+
+def rendered_method(index: AgentIndex, dialect: Dialect, columns: list[ColumnDDL]) -> str | None:
+    """The USING method the draft renders for ``index`` on ``dialect``, or None for a plain
+    B-tree; Aurora MySQL takes no method."""
+    return _pg_index_method(index, columns)[0] if dialect is POSTGRES else None
+
+
+def carried_indexes(table: AgentTable, dialect: Dialect) -> list[AgentIndex]:
+    """The secondary indexes the draft renders on ``dialect``, in ``TableDDL.index_sql``
+    order: all of them on Aurora PostgreSQL; on Aurora MySQL, all but the GIN, GiST and
+    SP-GiST indexes it cannot create (``_index_sql`` notes those instead)."""
+    return [
+        i
+        for i in secondary_indexes(table)
+        if not (dialect is MYSQL and index_method(i) in _MYSQL_DROPPED_METHODS)
+    ]
+
+
 def _index_sql(
-    table: AgentTable, dialect: Dialect, notes: list[dict], text_columns: set[str]
+    table: AgentTable, dialect: Dialect, notes: list[dict], column_ddls: list[ColumnDDL]
 ) -> list[str]:
     statements: list[str] = []
     columns = [c.column_name for c in table.columns]
-    for idx in secondary_indexes(table):
+    text_columns = _text_columns(column_ddls)
+    if dialect is MYSQL:
+        for idx in secondary_indexes(table):
+            method = index_method(idx)
+            if method in _MYSQL_DROPPED_METHODS:
+                notes.append(
+                    {
+                        "table": table.table_name,
+                        "index": idx.index_name,
+                        "reason": (
+                            f"{method.upper()} index not carried over: Aurora MySQL has no "
+                            f"{method} access method, and a B-tree on the same columns would "
+                            "not serve the queries it exists for. Use a FULLTEXT or SPATIAL "
+                            "index where one fits the columns, or serve the search from the "
+                            "application layer."
+                        ),
+                    }
+                )
+    for idx in carried_indexes(table, dialect):
+        method = index_method(idx)
+        using, why = _pg_index_method(idx, column_ddls) if dialect is POSTGRES else (None, "")
+        if why:
+            notes.append({"table": table.table_name, "index": idx.index_name, "reason": why})
+        if dialect is MYSQL and method == "brin":
+            notes.append(
+                {
+                    "table": table.table_name,
+                    "index": idx.index_name,
+                    "reason": (
+                        "BRIN index carried over as a B-tree: Aurora MySQL has no brin access "
+                        "method. A B-tree serves the same range scans but is larger."
+                    ),
+                }
+            )
         unique = bool(idx.is_unique)  # nosemgrep: is-function-without-parentheses
         where_sql = None
         if idx.predicate:
@@ -387,6 +520,7 @@ def _index_sql(
                 idx.index_name,
                 idx.columns,
                 unique=unique,
+                method=using,
                 where_sql=where_sql,
             )
         )
@@ -408,7 +542,11 @@ def render_index(
 
     ``method``, ``include`` and ``where_sql`` are PostgreSQL-only; the caller
     validates them (``where_sql`` comes from ``sql_safety.render_predicate``).
+    ``method`` is checked here too, so no text outside ``INDEX_METHODS`` reaches
+    ``USING`` whatever the caller.
     """
+    if method and method not in INDEX_METHODS:
+        raise SqlFragmentError(f"unknown index method '{method}'")
     cols = ", ".join(dialect.q(c) for c in columns)
     sql = (
         f"CREATE {'UNIQUE ' if unique else ''}INDEX {dialect.q(index_name)} "
@@ -438,10 +576,12 @@ def _fk_sql(table: AgentTable, dialect: Dialect) -> list[str]:
     return statements
 
 
-def _key_columns(table: AgentTable) -> set[str]:
-    """Columns in the primary key, an index or a foreign key."""
+def _key_columns(table: AgentTable, dialect: Dialect) -> set[str]:
+    """Columns in the primary key, an index the draft renders, or a foreign key."""
     cols = {c.lower() for c in table.primary_key or []}
     for idx in table.indexes or []:
+        if dialect is MYSQL and index_method(idx) in _MYSQL_DROPPED_METHODS:
+            continue  # #293: the draft renders no index on these columns
         cols.update(c.lower() for c in idx.columns)
     for fk in table.foreign_keys or []:
         cols.update(c.lower() for c in fk.columns)
@@ -476,7 +616,7 @@ def _generate(
     family = classify_source_family(source_engine)
 
     for table in tables:
-        keyed = _key_columns(table)
+        keyed = _key_columns(table, dialect)
         has_auto = any(c.is_auto_increment for c in table.columns)
         columns = [
             _column_ddl(
@@ -498,7 +638,7 @@ def _generate(
                 table_name=table.table_name,
                 columns=columns,
                 create_sql=_create_table_sql(table, columns, dialect),
-                index_sql=_index_sql(table, dialect, notes, _text_columns(columns)),
+                index_sql=_index_sql(table, dialect, notes, columns),
                 fk_sql=_fk_sql(table, dialect),
             )
         )

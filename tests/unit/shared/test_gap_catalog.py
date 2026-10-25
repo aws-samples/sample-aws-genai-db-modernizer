@@ -84,6 +84,7 @@ def test_a_valid_file_loads(tmp_path: Path) -> None:
     assert rule.id == "a-rule" and rule.match.calls == ("X",)
 
 
+@pytest.mark.passes_on_main  # the rule itself is unchanged; only the unknown example moved
 @pytest.mark.parametrize(
     ("match", "message"),
     [
@@ -104,7 +105,7 @@ def test_a_valid_file_loads(tmp_path: Path) -> None:
         ('quoted_with = ["x"]', "quote character"),
         ("partial_indexes = false", "needs at least one matcher"),
         # #1330 review round 1
-        ('index_types = ["brin"]', "unknown index types"),
+        ('index_types = ["bitmap"]', "unknown index types"),  # a type the enum lacks
         ('index_types = ["GIN "]', "empty or padded"),
         ('data_type_globs = [""]', "empty or padded"),
         ('default_values = [" "]', "empty or padded"),

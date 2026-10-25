@@ -41,6 +41,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.contracts.collector_output import IndexType
 from src.shared.catalog.engines import CatalogError
 
 __all__ = [
@@ -90,7 +91,7 @@ AURORA_TARGETS = frozenset({"aurora_mysql", "aurora_postgresql"})
 
 _ONE_LINE = r"^[^\n]+$"
 # The collector's index types (src.contracts.collector_output.IndexType).
-INDEX_TYPES = frozenset({"btree", "hash", "gist", "gin", "fulltext", "spatial", "other"})
+INDEX_TYPES = frozenset(t.value for t in IndexType)
 
 VersionCheck = Literal["older_than_target", "newer_than_target", "unknown"]
 

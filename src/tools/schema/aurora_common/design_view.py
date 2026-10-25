@@ -25,7 +25,11 @@ from src.contracts.schema_design_input import (
     AgentQueryPattern,
     AgentTable,
 )
-from src.tools.schema.aurora_common.ddl_generator import DdlResult, secondary_indexes
+from src.tools.schema.aurora_common.ddl_generator import (
+    DdlResult,
+    carried_indexes,
+    rendered_method,
+)
 from src.tools.schema.aurora_common.delta_merge import AuroraDesignBase
 
 HOT_QUERY_LIMIT = 40
@@ -282,8 +286,10 @@ def _column_line(base: AuroraDesignBase, table: AgentTable, col, ddl_col, residu
     return " ".join(parts)
 
 
-def _index_line(index) -> str:
+def _index_line(index, method: str | None) -> str:
     line = f"{index.index_name}{' UNIQUE' if index.is_unique else ''} ({', '.join(index.columns)})"
+    if method:  # #293: the method the draft renders, so the line matches its DDL
+        line += f" USING {method}"
     return f"{line} WHERE {index.predicate}" if index.predicate else line
 
 
@@ -325,7 +331,10 @@ def build_design_view(
                 )
                 for col, ddl_col in zip(src.columns, ddl.columns, strict=True)
             ],
-            "indexes": [_index_line(i) for i in secondary_indexes(src)],
+            "indexes": [
+                _index_line(i, rendered_method(i, base.dialect, ddl.columns))
+                for i in carried_indexes(src, base.dialect)
+            ],
         }
         if src.foreign_keys:
             entry["foreign_keys"] = [_fk_line(fk) for fk in src.foreign_keys]

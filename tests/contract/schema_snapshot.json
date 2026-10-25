@@ -5416,13 +5416,15 @@
                                       {
                                         "kind": "enum",
                                         "values": [
+                                          "brin",
                                           "btree",
                                           "fulltext",
                                           "gin",
                                           "gist",
                                           "hash",
                                           "other",
-                                          "spatial"
+                                          "spatial",
+                                          "spgist"
                                         ]
                                       },
                                       {
@@ -8518,8 +8520,8 @@
         }
       }
     },
-    "schema_hash": "8d1aa6898e41efd675c46541f6b5824b3e0d00ec3c9138703812fd878f28f72e",
-    "version": "4.0"
+    "schema_hash": "f1a31df8228ad7aee0ca342281de75eaca81ddf3c2aa33971f6f9fdf51900763",
+    "version": "4.1"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {
@@ -20118,7 +20120,7 @@
       }
     },
     "schema_hash": "c40e9988029f80f48f925c665ee76689bef7a834cf3ead63cd314f24bc6b8c62",
-    "version": "1.2"
+    "version": "1.3"
   },
   "schema_design_trace.DesignTrace": {
     "fields": {

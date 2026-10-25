@@ -741,6 +741,11 @@ class TestNormalizeIndexType:
     def test_valid_other_unchanged(self):
         assert _normalize_index_type("other").value == "other"
 
+    @pytest.mark.parametrize("method", ["spgist", "brin"])
+    def test_postgres_methods_added_in_293_pass_through(self, method):
+        """SP-GiST and BRIN used to fall back to ``other`` and lose the method."""
+        assert _normalize_index_type(method).value == method
+
     def test_case_insensitive(self):
         assert _normalize_index_type("BTREE").value == "btree"
         assert _normalize_index_type("BtRee").value == "btree"

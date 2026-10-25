@@ -24,6 +24,7 @@ from src.agents.collector.mysql_collector import (
     _dict_to_query_pattern,
     _enrich_patterns_from_pi_and_cw,
     _live_os_stats,
+    _normalize_index_type,
     _parse_ddl_raw,
 )
 from src.contracts.collector_input import CollectionMode, CollectorInput
@@ -374,7 +375,7 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 columns=i["columns"],
                 is_unique=i["is_unique"],
                 is_primary=i.get("is_primary", False),
-                index_type=i.get("index_type", "btree"),
+                index_type=_normalize_index_type(i.get("index_type", "btree")),
                 predicate=i.get("predicate") or None,
             )
             for i in t.get("indexes", [])

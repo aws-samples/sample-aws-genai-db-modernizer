@@ -134,7 +134,7 @@ _TYPE_MAP: dict[str, NormalizedDataType] = {
 
 
 # Cross-engine normalization for index_type values received in offline JSON.
-# Contract enum: btree|hash|gist|gin|fulltext|spatial|other.
+# Contract enum: ``IndexType`` in src.contracts.collector_output.
 # Oracle emits 'FUNCTION-BASED NORMAL', 'BITMAP', 'IOT - TOP', 'CLUSTER',
 # 'DOMAIN', 'NORMAL' via ALL_INDEXES.INDEX_TYPE — all get mapped here.
 # Older Oracle collections (before the collect-oracle.sql fix) may emit
@@ -148,7 +148,7 @@ _INDEX_TYPE_NORMALIZE = {
     "iot": "other",
     "normal": "btree",
 }
-_VALID_INDEX_TYPES = {"btree", "hash", "gist", "gin", "fulltext", "spatial", "other"}
+_VALID_INDEX_TYPES = frozenset(t.value for t in IndexType)
 
 # Truthy-string variants accepted for boolean-ish fields across engines.
 # MySQL/PostgreSQL emit 'YES'/'NO' for is_nullable; Oracle emits single-letter

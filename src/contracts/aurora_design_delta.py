@@ -22,7 +22,7 @@ engine's own contract afterwards.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -264,7 +264,7 @@ class IndexSpec(BaseModel):
     # ``None`` inside the Literal (not ``Literal[...] | None``) so the Bedrock tool
     # schema lists null among the values instead of a nullable-typed enum, which
     # Bedrock refuses (#1281).
-    method: Literal["btree", "hash", "gin", "gist", "brin", None] = Field(
+    method: Literal["btree", "hash", "gin", "gist", "spgist", "brin", None] = Field(
         default=None, description="Index access method (Aurora PostgreSQL only)"
     )
     include: list[str] = Field(
@@ -284,6 +284,13 @@ class IndexSpec(BaseModel):
     @classmethod
     def _name(cls, v: str) -> str:
         return _identifier(v, "index_name")
+
+
+# The index access methods, read from ``IndexSpec.method``: the delta's string form,
+# the draft and ``render_index`` all check this one list (review of #1506).
+INDEX_METHODS: tuple[str, ...] = tuple(
+    m for m in get_args(IndexSpec.model_fields["method"].annotation) if m is not None
+)
 
 
 class TableDelta(BaseModel):

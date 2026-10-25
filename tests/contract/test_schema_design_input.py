@@ -142,6 +142,67 @@ class TestProjectionFunction:
         assert agent_context.growth_multiplier == 10.0
         assert agent_context.peak_to_avg_ratio == 3.0
 
+    def test_projection_carries_the_index_method(self, valid_collector_output_data):
+        """#293: ``AgentIndex.index_type`` follows ``Index.index_type``, so the Aurora
+        draft can keep a GIN index as one."""
+        import copy
+
+        from src.contracts.analysis_output import (
+            AgentMetadata,
+            AnalysisOutputContract,
+            CostEstimate,
+            Pattern,
+            TableRecommendation,
+            TargetDatabase,
+            WorkloadAnalysis,
+        )
+        from src.contracts.collector_output import CollectorOutputContract, IndexType
+
+        data = copy.deepcopy(valid_collector_output_data)
+        data["database_schema"]["tables"][0]["indexes"][1]["index_type"] = "gin"
+        collector = CollectorOutputContract.model_validate(data)
+        analysis = AnalysisOutputContract(
+            contract_version="2.1",
+            agent_metadata=AgentMetadata(
+                agent_name="dynamodb-analysis-agent",
+                agent_version="1.0.0",
+                target_database=TargetDatabase.DYNAMODB,
+                analysis_timestamp="2024-01-15T12:00:00Z",
+                analysis_duration_seconds=30.0,
+            ),
+            table_recommendations=[
+                TableRecommendation(
+                    table_id="public.users",
+                    confidence_score=85,
+                    score_breakdown={
+                        "pattern_match_score": 90,
+                        "complexity_score": 80,
+                        "performance_score": 85,
+                        "cost_score": 75,
+                    },
+                )
+            ],
+            workload_analysis=WorkloadAnalysis(
+                patterns_detected=[
+                    Pattern(
+                        pattern_id="p1",
+                        pattern_type="key-value-lookup",
+                        confidence="HIGH",
+                        query_ids=["q1-select-users"],
+                        table_ids=["public.users"],
+                    )
+                ]
+            ),
+            cost_estimate=CostEstimate(
+                monthly_cost_usd=50.0, cost_components={"read": 30, "write": 20}
+            ),
+        )
+
+        agent_collector, _, _ = project_schema_design_input(collector, analysis)
+
+        [pkey, email] = agent_collector.tables[0].indexes
+        assert (pkey.index_type, email.index_type) == (IndexType.btree, IndexType.gin)
+
     def test_projection_carries_only_the_calls_key_scoped_counts(self, valid_collector_output_data):
         """#377: the DynamoDB designer is given the key-scoped counts among its own
         queries, each key column with its cardinality or "unknown"."""
