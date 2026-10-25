@@ -29,7 +29,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
 2. **Read the groups**
 
-   The `--split` status line lists `groups`: one entry per group with `group_index`, `primary_tables` (the tables the group owns: each table is primary in exactly one group), `context_tables` (tables its queries touch that another group owns), `query_count`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use it instead of reading the manifest.
+   The `--split` status line lists `query_total` and `groups`: one entry per group with `group_index`, `primary_tables` (the tables the group owns: each table is primary in exactly one group), `context_tables` (tables its queries touch that another group owns), `query_count`, `query_first`, `query_last`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use it instead of reading the manifest.
 
 3. **Write one draft per group**
 
@@ -41,7 +41,7 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
 
    If you are yourself a subagent, do the Group draft task for each group yourself, one after another.
 
-   Show each group to the user as a part of one design, with the `/modernize` Phase 6 **DynamoDB labels**: `DynamoDB design, part {P} of {T} ({Q} queries)` (`{P}` = `group_index` + 1, `{T}` = the number of groups, `{Q}` = its `query_count`), `DynamoDB design: {D} of {T} parts done` as parts finish, `Merging the {T} DynamoDB parts into one design` before `--merge`, and `Reconciling overlapping tables between parts (attempt {A} of 3)` for the Merge fix task.
+   Show each group to the user as a part of one design, with the `/modernize` Phase 6 **DynamoDB labels**: `DynamoDB design, part {P} of {T} (queries {F}-{L} of {X})` (`{P}` = `group_index` + 1, `{T}` = the number of groups, `{F}` and `{L}` = its `query_first` and `query_last`, `{X}` = the `--split` line's `query_total`), `DynamoDB design: {D} of {T} parts done` as parts finish, `Merging the {T} DynamoDB parts into one design` before `--merge`, and `Reconciling overlapping tables between parts (attempt {A} of 3)` for the Merge fix task.
 
 4. **Wait for every group**
 

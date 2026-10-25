@@ -274,6 +274,8 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
             "assignment_version": assignment_version,
             "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
             "groups": _group_entries(store, base_key, manifest),
+            # The "of {total}" in a part's query range: the queries in the groups.
+            "query_total": sum(g.get("query_count") or 0 for g in manifest.get("groups", [])),
             # Queries with no source table (#276/#369): left out of every
             # group, so their count would otherwise be invisible here.
             "excluded_count": len(excluded_queries),
@@ -332,8 +334,15 @@ def _draft_state(store, key: str) -> tuple[str, str | None]:
 def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
     """One compact entry per group: what a group subagent's dispatch needs."""
     entries = []
+    # Queries are numbered consecutively in group order (#1546): part 1 gets
+    # 1-N, part 2 continues from N+1. The range comes from the manifest's own
+    # per-group counts, so the label never depends on a model's arithmetic.
+    seen = 0
     for group in manifest.get("groups", []):
         idx = group["group_index"]
+        count = group.get("query_count") or 0
+        first, last = (seen + 1, seen + count) if count else (None, None)
+        seen += count
         draft_key = f"{base_key}/schema_draft_group_{idx}.json"
         state, digest = _draft_state(store, draft_key)
         # A PE review recorded after the last --merge (#1059) makes the merge
@@ -348,6 +357,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
                 # Tables another group owns (#1243): designed there, never redesigned here.
                 "context_tables": group.get("context_tables", []),
                 "query_count": group.get("query_count"),
+                "query_first": first,
+                "query_last": last,
                 "input_file": _local_path(store, f"{base_key}/input_group_{idx}.json"),
                 "input_pages": group.get("input_pages") or [],
                 "draft": _local_path(store, draft_key),

@@ -987,7 +987,7 @@ def test_the_commands_run_print_summary_only_with_its_documented_flags() -> None
 # total. The commands now name each group a part of one design, from 1, with the total
 # and its query count (`--split` prints `query_count`), and the merge and fix by what
 # they do. Section names, file names and `--status` keys stay as they are.
-PART_LABEL = "`DynamoDB design, part {P} of {T} ({Q} queries)`"
+PART_LABEL = "`DynamoDB design, part {P} of {T} (queries {F}-{L} of {X})`"
 MERGE_LABEL = "`Merging the {T} DynamoDB parts into one design`"
 FIX_LABEL = "`Reconciling overlapping tables between parts (attempt {A} of 3)`"
 PROGRESS_LABEL = "`DynamoDB design: {D} of {T} parts done`"
@@ -998,10 +998,11 @@ def test_modernize_labels_dynamodb_parts_merge_and_fix_for_the_user() -> None:
     for label in (PART_LABEL, MERGE_LABEL, FIX_LABEL, PROGRESS_LABEL):
         assert label in phase_6, label
     assert "`{P}` = `group_index` + 1" in phase_6
-    assert "`{Q}` = that group's `query_count`" in phase_6
+    assert "`{F}` and `{L}` = that group's `query_first` and `query_last`" in phase_6
+    assert "`{X}` = the line's `query_total`" in phase_6
     assert "A `group N` in a `--merge` line is part N + 1." in phase_6
     # The --split line's fields name query_count, so the label has its number.
-    assert "`query_count`, `input_pages`" in phase_6
+    assert "`query_count`, `query_first`, `query_last`, `input_pages`" in phase_6
     # Headless and UI-first runs stay compact.
     assert "Under `--auto` or `--mode ui`, skip the progress lines" in phase_6
     # Internal names are kept, so artifacts and other tests are unaffected.
@@ -1014,7 +1015,7 @@ def test_design_schema_commands_use_the_same_dynamodb_labels() -> None:
     standalone = " ".join((COMMANDS_DIR / "design-schema-dynamodb.md").read_text().split())
     for label in (PART_LABEL, MERGE_LABEL, FIX_LABEL, PROGRESS_LABEL):
         assert label in standalone, label
-    assert "`query_count`, `input_pages`" in standalone
+    assert "`query_count`, `query_first`, `query_last`, `input_pages`" in standalone
 
 
 @pytest.mark.passes_on_main  # guards the field the labels read
@@ -1029,3 +1030,27 @@ def test_split_status_line_carries_each_groups_query_count(tmp_path) -> None:
     manifest = {"groups": [{"group_index": 0, "primary_tables": ["t"], "query_count": 18}]}
     (entry,) = run_schema_design._group_entries(store, "db/job/schema-dynamodb/v1", manifest)
     assert entry["query_count"] == 18
+
+
+def test_split_status_line_numbers_queries_consecutively_in_group_order(tmp_path) -> None:
+    """Part 1 gets 1-N and part 2 continues from N+1; the range comes from the script."""
+    import importlib
+
+    from src.storage.local_store import LocalArtifactStore
+
+    run_schema_design = importlib.import_module("scripts.run_schema_design")
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    counts = [18, 20, 0, 7]
+    manifest = {
+        "groups": [
+            {"group_index": i, "primary_tables": ["t"], "query_count": n}
+            for i, n in enumerate(counts)
+        ]
+    }
+    entries = run_schema_design._group_entries(store, "db/job/schema-dynamodb/v1", manifest)
+    assert [(e["query_first"], e["query_last"]) for e in entries] == [
+        (1, 18),
+        (19, 38),
+        (None, None),
+        (39, 45),
+    ]

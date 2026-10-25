@@ -117,11 +117,11 @@ DynamoDB is always designed as split → one subagent per group → merge, and *
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --split
 ```
 
-It prints one JSON line with `assignment_version` (`{N}` below) and `groups`: per group `group_index` (`{G}`), `primary_tables`, `context_tables`, `input_file`, `query_count`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use that line; do not read the manifest.
+It prints one JSON line with `assignment_version` (`{N}` below) and `query_total` and `groups`: per group `group_index` (`{G}`), `primary_tables`, `context_tables`, `input_file`, `query_count`, `query_first`, `query_last`, `input_pages` (the Read `offset`/`limit` pages that cover `input_file`) and `draft`. Use that line; do not read the manifest.
 
-**DynamoDB labels.** Each group is a *part* of one DynamoDB design: name the work by what it does, never "group {G} draft" or "merge fix". `{P}` = `group_index` + 1 (parts count from 1), `{T}` = the number of `groups`, `{Q}` = that group's `query_count`. A `group N` in a `--merge` line is part N + 1.
+**DynamoDB labels.** Each group is a *part* of one DynamoDB design: name the work by what it does, never "group {G} draft" or "merge fix". `{P}` = `group_index` + 1 (parts count from 1), `{T}` = the number of `groups`, `{F}` and `{L}` = that group's `query_first` and `query_last`, `{X}` = the line's `query_total` (the script numbers the queries in group order; never count them yourself). A `group N` in a `--merge` line is part N + 1.
 
-- Each group subagent's dispatch description: `DynamoDB design, part {P} of {T} ({Q} queries)`; its review in 6c: `DynamoDB review, part {P} of {T}`.
+- Each group subagent's dispatch description: `DynamoDB design, part {P} of {T} (queries {F}-{L} of {X})`; its review in 6c: `DynamoDB review, part {P} of {T}`.
 - As each group subagent reports: `DynamoDB design: {D} of {T} parts done` ({D} = the parts reported so far).
 - Before each `--merge`: `Merging the {T} DynamoDB parts into one design`.
 - A Merge fix task subagent's dispatch description: `Reconciling overlapping tables between parts (attempt {A} of 3)` ({A} = the `--merge` attempt whose line it fixes), then one short line naming what overlapped, from that line's `errors` and `warnings` (for example `wp_postmeta was designed in parts 1 and 3`).
