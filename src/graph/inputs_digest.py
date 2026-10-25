@@ -27,6 +27,7 @@ _INPUT_KEY = re.compile(
     r"|post-schema-router/router_output\.json"
     r"|load-test-[^/]+/v\d+/results/summary\.json"
     r"|referee-synthesis/report\.json"
+    r"|synthesis/(?:v\d+/)?report\.json"
     r")$"
 )
 

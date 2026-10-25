@@ -803,9 +803,14 @@ def rebuild_graph(
                 break
 
     # 9. Synthesis
-    synthesis = _read_safe(f"{prefix}/referee-synthesis/report.json")
-    if synthesis:
-        populate_from_synthesis(synthesis, graph_store)
+    # The effective version's report first, then the legacy keys (#1520).
+    from src.storage.assignment_versioning import synthesis_report_candidates
+
+    for synthesis_key in synthesis_report_candidates(artifact_store, db_name, job_id):
+        synthesis = _read_safe(synthesis_key)
+        if synthesis:
+            populate_from_synthesis(synthesis, graph_store)
+            break
 
     # 10. The schema revision this graph was built with (a saved graph with
     # another revision is rebuilt before it is read) and its assignment version.

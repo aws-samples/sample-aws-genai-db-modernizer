@@ -113,3 +113,90 @@ def test_rebuild_graph_reads_real_pipeline_paths(
     produced = graph_store.query("MATCH ()-[:PRODUCED_BY]->(:Agent) RETURN COUNT(*) AS c")
     assert produced[0]["c"] > 0
     graph_store.close()
+
+
+def _rebuild_with_files(artifact_dir, files):
+    base, db_name, job_id = artifact_dir
+    for path, data in files.items():
+        full = base / db_name / job_id / path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(json.dumps(data))
+    store = LocalArtifactStore(str(base))
+    graph_path = str(base / db_name / job_id / "graph" / "context.lbug")
+    Path(graph_path).parent.mkdir(parents=True, exist_ok=True)
+    graph_store = GraphStore(graph_path)
+    initialize_schema(graph_store)
+    rebuild_graph(db_name, job_id, store, graph_store)
+    return base, db_name, job_id, store, graph_store
+
+
+def _risk_ids(graph_store):
+    return sorted(r["id"] for r in graph_store.query("MATCH (r:Risk) RETURN r.id AS id"))
+
+
+def _report(risk_id):
+    return {
+        "risk_assessment": {
+            "risks": [
+                {
+                    "risk_id": risk_id,
+                    "risk_type": "t",
+                    "severity": "high",
+                    "description": "d",
+                    "mitigation": "m",
+                }
+            ]
+        }
+    }
+
+
+def test_rebuild_graph_reads_versioned_synthesis_report(artifact_dir, sample_assignment):
+    """#1520: the report synthesis writes at synthesis/v<N>/report.json feeds Risk nodes."""
+    files = {
+        "assignment/v2/assignment.json": sample_assignment,
+        "synthesis/v2/report.json": _report("risk-v2"),
+        "synthesis/v1/report.json": _report("risk-v1"),
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _risk_ids(graph_store) == ["risk-v2"]
+    graph_store.close()
+
+
+def test_rebuild_graph_versioned_report_wins_over_legacy(artifact_dir, sample_assignment):
+    files = {
+        "assignment/v1/assignment.json": sample_assignment,
+        "synthesis/v1/report.json": _report("risk-v1"),
+        "referee-synthesis/report.json": _report("risk-legacy"),
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _risk_ids(graph_store) == ["risk-v1"]
+    graph_store.close()
+
+
+@pytest.mark.passes_on_main
+def test_rebuild_graph_old_layout_falls_back_to_legacy_report(artifact_dir, sample_assignment):
+    """An old job (assignment, legacy synthesis key only) still gets its Risk nodes."""
+    files = {
+        "assignment/v1/assignment.json": sample_assignment,
+        "referee-synthesis/report.json": _report("risk-legacy"),
+    }
+    *_, graph_store = _rebuild_with_files(artifact_dir, files)
+    assert _risk_ids(graph_store) == ["risk-legacy"]
+    graph_store.close()
+
+
+def test_inputs_digest_covers_versioned_synthesis_report(artifact_dir, sample_assignment):
+    """#1520: rewriting synthesis/v<N>/report.json changes the digest, so the graph is rebuilt."""
+    from src.graph.inputs_digest import graph_inputs_digest
+
+    base, db_name, job_id, store, graph_store = _rebuild_with_files(
+        artifact_dir,
+        {
+            "assignment/v1/assignment.json": sample_assignment,
+            "synthesis/v1/report.json": _report("risk-a"),
+        },
+    )
+    before = graph_inputs_digest(store, db_name, job_id)
+    (base / db_name / job_id / "synthesis/v1/report.json").write_text(json.dumps(_report("risk-b")))
+    assert graph_inputs_digest(store, db_name, job_id) != before
+    graph_store.close()
