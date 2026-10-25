@@ -49,7 +49,7 @@ When filing an issue, please check existing open, or recently closed, issues to 
 - Python 3.12+
 - Git
 - uv (Python package manager)
-- Node.js 18+ (for UI development)
+- Node.js 22 (for the local UI and UI development)
 - AWS CLI configured with credentials (for Bedrock, live-mode collection, or the AWS Transform integration)
 
 ### Quick Setup

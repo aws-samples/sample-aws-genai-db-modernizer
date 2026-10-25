@@ -80,6 +80,10 @@ All of a table's writes land on one engine, its source of truth. When another en
 
 A close call is a query whose engine scored less than 5 points above another engine the plan keeps, which could serve it too. The assessment still decides, deterministically; the engineering report and the results page list them so you can move any of them yourself in the assignment review. Exact ties a routing rule settled are counted apart from them.
 
+## Costs
+
+Every cost figure is labelled as the full-modernization estimate: all waves done, every kept engine running. It is not the cost of wave 1. The estimates use public on-demand list prices for the stated Region, and the TCO lists its assumptions; check them with your own pricing in the [AWS Pricing Calculator](https://calculator.aws/). With no current cost collected for the source, the deliverables say so and claim no saving. When the DynamoDB design keeps derived copies of data in sync through DynamoDB Streams, the deliverables price that sync and list it under the overlap risk it belongs to.
+
 ## Risks
 
 The engineering report carries the risk posture (the overall risk is the highest severity among the open risks), a risk register of the open risks by engine, each with its mitigation and the tables it affects, the risks the assignment already resolved, and the mitigation strategies, wave by wave. The executive report's Risks page gives the same open risks without table names. Risks cover anything the deterministic scoring flagged as low-fit, the reads that run on a replica, close calls, schema design that was not run, and any assumption the model made that depends on data this tool couldn't see (traffic patterns, peak load, compliance requirements). Read them before treating the migration roadmap as a commitment.

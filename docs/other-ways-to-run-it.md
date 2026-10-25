@@ -1,6 +1,6 @@
 # Other ways to run it
 
-Claude Code is the main way to run the tool, but the pipeline itself is a set of plain scripts. You can also run them in these ways.
+Claude Code is the main way to run the tool, but the pipeline itself is a set of plain scripts and a Python library. You can also run it in these ways.
 
 === "Deterministic CLI (no LLM)"
 
@@ -83,21 +83,42 @@ Claude Code is the main way to run the tool, but the pipeline itself is a set of
 
     [`infrastructure/cloudformation/bedrock-guardrail.yaml`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/infrastructure/cloudformation/bedrock-guardrail.yaml) defines a guardrail with a prompt-attack filter on inputs, PII filters on outputs and a published version; its `GuardrailId` and `GuardrailVersion` outputs are the two values above. Deploying it is up to you. For Claude Code runs, see [Use Claude Code](use-claude-code.md#optional-attach-an-amazon-bedrock-guardrail).
 
-=== "Local UI on its own"
+=== "Python library"
 
-    Run the API and the React UI directly, without Claude Code:
+    `assess()` runs an assessment in one call and returns a typed, versioned result: each statement's engine, the groups that move together and each table's owner. `load_collection` reads a collection script's output (a `.json` or `.txt` file, or a `.zip` holding one, as the bundled samples are shipped):
 
-    ```bash
-    # Start the API server
-    ARTIFACT_DIR=./artifacts uv run uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+    ```python
+    from pathlib import Path
 
-    # Build and serve the UI (in another terminal)
-    cd src/ui && npm ci
-    REACT_APP_API_URL=http://localhost:8000/api/v1/ npm run build
-    npm run serve
+    from src.assessment import AssessmentRequest, assess, load_collection
+
+    collection = load_collection(Path("docs/examples/wordpress/wordpress.zip"))
+    result = assess(
+        AssessmentRequest(
+            database_name="wordpress",  # must equal the collected database's own name
+            collection=collection,
+            options={"run_through": "reality_check"},
+        )
+    )
+    for statement in result.statements:
+        print(statement.query_id, statement.engine, statement.reason_code)
     ```
 
-    Then open <http://localhost:3000>. The local API only answers requests addressed to `localhost`, `127.0.0.1`, or `::1`; set `MODERNIZER_ALLOWED_HOSTS` to reach it under another host name.
+    `"analysis"` and `"reality_check"` (the default) need no model and take seconds. `"schema_design"` adds a data model per kept engine (the `designs` block) and `"synthesis"` adds the report every deliverable renders; both always use a model through Amazon Bedrock (set `"deterministic": False`). `options.target_engines` is the engine scope. The full contract, with every field, the cost of a designed run and what is stable across releases, is in [`docs/contracts/assess.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/contracts/assess.md).
+
+=== "Local UI on its own"
+
+    Start the local API and the React UI with one command, without Claude Code (it needs Node 22, and the first start builds the UI, which takes a few minutes):
+
+    ```bash
+    uv run python scripts/start_local_ui.py
+    ```
+
+    It binds both servers to `127.0.0.1` and prints one JSON line with the URLs. Open <http://localhost:3000> to browse every job under `./artifacts`, or upload a collection from the create-analysis page. Stop both servers with `uv run python scripts/start_local_ui.py --stop`.
+
+    To work on the UI with hot reload, run `make local` instead: it starts the API on `127.0.0.1:8000` and the UI's development server (`npm start` in `src/ui`) on `localhost:3000`, which proxies API calls to the API. Leave `API_HOST` unset: it defaults to `127.0.0.1`, and `API_HOST=0.0.0.0` opens the API to your network. Press Ctrl+C in that terminal to stop both servers (`--stop` above only stops what `start_local_ui.py` started).
+
+    The local API only answers requests addressed to `localhost`, `127.0.0.1`, or `::1`; set `MODERNIZER_ALLOWED_HOSTS` to reach it under another host name.
 
 ## Where the deliverables land
 
@@ -117,11 +138,17 @@ The folder always holds the latest assignment version; an older version's `repor
 
 ## Analyzing your own database
 
-Every option above accepts a collector output file in place of the sample. See [Use Claude Code → Analyzing your own database](use-claude-code.md#analyzing-your-own-database) for the collection scripts.
+Every option above accepts a collector output file in place of the sample. See [Use Claude Code → Analyzing your own database](use-claude-code.md#analyzing-your-own-database) for the collection scripts, and pass the collected database's name as `--db`.
 
 ## Run it for you (early, opt-in)
 
---8<-- "README.md:run-it-for-you"
+For customers who can't run the collector scripts themselves, the API has an opt-in path that provisions an SSM automation instance in your VPC and runs the collection on your behalf against an RDS cluster you name. It is gated behind an environment variable because it is not yet wired end to end (tracked in [#342](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/342)):
+
+```bash
+export MODERNIZER_ENABLE_AUTOMATION=1
+```
+
+This is an early preview and not supported yet. The automation instance ID is not yet threaded through to the collector environment, the region is hard-coded, and the instance and its ingress rule have no automated teardown. Until #342 lands, run the collector scripts yourself (see [Analyzing your own database](use-claude-code.md#analyzing-your-own-database)).
 
 ## LLM modes at a glance
 
