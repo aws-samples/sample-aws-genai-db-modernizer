@@ -145,3 +145,61 @@ def raw_labels(md: str) -> list[str]:
     )
     found += re.findall(r"^### .*\): on \S.*$", md, re.M)
     return found
+
+
+# #1220: what one section lists and another lists again.
+_REGISTER_RISK = re.compile(r"^- \*\*(RISK-\d+)\*\*")
+_REGISTER_MITIGATION = re.compile(r"^\s+- Mitigation: (.*)$")
+_SEVERE_STRATEGY = re.compile(r"^- (RISK-\d+) \\\(.*?\\\): (.*)$")
+_CLOSE_CALL_PAIR = re.compile(r"(?:keeps|takes) [^;.]*?close calls?[^;.]*? over ")
+
+
+def cross_section_repeats(md: str) -> dict[str, int]:
+    """How often the engineering report lists an item a second time in another section
+    (#1220), by kind:
+
+    - ``severe_mitigation``: a Mitigation strategies line that repeats the mitigation its
+      risk's Risk register entry prints;
+    - ``close_call_pairs``: an engine pair the register's close-call risk lists while the
+      Close calls table has a row for each;
+    - ``open_tie_lines``: an appendix runner-up or unresolved-tie line that restates an open
+      tie Pending engine choices states;
+    - ``consolidation_reason``: an appendix step restating the reality check's reason the
+      appendix points to Migration trade-offs for;
+    - ``aurora_consolidation_scores``: a Queries on Aurora by table row with the reality
+      check's per-query scores, which the appendix gives per query;
+    - ``raw_utility_reason``: a row with the utility pin's raw label.
+    """
+    register = section(md, "Risk register")
+    appendix = section(md, "Appendix: per-query routing decisions")
+    aurora = section(md, "Queries on Aurora by table")
+    mitigations: dict[str, str] = {}
+    risk = None
+    for line in register.splitlines():
+        if m := _REGISTER_RISK.match(line):
+            risk = m.group(1)
+        elif (m := _REGISTER_MITIGATION.match(line)) and risk:
+            mitigations[risk] = m.group(1).strip().rstrip(".")
+    severe = 0
+    for line in section(md, "Mitigation strategies").splitlines():
+        m = _SEVERE_STRATEGY.match(line)
+        if m and mitigations.get(m.group(1)) and mitigations[m.group(1)] in m.group(2):
+            severe += 1
+    ties = 0
+    if section(md, "Pending engine choices"):
+        for line in appendix.splitlines():
+            ties += line.startswith("- Runner-up:") and "until the customer chooses" in line
+            ties += line.startswith("- Unresolved tie:") and "Pending engine choices" not in line
+    pointer = 'under "Migration trade-offs" (Reality check)' in appendix
+    return {
+        "severe_mitigation": severe,
+        "close_call_pairs": (
+            len(_CLOSE_CALL_PAIR.findall(register)) if section(md, "Close calls") else 0
+        ),
+        "open_tie_lines": ties,
+        "consolidation_reason": (
+            appendix.count("which adds too little over the engines kept") if pointer else 0
+        ),
+        "aurora_consolidation_scores": aurora.count("(no unique value:"),
+        "raw_utility_reason": aurora.count("utility/metadata statement"),
+    }

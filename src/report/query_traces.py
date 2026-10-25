@@ -12,8 +12,11 @@ context like any other string.
 
 from __future__ import annotations
 
+from collections.abc import Set as AbstractSet
 from typing import Any
 
+from src.shared.engine_names import display_engine
+from src.shared.move_reasons import consolidation_reason
 from src.shared.workload_fit_labels import pinned_label
 
 from . import escaping
@@ -94,7 +97,23 @@ def _consolidated_engines(report: dict[str, Any]) -> set[str]:
     }
 
 
-def _step_md(step: dict[str, Any], first: bool, previous: dict[str, Any] | None) -> list[str]:
+def _step_explanation(step: dict[str, Any], consolidated: AbstractSet[str]) -> str:
+    """The step's sentence. A consolidation whose reason "Migration trade-offs" states
+    (``consolidated``, the appendix says so once above the entries) keeps its move and
+    scores, not that reason again (#1220)."""
+    text = str(step.get("explanation") or "")
+    engine = str(step.get("from_engine") or "")
+    if step.get("reason_code") == _CONSOLIDATED and engine in consolidated:
+        text = text.replace(f": {consolidation_reason(display_engine(engine))}", "", 1)
+    return text
+
+
+def _step_md(
+    step: dict[str, Any],
+    first: bool,
+    previous: dict[str, Any] | None,
+    consolidated: AbstractSet[str] = frozenset(),
+) -> list[str]:
     """One step: its version, rule and reason, and every engine's score or
     gate when they differ from the step before (the first step always)."""
     what = "first assignment, " if first else ""
@@ -102,7 +121,7 @@ def _step_md(step: dict[str, Any], first: bool, previous: dict[str, Any] | None)
         f"- Step {escaping.md_text(step.get('step', '?'))}, version "
         f"{escaping.md_text(step.get('version', '?'))} ({what}"
         f"{escaping.md_text(step.get('rule') or '')}): "
-        f"{escaping.md_text(step.get('explanation') or '')}"
+        f"{escaping.md_text(_step_explanation(step, consolidated))}"
     ]
     same = previous is not None and previous.get("candidates") == step.get("candidates")
     scores = "" if same else _candidates_md(step)
@@ -125,11 +144,40 @@ def _said_by_a_step(better: dict[str, Any], steps: list[dict[str, Any]]) -> bool
     )
 
 
+def _pending_tables(report: dict[str, Any], query_ids: set[str]) -> list[str]:
+    """The tables "Pending engine choices" lists any of ``query_ids`` under, in its order
+    (as its headings name them, #1220)."""
+    return [
+        str(c.get("table") or "?").rsplit(".", 1)[-1]
+        for c in report.get("pending_engine_choices") or []
+        if isinstance(c, dict) and query_ids & {str(q) for q in c.get("query_ids") or []}
+    ]
+
+
+def _restates_open_tie(trace: dict[str, Any], pending: list[str]) -> bool:
+    """Whether the runner-up line would only restate the open tie: the runner-up is a
+    tie partner at the final score, and "Pending engine choices" holds the tie (#1220)."""
+    runner = trace.get("runner_up")
+    return (
+        bool(pending)
+        and isinstance(runner, dict)
+        and runner.get("engine") in (trace.get("tied_engines") or [])
+        and runner.get("gap") == 0
+    )
+
+
 def _trace_md(
-    trace: dict[str, Any], row: dict[str, Any], group: dict[str, Any] | None = None
+    trace: dict[str, Any],
+    row: dict[str, Any],
+    group: dict[str, Any] | None = None,
+    report: dict[str, Any] | None = None,
+    consolidated: AbstractSet[str] = frozenset(),
 ) -> list[str]:
     """One entry: a query's trace, or (``group``, #1108) the one trace the queries
-    of a facts-layer group share, headed by their count and short ids."""
+    of a facts-layer group share, headed by their count and short ids.
+
+    An open tie that "Pending engine choices" holds names that section, not the
+    tie a third time (#1220)."""
     first = trace.get("first_assignment") or {}
     start = first.get("to_engine_name")
     end = trace.get("final_engine_name") or "?"
@@ -162,8 +210,10 @@ def _trace_md(
     previous: dict[str, Any] | None = None
     steps = ([first] if first else []) + list(trace.get("moves") or [])
     for step in steps:
-        out += _step_md(step, first=step is first, previous=previous)
+        out += _step_md(step, first=step is first, previous=previous, consolidated=consolidated)
         previous = step
+    ids = {str(q) for q in (group or {}).get("query_ids") or []} or {str(trace.get("query_id"))}
+    pending = _pending_tables(report or {}, ids) if row.get("open_tie") else []
     final_score = trace.get("final_score")
     pin = pinned_label(trace.get("pinned"))
     # A pinned query shows its pin, not its score (#1373).
@@ -185,7 +235,11 @@ def _trace_md(
         as_of += f" (the effective assignment is version {escaping.md_text(effective)})"
     out.append(f"- Final engine: {escaping.md_text(end)}{scored}{as_of}.")
     runner = trace.get("runner_up")
-    if isinstance(runner, dict) and runner.get("explanation"):
+    if (
+        isinstance(runner, dict)
+        and runner.get("explanation")
+        and not _restates_open_tie(trace, pending)
+    ):
         # Only a runner-up with a score was compared; a gated one was not.
         basis = (
             " Compared on the co-dependency group's mean scores."
@@ -209,7 +263,14 @@ def _trace_md(
                 f"{escaping.md_text(key['explanation'])}."
             )
     tied = trace.get("tied_engine_names") or []
-    if tied:
+    if tied and pending:
+        at = f" at {_score(final_score)}" if isinstance(final_score, (int, float)) else ""
+        where = ", ".join(f"`{escaping.md_code(t)}`" for t in pending)
+        out.append(
+            f"- Unresolved tie: {escaping.md_text(', '.join(str(n) for n in tied))}{at}; "
+            f"the choice is under Pending engine choices ({where})."
+        )
+    elif tied:
         who = "each query" if group is not None else "the query"
         out.append(
             f"- Unresolved tie: {escaping.md_text(', '.join(str(n) for n in tied))}; {who} "
@@ -324,12 +385,13 @@ def query_traces_md(report: dict[str, Any]) -> list[str]:
         ]
     rows = {str(r.get("query_id")): r for r in facts.get("listed_queries") or []}
     consolidated = _consolidated_engines(report)
-    if any(
+    said_once = any(
         m.get("reason_code") == _CONSOLIDATED and m.get("from_engine") in consolidated
         for t in by_id.values()
         for m in t.get("moves") or []
         if isinstance(m, dict)
-    ):
+    )
+    if said_once:
         # #1170: the consolidation's reason is stated once, under Migration trade-offs.
         out += [
             'A step marked "engine consolidated away" moved its query for the reason given '
@@ -342,5 +404,11 @@ def query_traces_md(report: dict[str, Any]) -> list[str]:
         trace = by_id.get(rep)
         if trace is None or not rows.get(rep, {}).get("in_full"):
             continue
-        out += _trace_md(trace, rows[rep], group if group.get("query_count", 1) > 1 else None)
+        out += _trace_md(
+            trace,
+            rows[rep],
+            group if group.get("query_count", 1) > 1 else None,
+            report,
+            consolidated if said_once else set(),
+        )
     return out

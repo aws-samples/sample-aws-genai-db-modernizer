@@ -12,6 +12,7 @@ external-job mode the same checks run on a model run's report.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -19,6 +20,7 @@ from src.report.escaping import md_text
 from tests.e2e.pipeline import PipelineResult
 from tests.report_concision import (
     bare_ids,
+    cross_section_repeats,
     known_query_ids,
     md_sections,
     raw_labels,
@@ -114,3 +116,37 @@ def test_the_designed_job_states_each_long_sentence_once(designed_run: PipelineR
         else f"## Query groups ({listed})"
     )
     assert heading in md.splitlines()
+
+
+def test_each_item_is_listed_in_one_section(run: PipelineResult) -> None:
+    """No item one section lists is listed again in another (#1220), and each pointer
+    names a section that holds it."""
+    md = _md(run)
+    report = json.loads(run.report_json().read_text())
+    repeats = cross_section_repeats(md)
+    if any(
+        "utility/metadata statement" in str(reason)
+        for g in report.get("query_groups") or []
+        for reason in g.get("reasons") or []
+    ):
+        # A report synthesized before #1220 keeps its stored reason, as the UI shows it.
+        repeats.pop("raw_utility_reason")
+    assert set(repeats.values()) <= {0}, repeats
+    if "listed by engine pair under Close calls" in section(md, "Risk register"):
+        assert section(md, "Close calls")
+    pending = section(md, "Pending engine choices")
+    for tables in re.findall(r"the choice is under Pending engine choices \((.+?)\)\.", md):
+        for table in re.findall(r"`([^`]+)`", tables):
+            assert f"### `{table}` (" in pending, table
+    strategies = section(md, "Mitigation strategies")
+    register = section(md, "Risk register")
+    mitigations = {
+        r.get("risk_id"): str(r.get("mitigation") or "") for r in report["risk_assessment"]["risks"]
+    }
+    referred = re.findall(
+        r"^- (RISK-\d+) .*its mitigation is under its Risk register", strategies, re.M
+    )
+    for rid in referred:
+        # The register entry it refers to prints that mitigation (or its own text says it).
+        entry = register.split(f"**{rid}**", 1)[1].split("\n- **", 1)[0]
+        assert "  - Mitigation: " in entry or md_text(mitigations[rid]) in entry, rid

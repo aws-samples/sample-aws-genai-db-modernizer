@@ -21,6 +21,7 @@ import pytest
 from src.agents.referee.migration_risks import RULES
 from src.report.escaping import md_text
 from src.report.executive_report import RISK_DETAILS_POINTER
+from src.shared.design_text import split_close_call_description
 from src.shared.migration_risk_rules import GATE_IDS_NAMED
 from src.shared.report_facts import risk_engine_and_body
 from src.storage.assignment_versioning import resolve_downstream_assignment_version
@@ -28,6 +29,7 @@ from src.storage.local_store import LocalArtifactStore
 from tests.e2e.deliverable_figures import norm, pdf_page_texts
 from tests.e2e.designed_run import UNSUPPORTED_CACHE_READ, run_designed_wordpress
 from tests.e2e.pipeline import REPO, PipelineResult, _run, run_pipeline
+from tests.report_concision import section
 
 pytestmark = pytest.mark.deterministic
 
@@ -127,6 +129,14 @@ def test_the_sync_risk_agrees_with_the_wave_and_source_facts(run: PipelineResult
             assert kept <= synced, (run.db, wave["wave"], kept - synced)
 
 
+# One engine pair of a close-call risk: "Aurora MySQL keeps 14 close calls and 5 ties over
+# DynamoDB" (#1410).
+_PAIR = re.compile(
+    r"(?P<engine>.+?) (?:keeps|takes) (?:(?P<close>\d+) close calls?)?(?: and )?"
+    r"(?:(?P<ties>\d+) ties?)? over (?P<alternative>.+)"
+)
+
+
 def test_every_deliverable_shows_the_same_risks(run: PipelineResult) -> None:
     report = _report(run)
     risks = _new(report)
@@ -144,7 +154,20 @@ def test_every_deliverable_shows_the_same_risks(run: PipelineResult) -> None:
         assert b["affected_tables"] and set(b["affected_tables"]) <= set(f["affected_tables"])
     for r in risks:
         _, body = risk_engine_and_body(r["description"])
-        assert f"**{r['risk_id']}**" in md and md_text(body) in md, r["risk_id"]
+        split = split_close_call_description(body) if r["rule"] == "routing.close_calls" else None
+        if split:
+            # #1220: the register names the Close calls table, which has each pair's row.
+            lead, pairs, tail = split
+            pointer = f"{lead}, listed by engine pair under Close calls. {tail}"
+            assert f"**{r['risk_id']}**" in md and md_text(pointer) in md, r["risk_id"]
+            table = section(md, "Close calls")
+            for pair in pairs.split("; "):
+                m = _PAIR.fullmatch(pair)
+                assert m, pair
+                row = f"| {m['engine']} | {m['alternative']} | {m['close'] or 0} |"
+                assert row in table, pair
+        else:
+            assert f"**{r['risk_id']}**" in md and md_text(body) in md, r["risk_id"]
         assert f"`{r['affected_tables'][0]}`" in md, r["risk_id"]
         # Every risk has its card, a low one included (maintainer decision on #950).
         assert norm(r["risk_id"]) in pdf, r["risk_id"]

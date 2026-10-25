@@ -8,6 +8,8 @@ from typing import Any
 from src.shared.design_text import (
     design_text_item,
     split_carried_write_detail,
+    split_close_call_description,
+    split_severe_risk_strategy,
     unsupported_pattern_detail,
 )
 from src.shared.engine_names import canonical_engine_id, display_engine
@@ -252,12 +254,29 @@ def _resolved_by_severity(facts: dict[str, Any]) -> str:
 
 
 def _mitigation_strategies_md(report: dict[str, Any]) -> list[str]:
-    """Engineering Report "Mitigation strategies" section (#1020)."""
+    """Engineering Report "Mitigation strategies" section (#1020).
+
+    A CRITICAL or HIGH risk's line repeats the mitigation its Risk register entry
+    prints; here it names the risk and refers to it (#1220). The executive report's
+    Next steps print the line whole: it has no register."""
     risk = report.get("risk_assessment") or {}
     strategies = [s for s in (risk.get("mitigation_strategies") or []) if s]
     if not strategies:
         return []
-    return ["## Mitigation strategies", "", *[f"- {escaping.md_text(s)}" for s in strategies], ""]
+    in_register = {
+        str(r.get("risk_id")): str(r.get("mitigation") or "").strip().rstrip(".")
+        for r in filtered_risks(report)
+    }
+    lines: list[str] = []
+    for s in strategies:
+        split = split_severe_risk_strategy(s)
+        if split and in_register.get(split[0]) and split[2].rstrip(".") == in_register[split[0]]:
+            lines.append(
+                f"- {escaping.md_text(split[1])}: its mitigation is under its Risk register entry."
+            )
+        else:
+            lines.append(f"- {escaping.md_text(s)}")
+    return ["## Mitigation strategies", "", *lines, ""]
 
 
 def _mermaid_er(engine: str, design: dict, max_nodes: int = 15) -> str | None:
@@ -448,6 +467,12 @@ def _aurora_queries_by_table_md(report: dict[str, Any]) -> list[str]:
 _TABLE_REASONS_SHOWN = 3
 
 
+# A reality-check consolidation's reason. Its scores are each query's own, which the
+# appendix lists per query, and its why is under "Migration trade-offs", so a row names
+# the move alone (#1220).
+_CONSOLIDATED_REASON = "reality check: consolidated from "
+
+
 def _table_reason_cell(reasons: list[str]) -> str:
     """One table's reasons, each stated once and whole (#951).
 
@@ -456,8 +481,9 @@ def _table_reason_cell(reasons: list[str]) -> str:
     with a different tail. Reasons that differ only in their per-query detail
     in parentheses ("... (scores tie with OpenSearch; ...)", "... (no unique
     value: DocumentDB scores 79.0, ...)") are named once, without it: each
-    query's own detail is in its trace. Nothing is cut mid-sentence: after the
-    first few reasons, the rest are counted.
+    query's own detail is in its trace. A reality-check consolidation is named
+    without its scores even when only one variant reads (#1220). Nothing is cut
+    mid-sentence: after the first few reasons, the rest are counted.
     """
     by_rule: dict[str, list[str]] = {}
     for reason in reasons:
@@ -467,7 +493,10 @@ def _table_reason_cell(reasons: list[str]) -> str:
             variants = by_rule.setdefault(rule, [])
             if head not in variants:
                 variants.append(head)
-    whole = [variants[0] if len(variants) == 1 else rule for rule, variants in by_rule.items()]
+    whole = [
+        variants[0] if len(variants) == 1 and not rule.startswith(_CONSOLIDATED_REASON) else rule
+        for rule, variants in by_rule.items()
+    ]
     shown = whole[:_TABLE_REASONS_SHOWN]
     more = len(whole) - len(shown)
     return "; ".join(shown) + (f" (+{more} more)" if more else "")
@@ -909,11 +938,22 @@ class _SaidOnce:
         return "".join(parts)
 
 
+def _close_call_body(body: str, risk: dict[str, Any], listed: bool) -> str:
+    """A close-call risk's text without its engine pairs when the Close calls section
+    (``listed``) shows them, one table row per pair (#1220); any other text as it is."""
+    split = split_close_call_description(body) if listed else None
+    if risk.get("rule") != "routing.close_calls" or split is None:
+        return body
+    lead, _, tail = split
+    return f"{lead}, listed by engine pair under Close calls. {tail}"
+
+
 def _risk_register_md(report: dict[str, Any]) -> list[str]:
     """Engineering Report "Risk register" and "Resolved by the assignment" sections."""
     facts = report_facts(report)
     out: list[str] = []
     said = _SaidOnce()
+    close_calls = bool(close_calls_md(report))
     risks = filtered_risks(report)
     if risks:
         by_eng: dict[str, list] = {}
@@ -932,6 +972,7 @@ def _risk_register_md(report: dict[str, Any]) -> list[str]:
             out += [f"### {escaping.md_text(heading)}", ""]
             for r in items:
                 _, body = _risk_engine_and_body(r.get("description"))
+                body = _close_call_body(body, r, close_calls)
                 sev = r.get("severity", "-")
                 rtype = str(r.get("risk_type", "")).replace("_", " ").lower()
                 rid = r.get("risk_id", "-")

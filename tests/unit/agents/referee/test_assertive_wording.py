@@ -261,10 +261,10 @@ def test_a_long_reason_drops_whole_clauses_without_an_ellipsis() -> None:
         "capability: a utility or DDL statement"
     )
     out = _clean_relational_reason(reason, max_chars=180)
+    # #1220: the utility pin's label reads as a sentence.
     assert out == (
-        "utility/metadata statement, kept on the source-compatible relational engine "
-        "(Aurora MySQL) | DocumentDB lacks required capability: a utility or DDL statement "
-        "(+3 more)"
+        "administration or metadata statement, kept on Aurora MySQL as the source-compatible "
+        "engine | DocumentDB lacks required capability: a utility or DDL statement (+3 more)"
     ), out
 
 

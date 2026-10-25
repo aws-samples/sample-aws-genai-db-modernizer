@@ -55,3 +55,45 @@ def split_carried_write_detail(text: str) -> tuple[str, str] | None:
     ``None`` for any other detail text."""
     m = _CARRIED_WRITE_RE.match(text)
     return (m.group("lead"), m.group("approach")) if m else None
+
+
+# A close-call risk's description (#1220): "<wave and counts>: <engine pairs>. A small
+# change in the scores moves them." The engine pairs are the rows of the engineering
+# report's Close calls table, so the register names that table instead of listing them.
+_CLOSE_CALL_TAIL = "A small change in the scores moves "
+_CLOSE_CALL_RE = re.compile(
+    rf"^(?P<lead>.+?): (?P<pairs>[^:]+? (?:keeps|takes) [^:]+?)\. "
+    rf"(?P<tail>{_CLOSE_CALL_TAIL}(?:it|them)\.)$"
+)
+
+
+def close_call_description(lead: str, pairs: list[str], moved: str) -> str:
+    """A close-call risk's description: its counts (``lead``), each engine pair
+    (``"Aurora MySQL keeps 14 close calls over DynamoDB"``) and ``moved`` ("it" or
+    "them"). The engineering report reads it back with ``split_close_call_description``."""
+    return f"{lead}: {'; '.join(pairs)}. {_CLOSE_CALL_TAIL}{moved}."
+
+
+def split_close_call_description(text: str) -> tuple[str, str, str] | None:
+    """``(lead, engine pairs, last sentence)`` for a description
+    ``close_call_description`` wrote, or ``None`` for any other text."""
+    m = _CLOSE_CALL_RE.match(text)
+    return (m.group("lead"), m.group("pairs"), m.group("tail")) if m else None
+
+
+def severe_risk_strategy(risk_id: str, label: str, scope: str, mitigation: str) -> str:
+    """A CRITICAL or HIGH risk's line in ``mitigation_strategies``: its id, severity and
+    engine (``label``), scope and own mitigation (one sentence). The engineering report
+    reads it back with ``split_severe_risk_strategy``: its Risk register prints that
+    mitigation already, so the strategy refers to it (#1220)."""
+    return f"{risk_id} ({label}; {scope}): {mitigation}"
+
+
+_SEVERE_STRATEGY_RE = re.compile(r"^(?P<head>(?P<rid>RISK-\d+) \([^:]*\)): (?P<body>.+)$")
+
+
+def split_severe_risk_strategy(text: str) -> tuple[str, str, str] | None:
+    """``(risk id, head, mitigation)`` for a line ``severe_risk_strategy`` wrote, or
+    ``None`` for any other strategy."""
+    m = _SEVERE_STRATEGY_RE.match(text)
+    return (m.group("rid"), m.group("head"), m.group("body")) if m else None

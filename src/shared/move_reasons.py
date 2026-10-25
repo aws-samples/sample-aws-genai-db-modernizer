@@ -272,6 +272,17 @@ def _first_assignment(move: Move) -> str:
     return f"Assigned to {to} ({rule_label(code)})."
 
 
+def consolidation_reason(engine_name: str) -> str:
+    """Why the reality check moved a query off ``engine_name`` (a display name) when the
+    engine adds too little (``CONSOLIDATE_NO_UNIQUE_VALUE``), as the move's sentence ends.
+    The engineering report's appendix leaves it out of each step and states it once,
+    under Migration trade-offs (#1220)."""
+    return (
+        f"the reality check removed {engine_name}, which adds too little over the engines "
+        "kept to justify running another engine"
+    )
+
+
 def _engine_change(move: Move) -> str:
     """The sentence for a Move from one engine to another."""
     to = display_engine(move.to_engine)
@@ -287,10 +298,7 @@ def _engine_change(move: Move) -> str:
     if code == ReasonCode.HIGHEST_SCORE:
         why = f"{to} scores it higher among the engines kept"
     elif code == ReasonCode.CONSOLIDATE_NO_UNIQUE_VALUE:
-        why = (
-            f"the reality check removed {frm}, which adds too little over the engines kept "
-            "to justify running another engine"
-        )
+        why = consolidation_reason(frm)
     elif code == ReasonCode.CONSOLIDATE_SOURCE_COMPATIBLE_SURVIVES:
         why = (
             "the source-compatible engine serves this query at least as well, so "

@@ -60,6 +60,7 @@ from src.contracts.executive_summary_response import (
 from src.contracts.model_flag import validation_error_note
 from src.shared.bedrock_guardrail import GuardrailConfigError, GuardrailIntervened
 from src.shared.capability_labels import CAPABILITY_DISPLAY_NAMES
+from src.shared.design_text import severe_risk_strategy
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import (
     SOURCE_ENGINE_DISPLAY_NAMES,
@@ -158,17 +159,32 @@ def _dedupe_reason_clauses(reason: str) -> str:
     return "; ".join(kept)
 
 
+# The utility pin's reason as the assignment resolver writes it (#327, #710).
+_UTILITY_PIN_REASON_RE = re.compile(
+    r"utility/metadata statement, kept on the (source-compatible|chosen) relational engine "
+    r"\(([^()]+)\)"
+)
+
+
+def _readable_utility_reason(match: re.Match[str]) -> str:
+    """The utility pin's reason in plain words (#1220): what the statement is and why
+    it stays, not the rule's label."""
+    which = "source-compatible" if match.group(1) == "source-compatible" else "chosen relational"
+    return f"administration or metadata statement, kept on {match.group(2)} as the {which} engine"
+
+
 def _clean_relational_reason(
     reason: str | None, max_chars: int = _RELATIONAL_REASON_MAX_CHARS
 ) -> str:
     """A relational engine's per-query reason, ready to sit next to its excerpt.
 
     Deduplicated (see above), the collector's "unknown" table placeholder
-    replaced by a readable phrase, and capped by dropping whole exclusion
-    clauses (never mid-sentence, #951).
+    replaced by a readable phrase, the utility pin's label worded as a sentence
+    (#1220), and capped by dropping whole exclusion clauses (never mid-sentence, #951).
     """
     cleaned = _dedupe_reason_clauses(reason or "")
     cleaned = _UNKNOWN_WORD_RE.sub("an unresolved table", cleaned)
+    cleaned = _UTILITY_PIN_REASON_RE.sub(_readable_utility_reason, cleaned)
     if len(cleaned) <= max_chars:
         return cleaned
     # #951: never cut mid-sentence. The base reason (before " | ") says why the
@@ -2509,7 +2525,7 @@ def _build_mitigation_strategies(
             if mitigation
             else "no mitigation recorded; define one before cutover."
         )
-        strategies.append(f"{head} ({label}; {_risk_scope(r)}): {body}")
+        strategies.append(severe_risk_strategy(head, label, _risk_scope(r), body))
 
     by_type: dict[str, list[dict]] = {}
     for r in risks:

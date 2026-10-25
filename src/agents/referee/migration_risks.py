@@ -113,6 +113,7 @@ from src.agents.referee.cache_overlay import is_write_query
 from src.shared.catalog.access_classes import access_classes
 from src.shared.design_text import (
     carried_write_detail,
+    close_call_description,
     design_text_item,
     unsupported_pattern_detail,
 )
@@ -485,10 +486,7 @@ def _close_call_risks(ctx: _Context, query_traces: Mapping[str, Any] | None) -> 
                 else f"{_n(ties, 'query was an exact tie', 'queries were exact ties')}"
             )
             decided = (f"{decided}, and " if decided else "") + f"{tied} a routing rule settled"
-        description = (
-            f"{head}{decided}: {'; '.join(parts)}. A small change in the scores moves "
-            f"{_them(total)}."
-        )
+        description = close_call_description(f"{head}{decided}", parts, _them(total))
         mitigation = (
             f"Confirm the engine for {_these(total, 'query', 'queries')} in the assignment "
             f"review before {_start(wave)}, using the close calls section; move any that fit "

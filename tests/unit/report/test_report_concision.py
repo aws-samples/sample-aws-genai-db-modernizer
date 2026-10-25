@@ -22,6 +22,8 @@ import pytest
 
 from src.report.escaping import md_text
 from src.report.renderers import render_engineering_report_md
+from src.shared.engine_names import display_engine
+from src.shared.move_reasons import consolidation_reason
 from src.shared.report_facts import replica_risk_text, shared_replica_risk_text
 from tests.report_concision import (
     bare_ids,
@@ -267,10 +269,17 @@ def test_the_appendix_points_once_to_the_consolidation_reason(md: str, saved) ->
     appendix = section(md, "Appendix: per-query routing decisions")
     assert appendix.count(POINTER) == 1
     assert "DocumentDB provides no unique capabilities over Aurora MySQL" in md
-    # Every stored step explanation is printed as stored.
+    # Every stored step explanation is printed as stored, except a consolidation's
+    # reason, which the pointer states once (#1220): its move and scores stay.
     for trace in saved["query_traces"]["queries"]:
         for step in [trace["first_assignment"], *trace["moves"]]:
-            assert md_text(step["explanation"]) in appendix
+            text = step["explanation"]
+            if step.get("reason_code") == "consolidate.no_unique_value":
+                reason = consolidation_reason(display_engine(step["from_engine"]))
+                assert reason in text
+                text = text.replace(f": {reason}", "")
+            assert md_text(text) in appendix
+    assert "which adds too little over the engines kept" not in appendix
 
 
 def test_the_engine_a_consolidation_step_removed_is_not_named_again(md: str) -> None:
@@ -286,3 +295,5 @@ def test_without_its_trade_off_there_is_no_pointer(report) -> None:
     ]
     appendix = section(render_engineering_report_md(report), "Appendix: per-query routing")
     assert POINTER not in appendix
+    # With no pointer, each consolidation step keeps its own reason (#1220).
+    assert "which adds too little over the engines kept" in appendix
