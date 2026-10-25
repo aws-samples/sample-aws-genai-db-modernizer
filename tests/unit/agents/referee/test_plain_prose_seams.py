@@ -164,6 +164,42 @@ class TestSchemaDesignProse:
         assert cleaned["trade_offs"] == ["Embed comments, bounded at 50."]
         assert rejections == []
 
+    def test_an_internal_confidence_figure_is_dropped_from_a_trade_off(self) -> None:
+        text = (
+            "The posts, users and meta tables stay separate even though the analysis "
+            "reports co-access with 100% confidence for the posts and meta aggregate: "
+            "no query reads a post together with its meta rows."
+        )
+        cleaned, rejections = clean_schema_design_prose(
+            "dynamodb", self._schema(description=text, impact="Posts and meta (80% confidence).")
+        )
+        t = cleaned["trade_offs"][0]
+        assert t["description"] == (
+            "The posts, users and meta tables stay separate even though the analysis "
+            "reports co-access for the posts and meta aggregate: "
+            "no query reads a post together with its meta rows."
+        )
+        assert t["impact"] == "Posts and meta."
+        assert rejections == []
+        assert scan_json({"trade_offs": cleaned["trade_offs"]}) == []
+
+    def test_a_confidence_figure_it_cannot_drop_sends_the_field_back(self) -> None:
+        cleaned, rejections = clean_schema_design_prose(
+            "dynamodb", self._schema(impact="A 90% confidence score backs this.")
+        )
+        impact = cleaned["trade_offs"][0]["impact"]
+        assert "confidence" not in impact
+        assert impact == "Review this trade-off with the DynamoDB schema design before migration."
+        assert rejections == [
+            'dynamodb trade_offs[0].impact: plain-prose style list ("N% confidence")'
+        ]
+
+    def test_a_statistics_term_is_kept(self) -> None:
+        keep = "The 95% confidence interval is narrow and the 90% confidence level holds."
+        cleaned, rejections = clean_schema_design_prose("dynamodb", self._schema(impact=keep))
+        assert cleaned["trade_offs"][0]["impact"] == keep
+        assert rejections == []
+
     def test_no_schema_design(self) -> None:
         assert clean_schema_design_prose("dynamodb", None) == (None, [])
 
@@ -514,3 +550,36 @@ def test_each_synthesis_version_has_its_own_rejection_log(store) -> None:
     assert store.read_json(f"{log}1.json")["prose_style_rejections"] == ["a"]
     assert store.read_json(f"{log}2.json")["prose_style_rejections"] == ["b"]
     assert not (store.base_dir / f"{log}3.json").exists()
+
+
+def test_a_confidence_figure_in_a_trade_off_never_reaches_report_json(store) -> None:
+    """The e2e-llm flake (#1569): a model-written trade-off quoting the analysis's
+    co-access confidence reaches neither the trade-off list, the schema design
+    projection nor the risk register's details."""
+    from src.agents.referee.synthesis_handler import (
+        _write_synthesis_report,
+        run_synthesis_deterministic,
+    )
+
+    key = f"{DB}/{JOB}/schema-dynamodb/v2/schema_output.json"
+    store.write_json(
+        key,
+        {
+            "trade_offs": [
+                {
+                    "description": (
+                        "Posts and meta stay separate even though the analysis reports "
+                        "co-access with 100% confidence for the posts and meta aggregate."
+                    ),
+                    "impact": "Two reads instead of one.",
+                    "source_tables": ["users"],
+                }
+            ]
+        },
+    )
+    result = run_synthesis_deterministic(JOB, DB, store, assignment_version=2)
+    _write_synthesis_report(store, result, assignment_version=2)
+    report = store.read_json(f"{DB}/{JOB}/synthesis/v2/report.json")
+    assert "100% confidence" not in json.dumps(report)
+    assert [f for f in scan_json(report) if f.kind == "confidence_wording"] == []
+    assert "co-access for the posts and meta aggregate" in json.dumps(report)

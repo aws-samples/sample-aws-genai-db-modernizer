@@ -404,3 +404,28 @@ def test_replace_dashes_rewrites_every_sentence_of_a_long_text():
 def test_replace_dashes_leaves_a_sentence_with_three_dashes_alone():
     text = "One -- two -- three -- four.\nA -- b.\n"
     assert replace_dashes(text) == "One -- two -- three -- four.\nA, b.\n"
+
+
+def test_replace_confidence_figures_drops_only_the_figure_phrase() -> None:
+    from src.shared.prose_style import has_confidence_figure, replace_confidence_figures
+
+    assert (
+        replace_confidence_figures("It reports co-access with 100% confidence for posts.")
+        == "It reports co-access for posts."
+    )
+    assert replace_confidence_figures("Kept (at 80% confidence).") == "Kept."
+    assert replace_confidence_figures("Kept (90% confidence), then more.") == "Kept, then more."
+    # Not rewritable: left for the seam to reject.
+    left = replace_confidence_figures("A 90% confidence score.")
+    assert left == "A 90% confidence score." and has_confidence_figure(left)
+    # Code is never rewritten; the guard still flags it, so it stays a hit.
+    code = "Set `with 90% confidence` here."
+    assert replace_confidence_figures(code) == code and has_confidence_figure(code)
+    # Statistics terms and plain text are untouched.
+    for same in (
+        "A 95% confidence interval.",
+        "No figure here.",
+        "",
+    ):
+        assert replace_confidence_figures(same) == same
+        assert not has_confidence_figure(same)

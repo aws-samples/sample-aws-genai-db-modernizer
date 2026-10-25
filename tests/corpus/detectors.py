@@ -357,7 +357,7 @@ for _fn, _reader in (
 
 # The modules that rewrite or check customer prose, and what each holds.
 PROSE_MODULES: dict[str, str] = {
-    "src/shared/prose_style.py": "the plain-prose style list and its dash rewriter",
+    "src/shared/prose_style.py": "the plain-prose style list and its dash and confidence-figure rewriters",
     "src/tools/validation/customer_text_guard.py": "the internal-wording guard",
     "src/agents/referee/synthesis_grounding.py": "the summary and risk checks",
     "src/agents/referee/synthesis_prose.py": "the schema-design prose seam",
@@ -414,6 +414,30 @@ PROSE_DETECTORS: tuple[ProseDetector, ...] = (
             "quoted_engine_id": True,
             "risk_and_wave_claims": True,
             "negated_attribution": True,
+        },
+    ),
+    ProseDetector(
+        f"{_PROSE}:replace_confidence_figures",
+        lambda text: prose_style.replace_confidence_figures(text) == text,
+        expect={
+            "negation": True,
+            "numeric_ranges": True,
+            "identifier_colon": True,
+            "quoted_engine_id": True,
+            "risk_and_wave_claims": True,
+            "negated_attribution": True,
+        },
+    ),
+    ProseDetector(
+        f"{_PROSE}:has_confidence_figure",
+        prose_style.has_confidence_figure,
+        expect={
+            "negation": False,
+            "numeric_ranges": False,
+            "identifier_colon": False,
+            "quoted_engine_id": False,
+            "risk_and_wave_claims": False,
+            "negated_attribution": False,
         },
     ),
     ProseDetector(

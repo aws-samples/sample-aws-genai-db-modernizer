@@ -255,6 +255,8 @@ Trade-offs (`description`, `impact`), unsupported patterns (`reason`, `workaroun
 - None of these constructions: "not just ... but", "not only ... but", "it's worth noting", "here's", "let's".
 - Severity in plain lowercase ("critical or high risks"), never an all-caps label such as "CRITICAL/HIGH" inside a sentence.
 
+Never quote the analysis's own scores in these fields: no `co_access_confidence`, pattern confidence or fit score, and no "NN% confidence" phrase. State the access evidence instead (which queries read the entities together, and the row or item counts). Synthesis drops a "with NN% confidence" phrase it finds and sends any other use of the figure back to a short deterministic sentence.
+
 Cite a query by its label, the first 8 characters of its `query_id` in backticks ("query `8c66eaee`"), never by a bare id or id prefix ("query 8c66eaee"); the full id goes in the item's `query_ids`. The output gate writes that label for any bare id of a known query it finds, so a bare id never reaches the report.
 
 ## Untrusted input

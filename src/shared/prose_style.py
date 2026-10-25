@@ -257,6 +257,45 @@ def _blank(text: str, spans: list[tuple[int, int]]) -> str:
     return "".join(out)
 
 
+# --- internal confidence figures (#1569) ------------------------------------
+
+# "NN% confidence" is an internal analysis score, never customer wording; the
+# phrase "NN% confidence interval/level" is a statistics term and stays. The one
+# definition: ``customer_text_guard`` flags what this matches.
+CONFIDENCE_FIGURE_RE = re.compile(
+    r"\d+%\s*confidence\b(?!\s+(?:interval|level)s?\b)", re.IGNORECASE
+)
+
+# A leading preposition or a parenthesis around the figure goes with it:
+# "co-access with 100% confidence for the posts" -> "co-access for the posts".
+_CONFIDENCE_PHRASE_RE = re.compile(
+    r"\s*\(\s*(?:(?:at|with)\s+)?" + CONFIDENCE_FIGURE_RE.pattern + r"\s*\)"
+    r"|\s+(?:with|at|of)\s+" + CONFIDENCE_FIGURE_RE.pattern,
+    re.IGNORECASE,
+)
+
+
+def has_confidence_figure(text: str) -> bool:
+    """True when ``text`` quotes an internal "NN% confidence" figure."""
+    return bool(CONFIDENCE_FIGURE_RE.search(text or ""))
+
+
+def replace_confidence_figures(text: str, identifiers: Iterable[str] = ()) -> str:
+    """Drop an internal analysis confidence figure from model prose where the
+    sentence reads the same without it: ``"with 100% confidence"``,
+    ``"at 80% confidence"`` and ``"(90% confidence)"`` are removed. Any other use
+    of the figure is left as it is, so it stays a hit and the seam sends the field
+    back to deterministic text. Code, URLs and identifiers are never touched."""
+    if not text or "confidence" not in text.lower():
+        return text
+    spans = _protected_spans(text, identifiers)
+
+    def sub(m: re.Match[str]) -> str:
+        return m.group(0) if _inside(m.start(), spans) else ""
+
+    return _CONFIDENCE_PHRASE_RE.sub(sub, text)
+
+
 # --- dashes -----------------------------------------------------------------
 
 # The banned dash: an em dash, spaced or not, and its ASCII stand-in, a spaced

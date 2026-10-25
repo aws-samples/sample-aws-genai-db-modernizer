@@ -16,6 +16,10 @@ text is checked, whatever mode wrote the design and however old it is:
   (``prose_style.replace_dashes``, which never touches code, en dashes or
   identifiers); short labels (an optimization's target, a pattern type, an
   object name) only get that rewrite;
+- an internal analysis confidence figure ("co-access with 100% confidence") is
+  dropped where the sentence reads the same without it
+  (``prose_style.replace_confidence_figures``); one it cannot drop goes back to
+  deterministic text like any other hit;
 - a field with any other item of the plain-prose style list goes back to
   deterministic text: a trade-off or an access pattern gets a short sentence
   built from its own structured fields, an optimization's recommendation names
@@ -41,7 +45,12 @@ from typing import Any
 
 from src.agents.referee.aurora_choice import AURORA_ENGINES
 from src.shared.engine_names import display_engine
-from src.shared.prose_style import find_style_hits, replace_dashes
+from src.shared.prose_style import (
+    find_style_hits,
+    has_confidence_figure,
+    replace_confidence_figures,
+    replace_dashes,
+)
 
 # Model-written fields that fall back to empty text: the risk builder then uses
 # its own deterministic wording (the problem stated from the queries, or the
@@ -113,8 +122,11 @@ def clean_schema_design_prose(
     rejections: list[str] = []
 
     def clean(path: str, value: str, fallback: Callable[[], str]) -> str:
-        cleaned = replace_dashes(value, names)
-        terms = sorted({f'"{h.term}"' for h in find_style_hits(cleaned, names)})
+        cleaned = replace_confidence_figures(replace_dashes(value, names), names)
+        found = {f'"{h.term}"' for h in find_style_hits(cleaned, names)}
+        if has_confidence_figure(cleaned):
+            found.add('"N% confidence"')
+        terms = sorted(found)
         if not terms:
             return cleaned
         rejections.append(f"{engine} {path}: plain-prose style list ({', '.join(terms)})")

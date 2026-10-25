@@ -92,6 +92,7 @@ from src.agents.referee.engine_exclusions import EXCLUSION_RULES
 from src.agents.referee.query_scoring import GATE_KINDS
 from src.agents.referee.tie_break import TIE_KINDS
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.prose_style import CONFIDENCE_FIGURE_RE
 
 # Fields distinctive enough that no other field in src/contracts/ shares their
 # bare name -- excluded at any depth. See the module docstring for why a
@@ -461,9 +462,7 @@ _CODE_SPAN_RE = re.compile(r"`[^`\n]+`|<code\b[^>]*>.*?</code>", re.IGNORECASE |
 # unrelated statistics term this pipeline could reasonably write about data
 # quality or load testing, not a mislabelled fit score. Review round 1 found
 # this guard flagging "95% confidence interval" as a violation.
-_CONFIDENCE_WORDING_RE = re.compile(
-    r"\d+%\s*confidence\b(?!\s+(?:interval|level)s?\b)", re.IGNORECASE
-)
+_CONFIDENCE_WORDING_RE = CONFIDENCE_FIGURE_RE  # one definition: src.shared.prose_style
 
 # The technical, log-only reason text of every exclusion rule (never meant for a
 # customer -- see the module docstring above and engine_exclusions.py's own). Built
