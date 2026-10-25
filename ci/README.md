@@ -235,7 +235,10 @@ font packages (`fonts-unifont`, ...); no e2e test depends on them (the PDF is ge
 browser, and the browser checks read the DOM), but `install-deps` cannot skip them.
 Locally (including macOS, where there is no `apt`) only the browser binaries are installed.
 The GitHub workflow also caches `~/.cache/ms-playwright`, keyed on the Playwright version in
-`uv.lock`.
+`uv.lock`, and, for the shards that install webkit, the `.deb` files `install-deps` downloads
+(`~/apt-archives`, keyed on the runner image and the Playwright version, #1375): they are copied into
+`/var/cache/apt/archives` before the shard and back out after it on a cache miss, so a slow apt mirror
+rarely matters. `ci/e2e-llm.sh` installs its browsers with the same two helpers instead of `--with-deps`.
 
 ## `replay.sh`
 

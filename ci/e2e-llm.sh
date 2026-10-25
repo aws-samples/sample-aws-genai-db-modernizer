@@ -340,10 +340,11 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
   uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
 
   run_install_browsers() {
+    # The shared helpers from lib.sh (#1363): retry with a watchdog, and apt only when a
+    # browser cannot launch (the all-in-one install flag stalled whole jobs on a slow mirror, #1375).
+    playwright_install_with_retry chromium webkit
     if [ "${CI:-}" = "true" ]; then
-      uv run playwright install --with-deps chromium webkit
-    else
-      uv run playwright install chromium webkit
+      playwright_ensure_deps chromium webkit
     fi
   }
   step install-browsers run_install_browsers

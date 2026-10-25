@@ -218,10 +218,33 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-${{ matrix.shard == 'ui' && 'chromium' || 'chromium-webkit' }}
+      - name: Runner image
+        id: image
+        run: echo "name=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+      - name: Cache webkit system packages
+        # The roughly 120 MB of .deb files `playwright install-deps` downloads, so a slow
+        # apt mirror no longer stalls the shard (#1375). apt's own cache directory is
+        # root-owned, so the cache lives in the home folder and is copied in and out.
+        # The browser shards that do not install webkit have no packages to cache.
+        id: apt-cache
+        if: matrix.shard != 'ui' && matrix.shard != 'hashseed' && matrix.shard != 'determinism' && matrix.shard != 'replay'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/apt-archives
+          key: apt-debs-${{ steps.image.outputs.name }}-${{ steps.playwright.outputs.version }}
+      - name: Seed the apt package cache
+        if: steps.apt-cache.outputs.cache-hit == 'true'
+        run: sudo cp -n "$HOME"/apt-archives/*.deb /var/cache/apt/archives/ || true
       - name: End-to-end
         env:
           E2E_SHARD: ${{ matrix.shard }}
         run: ./ci/e2e.sh
+      - name: Keep the downloaded apt packages for the cache
+        if: always() && steps.apt-cache.outcome == 'success' && steps.apt-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$HOME/apt-archives"
+          sudo cp /var/cache/apt/archives/*.deb "$HOME/apt-archives/" || true
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
