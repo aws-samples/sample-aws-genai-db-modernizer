@@ -8,6 +8,16 @@
             "type": "command",
             "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_commit_bypass.py\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_credential_output.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/block_fork_pr_push.py\"",
+            "timeout": 10
           }
         ]
       },

@@ -1,4 +1,4 @@
-"""The hooks are wired in .claude/settings.json (1-3, 5, 6) and settings.ci.json (1, 2, 4-6)."""
+"""Which hooks .claude/settings.json (interactive) and settings.ci.json (headless) wire."""
 
 from __future__ import annotations
 
@@ -33,6 +33,8 @@ def _scripts(entries: list[tuple[str, str, str]]) -> dict[str, tuple[str, str]]:
 def test_interactive_settings() -> None:
     assert _scripts(_hooks("settings.json")) == {
         "block_commit_bypass.py": ("PreToolUse", "Bash"),
+        "block_credential_output.py": ("PreToolUse", "Bash"),
+        "block_fork_pr_push.py": ("PreToolUse", "Bash"),
         "block_baseline_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "block_contract_version_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "remind_llm_run.py": ("Stop", ""),
@@ -44,6 +46,8 @@ def test_headless_settings() -> None:
     assert _scripts(_hooks("settings.ci.json")) == {
         "block_commit_bypass.py": ("PreToolUse", "Bash"),
         "enforce_tool_use_rule.py": ("PreToolUse", "Bash"),
+        "block_credential_output.py": ("PreToolUse", "Bash"),
+        "block_fork_pr_push.py": ("PreToolUse", "Bash"),
         "block_baseline_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "block_contract_version_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),

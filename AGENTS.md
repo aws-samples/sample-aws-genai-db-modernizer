@@ -275,7 +275,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
   not the commit (see CONTRIBUTING.md's Commit Message Format). A
   `check-commit-message` pre-commit hook and `ci/check_commits.sh` enforce
   this; merge and fixup/squash/amend commits are skipped (#570).
-- Claude Code hooks in `scripts/hooks/` (wired in `.claude/settings.json` and `.claude/settings.ci.json`) refuse `git commit --no-verify`, hand edits of generated baselines and of contract versions (declare a bump with `scripts/bump_contract.py`), schema design before `/modernize` has run the approval gate on its own and, in headless runs, any Bash call that breaks the tool-use rule; see ci/README.md.
+- Claude Code hooks in `scripts/hooks/` (wired in `.claude/settings.json` and `.claude/settings.ci.json`) refuse `git commit --no-verify`, hand edits of generated baselines and of contract versions (declare a bump with `scripts/bump_contract.py`), schema design before `/modernize` has run the approval gate on its own, a Bash call that prints a cloud credential helper's output, a push from a fork PR's worktree to a repository other than the fork and, in headless runs, any Bash call that breaks the tool-use rule; see ci/README.md.
 - Never add `Co-Authored-By` trailers (also hook-enforced, see above); never use `--no-verify`.
 - Write tests first; keep PRs small; open them against `main`.
 - Public wording everywhere (issues, commits, docs, code): this is a public
