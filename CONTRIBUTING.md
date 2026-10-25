@@ -566,6 +566,14 @@ The release process is in [docs/RELEASE_MANAGEMENT.md](docs/RELEASE_MANAGEMENT.m
 
 ---
 
+## Follow-ups
+
+A review, a PR description or a code comment often lists a follow-up or a known limit. Each one becomes an issue before the PR merges, and the PR says which issue it is. A limit that lives only in prose is lost when the PR closes.
+
+- Every follow-up issue joins an epic as a sub-issue, so the epic shows its progress. If no epic fits, say so in the issue and ask a maintainer to place it.
+- Before you file one, search for an open issue that already covers it, and comment there instead of filing a duplicate.
+- A weekly triage pass closes or merges duplicates and checks that every open issue has an epic, a label and an assignee.
+
 ## Working with a fast-moving main
 
 Many pull requests land on `main` every day, so a branch that was green yesterday can conflict or break today.

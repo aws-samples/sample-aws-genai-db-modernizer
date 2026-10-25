@@ -262,6 +262,7 @@ Self-review checklist, from findings that recur in review. Each item says what t
 
 ## Conventions
 
+- Every follow-up or known limit listed in a review or PR becomes an issue before the PR merges, and joins an epic as a sub-issue (CONTRIBUTING.md, "Follow-ups").
 - Issues use the templates in `.github/ISSUE_TEMPLATE/`: `[Bug] ...`
   (label `bug`) or `[Feature] ...` (label `enhancement`), every section filled in.
 - One commit per issue: a short Conventional Commits subject (at most 72
