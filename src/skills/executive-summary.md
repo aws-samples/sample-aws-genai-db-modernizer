@@ -79,6 +79,10 @@ Also:
 
 One JSON object, the `ExecutiveSummaryResponse` contract (`src/contracts/executive_summary_response.py`), validated the same way in both modes: `{"executive_summary": "..."}`, the summary as plain prose, and no other key.
 
+## Rewrite
+
+The post-checks can reject a summary (a table named under the wrong engine, a migration order or risk count that contradicts the report, a style or structure rule broken); the customer then sees the deterministic summary. A rejected summary comes back to you once, with the warnings the checks reported. Write the summary again over the same request: correct every claim a warning names, keep what no warning names, and apply every section of this file as before. The response is the same contract. There is no second rewrite: if the rewritten summary is rejected too, the deterministic summary stands.
+
 ## Schema Design Status
 
 ### all_designed

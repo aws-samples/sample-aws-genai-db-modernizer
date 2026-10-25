@@ -44,8 +44,19 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
       ```
 
       The output carries `summary_source` (`llm`, or `deterministic_fallback` when the
-      post-check rejected your summary) and `summary_validation_warnings`. On a
-      fallback, tell the user the generated summary was withheld and quote the warnings.
+      post-check rejected your summary) and `summary_validation_warnings`.
+   f. On the first `deterministic_fallback`, rewrite the summary once: follow the
+      `Rewrite` section of `src/skills/executive-summary.md` over the same request,
+      correcting each claim the `summary_validation_warnings` name, write the new
+      `{"executive_summary": "..."}` to the same `llm_response` path, and finalize again:
+
+      ```bash
+      uv run python scripts/run_synthesis.py --job-id {job_id} --db {database_name} --finalize
+      ```
+
+      The Bedrock path asks its model for the same one rewrite. Never rewrite a second
+      time: if this finalize also returns `deterministic_fallback`, tell the user the
+      generated summary was withheld and quote its warnings.
 
 4. **Render deliverables**
 

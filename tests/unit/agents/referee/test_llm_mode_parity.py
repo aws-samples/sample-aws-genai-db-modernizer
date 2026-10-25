@@ -411,8 +411,12 @@ class TestExecutiveSummarySameAnswerSameResult:
         agent, model = _bedrock()
         with agent, model:
             run_synthesis(SYN_JOB, SYN_DB, bedrock_store, assignment_version=2, llm_mode="bedrock")
-        ((_, prompt, output_model),) = _ModelStandIn.calls
+        # #214: a rejected summary is asked for once more, over the same request.
+        (_, prompt, output_model), *rewrites = _ModelStandIn.calls
         assert output_model is ExecutiveSummaryResponse
+        assert len(rewrites) <= 1
+        for _, rewrite_prompt, _ in rewrites:
+            assert _framed_payload(rewrite_prompt) == _framed_payload(prompt)
 
         headless_store = synthesis_store("headless")
         run_synthesis(SYN_JOB, SYN_DB, headless_store, assignment_version=2, llm_mode="external")

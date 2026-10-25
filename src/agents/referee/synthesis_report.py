@@ -3602,13 +3602,23 @@ def executive_summary_system_prompt(designed: list[str], not_designed: list[str]
     return role + "\n\n" + fragments["authority"] + "\n\n" + SYSTEM_PROMPT_DATA_DIRECTIVE
 
 
-def executive_summary_prompt(designed: list[str], not_designed: list[str], context: dict) -> str:
+def executive_summary_prompt(
+    designed: list[str],
+    not_designed: list[str],
+    context: dict,
+    rejection: dict | None = None,
+) -> str:
     """The Bedrock user prompt: the shared skill's sections, then the request.
 
     ``context`` is the ``prepare_synthesis_llm_input`` payload, the request
     ``/synthesize`` hands Claude Code (#628). It carries customer-derived
     strings (table and query-group names, risk/trade-off descriptions), so it
     is framed as untrusted data (R1).
+
+    ``rejection`` (#214) is ``{"rejected_summary", "warnings"}`` for the one
+    rewrite after the post-checks rejected a summary: the skill's ``Rewrite``
+    section follows the request, then the rejected text and the warnings,
+    framed as untrusted data too (model text quoting customer names).
     """
     fragments = _executive_summary_prompt_fragments(designed, not_designed)
     sections = skill_sections(EXECUTIVE_SUMMARY_SKILL)
@@ -3627,11 +3637,33 @@ def executive_summary_prompt(designed: list[str], not_designed: list[str], conte
             json.dumps(context, separators=(",", ":"), sort_keys=True),
             label="assessment context",
         )
+        + _rewrite_request(rejection)
         + "\n\nWrite the briefing now."
     )
 
 
-def generate_executive_summary(llm_input: dict) -> ExecutiveSummaryResponse | None:
+def _rewrite_request(rejection: dict | None) -> str:
+    """The prompt part asking for the one rewrite (#214); empty on the first call."""
+    if not rejection:
+        return ""
+    rejected = {
+        "rejected_summary": str(rejection.get("rejected_summary") or ""),
+        "warnings": [str(w) for w in rejection.get("warnings") or []],
+    }
+    return (
+        "\n\nREWRITE:\n"
+        + skill_sections(EXECUTIVE_SUMMARY_SKILL)["Rewrite"]
+        + "\n\n"
+        + frame_untrusted(
+            json.dumps(rejected, separators=(",", ":"), sort_keys=True),
+            label="rejected summary and the post-check warnings",
+        )
+    )
+
+
+def generate_executive_summary(
+    llm_input: dict, rejection: dict | None = None
+) -> ExecutiveSummaryResponse | None:
     """Generate the executive summary on Bedrock from the headless request payload.
 
     ``llm_input`` is :func:`~src.agents.referee.synthesis_handler.prepare_synthesis_llm_input`'s
@@ -3648,6 +3680,9 @@ def generate_executive_summary(llm_input: dict) -> ExecutiveSummaryResponse | No
     (Strands missing, a call error, or an answer off the contract): the caller
     keeps the deterministic summary. The caller post-checks the summary
     (``apply_synthesis_llm_output``) exactly as it does a headless one.
+
+    ``rejection`` asks for the one rewrite of a rejected summary (#214); see
+    :func:`executive_summary_prompt`.
     """
     try:
         from strands import Agent
@@ -3658,7 +3693,7 @@ def generate_executive_summary(llm_input: dict) -> ExecutiveSummaryResponse | No
     status = llm_input.get("schema_design_status") or {}
     designed = list(status.get("designed") or [])
     not_designed = list(status.get("not_designed") or [])
-    prompt = executive_summary_prompt(designed, not_designed, llm_input)
+    prompt = executive_summary_prompt(designed, not_designed, llm_input, rejection)
     system_prompt = executive_summary_system_prompt(designed, not_designed)
 
     try:

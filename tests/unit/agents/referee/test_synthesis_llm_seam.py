@@ -14,6 +14,8 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.agents.referee.synthesis_data import EngineArtifacts, SynthesisData
 from src.agents.referee.synthesis_handler import (
     apply_synthesis_llm_output,
@@ -716,22 +718,32 @@ class TestRunSynthesisBackwardCompatible:
         ):
             assert key in llm_input, f"Missing key in llm_input: {key}"
 
+    @pytest.mark.passes_on_main  # #214: an accepted summary is asked for once
     def test_llm_mode_bedrock_calls_generate_executive_summary(self):
         """llm_mode='bedrock' (default) must call generate_executive_summary."""
         store = _mock_store()
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value=ExecutiveSummaryResponse(executive_summary="Mocked executive summary."),
+            return_value=ExecutiveSummaryResponse(
+                executive_summary=_structured_summary(
+                    run_synthesis_deterministic("job-1", "mydb", _mock_store())
+                )
+            ),
         ) as mock_gen:
             run_synthesis("job-1", "mydb", store, llm_mode="bedrock")
         mock_gen.assert_called_once()
 
+    @pytest.mark.passes_on_main  # #214: an accepted summary is asked for once
     def test_no_llm_mode_arg_defaults_to_bedrock(self):
         """Calling without llm_mode must use generate_executive_summary."""
         store = _mock_store()
         with patch(
             "src.agents.referee.synthesis_handler.generate_executive_summary",
-            return_value=ExecutiveSummaryResponse(executive_summary="Summary from bedrock."),
+            return_value=ExecutiveSummaryResponse(
+                executive_summary=_structured_summary(
+                    run_synthesis_deterministic("job-1", "mydb", _mock_store())
+                )
+            ),
         ) as mock_gen:
             run_synthesis("job-1", "mydb", store)
         mock_gen.assert_called_once()

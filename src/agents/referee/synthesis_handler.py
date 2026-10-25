@@ -1563,6 +1563,18 @@ def run_synthesis(
         # None: no usable answer, so the deterministic summary stays.
         if response is not None:
             result = apply_synthesis_llm_output(result, response)
+        # #214: a rejected summary goes back to the model once, with the warnings;
+        # a second rejection keeps the deterministic summary. /synthesize does the
+        # same in external mode.
+        if result.get("summary_source") == "deterministic_fallback":
+            rejection = {
+                "rejected_summary": result.get("summary_llm"),
+                "warnings": list(result.get("summary_validation_warnings") or []),
+            }
+            print("[synthesis] Summary rejected by the post-checks; asking for one rewrite.")
+            rewritten = generate_executive_summary(llm_input, rejection=rejection)
+            if rewritten is not None:
+                result = apply_synthesis_llm_output(result, rewritten)
 
     elif llm_mode == "external":
         llm_input = prepare_synthesis_llm_input(result)
