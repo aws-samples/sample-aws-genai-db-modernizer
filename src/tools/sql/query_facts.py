@@ -422,7 +422,9 @@ GEOSPATIAL_KEYWORDS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 _MIN_MAX_CALL_RE = re.compile(r"\b(max|min)\s*\(")
-_STATUS_EQUALS_VALUE_RE = re.compile(r"\bstatus\s*=\s*[\?'\"]")
+# A value after ``status =``: a literal (``?``, ``'``, ``"``) or a bind (``$1``, ``@p``,
+# ``:s``, #1547).
+_STATUS_EQUALS_VALUE_RE = re.compile(r"\bstatus\s*=\s*(?:[\?'\"]|\$\d|[@:]\w)")
 _IS_NULL_RE = re.compile(r"\bis\s+null\b")
 _COUNT_STAR_OR_ONE_RE = re.compile(r"\bcount\s*\(\s*[\*1]\s*\)")
 
@@ -770,6 +772,19 @@ class QueryFacts:
         never SQL. The facts that read a name (``status``, ``latitude``, a session key)
         read :attr:`_code`; a quoted function name before ``(`` is kept as the call."""
         return keyword_text(self._text, self._source_engine)
+
+    @cached_property
+    def _bare(self) -> str:
+        """:attr:`_code` with each one-word quoted identifier bare (``"status"`` reads
+        ``status``, #1547): the facts whose pattern expects a bare name next to a keyword
+        read this, so the same clause reads with a quoted name."""
+        return code_text(self._text, self._source_engine, unquote=True)
+
+    @cached_property
+    def _bare_keywords(self) -> str:
+        """:attr:`_keywords` with each neutral name bare (``RETURNING "id"`` reads
+        ``RETURNING quoted_name``, #1547): for the keyword facts that expect a bare name."""
+        return keyword_text(self._text, self._source_engine, unquote=True)
 
     @cached_property
     def _keywords_lower(self) -> str:
@@ -1152,7 +1167,7 @@ class QueryFacts:
     @cached_property
     def on_conflict_or_returning(self) -> bool:
         """``ON CONFLICT``, or ``RETURNING <column>`` not preceded by ``AS``."""
-        return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._keywords))
+        return bool(_ON_CONFLICT_OR_RETURNING_RE.search(self._bare_keywords))
 
     @cached_property
     def negation_word(self) -> bool:
@@ -1162,7 +1177,7 @@ class QueryFacts:
     @cached_property
     def correlated_subquery_shape(self) -> bool:
         """``( SELECT ... WHERE ... a.b = c.d``."""
-        return _has_correlated_subquery_shape(self._keywords)
+        return _has_correlated_subquery_shape(self._bare_keywords)
 
     @cached_property
     def time_function_keyword(self) -> bool:
@@ -1184,7 +1199,7 @@ class QueryFacts:
     @cached_property
     def status_equals_value(self) -> bool:
         """``status = ?`` / ``status = '...`` / ``status = "...``."""
-        return bool(_STATUS_EQUALS_VALUE_RE.search(self._code_lower))
+        return bool(_STATUS_EQUALS_VALUE_RE.search(self._bare.lower()))
 
     @cached_property
     def is_null(self) -> bool:

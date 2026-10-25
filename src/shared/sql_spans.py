@@ -388,13 +388,14 @@ NEUTRAL_NAME = "quoted_name"
 _CLOSERS = {"[": "]"}
 # A ``(`` after a quoted name: the name is a function's, and the call is SQL.
 _CALL_PAREN_RE = re.compile(r"\s*\(")
+_WORD_RE = re.compile(r"\w+")
 
 
 def _quoted(opener: str, name: str) -> str:
     return f"{opener}{name}{_CLOSERS.get(opener, opener)}"
 
 
-def keyword_text(text: str, source_engine: str | None) -> str:
+def keyword_text(text: str, source_engine: str | None, *, unquote: bool = False) -> str:
     """:func:`code_text` with each quoted identifier's name :data:`NEUTRAL_NAME`, in its
     quotes (``"where"`` reads ``"quoted_name"``, #1478).
 
@@ -403,11 +404,20 @@ def keyword_text(text: str, source_engine: str | None) -> str:
     keyword reads this text; a fact that needs the names (a table, a ``latitude``
     column, a session key) reads :func:`code_text`. A quoted name followed by ``(`` names
     the function a call runs, so it is kept (`` `FOUND_ROWS`() `` is that call).
+
+    With ``unquote``, each neutral name is written bare (``RETURNING "id"`` reads
+    ``RETURNING quoted_name``), for a fact whose pattern expects a bare name (#1547).
     """
-    return code_text(text, source_engine, neutral_name=NEUTRAL_NAME)
+    return code_text(text, source_engine, neutral_name=NEUTRAL_NAME, unquote=unquote)
 
 
-def code_text(text: str, source_engine: str | None, *, neutral_name: str | None = None) -> str:
+def code_text(
+    text: str,
+    source_engine: str | None,
+    *,
+    neutral_name: str | None = None,
+    unquote: bool = False,
+) -> str:
     """``text`` as the source engine runs it (#1415): each comment a space, each string
     literal a ``?`` placeholder, each quoted identifier as written.
 
@@ -425,7 +435,10 @@ def code_text(text: str, source_engine: str | None, *, neutral_name: str | None 
     string inside a body is still a string (``RAISE NOTICE 'call x()'`` calls nothing).
 
     With ``neutral_name``, each quoted identifier holds that token instead of its name
-    (:func:`keyword_text`).
+    (:func:`keyword_text`). With ``unquote``, a quoted identifier that is one word is
+    written without its quotes (``"status"`` reads ``status``, ``"a"."b"`` reads ``a.b``,
+    #1547), for a fact whose pattern expects a bare name next to a keyword; a name that
+    is not one word (``"my status"``) keeps its quotes.
     """
     text = text or ""
     grammar = literals_and_comments_for(source_engine)
@@ -439,7 +452,14 @@ def code_text(text: str, source_engine: str | None, *, neutral_name: str | None 
         elif opener in grammar.identifiers:
             # A quoted name before ``(`` is the function called: kept, as a call.
             if neutral_name is None or _CALL_PAREN_RE.match(text, end) is not None:
-                out.append(text[start:end])
+                name = text[start + 1 : end - 1]
+                is_call = _CALL_PAREN_RE.match(text, end) is not None
+                if unquote and not is_call and _WORD_RE.fullmatch(name):
+                    out.append(name)
+                else:
+                    out.append(text[start:end])
+            elif unquote:
+                out.append(neutral_name)
             else:
                 out.append(_quoted(opener, neutral_name))
         elif (
@@ -449,7 +469,9 @@ def code_text(text: str, source_engine: str | None, *, neutral_name: str | None 
             and opens_routine_body("".join(out[-4:]))
         ):
             body = text[start + len(opener) : end - len(opener)]
-            out.append(f" {code_text(body, source_engine, neutral_name=neutral_name)} ")
+            out.append(
+                f" {code_text(body, source_engine, neutral_name=neutral_name, unquote=unquote)} "
+            )
         else:
             out.append("?")
     out.append(text[last:])

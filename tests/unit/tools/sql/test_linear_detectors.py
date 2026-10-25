@@ -29,7 +29,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from src.shared.sql_spans import code_text
+from src.shared.sql_spans import code_text, keyword_text
 from src.tools.database.offline_parser import parse_offline_collection
 from src.tools.sql import query_facts as query_facts_module
 from src.tools.sql.query_facts import QueryFacts
@@ -125,7 +125,9 @@ def _check(text: str) -> None:
     facts = QueryFacts(text)
     # The fact reads the text with comments and literals blanked since #1415 (#1440).
     code = code_text(text, None)
-    assert facts.correlated_subquery_shape is bool(_OLD_CORRELATED_RE.search(code)), text[:120]
+    # ... and a quoted name bare, the way a bare name reads (#1547).
+    bare = keyword_text(text, None, unquote=True)
+    assert facts.correlated_subquery_shape is bool(_OLD_CORRELATED_RE.search(bare)), text[:120]
     assert has_match_against(text) is bool(_OLD_MATCH_AGAINST_RE.search(text)), text[:120]
     assert regex_fulltext_search(text) is bool(_OLD_FULLTEXT_RE.search(text)), text[:120]
     assert facts.write_with_subquery is bool(_OLD_WRITE_WITH_SUBQUERY_RE.search(code)), text[:120]

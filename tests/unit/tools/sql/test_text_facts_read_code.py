@@ -220,3 +220,73 @@ class TestAKeywordAsAQuotedNameIsAName:
     def test_a_real_where_after_a_quoted_name_still_reads(self):
         facts = QueryFacts('SELECT "where" FROM t WHERE "id" = $1', "postgresql")
         assert facts.where_word and facts.keyed_after_where
+
+
+class TestAQuotedNameIsReadAsAName:
+    """#1547: a fact that expects a bare name next to a keyword reads the same clause
+    when the name is quoted (``sql_spans.code_text`` with ``unquote=True``)."""
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ('SELECT id FROM t WHERE "status" = $1', "postgresql"),
+            ('SELECT id FROM t WHERE "status" = :s', "oracle"),
+            ("SELECT id FROM t WHERE `status` = ?", "mysql"),
+            ("SELECT id FROM t WHERE [status] = @p", "sqlserver"),
+            ("SELECT id FROM t WHERE status = @p", "sqlserver"),
+            ('SELECT id FROM t WHERE "t"."status" = $1', "postgresql"),
+        ],
+    )
+    def test_status_equals_value_reads_a_quoted_name_and_a_bind(self, sql, engine):
+        assert QueryFacts(sql, engine).status_equals_value
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ('SELECT id FROM t WHERE "status" = "other"', "postgresql"),
+            ("SELECT id FROM t WHERE [status] = other", "sqlserver"),
+            ('SELECT id FROM t WHERE "my status" = $1', "postgresql"),
+        ],
+    )
+    @pytest.mark.passes_on_main  # a guard of what must stay false
+    def test_status_equals_value_stays_false_for_a_column_or_another_name(self, sql, engine):
+        assert not QueryFacts(sql, engine).status_equals_value
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            ('INSERT INTO t (a) VALUES (1) RETURNING "id"', "postgresql"),
+            ('INSERT INTO t (a) VALUES (1) RETURNING "id", "a"', "oracle"),
+            ('INSERT INTO t (a) VALUES (1) RETURNING "t".*', "postgresql"),
+        ],
+    )
+    def test_returning_reads_a_quoted_column(self, sql, engine):
+        assert QueryFacts(sql, engine).on_conflict_or_returning
+
+    @pytest.mark.passes_on_main  # a guard of what must stay false
+    def test_a_quoted_returning_alias_is_still_no_clause(self):
+        assert not QueryFacts(
+            'SELECT a AS "returning" FROM t', "postgresql"
+        ).on_conflict_or_returning
+
+    @pytest.mark.parametrize(
+        "sql,engine",
+        [
+            (
+                'SELECT 1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE "a"."x" = "b"."y")',
+                "postgresql",
+            ),
+            ("SELECT 1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE `a`.`x` = `b`.`y`)", "mysql"),
+            ("SELECT 1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE [a].[x] = [b].[y])", "sqlserver"),
+        ],
+    )
+    def test_correlated_subquery_shape_reads_quoted_names(self, sql, engine):
+        assert QueryFacts(sql, engine).correlated_subquery_shape
+
+    def test_unquote_keeps_a_name_that_is_not_one_word(self):
+        assert code_text('SELECT "a b", "c" FROM t', "postgresql", unquote=True) == (
+            'SELECT "a b", c FROM t'
+        )
+        assert keyword_text('SELECT "where" FROM "t"', "postgresql", unquote=True) == (
+            f"SELECT {NEUTRAL_NAME} FROM {NEUTRAL_NAME}"
+        )

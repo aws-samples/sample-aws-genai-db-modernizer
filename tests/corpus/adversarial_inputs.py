@@ -502,6 +502,31 @@ SQL_ENTRIES: tuple[SqlEntry, ...] = (
         ("sqlserver",),
         "a WHERE and a key equality as bracket-quoted SQL Server names, no real WHERE (#1478)",
     ),
+    SqlEntry(
+        "bare_name_clauses_double_quoted",
+        'UPDATE t SET a = 1 WHERE "status" = $1 AND EXISTS '
+        '(SELECT 1 FROM b WHERE "t"."x" = "b"."y") RETURNING "id"',
+        "UPDATE t SET a = 1 WHERE status = $1 AND EXISTS "
+        "(SELECT 1 FROM b WHERE t.x = b.y) RETURNING id",
+        ("postgresql", "oracle"),
+        "status = bind, a correlated equality and RETURNING with double-quoted names (#1547)",
+    ),
+    SqlEntry(
+        "bare_name_clauses_backtick",
+        "UPDATE t SET a = 1 WHERE `status` = ? AND EXISTS "
+        "(SELECT 1 FROM b WHERE `t`.`x` = `b`.`y`)",
+        "UPDATE t SET a = 1 WHERE status = ? AND EXISTS (SELECT 1 FROM b WHERE t.x = b.y)",
+        ("mysql",),
+        "status = ? and a correlated equality with backtick-quoted names (#1547)",
+    ),
+    SqlEntry(
+        "bare_name_clauses_bracket",
+        "UPDATE t SET a = 1 WHERE [status] = @p AND EXISTS "
+        "(SELECT 1 FROM b WHERE [t].[x] = [b].[y])",
+        "UPDATE t SET a = 1 WHERE status = @p AND EXISTS (SELECT 1 FROM b WHERE t.x = b.y)",
+        ("sqlserver",),
+        "status = @p and a correlated equality with bracket-quoted names (#1547)",
+    ),
 )
 
 

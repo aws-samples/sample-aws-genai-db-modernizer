@@ -168,6 +168,15 @@ _KEEPS_IDENTIFIER_NAMES = {
     ),
 }
 
+# A bare name next to a keyword, quoted (#1547): ``status`` is a word in the twin, a quoted
+# name in the entry, so the two passes that blank or skip quoted names read one word less.
+_WITHOUT_STATUS = {
+    "bare_name_clauses_double_quoted@postgresql": ("EXISTS", "RETURNING", "SET", "UPDATE"),
+    "bare_name_clauses_double_quoted@oracle": ("EXISTS", "RETURNING", "SET", "UPDATE"),
+    "bare_name_clauses_backtick@mysql": ("EXISTS", "SET", "UPDATE"),
+    "bare_name_clauses_bracket@sqlserver": ("EXISTS", "SET", "UPDATE"),
+}
+
 # A PostgreSQL routine body is code (``sql_spans.code_text``, #1416): the fact in it counts,
 # on the entry and its twin alike (the same body under another dollar tag).
 _FACT_EXPECT: dict[str, dict[str, object]] = {
@@ -199,7 +208,11 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
         lambda text, dialect: facade.table_references(text, dialect).tables,
     ),
     SqlDetector(f"{_FACADE}:access_facts", _access_shape),
-    SqlDetector(f"{_FACADE}:sql_tokens", _tokens),
+    SqlDetector(
+        f"{_FACADE}:sql_tokens",
+        _tokens,
+        expect={key: (words, ("EXISTS",)) for key, words in _WITHOUT_STATUS.items()},
+    ),
     SqlDetector(
         f"{_REGEX}:scan_sql",
         lambda text, dialect: _words(regex_facts.scan_sql(text, dialect)),
@@ -211,7 +224,7 @@ SQL_DETECTORS: tuple[SqlDetector, ...] = (
             unsupported_pattern.strip_comments_and_literals(text, dialect)
         ),
         # Documented to blank quoted identifiers too.
-        expect={entry: () for entry in _KEEPS_IDENTIFIER_NAMES},
+        expect={**{entry: () for entry in _KEEPS_IDENTIFIER_NAMES}, **_WITHOUT_STATUS},
     ),
     SqlDetector(
         f"{_UNSUPPORTED}:is_dedup_only_group_by",
