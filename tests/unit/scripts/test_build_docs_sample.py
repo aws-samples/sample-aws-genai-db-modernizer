@@ -557,6 +557,112 @@ def test_refresh_copies_the_latest_report_and_only_the_collected_names(tmp_path:
     assert after == before
 
 
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _add_routing_records(job: Path) -> None:
+    """Assignments v1 (first), v2 (an abandoned branch) and v3 (effective, from v1)."""
+    for version, previous in ((1, None), (2, 1), (3, 1)):
+        _write_json(
+            job / "assignment" / f"v{version}" / "assignment.json",
+            {"version": version, "previous_version": previous, "query_assignments": []},
+        )
+    _write_json(job / "assignment" / "v1" / "access_patterns.json", {"queries": [{"v": 1}]})
+    _write_json(job / "assignment" / "v3" / "access_patterns.json", {"queries": [{"v": 3}]})
+    _write_json(job / "analysis-dynamodb" / "analysis.json", {"engine": "dynamodb"})
+    _write_json(job / "analysis-dynamodb" / "decision-trace.json", {"trace": True})
+    _write_json(job / "analysis-aurora-mysql" / "analysis.json", {"engine": "aurora-mysql"})
+
+
+def test_refresh_also_copies_the_effective_assignment_lineage_and_the_analyses(
+    tmp_path: Path,
+) -> None:
+    """#1472: the detailed report reads the lineage, the effective version's access-pattern
+    record and each engine's analysis, so the refresh carries exactly those."""
+    job = _fake_job(tmp_path)
+    _add_routing_records(job)
+    run_dir = tmp_path / "sample-run"
+    shutil.copytree(RUN_DIR, run_dir)
+    baseline_file = tmp_path / ".secrets.baseline"
+    shutil.copyfile(build_docs_sample.SCAN_BASELINE, baseline_file)
+
+    result = build_docs_sample.refresh_sample_run(job, run_dir, baseline_file, tmp_path)
+
+    files = sorted(p.relative_to(run_dir).as_posix() for p in run_dir.rglob("*") if p.is_file())
+    assert files == [
+        "README.md",
+        "analysis-aurora-mysql/analysis.json",
+        "analysis-dynamodb/analysis.json",
+        "assignment/v1/assignment.json",
+        "assignment/v3/access_patterns.json",
+        "assignment/v3/assignment.json",
+        "collector/output.json",
+        "synthesis/v3/report.json",
+    ]  # no abandoned v2, no v1 access patterns, no decision trace
+    assert sorted(result["files"]) == sorted(str(run_dir / rel) for rel in files[1:])
+    assert json.loads((run_dir / "assignment/v3/access_patterns.json").read_text()) == {
+        "queries": [{"v": 3}]
+    }
+    assert "sample-run/assignment/v3/assignment.json" in result["scan_baseline_entries"]
+
+
+@pytest.mark.passes_on_main  # guards the cleanup the copy needs; main copies none
+def test_a_second_refresh_drops_the_records_the_new_job_lacks(tmp_path: Path) -> None:
+    job = _fake_job(tmp_path)
+    _add_routing_records(job)
+    run_dir = tmp_path / "sample-run"
+    shutil.copytree(RUN_DIR, run_dir)
+    baseline_file = tmp_path / ".secrets.baseline"
+    shutil.copyfile(build_docs_sample.SCAN_BASELINE, baseline_file)
+    build_docs_sample.refresh_sample_run(job, run_dir, baseline_file, tmp_path)
+
+    plain = _fake_job(tmp_path / "second")
+    build_docs_sample.refresh_sample_run(plain, run_dir, baseline_file, tmp_path)
+
+    assert not (run_dir / "assignment").exists()
+    assert not list(run_dir.glob("analysis-*"))
+
+
+def test_refresh_refuses_a_private_detail_in_a_routing_record(tmp_path: Path) -> None:
+    job = _fake_job(tmp_path)
+    _add_routing_records(job)
+    _write_json(job / "analysis-dynamodb" / "analysis.json", {"note": "see /Users/someone/x"})
+    run_dir = tmp_path / "sample-run"
+    shutil.copytree(RUN_DIR, run_dir)
+    before = sorted(p.relative_to(run_dir) for p in run_dir.rglob("*"))
+    baseline_file = tmp_path / ".secrets.baseline"
+    shutil.copyfile(build_docs_sample.SCAN_BASELINE, baseline_file)
+
+    with pytest.raises(ValueError, match="analysis-dynamodb.*local path"):
+        build_docs_sample.refresh_sample_run(job, run_dir, baseline_file, tmp_path)
+    assert sorted(p.relative_to(run_dir) for p in run_dir.rglob("*")) == before
+
+
+@pytest.mark.passes_on_main  # render_sample_run copies the whole folder already
+def test_render_sample_run_stages_the_routing_records_for_the_detailed_report(
+    tmp_path: Path,
+) -> None:
+    """With the records in the run folder, the detailed report no longer says no
+    assignment was saved (the committed sample, recorded without them, still does)."""
+    run_dir = tmp_path / "run"
+    shutil.copytree(RUN_DIR, run_dir)
+    report = _committed_report()
+    version = report["assignment_summary"]["version"]
+    _write_json(
+        run_dir / "assignment" / f"v{version}" / "assignment.json",
+        {"version": version, "previous_version": None, "query_assignments": []},
+    )
+
+    result = build_docs_sample.render_sample_run(run_dir, tmp_path / "store")
+
+    detailed = next(
+        Path(p) for p in result["deliverables"] if Path(p).name == "engineering-report-detailed.md"
+    )
+    assert "No assignment is saved next to this report" not in detailed.read_text(encoding="utf-8")
+
+
 def test_refresh_records_the_new_report_s_query_ids_in_the_baseline(tmp_path: Path) -> None:
     run_dir = tmp_path / "sample-run"
     shutil.copytree(RUN_DIR, run_dir)

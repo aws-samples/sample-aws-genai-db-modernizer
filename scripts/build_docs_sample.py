@@ -341,6 +341,44 @@ def _collected_names(collector_output: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _routing_records(job_dir: Path, report: dict[str, Any], report_src: Path) -> dict[Path, str]:
+    """The saved routing records the detailed engineering report reads (#1472), as
+    ``{path relative to the job folder: text}``: the effective assignment's lineage
+    (``assignment/v<N>/assignment.json``, following ``previous_version`` back, so an
+    abandoned branch stays out), the effective version's ``access_patterns.json`` and
+    each engine's ``analysis-<engine>/analysis.json`` (not its decision trace). A record
+    the job did not save is left out; the report states the absence. Reads the same
+    records ``src.shared.routing_detail.load_routing_detail`` does."""
+    from src.shared.routing_detail import ACCESS_PATTERNS_FILE, effective_version_of
+
+    key = "job/" + report_src.relative_to(job_dir).as_posix()
+    version = effective_version_of(report, key)
+    records: dict[Path, str] = {}
+
+    def keep(rel: Path) -> dict[str, Any] | None:
+        path = job_dir / rel
+        if not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8").rstrip("\n") + "\n"
+        records[rel] = text
+        data = json.loads(text)
+        return data if isinstance(data, dict) else None
+
+    seen: set[int] = set()
+    current: int | None = version
+    while isinstance(current, int) and current >= 1 and current not in seen:
+        seen.add(current)
+        assignment = keep(Path("assignment") / f"v{current}" / "assignment.json")
+        if assignment is None:
+            break
+        current = assignment.get("previous_version")
+    if version:
+        keep(Path("assignment") / f"v{version}" / ACCESS_PATTERNS_FILE)
+    for path in sorted(job_dir.glob("analysis-*/analysis.json")):
+        keep(path.relative_to(job_dir))
+    return records
+
+
 def refresh_sample_run(
     job_dir: Path,
     run_dir: Path = SAMPLE_RUN_DIR,
@@ -349,8 +387,9 @@ def refresh_sample_run(
 ) -> dict[str, Any]:
     """Replace ``run_dir``'s recorded run with the one in ``job_dir``.
 
-    Copies the job's latest synthesis ``report.json`` and the collected names
-    (``_collected_names``) -- all the renderers read -- and keeps ``run_dir``'s README,
+    Copies the job's latest synthesis ``report.json``, the collected names
+    (``_collected_names``) and the routing records the detailed engineering report
+    reads (``_routing_records``, #1472) -- all the renderers read -- and keeps ``run_dir``'s README,
     which names the release (update it by hand). Refuses the job when either of the
     two outputs carries a private detail (``private_markers``, with this machine's
     user names), then regenerates the folder's detect-secrets baseline entries
@@ -372,12 +411,20 @@ def refresh_sample_run(
         collector, CollectorOutputContract, artifact=str(job_dir / COLLECTOR_KEY)
     )
     collector_text = json.dumps(_collected_names(collector), indent=2) + "\n"
-    for name, text in (("report.json", report_text), ("collector names", collector_text)):
+    routing = _routing_records(job_dir, json.loads(report_text), report_src)
+    texts = [("report.json", report_text), ("collector names", collector_text)]
+    texts += [(rel.as_posix(), text) for rel, text in routing.items()]
+    for name, text in texts:
         found = private_markers(text, local_user_names())
         if found:
             raise ValueError(f"{name} carries a private detail ({', '.join(found)}); not copied")
 
-    for old in (run_dir / "synthesis", run_dir / "collector"):
+    for old in (
+        run_dir / "synthesis",
+        run_dir / "collector",
+        run_dir / "assignment",
+        *run_dir.glob("analysis-*"),
+    ):
         if old.exists():
             shutil.rmtree(old)
     report_dest = run_dir / report_src.relative_to(job_dir)
@@ -386,11 +433,17 @@ def refresh_sample_run(
     collector_dest = run_dir / COLLECTOR_KEY
     collector_dest.parent.mkdir(parents=True, exist_ok=True)
     collector_dest.write_text(collector_text, encoding="utf-8")
+    routing_dests = []
+    for rel, text in routing.items():
+        dest = run_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
+        routing_dests.append(str(dest))
     baseline = update_scan_baseline(run_dir, baseline_file, root)
     return {
         "status": "complete",
         "run_dir": str(run_dir),
-        "files": [str(report_dest), str(collector_dest)],
+        "files": [str(report_dest), str(collector_dest), *routing_dests],
         "scan_baseline_entries": baseline,
     }
 

@@ -16,7 +16,9 @@ Only what the deliverable renderers read, under the job folder's own layout:
 - `synthesis/v2/report.json`: the run's synthesis report, as the run wrote it (plus a final newline). Every deliverable is rendered from it, including the per-engine schemas.
 - `collector/output.json`: trimmed to the collected names (tables, views, procedures, triggers and their columns) the executive report keeps out of its text. The query text, metrics and host metadata of the real collector output are left out.
 
-The rest of the job (per-phase outputs, assignments, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
+The recorded run was saved without its assignments, so the detailed engineering report on the sample page says no assignment was saved. The next refresh also carries the effective assignment's lineage, its access-pattern record and each engine's analysis (#1472), which the detailed report then shows in full.
+
+The rest of the job (per-phase outputs, the context graph, model inputs and responses) is not needed to render the deliverables and is not committed.
 
 ## How it is used
 
