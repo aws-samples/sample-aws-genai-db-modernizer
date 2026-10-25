@@ -980,3 +980,52 @@ def test_the_commands_run_print_summary_only_with_its_documented_flags() -> None
             runs.append(f"{path.name} {args[4]}")
     # The gate block and the completion summary in /modernize, and /synthesize's report step.
     assert sorted(runs) == ["modernize.md --final", "modernize.md --gate", "synthesize.md --final"]
+
+
+# Issue #354: the DynamoDB groups showed up as "DynamoDB group 0 draft" and the
+# reconciliation as "merge fix (attempt 1)": internal names, numbered from 0, with no
+# total. The commands now name each group a part of one design, from 1, with the total
+# and its query count (`--split` prints `query_count`), and the merge and fix by what
+# they do. Section names, file names and `--status` keys stay as they are.
+PART_LABEL = "`DynamoDB design, part {P} of {T} ({Q} queries)`"
+MERGE_LABEL = "`Merging the {T} DynamoDB parts into one design`"
+FIX_LABEL = "`Reconciling overlapping tables between parts (attempt {A} of 3)`"
+PROGRESS_LABEL = "`DynamoDB design: {D} of {T} parts done`"
+
+
+def test_modernize_labels_dynamodb_parts_merge_and_fix_for_the_user() -> None:
+    phase_6 = " ".join(_phase_6(_modernize_text()).split())
+    for label in (PART_LABEL, MERGE_LABEL, FIX_LABEL, PROGRESS_LABEL):
+        assert label in phase_6, label
+    assert "`{P}` = `group_index` + 1" in phase_6
+    assert "`{Q}` = that group's `query_count`" in phase_6
+    assert "A `group N` in a `--merge` line is part N + 1." in phase_6
+    # The --split line's fields name query_count, so the label has its number.
+    assert "`query_count`, `input_pages`" in phase_6
+    # Headless and UI-first runs stay compact.
+    assert "Under `--auto` or `--mode ui`, skip the progress lines" in phase_6
+    # Internal names are kept, so artifacts and other tests are unaffected.
+    assert "**Group draft task**" in phase_6 and "**Merge fix task**" in phase_6
+
+
+def test_design_schema_commands_use_the_same_dynamodb_labels() -> None:
+    dispatcher = (COMMANDS_DIR / "design-schema.md").read_text()
+    assert "**DynamoDB labels**" in dispatcher and PART_LABEL in dispatcher
+    standalone = " ".join((COMMANDS_DIR / "design-schema-dynamodb.md").read_text().split())
+    for label in (PART_LABEL, MERGE_LABEL, FIX_LABEL, PROGRESS_LABEL):
+        assert label in standalone, label
+    assert "`query_count`, `input_pages`" in standalone
+
+
+@pytest.mark.passes_on_main  # guards the field the labels read
+def test_split_status_line_carries_each_groups_query_count(tmp_path) -> None:
+    """The label's query count comes from the `--split` line, never from a count."""
+    import importlib
+
+    from src.storage.local_store import LocalArtifactStore
+
+    run_schema_design = importlib.import_module("scripts.run_schema_design")
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    manifest = {"groups": [{"group_index": 0, "primary_tables": ["t"], "query_count": 18}]}
+    (entry,) = run_schema_design._group_entries(store, "db/job/schema-dynamodb/v1", manifest)
+    assert entry["query_count"] == 18
