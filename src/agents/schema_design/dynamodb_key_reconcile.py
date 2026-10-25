@@ -13,9 +13,12 @@ sample) that fix round did not fit in the run's budget.
 :func:`reconcile_shared_tables` rewrites the drafts, before they are combined,
 so the merge sees compatible tables. Every step is deterministic and only
 touches tables from *different* drafts (a group that designs two homes for the
-same rows did it on purpose), and never tables a trade-off already justifies
-keeping apart (one whose ``source_tables`` include the source table and whose
-``target_tables`` name every table involved).
+same rows did it on purpose). A group's trade-off that names the source table
+and every table involved ("a second, independent home ...") does not keep them
+apart (#333): it is a model's text, not a decision. The tables are reconciled as
+if it were absent, and the trade-off, which describes the design the merge
+replaced, is dropped; the merge trace names the dropped home
+(:meth:`_Drafts.settle`).
 
 With the split's ownership (``owners``, #1243), a context group's single-entity
 placeholder for rows another group owns is reconciled with the owner's home for
@@ -254,7 +257,10 @@ def _flush_notes(drafts: list[dict]) -> None:
 
 
 def _covers(trade_off: dict, source: str, targets: Iterable[str]) -> bool:
-    """A draft's own trade-off that names ``source`` and every table in ``targets``."""
+    """A draft's own trade-off that names ``source`` and every table in ``targets``.
+
+    Such a trade-off describes those tables as separate homes; :meth:`_Drafts.settle`
+    drops it when the merge gives the rows one home (#333)."""
     sources = {
         normalize_table_name(s) for s in trade_off.get("source_tables") or [] if isinstance(s, str)
     }
@@ -314,16 +320,38 @@ class _Drafts:
             if e.get("table_name") == ref.name
         ]
 
-    def justified(self, source: str, refs: list[_Ref]) -> bool:
-        """True when a draft's trade-off already keeps these tables apart on purpose."""
-        names = list(dict.fromkeys(r.name for r in refs))
+    def settle(self, source: str, kept: _Ref, dropped: list[_Ref]) -> None:
+        """Drop each draft trade-off that kept ``dropped`` apart from ``kept`` (#333).
+
+        Call it just before the rewrite that gives ``source``'s rows one home,
+        ``kept``. A trade-off naming ``source`` and every one of those tables
+        describes the design the rewrite replaces, so it is removed; the trace
+        note names the tables only, never the trade-off's (model-written) text.
+        """
+        names = list(dict.fromkeys(r.name for r in [kept, *dropped]))
         if len(names) < 2:
-            return False
-        return any(
-            _covers(t, source, names)
-            for draft in self.drafts
-            for t in _dicts(draft.get("trade_offs"))
-        )
+            return
+        for draft in self.drafts:
+            trade_offs = draft.get("trade_offs")
+            if not isinstance(trade_offs, list):
+                continue
+            kept_offs = [
+                t for t in trade_offs if not (isinstance(t, dict) and _covers(t, source, names))
+            ]
+            if len(kept_offs) == len(trade_offs):
+                continue
+            draft["trade_offs"] = kept_offs
+            others = ", ".join(
+                f"{r.name} (group {r.group})"
+                for r in sorted(dropped, key=lambda r: (r.name, r.group))
+                if r.name != kept.name
+            )
+            self.notes.append(
+                f"{_shown(source, kept.table, *(r.table for r in dropped))}: a design group's "
+                f"trade-off kept {others} apart from {kept.name} (group {kept.group}) as "
+                f"another home for these rows; the merge keeps one home, {kept.name}, and "
+                "drops that trade-off"
+            )
 
     def rename_table(self, ref: _Ref, new: str) -> None:
         """Re-point ``ref``'s draft from its table name to ``new`` and rename the table."""
@@ -829,8 +857,6 @@ def _singles_by_base(drafts: _Drafts) -> dict[str, list[_Ref]]:
         positions = [r.pos for r in refs]
         if len(set(positions)) < 2 or len(set(positions)) != len(positions):
             continue
-        if drafts.justified(base, refs):
-            continue
         result[base] = refs
     return result
 
@@ -1233,7 +1259,7 @@ def _point_context_tables(drafts: _Drafts, owners: dict[str, int]) -> None:
     combines the two. An owner that keeps the rows in an item collection is handled
     by :func:`_fold_into_owner_collections`; an owner with no home of its own for the
     rows (it only copies them) leaves the placeholder as is. Also left as is: a draft
-    that already has another table of that name, or tables a trade-off keeps apart.
+    that already has another table of that name.
     """
     for ref in drafts.refs():
         owner = _placeholder_owner(drafts, ref, owners)
@@ -1244,8 +1270,9 @@ def _point_context_tables(drafts: _Drafts, owners: dict[str, int]) -> None:
         if target is None or target.name == ref.name:
             continue
         taken = {r.name for r in drafts.refs() if r.pos == ref.pos and r.table is not ref.table}
-        if target.name in taken or drafts.justified(base, [ref, target]):
+        if target.name in taken:
             continue
+        drafts.settle(base, target, [ref])
         drafts.notes.append(
             f"{_shown(base, ref.table)}: group {ref.group}'s table {ref.name} is a context "
             f"placeholder; pointed at owner group {owner}'s table {target.name}"
@@ -1278,7 +1305,7 @@ def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> Non
         if _owner_single(drafts, owner, base) is not None:
             continue
         home = _owner_entity(drafts, owner, base)
-        if home is None or drafts.justified(base, [ref, home[0]]):
+        if home is None:
             continue
         coll, entity = home
         shown = _shown(base, ref.table, coll.table)
@@ -1318,6 +1345,7 @@ def _fold_into_owner_collections(drafts: _Drafts, owners: dict[str, int]) -> Non
         if problems:
             drafts.failures.extend(problems)
             continue
+        drafts.settle(base, coll, [ref])
         # Every attribute of the placeholder the entity does not have yet, as rule 4
         # copies them: a pattern of the context group uses each.
         names = {a.get("name") for a in _dicts(entity.get("attributes"))}
@@ -1412,6 +1440,7 @@ def _unify_single_keys(
         # primary key, then the key's attribute names.
         best = sorted(allowed, key=lambda p: (-p.score, not p.contains_primary, str(p.key)))[0]
         winner = holders[best.key]
+        drafts.settle(base, winner, [r for r in refs if r is not winner])
         changes = [
             _rekey(drafts, ref, winner, refs, base, best)
             for ref in refs
@@ -1649,14 +1678,14 @@ def _fold_singles(drafts: _Drafts) -> None:
             (
                 f
                 for f in _fold_targets(single, collections, base)
-                if not drafts.justified(base, [single, f.collection])
-                and (f.collection.name == single.name or f.collection.name not in same_draft_names)
+                if f.collection.name == single.name or f.collection.name not in same_draft_names
             ),
             None,
         )
         if fold is None:
             continue
         coll = fold.collection
+        drafts.settle(base, coll, [single])
         old_name, old_sk = single.name, _key_name(single.table.get("sort_key"))
         static = not _TOKEN_RE.search(str(fold.entity.get("sk_template") or ""))
         sk_attr = _key_name(coll.table.get("sort_key")) or "SK"

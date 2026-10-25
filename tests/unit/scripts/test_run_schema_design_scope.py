@@ -506,7 +506,10 @@ def test_merge_independent_homes_warn_and_complete(monkeypatch, capsys, tmp_path
     assert any(t["description"] == warning for t in merged["trade_offs"])
 
 
-def test_merge_overlap_justified_by_trade_off_has_no_warning(monkeypatch, capsys, tmp_path):
+def test_merge_overlap_named_by_a_trade_off_still_warns(monkeypatch, capsys, tmp_path):
+    """A group's trade-off naming both homes no longer hides the review (#333)."""
+    from src.agents.schema_design.group_merger import OVERLAP_PREFIX
+
     store = _store(tmp_path, "dynamodb")
     drafts = _overlapping_drafts()
     drafts[1]["trade_offs"].append(
@@ -521,8 +524,11 @@ def test_merge_overlap_justified_by_trade_off_has_no_warning(monkeypatch, capsys
 
     code, status = _run(monkeypatch, capsys, tmp_path, "dynamodb", "--merge")
 
+    assert code == 0
     assert status["status"] == "complete"
-    assert "warnings" not in status
+    [warning] = status["warnings"]
+    assert warning.startswith(OVERLAP_PREFIX)
+    assert "as the authoritative home" in warning and "as a derived copy" in warning
 
 
 def test_merge_true_conflict_fails_validation(monkeypatch, capsys, tmp_path):

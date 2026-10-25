@@ -456,15 +456,17 @@ class TestDynamoDBOverlappingDesigns:
         assert "modelled independently by design groups" in warning
         assert "WpPosts (group 0; PK post_id, SK record_key)" in warning
         assert "wp_posts (group 1; PK post_name)" in warning
-        assert (
-            "choose one write path or keep copies in sync, and review before migration" in warning
-        )
+        # A tie on statements and design RPS goes to the name, never the draft order.
+        assert "the merge keeps wp_posts as the authoritative home" in warning
+        assert "WpPosts as a derived copy; review before migration" in warning
         [note] = [t for t in result["trade_offs"] if t["description"] == warning]
         assert sorted(note["target_tables"]) == ["WpPosts", "wp_posts"]
         assert note["source_tables"] == ["wp_posts"]
         assert note["engine"] == "dynamodb"
 
-    def test_trade_off_naming_every_target_justifies_separate_tables(self):
+    def test_trade_off_naming_every_target_does_not_hide_the_review(self):
+        """#333: the trade-off names the conflict without resolving it; the merge
+        still reports the two homes and names the authoritative one."""
         g0, g1 = self._posts_drafts()
         g1["trade_offs"] = [
             {
@@ -481,7 +483,8 @@ class TestDynamoDBOverlappingDesigns:
 
         assert len(result["table_definitions"]) == 2
         assert result["validation_passed"] is True
-        assert merge_warnings(result) == []
+        [warning] = merge_warnings(result)
+        assert "as the authoritative home" in warning
 
     def test_trade_off_naming_only_some_targets_does_not_justify(self):
         g0, g1 = self._posts_drafts()

@@ -1576,8 +1576,8 @@ def build_risk_assessment(
         # was visible in the deliverables' trade-off list, but never became a
         # risk, so the report could say "review before migration" while the
         # risk register stayed empty. One MEDIUM risk per such trade-off; it
-        # disappears with the trade-off once the overlap is consolidated or a
-        # real trade-off covers it (``dynamodb_merge._covers``).
+        # disappears with the trade-off once the overlap is consolidated (a
+        # group's own trade-off naming the overlap no longer hides it, #333).
         risk_id, conflict_risks = _design_conflict_risks(risk_id, engine, schema, normalise)
         risks.extend(conflict_risks)
 
@@ -2242,8 +2242,7 @@ def _design_conflict_risks(
 
     ``dynamodb_merge.independent_homes`` adds a review trade-off (collected by
     :func:`merge_overlaps`) when a source table is the primary entity of two or
-    more tables designed by different groups and nothing already covers the
-    overlap -- it never raises a validation failure, so the merge can succeed
+    more tables designed by different groups -- it never raises a validation failure, so the merge can succeed
     with the conflict still open. That trade-off is real (it is in the
     deliverables' trade-off list), but names a decision the migration still has
     to make, which makes it a risk too. ``affected_tables`` is the shared source
@@ -2253,8 +2252,8 @@ def _design_conflict_risks(
     every access pattern on those tables, which would also list queries against
     other entities an item-collection table happens to also hold. The risk
     disappears exactly when the trade-off does: once the tables are
-    consolidated, or a real (non-review) trade-off names the source table and
-    every table it produced, a later merge stops emitting it.
+    consolidated, a later merge stops emitting it (a group's own trade-off
+    naming the overlap does not, #333).
     """
     conflicts = merge_overlaps(schema)
     if not conflicts:

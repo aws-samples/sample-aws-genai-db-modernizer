@@ -64,13 +64,21 @@ Merge rule
    a table or GSI name over DynamoDB's 255-character limit (#866), and an access
    pattern or hot-partition entry on a table or GSI the merged design does not
    define (:func:`dangling_references`, #1243).
-4. **Independent homes are warnings.** When a source table is the *primary
-   entity* (its own entity in an item collection, or the base entity of a
-   single-entity table) of two or more tables designed by different groups,
-   and no trade-off names the source table and every one of those tables, the
-   merge appends a review trade-off (description prefix
-   :data:`OVERLAP_PREFIX`) naming the tables and keys. :func:`merge_warnings`
-   reports it; it never fails validation.
+4. **Independent homes get one authoritative home.** When a source table is
+   still the *primary entity* (its own entity in an item collection, or the
+   base entity of a single-entity table) of two or more tables designed by
+   different groups -- rules 1a and 2 could not give the rows one home -- the
+   merge picks one authoritative home (:func:`_authoritative`: the table whose
+   access patterns on those rows serve the most statements, then the most
+   ``design_rps``, then by name; never the draft order) and keeps the others
+   as derived copies, kept in sync from its DynamoDB stream. A review
+   trade-off (description prefix :data:`OVERLAP_PREFIX`) names the tables,
+   keys and the choice, and each write pattern on a derived copy gets a
+   ``(merged design: ...)`` note pointing it at the authoritative home; no
+   access pattern is moved or dropped. :func:`merge_warnings` reports the
+   review; it never fails validation. A group's own trade-off naming the
+   overlap does not replace the review (#333): it names the conflict without
+   resolving it.
 5. **Not flagged at all:** denormalized copies (a source table listed only in
    a table's ``source_tables`` or in attribute-level ``source_table``, without
    its own entity) and any overlap whose tables all come from one group (that
@@ -772,20 +780,6 @@ def aggregate_hot_partitions(entries: Any, tables: set[str]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _covers(trade_off: dict, source: str, targets: list[str]) -> bool:
-    if str(trade_off.get("description") or "").startswith(OVERLAP_PREFIX):
-        return False  # our own review note does not justify the overlap
-    sources = {
-        normalize_table_name(s) for s in trade_off.get("source_tables") or [] if isinstance(s, str)
-    }
-    if source not in sources:
-        return False
-    named = {str(t).lower() for t in trade_off.get("target_tables") or [] if isinstance(t, str)}
-    return all(
-        t.lower() in named or any(n.startswith(t.lower() + ".") for n in named) for t in targets
-    )
-
-
 def entity_conflicts(homes: list[_Home]) -> list[str]:
     """Same entity type for the same source table with contradictory PK/SK templates."""
     seen: dict[tuple[str, str], list[tuple[int, dict]]] = {}
@@ -824,8 +818,61 @@ def entity_conflicts(homes: list[_Home]) -> list[str]:
     return failures
 
 
-def independent_homes(homes: list[_Home], trade_offs: list[dict]) -> list[dict]:
-    """Review trade-offs for source tables that several groups each gave their own entity."""
+_WRITE_OPERATIONS = frozenset(
+    {"PutItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "TransactWriteItems"}
+)
+
+
+def _on_rows(ap: dict, table: str, sources: set[str]) -> bool:
+    """``ap`` runs on ``table`` and touches ``sources`` (or names no source table)."""
+    if ap.get("table_name") != table:
+        return False
+    named = {normalize_table_name(s) for s in ap.get("source_tables") or [] if isinstance(s, str)}
+    return not named or bool(named & sources)
+
+
+def _float(value: Any) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def _authoritative(names: list[str], sources: set[str], access_patterns: list[dict]) -> int:
+    """Index in ``names`` of the home that serves ``sources``' rows best (#333).
+
+    The table whose access patterns on those rows serve the most statements
+    (distinct query IDs), then the most summed ``design_rps``, then by name
+    (case-insensitive, then exact): the content alone decides, never the draft
+    order or group numbering.
+    """
+
+    def rank(i: int) -> tuple[int, float, str, str]:
+        patterns = [ap for ap in access_patterns if _on_rows(ap, names[i], sources)]
+        statements = {
+            str(q) for ap in patterns for q in ap.get("query_ids") or [] if isinstance(q, str)
+        }
+        rps = sum(_float(ap.get("design_rps")) for ap in patterns)
+        return -len(statements), -rps, names[i].casefold(), names[i]
+
+    return min(range(len(names)), key=rank)
+
+
+def _add_note(ap: dict, note: str) -> None:
+    """Append ``note`` to ``ap``'s ``(merged design: ...)`` note, or start one."""
+    text = str(ap.get("key_condition") or "")
+    if note in text:
+        return  # a draft copied from an earlier merge already carries it
+    if "(merged design:" in text and text.endswith(")"):
+        ap["key_condition"] = f"{text[:-1]}; {note})"
+    else:
+        ap["key_condition"] = f"{text} (merged design: {note})".strip()
+
+
+def independent_homes(homes: list[_Home], access_patterns: list[dict]) -> list[dict]:
+    """Review trade-offs for source tables that several groups each gave their own entity.
+
+    Each names the authoritative home (:func:`_authoritative`) and the derived
+    copies; write patterns on a copy get a note pointing them at the
+    authoritative home (``access_patterns`` is edited in place).
+    """
     by_source: dict[str, list[int]] = {}
     for i, home in enumerate(homes):
         for source in home.primary:
@@ -846,9 +893,6 @@ def independent_homes(homes: list[_Home], trade_offs: list[dict]) -> list[dict]:
         # Overlap designed by one group on purpose: that group is in every home.
         if set.intersection(*(homes[i].primary[source] for i in idxs)):
             continue
-        names = [str(homes[i].table.get("table_name")) for i in idxs]
-        if any(_covers(t, source, names) for t in trade_offs):
-            continue
         pending.setdefault(tuple(idxs), []).append(shown.get(source, source))
 
     notes: list[dict] = []
@@ -863,17 +907,36 @@ def independent_homes(homes: list[_Home], trade_offs: list[dict]) -> list[dict]:
             for i in home_idxs
         )
         names = [str(homes[i].table.get("table_name")) for i in home_idxs]
+        normalised = {normalize_table_name(s) for s in sources}
+        kept = names[_authoritative(names, normalised, access_patterns)]
+        copies = [n for n in names if n != kept]
+        one = len(copies) == 1
+        shown_copies = ", ".join(copies)
+        shown_sources = ", ".join(sources)
+        for ap in access_patterns:
+            if ap.get("operation") in _WRITE_OPERATIONS and any(
+                _on_rows(ap, c, normalised) for c in copies
+            ):
+                _add_note(
+                    ap,
+                    f"write {kept}, the authoritative home of {shown_sources}; "
+                    f"{ap.get('table_name')} is a derived copy kept in sync from {kept}'s "
+                    "DynamoDB Streams",
+                )
         notes.append(
             {
                 "description": (
-                    f"{OVERLAP_PREFIX}{', '.join(sources)} modelled independently by design "
-                    f"groups in {tables}; choose one write path or keep copies in sync, and "
-                    "review before migration."
+                    f"{OVERLAP_PREFIX}{shown_sources} modelled independently by design "
+                    f"groups in {tables}; the merge keeps {kept} as the authoritative home "
+                    f"(chosen by the statements its access patterns serve, then their design "
+                    f"RPS) and {shown_copies} as "
+                    f"{'a derived copy' if one else 'derived copies'}; review before migration."
                 ),
                 "impact": (
-                    f"Until this is reviewed, rows of {', '.join(sources)} have {len(home_idxs)} "
-                    f"DynamoDB homes ({', '.join(names)}): a migration must either write one of "
-                    "them and drop the others, or write all of them and keep them in sync."
+                    f"Writes to {shown_sources} go to {kept}; {shown_copies} "
+                    f"{'is' if one else 'are'} updated from {kept}'s DynamoDB Streams, "
+                    f"eventually consistent, so reads on {'it' if one else 'them'} can "
+                    "return rows older than the latest write."
                 ),
                 "source_tables": sources,
                 "target_tables": names,
@@ -1051,7 +1114,7 @@ def finish_merge(
             {str(h.table.get("table_name")) for h in homes if h.absorbed},
         )
     trade_offs = _dicts(merged.get("trade_offs")) + reconciliation.trade_offs
-    trade_offs += independent_homes(homes, trade_offs)
+    trade_offs += independent_homes(homes, _dicts(merged.get("access_patterns")))
     if "trade_offs" in merged or trade_offs:
         merged["trade_offs"] = trade_offs
 
