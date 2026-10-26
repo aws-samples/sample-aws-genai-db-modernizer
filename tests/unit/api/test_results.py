@@ -499,3 +499,20 @@ class TestResultsPageWording:
         mock_services["s3"].read_triage.return_value = None
         body = client.get("/api/v1/assessments/job-1/results").json()
         assert body["no_open_risks_caveat"] == NO_OPEN_RISKS_CAVEAT
+
+
+def test_results_routes_never_block_the_event_loop() -> None:
+    """#1593: these handlers read artifacts and clean prose synchronously. As
+    ``async def`` they ran on the API's event loop, so on a large job every other
+    request of the results page waited behind GET /schema-designs. Plain ``def``
+    handlers run in FastAPI's thread pool."""
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    blocking = [
+        route.path
+        for route in results.router.routes
+        if isinstance(route, APIRoute) and inspect.iscoroutinefunction(route.endpoint)
+    ]
+    assert blocking == []

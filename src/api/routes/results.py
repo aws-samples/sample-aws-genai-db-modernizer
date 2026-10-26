@@ -45,7 +45,7 @@ def _get_database_name(job_id: str) -> str:
 
 
 @router.get("/{job_id}/results")
-async def get_results(job_id: str = Depends(job_id_param)):
+def get_results(job_id: str = Depends(job_id_param)):
     """Get full analysis results (executive summary, architecture, TCO, risks)."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -150,7 +150,7 @@ def _deliverable_entries() -> list[tuple[str, str, str]]:
 
 
 @router.get("/{job_id}/deliverables")
-async def list_deliverables(job_id: str = Depends(job_id_param)):
+def list_deliverables(job_id: str = Depends(job_id_param)):
     """The files in the job's ``deliverables/`` folder (#957), for the results
     page's download panel: each listed file the folder holds, with its title,
     audience, size and download path. Empty until the folder is rendered."""
@@ -183,7 +183,7 @@ async def list_deliverables(job_id: str = Depends(job_id_param)):
 
 
 @router.get("/{job_id}/deliverables/{filename}")
-async def download_deliverable(
+def download_deliverable(
     job_id: str = Depends(job_id_param), filename: str = Depends(validated_filename)
 ):
     """Download one file of the job's ``deliverables/`` folder (#957). Only a
@@ -212,7 +212,7 @@ async def download_deliverable(
 
 
 @router.get("/{job_id}/collector")
-async def get_collector_output(job_id: str = Depends(job_id_param)):
+def get_collector_output(job_id: str = Depends(job_id_param)):
     """Get raw collector output artifact."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -224,7 +224,7 @@ async def get_collector_output(job_id: str = Depends(job_id_param)):
 
 
 @router.get("/{job_id}/triage")
-async def get_triage_output(job_id: str = Depends(job_id_param)):
+def get_triage_output(job_id: str = Depends(job_id_param)):
     """Get raw triage decisions artifact."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -237,7 +237,7 @@ async def get_triage_output(job_id: str = Depends(job_id_param)):
 
 
 @router.get("/{job_id}/analysis/{agent_type}")
-async def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_param)):
+def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_param)):
     """Get raw analysis output for a specific agent type."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -276,7 +276,7 @@ async def get_analysis_output(agent_type: str, job_id: str = Depends(job_id_para
 
 
 @router.get("/{job_id}/reality-check")
-async def get_reality_check(job_id: str = Depends(job_id_param)):
+def get_reality_check(job_id: str = Depends(job_id_param)):
     """Get reality check output — engine consolidations and recommendations."""
     db_name = _get_database_name(job_id)
     if not s3_service:
@@ -288,7 +288,7 @@ async def get_reality_check(job_id: str = Depends(job_id_param)):
 
 
 @router.get("/{job_id}/results/table-mappings")
-async def get_table_mappings(
+def get_table_mappings(
     job_id: str = Depends(job_id_param),
     limit: int = Query(default=25, ge=1, le=500, description="Max rows to return"),
     offset: int = Query(default=0, ge=0, description="Rows to skip"),
@@ -347,7 +347,7 @@ async def get_table_mappings(
 
 
 @router.get("/{job_id}/schema-designs")
-async def get_schema_designs(job_id: str = Depends(job_id_param)):
+def get_schema_designs(job_id: str = Depends(job_id_param)):
     """Get all schema design artifacts."""
     db_name = _get_database_name(job_id)
     if not s3_service:
