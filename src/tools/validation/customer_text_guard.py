@@ -432,6 +432,21 @@ _ENGINE_ID_RE = re.compile(
     + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
     + r")\b"
 )
+# An engine id that is also an AWS IAM service prefix names an IAM action or condition
+# key when a colon and an identifier follow it ("dynamodb:Attributes",
+# "dynamodb:LeadingKeys", "elasticache:CreateCacheCluster", an ARN's
+# "arn:aws:dynamodb:us-east-1"): AWS's own spelling, not a raw engine id in prose
+# (#1574). Only these two ids are IAM prefixes; "dynamodb: the table" (a colon and a
+# space) and every other id are still findings.
+_IAM_SERVICE_PREFIXES = frozenset({"dynamodb", "elasticache"})
+_IAM_NAME_AFTER = re.compile(r":[A-Za-z*]")
+
+
+def _iam_name(text: str, m: re.Match[str]) -> bool:
+    """Whether the engine id ``m`` matched is an IAM action, condition key or ARN part."""
+    return m.group(0) in _IAM_SERVICE_PREFIXES and bool(_IAM_NAME_AFTER.match(text, m.end()))
+
+
 _ADR_RE = re.compile(r"\bADR-\d+\b")
 # A reason label reads "tie_unresolved: no routing rule decides" -- the colon is
 # followed by whitespace, then prose. An identifier-shaped token that happens to
@@ -520,6 +535,8 @@ def scan_text(text: str, path: str = "", *, strict_reason_codes: bool = True) ->
         return []
     findings: list[Finding] = []
     for m in _ENGINE_ID_RE.finditer(text):
+        if _iam_name(text, m):
+            continue  # an IAM action or condition key ("dynamodb:Attributes"), #1574
         findings.append(Finding("engine_id", path, m.group(0), _excerpt(text, m.start(), m.end())))
     for m in _ADR_RE.finditer(text):
         findings.append(

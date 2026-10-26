@@ -10,6 +10,8 @@ runs it against the real wordpress/discourse deterministic pipeline output.
 
 from __future__ import annotations
 
+import pytest
+
 from src.tools.validation.customer_text_guard import (
     ID_FIELDS,
     KNOWN_REASON_CODES,
@@ -507,3 +509,34 @@ class TestScanMarkdown:
 
     def test_no_frontmatter_is_fine(self) -> None:
         assert scan_markdown("# Report\n\nNo frontmatter here.\n") == []
+
+
+# #1574: a scoped run's model text named "an IAM policy with a dynamodb:Attributes
+# condition"; an IAM action or condition key is AWS's own spelling, not a raw id.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Deny it with an IAM policy with a dynamodb:Attributes condition.",
+        "Scope the role with dynamodb:LeadingKeys on the partition key.",
+        "Grant dynamodb:PutItem and dynamodb:Query only.",
+        "Allow dynamodb:* on the table, or elasticache:CreateCacheCluster for the admin role.",
+        "The table arn:aws:dynamodb:us-east-1:123456789012:table/users is the target.",
+    ],
+)
+def test_an_iam_action_or_condition_key_is_not_a_raw_engine_id(text: str) -> None:
+    assert [f for f in scan_text(text) if f.kind == "engine_id"] == []
+
+
+@pytest.mark.parametrize(
+    ("text", "engine"),
+    [
+        ("Move the reads to dynamodb next.", "dynamodb"),
+        ("dynamodb: the table keeps its key.", "dynamodb"),
+        ("Keep them on aurora_postgresql:Replica copies.", "aurora_postgresql"),
+        ("documentdb:Find is not an IAM name.", "documentdb"),
+        ("The dynamodb table and the elasticache cluster.", "elasticache"),
+    ],
+)
+@pytest.mark.passes_on_main  # the other direction: the skip stays narrow
+def test_a_raw_engine_id_in_prose_is_still_flagged(text: str, engine: str) -> None:
+    assert engine in [f.text for f in scan_text(text) if f.kind == "engine_id"]
