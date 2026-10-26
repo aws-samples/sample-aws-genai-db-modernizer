@@ -453,7 +453,9 @@ class _DirStore:
         self.files = files
 
     def read_json(self, path: str) -> dict:
-        return self.files[path]
+        # A copy, as every real store returns a freshly parsed document: a build that
+        # changes what it read must not change the artifact the next digest hashes.
+        return copy.deepcopy(self.files[path])
 
     def read_bytes(self, path: str) -> bytes:
         return json.dumps(self.files[path], sort_keys=True).encode()
