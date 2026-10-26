@@ -52,7 +52,7 @@ def test_the_committed_schemas_are_current() -> None:
 
 
 def test_one_file_per_model_named_by_the_major_version() -> None:
-    assert CONTRACT_VERSION == "1.0"
+    assert CONTRACT_VERSION == "1.1"
     assert [p.name for p, _ in rcs.render()] == [
         "assess_request.v1.schema.json",
         "assess_result.v1.schema.json",
@@ -163,12 +163,19 @@ def test_the_documented_design_block_validates() -> None:
     adapter: TypeAdapter[list[EngineDesign]] = TypeAdapter(list[EngineDesign])
     assert adapter.dump_python(adapter.validate_python(sample), mode="json") == sample
     assert {d["engine"] for d in sample} == {"aurora_mysql", "dynamodb", "elasticache"}
-    # And the proposal's examples (docs/contracts/assess-design-block.md).
-    proposal = (DOC.parent / "assess-design-block.md").read_text(encoding="utf-8")
-    blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)\n```", proposal, re.S)]
-    assert len(blocks) == 2
-    for designs in (blocks[0], [blocks[1]]):
+    # And the standard's examples (docs/contracts/assess-design-block.md): the run's
+    # list, then one entry per engine it did not design, so every engine has one.
+    standard = (DOC.parent / "assess-design-block.md").read_text(encoding="utf-8")
+    blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)\n```", standard, re.S)]
+    examples = [blocks[0], *([b] for b in blocks[1:])]
+    for designs in examples:
+        Draft202012Validator(
+            {"$defs": schema["$defs"], **schema["properties"]["designs"]}
+        ).validate(designs)
         assert adapter.dump_python(adapter.validate_python(designs), mode="json") == designs
+    assert sorted(d["engine"] for designs in examples for d in designs) == sorted(
+        {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "opensearch", "elasticache"}
+    )
 
 
 def test_the_request_schema_accepts_the_minimal_request() -> None:

@@ -12,7 +12,7 @@ This directory contains the formal contract specifications for all agents in the
 | [QUICK_START.md](QUICK_START.md)                   | Quick reference for common tasks                             | Developers                    |
 | [artifacts.md](artifacts.md) | Every JSON file a job writes: registered contracts, model I/O and internal artifacts | Developers, library callers |
 | [assess.md](assess.md) | The library entry point `assess()`: its typed request and result, the stable surface and the unversioned artifacts | Library callers |
-| [assess-design-block.md](assess-design-block.md) | Proposal: the stable design block of a designed `assess()` result, per engine, with a real example | Library callers |
+| [assess-design-block.md](assess-design-block.md) | The published standard for the stable design block of a designed `assess()` result: the fields per engine, what is guaranteed, and an example per engine | Library callers |
 | [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)       | Pydantic model implementations (source code)                 | Developers, Tools             |
 | [schemas/](schemas/README.md)                      | JSON Schema definitions (reference only)                     | External tools, documentation |
 

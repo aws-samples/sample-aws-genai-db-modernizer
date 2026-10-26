@@ -4,7 +4,7 @@
 builds on, copied from the engine's schema design; the full designs stay in
 ``artifacts``. Tests never call a model: the designer writes the fixture designs of
 ``tests/assess_models.py`` (the designed wordpress job's, plus a global secondary index
-and a DocumentDB design).
+and DocumentDB, OpenSearch and Aurora PostgreSQL designs).
 """
 
 from __future__ import annotations
@@ -27,12 +27,14 @@ from src.assessment.models import (
     ElastiCacheDesign,
     EngineDesign,
 )
-from src.assessment.result_builder import RunState, build_designs
+from src.assessment.result_builder import RunState, _design_lines, build_designs
 from src.storage.local_store import LocalArtifactStore
 from tests.assess_models import FAKE_GSI, models_patched
-from tests.unit.assessment.conftest import assessed, collection
+from tests.unit.assessment.conftest import REPO, assessed, collection
 
 DB = "wordpress"
+OPENSEARCH_SCOPE = ("dynamodb", "opensearch")
+POSTGRESQL_SCOPE = ("aurora_postgresql", "dynamodb")
 
 
 @cache
@@ -205,6 +207,81 @@ def test_the_documentdb_design_copies_collections_embeds_and_indexes() -> None:
             source["access_patterns"], collection_name=c["collection_name"]
         )
     assert any(c.query_ids for c in design.collections)
+
+
+def test_the_opensearch_design_copies_indexes_fields_aliases_and_statements() -> None:
+    from src.assessment.models import OpenSearchDesign
+
+    result, store = designed("design04", OPENSEARCH_SCOPE)
+    assert result.summary.designed_engines == ["dynamodb", "opensearch"]
+    source = _schema_output(store, result, "opensearch", "design04")
+    design = _design(result, "opensearch")
+    assert isinstance(design, OpenSearchDesign)
+    assert design.validation_passed is source["validation_passed"] is True
+    patterns = source["access_patterns"]
+    assert [i.model_dump() for i in design.indexes] == [
+        {
+            "name": i["index_name"],
+            "source_tables": i["source_tables"],
+            "fields": [
+                {"name": f["field_name"], "type": f["field_type"]} for f in i["field_mappings"]
+            ],
+            "aliases": i["aliases"],
+            "query_ids": _served(patterns, index_or_stream=i["index_name"]),
+        }
+        for i in source["index_designs"]
+    ]
+    assert [s.model_dump() for s in design.data_streams] == [
+        {
+            "name": s["data_stream_name"],
+            "source_tables": s["source_tables"],
+            "fields": [
+                {"name": f["field_name"], "type": f["field_type"]}
+                for f in s["index_template"]["field_mappings"]
+            ],
+            "query_ids": _served(patterns, index_or_stream=s["data_stream_name"]),
+        }
+        for s in source["data_stream_designs"]
+    ]
+    # The fixture reaches every part: an alias, a mapped field and a served statement on
+    # an index, and a data stream with its @timestamp field and a served statement.
+    assert any(i.aliases and i.fields and i.query_ids for i in design.indexes)
+    assert any(s.query_ids and s.fields[0].name == "@timestamp" for s in design.data_streams)
+
+
+@pytest.mark.passes_on_main
+def test_the_aurora_postgresql_design_copies_tables_indexes_and_points_at_the_ddl() -> None:
+    result, store = designed("design05", POSTGRESQL_SCOPE)
+    assert result.summary.designed_engines == ["aurora_postgresql", "dynamodb"]
+    source = _schema_output(store, result, "aurora_postgresql", "design05")
+    design = _design(result, "aurora_postgresql")
+    assert isinstance(design, AuroraDesign)
+    assert design.validation_passed is True
+    assert [t.model_dump() for t in design.tables] == [
+        {"name": t["table_name"], "primary_key": t["primary_key"], "indexes": t["indexes"]}
+        for t in source["table_definitions"]
+    ]
+    assert design.ddl_artifact_path == "artifacts.schema_designs.aurora_postgresql.generated_ddl"
+
+
+@pytest.mark.passes_on_main
+def test_a_run_with_no_opensearch_design_has_no_opensearch_entry() -> None:
+    """A designed result with no OpenSearch design (the placement keeps no OpenSearch
+    statement, or its designer had nothing to design) has no ``opensearch`` entry, as
+    before the entry existed."""
+    result, _ = designed()
+    assert "opensearch" not in result.summary.designed_engines
+    assert result.designs is not None
+    assert "opensearch" not in {d.engine for d in result.designs}
+    state = _state(
+        {
+            "opensearch": {"status": "skipped", "target_type": "opensearch"},
+            "elasticache": {"validation_passed": True, "key_designs": []},
+        }
+    )
+    designed_engines = _design_lines(state)["designed_engines"]
+    assert designed_engines == ["elasticache"]
+    assert [d.engine for d in build_designs(state, designed_engines)] == ["elasticache"]
 
 
 # --------------------------------------------------------------------------- phases
@@ -392,14 +469,169 @@ def test_out_of_scope_access_patterns_serve_no_table() -> None:
     assert design.tables[0].query_ids == ["q1", "q2", "q3"]
 
 
-def test_only_designed_engines_with_a_stable_shape_are_listed() -> None:
-    """An engine missing from ``designed_engines`` (a skipped placeholder) or with no
-    stable shape yet (OpenSearch) has no entry; the order is ``designed_engines``'."""
+def test_only_designed_engines_are_listed_in_their_order() -> None:
+    """An engine missing from ``designed_engines`` (a skipped placeholder) has no entry;
+    every designed engine, OpenSearch included, has one, in ``designed_engines``' order."""
     designs: dict[str, dict[str, Any]] = {
         "elasticache": {"validation_passed": True, "key_designs": []},
-        "opensearch": {"validation_passed": True, "index_mappings": []},
+        "opensearch": {"validation_passed": True, "index_designs": []},
         "dynamodb": {"status": "skipped"},
         "aurora_mysql": {"validation_passed": True, "table_definitions": []},
     }
     out = build_designs(_state(designs), ["aurora_mysql", "opensearch", "elasticache"])
-    assert [d.engine for d in out] == ["aurora_mysql", "elasticache"]
+    assert [d.engine for d in out] == ["aurora_mysql", "opensearch", "elasticache"]
+
+
+def test_a_partial_opensearch_design_reads_its_missing_fields_as_empty() -> None:
+    """An older or partial OpenSearch design (no fields, aliases, template, access
+    patterns or validation result) still gives a stable entry; an index, data stream or
+    field with no name, and a field with no type, is left out, and an out-of-scope access
+    pattern serves nothing."""
+    opensearch: dict[str, Any] = {
+        "index_designs": [
+            {
+                "index_name": "posts",
+                "field_mappings": [
+                    {"field_type": "text"},
+                    {"field_name": "untyped"},
+                    {"field_name": "t", "field_type": "keyword"},
+                ],
+            },
+            {"source_tables": ["shop.nameless"]},
+        ],
+        "data_stream_designs": [
+            {"data_stream_name": "events", "index_template": None},
+            {"data_stream_name": "logs", "index_template": {"field_mappings": None}},
+            {"source_tables": ["shop.nameless"]},
+        ],
+        "access_patterns": [
+            {"index_or_stream": "posts", "query_ids": ["q1", "q2"]},
+            {"index_or_stream": "posts", "query_ids": ["q2", "q3"], "in_scope": True},
+            {"index_or_stream": "posts", "query_ids": ["q4"], "in_scope": False},
+            {"index_or_stream": "posts-live", "query_ids": ["q5"]},
+            {"index_or_stream": "events", "query_ids": ["q6"]},
+        ],
+    }
+    (design,) = build_designs(_state({"opensearch": opensearch}), ["opensearch"])
+    as_json = design.model_dump(mode="json")
+    assert as_json == {
+        "validation_passed": False,
+        "engine": "opensearch",
+        "indexes": [
+            {
+                "name": "posts",
+                "source_tables": [],
+                # A field with no name or no type is left out, never given one.
+                "fields": [{"name": "t", "type": "keyword"}],
+                "aliases": [],
+                # Only the patterns naming the index itself, never an alias of it.
+                "query_ids": ["q1", "q2", "q3"],
+            }
+        ],
+        "data_streams": [
+            {"name": "events", "source_tables": [], "fields": [], "query_ids": ["q6"]},
+            {"name": "logs", "source_tables": [], "fields": [], "query_ids": []},
+        ],
+    }
+    adapter: TypeAdapter[list[EngineDesign]] = TypeAdapter(list[EngineDesign])
+    assert adapter.validate_python([as_json])[0] == design
+
+
+# --------------------------------------------------------------------------- older results
+
+#: A designed result written by the code before the OpenSearch entry (#1513): a
+#: wordpress run with the engine scope OpenSearch, model phases patched, its
+#: ``statements`` cut to the first three. OpenSearch is in ``summary.designed_engines``
+#: with no ``designs`` entry, as that code wrote it.
+PRE_OPENSEARCH_RESULT = (
+    REPO / "tests" / "fixtures" / "assess_result_v1_0_opensearch_without_entry.json"
+)
+
+
+@pytest.mark.passes_on_main
+def test_a_result_written_before_the_opensearch_entry_still_loads() -> None:
+    text = PRE_OPENSEARCH_RESULT.read_text(encoding="utf-8")
+    document = json.loads(text)
+    assert document["summary"]["designed_engines"] == ["opensearch"]
+    assert document["designs"] == []
+    schema = json.loads(rcs.schema_path("assess_result").read_text("utf-8"))
+    Draft202012Validator(schema).validate(document)
+    loaded = AssessmentResult.model_validate_json(text)
+    assert loaded.label == "designed" and loaded.designs == []
+    assert json.loads(loaded.model_dump_json()) == document
+
+
+# --------------------------------------------------------------------------- the entry guard
+
+
+def test_a_designed_engine_with_an_entry_in_its_version_cannot_lose_it() -> None:
+    """A 1.1 result lists one entry per designed engine, in order: dropping the
+    OpenSearch entry, or any other, or reordering them, is refused."""
+    result, _ = designed("design04", OPENSEARCH_SCOPE)
+    document = json.loads(result.model_dump_json())
+    assert document["contract_version"] == "1.1"
+    assert [d["engine"] for d in document["designs"]] == ["dynamodb", "opensearch"]
+    for change in (
+        lambda d: d["designs"].pop(),
+        lambda d: d["designs"].pop(0),
+        lambda d: d["designs"].reverse(),
+    ):
+        changed = json.loads(json.dumps(document))
+        change(changed)
+        with pytest.raises(ValidationError, match="one entry per designed engine"):
+            AssessmentResult.model_validate(changed)
+
+
+def test_a_1_0_result_is_not_checked_for_one_entry_per_engine() -> None:
+    """Contract 1.0 had no OpenSearch entry and no entry rule, so a 1.0 result keeps
+    exactly 1.0's checks: one with OpenSearch designed and no entry is valid, and so is
+    one with an engine's entry missing; marked 1.1, the same result is refused."""
+    document = json.loads(PRE_OPENSEARCH_RESULT.read_text(encoding="utf-8"))
+    assert document["contract_version"] == "1.0"
+    AssessmentResult.model_validate(document)
+    document["summary"]["designed_engines"] = ["opensearch", "elasticache"]
+    AssessmentResult.model_validate(document)
+    document["contract_version"] = "1.1"
+    with pytest.raises(ValidationError, match="one entry per designed engine"):
+        AssessmentResult.model_validate(document)
+
+
+#: The shapes contract 1.0 accepts for a designed result with three designed engines
+#: and that 1.1 refuses: no entry at all, one dropped, reordered, one repeated.
+_ENTRY_SHAPES = {
+    "empty": lambda designs: [],
+    "dropped": lambda designs: designs[1:],
+    "reordered": lambda designs: designs[::-1],
+    "repeated": lambda designs: [*designs, designs[0]],
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_ENTRY_SHAPES))
+def test_the_entry_rule_applies_from_1_1_and_1_0_keeps_its_checks(shape: str) -> None:
+    result, _ = designed()
+    document = json.loads(result.model_dump_json())
+    assert document["contract_version"] == "1.1"
+    assert len(document["designs"]) == 3
+    document["designs"] = _ENTRY_SHAPES[shape](document["designs"])
+    with pytest.raises(ValidationError, match="one entry per designed engine"):
+        AssessmentResult.model_validate(document)
+    document["contract_version"] = "1.0"
+    assert AssessmentResult.model_validate(document).designs is not None
+
+
+def test_every_engine_with_an_entry_has_a_reader_and_a_model() -> None:
+    """build_designs cannot skip an engine silently: the engines the current contract
+    version gives an entry, the readers and the modelled entries are the same set, and
+    it holds every active catalog engine."""
+    from typing import get_args
+
+    from src.assessment.models import CONTRACT_VERSION, DESIGN_ENTRY_ENGINES, ContractVersion
+    from src.assessment.result_builder import _DESIGN_READERS
+    from src.shared.catalog.engines import ACTIVE, engine_ids
+
+    union = get_args(get_args(EngineDesign)[0])
+    modelled = {e for m in union for e in get_args(m.model_fields["engine"].annotation)}
+    assert set(_DESIGN_READERS) == modelled == DESIGN_ENTRY_ENGINES[CONTRACT_VERSION]
+    assert engine_ids(status=ACTIVE) <= set(_DESIGN_READERS)
+    # Every version the models read but 1.0 (which is not checked) names its engines.
+    assert set(DESIGN_ENTRY_ENGINES) == set(get_args(ContractVersion)) - {"1.0"}

@@ -1,0 +1,342 @@
+{
+  "contract_version": "1.0",
+  "label": "designed",
+  "library_version": "0.3.0b2.dev193+ga1d5f34bd",
+  "ruleset_version": "0.3.0b2.dev193+ga1d5f34bd",
+  "ruleset_hash": "sha256:dacc9ecc41a4fda26ded3ffd5718f2edf583c86b1c528b1f23a0f6994476b8ac",
+  "options": {
+    "target_engines": [
+      "opensearch"
+    ],
+    "run_through": "schema_design",
+    "deterministic": false,
+    "include_artifacts": false
+  },
+  "scope": null,
+  "summary": {
+    "run_through_reached": "schema_design",
+    "source_engine": "mysql",
+    "assignment_version": 1,
+    "statement_count": 107,
+    "statements_per_engine": {
+      "opensearch": 56
+    },
+    "unservable_count": 51,
+    "post_schema_terminal_count": 0,
+    "unique_delta_threshold": 15,
+    "relational_engine": null,
+    "engines": [
+      {
+        "engine": "opensearch",
+        "role": "owner",
+        "statement_count": 56,
+        "consolidated_into": null,
+        "unique_queries": 0,
+        "avg_delta": 0.0,
+        "reason": "1% mean fit across 56 queries (5 queries match a detected pattern; 51 queries signal only), led by key-value lookups (37 of 56). Schema design: 18 target tables, 55 in-scope access patterns."
+      }
+    ],
+    "consolidations": [],
+    "tables": [
+      {
+        "table_id": "wordpress.wp_actionscheduler_actions",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_groups",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_commentmeta",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_comments",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_options",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_postmeta",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_posts",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_term_relationships",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_term_taxonomy",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_termmeta",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_terms",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_usermeta",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_users",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_wc_admin_notes",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_wc_tax_rate_classes",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_api_keys",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_items",
+        "owner": null,
+        "owner_basis": null,
+        "also_read_by": [
+          "opensearch"
+        ],
+        "cached_by": null,
+        "reason": null
+      }
+    ],
+    "designed_engines": [
+      "opensearch"
+    ],
+    "design_note": null
+  },
+  "statements": [
+    {
+      "query_id": "59163c184972d1ec4ad95106a5fc20c95d19dd06d071f956bf50e0c51ce12bdf",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 1,
+      "tables": [
+        "wordpress.wp_actionscheduler_actions",
+        "wordpress.wp_actionscheduler_groups"
+      ],
+      "calls_per_second": 0.4547800925925926,
+      "rewritten_by_caller": false,
+      "engine": "opensearch",
+      "confidence": 0,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [
+        "aurora_mysql",
+        "aurora_postgresql",
+        "documentdb",
+        "dynamodb",
+        "elasticache"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "opensearch": 0
+      },
+      "signals": [
+        "status_filters",
+        "time_series",
+        "text_search"
+      ],
+      "matched_patterns": [
+        {
+          "id": "wildcard-search",
+          "name": "Wildcard search"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "highest fit for OpenSearch",
+      "post_schema_terminal": null
+    },
+    {
+      "query_id": "66c96f951dd01698438c1be2887ff2553664cb0b99c1a1b0108b18ca22dcb799",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 0,
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "calls_per_second": 75.8340162037037,
+      "rewritten_by_caller": false,
+      "engine": "opensearch",
+      "confidence": 0,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [
+        "aurora_mysql",
+        "aurora_postgresql",
+        "documentdb",
+        "dynamodb",
+        "elasticache"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "opensearch": 0
+      },
+      "signals": [
+        "key_value_lookups",
+        "metadata_config",
+        "high_frequency_reads"
+      ],
+      "matched_patterns": [],
+      "tied_engines": [],
+      "reason_text": "highest fit for OpenSearch",
+      "post_schema_terminal": null
+    },
+    {
+      "query_id": "12f856eaf9281605faf126dd7926df918410651b368cf532ecdcf01da5fcf625",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 0,
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "calls_per_second": 0.28856481481481483,
+      "rewritten_by_caller": false,
+      "engine": "opensearch",
+      "confidence": 0,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [
+        "aurora_mysql",
+        "aurora_postgresql",
+        "documentdb",
+        "dynamodb",
+        "elasticache"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "opensearch": 0
+      },
+      "signals": [
+        "aggregations",
+        "time_series"
+      ],
+      "matched_patterns": [],
+      "tied_engines": [],
+      "reason_text": "highest fit for OpenSearch",
+      "post_schema_terminal": null
+    }
+  ],
+  "groups": [],
+  "designs": [],
+  "artifacts": null
+}

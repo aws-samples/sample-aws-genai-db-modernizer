@@ -110,7 +110,7 @@ A designed result always carries the [design block](#the-design-block) (`designs
 
 | Field | Meaning |
 |---|---|
-| `contract_version` | `"1.0"` |
+| `contract_version` | `"1.1"` (the default). A request written for `"1.0"` is read the same way |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. Use the collected database's own name: today a different name routes every statement to Aurora ([#1572](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1572)) |
 | `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
@@ -123,7 +123,7 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.0` has not been released yet, so the fields below are all part of `1.0`: the additions since the first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` adds the OpenSearch entry of the design block (#1513), the one change since `1.0`; neither has been released yet. The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
 - `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
@@ -147,7 +147,7 @@ Fields that come from a later phase are `null` (or empty) when `run_through` sto
 
 ### The design block
 
-`designs` is set only on a `designed` result (`null` otherwise): one entry per engine in `summary.designed_engines`, in that order, discriminated by `engine`. Every value is copied from that engine's schema design, never recomputed and never taken from the deterministic analysis; the full design (attributes, item collections, access patterns, sizing, trade-offs) stays in `artifacts.schema_designs.<engine>`. The [design block proposal](assess-design-block.md) explains the choices.
+`designs` is set only on a `designed` result (`null` otherwise): one entry per engine in `summary.designed_engines`, in that order, discriminated by `engine`. Every value is copied from that engine's schema design, never recomputed and never taken from the deterministic analysis; the full design (attributes, item collections, access patterns, sizing, trade-offs) stays in `artifacts.schema_designs.<engine>`. The [design block standard](assess-design-block.md) explains the choices and says what is guaranteed, with an example per engine.
 
 Every entry has `engine` and `validation_passed`: `false` for a design that failed its own checks (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result. Check it before you build on a design: a failed design is returned, not dropped. Then, per engine:
 
@@ -157,8 +157,9 @@ Every entry has `engine` and `validation_passed`: `false` for a design that fail
 | `aurora_mysql`, `aurora_postgresql` | `tables[]`: `name`, `primary_key` (columns) and `indexes` (the design's `CREATE INDEX` statements, verbatim); `ddl_artifact_path`, where the full generated DDL is in the result with `include_artifacts: true` (`artifacts.schema_designs.<engine>.generated_ddl`) |
 | `documentdb` | `collections[]`: `name`, `source_tables`, `embedded[]` (per child table: `source_table`, `path` in the parent document, `strategy` `embed`, `reference` or `hybrid`), `referenced_collections`, `indexes[]` (`name`, `keys[]` as ordered `{"field", "direction"}`, `type` `compound`, `single`, `text`, `partial` or `unique`, `query_ids`) and `query_ids` |
 | `elasticache` | `keys[]`: `pattern` (the key pattern), `data_type`, `ttl_seconds` (`null` for no expiry), `source_tables` and `query_ids` (what the key caches: the source tables and the statements whose reads it serves) |
+| `opensearch` | `indexes[]`: `name`, `source_tables`, `fields[]` (its mapped fields in the design's order, `{"name", "type"}`, `type` the OpenSearch field type as the design names it), `aliases` and `query_ids` (the statements the design serves from the index); `data_streams[]`: `name`, `source_tables`, `fields[]` (its index template's mapped fields, with `@timestamp`) and `query_ids` |
 
-An engine with no agreed stable shape yet (OpenSearch) is in `summary.designed_engines`, and its design is in `artifacts`, but it has no `designs` entry. A new engine in `designs` is a MINOR change: read it with a default branch. Names (tables, keys, indexes) come from the design, which a model wrote from collection text: treat them as data and escape them when you render them.
+The OpenSearch entry was added in contract `1.1` (#1513). From `1.1` on, every engine in `summary.designed_engines` has its entry, in that order, and the result model refuses one without it. A `1.0` result is not checked for this: it is read exactly as contract `1.0` read it, so it can list `opensearch` in `summary.designed_engines` with no `designs` entry, and still validates. A new engine in `designs`, or a new optional field in an entry, is a MINOR change: read it with a default branch, and validate a result against the schema of the `contract_version` it carries (an older schema file refuses an engine it does not know). Names (tables, keys, indexes) come from the design, which a model wrote from collection text: treat them as data and escape them when you render them.
 
 ### Sample design block
 
@@ -332,7 +333,7 @@ The request and the result are published as JSON Schemas (draft 2020-12) in [`do
 - [`assess_request.v1.schema.json`](schemas/assess_request.v1.schema.json): `AssessmentRequest`;
 - [`assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json): `AssessmentResult`, as `model_dump_json` writes it.
 
-`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id and a `label` that does not match `summary.run_through_reached` ([schemas/README.md](schemas/README.md)).
+`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id, a `label` that does not match `summary.run_through_reached`, and, from contract `1.1` on, `designs` that are not one entry per engine of `summary.designed_engines`, in that order ([schemas/README.md](schemas/README.md)).
 
 ## Sample
 
@@ -342,7 +343,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.0",
+  "contract_version": "1.1",
   "database_name": "shop",
   "collection": {
     "...": "the collection scripts' output"
@@ -364,7 +365,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.0",
+  "contract_version": "1.1",
   "label": "recommendation",
   "library_version": "0.3.0",
   "ruleset_version": "0.3.0",

@@ -1,4 +1,4 @@
-"""The typed request and result of :func:`src.assessment.assess` (contract 1.0).
+"""The typed request and result of :func:`src.assessment.assess` (contract 1.1).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,
 ``statements[]`` and ``groups[]``. It is versioned on its own (``contract_version``,
@@ -28,7 +28,23 @@ from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_na
 from src.shared.target_databases import normalize_target_databases
 
 #: The version of this public surface (not of any internal contract).
-CONTRACT_VERSION: Literal["1.0"] = "1.0"
+CONTRACT_VERSION: Literal["1.1"] = "1.1"
+
+#: The ``contract_version`` values of this MAJOR the models read: a request or a result
+#: written for an earlier MINOR version still validates. 1.1 added the OpenSearch entry
+#: of the design block (#1513).
+ContractVersion = Literal["1.0", "1.1"]
+
+#: The engines with an entry in the design block, by the contract version that defines
+#: them: a result of that version has an entry for each of its designed engines in the
+#: set, in ``summary.designed_engines`` order. A ``1.0`` result is not checked: it is
+#: read exactly as contract 1.0 read it (it can, for one, list ``opensearch`` as designed
+#: with no entry).
+DESIGN_ENTRY_ENGINES: dict[str, frozenset[str]] = {
+    "1.1": frozenset(
+        {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
+    ),
+}
 
 RunThrough = Literal["analysis", "reality_check", "schema_design", "synthesis"]
 
@@ -205,7 +221,10 @@ class WorkloadScope(_Strict):
 class AssessmentRequest(_Strict):
     """One assessment: a database's raw collection and the options to run it with."""
 
-    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    contract_version: ContractVersion = Field(
+        CONTRACT_VERSION,
+        description="The contract version the caller wrote the request for; any 1.x is read",
+    )
     database_name: str = Field(
         ...,
         min_length=1,
@@ -689,10 +708,64 @@ class ElastiCacheDesign(_Design):
     keys: list[CacheKey] = Field(default_factory=list)
 
 
+class OpenSearchField(_Strict):
+    """One mapped field."""
+
+    name: str = Field(..., description="The field name, for example 'post_title' or '@timestamp'")
+    type: str = Field(
+        ...,
+        description=(
+            "Its OpenSearch field type, as the design names it, for example 'text', "
+            "'keyword', 'long', 'date' or 'nested'"
+        ),
+    )
+
+
+class OpenSearchIndex(_Strict):
+    """One search index."""
+
+    name: str
+    source_tables: list[str] = Field(
+        default_factory=list, description="The source tables it holds, as the design names them"
+    )
+    fields: list[OpenSearchField] = Field(
+        default_factory=list, description="Its mapped fields, in the design's order"
+    )
+    aliases: list[str] = Field(default_factory=list, description="Its index aliases")
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements the design serves from this index"
+    )
+
+
+class OpenSearchDataStream(_Strict):
+    """One data stream (a time-series table), with the fields of its index template."""
+
+    name: str
+    source_tables: list[str] = Field(
+        default_factory=list, description="The source tables it holds, as the design names them"
+    )
+    fields: list[OpenSearchField] = Field(
+        default_factory=list,
+        description="The mapped fields of its index template, in the design's order",
+    )
+    query_ids: list[str] = Field(
+        default_factory=list, description="The statements the design serves from this data stream"
+    )
+
+
+class OpenSearchDesign(_Design):
+    """An OpenSearch design: its indexes and data streams, their mapped fields and what
+    each serves."""
+
+    engine: Literal["opensearch"]
+    indexes: list[OpenSearchIndex] = Field(default_factory=list)
+    data_streams: list[OpenSearchDataStream] = Field(default_factory=list)
+
+
 #: One designed engine's stable design, discriminated by ``engine``. Adding an engine
 #: is a MINOR change of this contract: read it with a default branch.
 EngineDesign = Annotated[
-    DynamoDBDesign | AuroraDesign | DocumentDBDesign | ElastiCacheDesign,
+    DynamoDBDesign | AuroraDesign | DocumentDBDesign | ElastiCacheDesign | OpenSearchDesign,
     Field(discriminator="engine"),
 ]
 
@@ -731,7 +804,13 @@ class AssessmentResult(_Strict):
     designs and the report's executive summary can differ between runs. Results are
     never stored or reused: a repeat call is a new run."""
 
-    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    contract_version: ContractVersion = Field(
+        CONTRACT_VERSION,
+        description=(
+            "The contract version the result was written for; this library writes "
+            "CONTRACT_VERSION and reads any 1.x"
+        ),
+    )
     label: ResultLabel = Field(
         ...,
         description=(
@@ -754,9 +833,9 @@ class AssessmentResult(_Strict):
         None,
         description=(
             "Set only when label is 'designed' (None otherwise): one entry per engine in "
-            "summary.designed_engines with a stable design shape, in that order, each "
-            "copied from the engine's schema design. An engine with no stable shape yet "
-            "(OpenSearch) has its design in `artifacts` only"
+            "summary.designed_engines, in that order, each copied from the engine's "
+            "schema design; checked from contract 1.1 on (a 1.0 result has no OpenSearch "
+            "entry and is read as 1.0 read it)"
         ),
     )
     artifacts: Artifacts | None = None
@@ -777,4 +856,15 @@ class AssessmentResult(_Strict):
             )
         if (self.designs is not None) != (self.label == "designed"):
             raise ValueError("designs is set exactly when label is 'designed'")
+        # 1.0 results keep exactly 1.0's checks; the entry rule starts with 1.1.
+        if self.designs is not None and self.contract_version != "1.0":
+            with_entry = DESIGN_ENTRY_ENGINES[self.contract_version]
+            expected_engines = [e for e in self.summary.designed_engines if e in with_entry]
+            listed = [d.engine for d in self.designs]
+            if listed != expected_engines:
+                raise ValueError(
+                    f"designs must have one entry per designed engine with an entry in "
+                    f"contract {self.contract_version}, in summary.designed_engines order: "
+                    f"expected {expected_engines}, got {listed}"
+                )
         return self

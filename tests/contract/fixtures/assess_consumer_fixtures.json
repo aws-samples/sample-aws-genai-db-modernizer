@@ -272,6 +272,56 @@
         "statements[].post_schema_terminal.cause",
         "statements[].post_schema_terminal.reason"
       ]
+    },
+    "wordpress_opensearch": {
+      "why": "An engine scope (DynamoDB and OpenSearch) that places statements on OpenSearch, so a designed result carries an OpenSearch design: indexes, data streams, mapped fields, aliases and the statements each serves",
+      "sample": "wordpress",
+      "database_name": "wordpress",
+      "options": {
+        "target_engines": ["dynamodb", "opensearch"]
+      },
+      "scope": null,
+      "guards": [
+        "summary.designed_engines",
+        "designs",
+        "designs[OpenSearchDesign].engine",
+        "designs[OpenSearchDesign].validation_passed",
+        "designs[OpenSearchDesign].indexes",
+        "designs[OpenSearchDesign].indexes[].name",
+        "designs[OpenSearchDesign].indexes[].source_tables",
+        "designs[OpenSearchDesign].indexes[].fields",
+        "designs[OpenSearchDesign].indexes[].fields[].name",
+        "designs[OpenSearchDesign].indexes[].fields[].type",
+        "designs[OpenSearchDesign].indexes[].aliases",
+        "designs[OpenSearchDesign].indexes[].query_ids",
+        "designs[OpenSearchDesign].data_streams",
+        "designs[OpenSearchDesign].data_streams[].name",
+        "designs[OpenSearchDesign].data_streams[].source_tables",
+        "designs[OpenSearchDesign].data_streams[].fields",
+        "designs[OpenSearchDesign].data_streams[].fields[].name",
+        "designs[OpenSearchDesign].data_streams[].fields[].type",
+        "designs[OpenSearchDesign].data_streams[].query_ids"
+      ]
+    },
+    "wordpress_aurora_postgresql": {
+      "why": "An engine scope (Aurora PostgreSQL and DynamoDB) that places statements on Aurora PostgreSQL, so a designed result carries an Aurora PostgreSQL design: tables, primary keys, indexes and the DDL pointer",
+      "sample": "wordpress",
+      "database_name": "wordpress",
+      "options": {
+        "target_engines": ["aurora_postgresql", "dynamodb"]
+      },
+      "scope": null,
+      "guards": [
+        "summary.designed_engines",
+        "designs",
+        "designs[AuroraDesign].engine",
+        "designs[AuroraDesign].validation_passed",
+        "designs[AuroraDesign].tables",
+        "designs[AuroraDesign].tables[].name",
+        "designs[AuroraDesign].tables[].primary_key",
+        "designs[AuroraDesign].tables[].indexes",
+        "designs[AuroraDesign].ddl_artifact_path"
+      ]
     }
   }
 }

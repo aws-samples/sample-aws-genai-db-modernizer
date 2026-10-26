@@ -9,7 +9,9 @@ This folder holds the JSON Schemas of the public library entry point `assess()` 
 
 ## Versions
 
-Each file is named after the MAJOR version of the contract it describes: `v1` covers every `contract_version` `1.x`. A MINOR version (a new optional field, a new enum value) regenerates the same file; a MAJOR version adds a `v2` file next to it. Each file states the exact `contract_version` it was rendered from in `x-contract-version`, and the payloads carry it in `contract_version`.
+Each file is named after the MAJOR version of the contract it describes: `v1` covers every `contract_version` `1.x`. A MINOR version (a new optional field, a new enum value, a new engine in the result's `designs`) regenerates the same file; a MAJOR version adds a `v2` file next to it. Each file states the exact `contract_version` it was rendered from in `x-contract-version`, and the payloads carry it in `contract_version`. The current files are `1.1`; they also accept a `1.0` payload.
+
+An older file refuses every result of a newer MINOR version: the `1.0` file fixes `contract_version` to `"1.0"`, so it refuses every `1.1` result, with or without an OpenSearch entry. A caller pinned to the `1.0` file must move to the `1.1` file, which accepts both `1.0` and `1.1` results. A MINOR version can also add a `designs` engine (`1.1` added `opensearch`), and `designs` is a closed `oneOf` on `engine`: read `designs` with a default branch on `engine` in your own code.
 
 The schemas use JSON Schema draft 2020-12 (`$schema`). Each file's `$id` is its raw URL on this repository's `main` branch.
 

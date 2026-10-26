@@ -63,6 +63,10 @@ from src.assessment.models import (
     EngineLine,
     FlagReasonCode,
     Group,
+    OpenSearchDataStream,
+    OpenSearchDesign,
+    OpenSearchField,
+    OpenSearchIndex,
     PatternRef,
     PostSchemaTerminal,
     PublicReasonCode,
@@ -1001,19 +1005,70 @@ def _elasticache_design(design: Mapping[str, Any]) -> ElastiCacheDesign:
     )
 
 
-#: The engines with a stable design shape, and how each is read from its schema output.
+def _opensearch_fields(mappings: Any) -> list[OpenSearchField]:
+    return [
+        OpenSearchField(name=str(f["field_name"]), type=str(f["field_type"]))
+        for f in mappings or []
+        if isinstance(f, Mapping) and f.get("field_name") and f.get("field_type")
+    ]
+
+
+def _template_fields(template: Any) -> Any:
+    """A data stream's mapped fields: its index template's."""
+    return template.get("field_mappings") if isinstance(template, Mapping) else None
+
+
+def _opensearch_design(design: Mapping[str, Any]) -> OpenSearchDesign:
+    patterns = _in_scope(design)
+
+    def served(name: str) -> list[str]:
+        return _ids([p for p in patterns if p.get("index_or_stream") == name], "query_ids")
+
+    indexes = [
+        OpenSearchIndex(
+            name=str(i["index_name"]),
+            source_tables=_strs(i.get("source_tables")),
+            fields=_opensearch_fields(i.get("field_mappings")),
+            aliases=_strs(i.get("aliases")),
+            query_ids=served(str(i["index_name"])),
+        )
+        for i in design.get("index_designs") or []
+        if isinstance(i, Mapping) and i.get("index_name")
+    ]
+    data_streams = [
+        OpenSearchDataStream(
+            name=str(s["data_stream_name"]),
+            source_tables=_strs(s.get("source_tables")),
+            fields=_opensearch_fields(_template_fields(s.get("index_template"))),
+            query_ids=served(str(s["data_stream_name"])),
+        )
+        for s in design.get("data_stream_designs") or []
+        if isinstance(s, Mapping) and s.get("data_stream_name")
+    ]
+    return OpenSearchDesign(
+        engine="opensearch",
+        validation_passed=design.get("validation_passed") is True,
+        indexes=indexes,
+        data_streams=data_streams,
+    )
+
+
+#: How each designed engine's stable design is read from its schema output.
 _DESIGN_READERS: dict[str, Callable[[Mapping[str, Any]], EngineDesign]] = {
     "dynamodb": _dynamodb_design,
     "aurora_mysql": lambda d: _aurora_design("aurora_mysql", d),
     "aurora_postgresql": lambda d: _aurora_design("aurora_postgresql", d),
     "documentdb": _documentdb_design,
     "elasticache": _elasticache_design,
+    "opensearch": _opensearch_design,
 }
 
 
 def build_designs(state: RunState, designed_engines: list[str]) -> list[EngineDesign]:
-    """One stable design per engine of ``designed_engines`` that has a stable shape, in
-    that order, from the engine's schema output at the effective version."""
+    """One stable design per engine of ``designed_engines``, in that order, from the
+    engine's schema output at the effective version. Every active catalog engine has a
+    reader (``tests/unit/assessment/test_design_block.py`` checks it); an engine with
+    none, such as a planned one, has no entry."""
     return [
         _DESIGN_READERS[engine](state.schema_designs[engine])
         for engine in designed_engines

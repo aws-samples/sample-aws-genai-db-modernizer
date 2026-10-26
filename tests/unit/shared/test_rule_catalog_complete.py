@@ -203,6 +203,10 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     "src/atx_orchestrator/subagents/schema.py": (frozenset({"VALID_TARGET_TYPES"}), _PLUMBING),
     "src/atx_orchestrator/tools.py": (frozenset({"_SCHEMA_ENGINES"}), _PLUMBING),
     "src/api/routes/agent_interaction.py": (frozenset({"_KNOWN_AGENT_FOLDERS"}), _PLUMBING),
+    "src/assessment/models.py": (
+        frozenset({"DESIGN_ENTRY_ENGINES"}),
+        _CONTRACT + ": the engines each assess() contract version gives a design entry (#1513)",
+    ),
     "src/assessment/result_builder.py": (
         frozenset({"_DESIGN_READERS"}),
         _PLUMBING + ": how each engine's schema output maps onto assess()'s design block (#1493)",

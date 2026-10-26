@@ -6,7 +6,9 @@ what tests put in their place (tests never call a model).
   on the wordpress sample, the designed wordpress job's designs
   (``tests/e2e/designed_run.py``; DynamoDB's with one global secondary index added, so
   the stable design block has one) and a small DocumentDB design
-  (:func:`write_documentdb_design`); on any other database, a skipped placeholder, as a
+  (:func:`write_documentdb_design`), and small OpenSearch and Aurora PostgreSQL
+  designs (:func:`write_opensearch_design`, :func:`write_aurora_postgresql_design`);
+  on any other database, a skipped placeholder, as a
   designer writes when it has nothing to design. The database
   :data:`FLAGGED_DATABASE` (the wordpress sample under another name) gets the same
   designs, with its first DynamoDB design reporting one statement unsupported
@@ -148,6 +150,150 @@ def write_documentdb_design(
     store.write_json(key, design.model_dump(mode="json"))
 
 
+def write_opensearch_design(
+    store: Any, database_name: str, job_id: str, assignment_version: int
+) -> None:
+    """An OpenSearch design for the version's OpenSearch statements: an index (mapped
+    fields, a nested object among them, and an alias) per collected source table they
+    read, except the last, which is a data stream (an ``@timestamp`` field), and one
+    access pattern per statement, served from its first table's index or data stream.
+    No sample has a time-series table, so the data stream is this designer's only."""
+    from src.contracts.opensearch_model_output import OpenSearchModelOutputContract
+
+    prefix = f"{database_name}/{job_id}"
+    assignment = store.read_json(f"{prefix}/assignment/v{assignment_version}/assignment.json")
+    collected = {
+        str(t["table_id"])
+        for t in store.read_json(f"{prefix}/collector/output.json")["database_schema"]["tables"]
+    }
+    # Each statement with its collected tables (a statement can name none, ``unknown``).
+    queries = [
+        (str(qa["query_id"]), [str(t) for t in qa.get("source_tables") or [] if t in collected])
+        for qa in assignment["query_assignments"]
+        if qa["assigned_engine"] == "opensearch" and qa.get("in_scope", True)
+    ]
+    queries = [(query_id, read) for query_id, read in queries if read]
+    tables = sorted({t for _, read in queries for t in read})
+    names = {t: _bare(t).replace("_", "-") for t in tables}
+    settings = {
+        "number_of_shards": 1,
+        "assumed_node_count": 3,
+        "shard_sizing_rationale": "Under 30 GB of data -> 1 shard",
+    }
+    streamed = tables[-1:] if len(tables) > 1 else []
+    served_by = {t: f"{names[t]}-events" if t in streamed else names[t] for t in tables}
+    design = OpenSearchModelOutputContract.model_validate(
+        {
+            "job_id": job_id,
+            "source_database": database_name,
+            "index_designs": [
+                {
+                    "index_name": names[t],
+                    "source_tables": [t],
+                    "settings": settings,
+                    "field_mappings": [
+                        {"field_name": "id", "field_type": "long", "source_column": "ID"},
+                        {
+                            "field_name": "title",
+                            "field_type": "text",
+                            "source_column": "title",
+                            "analyzer": "standard",
+                            "multi_field": True,
+                        },
+                        # A nested object and one of its fields, by dotted path, as a
+                        # real design maps a child table (wp_usermeta in wp-users).
+                        {"field_name": "meta", "field_type": "nested", "source_column": "ID"},
+                        {"field_name": "meta.key", "field_type": "keyword", "source_column": "key"},
+                    ],
+                    "aliases": [f"{names[t]}-live"],
+                }
+                for t in tables
+                if t not in streamed
+            ],
+            "data_stream_designs": [
+                {
+                    "data_stream_name": served_by[t],
+                    "source_tables": [t],
+                    "timestamp_field": "created_at",
+                    "index_template": {
+                        "template_name": f"{names[t]}-template",
+                        "index_patterns": [f"{names[t]}-events-*"],
+                        "settings": {**settings, "refresh_interval": "30s"},
+                        "field_mappings": [
+                            {
+                                "field_name": "@timestamp",
+                                "field_type": "date",
+                                "source_column": "created_at",
+                            }
+                        ],
+                    },
+                    "ism_policy": {"policy_name": "hot-7d-delete-90d", "hot_phase_days": 7},
+                }
+                for t in streamed
+            ],
+            "access_patterns": [
+                {
+                    "pattern_id": f"OS-AP-{i + 1}",
+                    "name": "Search one table",
+                    "description": "Filter and sort the documents of one table",
+                    "query_ids": [query_id],
+                    "source_tables": read,
+                    "source_query": "SELECT 1",
+                    "opensearch_dsl": '{"query": {"match_all": {}}}',
+                    "index_or_stream": served_by[read[0]],
+                    "operation": "search",
+                    "design_rps": 1.0,
+                }
+                for i, (query_id, read) in enumerate(queries)
+            ],
+            "validation_passed": True,
+        }
+    )
+    key = f"{prefix}/schema-opensearch/v{assignment_version}/schema_output.json"
+    store.write_json(key, design.model_dump(mode="json"))
+
+
+def write_aurora_postgresql_design(
+    store: Any, database_name: str, job_id: str, assignment_version: int
+) -> None:
+    """An Aurora PostgreSQL design: two of the sample's tables carried over, one with a
+    secondary index."""
+    from src.contracts.aurora_postgresql_model_output import AuroraPostgresqlModelOutputContract
+
+    design = AuroraPostgresqlModelOutputContract.model_validate(
+        {
+            "job_id": job_id,
+            "source_database": database_name,
+            "migration_strategy": "translate",
+            "table_definitions": [
+                {
+                    "table_name": "wp_posts",
+                    "columns": [
+                        {"name": "ID", "aurora_type": "BIGINT", "script_derived": True},
+                        {"name": "post_title", "aurora_type": "TEXT", "script_derived": True},
+                    ],
+                    "primary_key": ["ID"],
+                    "indexes": [
+                        'CREATE INDEX "type_status_date" ON "wp_posts" ("post_type", "post_status");'
+                    ],
+                },
+                {
+                    "table_name": "wp_comments",
+                    "columns": [
+                        {"name": "comment_ID", "aurora_type": "BIGINT", "script_derived": True}
+                    ],
+                    "primary_key": ["comment_ID"],
+                },
+            ],
+            "generated_ddl": 'CREATE TABLE "wp_posts" (\n  "ID" BIGINT NOT NULL,\n  PRIMARY KEY ("ID")\n);',
+            "trade_offs": [{"description": "Translate the schema", "impact": "Types change."}],
+            "validation_passed": True,
+        }
+    )
+    key = f"{database_name}/{job_id}/schema-aurora_postgresql/v{assignment_version}/schema_output.json"
+    store.write_json(key, design.model_dump(mode="json"))
+
+
 #: A database the fake designer designs as wordpress, with the first DynamoDB design
 #: reporting one statement unsupported (``assess_consumer_fixtures.json``'s
 #: ``wordpress_terminal``: in an engine scope with no other owner, it stays terminal).
@@ -206,6 +352,8 @@ def write_fake_design(
         "elasticache": write_elasticache_design,
         "aurora_mysql": write_aurora_mysql_design,
         "documentdb": write_documentdb_design,
+        "opensearch": write_opensearch_design,
+        "aurora_postgresql": write_aurora_postgresql_design,
     }
     if database_name in DESIGNED_DATABASES and target_type in writers:
         writers[target_type](store, database_name, job_id, assignment_version)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_result.v1.schema.json",
   "title": "AssessmentResult",
-  "x-contract-version": "1.0",
+  "x-contract-version": "1.1",
   "$defs": {
     "Artifacts": {
       "additionalProperties": true,
@@ -789,6 +789,159 @@
       "title": "Group",
       "type": "object"
     },
+    "OpenSearchDataStream": {
+      "additionalProperties": false,
+      "description": "One data stream (a time-series table), with the fields of its index template.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "description": "The source tables it holds, as the design names them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "fields": {
+          "description": "The mapped fields of its index template, in the design's order",
+          "items": {
+            "$ref": "#/$defs/OpenSearchField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from this data stream",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "fields",
+        "query_ids"
+      ],
+      "title": "OpenSearchDataStream",
+      "type": "object"
+    },
+    "OpenSearchDesign": {
+      "additionalProperties": false,
+      "description": "An OpenSearch design: its indexes and data streams, their mapped fields and what\neach serves.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "opensearch",
+          "title": "Engine",
+          "type": "string"
+        },
+        "indexes": {
+          "items": {
+            "$ref": "#/$defs/OpenSearchIndex"
+          },
+          "title": "Indexes",
+          "type": "array"
+        },
+        "data_streams": {
+          "items": {
+            "$ref": "#/$defs/OpenSearchDataStream"
+          },
+          "title": "Data Streams",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "indexes",
+        "data_streams"
+      ],
+      "title": "OpenSearchDesign",
+      "type": "object"
+    },
+    "OpenSearchField": {
+      "additionalProperties": false,
+      "description": "One mapped field.",
+      "properties": {
+        "name": {
+          "description": "The field name, for example 'post_title' or '@timestamp'",
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "description": "Its OpenSearch field type, as the design names it, for example 'text', 'keyword', 'long', 'date' or 'nested'",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "OpenSearchField",
+      "type": "object"
+    },
+    "OpenSearchIndex": {
+      "additionalProperties": false,
+      "description": "One search index.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "description": "The source tables it holds, as the design names them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "fields": {
+          "description": "Its mapped fields, in the design's order",
+          "items": {
+            "$ref": "#/$defs/OpenSearchField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "aliases": {
+          "description": "Its index aliases",
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from this index",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "fields",
+        "aliases",
+        "query_ids"
+      ],
+      "title": "OpenSearchIndex",
+      "type": "object"
+    },
     "PatternRef": {
       "additionalProperties": false,
       "description": "A pattern from the pattern catalog (``src/catalog/patterns``).",
@@ -1404,8 +1557,12 @@
   "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
-      "const": "1.0",
-      "default": "1.0",
+      "default": "1.1",
+      "description": "The contract version the result was written for; this library writes CONTRACT_VERSION and reads any 1.x",
+      "enum": [
+        "1.0",
+        "1.1"
+      ],
       "title": "Contract Version",
       "type": "string"
     },
@@ -1472,7 +1629,8 @@
                 "aurora_postgresql": "#/$defs/AuroraDesign",
                 "documentdb": "#/$defs/DocumentDBDesign",
                 "dynamodb": "#/$defs/DynamoDBDesign",
-                "elasticache": "#/$defs/ElastiCacheDesign"
+                "elasticache": "#/$defs/ElastiCacheDesign",
+                "opensearch": "#/$defs/OpenSearchDesign"
               },
               "propertyName": "engine"
             },
@@ -1488,6 +1646,9 @@
               },
               {
                 "$ref": "#/$defs/ElastiCacheDesign"
+              },
+              {
+                "$ref": "#/$defs/OpenSearchDesign"
               }
             ]
           },
@@ -1498,7 +1659,7 @@
         }
       ],
       "default": null,
-      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines with a stable design shape, in that order, each copied from the engine's schema design. An engine with no stable shape yet (OpenSearch) has its design in `artifacts` only",
+      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines, in that order, each copied from the engine's schema design; checked from contract 1.1 on (a 1.0 result has no OpenSearch entry and is read as 1.0 read it)",
       "title": "Designs"
     },
     "artifacts": {
