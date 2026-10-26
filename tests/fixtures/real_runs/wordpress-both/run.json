@@ -1,12 +1,12 @@
 {
   "db": "wordpress",
-  "job_id": "0c8b7450",
+  "job_id": "3b664548",
   "mode": "both",
   "fixture": "wordpress",
-  "git_sha": "6b1e9da",
-  "timestamp": "2026-10-24T08:47:21.013983+00:00",
-  "cost_usd": 3.918233899999999,
-  "judge_mean": 3.286,
+  "git_sha": "00cadbe",
+  "timestamp": "2026-10-26T23:19:45.419191+00:00",
+  "cost_usd": 4.2413970999999995,
+  "judge_mean": 3.429,
   "checks": {
     "transcript": true,
     "contracts": true,

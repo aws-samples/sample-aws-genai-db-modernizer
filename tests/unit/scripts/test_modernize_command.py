@@ -222,7 +222,7 @@ def test_decision_gate_quotes_the_printed_block_not_a_composed_table() -> None:
         "uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --gate"
         in decision_gate
     )
-    assert "Quote it verbatim" in decision_gate
+    assert "your next chat message must contain its stdout verbatim" in decision_gate
     assert "add no table or figure of your own" in decision_gate
     assert "never come from opening `reality-check/output.json`" in decision_gate
     assert "never tell the user you have not read them" in decision_gate
@@ -921,12 +921,62 @@ def test_completion_summary_is_printed_from_facts_and_quoted_verbatim() -> None:
         in completion
     )
     assert "from the synthesis `report.json` facts" in completion
-    assert "Quote it verbatim" in completion
+    assert "your next chat message must contain its stdout verbatim" in completion
     assert "or open `report.json` or any other artifact for it" in completion
     assert "at the depth of the results page" in completion
     assert "one line per engine with why" in completion
     assert "(it names any file that was not rendered)" in completion
     assert "Build the final summary only from" not in completion  # no longer composed
+
+
+def _gate_section() -> str:
+    gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
+    return " ".join(gate.split("### Phase 6", 1)[0].split())
+
+
+def test_the_gate_block_is_pasted_into_the_next_chat_message_before_the_question() -> None:
+    # #1605: Claude Code shows a tool call collapsed, so an interactive run said "The block
+    # above is the approval gate" over a block the user never saw.
+    gate = _gate_section()
+    assert "The user does not see a command's output: Claude Code shows the call collapsed" in (
+        gate
+    )
+    assert (
+        "your next chat message must contain its stdout verbatim, the whole Markdown block "
+        "(including the `Summary page` line unless `{experience_mode}` is `chat`), and only then "
+        "ask the approval question below" in gate
+    )
+    assert 'Never write "the block above"' in gate
+    assert gate.index("must contain its stdout verbatim") < gate.index(
+        'Ask: "Approve this assignment'
+    )
+    assert "`scripts/hooks/remind_quote_printed_summary.py`" in gate
+
+
+def test_the_final_summary_and_result_line_are_in_the_chat_message() -> None:
+    completion = " ".join(_completion_text().split())
+    assert "The user does not see a command's output (Claude Code shows the call collapsed)" in (
+        completion
+    )
+    assert "your next chat message must contain its stdout verbatim in every mode but `ui`" in (
+        completion
+    )
+    assert "quote only its `Results page` line there" in completion
+    assert 'Never write "the summary above"' in completion
+    assert "in that same chat message after the quoted summary" in completion
+
+
+def test_no_command_claims_the_user_sees_tool_output() -> None:
+    # #1605: the false claim behind the regression, gone from every command.
+    for path in sorted(COMMANDS_DIR.glob("*.md")):
+        text = " ".join(path.read_text().split())
+        assert "they see a command's output" not in text, path.name
+        assert "output is what the user sees" not in text, path.name
+        assert "its output is what the user sees" not in text, path.name
+    synthesize = " ".join((COMMANDS_DIR / "synthesize.md").read_text().split())
+    assert "quote it verbatim in your chat message (the user does not see a command's output" in (
+        synthesize
+    )
 
 
 def test_completion_summary_never_narrates_the_run_itself() -> None:

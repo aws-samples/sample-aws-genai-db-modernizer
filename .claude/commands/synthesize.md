@@ -69,7 +69,8 @@ Read files with the Read tool (use `offset`/`limit` for large files). Search fil
    synthesis report, or rendering failed) stop and report it.
 
 5. **Present report**
-   Print the report from the facts in `report.json`, then quote it verbatim:
+   Print the report from the facts in `report.json`, then quote it verbatim in your chat
+   message (the user does not see a command's output: Claude Code shows the call collapsed):
 
    ```bash
    uv run python scripts/print_summary.py --job-id {job_id} --db {database_name} --final

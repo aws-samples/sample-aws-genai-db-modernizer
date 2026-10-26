@@ -118,7 +118,16 @@ check-transcript's fixed failure conditions (anything else is tolerated as
   dispatch) rather than at the approval gate -- fail (#1307; it only warned
   while the model composed the gate and completion text, before
   ``scripts/print_summary.py`` printed them). It checks the URLs only, not
-  the gate table or the summary.
+  the gate table or the summary (the next check does).
+* not shown in chat (#1605): the approval-gate block (the last successful
+  top-level ``print_summary.py --gate``: heading, engine table, total, scope
+  lines and, in ui/both mode, the ``Summary page`` line) is not in the
+  orchestrator's own assistant text between its output and the start of
+  schema design, or the final summary's headline (heading and "At a glance"
+  figures; in ui mode its ``Results page`` line) and the
+  ``MODERNIZE_RESULT: complete`` line are not in assistant text after
+  ``print_summary.py --final`` -- fail. Tool output, subagent text and the
+  ``result`` line never count: Claude Code collapses tool output.
 
 On failure, check-transcript still prints the aggregated cost/turn/usage
 fields next to ``error``, and ``results`` copies them (plus
@@ -378,14 +387,12 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
     come from a top-level ``start_local_ui.py --page <page>`` tool_result (the summary page's may
     instead be the ``Summary page`` line of ``print_summary.py --gate``, the results page's the
     ``Results page`` line of ``print_summary.py --final``, #1307) and
-    appear in a top-level assistant text block (or the final result text). The summary page's
-    URL also counts as shown when it is in the gate script's own output, which the user sees
-    (maintainer decision on #1401), provided the gate ran in an earlier assistant message than
-    the first schema-design call: a gate batched with that call was not in front of anyone
-    before schema design started.
-    Likewise the results page's URL counts as shown when it is in the output of
-    ``print_summary.py --final``, provided that ran after synthesis finished (the
-    ``/synthesize`` dispatch reported back).
+    appear in a top-level assistant text block (or the final result text). A URL that is only in
+    a tool's output was never shown: Claude Code collapses tool output in its interactive UI
+    (#1605, which replaces the #1401 reading that the user sees the gate script's output). The
+    gate must still run in an earlier assistant message than the first schema-design call, and
+    a results URL from ``print_summary.py --final`` printed before synthesis finished (the
+    ``/synthesize`` dispatch reported back) is named as such when it was never quoted.
     Subagent messages never count. Chat mode is never checked. A schema design call one of our
     hooks refused (``require_gate_shown.py``, #1401) never ran, so it does not start schema
     design; the next call that runs does."""
@@ -400,7 +407,7 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
     phase6_at: int | None = None
     phase6_message: str | None = None
     message_of: dict[str, str] = {}  # tool_use id -> key of the assistant message it is in
-    gate_message: str | None = None  # message of the gate call whose output showed the URL
+    gate_message: str | None = None  # message of the latest gate call that printed the URL
     synthesis_ids: set[str] = set()  # top-level /synthesize dispatches
     synthesis_done = False
     final_too_early = False  # print_summary.py --final printed the URL before synthesis finished
@@ -473,21 +480,13 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
                     synthesis_done = True  # the dispatch reported back (foreground or hand-back)
                 if printed:
                     urls["results"] = printed.group(1)
-                    if (
-                        "results" not in quoted_at
-                    ):  # the final summary's output is in front of the user
-                        if synthesis_done:
-                            quoted_at["results"] = position
-                        else:
-                            final_too_early = True
+                    final_too_early = not synthesis_done
                 gate_url = (
                     _PRINTED_SUMMARY_RE.search(result_text) if use_id in printed_gate else None
                 )
                 if gate_url:
                     urls["summary"] = gate_url.group(1)
-                    if "summary" not in quoted_at:  # the gate's own output is in front of the user
-                        quoted_at["summary"] = position
-                        gate_message = message_of.get(use_id)
+                    gate_message = message_of.get(use_id)
         position += 1
         for text in texts:
             _mark_quoted(text, urls, quoted_at, position)
@@ -519,6 +518,158 @@ def check_ui_pointers(records: list[dict[str, Any]], mode: str) -> tuple[bool, s
         return False, (
             f"{mode} mode ran the approval gate in the same message as the first schema-design "
             "call, not on its own before it"
+        )
+    return True, None
+
+
+_GATE_HEADING = "## Assignment for approval:"
+_FINAL_HEADING = "## Assessment:"
+# Gate lines a chat message must carry (besides the heading and the engine table): the scope,
+# the queries no engine in it serves, and the summary page (ui/both mode).
+_GATE_SHOWN_LINE_RE = re.compile(
+    r"^(?:Total: |Engines in scope: |- Summary page)|no engine in the customer's engine scope"
+)
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _gate_lines_to_show(block: str) -> list[str]:
+    """The gate block's lines the user must see in chat: the heading, the engine table (its
+    separator row aside), the total, the scope lines and, unless chat mode, the summary page."""
+    lines = []
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line or re.fullmatch(r"\|[\s:|-]*\|", line):
+            continue
+        if line.startswith((_GATE_HEADING, "|")) or _GATE_SHOWN_LINE_RE.search(line):
+            lines.append(line)
+    return lines
+
+
+def _final_lines_to_show(block: str, mode: str) -> list[str]:
+    """The final summary's headline the user must see in chat: the heading and the "At a
+    glance" figures. In ui mode chat carries only the UI pointers: the ``Results page`` line."""
+    lines = [line.strip() for line in block.splitlines()]
+    if mode == "ui":
+        return [line for line in lines if _PRINTED_RESULTS_RE.fullmatch(line)]
+    shown = [line for line in lines if line.startswith(_FINAL_HEADING)]
+    in_glance = False
+    for line in lines:
+        if line.startswith("### "):
+            in_glance = line == "### At a glance"
+        elif in_glance and line.startswith("- "):
+            shown.append(line)
+    return shown
+
+
+def _missing_lines(lines: list[str], texts: list[str]) -> list[str]:
+    said = _norm("\n".join(texts))
+    return [line for line in lines if _norm(line) not in said]
+
+
+def _printed_ok(text: str, block: dict[str, Any], heading: str) -> bool:
+    return block.get("is_error") is not True and text.lstrip().startswith(heading)
+
+
+def check_printed_blocks_shown(records: list[dict[str, Any]], mode: str) -> tuple[bool, str | None]:
+    """The approval-gate block and the final summary reach the user only in the orchestrator's
+    own chat text: Claude Code collapses a tool's output in its interactive UI, so a block that
+    appears only in a tool_result was never in front of anyone (#1605).
+
+    Only top-level assistant ``text`` blocks count, never a tool_result, a subagent message or
+    the ``result`` line. The gate (the last successful top-level ``print_summary.py --gate``)
+    must be shown after its output and before schema design starts: its heading, the engine
+    table, the total and the scope lines, and unless chat mode its ``Summary page`` line. The
+    final summary (the last successful ``print_summary.py --final``) must be shown after its
+    output: its heading and the "At a glance" figures (in ui mode only its ``Results page``
+    line), followed by the ``MODERNIZE_RESULT: complete`` line. A run that started schema design
+    with no gate printed, or dispatched ``/synthesize`` with no final summary printed, fails too
+    (a transcript that reached neither step, such as a unit fixture, has nothing to show)."""
+    refused = _refused_by_gate_hook(records)
+    gate_ids: set[str] = set()
+    final_ids: set[str] = set()
+    gate_block: str | None = None
+    gate_texts: list[str] = []
+    phase6_started = False
+    final_block: str | None = None
+    final_texts: list[str] = []
+    synthesized = False
+    for rec in records:
+        if rec.get("parent_tool_use_id") is not None:
+            continue
+        rtype = rec.get("type")
+        content = (
+            rec.get("message", {}).get("content") if isinstance(rec.get("message"), dict) else None
+        )
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if (
+                not phase6_started
+                and _phase6_starts(str(rtype), block)
+                and str(block.get("id")) not in refused
+            ):
+                phase6_started = True
+            if rtype == "assistant" and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str):
+                    if gate_block is not None and not phase6_started:
+                        gate_texts.append(text)
+                    if final_block is not None:
+                        final_texts.append(text)
+            elif rtype == "assistant" and block.get("type") == "tool_use":
+                prompt = (block.get("input") or {}).get("prompt")
+                if isinstance(prompt, str) and re.match(r"\s*Run /synthesize\b", prompt):
+                    synthesized = True
+                command = (block.get("input") or {}).get("command")
+                if isinstance(command, str) and "scripts/print_summary.py" in command:
+                    if re.search(r"--final\b", command):
+                        final_ids.add(str(block.get("id")))
+                    elif re.search(r"--gate\b", command):
+                        gate_ids.add(str(block.get("id")))
+            elif rtype == "user" and block.get("type") == "tool_result":
+                use_id = str(block.get("tool_use_id"))
+                text = _text_from_content(block.get("content"))
+                if (
+                    use_id in gate_ids
+                    and not phase6_started
+                    and _printed_ok(text, block, _GATE_HEADING)
+                ):
+                    gate_block, gate_texts = text, []
+                elif use_id in final_ids and _printed_ok(text, block, _FINAL_HEADING):
+                    final_block, final_texts = text, []
+    if gate_block is None and phase6_started:
+        return False, (
+            "the approval-gate block was never printed: no successful top-level "
+            "scripts/print_summary.py --gate before schema design started"
+        )
+    missing = _missing_lines(_gate_lines_to_show(gate_block or ""), gate_texts)
+    if missing:
+        return False, (
+            "the approval-gate block never appeared in the orchestrator's chat text before "
+            f"schema design started (it is only in the tool output, which the user does not "
+            f"see); missing line: {_truncate(missing[0])!r}"
+        )
+    if final_block is None:
+        if not synthesized:
+            return True, None
+        return False, (
+            "the final summary was never printed: no successful top-level "
+            "scripts/print_summary.py --final after /synthesize was dispatched"
+        )
+    missing = _missing_lines(_final_lines_to_show(final_block, mode), final_texts)
+    if missing:
+        return False, (
+            "the final summary never appeared in the orchestrator's chat text after "
+            "scripts/print_summary.py --final (it is only in the tool output, which the user "
+            f"does not see); missing line: {_truncate(missing[0])!r}"
+        )
+    if not any(_COMPLETE_RE.search(text) for text in final_texts):
+        return False, (
+            "the MODERNIZE_RESULT: complete line never appeared in the orchestrator's chat text "
+            "after the final summary"
         )
     return True, None
 
@@ -1274,6 +1425,11 @@ def check_transcript(
     if not pointers_ok:
         raise fail(f"missing UI pointer: {pointers_reason}")
 
+    # #1605: the gate block and the final summary must be in the orchestrator's chat text.
+    shown_ok, shown_reason = check_printed_blocks_shown(records, mode)
+    if not shown_ok:
+        raise fail(f"not shown in chat: {shown_reason}")
+
     if state_file is not None and state_file.is_file():
         try:
             state = json.loads(state_file.read_text())
@@ -1509,7 +1665,10 @@ def cmd_check_transcript(args: argparse.Namespace) -> None:
     settings_file = Path(args.settings_file) if args.settings_file else None
     try:
         summary = check_transcript(
-            Path(args.transcript), args.mode, state_file=state_file, settings_file=settings_file
+            Path(args.transcript),
+            args.mode,
+            state_file=state_file,
+            settings_file=settings_file,
         )
     except TranscriptError as exc:
         print(json.dumps({"error": str(exc), **exc.partial}))

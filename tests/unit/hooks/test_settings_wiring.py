@@ -38,6 +38,7 @@ def test_interactive_settings() -> None:
         "block_baseline_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "block_contract_version_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "remind_llm_run.py": ("Stop", ""),
+        "remind_quote_printed_summary.py": ("PostToolUse", "Bash"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),
     }
 
@@ -50,6 +51,7 @@ def test_headless_settings() -> None:
         "block_fork_pr_push.py": ("PreToolUse", "Bash"),
         "block_baseline_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "block_contract_version_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
+        "remind_quote_printed_summary.py": ("PostToolUse", "Bash"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),
         "require_modernize_result.py": ("Stop", ""),
     }

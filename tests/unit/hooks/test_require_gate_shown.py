@@ -171,11 +171,12 @@ def test_the_gate_batched_with_the_split_is_refused(tmp_path: Path, run, session
     assert res.stderr.count("\n") == 1
 
 
+@pytest.mark.passes_on_main  # the hook is unchanged; only its comment moved to #1605
 @pytest.mark.parametrize("session", [False, True])
 def test_the_gate_in_an_earlier_message_lets_schema_design_start(tmp_path, run, session) -> None:
     # batch10230505, batch10231016, pr1402: the gate alone, then the split in a later message.
-    # Whether the model also retyped the block (or wrote it only in thinking) does not matter:
-    # the gate's own output is what the user sees.
+    # This hook holds only the order: whether the chat quoted the block is the transcript
+    # check's job (#1605), so a quote, or none, does not change the verdict here.
     records = [*_gate_ran(), _thinking("msg-next")]
     assert run(_event(tmp_path, records, session=session)).code == 0
     assert run(_event(tmp_path, _gate_ran(), session=session)).code == 0

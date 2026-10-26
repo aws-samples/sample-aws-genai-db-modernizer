@@ -13,6 +13,7 @@ from src.report.deliverables import FOLDER_FILENAMES
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURE = replay.DEFAULT_FIXTURE
+REPO_ROOT = replay.REPO_ROOT
 
 
 def _records(text: str) -> list[dict]:
@@ -217,7 +218,8 @@ def test_save_refuses_a_run_that_did_not_pass(tmp_path: Path) -> None:
 
 
 def test_the_saved_transcript_passes_the_transcript_checks() -> None:
-    """The current allowlist and transcript checks still accept the saved passing run."""
+    """The current allowlist and transcript checks, the chat checks of #1605 included, still
+    accept the saved passing run."""
     saved = json.loads((FIXTURE / replay.RUN_FILE).read_text())
     summary = run.check_transcript(FIXTURE / replay.TRANSCRIPT_FILE, saved["mode"])
     assert (summary["db"], summary["job_id"], summary["mode"]) == (
@@ -225,6 +227,44 @@ def test_the_saved_transcript_passes_the_transcript_checks() -> None:
         saved["job_id"],
         saved["mode"],
     )
+    records = run.iter_jsonl(FIXTURE / replay.TRANSCRIPT_FILE)
+    assert run.check_printed_blocks_shown(records, saved["mode"]) == (True, None)
+
+
+def _without_chat_quotes(records: list[dict]) -> list[dict]:
+    """The saved run as a pre-#1605 orchestrator wrote it: the gate block and the final summary
+    only in their tool output, the chat text pointing at "the block above"."""
+    out: list[dict] = json.loads(json.dumps(records))
+    for rec in out:
+        if rec.get("type") != "assistant" or rec.get("parent_tool_use_id") is not None:
+            continue
+        for block in rec["message"]["content"]:
+            text = block.get("text") if block.get("type") == "text" else None
+            if isinstance(text, str) and "## Assignment for approval" in text:
+                block["text"] = "The block above is the approval gate. Approve this assignment?"
+            elif isinstance(text, str) and "## Assessment:" in text:
+                tail = text[text.find("MODERNIZE_RESULT") :] if "MODERNIZE_RESULT" in text else ""
+                block["text"] = "The summary above is the assessment.\n" + tail
+    return out
+
+
+def test_the_saved_run_without_its_chat_quotes_fails(tmp_path: Path) -> None:
+    """The #1605 regression: the same run with the blocks only in tool output fails."""
+    saved = json.loads((FIXTURE / replay.RUN_FILE).read_text())
+    records = _without_chat_quotes(run.iter_jsonl(FIXTURE / replay.TRANSCRIPT_FILE))
+    ok, reason = run.check_printed_blocks_shown(records, saved["mode"])
+    assert not ok and "approval-gate block never appeared" in str(reason)
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+    with pytest.raises(run.TranscriptError):
+        run.check_transcript(path, saved["mode"])
+
+
+@pytest.mark.passes_on_main  # guards that no replay-only skip of the chat checks comes back
+def test_replay_runs_every_transcript_check() -> None:
+    script = (REPO_ROOT / "ci" / "replay.sh").read_text()
+    assert "--recorded-before-chat-quote" not in script
+    assert 'ci/llm/run.py check-transcript "$FIXTURE/transcript.jsonl" --mode "$MODE"' in script
 
 
 def test_the_saved_run_names_no_machine_user_or_account() -> None:

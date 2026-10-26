@@ -12,6 +12,7 @@ messages, `permission_denials` entries, nested `usage` fields).
 from __future__ import annotations
 
 import json
+import re
 import subprocess  # nosec B404 -- runs this repo's own scripts/binaries with fixed argv
 import xml.etree.ElementTree as ET  # nosec B405 -- builds/writes synthetic JUnit fixtures; defusedxml.ElementTree has no builder/writer API, only parsing, and ci/llm/run.py (the code under test) already parses with defusedxml
 from pathlib import Path
@@ -1680,18 +1681,9 @@ _GATE_BLOCK = (
 
 
 def _gate_printed_records() -> list[dict]:
-    """The UI run, with the summary page's URL from the printed gate block (#1307)
-    instead of a separate ``start_local_ui.py --page summary`` call."""
-    records = _ui_records()
-    for rec in records:
-        for block in (rec.get("message") or {}).get("content") or []:
-            if block.get("type") == "tool_use" and "--page summary" in block["input"].get(
-                "command", ""
-            ):
-                block["input"]["command"] = _GATE_COMMAND
-            elif block.get("type") == "tool_result" and _SUMMARY_URL in json.dumps(block):
-                block["content"][0]["text"] = _GATE_BLOCK
-    return records
+    """The UI run, with the summary page's URL from the printed gate block (#1307) only,
+    without the separate ``start_local_ui.py --page summary`` call (``tu-2``)."""
+    return [rec for rec in _ui_records() if '"tu-2"' not in json.dumps(rec)]
 
 
 def test_the_summary_url_may_come_from_the_printed_gate_block() -> None:
@@ -1758,9 +1750,8 @@ def test_the_gate_url_counts_only_from_the_gate_block_not_the_final_summary(
 
 def _split_refused_then_gate_quoted() -> list[dict]:
     """#1401: the split, sent in one message with the gate, is refused by the gate hook; the
-    orchestrator runs it again in a later message. The summary URL is shown by the gate's own
-    output (no text quote)."""
-    records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
+    orchestrator quotes the gate block and runs the split again in a later message."""
+    records = _gate_printed_records()
     gate_use = next(
         rec
         for rec in records
@@ -1779,7 +1770,7 @@ def _split_refused_then_gate_quoted() -> list[dict]:
     gate_at = next(
         i
         for i, rec in enumerate(records)
-        if rec.get("type") == "user" and json.dumps(_GATE_BLOCK) in json.dumps(rec)
+        if rec.get("type") == "user" and '"tool_use_id": "tu-g"' in json.dumps(rec)
     )
     refusal = {
         "type": "user",
@@ -1949,15 +1940,15 @@ _HAND_BACK = "[Subagent hand-back] Synthesis for job dry00002 (wordpress) is com
 _LAUNCHED = "Async agent launched successfully. agentId: a1"
 
 
-def test_the_final_summary_output_alone_shows_the_results_url() -> None:
-    # Maintainer decision on #1401, applied to the final pointer (the PR 1402 e2e-llm run): the
-    # user sees print_summary.py --final's output after synthesis, so its Results page line counts.
-    assert run.check_ui_pointers(_final_printed_records(_synthesis(_HAND_BACK)), "ui") == (
-        True,
-        None,
-    )
-    async_done = _synthesis(_LAUNCHED, notification=True)
-    assert run.check_ui_pointers(_final_printed_records(async_done), "ui") == (True, None)
+def test_the_final_summary_output_alone_does_not_show_the_results_url(tmp_path: Path) -> None:
+    # #1605 (replaces the #1401 reading): Claude Code collapses tool output, so the Results page
+    # line in print_summary.py --final's output counts only once the orchestrator quotes it.
+    for synthesis in (_synthesis(_HAND_BACK), _synthesis(_LAUNCHED, notification=True)):
+        records = _final_printed_records(synthesis)
+        ok, reason = run.check_ui_pointers(records, "ui")
+        assert not ok and "never quoted the results-page ui_url" in str(reason)
+        records[-2]["message"]["content"][0]["text"] += f"\nResults page: {_RESULTS_URL}"
+        assert run.check_ui_pointers(records, "ui") == (True, None)
 
 
 @pytest.mark.parametrize(
@@ -1991,20 +1982,22 @@ def _message_ids(records: list[dict]) -> list[dict]:
     return out
 
 
-def test_the_gate_output_alone_shows_the_summary_url() -> None:
-    # Maintainer decision on #1401: the user sees the gate script's output, so its Summary page
-    # line counts without the orchestrator retyping it (batch10231016, pr1402).
+def test_the_gate_output_alone_does_not_show_the_summary_url(tmp_path: Path) -> None:
+    # #1605 (replaces the #1401 reading): the interactive run where the gate's output was only a
+    # collapsed "Ran 1 shell command"; its Summary page line counts only once quoted in chat.
     records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
-    assert run.check_ui_pointers(records, "ui") == (True, None)
-    assert run.check_ui_pointers(_message_ids(records), "ui") == (True, None)
+    _fails_with(tmp_path, records, "never quoted the summary-page ui_url")
+    _fails_with(tmp_path, _message_ids(records), "never quoted the summary-page ui_url")
+    assert run.check_ui_pointers(_message_ids(_gate_printed_records()), "ui") == (True, None)
 
 
+@pytest.mark.passes_on_main  # guards the #1401 order check, kept under #1605
 def test_a_gate_in_the_same_message_as_the_first_schema_design_call_fails(
     tmp_path: Path,
 ) -> None:
     # The gate's result can be recorded before the split's tool_use of the same message; the
     # gate still was not run on its own before schema design started.
-    records = _message_ids(_drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL))
+    records = _message_ids(_gate_printed_records())
     gate_rec = next(
         rec
         for rec in records
@@ -2025,6 +2018,7 @@ def test_a_gate_in_the_same_message_as_the_first_schema_design_call_fails(
     _fails_with(tmp_path, records, "ran the approval gate in the same message")
 
 
+@pytest.mark.passes_on_main  # guards the #1401 order check, kept under #1605
 def test_a_gate_that_runs_only_after_schema_design_started_fails(tmp_path: Path) -> None:
     records = _drop_url_from_texts(_gate_printed_records(), _SUMMARY_URL)
     gate_at = next(
@@ -2055,6 +2049,7 @@ def test_a_gate_that_runs_only_after_schema_design_started_fails(tmp_path: Path)
         )
     )
     records = rest[: split_at + 2] + gate_pair + rest[split_at + 2 :]
+    records[-2]["message"]["content"][0]["text"] += f"\nSummary page: {_SUMMARY_URL}"
     _fails_with(tmp_path, records, "only after schema design started")
 
 
@@ -2071,6 +2066,189 @@ def test_design_schema_dispatch_also_marks_schema_design_start() -> None:
     }
     assert run._phase6_starts("assistant", dispatch)
     assert not run._phase6_starts("assistant", other)
+
+
+# ---------------------------------------------------------------------------
+# check_transcript: the gate block and the final summary are shown in chat (#1605)
+# ---------------------------------------------------------------------------
+
+
+def _chat_records() -> list[dict]:
+    records: list[dict] = run.iter_jsonl(FIXTURES / "synthetic-success-chat.jsonl")
+    return records
+
+
+def _texts_of(records: list[dict]) -> list[dict]:
+    """The top-level assistant text blocks, in order."""
+    return [
+        block
+        for rec in records
+        if rec.get("type") == "assistant"
+        for block in rec["message"]["content"]
+        if block.get("type") == "text"
+    ]
+
+
+def _gate_quote(records: list[dict]) -> dict:
+    return next(b for b in _texts_of(records) if b["text"].startswith("## Assignment for approval"))
+
+
+def _final_quote(records: list[dict]) -> dict:
+    return next(b for b in _texts_of(records) if b["text"].startswith("## Assessment:"))
+
+
+def _not_shown(tmp_path: Path, records: list[dict], match: str, mode: str = "chat") -> None:
+    with pytest.raises(run.TranscriptError, match=match):
+        run.check_transcript(_transcript(tmp_path, records), mode)
+
+
+@pytest.mark.parametrize("mode", ["chat", "ui"])
+def test_the_gate_block_and_final_summary_quoted_in_chat_pass(mode: str) -> None:
+    records = _chat_records() if mode == "chat" else _ui_records()
+    assert run.check_printed_blocks_shown(records, mode) == (True, None)
+
+
+def test_the_block_above_with_no_block_fails(tmp_path: Path) -> None:
+    # The interactive run of #1605: the gate's output was a collapsed tool call and the model
+    # pointed at it instead of quoting it.
+    records = _chat_records()
+    _gate_quote(records)["text"] = (
+        "The block above is the approval gate for job dry00001. Approve this assignment and "
+        "continue to Schema Design, or modify?"
+    )
+    _not_shown(tmp_path, records, "approval-gate block never appeared in the orchestrator's chat")
+
+
+def test_a_gate_block_only_in_the_tool_result_fails(tmp_path: Path) -> None:
+    # The block is in print_summary.py --gate's tool_result (and a subagent's text and the
+    # result line), never in the orchestrator's own chat text.
+    records = _chat_records()
+    block = _gate_quote(records)["text"]
+    _gate_quote(records)["text"] = "Approve this assignment and continue to Schema Design?"
+    records.insert(
+        -1,
+        {
+            "type": "assistant",
+            "parent_tool_use_id": "tu-agent",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": block}]},
+        },
+    )
+    records[-1]["result"] = block + records[-1]["result"]
+    assert any(block.splitlines()[0] in json.dumps(r) for r in records if r["type"] == "user")
+    _not_shown(tmp_path, records, "missing line: '## Assignment for approval: wordpress")
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    ["| Aurora MySQL | 44 | 44 | 41.1% | kept |", "Total: 107 queries."],
+    ids=["table-row", "total"],
+)
+def test_a_gate_quote_missing_a_figure_line_fails(tmp_path: Path, dropped: str) -> None:
+    records = _chat_records()
+    quote = _gate_quote(records)
+    quote["text"] = quote["text"].replace(dropped, "")
+    _not_shown(tmp_path, records, re.escape(dropped))
+
+
+def test_the_scope_lines_and_summary_page_line_must_be_quoted(tmp_path: Path) -> None:
+    scope = "Engines in scope: DynamoDB, Aurora MySQL (customer's choice)."
+    unservable = (
+        "3 of 107 queries have no engine in the customer's engine scope; a new assessment whose "
+        "scope adds an engine can serve them."
+    )
+    url = "- Summary page (the query flow and every query's engine): http://x/summary/dry00001"
+    records = _chat_records()
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_result" and block["tool_use_id"] == "tu-g":
+                text = block["content"][0]["text"]
+                block["content"][0]["text"] = (
+                    text.replace(
+                        "Total: 107 queries.\n", f"Total: 107 queries.\n\n{scope}\n\n{unservable}\n"
+                    )
+                    + url
+                )
+    for line in (scope, unservable, url):
+        _not_shown(tmp_path, records, re.escape(line[:40]))
+        _gate_quote(records)["text"] += "\n" + line
+    assert run.check_printed_blocks_shown(records, "chat") == (True, None)
+
+
+def test_a_gate_quoted_only_after_schema_design_started_fails(tmp_path: Path) -> None:
+    records = _chat_records()
+    quote = _gate_quote(records)
+    split_at = next(
+        i
+        for i, rec in enumerate(records)
+        if rec["type"] == "assistant" and "--split" in json.dumps(rec)
+    )
+    records.insert(
+        split_at + 2,
+        {"type": "assistant", "message": {"role": "assistant", "content": [dict(quote)]}},
+    )
+    quote["text"] = "Approve?"
+    _not_shown(tmp_path, records, "before schema design started")
+
+
+def test_schema_design_with_no_gate_printed_fails(tmp_path: Path) -> None:
+    records = [r for r in _chat_records() if '"tu-g"' not in json.dumps(r)]
+    _not_shown(tmp_path, records, "approval-gate block was never printed")
+
+
+def test_a_failed_gate_print_is_no_gate(tmp_path: Path) -> None:
+    records = _chat_records()
+    for rec in records:
+        for block in (rec.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_result" and block["tool_use_id"] == "tu-g":
+                block["content"][0]["text"] = '{"status": "error", "message": "no assignment"}'
+    _not_shown(tmp_path, records, "approval-gate block was never printed")
+
+
+def test_a_final_summary_only_in_the_tool_result_fails(tmp_path: Path) -> None:
+    records = _chat_records()
+    _final_quote(records)["text"] = (
+        "The summary above is the assessment.\n"
+        "MODERNIZE_RESULT: complete job_id=dry00001 db=wordpress mode=chat"
+    )
+    _not_shown(tmp_path, records, "final summary never appeared in the orchestrator's chat")
+
+
+def test_a_final_summary_missing_a_headline_figure_fails(tmp_path: Path) -> None:
+    records = _chat_records()
+    quote = _final_quote(records)
+    quote["text"] = quote["text"].replace("- Projected monthly cost: $1,234\n", "")
+    _not_shown(tmp_path, records, "Projected monthly cost")
+
+
+def test_the_result_line_must_follow_the_final_summary_in_chat(tmp_path: Path) -> None:
+    # The result line only in the result record (or before the final summary) does not count.
+    records = _chat_records()
+    quote = _final_quote(records)
+    quote["text"] = quote["text"].split("MODERNIZE_RESULT")[0]
+    records[3]["message"]["content"].insert(
+        0,
+        {
+            "type": "text",
+            "text": "MODERNIZE_RESULT: complete job_id=dry00001 db=wordpress mode=chat",
+        },
+    )
+    _not_shown(tmp_path, records, "MODERNIZE_RESULT: complete line never appeared")
+
+
+def test_a_synthesis_with_no_final_summary_printed_fails(tmp_path: Path) -> None:
+    records = [r for r in _chat_records() if '"tu-f"' not in json.dumps(r)]
+    records.insert(-2, _synthesis(_HAND_BACK)[0])
+    records.insert(-2, _synthesis(_HAND_BACK)[1])
+    _not_shown(tmp_path, records, "final summary was never printed")
+
+
+def test_ui_mode_final_needs_only_the_results_page_line() -> None:
+    # In ui mode chat carries only the UI pointers at completion.
+    records = _ui_records()
+    final = next(b for b in _texts_of(records) if "MODERNIZE_RESULT" in b["text"])
+    assert "## Assessment" not in final["text"]
+    assert run.check_printed_blocks_shown(records, "ui") == (True, None)
+    assert run.check_printed_blocks_shown(records, "both")[0] is False
 
 
 def test_chat_mode_needs_no_ui_pointers() -> None:

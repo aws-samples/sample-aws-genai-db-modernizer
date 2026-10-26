@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash, Agent): no schema design before the approval gate ran on its own (#1401).
 
-After reality check, ``/modernize`` runs ``scripts/print_summary.py --gate --mode <mode>``; its
-output (the gate block, ending with the summary page's URL unless the mode is chat) is what the
-user sees at the gate, so the model does not have to retype it (maintainer decision on #1401).
-What must hold is the order: the gate runs in an earlier assistant message than the first
+After reality check, ``/modernize`` runs ``scripts/print_summary.py --gate --mode <mode>`` and
+pastes its output (the gate block, ending with the summary page's URL unless the mode is chat)
+into its next chat message: Claude Code collapses tool output, so the user sees only the quote
+(#1605; ``remind_quote_printed_summary.py`` reminds, the e2e-llm transcript check enforces it).
+What this hook holds is the order: the gate runs in an earlier assistant message than the first
 schema-design call. The #1358 failures batched the two in one message, so the run moved on
 before the gate was in front of anyone.
 
