@@ -13,6 +13,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.ci.json"
 COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
@@ -180,3 +182,24 @@ def test_bash_timeouts_cover_long_pipeline_phases() -> None:
     env = _load_settings()["env"]
     assert int(env["BASH_DEFAULT_TIMEOUT_MS"]) >= 600_000
     assert int(env["BASH_MAX_TIMEOUT_MS"]) >= int(env["BASH_DEFAULT_TIMEOUT_MS"])
+
+
+@pytest.mark.passes_on_main
+def test_no_allow_rule_reaches_into_the_home_directory() -> None:
+    """#1593 review: the blanket Read(//root/**) deny stays (the CI runner's home),
+    and no allow rule opens anything under ~/.claude, ~ or /root. A headless script
+    keeps its line short and writes any detail under artifacts/ instead."""
+    settings = _load_settings()["permissions"]
+    assert "Read(//root/**)" in settings["deny"]
+    for rule in settings["allow"]:
+        _, _, spec = rule.partition("(")
+        assert not spec.startswith(("~", "//root", "/root")), rule
+        assert ".claude/projects" not in spec and "tool-results" not in spec, rule
+
+
+@pytest.mark.passes_on_main
+def test_the_headless_run_never_adds_a_directory() -> None:
+    """--add-dir would make reads outside the repo 'working directory' reads that
+    dontAsk allows with no rule; ci/e2e-llm.sh never passes it."""
+    script = (REPO_ROOT / "ci" / "e2e-llm.sh").read_text()
+    assert "--add-dir" not in script
