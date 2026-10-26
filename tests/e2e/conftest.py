@@ -366,3 +366,13 @@ def ui(api: str) -> Iterator[str]:
         yield f"http://localhost:{UI_PORT}"
     finally:
         _terminate(proc, log_file)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Iterator[Any]:
+    """Keep each phase's report on the item (``item.rep_call``), so a fixture's
+    teardown can tell whether its test failed (test_ui.py's shared results pages
+    save a screenshot and a trace then, #1593)."""
+    outcome: Any = yield
+    report = outcome.get_result()
+    setattr(item, f"rep_{report.when}", report)

@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import playwright.sync_api
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Browser, Locator, Page, expect
 
 from src.report.deliverables import DELIVERABLES_DIR, FOLDER_FILENAMES
 from tests.e2e.pipeline import PipelineResult
@@ -92,6 +93,72 @@ def _loaded(page: Page, r: PipelineResult) -> None:
     expect(page.get_by_text(r.db).first).to_be_visible(timeout=READY_MS)
 
 
+OpenResults = Callable[[PipelineResult], tuple[Page, dict[str, list[str]]]]
+
+
+@pytest.fixture(scope="module")
+def _shared_results(
+    browser: Browser, browser_context_args: dict, ui: str
+) -> Iterator[tuple[object, OpenResults]]:
+    """The context and opener behind ``loaded_results``: one page per job for the module."""
+    context = browser.new_context(**browser_context_args)
+    # One trace for the module's shared pages; each test records a chunk of it.
+    context.tracing.start(screenshots=True, snapshots=True)
+    opened: dict[str, tuple[Page, dict[str, list[str]]]] = {}
+
+    def open_results(r: PipelineResult) -> tuple[Page, dict[str, list[str]]]:
+        if r.job_id not in opened:
+            page = context.new_page()
+            ev = _watch(page)
+            page.goto(f"{ui}/analysis/results/{r.job_id}")
+            _loaded(page, r)
+            opened[r.job_id] = (page, ev)
+        return opened[r.job_id]
+
+    yield context, open_results
+    context.tracing.stop()
+    context.close()
+
+
+@pytest.fixture
+def loaded_results(
+    _shared_results: tuple[object, OpenResults],
+    request: pytest.FixtureRequest,
+    pytestconfig: pytest.Config,
+) -> Iterator[OpenResults]:
+    """One loaded results page per job, shared by the tests that only read it (#1593).
+
+    Each such test used to open its own page, so a large job's page (discourse: 1,654
+    queries, about 11 MB of JSON) was fetched and rendered a dozen times per run. A
+    test that clicks, types, resizes or expands anything opens its own ``page``
+    instead, so every shared page stays exactly as it loaded. The events ``_watch``
+    records cover the shared page's whole life, so a test's "no console error, no
+    failed request" check holds from the load to its own reads.
+
+    The context is not pytest-playwright's, so its ``--screenshot`` and ``--tracing``
+    options do not reach it: a failing test keeps a screenshot of each shared page it
+    read and its own trace chunk here instead, under ``--output``."""
+    context, open_results = _shared_results
+    used: dict[str, Page] = {}
+
+    def open_and_record(r: PipelineResult) -> tuple[Page, dict[str, list[str]]]:
+        page, ev = open_results(r)
+        used[r.job_id] = page
+        return page, ev
+
+    context.tracing.start_chunk()  # type: ignore[attr-defined]
+    yield open_and_record
+    report = getattr(request.node, "rep_call", None)
+    if report is None or not report.failed:
+        context.tracing.stop_chunk()  # type: ignore[attr-defined]
+        return
+    out = Path(pytestconfig.getoption("output")) / re.sub(r"[^\w.-]+", "-", request.node.nodeid)
+    out.mkdir(parents=True, exist_ok=True)
+    context.tracing.stop_chunk(path=str(out / "trace.zip"))  # type: ignore[attr-defined]
+    for job_id, page in used.items():
+        page.screenshot(path=str(out / f"shared-{job_id}.png"), full_page=True)
+
+
 def _top_engine_label(r: PipelineResult) -> str:
     """The highest-ranked target engine from the synthesis report, as the UI labels it.
 
@@ -119,12 +186,10 @@ def test_dashboard_lists_both_jobs(page: Page, ui: str, all_runs: list[PipelineR
 
 
 def test_results_page_shows_the_ranked_engines(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     for r in all_runs:
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        _loaded(page, r)
+        page, ev = loaded_results(r)
         text = page.inner_text("body")
         assert "undefined" not in text and "NaN" not in text, r.db
         assert r.db in text, (r.db, "source database name missing")
@@ -731,7 +796,7 @@ OPTIONAL_SECTIONS = {
 
 
 def test_results_page_states_the_price_date(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1196: the projected-cost tile states the same price date report.json's
     facts.price_list holds (the line the PDF and engineering reports print)."""
@@ -740,17 +805,17 @@ def test_results_page_states_the_price_date(
     for r in all_runs:
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         assert (report.get("facts") or {}).get("price_list"), r.db
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
+        page, ev = loaded_results(r)
+        # The figure itself, not network silence (#1593): the page is loaded once
+        # the figure renders, whatever else is still in flight.
         shown = page.locator("[data-figure=price-list]")
-        shown.wait_for()
+        shown.wait_for(timeout=READY_MS)
         assert shown.inner_text().strip() == f"List prices: {price_list_text(report['facts'])}"
         assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
 
 
 def test_results_page_states_what_each_engine_was_sized_for(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1195: each cost card states what its figure was sized for, as report.json's
     facts.engines[].cost_sizing holds it (the reports' "Sized for" column)."""
@@ -764,10 +829,8 @@ def test_results_page_states_what_each_engine_was_sized_for(
             if e.get("cost_sizing") and e.get("monthly_cost_usd") is not None
         }
         assert sizing, r.db
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.wait_for_load_state("networkidle")
-        page.locator("[data-figure=cost-sizing]").first.wait_for()
+        page, ev = loaded_results(r)
+        page.locator("[data-figure=cost-sizing]").first.wait_for(timeout=READY_MS)
         for engine, basis in sizing.items():
             shown = page.locator(f"[data-figure=cost-sizing][data-engine={engine}]")
             assert shown.inner_text().strip() == f"Sized for {cost_sizing_text(basis)}", (
@@ -778,7 +841,7 @@ def test_results_page_states_what_each_engine_was_sized_for(
 
 
 def test_results_page_shows_the_headline_first(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1028: the results page opens with the deliverable buttons, the executive
     summary, the query flow, the cost breakdown and the migration roadmap, in
@@ -786,8 +849,7 @@ def test_results_page_shows_the_headline_first(
     the report has them), then query routing, collapsed. The close-call banner names its
     first 3 queries by a 5-character id, then "+N more"."""
     for r in all_runs:
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page, ev = loaded_results(r)
         page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
         present = page.evaluate(
             "ids => ids.filter(id => document.getElementById(id))", SECTION_ORDER
@@ -826,7 +888,7 @@ def test_results_page_shows_the_headline_first(
 
 
 def test_results_page_states_the_resolved_risks_by_severity(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1020: the risk section's resolved-risks header reads the stored
     facts.resolved_risks_by_severity, as the executive and engineering reports do
@@ -843,9 +905,9 @@ def test_results_page_states_the_resolved_risks_by_severity(
         expected = f"{n} {noun} resolved by the assignment: {severities}"
         md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
         assert f"({severities})" in md, r.db
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        page, ev = loaded_results(r)
+        # The risk section itself, not file order: this test may run first (-k).
+        page.get_by_role("heading", name="Risk assessment").wait_for(timeout=READY_MS)
         header = page.get_by_text(expected, exact=True)
         assert header.count() == 1, (r.db, expected)
         checked += 1
@@ -854,7 +916,7 @@ def test_results_page_states_the_resolved_risks_by_severity(
 
 
 def test_results_page_states_the_distinct_query_patterns(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1146: the results page prints "N queries in M distinct query patterns" from
     facts.query_pattern_counts, the same figures the engineering report prints."""
@@ -866,8 +928,7 @@ def test_results_page_states_the_distinct_query_patterns(
         md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
         found = figure.search(md)
         assert found and tuple(int(g.replace(",", "")) for g in found.groups()) == expected, r.db
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page, ev = loaded_results(r)
         line = page.locator('[data-figure="query-patterns"]')
         line.wait_for(timeout=READY_MS)
         shown = figure.fullmatch(line.inner_text().strip())
@@ -877,7 +938,7 @@ def test_results_page_states_the_distinct_query_patterns(
 
 
 def test_results_page_states_the_cost_basis_the_deliverables_state(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1197: the read I/O basis DocumentDB's estimate rests on (the source's hit ratio,
     its memory scaling and the billed-miss floor) is one report fact,
@@ -895,17 +956,13 @@ def test_results_page_states_the_cost_basis_the_deliverables_state(
             # wordpress model run has no DocumentDB estimate): then nothing is printed.
             md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
             assert "- Cost basis:" not in md, r.db
-            ev = _watch(page)
-            page.goto(f"{ui}/analysis/results/{r.job_id}")
-            _loaded(page, r)
+            page, ev = loaded_results(r)
             assert page.locator('[data-figure="cost-basis"]').count() == 0, r.db
             assert ev == {"console": [], "pageerror": [], "failed": []}, (r.db, ev)
             continue
         md = md_plain(r.deliverable("engineering-report.md").read_text(encoding="utf-8"))
         pdf = " ".join(" ".join(pdf_page_texts(str(r.deliverable("executive-report.pdf")))).split())
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        _loaded(page, r)
+        page, ev = loaded_results(r)
         lines = page.locator('[data-figure="cost-basis"]')
         lines.first.wait_for(timeout=READY_MS)
         assert [t.strip() for t in lines.all_inner_texts()] == notes, r.db
@@ -920,7 +977,7 @@ def test_results_page_states_the_cost_basis_the_deliverables_state(
 
 
 def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#996: the sentence the engineering report prints under "no open risks" is on the
     results page too, in the risk section, and only for a report with no open risk."""
@@ -931,9 +988,9 @@ def test_results_page_states_the_no_open_risks_caveat_only_when_no_risk_is_open(
         no_open = facts["open_risk_count"] == 0
         md = r.deliverable("engineering-report.md").read_text(encoding="utf-8")
         assert (NO_OPEN_RISKS_CAVEAT in md) == no_open, r.db
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
-        page.locator("#migration-roadmap-section").wait_for(timeout=READY_MS)
+        page, ev = loaded_results(r)
+        # The risk section itself: a count of 0 must not come from a page not drawn yet.
+        page.get_by_role("heading", name="Risk assessment").wait_for(timeout=READY_MS)
         note = page.locator("#no-open-risks-note")
         assert note.count() == (1 if no_open else 0), r.db
         if no_open:
@@ -1086,11 +1143,13 @@ def _open_results(page: Page, ui: str, r: PipelineResult) -> dict[str, list[str]
     return ev
 
 
-def test_results_page_text_is_clean(page: Page, ui: str, all_runs: list[PipelineResult]) -> None:
+def test_results_page_text_is_clean(
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
+) -> None:
     from src.tools.validation.customer_text_guard import scan_text
 
     for r in all_runs:
-        ev = _open_results(page, ui, r)
+        page, ev = loaded_results(r)
         text = page.inner_text("body")
         assert _leaked_forbidden_text(text) == [], r.db
         findings = scan_text(text, f"results-page:{r.db}")
@@ -1111,20 +1170,42 @@ def test_results_page_has_no_horizontal_overflow(
 def _expand_every_section(page: Page) -> None:
     """Open every collapsed section of the page's content (the Table design's
     tables and query groups, the explorer's groups, ...), so the scan sees what
-    a reader can open, not only what shows on load."""
-    main = page.locator("main")
+    a reader can open, not only what shows on load.
+
+    Each level's visible section headers are clicked in one ``evaluate`` (#1593): a
+    large job has about 700 of them, and a Playwright click per header (an actionability
+    wait and a round trip each) took over two minutes. The headers and the click order
+    are the same. Visible means what Playwright's ``is_visible()`` checks: rendered
+    (``checkVisibility`` with ``visibilityProperty``, so ``visibility: hidden`` is out)
+    and a non-empty bounding box. ``click()`` fires the same click event the page's
+    handlers open a section on. The check after the loop fails when a visible header
+    is still closed, so a click that stopped opening sections cannot pass."""
     for _ in range(4):  # nested sections open one level at a time
         # Section headers only (they control their content); never a menu, a
         # dropdown or a popover trigger.
-        closed = main.locator('[aria-expanded="false"][aria-controls]:not([aria-haspopup])')
-        n = closed.count()
-        if not n:
-            return
-        for i in range(n - 1, -1, -1):
-            item = closed.nth(i)
-            if item.is_visible():
-                item.click()
+        clicked = page.evaluate("""() => {
+              const isVisible = (el) => {
+                const box = el.getBoundingClientRect();
+                return el.checkVisibility({visibilityProperty: true})
+                  && box.width > 0 && box.height > 0;
+              };
+              const closed = [...document.querySelectorAll(
+                'main [aria-expanded="false"][aria-controls]:not([aria-haspopup])')];
+              const visible = closed.filter(isVisible);
+              visible.reverse().forEach((el) => el.click());
+              return visible.length;
+            }""")
+        if not clicked:
+            break
         page.wait_for_timeout(200)
+    still_closed = page.locator(
+        'main [aria-expanded="false"][aria-controls]:not([aria-haspopup])'
+    ).evaluate_all(
+        "els => els.filter((el) => { const b = el.getBoundingClientRect();"
+        " return el.checkVisibility({visibilityProperty: true})"
+        " && b.width > 0 && b.height > 0; }).length"
+    )
+    assert still_closed == 0, f"{still_closed} visible sections did not open"
 
 
 def test_results_page_has_no_moderate_or_worse_accessibility_violations(
@@ -1156,7 +1237,7 @@ def _designed_runs(all_runs: list[PipelineResult]) -> list[PipelineResult]:
 
 
 def test_the_designed_job_renders_the_schema_design_panels(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#987: the suite always has a job with schema designs, so the checks above
     also cover the panels only a schema-designed run shows: the explorer with
@@ -1168,7 +1249,7 @@ def test_the_designed_job_renders_the_schema_design_panels(
     if not any(r.external for r in all_runs):
         assert [r.job_id for r in designed] == ["ui-desi"]
     for r in designed:
-        ev = _open_results(page, ui, r)
+        page, ev = loaded_results(r)
         text = page.inner_text("body")
         headings = ["Access pattern explorer", "Trade-offs and design decisions"]
         aurora = bool(list(r.job_dir().glob("schema-aurora_*/v*/schema_output.json")))
@@ -1189,7 +1270,7 @@ def test_the_designed_job_renders_the_schema_design_panels(
 
 
 def test_results_page_states_the_pending_engine_choices(
-    page: Page, ui: str, all_runs: list[PipelineResult]
+    loaded_results: OpenResults, all_runs: list[PipelineResult]
 ) -> None:
     """#1003: the results page states the pending engine choices with the counts
     report.json's facts hold (the ones the engineering report and the PDF state),
@@ -1198,8 +1279,7 @@ def test_results_page_states_the_pending_engine_choices(
         report = json.loads((r.artifact_root / r.report["report"]).read_text())
         facts = report.get("facts") or {}
         n, q = facts.get("pending_choice_count") or 0, facts.get("pending_choice_query_count") or 0
-        ev = _watch(page)
-        page.goto(f"{ui}/analysis/results/{r.job_id}")
+        page, ev = loaded_results(r)
         page.locator("#sources-of-truth-section").wait_for(timeout=READY_MS)
         note = page.locator("#engine-choices-note")
         if n:
