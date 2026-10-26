@@ -356,7 +356,9 @@ def ui(api: str) -> Iterator[str]:
         # re-install the package on every invocation, which is slower and,
         # offline, can fail outright. The pinned dependency's own binary
         # (installed by `npm ci`) is what we actually want to run.
-        [str(serve_bin), "-s", "build", "-l", str(UI_PORT), "--no-clipboard"],
+        # Loopback only, as scripts/start_local_ui.py serves it: a bare port makes
+        # `serve` listen on every interface.
+        [str(serve_bin), "-s", "build", "-l", f"tcp://127.0.0.1:{UI_PORT}", "--no-clipboard"],
         cwd=REPO / "src" / "ui",
         stdout=log_file,
         stderr=subprocess.STDOUT,
