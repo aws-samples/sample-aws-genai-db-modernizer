@@ -31,6 +31,12 @@
 #   E2E_LLM_JUDGE_BASELINE - optional saved main judge.json; compared only when it
 #                            has the same rubric_version, and the judge step then fails
 #                            on a 2-point drop in one criterion or 1 point in two.
+#   E2E_LLM_JOB_BUDGET     - seconds, from this script's start, by which the report and
+#                            UI test steps must end (#1593). Default: 4800 (80 minutes),
+#                            which leaves the results step and the artifact upload time
+#                            inside the mirror's 90-minute job limit. A test step still
+#                            running at the deadline is stopped and recorded as failed
+#                            (124); one that would start after it is skipped (124).
 #   E2E_LLM_DRY_RUN        - "1" skips the claude call entirely (see below).
 #   E2E_LLM_TRANSCRIPT     - required when E2E_LLM_DRY_RUN=1: path to a transcript
 #                            .jsonl file to use in place of a real claude run.
@@ -85,7 +91,12 @@ esac
 
 OUT="${E2E_OUTPUT:-test-results}/llm-${MODE}-${FIXTURE}"
 mkdir -p "$OUT"
-rm -f "$OUT/results.json"
+# A previous run's outputs in a reused folder (the documented dry run reuses one)
+# must never stand in for this run's: a test step the job budget skips or stops
+# writes no junit, and results.json would otherwise read the old file (#1593).
+# Only these files: a dry run's $E2E_LLM_TRANSCRIPT may live in this folder.
+rm -f "$OUT/results.json" "$OUT/steps.json" "$OUT/summary.json" "$OUT/judge.json" \
+  "$OUT/reports-junit.xml" "$OUT/ui-junit.xml"
 DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 
 # PHASE names the preflight step in progress, for the EXIT trap's fallback
@@ -94,6 +105,8 @@ DRY_RUN="${E2E_LLM_DRY_RUN:-0}"
 # touched by a run that never started).
 PHASE="setup"
 CLAUDE_STARTED=0
+# The deadline run_before_deadline (ci/lib.sh) holds the test steps to.
+export E2E_LLM_DEADLINE_TS=$(($(date +%s) + ${E2E_LLM_JOB_BUDGET:-4800}))
 on_exit() {
   local rc=$?
   if [ "$CLAUDE_STARTED" = "1" ]; then
@@ -340,6 +353,28 @@ fi
 if [ -n "$DB" ] && [ -n "$JOB" ]; then
   log "deliverable checks for db=$DB job=$JOB"
 
+  # The judge goes first (#1593): it needs only the job's deliverables, and after the
+  # browser tests a slow UI step once left it no time before the job limit. The
+  # deliverables are rendered first the way the report tests' external-job fixture
+  # renders them (tests/e2e/pipeline.py from_existing_job), so the judge grades the
+  # same files the tests check.
+  run_render() {
+    uv run python scripts/run_report.py --job-id "$JOB" --db "$DB" --artifact-root "$ARTIFACT_ROOT" >/dev/null
+  }
+  step render run_render
+
+  run_judge() {
+    # Median of $JUDGE_SAMPLES (default 3) samples by the pinned judge model
+    # ($JUDGE_MODEL overrides it); with E2E_LLM_JUDGE_BASELINE (a saved main
+    # judge.json of the same rubric_version) a regression fails the judge step.
+    if [ -n "${E2E_LLM_JUDGE_BASELINE:-}" ]; then
+      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json" --baseline "$E2E_LLM_JUDGE_BASELINE"
+    else
+      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json"
+    fi
+  }
+  step judge run_judge
+
   # The headless run may have left its own local API/UI up (ui/both); the e2e
   # fixtures below start their own on the same ports, so stop any leftovers first.
   uv run python scripts/start_local_ui.py --stop >/dev/null 2>&1 || true
@@ -363,7 +398,7 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
       --browser chromium --browser webkit \
       --output="$OUT/pw-reports" --junitxml="$OUT/reports-junit.xml" -q
   }
-  step report-tests run_report_tests
+  step report-tests run_before_deadline run_report_tests
 
   if [ "$MODE" != "chat" ]; then
     run_ui_tests() {
@@ -371,20 +406,8 @@ if [ -n "$DB" ] && [ -n "$JOB" ]; then
         uv run pytest tests/e2e/test_ui.py -m e2e -p no:xdist --fail-on-skip --browser chromium \
         --output="$OUT/pw-ui" --junitxml="$OUT/ui-junit.xml" -q
     }
-    step ui-tests run_ui_tests
+    step ui-tests run_before_deadline run_ui_tests
   fi
-
-  run_judge() {
-    # Median of $JUDGE_SAMPLES (default 3) samples by the pinned judge model
-    # ($JUDGE_MODEL overrides it); with E2E_LLM_JUDGE_BASELINE (a saved main
-    # judge.json of the same rubric_version) a regression fails the judge step.
-    if [ -n "${E2E_LLM_JUDGE_BASELINE:-}" ]; then
-      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json" --baseline "$E2E_LLM_JUDGE_BASELINE"
-    else
-      uv run python ci/llm/judge.py --artifact-root "$ARTIFACT_ROOT" --db "$DB" --job "$JOB" --out "$OUT/judge.json"
-    fi
-  }
-  step judge run_judge
 else
   log "no job_id/db parsed from the transcript (check-transcript failed) -- skipping deliverable checks and judge"
 fi

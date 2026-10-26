@@ -325,8 +325,19 @@ deterministic job.
 - `steps.json` -- exit code of every step (`build-ui` (ui/both, run *before*
   the claude call so `scripts/start_local_ui.py` finds `src/ui/build/` and
   never builds inside a Bash tool call), `claude`, `check-transcript`,
-  `install-browsers`, `report-tests`, `ui-tests`, `judge`, `results`); a step
-  failing never stops the script early. Preflight failures before the run
+  `token-usage`, `render`, `judge`, `install-browsers`, `report-tests`, `ui-tests`,
+  `results`); a step failing never stops the script early. The judge runs before
+  the browser tests (#1593), on the deliverables `render` re-renders the way the
+  tests' external-job fixture does, so a slow test step can no longer leave it no
+  time. `report-tests` and `ui-tests` run under `run_before_deadline` (`ci/lib.sh`):
+  each must end `E2E_LLM_JOB_BUDGET` seconds (default 4800, 80 minutes) after the
+  script started, or it is stopped (or, when the budget is already used up,
+  skipped) and recorded as 124. The default leaves the `results` step and the
+  artifact upload inside the mirror's 90-minute job limit: a scoped discourse run
+  that hit that limit during its judge step was killed with no `results.json` and
+  no uploaded test results. The script first removes a previous run's `results.json`,
+  `steps.json`, `summary.json`, `judge.json` and junit files from `$OUT`, so a skipped
+  or stopped step can never be scored from a reused folder's old files. Preflight failures before the run
   (missing credentials, the CLI install, `claude --version`, unzipping the
   fixture, a rejected `E2E_LLM_ARTIFACT_ROOT`) exit early, and the EXIT trap
   then writes a minimal `{"schema_version": 2, "pass": false, "error": "<step>
@@ -348,6 +359,7 @@ deliberately), `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY` *or*
 `CLAUDE_CODE_USE_BEDROCK` + `AWS_REGION`, `E2E_LLM_TIMEOUT` (seconds, default
 3600), `E2E_LLM_MAX_TURNS` (default 200) and `E2E_LLM_MAX_BUDGET_USD`
 (default 50: a discourse run costs about $18-20, plus $3-5 when the DynamoDB merge needs a fix round), each only passed if the CLI's own `--help` mentions the flag,
+`E2E_LLM_JOB_BUDGET` (seconds, default 4800, see `steps.json` above),
 `E2E_LLM_ARTIFACT_ROOT` (dry-run only, default `$REPO_ROOT/artifacts`; see
 below), `E2E_OUTPUT` (as in `e2e.sh`).
 

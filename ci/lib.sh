@@ -74,6 +74,20 @@ _run_with_limit() {
   return "$rc"
 }
 
+# Run a command that must end by the epoch second in $E2E_LLM_DEADLINE_TS (#1593):
+# skipped with 124 when the deadline has passed, stopped (with its descendants) and
+# 124 when it would outlast it, else its own status. ci/e2e-llm.sh sets the deadline
+# from E2E_LLM_JOB_BUDGET, so a slow test step cannot run the job into the CI
+# runner's limit, which kills it before results.json and the test results exist.
+run_before_deadline() {
+  local left=$(( ${E2E_LLM_DEADLINE_TS:?run_before_deadline needs E2E_LLM_DEADLINE_TS} - $(date +%s) ))
+  if [ "$left" -le 0 ]; then
+    echo "error: the job budget is used up; skipping '$*'" >&2
+    return 124
+  fi
+  _run_with_limit "$left" "$@"
+}
+
 # Install Playwright browsers, retrying with backoff (#1346). The CDN has served a
 # certificate for the wrong host (ERR_TLS_CERT_ALTNAME_INVALID) before any test ran.
 # TLS verification is never relaxed. Attempts 1 and 2 use Playwright's own host
