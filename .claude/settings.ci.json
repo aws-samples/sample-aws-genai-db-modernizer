@@ -117,6 +117,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --no-project python -I \"$CLAUDE_PROJECT_DIR/scripts/hooks/require_modernize_result.py\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   },
   "env": {

@@ -198,6 +198,11 @@ FILE_READS: dict[tuple[str, str, str], str] = {
     ("scripts/start_local_ui.py", "ui_build_is_current", "stamp"): "the UI build stamp",
     ("scripts/hooks/enforce_tool_use_rule.py", "allowed_rules", "<expr>"): "Claude Code settings",
     ("scripts/hooks/hook_common.py", "read_event", "data"): "a hook event on stdin",
+    ("scripts/hooks/require_modernize_result.py", "_read_json", "<return>"): (
+        "the Stop hook's read-only check of the job cursor, the DynamoDB split manifest and "
+        "whether each group draft is a JSON object (#1574): a hook loads no project code, "
+        "and no field it reads depends on a contract version"
+    ),
     ("scripts/check_commit_authors.py", "read_event", "<expr>"): "the GitHub Actions event",
 }
 

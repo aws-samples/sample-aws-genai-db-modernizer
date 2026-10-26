@@ -51,4 +51,5 @@ def test_headless_settings() -> None:
         "block_baseline_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "block_contract_version_edit.py": ("PreToolUse", "Edit|Write|MultiEdit"),
         "require_gate_shown.py": ("PreToolUse", "Bash|Agent|Task"),
+        "require_modernize_result.py": ("Stop", ""),
     }

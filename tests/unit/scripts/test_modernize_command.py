@@ -1139,3 +1139,13 @@ def test_phase_6_waits_on_the_status_lines_never_on_a_tally() -> None:
     waiting = text.split("## Waiting Rule", 1)[1].split("## Subagent Dispatch Rules", 1)[0]
     assert "a subagent is still running only when the last status line" in waiting
     assert TOOL_USE_RULE in _modernize_text()
+
+
+def test_the_waiting_rule_names_the_stop_hook_that_holds_it() -> None:
+    # #1574: text alone was not enough (a later stack run stalled the same way), so a
+    # Stop hook refuses the stall; the command says what its refusal means.
+    waiting = _modernize_text().split("## Waiting Rule", 1)[1].split("## Subagent Dispatch", 1)[0]
+    waiting = " ".join(waiting.split())
+    assert "`scripts/hooks/require_modernize_result.py`" in waiting
+    assert "`Blocked: nothing is running ...`" in waiting
+    assert (REPO_ROOT / "scripts" / "hooks" / "require_modernize_result.py").exists()

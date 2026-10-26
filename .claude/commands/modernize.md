@@ -260,7 +260,7 @@ End the run with exactly one line `MODERNIZE_RESULT: complete job_id=<id> db=<db
 
 ## Waiting Rule
 
-This applies headless and interactive. Never end a turn waiting unless a dispatched subagent is still running: a headless run ends as soon as a turn ends with nothing running. In Phase 6, a subagent is still running only when the last status line (the **Done signal** of 6b or 6c) names its design or review as missing and it has not reported; when that line says every design or review is in, the next step runs in the same turn.
+This applies headless and interactive. Never end a turn waiting unless a dispatched subagent is still running: a headless run ends as soon as a turn ends with nothing running. In Phase 6, a subagent is still running only when the last status line (the **Done signal** of 6b or 6c) names its design or review as missing and it has not reported; when that line says every design or review is in, the next step runs in the same turn. Under `--auto`, a Stop hook (`scripts/hooks/require_modernize_result.py`) holds you to this: it refuses to end a turn with nothing running and no `MODERNIZE_RESULT` line (`Blocked: nothing is running ...`). When it does, run the step it names, or end with the `failed` result line.
 
 When every subagent you dispatched has reported, do not wait for anything else. Read `phase_status` in `.modernizer-state.json` (and, for DynamoDB, the `--status` line from 6d), then either finish the phase yourself (for example, run `--merge` when `--status` prints `merge_pending`, or set the phase complete and dispatch the next phase) or end with `MODERNIZE_RESULT: failed phase=<phase> reason=<one line>`. A subagent's completion notification is its final report: nobody else will run the next step for you.
 
