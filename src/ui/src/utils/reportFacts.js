@@ -106,8 +106,16 @@ export function currentTradeOffs(synthesis) {
 // reality check made. An empty list gets no tab.
 export const REALITY_CHECK_TAB = 'reality-check';
 
+// #1574: an engine's tab lists the report's own trade-offs for it when synthesis wrote
+// them (each long sentence stated once across the design's parts, as every deliverable
+// states them); a design with none in the report keeps its own list.
 export function tradeOffsByTab(designTradeOffs, synthesis) {
   const map = { ...designTradeOffs };
+  const reported = (synthesis && synthesis.trade_offs) || [];
+  Object.keys(map).forEach(engine => {
+    const own = reported.filter(t => t && t.engine === engine);
+    if (own.length > 0) map[engine] = own;
+  });
   const rc = realityCheckDecisions(synthesis || {});
   if (rc.length > 0) map[REALITY_CHECK_TAB] = rc;
   return map;

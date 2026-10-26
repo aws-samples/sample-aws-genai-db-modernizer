@@ -127,6 +127,19 @@ describe('results page Reality check tab (ADR-032 Decision 7)', () => {
     expect(tradeOffTabLabel('dynamodb', 1, t, labels)).toBe('DynamoDB (1)');
   });
 
+  test("an engine's tab lists the report's stated-once trade-offs when synthesis wrote them", () => {
+    const gsi = 'A GSI is eventually consistent: a query on it returns a write once DynamoDB has applied it to the index.';
+    const raw = { dynamodb: [{ description: `A. ${gsi}` }, { description: `B. ${gsi}` }], opensearch: [{ description: 'Own list' }] };
+    const synthesis = { trade_offs: [
+      { description: `A. ${gsi}`, engine: 'dynamodb' },
+      { description: 'B.', engine: 'dynamodb' },
+      { description: 'Kept the cache.', engine: 'reality-check' },
+    ] };
+    const tabs = tradeOffsByTab(raw, synthesis);
+    expect(tabs.dynamodb.map(d => d.description)).toEqual([`A. ${gsi}`, 'B.']);
+    expect(tabs.opensearch.map(d => d.description)).toEqual(['Own list']);
+  });
+
   test('adds no tab when the reality check decided nothing', () => {
     expect(Object.keys(tradeOffsByTab(designs, { facts: { reality_check_decisions: [] } }))).toEqual(['dynamodb']);
     expect(Object.keys(tradeOffsByTab(designs, undefined))).toEqual(['dynamodb']);

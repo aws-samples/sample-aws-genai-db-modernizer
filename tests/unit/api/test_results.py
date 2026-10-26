@@ -56,6 +56,25 @@ class TestGetResults:
         assert "synthesis" in data
         assert "triage_summary" in data
 
+    def test_states_a_long_sentence_two_design_trade_offs_share_once(self, mock_services):
+        # #1574: the results payload reads the trade-offs the deliverables state.
+        gsi = (
+            "A GSI is eventually consistent: a query on it returns a write once DynamoDB "
+            "has applied it to the index."
+        )
+        mock_services["s3"].read_synthesis.return_value = {
+            "ranking": [],
+            "trade_offs": [
+                {"description": f"A. {gsi}", "impact": "x", "engine": "dynamodb"},
+                {"description": f"B. {gsi}", "impact": "y", "engine": "dynamodb"},
+            ],
+        }
+        mock_services["s3"].read_triage.return_value = {"selected_agents": []}
+        response = client.get("/api/v1/assessments/job-1/results")
+        assert response.status_code == 200
+        trade_offs = response.json()["synthesis"]["trade_offs"]
+        assert [t["description"] for t in trade_offs] == [f"A. {gsi}", "B."]
+
     def test_404_when_no_synthesis(self, mock_services):
         mock_services["s3"].read_synthesis.return_value = None
         response = client.get("/api/v1/assessments/job-1/results")

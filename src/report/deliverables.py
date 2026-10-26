@@ -17,6 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.shared.design_text import said_once_report
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.report_facts import build_commit, build_commit_line
 from src.shared.routing_detail import load_routing_detail
@@ -306,6 +307,9 @@ def render_deliverables(
     # #1148: a report synthesized before a report-only risk rule existed shows
     # the same risk a new synthesis writes (the same function, ADR-032).
     report = backfill_report_risks(store.read_json(report_key))
+    # #1574: a long sentence two design trade-offs share is stated once (the same
+    # function synthesis applies), so a report written before it reads the same.
+    report = said_once_report(report)
     # #1166: one commit for the whole set; each renderer only prints it.
     commit = build_commit()
 

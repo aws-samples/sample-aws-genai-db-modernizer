@@ -98,7 +98,12 @@ def test_assessment_data_is_the_report_json(tmp_path: Path) -> None:
     data = json.loads((tmp_path / DB / JOB / "deliverables" / "assessment-data.json").read_text())
     identity = data.pop("_artifact")
     assert identity["artifact"] == "assessment-data"
-    assert data == json.loads(FIXTURE.read_text())
+    # The report the deliverables render (#1574: an older report's trade-offs read with
+    # each long sentence stated once, as a new synthesis writes them).
+    from src.shared.design_text import said_once_report
+    from src.shared.migration_risk_rules import backfill_report_risks
+
+    assert data == said_once_report(backfill_report_risks(json.loads(FIXTURE.read_text())))
 
 
 def test_index_lists_each_file_its_audience_and_the_assignment_version(tmp_path: Path) -> None:

@@ -84,6 +84,7 @@ from src.contracts.synthesis_output import SynthesisOutputContract
 from src.shared.bedrock_guardrail import require_valid_guardrail_config
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.contract_versioning import stamp_artifact_version
+from src.shared.design_text import said_once_trade_offs
 from src.shared.engine_names import display_engine
 from src.shared.engines_in_use import engines_in_use
 from src.shared.executive_brief import check_summary_brief, executive_brief_text
@@ -1837,7 +1838,9 @@ def _collect_trade_offs(data):
             if dedup_key not in seen:
                 seen.add(dedup_key)
                 trade_offs.append(entry)
-    return trade_offs
+    # #1574: a long sentence two design parts both wrote is stated once, here, so
+    # report.json, the risk details and every deliverable read the same list.
+    return said_once_trade_offs(trade_offs)
 
 
 def _write_empty_report(store, database_name, job_id, assignment_version=0):

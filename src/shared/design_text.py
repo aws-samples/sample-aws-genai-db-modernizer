@@ -97,3 +97,99 @@ def split_severe_risk_strategy(text: str) -> tuple[str, str, str] | None:
     ``None`` for any other strategy."""
     m = _SEVERE_STRATEGY_RE.match(text)
     return (m.group("rid"), m.group("head"), m.group("body")) if m else None
+
+
+# A sentence this long is stated once across the design trade-offs synthesis collects
+# (#1574); the length the engineering report's said-once ledger and the report guard
+# (``tests/report_concision.py``) use.
+ONCE_MIN_WORDS = 15
+# What a trade-off field says when every sentence in it was stated by an earlier one.
+ALREADY_STATED = "As stated in an earlier trade-off."
+_SENTENCE_END = re.compile(r"((?<=[.!?])[:;]?\s+)")
+
+
+def _sentence_key(sentence: str) -> str:
+    return " ".join(sentence.replace("**", "").split()).strip(" -*:,.;")
+
+
+def said_once_trade_offs(trade_offs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The trade-offs with each long sentence stated once (#1574).
+
+    A split design runs as independent parts, and two of them can word the same rule
+    the same way ("A GSI is eventually consistent: ..."). The first trade-off to state
+    a sentence of at least ``ONCE_MIN_WORDS`` words keeps it; a later trade-off keeps
+    its own text and drops that sentence, in its ``description`` and its ``impact``.
+    A field left with nothing of its own reads ``ALREADY_STATED``. Sentences are cut
+    where the report guard cuts them. The input is not changed.
+    """
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for t in trade_offs:
+        if not isinstance(t, dict):
+            out.append(t)
+            continue
+        entry = dict(t)
+        # A legacy string trade-off carries its text as both fields: state it once.
+        same = entry.get("impact") == entry.get("description")
+        for field in ("description",) if same else ("description", "impact"):
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            parts = _SENTENCE_END.split(value.strip())
+            kept: list[str] = []
+            dropped = False
+            for i in range(0, len(parts), 2):
+                sentence = parts[i]
+                key = _sentence_key(sentence)
+                if len(key.split()) >= ONCE_MIN_WORDS:
+                    if key in seen:
+                        dropped = True
+                        continue
+                    seen.add(key)
+                kept.append(sentence.strip())
+            if dropped:
+                entry[field] = " ".join(s for s in kept if s) or ALREADY_STATED
+        if same:
+            entry["impact"] = entry.get("description")
+        out.append(entry)
+    return out
+
+
+def said_once_report(report: dict[str, Any]) -> dict[str, Any]:
+    """``report`` with its design trade-offs stated once (:func:`said_once_trade_offs`)
+    and each ``design.trade_offs`` risk's ``details`` listing the same texts (#1574).
+
+    Synthesis writes the list that way; the deliverables and the results payload read a
+    report through this too, so one synthesized before it shows the same list. The
+    reality check's own trade-offs keep their place (``facts.reality_check_trade_offs``
+    points at them by index) and their text. A report with no repeat comes back
+    unchanged (the same object).
+    """
+    trade_offs = report.get("trade_offs")
+    if not isinstance(trade_offs, list):
+        return report
+    design = [
+        i
+        for i, t in enumerate(trade_offs)
+        if isinstance(t, dict) and t.get("engine") != "reality-check"
+    ]
+    once = said_once_trade_offs([trade_offs[i] for i in design])
+    changed = {i: t for i, t in zip(design, once, strict=True) if t != trade_offs[i]}
+    if not changed:
+        return report
+    renamed = {
+        design_text_item(str(trade_offs[i].get("description") or "")): design_text_item(
+            str(t.get("description") or "")
+        )
+        for i, t in changed.items()
+    }
+    out = {**report, "trade_offs": [changed.get(i, t) for i, t in enumerate(trade_offs)]}
+    assessment = report.get("risk_assessment")
+    if isinstance(assessment, dict) and isinstance(assessment.get("risks"), list):
+        risks = []
+        for r in assessment["risks"]:
+            if isinstance(r, dict) and r.get("rule") == "design.trade_offs" and r.get("details"):
+                r = {**r, "details": sorted({renamed.get(d, d) for d in r["details"]})}
+            risks.append(r)
+        out["risk_assessment"] = {**assessment, "risks": risks}
+    return out

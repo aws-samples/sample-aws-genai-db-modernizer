@@ -303,6 +303,11 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/shared/design_text.py": (
+        frozenset({"ONCE_MIN_WORDS"}),
+        "a prose length, not a routing rule: the words a design sentence needs to be "
+        "stated once across the trade-offs, the report guard's length (#1574)",
+    ),
     "src/agents/referee/aurora_choice.py": (
         frozenset({"_TIE_TOLERANCE", "_TOTAL_DIGITS"}),
         "float arithmetic, not a routing rule: the noise tolerance under which two summed "
