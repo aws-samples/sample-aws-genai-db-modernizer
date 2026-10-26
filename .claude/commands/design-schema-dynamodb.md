@@ -100,7 +100,7 @@ For one group `{G}` of version `{N}`. Write only `artifacts/{database_name}/{job
 2. Read the domain expertise: `src/skills/dynamodb-data-modeling.md`
 3. Read the output contract: `src/contracts/dynamodb_model_output.py`
 4. Design the schema following Phases 1-2 from the skill
-5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`, the whole JSON in one Write tool call (fix it later with Edit). Do not generate it with a script.
+5. Write the draft to: `artifacts/{database_name}/{job_id}/schema-dynamodb/v{N}/schema_draft_group_{G}.json`, the whole JSON in one Write tool call (fix it later with Edit). Do not generate it with a script. Then go straight to step 6: the next tool call after the Write is the `--check-costs` command. Once it has read steps 1-3, this task never calls the Skill tool: it changes no settings or configuration, and everything it needs is in this section and the files those steps name.
 6. Run the cost / hot-partition check on that draft:
 
    ```bash

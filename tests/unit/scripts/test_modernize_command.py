@@ -1081,6 +1081,17 @@ def test_every_status_block_says_how_to_read_its_line_without_a_pipe(name: str) 
         assert after.startswith(STATUS_LINE_RULE), (name, after[:200])
 
 
+def test_the_group_draft_runs_its_cost_check_right_after_the_write() -> None:
+    """#1593: twice a Group draft subagent called an unlisted settings skill between
+    its Write and `--check-costs` (denied under dontAsk). Step 5 says the next call is
+    the check, and that the task calls no skill once it has its instructions."""
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    task = text[text.index("## Group draft task") : text.index("## Merge fix task")]
+    step5 = task[task.index("5. Write the draft") : task.index("6. Run the cost")]
+    assert "the next tool call after the Write is the `--check-costs` command" in step5
+    assert "never calls the Skill tool" in step5
+
+
 def test_the_merge_fix_task_reads_check_costs_all_details_from_artifacts() -> None:
     """#1593: --check-costs-all prints one short line and writes every group's
     result to a details file under artifacts/; the task says to Read it."""
