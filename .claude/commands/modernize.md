@@ -148,6 +148,8 @@ Wait for all of them to report (see Waiting Rule). Then, for each non-DynamoDB e
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine <engine> --status
 ```
 
+Run it exactly as shown, on its own, and read `status` and the keys named here from the one short JSON line it prints. Never pipe it into another command (`uv run python`, `tail`, `jq`, ...): a hook refuses a piped command. For DynamoDB the line lists only the groups to redo; every group's entry is in the `--split` line and in the `manifest` file the line names, under `artifacts/`: read that file with the Read tool.
+
 - `"status": "complete"`: set `phase_status.schema_design_<engine>` = "complete".
 - `"status": "validation_failed"`, `"finalize_pending"` or `"not_finalized"`: set `phase_status.schema_design_<engine>` = "failed". That is a phase failure for `schema_design_<engine>`, with the line's `errors` (or its `status`) as the reason: see Error Handling. A subagent that returned `failed` after its 3 attempts ends here too.
 
@@ -176,6 +178,8 @@ Run this step once per design round; one review per design is the whole budget.
 ```bash
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
 ```
+
+Run it exactly as shown, on its own, and read `status` and the keys named here from the one short JSON line it prints. Never pipe it into another command (`uv run python`, `tail`, `jq`, ...): a hook refuses a piped command. For DynamoDB the line lists only the groups to redo; every group's entry is in the `--split` line and in the `manifest` file the line names, under `artifacts/`: read that file with the Read tool.
 
 - `"status": "drafts_pending"`: the groups in `drafts_missing` wrote no draft, and those in `drafts_invalid` wrote one that is not a readable JSON object. That is a phase failure for `schema_design_dynamodb` with reason `group drafts missing or invalid: <groups>` (see Error Handling: the retry is one fresh group subagent, same task text, per listed group). Never run `--merge` while drafts are missing or invalid. After a redone group draft, run 6c again before `--merge` (it lists only the reviews not yet recorded).
 - `"status": "merged"`: the last `--merge` ran on exactly these drafts and passed. Set `phase_status.schema_design_dynamodb` = "complete".

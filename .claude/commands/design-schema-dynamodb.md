@@ -51,6 +51,8 @@ Nesting is one level deep: only the top-level session dispatches subagents, beca
    uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --status
    ```
 
+   Run it exactly as shown, on its own, and read `status` and the keys named here from the one short JSON line it prints. Never pipe it into another command (`uv run python`, `tail`, `jq`, ...): a hook refuses a piped command. For DynamoDB the line lists only the groups to redo; every group's entry is in the `--split` line and in the `manifest` file the line names, under `artifacts/`: read that file with the Read tool.
+
    - `"status": "drafts_pending"`: `drafts_missing` lists the groups without a draft and `drafts_invalid` those whose draft is not a readable JSON object. Redo the Group draft task for each of them (one fresh subagent each, or yourself if you are a subagent), **at most once** per run. If `--status` still prints `drafts_pending` after that redo, stop: set `phase_status.schema_design_dynamodb` = "failed" and return `failed` with the missing and invalid groups as your result.
    - `"status": "merge_pending"`: run the PE review (below), then go to Step 5.
    - `"status": "merged"`: the last `--merge` ran on exactly these drafts and passed; go to Step 6.

@@ -1056,6 +1056,31 @@ def test_split_status_line_numbers_queries_consecutively_in_group_order(tmp_path
     ]
 
 
+# #1593: a headless run piped `--status` into `uv run python` to pick out its status
+# (a hook refused it): every `--status` block says how to read its line instead,
+# pointing at a file inside the working directory, never at one Claude Code saved
+# outside it.
+STATUS_LINE_RULE = (
+    "Run it exactly as shown, on its own, and read `status` and the keys named here "
+    "from the one short JSON line it prints. Never pipe it into another command "
+    "(`uv run python`, `tail`, `jq`, ...): a hook refuses a piped command. For DynamoDB "
+    "the line lists only the groups to redo; every group's entry is in the `--split` "
+    "line and in the `manifest` file the line names, under `artifacts/`: read that "
+    "file with the Read tool."
+)
+_STATUS_BLOCK = re.compile(r"```bash\n[^`]*--status\n[ ]*```\n")
+
+
+@pytest.mark.parametrize("name", ["modernize.md", "design-schema-dynamodb.md"])
+def test_every_status_block_says_how_to_read_its_line_without_a_pipe(name: str) -> None:
+    text = (COMMANDS_DIR / name).read_text()
+    blocks = list(_STATUS_BLOCK.finditer(text))
+    assert blocks, name
+    for block in blocks:
+        after = " ".join(text[block.end() : block.end() + 600].split())
+        assert after.startswith(STATUS_LINE_RULE), (name, after[:200])
+
+
 def test_the_merge_fix_task_reads_check_costs_all_details_from_artifacts() -> None:
     """#1593: --check-costs-all prints one short line and writes every group's
     result to a details file under artifacts/; the task says to Read it."""
