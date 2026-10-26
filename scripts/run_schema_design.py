@@ -18,9 +18,9 @@ Usage:
 
 DynamoDB always designs split -> per-group drafts -> ``--merge``; ``--merge`` is
 its final step. ``--finalize --engine dynamodb`` only reports whether the merged
-output exists (it never reads an LLM response). ``--status`` (read-only) lists
-DynamoDB's groups, which group drafts exist and whether ``--merge`` is still
-pending; for any other engine it reports the verdict its last ``--finalize``
+output exists (it never reads an LLM response). ``--status`` (read-only) says
+how many groups DynamoDB has, lists the ones whose draft is missing or invalid,
+and whether ``--merge`` is still pending; for any other engine it reports the verdict its last ``--finalize``
 printed (#332). Either way an orchestrator can decide its next step, and set
 ``phase_status``, without listing or reading artifacts.
 
@@ -273,7 +273,7 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
             "status": "split",
             "assignment_version": assignment_version,
             "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
-            "groups": _group_entries(store, base_key, manifest),
+            "groups": _public(_group_entries(store, base_key, manifest)),
             # The "of {total}" in a part's query range: the queries in the groups.
             "query_total": sum(g.get("query_count") or 0 for g in manifest.get("groups", [])),
             # Queries with no source table (#276/#369): left out of every
@@ -284,6 +284,8 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
 
 
 _MERGE_RECORD = "merge_record.json"
+# Where a check of several group drafts writes its per-group detail (#1593).
+_CHECK_COSTS_DETAILS = "check_costs.json"
 # The verdict the last --finalize of a single-pass engine printed, and a digest of
 # the response it read, so --status can report it without trusting a subagent (#332).
 _FINALIZE_RECORD = "finalize_record.json"
@@ -393,6 +395,9 @@ def _hashes(groups: list[dict]) -> dict[str, str | None]:
 def run_status(store, job_id: str, db: str, engine: str, assignment_version: int) -> None:
     """Report DynamoDB group-design progress as one JSON line (read-only, #246).
 
+    ``groups`` lists only the groups whose draft is missing or invalid (#1593),
+    ``group_count`` how many there are in all.
+
     ``not_split``: no manifest yet, run ``--split``. ``drafts_pending``: some
     group drafts are missing (``drafts_missing``) or not a readable JSON object
     (``drafts_invalid``). ``merge_pending``: every draft is readable and none of
@@ -450,11 +455,18 @@ def run_status(store, job_id: str, db: str, engine: str, assignment_version: int
             next_step = "merged output is current; re-run --merge only after editing a draft"
         if record.get("warnings"):
             extra["warnings"] = record["warnings"]
+    # Only the groups to redo, with the entry their redo needs (#1593): listing all
+    # of them made this line about 23 KB on discourse's 44 groups, close to the
+    # length Claude Code saves to a file outside the working directory. The full
+    # list is the --split line's, and the manifest's.
+    redo = set(missing + invalid)
     _output(
         {
             "status": status,
             **fields,
-            "groups": _public(groups),
+            "manifest": _local_path(store, f"{base_key}/groups_manifest.json"),
+            "group_count": len(groups),
+            "groups": _public([g for g in groups if g["group_index"] in redo]),
             "drafts_missing": missing,
             "drafts_invalid": invalid,
             **extra,
@@ -786,20 +798,19 @@ def run_check_costs(
     partial result is printed.
 
     One draft keeps today's shape: ``{"status": "complete", "draft": ...,
-    "passed": ..., "results": [...], ...}`` at the top level. More than one
-    draft prints ``{"status": "complete", "groups": [<that same shape minus
-    "results", ...], "passed": <all of them passed>}`` -- "results" (the
-    full validated entry per access pattern) is dropped per group because it
-    is the one field that scales with entry count on every group at once,
-    and a headless session's stdout must stay compact (AGENTS.md): on a
-    sample with several thousand access patterns across many groups, printing
-    every group's full "results" made --check-costs-all's own output large
-    enough that the harness persisted it to a file outside the repo, which no
-    allowed tool in a headless session can then read back (#375's second
-    e2e-llm run found exactly this). "per_table" and "hot_partition_findings"
-    already summarise everything "results" would otherwise be needed for; a
-    single draft's own --check-costs call still prints "results" in full,
-    since one group's own entries are the shape its own merge-fix pass reads.
+    "passed": ..., "results": [...], ...}`` at the top level: one group's own
+    entries are what its subagent copies into the draft, and a group is small.
+
+    More than one draft (``--check-costs-all`` re-checks every group) writes the
+    detail, each group's result without "results", to ``check_costs.json`` next to
+    the first draft and prints one short line: ``{"status": "complete", "passed":
+    <all passed>, "group_count": N, "failed": [{"draft", "error_count",
+    "contract_error_count"}, ...], "details": <that file>}``. A headless session's
+    stdout must stay compact (AGENTS.md): printing every group made this line about
+    54 KB on discourse's 44 groups, and Claude Code saves an output that long to a
+    file under ~/.claude, outside the working directory, which the headless
+    allowlist cannot read (#375, #1593). The details file is under the job's
+    artifacts, which the session reads with the Read tool and no extra rule.
     """
     if engine != "dynamodb":
         _error("--check-costs is only available for --engine dynamodb")
@@ -834,11 +845,26 @@ def run_check_costs(
     compact_groups = [
         {k: v for k, v in result.items() if k != "results"} for result in group_results
     ]
+    passed = all(result["passed"] for result in group_results)
+    details = os.path.join(os.path.dirname(drafts[0]), _CHECK_COSTS_DETAILS)
+    Path(details).write_text(
+        json.dumps({"passed": passed, "groups": compact_groups}, indent=1), encoding="utf-8"
+    )
     _output(
         {
             "status": "complete",
-            "groups": compact_groups,
-            "passed": all(result["passed"] for result in group_results),
+            "passed": passed,
+            "group_count": len(group_results),
+            "failed": [
+                {
+                    "draft": result["draft"],
+                    "error_count": len(result.get("errors") or []),
+                    "contract_error_count": len(result.get("contract_errors") or []),
+                }
+                for result in group_results
+                if not result["passed"]
+            ],
+            "details": details,
         }
     )
 

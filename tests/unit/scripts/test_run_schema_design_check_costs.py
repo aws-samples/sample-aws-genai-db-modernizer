@@ -3,7 +3,9 @@
 External-mode group subagents have no Strands ``compute_performances_and_costs``
 tool, so every draft ended ``validation_passed: false``. ``--check-costs`` runs
 the same computation on a group draft and prints the result as JSON. It only
-reads drafts inside the job's ``schema-dynamodb/`` directory, and never writes.
+reads drafts inside the job's ``schema-dynamodb/`` directory and never changes one;
+a check of several drafts writes its full detail to ``check_costs.json`` next to
+them and prints one short line (#1593).
 """
 
 from __future__ import annotations
@@ -202,11 +204,12 @@ def test_check_costs_accepts_several_drafts_in_one_call(monkeypatch, capsys, tmp
     assert code == 0
     assert status["status"] == "complete"
     assert status["passed"] is False  # overall: not every group passed
-    assert len(status["groups"]) == 2
-    assert status["groups"][0]["draft"] == str(p0)
-    assert status["groups"][0]["passed"] is True
-    assert status["groups"][1]["draft"] == str(p1)
-    assert status["groups"][1]["passed"] is False
+    assert status["group_count"] == 2
+    assert [f["draft"] for f in status["failed"]] == [str(p1)]
+    assert status["failed"][0]["error_count"] >= 1
+    detail = json.loads(Path(status["details"]).read_text())
+    assert [g["draft"] for g in detail["groups"]] == [str(p0), str(p1)]
+    assert [g["passed"] for g in detail["groups"]] == [True, False]
 
 
 def test_check_costs_multi_draft_errors_on_first_bad_path(monkeypatch, capsys, tmp_path):
@@ -236,22 +239,22 @@ def test_check_costs_all_checks_every_group_draft_of_the_version(monkeypatch, ca
     assert code == 0
     assert status["status"] == "complete"
     assert status["passed"] is False
-    assert [g["draft"].rsplit("_", 1)[-1] for g in status["groups"]] == [
+    assert status["group_count"] == 3
+    assert "2.json" in [f["draft"].rsplit("_", 1)[-1] for f in status["failed"]]
+    detail = json.loads(Path(status["details"]).read_text())
+    assert [g["draft"].rsplit("_", 1)[-1] for g in detail["groups"]] == [
         "0.json",
         "1.json",
         "2.json",
     ]
 
 
-def test_check_costs_all_drops_results_but_keeps_the_summary_fields(monkeypatch, capsys, tmp_path):
-    """Review of #375: on a sample with many groups and access patterns, printing
-    every group's full "results" (the validated entry per access pattern, the one
-    field that scales with entry count) made --check-costs-all's own stdout large
-    enough that the harness persisted it to a file outside the repo -- no allowed
-    tool in a headless session could then read it back to check the per-group
-    "passed" flags the merge-fix task actually needed. "results" is dropped from
-    each group here; "per_table" and "hot_partition_findings" already summarise
-    everything a caller needs from it, so they stay."""
+def test_check_costs_all_details_keep_the_summary_fields(monkeypatch, capsys, tmp_path):
+    """Review of #375, then #1593: printing every group made --check-costs-all's
+    stdout large enough that the harness persisted it to a file outside the repo,
+    which no allowed tool in a headless session can read back. The line now names
+    only the failed drafts; each group's "per_table", "hot_partition_findings",
+    "passed" and "entry_count" are in the details file inside the job's folder."""
     _write_draft(
         tmp_path, {"hot_partition_analysis": HOT_PARTITIONS}, rel="v1/schema_draft_group_0.json"
     )
@@ -264,7 +267,10 @@ def test_check_costs_all_drops_results_but_keeps_the_summary_fields(monkeypatch,
     )
 
     assert code == 0
-    for group in status["groups"]:
+    assert "groups" not in status
+    detail_path = Path(status["details"])
+    assert detail_path == tmp_path / DB / JOB / "schema-dynamodb" / "v1" / "check_costs.json"
+    for group in json.loads(detail_path.read_text())["groups"]:
         assert "results" not in group
         assert "per_table" in group
         assert "hot_partition_findings" in group
@@ -338,3 +344,33 @@ def test_sandbox_contains_every_check_costs_path(tmp_path):
     )
     assert message is not None
     assert "--check-costs" in message
+
+
+# #1593: Claude Code saves a Bash output longer than about 30,000 characters to a
+# file under ~/.claude, outside the working directory, and the headless allowlist
+# cannot read it back. A discourse-sized job has 44 DynamoDB groups; the lines the
+# model reads stay far below that.
+HEADLESS_LINE_LIMIT = 6_000
+
+
+def test_check_costs_all_line_stays_short_on_a_discourse_sized_job(monkeypatch, capsys, tmp_path):
+    failing = {
+        "hot_partition_analysis": [{**HOT_PARTITIONS[0], "at_risk": True, "utilization_pct": 95.0}]
+    }
+    for g in range(44):  # every group failing: the longest line
+        _write_draft(tmp_path / "artifacts", failing, rel=f"v1/schema_draft_group_{g}.json")
+    monkeypatch.chdir(tmp_path)  # the default root: paths as a real run prints them
+
+    code, status = _run(
+        monkeypatch,
+        capsys,
+        Path("artifacts"),
+        "--check-costs-all",
+        "--assignment-version",
+        "1",
+    )
+
+    assert code == 0
+    assert len(status["failed"]) == 44
+    assert len(json.dumps(status)) <= HEADLESS_LINE_LIMIT, len(json.dumps(status))
+    assert len(json.loads(Path(status["details"]).read_text())["groups"]) == 44

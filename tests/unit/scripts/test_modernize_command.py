@@ -1054,3 +1054,13 @@ def test_split_status_line_numbers_queries_consecutively_in_group_order(tmp_path
         (None, None),
         (39, 45),
     ]
+
+
+def test_the_merge_fix_task_reads_check_costs_all_details_from_artifacts() -> None:
+    """#1593: --check-costs-all prints one short line and writes every group's
+    result to a details file under artifacts/; the task says to Read it."""
+    text = (COMMANDS_DIR / "design-schema-dynamodb.md").read_text()
+    task = text[text.index("## Merge fix task") :]
+    after = task[task.index("--check-costs-all\n```") :][:700]
+    assert "`details`, a file under `artifacts/`" in after
+    assert "Read that file with the Read tool; never pipe the command." in after

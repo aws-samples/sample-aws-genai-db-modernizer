@@ -127,6 +127,8 @@ For the `errors` and `warnings` a `--merge` attempt printed. Edit only the `sche
 uv run python scripts/run_schema_design.py --job-id {job_id} --db {database_name} --engine dynamodb --check-costs-all
 ```
 
+It prints one short JSON line: `passed`, `failed` (each failed draft with its `error_count` and `contract_error_count`) and `details`, a file under `artifacts/` with every group's `errors`, `contract_errors`, `per_table` and `hot_partition_findings`. Read that file with the Read tool; never pipe the command.
+
 Do not run `--merge` or `--finalize` and do not update `.modernizer-state.json`: whoever dispatched you (or Step 5) re-runs `--merge`. Do not dispatch subagents yourself. Return a short summary of what you changed per error or warning.
 
 For each entry in `errors`:

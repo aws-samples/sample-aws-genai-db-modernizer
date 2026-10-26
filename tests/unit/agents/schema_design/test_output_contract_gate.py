@@ -315,7 +315,10 @@ def test_check_costs_all_carries_each_groups_contract_errors(monkeypatch, capsys
 
     _code, status = _run(monkeypatch, capsys, tmp_path, "--check-costs-all")
 
-    by_draft = {Path(g["draft"]).name: g for g in status["groups"]}
+    # The line names the failed drafts; each group's errors are in its details file (#1593).
+    assert [Path(f["draft"]).name for f in status["failed"]] == ["schema_draft_group_1.json"]
+    groups = json.loads(Path(status["details"]).read_text())["groups"]
+    by_draft = {Path(g["draft"]).name: g for g in groups}
     assert by_draft["schema_draft_group_0.json"]["contract_errors"] == []
     assert by_draft["schema_draft_group_1.json"]["contract_errors"]
     assert status["passed"] is False

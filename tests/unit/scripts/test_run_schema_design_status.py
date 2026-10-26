@@ -120,7 +120,10 @@ def test_status_lists_missing_group_drafts(monkeypatch, capsys, tmp_path):
     assert status["status"] == "drafts_pending"
     assert status["drafts_missing"] == [0, 2]
     assert status["drafts_invalid"] == []
-    assert [g["draft_exists"] for g in status["groups"]] == [False, True, False]
+    # #1593: only the groups to redo are listed, with what their redo needs.
+    assert [g["group_index"] for g in status["groups"]] == [0, 2]
+    assert [g["draft_exists"] for g in status["groups"]] == [False, False]
+    assert status["group_count"] == 3
     assert status["groups"][0]["primary_tables"] == ["wordpress.t0"]
     assert status["groups"][0]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_0.json")
 
@@ -140,7 +143,10 @@ def test_status_reports_unreadable_drafts_as_invalid(monkeypatch, capsys, tmp_pa
     assert status["status"] == "drafts_pending"
     assert status["drafts_missing"] == []
     assert status["drafts_invalid"] == [1, 2]
-    assert [g["draft_state"] for g in status["groups"]] == ["ok", "invalid", "invalid"]
+    assert [(g["group_index"], g["draft_state"]) for g in status["groups"]] == [
+        (1, "invalid"),
+        (2, "invalid"),
+    ]
 
 
 def test_status_merge_pending_when_all_drafts_exist(monkeypatch, capsys, tmp_path):
@@ -259,6 +265,8 @@ def test_split_prints_the_groups_for_the_dispatcher(monkeypatch, capsys, tmp_pat
     assert status["groups"][1]["primary_tables"] == ["wordpress.t1"]
     assert status["groups"][1]["input_file"] == _path(tmp_path, f"{BASE}/input_group_1.json")
     assert status["groups"][1]["draft"] == _path(tmp_path, f"{BASE}/schema_draft_group_1.json")
+    # #1593: the draft digests --status compares are internal, never printed.
+    assert not [k for g in status["groups"] for k in g if k.startswith("_")]
 
 
 def test_split_reports_the_excluded_count(monkeypatch, capsys, tmp_path):
@@ -397,3 +405,28 @@ def test_merge_runs_when_every_group_draft_exists(monkeypatch, capsys, tmp_path)
     record = store.read_json(f"{BASE}/merge_record.json")
     assert record["status"] == "complete"
     assert set(record["draft_hashes"]) == {"0", "1"}
+
+
+def test_status_line_stays_short_on_a_discourse_sized_job(monkeypatch, capsys, tmp_path):
+    """#1593: listing all 44 groups of a discourse-sized design made --status about
+    23 KB, close to the length Claude Code saves to a file outside the working
+    directory. A design with every draft written lists no group; one with a few
+    to redo lists only those."""
+    from tests.unit.scripts.test_run_schema_design_check_costs import HEADLESS_LINE_LIMIT
+
+    store = LocalArtifactStore(base_dir=str(tmp_path))
+    _manifest(store, groups=44)
+    _drafts(store, groups=44)
+
+    _, status = _run(monkeypatch, capsys, tmp_path, "--status")
+    assert status["status"] == "merge_pending"
+    assert status["groups"] == [] and status["group_count"] == 44
+    assert status["manifest"] == _path(tmp_path, f"{BASE}/groups_manifest.json")
+    assert len(json.dumps(status)) <= HEADLESS_LINE_LIMIT
+
+    for g in (3, 17, 40):
+        (tmp_path / f"{BASE}/schema_draft_group_{g}.json").unlink()
+    _, status = _run(monkeypatch, capsys, tmp_path, "--status")
+    assert status["drafts_missing"] == [3, 17, 40]
+    assert [g["group_index"] for g in status["groups"]] == [3, 17, 40]
+    assert len(json.dumps(status)) <= HEADLESS_LINE_LIMIT
