@@ -13,6 +13,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from src.shared.engine_names import display_engine_ids
 from src.shared.unsupported_pattern import unsupported_pattern_label
 
 # A leading review marker a designer puts on a line: "[PE note] ...", "PE note: ...".
@@ -155,35 +156,73 @@ def said_once_trade_offs(trade_offs: list[dict[str, Any]]) -> list[dict[str, Any
     return out
 
 
-def said_once_report(report: dict[str, Any]) -> dict[str, Any]:
-    """``report`` with its design trade-offs stated once (:func:`said_once_trade_offs`)
-    and each ``design.trade_offs`` risk's ``details`` listing the same texts (#1574).
+# The model-written prose fields of a report's per-engine design summary
+# (``schema_designs[engine]``) that the synthesis prose seam cleans.
+_DESIGN_PROSE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("trade_offs", ("description", "impact")),
+    ("unsupported_patterns", ("reason", "description", "recommendation", "workaround")),
+    ("migration_notes", ("application_logic_required",)),
+)
 
-    Synthesis writes the list that way; the deliverables and the results payload read a
-    report through this too, so one synthesized before it shows the same list. The
-    reality check's own trade-offs keep their place (``facts.reality_check_trade_offs``
-    points at them by index) and their text. A report with no repeat comes back
-    unchanged (the same object).
+
+def _with_display_ids(entry: Any, fields: tuple[str, ...]) -> Any:
+    if not isinstance(entry, dict):
+        return entry
+    out = dict(entry)
+    for field in fields:
+        if isinstance(out.get(field), str):
+            out[field] = display_engine_ids(out[field])
+    return out
+
+
+def design_prose_report(report: dict[str, Any]) -> dict[str, Any]:
+    """``report`` with its design prose as synthesis now writes it (#1574): every raw
+    engine id written as the engine's name (``display_engine_ids``), in the trade-offs and
+    the per-engine design summaries, and the trade-offs stating each long sentence once
+    (:func:`said_once_trade_offs`), each ``design.trade_offs`` risk's ``details`` listing
+    the same texts.
+
+    Synthesis writes a report that way; the deliverables and the results payload read a
+    report through this too, so one synthesized before it shows the same text. The reality
+    check's own trade-offs keep their place (``facts.reality_check_trade_offs`` points at
+    them by index) and their text. A report with nothing to change comes back unchanged
+    (the same object).
     """
+    out = report
+    designs = report.get("schema_designs")
+    if isinstance(designs, dict):
+        new_designs = {}
+        for engine, summary in designs.items():
+            if not isinstance(summary, dict):
+                new_designs[engine] = summary
+                continue
+            new_summary = dict(summary)
+            for key, fields in _DESIGN_PROSE_FIELDS:
+                if isinstance(summary.get(key), list):
+                    new_summary[key] = [_with_display_ids(e, fields) for e in summary[key]]
+            new_designs[engine] = new_summary
+        if new_designs != designs:
+            out = {**out, "schema_designs": new_designs}
     trade_offs = report.get("trade_offs")
     if not isinstance(trade_offs, list):
-        return report
+        return out
     design = [
         i
         for i, t in enumerate(trade_offs)
         if isinstance(t, dict) and t.get("engine") != "reality-check"
     ]
-    once = said_once_trade_offs([trade_offs[i] for i in design])
+    named = [_with_display_ids(trade_offs[i], ("description", "impact")) for i in design]
+    once = said_once_trade_offs(named)
     changed = {i: t for i, t in zip(design, once, strict=True) if t != trade_offs[i]}
     if not changed:
-        return report
+        return out
     renamed = {
         design_text_item(str(trade_offs[i].get("description") or "")): design_text_item(
             str(t.get("description") or "")
         )
         for i, t in changed.items()
     }
-    out = {**report, "trade_offs": [changed.get(i, t) for i, t in enumerate(trade_offs)]}
+    out = {**out, "trade_offs": [changed.get(i, t) for i, t in enumerate(trade_offs)]}
     assessment = report.get("risk_assessment")
     if isinstance(assessment, dict) and isinstance(assessment.get("risks"), list):
         risks = []

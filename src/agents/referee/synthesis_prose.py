@@ -44,7 +44,7 @@ from functools import partial
 from typing import Any
 
 from src.agents.referee.aurora_choice import AURORA_ENGINES
-from src.shared.engine_names import display_engine
+from src.shared.engine_names import display_engine, display_engine_ids
 from src.shared.prose_style import (
     find_style_hits,
     has_confidence_figure,
@@ -122,7 +122,10 @@ def clean_schema_design_prose(
     rejections: list[str] = []
 
     def clean(path: str, value: str, fallback: Callable[[], str]) -> str:
-        cleaned = replace_confidence_figures(replace_dashes(value, names), names)
+        # #1574: a raw engine id the model copied from its input reads as the engine's name.
+        cleaned = display_engine_ids(
+            replace_confidence_figures(replace_dashes(value, names), names)
+        )
         found = {f'"{h.term}"' for h in find_style_hits(cleaned, names)}
         if has_confidence_figure(cleaned):
             found.add('"N% confidence"')

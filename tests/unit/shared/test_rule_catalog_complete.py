@@ -180,11 +180,11 @@ _CONTRACT = (
 # Module-level constants (tables and single values) that name an engine id or a pattern
 # type in a literal.   path: (names, why it is still there)
 ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
-    "src/tools/validation/customer_text_guard.py": (
-        frozenset({"_IAM_SERVICE_PREFIXES"}),
+    "src/shared/engine_names.py": (
+        frozenset({"IAM_SERVICE_PREFIXES"}),
         "the AWS IAM service prefixes among the engine ids (AWS's own names for IAM "
         "actions and condition keys, no routing rule): the wording guard skips "
-        '"dynamodb:Attributes" as an IAM name, not a raw engine id (#1574)',
+        '"dynamodb:Attributes" as an IAM name, and the prose rewrite leaves it (#1574)',
     ),
     "src/shared/capability_labels.py": (
         frozenset({"CAPABILITY_REDESIGN_HINTS"}),

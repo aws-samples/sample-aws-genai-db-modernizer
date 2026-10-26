@@ -93,10 +93,10 @@ class TestEveryDeliverablePrintsIt:
         # The figures stay deterministic: the report and its facts never hold it. The
         # data is the report the deliverables render: its trade-offs state each long
         # sentence once (#1574; a new synthesis writes them so, this older one is read so).
-        from src.shared.design_text import said_once_report
+        from src.shared.design_text import design_prose_report
         from src.shared.migration_risk_rules import backfill_report_risks
 
-        assert data == said_once_report(backfill_report_risks(store.read_json(KEY)))
+        assert data == design_prose_report(backfill_report_risks(store.read_json(KEY)))
         assert COMMIT not in json.dumps(report_facts(store.read_json(KEY)))
 
     def test_every_pdf_page_footer_carries_it(self, rendered):

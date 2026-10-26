@@ -91,7 +91,7 @@ from src.agents.referee.consolidation_validator import BLOCKING_RULES
 from src.agents.referee.engine_exclusions import EXCLUSION_RULES
 from src.agents.referee.query_scoring import GATE_KINDS
 from src.agents.referee.tie_break import TIE_KINDS
-from src.shared.engine_names import ENGINE_DISPLAY_NAMES
+from src.shared.engine_names import ENGINE_DISPLAY_NAMES, ENGINE_ID_RE, is_iam_name
 from src.shared.prose_style import CONFIDENCE_FIGURE_RE
 
 # Fields distinctive enough that no other field in src/contracts/ shares their
@@ -424,27 +424,14 @@ REASON_CODE_FIELD_PATHS = frozenset(
     }
 )
 
-# Longest id first so "aurora_mysql" is matched whole, not as "aurora" plus a
-# dangling "_mysql" (re's alternation takes the first branch that matches at a
-# given position, not the longest).
-_ENGINE_ID_RE = re.compile(
-    r"\b("
-    + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
-    + r")\b"
-)
-# An engine id that is also an AWS IAM service prefix names an IAM action or condition
-# key when a colon and an identifier follow it ("dynamodb:Attributes",
-# "dynamodb:LeadingKeys", "elasticache:CreateCacheCluster", an ARN's
-# "arn:aws:dynamodb:us-east-1"): AWS's own spelling, not a raw engine id in prose
-# (#1574). Only these two ids are IAM prefixes; "dynamodb: the table" (a colon and a
-# space) and every other id are still findings.
-_IAM_SERVICE_PREFIXES = frozenset({"dynamodb", "elasticache"})
-_IAM_NAME_AFTER = re.compile(r":[A-Za-z*]")
+# The raw-id finder and its IAM exemption are engine_names' (#1574), shared with
+# ``display_engine_ids``, which rewrites what this flags in synthesized design prose.
+_ENGINE_ID_RE = ENGINE_ID_RE
 
 
 def _iam_name(text: str, m: re.Match[str]) -> bool:
     """Whether the engine id ``m`` matched is an IAM action, condition key or ARN part."""
-    return m.group(0) in _IAM_SERVICE_PREFIXES and bool(_IAM_NAME_AFTER.match(text, m.end()))
+    return is_iam_name(text, m)
 
 
 _ADR_RE = re.compile(r"\bADR-\d+\b")

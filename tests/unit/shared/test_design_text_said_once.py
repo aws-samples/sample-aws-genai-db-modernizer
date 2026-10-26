@@ -64,7 +64,7 @@ def test_a_legacy_trade_off_keeps_its_two_fields_equal() -> None:
 
 
 def test_a_stored_report_reads_the_same_list_and_its_risk_details_follow() -> None:
-    from src.shared.design_text import said_once_report
+    from src.shared.design_text import design_prose_report
 
     report = {
         "trade_offs": [
@@ -82,12 +82,12 @@ def test_a_stored_report_reads_the_same_list_and_its_risk_details_follow() -> No
             ]
         },
     }
-    out = said_once_report(report)
+    out = design_prose_report(report)
     assert out["trade_offs"][2]["description"] == "B."
     assert out["trade_offs"][1] == report["trade_offs"][1]  # the reality check's, in place
     assert out["risk_assessment"]["risks"][0]["details"] == [f"A. {GSI}".rstrip("."), "B"]
     assert out["risk_assessment"]["risks"][1] == report["risk_assessment"]["risks"][1]
-    assert said_once_report(out) is out  # idempotent: nothing left to change
+    assert design_prose_report(out) is out  # idempotent: nothing left to change
 
 
 def test_synthesis_collects_the_design_trade_offs_stated_once() -> None:

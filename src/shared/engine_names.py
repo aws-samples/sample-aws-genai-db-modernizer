@@ -18,11 +18,64 @@ covered, plus three this module covers that it didn't (``neptune``, ``keyspaces`
 
 from __future__ import annotations
 
+import re
+
 from src.shared import catalog
 
 # Built from the engine catalog (``src/catalog/engines/*.toml``, ADR-031 Decision 8, #492),
 # in its ``display_order``; the UI's copy is generated from the same files.
 ENGINE_DISPLAY_NAMES: dict[str, str] = {e.id: e.display_name for e in catalog.engines()}
+
+
+# A raw engine id in text, longest id first so "aurora_mysql" is matched whole, not as
+# "aurora" plus a dangling "_mysql" (re's alternation takes the first branch that matches
+# at a given position, not the longest). The customer-text guard finds leaks with it and
+# ``display_engine_ids`` rewrites them, so the two always agree on what an id is (#1574).
+ENGINE_ID_RE = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in sorted(ENGINE_DISPLAY_NAMES, key=len, reverse=True))
+    + r")\b"
+)
+# An engine id that is also an AWS IAM service prefix names an IAM action or condition
+# key when a colon and an identifier follow it ("dynamodb:Attributes",
+# "dynamodb:LeadingKeys", "elasticache:CreateCacheCluster", an ARN's
+# "arn:aws:dynamodb:us-east-1"): AWS's own spelling, not a raw engine id in prose
+# (#1574). Only these two ids are IAM prefixes; "dynamodb: the table" (a colon and a
+# space) and every other id are still raw ids.
+IAM_SERVICE_PREFIXES = frozenset({"dynamodb", "elasticache"})
+_IAM_NAME_AFTER = re.compile(r":[A-Za-z*]")
+_CODE_SPAN = re.compile(r"`[^`\n]*`")
+# Part of a path, a file name or an identifier: a "/", "\\", "-", "." or "$" right before
+# the id, or a "/", "\\" or "." followed by a name character right after it.
+_PATH_BEFORE = re.compile(r"[/\\.$-]$")
+_PATH_AFTER = re.compile(r"[/\\]|\.[A-Za-z0-9_]")
+
+
+def is_iam_name(text: str, match: re.Match[str]) -> bool:
+    """Whether the engine id ``match`` found is an IAM action, condition key or ARN part."""
+    return match.group(0) in IAM_SERVICE_PREFIXES and bool(_IAM_NAME_AFTER.match(text, match.end()))
+
+
+def display_engine_ids(text: str) -> str:
+    """``text`` with each raw engine id in its prose written as the engine's display name
+    ("stays on aurora_postgresql" -> "stays on Aurora PostgreSQL", #1574).
+
+    A model writes the ids it was given; the deliverables name engines. Word-boundary
+    matches only, and never inside a code span, in an IAM action or condition key
+    (``dynamodb:Attributes``), an ARN, a path or a file name (``analysis-dynamodb/``).
+    """
+    if not text or not ENGINE_ID_RE.search(text):
+        return text
+    spans = [(m.start(), m.end()) for m in _CODE_SPAN.finditer(text)]
+
+    def name(m: re.Match[str]) -> str:
+        if any(start <= m.start() < end for start, end in spans) or is_iam_name(text, m):
+            return m.group(0)
+        if _PATH_BEFORE.search(text[: m.start()]) or _PATH_AFTER.match(text, m.end()):
+            return m.group(0)
+        return ENGINE_DISPLAY_NAMES[m.group(0)]
+
+    return ENGINE_ID_RE.sub(name, text)
 
 
 # ADR-031 Decision 9: engines that exist in the catalog only as future placeholders

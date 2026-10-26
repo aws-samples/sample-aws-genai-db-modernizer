@@ -18,7 +18,7 @@ from src.report.risks import NO_OPEN_RISKS_CAVEAT
 from src.shared.cache_engines import CACHE_ENGINES
 from src.shared.contract_versioning import ContractVersionError
 from src.shared.database_name import validate_database_name
-from src.shared.design_text import said_once_report
+from src.shared.design_text import design_prose_report
 from src.shared.migration_risk_rules import backfill_report_risks
 from src.shared.prose_style import collector_identifiers
 from src.shared.ranking import PIN_RULE_PREDATES_NOTE, report_predates_pin_rule
@@ -61,7 +61,7 @@ def get_results(job_id: str = Depends(job_id_param)):
     synthesis = backfill_report_risks(synthesis)
     # #1574: the design trade-offs with each long sentence stated once, as synthesis
     # and the deliverables state them.
-    synthesis = said_once_report(synthesis)
+    synthesis = design_prose_report(synthesis)
     # #1403: a report whose facts carry the executive summary's own (read before an
     # older report's facts are computed here, which would add them).
     brief_era = brief_summary(synthesis) is not None
