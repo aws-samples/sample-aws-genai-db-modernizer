@@ -429,3 +429,31 @@ def test_replace_confidence_figures_drops_only_the_figure_phrase() -> None:
     ):
         assert replace_confidence_figures(same) == same
         assert not has_confidence_figure(same)
+
+
+def test_identifier_pattern_is_built_once_per_identifier_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1593: a job's collected names (about 1,800 on discourse) are escaped into
+    one pattern once, not again for every text field the caller checks: the
+    results page's schema designs have hundreds of fields, and rebuilding the
+    pattern per field made GET /schema-designs take seconds."""
+    import src.shared.prose_style as prose_style
+
+    names = [f"discourse.table_{i}" for i in range(300)]
+    escaped: list[str] = []
+    real_escape = re.escape
+
+    def counting_escape(text: str) -> str:
+        escaped.append(text)
+        return real_escape(text)
+
+    monkeypatch.setattr(prose_style.re, "escape", counting_escape)
+    for i in range(40):
+        find_style_hits(f"Field {i} reads table_{i} and is robust.", names)
+        replace_dashes(f"Field {i} — table_{i}.", names)
+    # One pattern: each full name and each bare table name escaped once.
+    assert len(escaped) <= 2 * len(names), len(escaped)
+    # The cached pattern still protects the names (a name is never a style hit).
+    assert _kinds("table_7 is robust", tuple(names)) == [("filler", "robust")]
+    assert _kinds("seamless here", ("seamless",)) == []

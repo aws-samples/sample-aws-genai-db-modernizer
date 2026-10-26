@@ -48,6 +48,7 @@ import re
 from bisect import bisect_right
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 # Each filler word with the inflections a sentence would use. Matched as whole
@@ -213,6 +214,28 @@ _NOT_PROSE_RES = (
 )
 
 
+@lru_cache(maxsize=8)
+def _identifier_pattern(identifiers: tuple[str, ...]) -> re.Pattern[str] | None:
+    """One case-insensitive pattern for the caller's identifiers and their bare
+    (last dotted part) names, longest first, or None when there are none.
+
+    Cached (#1593): a caller checks hundreds of text fields with the same job's
+    collected names (about 1,800 on discourse), and escaping and joining them
+    again for every field made the results page's GET /schema-designs take
+    seconds. Keyed on the caller's names as given: a lookup still builds and hashes
+    that tuple (linear in the names, but each string's hash is cached), far cheaper
+    than escaping and joining them again. The key is the exact list, so another
+    job's names never reuse this pattern."""
+    given = {n.strip() for n in identifiers if n and n.strip()}
+    names = sorted(given | {n.rsplit(".", 1)[-1] for n in given}, key=len, reverse=True)
+    if not names:
+        return None
+    return re.compile(
+        r"(?<![\w-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w-])",
+        re.IGNORECASE,
+    )
+
+
 def _protected_spans(
     text: str, identifiers: Iterable[str] = (), *, code_only: bool = False
 ) -> list[tuple[int, int]]:
@@ -223,13 +246,8 @@ def _protected_spans(
     spans = _code_spans(text)
     if not code_only:
         spans += [(m.start(), m.end()) for rx in _NOT_PROSE_RES for m in rx.finditer(text)]
-        given = {n.strip() for n in identifiers if n and n.strip()}
-        names = sorted(given | {n.rsplit(".", 1)[-1] for n in given}, key=len, reverse=True)
-        if names:
-            rx = re.compile(
-                r"(?<![\w-])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w-])",
-                re.IGNORECASE,
-            )
+        rx = _identifier_pattern(tuple(identifiers))
+        if rx is not None:
             spans += [(m.start(), m.end()) for m in rx.finditer(text)]
     spans.sort()
     merged: list[tuple[int, int]] = []
