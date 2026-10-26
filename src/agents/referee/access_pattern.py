@@ -58,9 +58,10 @@ evidence of an anchor, so it is classed as the least anchored class its shape al
 (``_cut_short_class``), and the reason says so (#986).
 
 A key column is a primary-key column, a foreign-key column, a unique index's
-leading column, or the leading column of a non-unique, non-text index unless the
-column is a date or timestamp (an index on a point in time orders rows, it does not
-address an entity) or the collector's statistics show it low-cardinality
+leading column, or the leading column of a non-unique index other than a full-text,
+GIN, GiST, spatial or BRIN one (``_NON_KEY_INDEX_TYPES``) unless the column is a
+date or timestamp (an index on a point in time orders rows, it does not address an
+entity) or the collector's statistics show it low-cardinality
 (``_LOW_CARDINALITY_SHARE``). With no statistics the index rule holds, and the
 reason names the unconfirmed key. A key column is also the key of other access
 patterns on the table (#1061, ``_workload_keys``): a column the table is looked up by
@@ -131,8 +132,13 @@ CLASS_LABELS: dict[str, str] = {
     UNPARSED: "unparsed statement",
 }
 
-# Index types that are not an access key for an equality or a range.
-_NON_KEY_INDEX_TYPES = frozenset({"fulltext", "gin", "gist", "spatial"})
+# Index types that are not an access key for an equality or a range. A BRIN index only
+# summarizes ranges of table blocks: an equality on its column reads every row of each
+# block range that may hold the value, so it addresses no entity, and it keeps no order,
+# so a range or an ordered read over it filters block ranges rather than reading by key.
+# A hash index and SP-GiST's text, inet and range operator classes serve an equality, so
+# they count.
+_NON_KEY_INDEX_TYPES = frozenset({"brin", "fulltext", "gin", "gist", "spatial"})
 # A time of day, which (like a point in time, ``query_facts.is_timestamp_type``)
 # orders rows rather than addressing an entity.
 _TIME_OF_DAY_TYPES = frozenset({"time", "timetz"})

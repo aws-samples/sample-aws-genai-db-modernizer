@@ -917,6 +917,46 @@ class TestWhichIndexColumnsAreKeys:
         query = {"query_id": "q", "query_text": "SELECT * FROM order_items WHERE order_id = $1"}
         assert "cardinality" not in classify_query(query, KEYS, "postgresql").reason
 
+    def _indexed_by(self, method):
+        """``parts`` with one non-unique index on ``code``, built with ``method``."""
+        table = _table(
+            "parts",
+            ["id"],
+            ["id", "code"],
+            indexes=[(("code",), False)],
+            types={"code": "varchar(32)"},
+        )
+        table["indexes"][0]["index_type"] = method
+        return SchemaKeys.from_collector({"database_schema": {"tables": [table]}})
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT * FROM parts WHERE code = $1",
+            "SELECT * FROM parts WHERE code BETWEEN $1 AND $2",
+            "SELECT * FROM parts ORDER BY code LIMIT 20",
+        ],
+    )
+    def test_a_brin_index_makes_no_key(self, sql):
+        """A BRIN index only summarizes ranges of table blocks: an equality on its column
+        reads every row of each range whose summary may hold the value, so, like a GIN or
+        GiST index, it addresses no entity, and it keeps no order, so a range or an ordered
+        read over it is a filter, not a read by key. Collections before #293 typed it
+        ``other``, which stays a key."""
+        keys = self._indexed_by("brin")
+        assert "code" not in keys.tables["shop.parts"].key_columns
+        query = {"query_id": "q", "query_text": sql}
+        assert classify_query(query, keys, "postgresql").name == AD_HOC_FILTER
+
+    @pytest.mark.passes_on_main  # the BRIN change must not take these keys away
+    @pytest.mark.parametrize("method", ["btree", "hash", "spgist", "other"])
+    def test_an_index_that_serves_an_equality_keeps_its_key(self, method):
+        """A hash index and SP-GiST's text, inet and range operator classes serve an
+        equality on their column, so its leading column stays a key like a B-tree's;
+        so does ``other``, which collections before #293 gave a BRIN index."""
+        query = {"query_id": "q", "query_text": "SELECT * FROM parts WHERE code = $1"}
+        assert classify_query(query, self._indexed_by(method), "postgresql").name == KEY_SCOPED
+
 
 def test_no_bundled_sample_query_is_unparsed():
     """#986: ADR-031 Decision 14 Amendment 7 says no bundled-sample statement keeps the
