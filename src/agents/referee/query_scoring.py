@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Literal, overload
 
 from src.agents.referee.capability_registry import missing_capabilities, triage_query_capabilities
@@ -64,7 +65,12 @@ from src.shared.catalog.patterns import (
 from src.shared.catalog.routing import Waiver, waivers
 from src.shared.engine_capabilities import PATTERN_ONLY_ENGINES
 from src.shared.engine_names import display_engine
-from src.tools.analysis.scoring import DEFAULT_WEIGHTS, compute_confidence, weighted_confidence
+from src.tools.analysis.scoring import (
+    DEFAULT_WEIGHTS,
+    compute_confidence,
+    effective_weights,
+    weighted_confidence,
+)
 from src.tools.sql.query_facts import source_engine_of
 
 ANTI_PATTERN_PENALTIES: dict[str, int] = anti_pattern_penalties()
@@ -96,6 +102,7 @@ def compute_query_confidence(
     pattern_model: QueryPatternModel,
     cost_score: int,
     exact: Literal[False] = False,
+    trace: dict | None = None,
 ) -> int: ...
 
 
@@ -109,6 +116,7 @@ def compute_query_confidence(
     pattern_model: QueryPatternModel,
     cost_score: int,
     exact: Literal[True],
+    trace: dict | None = None,
 ) -> float: ...
 
 
@@ -121,8 +129,14 @@ def compute_query_confidence(
     pattern_model: QueryPatternModel,
     cost_score: int,
     exact: bool = False,
+    trace: dict | None = None,
 ) -> float:
     """Base confidence (0-100) for a query->engine pair (ADR-031 Decision 2 step 4).
+
+    ``trace`` (#1603), when given, is filled with the arithmetic as it runs: the rule
+    (``method``), the ``pattern`` and ``cost`` dimensions the statement brings, each
+    table's ``complexity``, ``performance``, weights and weighted ``score``, and the
+    ``base`` this returns. It changes nothing the function computes.
 
     ``exact`` (#1003) keeps the fractions routing drops: each table's weighted sum
     and their mean, unrounded. Routing never passes it; a pending engine choice
@@ -155,9 +169,19 @@ def compute_query_confidence(
     included. ``cost_score`` is not read for it.
     """
     if not pattern_model.has_class_score(query):
-        return _unclassified_confidence(query_id, query, engine, analysis, exact=exact)
+        return _unclassified_confidence(query_id, query, engine, analysis, exact=exact, trace=trace)
     pattern_score = pattern_model.pattern_score(query, engine)
+    if trace is not None:
+        trace["pattern"] = {
+            "score": pattern_score,
+            "source": "statement",
+            "class": pattern_model.pattern_class(query, engine),
+        }
+        trace["cost"] = {"score": cost_score, "source": "statement"}
+        trace["tables"] = []
     if engine in PATTERN_ONLY_ENGINES and pattern_score <= 0:
+        if trace is not None:
+            trace.update(method=METHOD_PATTERN_ONLY_NO_CLASS_SCORE, base=0)
         return 0
     table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
     scores = []
@@ -170,10 +194,69 @@ def compute_query_confidence(
         breakdown["cost_score"] = cost_score
         weights = dict(pattern_model.weights.get((engine, table_id)) or DEFAULT_WEIGHTS)
         score = ScoreBreakdown(**breakdown)
-        scores.append(
+        table_score = (
             weighted_confidence(score, weights) if exact else compute_confidence(score, weights)
         )
-    return _mean(scores, exact)
+        scores.append(table_score)
+        if trace is not None:
+            trace["tables"].append(
+                {
+                    "table_id": table_id,
+                    "complexity": score.complexity_score,
+                    "performance": score.performance_score,
+                    "weights": _dimension_weights(weights),
+                    "score": table_score,
+                }
+            )
+    base = _mean(scores, exact)
+    if trace is not None:
+        trace.update(method=METHOD_PER_TABLE_WEIGHTED_MEAN, base=base)
+    return base
+
+
+#: How :func:`compute_query_confidence` reached a base score (#1603), as a fit
+#: breakdown names it. A classified statement: the mean of its own rated tables'
+#: weighted scores, or 0 on a pattern-only engine its class gives no score. A statement
+#: with no access-pattern class (:func:`_unclassified_confidence`): the mean confidence
+#: of its own rated tables, of every rated table, or (a pattern-only engine) of the
+#: tables of the patterns that matched it.
+METHOD_PER_TABLE_WEIGHTED_MEAN = "per_table_weighted_mean"
+METHOD_PATTERN_ONLY_NO_CLASS_SCORE = "pattern_only_no_class_score"
+METHOD_UNCLASSIFIED_OWN_TABLES = "unclassified_own_tables"
+METHOD_UNCLASSIFIED_ALL_TABLES = "unclassified_all_tables"
+METHOD_UNCLASSIFIED_PATTERN_TABLES = "unclassified_pattern_tables"
+METHODS: tuple[str, ...] = (
+    METHOD_PER_TABLE_WEIGHTED_MEAN,
+    METHOD_PATTERN_ONLY_NO_CLASS_SCORE,
+    METHOD_UNCLASSIFIED_OWN_TABLES,
+    METHOD_UNCLASSIFIED_ALL_TABLES,
+    METHOD_UNCLASSIFIED_PATTERN_TABLES,
+)
+
+
+def _dimension_weights(weights: Mapping[str, float]) -> dict[str, float]:
+    """The four weights a table's score was combined with, by dimension name."""
+    w = effective_weights(weights)
+    return {
+        "pattern": w["pattern_match"],
+        "complexity": w["complexity"],
+        "performance": w["performance"],
+        "cost": w["cost"],
+    }
+
+
+def _confidence_rows(table_ids: Iterable[str], table_recs: Mapping[str, Mapping]) -> list[dict]:
+    """The trace rows of an unclassified statement's tables: each one's confidence."""
+    return [
+        {
+            "table_id": t,
+            "complexity": None,
+            "performance": None,
+            "weights": None,
+            "score": table_recs[t].get("confidence_score", 0),
+        }
+        for t in table_ids
+    ]
 
 
 def _mean(values: list, exact: bool) -> float:
@@ -185,7 +268,13 @@ def _mean(values: list, exact: bool) -> float:
 
 
 def _unclassified_confidence(
-    query_id: str, query: Mapping, engine: str, analysis: Mapping, *, exact: bool = False
+    query_id: str,
+    query: Mapping,
+    engine: str,
+    analysis: Mapping,
+    *,
+    exact: bool = False,
+    trace: dict | None = None,
 ) -> float:
     """The base score of a statement with no access-pattern class (``utility`` or
     ``unparsed``): the rule every query had before the switch (#302, #475), kept only
@@ -195,8 +284,23 @@ def _unclassified_confidence(
     itself, or 0; any other engine the mean confidence of the query's own tables, or,
     when it has none the analysis rated (``EXEC`` of a procedure, ``SELECT fn(...)``),
     the mean over every table the analysis rated.
+
+    ``trace``: as :func:`compute_query_confidence`'s, with no pattern or cost dimension
+    (neither is read here).
     """
     table_recs = {r["table_id"]: r for r in analysis.get("table_recommendations", [])}
+
+    def traced(method: str, table_ids: list[str], base: float) -> float:
+        if trace is not None:
+            trace.update(
+                method=method,
+                pattern=None,
+                cost=None,
+                tables=_confidence_rows(table_ids, table_recs),
+                base=base,
+            )
+        return base
+
     if engine in PATTERN_ONLY_ENGINES:
         wa = analysis.get("workload_analysis", {})
         pattern_tables = list(
@@ -207,21 +311,17 @@ def _unclassified_confidence(
                 for t in (pattern.get("table_ids") or [])
             )
         )
-        matched = [
-            table_recs[t].get("confidence_score", 0) for t in pattern_tables if t in table_recs
-        ]
-        return _mean(matched, exact)
-    own = [
-        table_recs[t].get("confidence_score", 0)
-        for t in query.get("tables_accessed", [])
-        if t in table_recs
-    ]
+        rated = [t for t in pattern_tables if t in table_recs]
+        matched = [table_recs[t].get("confidence_score", 0) for t in rated]
+        return traced(METHOD_UNCLASSIFIED_PATTERN_TABLES, rated, _mean(matched, exact))
+    own_ids = [t for t in query.get("tables_accessed", []) if t in table_recs]
+    own = [table_recs[t].get("confidence_score", 0) for t in own_ids]
     if own:
-        return _mean(own, exact)
+        return traced(METHOD_UNCLASSIFIED_OWN_TABLES, own_ids, _mean(own, exact))
     if table_recs:
         every = [r.get("confidence_score", 0) for r in table_recs.values()]
-        return _mean(every, exact)
-    return 0
+        return traced(METHOD_UNCLASSIFIED_ALL_TABLES, list(table_recs), _mean(every, exact))
+    return traced(METHOD_UNCLASSIFIED_OWN_TABLES, [], 0)
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +625,15 @@ class ScoringContext:
     # placed; empty, no waiver applies and every gate is the plain one.
     sources_of_truth: Mapping[str, str] = field(default_factory=dict)
 
+    @cached_property
+    def findings_by_pair(self) -> dict[tuple[str, str], tuple[AntiPatternFinding, ...]]:
+        """``(query_id, engine) -> findings`` of :attr:`anti_pattern_findings`, in their
+        order (built once per context, for the fit breakdown, #1603)."""
+        out: dict[tuple[str, str], list[AntiPatternFinding]] = {}
+        for finding in self.anti_pattern_findings:
+            out.setdefault((finding.query_id, finding.engine), []).append(finding)
+        return {key: tuple(found) for key, found in out.items()}
+
     def with_sources_of_truth(self, sources: Mapping[str, str]) -> ScoringContext:
         """A copy whose capability waivers read ``sources`` (``{table: engine}``)."""
         return replace(self, sources_of_truth=dict(sources))
@@ -734,10 +843,19 @@ class EngineScore:
     score: float | None
     gate_reason: str | None = None
     gate_kind: str | None = None
+    # ``explain=True`` only (#1603): how the score was reached, from the same arithmetic
+    # (:func:`score_query_for_engine`). Never compared: two equal scores are equal.
+    breakdown: dict | None = field(default=None, compare=False)
 
 
 def score_query_for_engine(
-    query: Mapping, engine: str, ctx: ScoringContext, *, exact: bool = False
+    query: Mapping,
+    engine: str,
+    ctx: ScoringContext,
+    *,
+    exact: bool = False,
+    explain: bool = False,
+    apply_gates: bool = True,
 ) -> EngineScore:
     """The resolver's adjusted score for ``(query, engine)``, as an
     :class:`EngineScore` -- never ``None`` itself; check ``.score``.
@@ -758,19 +876,31 @@ def score_query_for_engine(
     ``exact=True`` (#1003) is the same score before its fractions are dropped
     (:func:`compute_query_confidence`): the deciding fact of a pending engine
     choice, never a routing input.
+
+    ``explain=True`` (#1603) also returns the arithmetic in ``.breakdown``, filled as it
+    runs (:func:`explained_breakdown` names its fields): a gated pair's gate, else the
+    base confidence's rule, dimensions and tables, the anti-pattern findings on the pair
+    with the points each costs, and the score. ``apply_gates=False`` scores the pair
+    past every gate, the score a caller that lifts the gates itself compares (the
+    resolver's guarantee for a homogeneous source's own Aurora engine, #474). Neither
+    changes the score.
     """
     query_id = str(query.get("query_id") or "")
-    gated = _structural_gate(query, engine, ctx)
-    if gated is not None:
-        return gated
-    if engine in ctx.flag_gaps.get(query_id, frozenset()):
-        return EngineScore(
-            score=None,
-            gate_reason=f"{display_engine(engine)} was flagged as unable to serve this query",
-            gate_kind=GATE_KIND_MODEL_FLAG,
-        )
+    if apply_gates:
+        gated = _structural_gate(query, engine, ctx)
+        if gated is None and engine in ctx.flag_gaps.get(query_id, frozenset()):
+            gated = EngineScore(
+                score=None,
+                gate_reason=f"{display_engine(engine)} was flagged as unable to serve this query",
+                gate_kind=GATE_KIND_MODEL_FLAG,
+            )
+        if gated is not None:
+            if explain:
+                return replace(gated, breakdown=_gated_breakdown(gated))
+            return gated
     analysis = ctx.analysis_outputs.get(engine) or {}
     cost_score = ctx.cost_score(query, engine)
+    trace: dict | None = {} if explain else None
     base = (
         compute_query_confidence(
             query_id,
@@ -780,6 +910,7 @@ def score_query_for_engine(
             pattern_model=ctx.pattern_model,
             cost_score=cost_score,
             exact=True,
+            trace=trace,
         )
         if exact
         else compute_query_confidence(
@@ -789,10 +920,76 @@ def score_query_for_engine(
             analysis,
             pattern_model=ctx.pattern_model,
             cost_score=cost_score,
+            trace=trace,
         )
     )
     penalty = ctx.anti_pattern_map.get((query_id, engine), 0)
-    return EngineScore(score=float(max(0, base - penalty)))
+    fit = max(0, base - penalty)
+    if trace is None:
+        return EngineScore(score=float(fit))
+    trace.update(
+        gate=None,
+        penalties=_penalty_rows(ctx.findings_by_pair.get((query_id, engine), ())),
+        fit=fit,
+    )
+    return EngineScore(score=float(fit), breakdown=explained_breakdown(trace))
+
+
+#: The fields of a fit breakdown (``EngineScore.breakdown``, #1603), in order.
+BREAKDOWN_FIELDS: tuple[str, ...] = (
+    "gate",
+    "method",
+    "pattern",
+    "cost",
+    "tables",
+    "base",
+    "penalties",
+    "fit",
+)
+
+
+def explained_breakdown(trace: Mapping) -> dict:
+    """``trace`` as a fit breakdown: every :data:`BREAKDOWN_FIELDS` entry, in order.
+
+    ``gate`` (``kind``, ``reason``) is set only for a gated pair, and then nothing
+    else is. Otherwise: ``method``, the rule the base score followed (``METHODS``);
+    ``pattern`` (``score``, ``source``, ``class``) and ``cost`` (``score``,
+    ``source``), the statement's own dimensions (None for a statement with no
+    access-pattern class, which reads neither); ``tables``, each table's
+    ``complexity``, ``performance``, ``weights`` and weighted ``score`` (an
+    unclassified statement's: its confidence, with the dimensions None); ``base``;
+    ``penalties``, each anti-pattern finding on the pair (``id``, ``name``,
+    ``points``, ``intrinsic``: a fixable finding costs 0 points, #1231); and ``fit``,
+    ``max(0, base - the largest points)``."""
+    out: dict = {name: trace.get(name) for name in BREAKDOWN_FIELDS}
+    out["tables"] = list(out["tables"] or [])
+    out["penalties"] = list(out["penalties"] or [])
+    return out
+
+
+def _gated_breakdown(gated: EngineScore) -> dict:
+    return explained_breakdown(
+        {"gate": {"kind": gated.gate_kind or "", "reason": gated.gate_reason or ""}}
+    )
+
+
+def _penalty_rows(findings: Iterable[AntiPatternFinding]) -> list[dict]:
+    """One row per finding: its pattern (by catalog id and name), the points it costs
+    the engine (its penalty when intrinsic, 0 when a redesign fixes it) and its kind."""
+    from src.shared.catalog.patterns import penalty_pattern
+
+    rows = []
+    for finding in findings:
+        entry = penalty_pattern(finding.pattern)
+        rows.append(
+            {
+                "id": entry.id if entry else finding.pattern,
+                "name": entry.name if entry else finding.pattern,
+                "points": 0 if finding.fixable else finding.penalty,
+                "intrinsic": not finding.fixable,
+            }
+        )
+    return rows
 
 
 def _structural_gate(

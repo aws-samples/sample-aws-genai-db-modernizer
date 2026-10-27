@@ -7,6 +7,7 @@ across target-specific agents (Redis, DynamoDB, DocumentDB, etc.).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import combinations
 
@@ -338,15 +339,27 @@ def _cost(p: TableProfile) -> int:
 DEFAULT_WEIGHTS: dict[str, float] = default_score_weights()
 
 
+def effective_weights(weights: Mapping[str, float] | None = None) -> dict[str, float]:
+    """The four dimension weights :func:`weighted_confidence` multiplies by: ``weights``
+    (or the defaults, when empty), each missing key at its default share."""
+    w = weights or DEFAULT_WEIGHTS
+    return {
+        "pattern_match": w.get("pattern_match", 0.4),
+        "complexity": w.get("complexity", 0.3),
+        "performance": w.get("performance", 0.2),
+        "cost": w.get("cost", 0.1),
+    }
+
+
 def weighted_confidence(scores: ScoreBreakdown, weights: dict[str, float] | None = None) -> float:
     """The weighted sum of the four score dimensions, before :func:`compute_confidence`
     drops the fraction (#1003: a near-tie's deciding fact)."""
-    w = weights or DEFAULT_WEIGHTS
+    w = effective_weights(weights)
     return (
-        scores.pattern_match_score * w.get("pattern_match", 0.4)
-        + scores.complexity_score * w.get("complexity", 0.3)
-        + scores.performance_score * w.get("performance", 0.2)
-        + scores.cost_score * w.get("cost", 0.1)
+        scores.pattern_match_score * w["pattern_match"]
+        + scores.complexity_score * w["complexity"]
+        + scores.performance_score * w["performance"]
+        + scores.cost_score * w["cost"]
     )
 
 

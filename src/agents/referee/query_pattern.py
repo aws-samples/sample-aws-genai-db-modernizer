@@ -126,6 +126,14 @@ class QueryPatternModel:
         redesigned = self.redesigned_pattern_score(query, engine)
         return written if redesigned is None else max(written, redesigned)
 
+    def pattern_class(self, query: Mapping, engine: str) -> str:
+        """The access-pattern class whose score :meth:`pattern_score` reads on ``engine``:
+        the redesigned class when routing relies on it there, else the class as written."""
+        found = self.redesign(query)
+        if found is not None and self.relies_on_redesign(query, engine):
+            return str(found.redesigned.name)
+        return str(self.classification(query).name)
+
     def redesigned_pattern_score(self, query: Mapping, engine: str) -> int | None:
         """``query``'s redesigned class score on ``engine``, or None with no redesign."""
         found = self.redesign(query)

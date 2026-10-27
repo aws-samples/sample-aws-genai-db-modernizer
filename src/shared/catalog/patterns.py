@@ -555,6 +555,22 @@ def pattern(pattern_id: str) -> PatternEntry:
     raise KeyError(f"no src/catalog/patterns/{pattern_id}.toml")
 
 
+def penalty_pattern(key: str) -> PatternEntry | None:
+    """The pattern file a penalty key names: its ``id`` or one of its
+    ``penalty_aliases`` (the keys an anti-pattern finding carries), or None."""
+    return _by_penalty_key().get(key)
+
+
+@cache
+def _by_penalty_key() -> dict[str, PatternEntry]:
+    out: dict[str, PatternEntry] = {}
+    for entry in patterns():
+        for key in (entry.id, *entry.penalty_aliases):
+            # Unique across files: the loader refuses a key two files claim.
+            out.setdefault(key, entry)
+    return out
+
+
 def engine_pattern(engine: str, catalog_id: str) -> PatternEntry | None:
     """The pattern whose entry for ``engine`` carries ``catalog_id`` (``dynamodb-01``,
     the id the engine's analysis and decision trace record), or None when no pattern
