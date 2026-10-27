@@ -1,174 +1,63 @@
-# Agent Contracts Documentation
+# Agent contracts documentation
 
-This directory contains the formal contract specifications for all agents in the Database Modernizer Assessment system.
+This directory holds the contract documentation for the Database Modernizer Assessment pipeline. The contracts themselves are the Pydantic models in `src/contracts/`.
 
-## 📚 Documentation Index
+## Index
 
-### Core Documents
-
-| Document                                           | Purpose                                                      | Audience                      |
-| -------------------------------------------------- | ------------------------------------------------------------ | ----------------------------- |
-| [agent-contracts-spec.md](agent-contracts-spec.md) | Main specification with overview, versioning, and guidelines | All developers                |
-| [QUICK_START.md](QUICK_START.md)                   | Quick reference for common tasks                             | Developers                    |
+| Document | Purpose | Audience |
+|---|---|---|
+| [agent-contracts-spec.md](agent-contracts-spec.md) | How contracts are organised and versioned, and where the rules are enforced | All developers |
 | [artifacts.md](artifacts.md) | Every JSON file a job writes: registered contracts, model I/O and internal artifacts | Developers, library callers |
 | [assess.md](assess.md) | The library entry point `assess()`: its typed request and result, the stable surface and the unversioned artifacts | Library callers |
 | [assess-design-block.md](assess-design-block.md) | The published standard for the stable design block of a designed `assess()` result: the fields per engine, what is guaranteed, and an example per engine | Library callers |
-| [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/)       | Pydantic model implementations (source code)                 | Developers, Tools             |
-| [schemas/](schemas/README.md)                      | JSON Schema definitions (reference only)                     | External tools, documentation |
+| [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/) | Pydantic model implementations (source code) | Developers, tools |
+| [schemas/](schemas/README.md) | The published JSON Schemas of the `assess()` request and result | External tools, library callers |
 
-## 🚀 Quick Start
+## Getting started
 
-### For Developers
+1. Read [agent-contracts-spec.md](agent-contracts-spec.md).
+2. Find the model for your phase in `src/contracts/` (the table in section 3 of the spec maps phases to files).
+3. Validate with the Pydantic model; read a stored contract through `load_contract` (`src/shared/contract_versioning.py`) so the version check runs.
+4. To change a contract, follow "Contract Changes" in [CONTRIBUTING.md](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/CONTRIBUTING.md).
 
-1. **Read the spec**: Start with [agent-contracts-spec.md](agent-contracts-spec.md)
-2. **Find your contract**: Check [../../src/contracts/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/src/contracts/) directory
-3. **Validate your code**: Use Pydantic models for validation
-4. **Quick reference**: See [QUICK_START.md](QUICK_START.md)
+## Contracts by phase
 
-### For Contributors
+| Phase | Source of truth |
+|---|---|
+| Collector | [src/contracts/collector_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/collector_output.py) |
+| Triage | [src/contracts/triage_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/triage_output.py) |
+| Analysis | [src/contracts/analysis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/analysis_output.py) |
+| Assignment and move ledger | [src/contracts/assignment_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/assignment_models.py), [src/contracts/move_ledger.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/move_ledger.py) |
+| Reality check | [src/contracts/reality_check_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/reality_check_output.py) |
+| Schema design | [src/contracts/schema_design_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/schema_design_output.py) and one `<engine>_model_output.py` per engine |
+| Load test | [src/contracts/load_test_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/load_test_models.py) |
+| Synthesis | [src/contracts/synthesis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/synthesis_output.py) |
+| Phase progression | [src/contracts/phase_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/phase_models.py) |
 
-3. **Update contracts**: Follow guidelines in main spec
-4. **Test changes**: Run contract validation tests
+## Key concepts
 
-## 📋 Contract Overview
+### Versioning
 
-### Agent Types and Contracts
+Contracts are versioned `MAJOR.MINOR`, with no PATCH ([ADR-008](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-008-contract-versioning.md)).
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    COLLECTOR AGENTS                         │
-│  Input:  collector-input.json                               │
-│  Output: collector-output.json                              │
-│  Types:  MySQL, PostgreSQL, MariaDB                         │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   ANALYSIS AGENTS                           │
-│  Input:  analysis-input.json                                │
-│  Output: analysis-output.json                               │
-│  Types:  DynamoDB, DocumentDB, ElastiCache, OpenSearch,     │
-│          Aurora PostgreSQL, Aurora MySQL                    │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    REFEREE AGENT                            │
-│  Input:  referee-input.json                                 │
-│  Output: referee-output.json                                │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                SCHEMA DESIGN AGENTS                         │
-│  Input:  schema-design-input.json                           │
-│  Output: schema-design-output.json                          │
-└─────────────────────────────────────────────────────────────┘
-```
+- **MAJOR**: a breaking change. It ships its adapter in the same change.
+- **MINOR**: a backward-compatible addition.
 
-### Contract Files
-
-| Contract            | Source of Truth                                                                              |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| Collector           | [src/contracts/collector_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/collector_output.py)                 |
-| Analysis            | [src/contracts/analysis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/analysis_output.py)                   |
-| Referee (Triage)    | [src/contracts/triage_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/triage_output.py)                       |
-| Referee (Synthesis) | [src/contracts/synthesis_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/synthesis_output.py)                 |
-| Assignment          | [src/contracts/assignment_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/assignment_models.py)               |
-| Schema Design       | [src/contracts/schema_design_output.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/schema_design_output.py)         |
-| Load Test           | [src/contracts/load_test_models.py](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/contracts/load_test_models.py)                 |
-
-## 🔄 Current Status
-
-**Version:** 2.0.0
-**Last Updated:** January 22, 2026
-**Status:** Modernized - Using Pydantic models
-
-See [agent-contracts-spec.md](agent-contracts-spec.md) for detailed status.
-
-## 📖 Key Concepts
-
-### Contract-First Development
-
-1. **Define contracts** before implementation
-2. **Validate** all inputs and outputs
-3. **Version** contracts semantically
-4. **Test** contract compliance in CI/CD
-
-### Semantic Versioning
-
-- **MAJOR** (1.x.x → 2.0.0): Breaking changes
-- **MINOR** (1.0.x → 1.1.0): New features (backward compatible)
-- **PATCH** (1.0.0 → 1.0.1): Bug fixes (backward compatible)
+A reader accepts any MINOR of its MAJOR and refuses a different MAJOR. The current numbers are in `tests/contract/schema_snapshot.json`; this page does not copy them.
 
 ### Validation
 
-All agents must validate:
-
-- ✅ Input conforms to input contract
-- ✅ Output conforms to output contract
-- ✅ Required fields are present
-- ✅ Data types are correct
-- ✅ Enum values are valid
-
-## 🛠️ Tools and Usage
-
-### Python Validation
-
-```python
-from src.contracts.collector_output import CollectorOutputContract
-from pydantic import ValidationError
-
-# Load and validate
-try:
-    output = CollectorOutputContract(**data)
-    print("Validation successful!")
-except ValidationError as e:
-    print(f"Validation failed: {e}")
-```
-
-### Command Line Validation
+A contract is validated by its Pydantic model when it is written and when it is read. `tests/contract/` pins the shape of every versioned contract in a committed snapshot, so a change to a field fails until its version moves.
 
 ```bash
-# Using Pydantic models
-python -c "from src.contracts.collector_output import CollectorOutputContract; CollectorOutputContract.model_validate_json(open('data.json').read())"
+uv run python -c "from src.contracts.collector_output import CollectorOutputContract; CollectorOutputContract.model_validate_json(open('collector/output.json').read())"
 ```
 
-## 📝 Contributing
+## Changing a contract
 
-### Updating Contracts
+The procedure (declare the bump with `scripts/bump_contract.py`, assign the number with `scripts/resolve_contract_versions.py` after the last rebase) is in CONTRIBUTING.md under "Contract Changes" and summarised in section 5 of the spec.
 
-1. Create issue describing change
-2. Update Pydantic model file
-3. Update main specification
-4. Increment version appropriately
-5. Run validation tests
-6. Get team approval
-7. Merge changes
+## Related documentation
 
-### Breaking Changes
-
-Breaking changes require:
-
-- MAJOR version bump
-- Migration guide
-- 4-week transition period
-- Team approval
-
-See section 8 of [agent-contracts-spec.md](agent-contracts-spec.md) for complete policy.
-
-## 🔗 Related Documentation
-
-- **Architecture**: [../architecture/high-level-design.md](../architecture/high-level-design.md)
-- **Data Specifications**: [data-specs/](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/data-specs/)
-
-## ❓ Questions?
-
-1. Check [QUICK_START.md](QUICK_START.md) for common tasks
-2. Review [agent-contracts-spec.md](agent-contracts-spec.md) for detailed information
-4. Open a GitHub issue for questions
-
----
-
-**Last Updated:** June 2026
-**Maintained By:** Database Modernizer Assessment Team
+- [High-level design](../architecture/high-level-design.md)
+- [Data specifications](https://github.com/aws-samples/sample-aws-genai-db-modernizer/tree/main/docs/data-specs/)

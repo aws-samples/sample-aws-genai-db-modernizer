@@ -78,4 +78,4 @@ The `__init__.py` re-exports the most commonly used contracts.
 ## Documentation
 
 - [Contract Specification](../../docs/contracts/agent-contracts-spec.md)
-- [Quick Start](../../docs/contracts/QUICK_START.md)
+- [Job artifacts](../../docs/contracts/artifacts.md)
