@@ -34,8 +34,9 @@ import hook_common  # noqa: E402
 GATE_REMINDER = (
     "The user cannot see this tool output: Claude Code shows the call collapsed. Your next "
     "chat message must contain this stdout verbatim, the whole Markdown block (including its "
-    "Summary page line, if any), and only then ask the approval question. Never refer to "
-    '"the block above", and add no figure of your own.'
+    "Summary page line, if any), as the visible text of your reply (thinking is not shown), "
+    "and only then ask the approval question; schema design is refused until it is. Never "
+    'refer to "the block above", and add no figure of your own.'
 )
 FINAL_REMINDER = (
     "The user cannot see this tool output: Claude Code shows the call collapsed. Paste this "

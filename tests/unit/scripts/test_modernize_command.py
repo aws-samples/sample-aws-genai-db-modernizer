@@ -802,11 +802,14 @@ def test_the_gate_section_names_the_hook_that_holds_schema_design() -> None:
     decision_gate = _modernize_text().split("### Decision Gate: Assignment Approval", 1)[1]
     decision_gate = " ".join(decision_gate.split("### Phase 6", 1)[0].split())
     assert "`scripts/hooks/require_gate_shown.py`" in decision_gate
-    # Maintainer decision on #1401: the gate's own output is what the user sees; the hook holds
-    # only the order.
+    # #1605 reversed the #1401 reading that the gate's own output is shown, and #1626 enforces the
+    # quote: the hook holds the order and the chat text, and the command says what counts.
     assert "unless a successful gate ran in an earlier message" in decision_gate
+    assert "your own chat text since its output carries the block" in decision_gate
+    assert "thinking, a tool call's input and a tool's output are not shown" in decision_gate
     assert "run the gate on its own first, then start schema design" in decision_gate
-    assert "thinking" not in decision_gate
+    assert "write the block it carries verbatim as the text of your reply" in decision_gate
+    assert "without `--auto`, ask the approval question again after the block" in decision_gate
 
 
 def test_auto_skips_only_the_gate_question_never_its_block_or_url() -> None:
