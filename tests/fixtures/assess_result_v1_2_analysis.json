@@ -1,0 +1,2211 @@
+{
+  "contract_version": "1.2",
+  "label": "analysis_only",
+  "library_version": "0.4.0b3.dev13+g396eedf10",
+  "ruleset_version": "0.4.0b3.dev13+g396eedf10",
+  "ruleset_hash": "sha256:54b61b3e166a06a92087fe2b8f08b052db08192f78e19efca7ceaa7c8d40b0db",
+  "options": {
+    "target_engines": null,
+    "run_through": "analysis",
+    "deterministic": true,
+    "include_artifacts": false
+  },
+  "scope": null,
+  "summary": {
+    "run_through_reached": "analysis",
+    "source_engine": "sqlserver",
+    "assignment_version": null,
+    "statement_count": 95,
+    "statements_per_engine": {},
+    "unservable_count": 0,
+    "post_schema_terminal_count": 0,
+    "unique_delta_threshold": 15,
+    "relational_engine": null,
+    "engines": [],
+    "consolidations": [],
+    "tables": [],
+    "designed_engines": [],
+    "design_note": null,
+    "table_facts": [
+      {
+        "table_id": "trailgear.Brand",
+        "row_count": 140,
+        "size_mb": 0.04,
+        "columns": [
+          {
+            "name": "BrandID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Name",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Country",
+            "data_type": "char",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "BrandID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.Customer",
+        "row_count": 412000,
+        "size_mb": 499.41,
+        "columns": [
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Email",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "FirstName",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "LastName",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Phone",
+            "data_type": "varchar",
+            "nullable": true
+          },
+          {
+            "name": "Preferences",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "CreatedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          },
+          {
+            "name": "ModifiedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "CustomerID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.CustomerAddress",
+        "row_count": 530000,
+        "size_mb": 199.35,
+        "columns": [
+          {
+            "name": "AddressID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Line1",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "City",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Region",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "PostalCode",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "IsDefault",
+            "data_type": "bit",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "AddressID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_CustomerAddress_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.CustomerNote",
+        "row_count": 61000,
+        "size_mb": 49.769999999999996,
+        "columns": [
+          {
+            "name": "NoteID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Body",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "CreatedBy",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "CreatedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "NoteID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_CustomerNote_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.EventLog",
+        "row_count": 31000000,
+        "size_mb": 22333.079999999998,
+        "columns": [
+          {
+            "name": "EventID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "EventType",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "EntityID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "Payload",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "EventTime",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "EventID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.FeatureFlag",
+        "row_count": 85,
+        "size_mb": 0.04,
+        "columns": [
+          {
+            "name": "FlagKey",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "Enabled",
+            "data_type": "bit",
+            "nullable": false
+          },
+          {
+            "name": "Rollout",
+            "data_type": "tinyint",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "FlagKey"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.KnowledgeArticle",
+        "row_count": 4100,
+        "size_mb": 5.460000000000001,
+        "columns": [
+          {
+            "name": "ArticleID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Title",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Body",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Tags",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "PublishedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "ArticleID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.LoyaltyAccount",
+        "row_count": 198000,
+        "size_mb": 8.02,
+        "columns": [
+          {
+            "name": "LoyaltyAccountID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Tier",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "Points",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ModifiedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "LoyaltyAccountID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_LoyaltyAccount_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.OrderStatusHistory",
+        "row_count": 9400000,
+        "size_mb": 501.3,
+        "columns": [
+          {
+            "name": "HistoryID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "Status",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "ChangedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "HistoryID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_OrderStatusHistory_Order",
+            "columns": [
+              "SalesOrderID"
+            ],
+            "referenced_table": "trailgear.SalesOrder",
+            "referenced_columns": [
+              "SalesOrderID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.Payment",
+        "row_count": 2810000,
+        "size_mb": 249.45999999999998,
+        "columns": [
+          {
+            "name": "PaymentID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "Method",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "Amount",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "AuthCode",
+            "data_type": "varchar",
+            "nullable": true
+          },
+          {
+            "name": "CapturedDate",
+            "data_type": "datetime2",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "PaymentID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_Payment_Order",
+            "columns": [
+              "SalesOrderID"
+            ],
+            "referenced_table": "trailgear.SalesOrder",
+            "referenced_columns": [
+              "SalesOrderID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.PriceChangeLog",
+        "row_count": 640000,
+        "size_mb": 112.67,
+        "columns": [
+          {
+            "name": "ChangeID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "OldPrice",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "NewPrice",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "ChangedBy",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "ChangedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "ChangeID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.Product",
+        "row_count": 38500,
+        "size_mb": 72.08,
+        "columns": [
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Sku",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "Name",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Description",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "CategoryID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "BrandID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Specs",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "IsActive",
+            "data_type": "bit",
+            "nullable": false
+          },
+          {
+            "name": "ModifiedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "ProductID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_Product_Category",
+            "columns": [
+              "CategoryID"
+            ],
+            "referenced_table": "trailgear.ProductCategory",
+            "referenced_columns": [
+              "CategoryID"
+            ]
+          },
+          {
+            "constraint_name": "FK_Product_Brand",
+            "columns": [
+              "BrandID"
+            ],
+            "referenced_table": "trailgear.Brand",
+            "referenced_columns": [
+              "BrandID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.ProductCategory",
+        "row_count": 260,
+        "size_mb": 0.06,
+        "columns": [
+          {
+            "name": "CategoryID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ParentCategoryID",
+            "data_type": "int",
+            "nullable": true
+          },
+          {
+            "name": "Name",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Slug",
+            "data_type": "varchar",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "CategoryID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_ProductCategory_Parent",
+            "columns": [
+              "ParentCategoryID"
+            ],
+            "referenced_table": "trailgear.ProductCategory",
+            "referenced_columns": [
+              "CategoryID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.ProductImage",
+        "row_count": 152000,
+        "size_mb": 49.65,
+        "columns": [
+          {
+            "name": "ImageID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Url",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "SortOrder",
+            "data_type": "smallint",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "ImageID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_ProductImage_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.ProductPrice",
+        "row_count": 41000,
+        "size_mb": 2.57,
+        "columns": [
+          {
+            "name": "PriceID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ListPrice",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "SalePrice",
+            "data_type": "decimal",
+            "nullable": true
+          },
+          {
+            "name": "ValidFrom",
+            "data_type": "datetime2",
+            "nullable": false
+          },
+          {
+            "name": "ValidTo",
+            "data_type": "datetime2",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "PriceID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_ProductPrice_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.ProductReview",
+        "row_count": 905000,
+        "size_mb": 695.25,
+        "columns": [
+          {
+            "name": "ReviewID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Rating",
+            "data_type": "tinyint",
+            "nullable": false
+          },
+          {
+            "name": "Title",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Body",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "CreatedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "ReviewID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_ProductReview_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          },
+          {
+            "constraint_name": "FK_ProductReview_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.Promotion",
+        "row_count": 320,
+        "size_mb": 0.04,
+        "columns": [
+          {
+            "name": "PromotionID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Code",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "DiscountPct",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "StartsOn",
+            "data_type": "date",
+            "nullable": false
+          },
+          {
+            "name": "EndsOn",
+            "data_type": "date",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "PromotionID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.PurchaseOrder",
+        "row_count": 52000,
+        "size_mb": 2.16,
+        "columns": [
+          {
+            "name": "PurchaseOrderID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "SupplierID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "WarehouseID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Status",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "OrderedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "PurchaseOrderID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_PurchaseOrder_Supplier",
+            "columns": [
+              "SupplierID"
+            ],
+            "referenced_table": "trailgear.Supplier",
+            "referenced_columns": [
+              "SupplierID"
+            ]
+          },
+          {
+            "constraint_name": "FK_PurchaseOrder_Warehouse",
+            "columns": [
+              "WarehouseID"
+            ],
+            "referenced_table": "trailgear.Warehouse",
+            "referenced_columns": [
+              "WarehouseID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.PurchaseOrderLine",
+        "row_count": 390000,
+        "size_mb": 14.17,
+        "columns": [
+          {
+            "name": "PurchaseOrderLineID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "PurchaseOrderID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Quantity",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "UnitCost",
+            "data_type": "decimal",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "PurchaseOrderLineID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_PurchaseOrderLine_PO",
+            "columns": [
+              "PurchaseOrderID"
+            ],
+            "referenced_table": "trailgear.PurchaseOrder",
+            "referenced_columns": [
+              "PurchaseOrderID"
+            ]
+          },
+          {
+            "constraint_name": "FK_PurchaseOrderLine_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.SalesOrder",
+        "row_count": 2740000,
+        "size_mb": 285.32,
+        "columns": [
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "OrderNumber",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Status",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "OrderDate",
+            "data_type": "datetime2",
+            "nullable": false
+          },
+          {
+            "name": "TotalDue",
+            "data_type": "decimal",
+            "nullable": false
+          },
+          {
+            "name": "ShipToAddressID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "PromotionID",
+            "data_type": "int",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "SalesOrderID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_SalesOrder_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          },
+          {
+            "constraint_name": "FK_SalesOrder_Address",
+            "columns": [
+              "ShipToAddressID"
+            ],
+            "referenced_table": "trailgear.CustomerAddress",
+            "referenced_columns": [
+              "AddressID"
+            ]
+          },
+          {
+            "constraint_name": "FK_SalesOrder_Promotion",
+            "columns": [
+              "PromotionID"
+            ],
+            "referenced_table": "trailgear.Promotion",
+            "referenced_columns": [
+              "PromotionID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.SalesOrderLine",
+        "row_count": 8310000,
+        "size_mb": 438.78999999999996,
+        "columns": [
+          {
+            "name": "SalesOrderLineID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Quantity",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "UnitPrice",
+            "data_type": "decimal",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "SalesOrderLineID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_SalesOrderLine_Order",
+            "columns": [
+              "SalesOrderID"
+            ],
+            "referenced_table": "trailgear.SalesOrder",
+            "referenced_columns": [
+              "SalesOrderID"
+            ]
+          },
+          {
+            "constraint_name": "FK_SalesOrderLine_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.Shipment",
+        "row_count": 2600000,
+        "size_mb": 237.2,
+        "columns": [
+          {
+            "name": "ShipmentID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "Carrier",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "TrackingNumber",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "ShippedDate",
+            "data_type": "datetime2",
+            "nullable": true
+          },
+          {
+            "name": "DeliveredDate",
+            "data_type": "datetime2",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "ShipmentID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_Shipment_Order",
+            "columns": [
+              "SalesOrderID"
+            ],
+            "referenced_table": "trailgear.SalesOrder",
+            "referenced_columns": [
+              "SalesOrderID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.StockLevel",
+        "row_count": 410000,
+        "size_mb": 12.870000000000001,
+        "columns": [
+          {
+            "name": "WarehouseID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "OnHand",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Reserved",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ModifiedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "WarehouseID",
+          "ProductID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_StockLevel_Warehouse",
+            "columns": [
+              "WarehouseID"
+            ],
+            "referenced_table": "trailgear.Warehouse",
+            "referenced_columns": [
+              "WarehouseID"
+            ]
+          },
+          {
+            "constraint_name": "FK_StockLevel_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.StockMovement",
+        "row_count": 14200000,
+        "size_mb": 939.97,
+        "columns": [
+          {
+            "name": "MovementID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "WarehouseID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ProductID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Delta",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Reason",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "MovedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "MovementID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_StockMovement_Product",
+            "columns": [
+              "ProductID"
+            ],
+            "referenced_table": "trailgear.Product",
+            "referenced_columns": [
+              "ProductID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.StoreSetting",
+        "row_count": 140,
+        "size_mb": 0.09000000000000001,
+        "columns": [
+          {
+            "name": "SettingKey",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "SettingValue",
+            "data_type": "nvarchar",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "SettingKey"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.Supplier",
+        "row_count": 410,
+        "size_mb": 0.21,
+        "columns": [
+          {
+            "name": "SupplierID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Name",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "ContactEmail",
+            "data_type": "nvarchar",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "SupplierID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.Ticket",
+        "row_count": 288000,
+        "size_mb": 107.56,
+        "columns": [
+          {
+            "name": "TicketID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "SalesOrderID",
+            "data_type": "bigint",
+            "nullable": true
+          },
+          {
+            "name": "Subject",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Status",
+            "data_type": "varchar",
+            "nullable": false
+          },
+          {
+            "name": "Priority",
+            "data_type": "tinyint",
+            "nullable": false
+          },
+          {
+            "name": "OpenedDate",
+            "data_type": "datetime2",
+            "nullable": false
+          },
+          {
+            "name": "ClosedDate",
+            "data_type": "datetime2",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "TicketID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_Ticket_Customer",
+            "columns": [
+              "CustomerID"
+            ],
+            "referenced_table": "trailgear.Customer",
+            "referenced_columns": [
+              "CustomerID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.TicketMessage",
+        "row_count": 1350000,
+        "size_mb": 1181.93,
+        "columns": [
+          {
+            "name": "MessageID",
+            "data_type": "bigint",
+            "nullable": false
+          },
+          {
+            "name": "TicketID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "ReplyToMessageID",
+            "data_type": "bigint",
+            "nullable": true
+          },
+          {
+            "name": "Author",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "Body",
+            "data_type": "nvarchar",
+            "nullable": false
+          },
+          {
+            "name": "SentDate",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "MessageID"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_TicketMessage_Ticket",
+            "columns": [
+              "TicketID"
+            ],
+            "referenced_table": "trailgear.Ticket",
+            "referenced_columns": [
+              "TicketID"
+            ]
+          },
+          {
+            "constraint_name": "FK_TicketMessage_ReplyTo",
+            "columns": [
+              "ReplyToMessageID"
+            ],
+            "referenced_table": "trailgear.TicketMessage",
+            "referenced_columns": [
+              "MessageID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "trailgear.UserSession",
+        "row_count": 96000,
+        "size_mb": 55.69,
+        "columns": [
+          {
+            "name": "SessionToken",
+            "data_type": "char",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": true
+          },
+          {
+            "name": "CartJson",
+            "data_type": "nvarchar",
+            "nullable": true
+          },
+          {
+            "name": "ExpiresAt",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "SessionToken"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "trailgear.Warehouse",
+        "row_count": 12,
+        "size_mb": 0.04,
+        "columns": [
+          {
+            "name": "WarehouseID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "Code",
+            "data_type": "char",
+            "nullable": false
+          },
+          {
+            "name": "Name",
+            "data_type": "nvarchar",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "WarehouseID"
+        ],
+        "foreign_keys": []
+      }
+    ]
+  },
+  "statements": [
+    {
+      "query_id": "0xE715A6116BCB0673",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 0,
+      "tables": [
+        "trailgear.Product"
+      ],
+      "calls_per_second": 1.2403587962962963,
+      "rewritten_by_caller": false,
+      "engine": null,
+      "confidence": null,
+      "reason_code": null,
+      "consolidated_from": null,
+      "excluded": [
+        "dynamodb",
+        "elasticache"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 67,
+        "aurora_postgresql": 81,
+        "documentdb": 56,
+        "opensearch": 74
+      },
+      "signals": [
+        "text_search",
+        "leaderboard_pattern"
+      ],
+      "matched_patterns": [],
+      "tied_engines": [],
+      "reason_text": null,
+      "post_schema_terminal": null,
+      "query_text": "SELECT TOP (24) [ProductID], [Sku], [Name] FROM [Product] WHERE [Name] LIKE '%' + @Term + '%' OR [Description] LIKE '%' + @Term + '%' ORDER BY [Name]",
+      "matched_anti_patterns": [
+        {
+          "id": "frequent-full-scan",
+          "name": "Frequent full scan",
+          "intrinsic": true
+        },
+        {
+          "id": "ordered-scan",
+          "name": "Ordered scan",
+          "intrinsic": true
+        },
+        {
+          "id": "wildcard-search",
+          "name": "Wildcard search",
+          "intrinsic": true
+        }
+      ],
+      "fit_breakdown": {
+        "aurora_mysql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 45,
+            "source": "statement",
+            "class": "text_search"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 85,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 67
+            }
+          ],
+          "base": 67,
+          "penalties": [],
+          "fit": 67
+        },
+        "aurora_postgresql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 80,
+            "source": "statement",
+            "class": "text_search"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 85,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 81
+            }
+          ],
+          "base": 81,
+          "penalties": [],
+          "fit": 81
+        },
+        "documentdb": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 45,
+            "source": "statement",
+            "class": "text_search"
+          },
+          "cost": {
+            "score": 95,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 65,
+              "performance": 50,
+              "weights": {
+                "pattern": 0.48,
+                "complexity": 0.26,
+                "performance": 0.16,
+                "cost": 0.1
+              },
+              "score": 56
+            }
+          ],
+          "base": 56,
+          "penalties": [],
+          "fit": 56
+        },
+        "dynamodb": {
+          "gate": {
+            "kind": "hard_exclusion",
+            "reason": "excluded from DynamoDB: it uses a leading-wildcard search (LIKE '%...')"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "elasticache": {
+          "gate": {
+            "kind": "capability",
+            "reason": "ElastiCache lacks required capability: full-text or pattern search"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "opensearch": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 80,
+            "source": "statement",
+            "class": "text_search"
+          },
+          "cost": {
+            "score": 98,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 75,
+              "performance": 50,
+              "weights": {
+                "pattern": 0.45,
+                "complexity": 0.25,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 74
+            }
+          ],
+          "base": 74,
+          "penalties": [],
+          "fit": 74
+        }
+      }
+    },
+    {
+      "query_id": "0x579133B43C5DF08B",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 0,
+      "tables": [
+        "trailgear.SalesOrder"
+      ],
+      "calls_per_second": 0.02050925925925926,
+      "rewritten_by_caller": false,
+      "engine": null,
+      "confidence": null,
+      "reason_code": null,
+      "consolidated_from": null,
+      "excluded": [
+        "dynamodb",
+        "elasticache"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 85,
+        "aurora_postgresql": 85,
+        "documentdb": 69,
+        "opensearch": 50
+      },
+      "signals": [
+        "low_frequency_reads",
+        "aggregations",
+        "time_series"
+      ],
+      "matched_patterns": [],
+      "tied_engines": [],
+      "reason_text": null,
+      "post_schema_terminal": null,
+      "query_text": "SELECT CAST(o.[OrderDate] AS date) AS [Day], COUNT(*) AS [Orders], SUM(o.[TotalDue]) AS [Revenue] FROM [SalesOrder] o WITH (NOLOCK) WHERE o.[OrderDate] >= @StartDate AND o.[OrderDate] < @EndDate GROUP BY CAST(o.[OrderDate] AS date) ORDER BY [Day]",
+      "matched_anti_patterns": [
+        {
+          "id": "complex-aggregation",
+          "name": "Complex aggregation",
+          "intrinsic": true
+        },
+        {
+          "id": "frequent-full-scan",
+          "name": "Frequent full scan",
+          "intrinsic": true
+        }
+      ],
+      "fit_breakdown": {
+        "aurora_mysql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 85,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 85,
+              "performance": 80,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 85
+            }
+          ],
+          "base": 85,
+          "penalties": [],
+          "fit": 85
+        },
+        "aurora_postgresql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 85,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 85,
+              "performance": 80,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 85
+            }
+          ],
+          "base": 85,
+          "penalties": [],
+          "fit": 85
+        },
+        "documentdb": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 75,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 98,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 55,
+              "performance": 60,
+              "weights": {
+                "pattern": 0.48,
+                "complexity": 0.26,
+                "performance": 0.16,
+                "cost": 0.1
+              },
+              "score": 69
+            }
+          ],
+          "base": 69,
+          "penalties": [],
+          "fit": 69
+        },
+        "dynamodb": {
+          "gate": {
+            "kind": "capability",
+            "reason": "DynamoDB lacks required capability: aggregation"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "elasticache": {
+          "gate": {
+            "kind": "capability",
+            "reason": "ElastiCache lacks required capability: aggregation"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "opensearch": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 90,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 98,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 0,
+              "performance": 0,
+              "weights": {
+                "pattern": 0.45,
+                "complexity": 0.25,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 50
+            }
+          ],
+          "base": 50,
+          "penalties": [],
+          "fit": 50
+        }
+      }
+    },
+    {
+      "query_id": "0x41A1D5EE8655B412",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 2,
+      "tables": [
+        "trailgear.SalesOrderLine",
+        "trailgear.Product",
+        "trailgear.SalesOrder"
+      ],
+      "calls_per_second": 0.008171296296296296,
+      "rewritten_by_caller": false,
+      "engine": null,
+      "confidence": null,
+      "reason_code": null,
+      "consolidated_from": null,
+      "excluded": [
+        "documentdb",
+        "dynamodb",
+        "elasticache",
+        "opensearch"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 84,
+        "aurora_postgresql": 84
+      },
+      "signals": [
+        "low_frequency_reads",
+        "complex_joins",
+        "aggregations",
+        "time_series"
+      ],
+      "matched_patterns": [],
+      "tied_engines": [],
+      "reason_text": null,
+      "post_schema_terminal": null,
+      "query_text": "SELECT TOP (50) p.[ProductID], p.[Name], SUM(l.[Quantity]) AS [Units] FROM [SalesOrderLine] l JOIN [Product] p ON p.[ProductID] = l.[ProductID] JOIN [SalesOrder] o ON o.[SalesOrderID] = l.[SalesOrderID] WHERE o.[OrderDate] >= @StartDate GROUP BY p.[ProductID], p.[Name] ORDER BY [Units] DESC",
+      "matched_anti_patterns": [
+        {
+          "id": "complex-aggregation",
+          "name": "Complex aggregation",
+          "intrinsic": true
+        },
+        {
+          "id": "multi-index-joins",
+          "name": "Multi-index joins",
+          "intrinsic": true
+        },
+        {
+          "id": "ordered-scan",
+          "name": "Ordered scan",
+          "intrinsic": true
+        }
+      ],
+      "fit_breakdown": {
+        "aurora_mysql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 85,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrderLine",
+              "complexity": 95,
+              "performance": 60,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 84
+            },
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 85,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 83
+            },
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 85,
+              "performance": 80,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 85
+            }
+          ],
+          "base": 84,
+          "penalties": [],
+          "fit": 84
+        },
+        "aurora_postgresql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 85,
+            "source": "statement",
+            "class": "aggregation"
+          },
+          "cost": {
+            "score": 97,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "trailgear.SalesOrderLine",
+              "complexity": 95,
+              "performance": 60,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 84
+            },
+            {
+              "table_id": "trailgear.Product",
+              "complexity": 85,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 83
+            },
+            {
+              "table_id": "trailgear.SalesOrder",
+              "complexity": 85,
+              "performance": 80,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 85
+            }
+          ],
+          "base": 84,
+          "penalties": [],
+          "fit": 84
+        },
+        "documentdb": {
+          "gate": {
+            "kind": "capability",
+            "reason": "DocumentDB lacks required capability: aggregation, multi-table joins"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "dynamodb": {
+          "gate": {
+            "kind": "capability",
+            "reason": "DynamoDB lacks required capability: aggregation, multi-table joins"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "elasticache": {
+          "gate": {
+            "kind": "hard_exclusion",
+            "reason": "excluded from ElastiCache: it joins more than one table, and a key-value store can't serve joins"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        },
+        "opensearch": {
+          "gate": {
+            "kind": "capability",
+            "reason": "OpenSearch lacks required capability: aggregation, multi-table joins"
+          },
+          "method": null,
+          "pattern": null,
+          "cost": null,
+          "tables": [],
+          "base": null,
+          "penalties": [],
+          "fit": null
+        }
+      }
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "cd-1",
+      "kind": "co_dependency",
+      "query_ids": [
+        "0x41A1D5EE8655B412",
+        "0x288281D96014BDB3",
+        "0x930174356CDABACA",
+        "0x7D9CCE936F5D81BA"
+      ],
+      "tables": [
+        "trailgear.CustomerAddress",
+        "trailgear.Payment",
+        "trailgear.Product",
+        "trailgear.SalesOrder",
+        "trailgear.SalesOrderLine",
+        "trailgear.Shipment"
+      ],
+      "engine": null,
+      "reason": "These statements join the same tables, so they stay on one engine."
+    },
+    {
+      "group_id": "cd-2",
+      "kind": "co_dependency",
+      "query_ids": [
+        "0xFCADCD1EDFC1863A",
+        "0x6429CA3F0184378A"
+      ],
+      "tables": [
+        "trailgear.ProductCategory"
+      ],
+      "engine": null,
+      "reason": "These statements join the same tables, so they stay on one engine."
+    },
+    {
+      "group_id": "cd-3",
+      "kind": "co_dependency",
+      "query_ids": [
+        "0x2F5F5C962A1DA875",
+        "0xD34F972E18B8D979"
+      ],
+      "tables": [
+        "trailgear.Ticket",
+        "trailgear.TicketMessage"
+      ],
+      "engine": null,
+      "reason": "These statements join the same tables, so they stay on one engine."
+    },
+    {
+      "group_id": "wg-trailgear.Customer",
+      "kind": "write_group",
+      "query_ids": [
+        "0x13AA5401A639D6C8",
+        "0xADF0BF17E0DB6B8F"
+      ],
+      "tables": [
+        "trailgear.Customer"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.Customer: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.ProductPrice",
+      "kind": "write_group",
+      "query_ids": [
+        "0xF65F1E1A98E68919",
+        "0xE4494B567754BF54"
+      ],
+      "tables": [
+        "trailgear.ProductPrice"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.ProductPrice: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.SalesOrder",
+      "kind": "write_group",
+      "query_ids": [
+        "0x8E6C17DA57EAB252",
+        "0x452800B927B9ECC9"
+      ],
+      "tables": [
+        "trailgear.SalesOrder"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.SalesOrder: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.Shipment",
+      "kind": "write_group",
+      "query_ids": [
+        "0xE99A571BCB104F13",
+        "0xAF48C75729669E37"
+      ],
+      "tables": [
+        "trailgear.Shipment"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.Shipment: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.StockLevel",
+      "kind": "write_group",
+      "query_ids": [
+        "0x2BDF3D0068BE8972",
+        "0xEAD44A73702298B8"
+      ],
+      "tables": [
+        "trailgear.StockLevel"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.StockLevel: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.Ticket",
+      "kind": "write_group",
+      "query_ids": [
+        "0x73F8029840AFB793",
+        "0xCA34070C2B7E419E"
+      ],
+      "tables": [
+        "trailgear.Ticket"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.Ticket: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-trailgear.UserSession",
+      "kind": "write_group",
+      "query_ids": [
+        "0x9D11480F1E01B771",
+        "0x0FB58D2872D5E89F",
+        "0x7E5D883FF93A2794"
+      ],
+      "tables": [
+        "trailgear.UserSession"
+      ],
+      "engine": null,
+      "reason": "Every statement that writes trailgear.UserSession: a table has one writer, so they share an engine."
+    }
+  ],
+  "designs": null,
+  "artifacts": null
+}

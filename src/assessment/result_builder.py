@@ -43,6 +43,7 @@ small addition: a field reads one more input here, a phase loads one more artifa
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any, get_args
@@ -71,11 +72,13 @@ from src.assessment.models import (
     EngineLine,
     FitBreakdown,
     FlagReasonCode,
+    ForeignKeyRowsBasis,
     Group,
     OpenSearchDataStream,
     OpenSearchDesign,
     OpenSearchField,
     OpenSearchIndex,
+    ParseStatus,
     PatternRef,
     PostSchemaTerminal,
     PublicReasonCode,
@@ -521,6 +524,51 @@ def post_schema_terminals(state: RunState) -> dict[str, PostSchemaTerminal]:
     return out
 
 
+def _parse_status(pattern: Mapping[str, Any], source_engine: str) -> ParseStatus:
+    """``parsed`` when the SQL parser read the statement's facts, ``fallback`` when they
+    are its pattern-based estimate: the reading the collector stored, else the parser's
+    reading of the text again (the collector stores none for a reading that failed)."""
+    from src.tools.sql.facade import read_sql
+    from src.tools.sql.stored_facts import readings_from_stored
+
+    text = str(pattern.get("query_text") or "")
+    stored = readings_from_stored(pattern.get("parsed_facts"), text, source_engine)
+    facts = stored[0] if stored is not None else read_sql(text, source_engine).facts
+    return (
+        "parsed" if facts.parsed_by == "sqlglot" and facts.fallback_reason is None else "fallback"
+    )
+
+
+def _counted_statements(collection: Mapping[str, Any] | None) -> dict[str, int | None] | None:
+    """Per statement id (a row's ``digest``, else the first 16 hexadecimal characters of
+    SHA-256 of its text, as the parser names it), the sum of the execution counts its
+    rows give, None when none gives one. None for no collection, or a collector output
+    (which records no unknown count)."""
+    if not isinstance(collection, Mapping) or "database_schema" in collection:
+        return None
+    out: dict[str, int | None] = {}
+    for r in collection.get("queries") or []:
+        if not isinstance(r, Mapping):
+            continue
+        text = str(r.get("query_text") or "")
+        qid = str(r.get("digest") or hashlib.sha256(text.encode()).hexdigest()[:16])
+        count, so_far = _count_or_none(r.get("execution_count")), out.get(qid)
+        out[qid] = so_far if count is None else (so_far or 0) + count
+    return out
+
+
+def _known_calls(calls: Any, counted: dict[str, int | None] | None, qid: str) -> Any:
+    """``calls_per_second`` as 1.3 states it: None when the collection gives no execution
+    count, 0.0 for a count of 0 (the parser counts both as one call a day, which routing
+    reads), else the parser's figure. A collector output's figure as it records it."""
+    if counted is None:
+        return calls
+    total = counted.get(qid)
+    if total is None:
+        return None
+    return 0.0 if total == 0 else calls
+
+
 def build_statements(state: RunState, request: AssessmentRequest) -> list[StatementResult]:
     """One entry per statement: every collected statement at ``analysis``; from
     ``reality_check`` on, every placed (in-scope) statement of the effective assignment,
@@ -531,6 +579,8 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
     scope_out = _scope_excluded(state.triage)
     rewritten = _rewritten(request)
     terminal = post_schema_terminals(state)
+    counted = _counted_statements(request.collection)
+    source_engine = state.source_engine
     scorer = _Scorer(state)
     anti_patterns = scorer.anti_patterns()
 
@@ -543,13 +593,18 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
         q = patterns.get(qid) or {}
         fit, gated, breakdown = scored
         engine = placed.engine if placed else None
-        return StatementResult(
+        calls, text = q.get("calls_per_second"), q.get("query_text")
+        # Since 1.3 (#1632): None for an unknown execution count, 0.0 for a real 0.
+        known_calls = _known_calls(calls, counted, qid)
+        known_text = text if text != "" else None
+        parse_status = _parse_status(q, source_engine) if known_text is not None else None
+        result = StatementResult(
             query_id=qid,
             query_tags=[str(t) for t in q.get("query_tags") or []],
             query_type=q.get("query_type"),
             join_count=q.get("join_count"),
             tables=[str(t) for t in tables],
-            calls_per_second=q.get("calls_per_second"),
+            calls_per_second=known_calls,
             rewritten_by_caller=qid in rewritten,
             engine=engine,
             confidence=placed.confidence if placed else None,
@@ -565,10 +620,22 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
             tied_engines=placed.tied_engines if placed else [],
             reason_text=placed.reason_text if placed else None,
             post_schema_terminal=terminal.get(qid) if placed and engine else None,
-            query_text=q.get("query_text"),
+            query_text=known_text,
+            parse_status=parse_status,
             matched_anti_patterns=anti_patterns.get(qid, []),
             fit_breakdown=breakdown,
         )
+        result.set_written_before_1_3(
+            {
+                name: value
+                for name, value, now in (
+                    ("calls_per_second", calls, known_calls),
+                    ("query_text", text, known_text),
+                )
+                if now != value
+            }
+        )
+        return result
 
     def from_ladder(qid: str, history: list[Move], extra_gates: Collection[str] = ()) -> Scored:
         fit, gated = _ladder_fit(history)
@@ -805,7 +872,11 @@ def build_engine_lines(
     return lines
 
 
-def build_summary(state: RunState, statements: list[StatementResult]) -> Summary:
+def build_summary(
+    state: RunState,
+    statements: list[StatementResult],
+    collection: Mapping[str, Any] | None = None,
+) -> Summary:
     from src.agents.referee.reality_check_rules import UNIQUE_DELTA_THRESHOLD
 
     per_engine: dict[str, int] = {}
@@ -832,7 +903,7 @@ def build_summary(state: RunState, statements: list[StatementResult]) -> Summary
         consolidations=consolidations,
         tables=build_table_lines(state, relational.engine if relational else None),
         **_design_lines(state),
-        table_facts=build_table_facts(state),
+        table_facts=build_table_facts(state, collection),
     )
 
 
@@ -874,17 +945,158 @@ def _size_through_1_2(table: Mapping[str, Any]) -> float | None:
     return 0.0 if size is None else size
 
 
-def build_table_facts(state: RunState) -> list[TableFacts]:
+def _count_or_none(value: Any) -> int | None:
+    """A collected row count, or None for an unknown one: missing, NULL, or negative
+    (PostgreSQL's ``reltuples`` is -1 for a table never analysed)."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if value < 0 or value != int(value):
+        return None
+    return int(value)
+
+
+def _collected_tables(
+    collection: Mapping[str, Any] | None,
+) -> dict[tuple[str | None, str], Mapping[str, Any]] | None:
+    """Each raw collection table as the collection states it, by (schema, table name),
+    with its raw columns by name under ``_columns``. None for no collection, or a
+    collector output (``database_schema``), whose values are read as it records them."""
+    if not isinstance(collection, Mapping) or "database_schema" in collection:
+        return None
+    raw = collection.get("tables")
+    if not isinstance(raw, list):
+        return None
+    out: dict[tuple[str | None, str], dict[str, Any]] = {}
+    for t in raw:
+        if isinstance(t, Mapping) and t.get("table_name"):
+            key = (str(t["schema_name"]) if t.get("schema_name") else None, str(t["table_name"]))
+            out[key] = {**t, "_columns": {}}
+    # Each table's raw columns, by name, so a column's own facts can be checked.
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for (_, table_name), table in out.items():
+        by_name.setdefault(table_name, []).append(table)
+    for c in collection.get("columns") or []:
+        if not (isinstance(c, Mapping) and c.get("table_name") and c.get("column_name")):
+            continue
+        # By table name, as the parser groups a collection's columns.
+        for table in by_name.get(str(c["table_name"]), []):
+            table["_columns"].setdefault(str(c["column_name"]), c)
+    return dict(out)
+
+
+def _raw_table(
+    t: Mapping[str, Any], collected: dict[tuple[str | None, str], Mapping[str, Any]]
+) -> Mapping[str, Any] | None:
+    """The raw collection table a collector table was built from, if found."""
+    name = str(t.get("table_name") or "")
+    schema = str(t["schema_name"]) if t.get("schema_name") else None
+    for key in ((schema, name), (None, name)):
+        if key in collected:
+            return collected[key]
+    return None
+
+
+#: The ``is_nullable`` values the collection scripts write (MySQL, PostgreSQL and SQL
+#: Server YES/NO, Oracle Y/N), as the collector reads them.
+_NULLABLE_VALUES: dict[str, bool] = {
+    "yes": True,
+    "y": True,
+    "true": True,
+    "1": True,
+    "no": False,
+    "n": False,
+    "false": False,
+    "0": False,
+}
+
+
+def _nullable_or_none(value: Any) -> bool | None:
+    """A raw ``is_nullable`` value as a bool, None when it is missing or unknown."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | str):
+        return _NULLABLE_VALUES.get(str(value).strip().lower())
+    return None
+
+
+def _table_column(
+    c: Mapping[str, Any],
+    t: Mapping[str, Any],
+    collected: dict[tuple[str | None, str], Mapping[str, Any]] | None,
+) -> TableColumn:
+    """One column's facts. Since 1.3 ``nullable`` is None when the collection does not
+    say: the collector reads a missing ``is_nullable`` as YES and NULL as NO."""
+    recorded = c.get("nullable")
+    nullable = recorded
+    if collected is not None:
+        raw = _raw_table(t, collected)
+        rows = raw.get("_columns") if raw is not None else None
+        found = rows.get(str(c["column_name"])) if isinstance(rows, dict) else None
+        if found is None or _nullable_or_none(found.get("is_nullable")) is None:
+            nullable = None
+    column = TableColumn(
+        name=str(c["column_name"]),
+        data_type=str(c.get("data_type") or ""),
+        nullable=nullable,
+    )
+    if nullable is None and recorded is not None:
+        column.set_written_before_1_3({"nullable": recorded})
+    return column
+
+
+def _children_per_parent(child_rows: int | None, parent_rows: int | None) -> float | None:
+    """A foreign key's 1.3 statistic: its table's row count per row of the referenced
+    table, None when either count is unknown or the parent is empty. No verdict."""
+    if child_rows is None or not parent_rows:
+        return None
+    return child_rows / parent_rows
+
+
+def _average_basis(
+    average: float | None, child: Mapping[str, Any], parent: Mapping[str, Any] | None
+) -> ForeignKeyRowsBasis | None:
+    """Where an average's two counts come from: ``catalogue_exact`` when the catalogue
+    records both exactly (``row_count_basis`` exact), else ``catalogue_estimate``."""
+    if average is None:
+        return None
+    both = (child.get("row_count_basis"), (parent or {}).get("row_count_basis"))
+    return "catalogue_exact" if both == ("exact", "exact") else "catalogue_estimate"
+
+
+def build_table_facts(
+    state: RunState, collection: Mapping[str, Any] | None = None
+) -> list[TableFacts]:
     """One entry per collected source table (``database_schema.tables``), by table id:
     the facts the collector read from the collection, with each foreign key's
-    referenced table resolved to its table id. Available from ``analysis`` on."""
+    referenced table resolved to its table id. Available from ``analysis`` on.
+
+    Since contract 1.3 (#1632) an unknown row count or size is None (the collector
+    output's own None, #1636), with the count's ``row_count_basis``, and each foreign
+    key carries the average of its two tables' row counts, per constraint: statistics
+    only, never a verdict. ``collection`` (the request's raw collection) says which
+    columns' nullability the collection gave. 1.0 to 1.2 results keep their values."""
     tables = [
         t
         for t in (state.collector.get("database_schema") or {}).get("tables") or []
         if isinstance(t, Mapping) and t.get("table_id")
     ]
+    collected = _collected_tables(collection)
+    by_id: dict[str, list[Mapping[str, Any]]] = {}
+    for t in tables:
+        by_id.setdefault(str(t["table_id"]), []).append(t)
+
+    def parent_of(table_id: str | None) -> Mapping[str, Any] | None:
+        # Two collected tables under one id: which one the key names is not known.
+        found = by_id.get(table_id or "", [])
+        return found[0] if len(found) == 1 else None
+
+    def rows_of(table_id: str | None) -> int | None:
+        parent = parent_of(table_id)
+        return known_row_count(parent) if parent is not None else None
+
     out: list[TableFacts] = []
     for t in sorted(tables, key=lambda t: str(t["table_id"])):
+        child_rows = known_row_count(t)
         columns = sorted(
             (c for c in t.get("columns") or [] if isinstance(c, Mapping) and c.get("column_name")),
             key=lambda c: (
@@ -893,35 +1105,40 @@ def build_table_facts(state: RunState) -> list[TableFacts]:
                 str(c["column_name"]),
             ),
         )
-        out.append(
-            TableFacts(
-                table_id=str(t["table_id"]),
-                # Contracts 1.0-1.2 state an unknown count as 0, as they always have; the
-                # collector output says which counts are unknown (row_count None) and
-                # their basis (row_count_basis), #1636.
-                row_count=_row_count_through_1_2(t),
-                size_mb=_size_through_1_2(t),
-                columns=[
-                    TableColumn(
-                        name=str(c["column_name"]),
-                        data_type=str(c.get("data_type") or ""),
-                        nullable=c.get("nullable"),
-                    )
-                    for c in columns
-                ],
-                primary_key=_strs(t.get("primary_key")),
-                foreign_keys=[
-                    TableForeignKey(
-                        constraint_name=str(fk.get("constraint_name") or ""),
-                        columns=_strs(fk.get("columns")),
-                        referenced_table=_referenced_table_id(fk, t.get("schema_name"), tables),
-                        referenced_columns=_strs(fk.get("referenced_columns")),
-                    )
-                    for fk in t.get("foreign_keys") or []
-                    if isinstance(fk, Mapping)
-                ],
-            )
+        facts = TableFacts(
+            table_id=str(t["table_id"]),
+            row_count=child_rows,
+            row_count_basis=t.get("row_count_basis") if child_rows is not None else None,
+            size_mb=t.get("size_mb"),
+            columns=[_table_column(c, t, collected) for c in columns],
+            primary_key=_strs(t.get("primary_key")),
+            foreign_keys=[
+                TableForeignKey(
+                    constraint_name=str(fk.get("constraint_name") or ""),
+                    columns=_strs(fk.get("columns")),
+                    referenced_table=referenced,
+                    referenced_columns=_strs(fk.get("referenced_columns")),
+                    avg_children_per_parent=average,
+                    basis=_average_basis(average, t, parent_of(referenced)),
+                )
+                for fk in t.get("foreign_keys") or []
+                if isinstance(fk, Mapping)
+                for referenced in [_referenced_table_id(fk, t.get("schema_name"), tables)]
+                for average in [_children_per_parent(child_rows, rows_of(referenced))]
+            ],
         )
+        # Contracts 1.0-1.2 state an unknown count or size as 0, as they always have.
+        facts.set_written_before_1_3(
+            {
+                name: before
+                for name, before, now in (
+                    ("row_count", _row_count_through_1_2(t), facts.row_count),
+                    ("size_mb", _size_through_1_2(t), facts.size_mb),
+                )
+                if before != now
+            }
+        )
+        out.append(facts)
     return out
 
 
@@ -1314,7 +1531,7 @@ def build_artifacts(state: RunState) -> Artifacts:
 
 def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResult:
     statements = build_statements(state, request)
-    summary = build_summary(state, statements)
+    summary = build_summary(state, statements, request.collection)
     label = result_label(state.run_through, summary.designed_engines)
     return AssessmentResult(
         # The version the caller wrote the request for (#1603): a 1.1 request's result is

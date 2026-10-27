@@ -263,11 +263,14 @@ def test_an_earlier_result_validates_loads_and_writes_back_unchanged(version: st
     assert not set(ADDED_IN_1_2["Summary"]) & set(dumped["summary"])
 
 
+@pytest.mark.passes_on_main
 def test_a_1_2_result_validates_against_the_schema_that_reads_1_1() -> None:
     """One schema file reads every 1.x: the 1.2 fields are optional in it, so a 1.1
-    result validates, and a 1.2 result with every field validates too."""
+    result validates, and a result of 1.2 or later with every field validates too."""
+    from src.assessment import CONTRACT_VERSION
+
     document = _result("trailgear", "reality_check")
-    assert document["contract_version"] == "1.2"
+    assert document["contract_version"] == CONTRACT_VERSION
     Draft202012Validator(_schema()).validate(document)
     older = copy.deepcopy(document)
     older["contract_version"] = "1.1"
@@ -275,16 +278,17 @@ def test_a_1_2_result_validates_against_the_schema_that_reads_1_1() -> None:
     assert "fit_breakdown" not in json.loads(loaded.model_dump_json())["statements"][0]
 
 
+@pytest.mark.passes_on_main
 def test_the_documented_sample_breakdown_recomputes() -> None:
-    """The sample result in docs/contracts/assess.md is a valid 1.2 result whose fit
-    breakdowns recompute to its fit by the documented rule."""
+    """The sample result in docs/contracts/assess.md is a valid result of 1.2 or later
+    (the latest) whose fit breakdowns recompute to its fit by the documented rule."""
     import re
 
     text = (REPO / "docs" / "contracts" / "assess.md").read_text(encoding="utf-8")
     match = re.search(r"^### Sample result\n\n```json\n(.*?)\n```", text, re.M | re.S)
     assert match
     document = json.loads(match.group(1))
-    assert document["contract_version"] == "1.2"
+    assert document["contract_version"] not in ("1.0", "1.1")
     AssessmentResult.model_validate(document)
     for statement in document["statements"]:
         assert statement["fit_breakdown"]
@@ -370,12 +374,12 @@ def test_a_request_pinned_to_an_earlier_version_gets_that_versions_result(
         assert ("opensearch" in engines_designed) == (version == "1.1" and engines is not None)
 
 
-@pytest.mark.parametrize("version", ["1.2", None])
-def test_a_1_2_request_or_one_with_no_version_gets_the_latest(version: str | None) -> None:
-    from src.assessment import CONTRACT_VERSION
-
-    document = json.loads(_pinned(version, "reality_check"))
-    assert document["contract_version"] == CONTRACT_VERSION == "1.2"
+@pytest.mark.passes_on_main
+def test_a_1_2_request_gets_the_1_2_fields() -> None:
+    """A 1.2 request gets every 1.2 field (a request with no version gets the latest:
+    test_assess_contract_1_3.py)."""
+    document = json.loads(_pinned("1.2", "reality_check"))
+    assert document["contract_version"] == "1.2"
     assert _has_a_1_2_field(document)
     assert all("fit_breakdown" in s for s in document["statements"])
     Draft202012Validator(_schema()).validate(document)
