@@ -114,9 +114,9 @@ A designed result always carries the [design block](#the-design-block) (`designs
 
 | Field | Meaning |
 |---|---|
-| `contract_version` | The contract version you build on: `"1.0"`, `"1.1"` or `"1.2"`; the result is written for the same version ([The result's version](#the-results-version)). Leave it out and you get the latest (`"1.2"` in this release). **Pin it in every request**, so a library upgrade never changes the shape you validate |
+| `contract_version` | The contract version you build on: `"1.0"`, `"1.1"`, `"1.2"` or `"1.3"`; the result is written for the same version ([The result's version](#the-results-version)). Leave it out and you get the latest (`"1.3"` in this release). **Pin it in every request**, so a library upgrade never changes the shape you validate |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. It names the run; it need not match the collection's own database name (see below) |
-| `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
+| `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (any version the library reads) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
 | `options.target_engines` | Engine scope, as engine catalog ids; `null` means every engine the workload warrants. Unknown, legacy and planned ids, and an empty list, are refused |
 | `options.deterministic` | `true` (default): no model is called. `false`: the reality check has a model review its consolidations, which needs model access. Must be `false` for `"schema_design"` and `"synthesis"`, which always use a model |
@@ -129,11 +129,11 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` added the OpenSearch entry of the design block (#1513), and contract `1.2` the fields listed in [From 1.1 to 1.2](#from-11-to-12) (#1603). The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` added the OpenSearch entry of the design block (#1513), contract `1.2` the fields listed in [From 1.1 to 1.2](#from-11-to-12) (#1603), and contract `1.3` the fields and null rules listed in [From 1.2 to 1.3](#from-12-to-13) (#1632): foreign key statistics, `row_count_basis`, `parse_status`, and `null` for values the collection does not have. The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
-- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]` (with `unique_query_ids` since `1.2`), `consolidations[]` (with `action` and `queries_retained` since `1.2`), `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines`, `design_note` and, since `1.2`, `table_facts[]`;
-- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`, and since `1.2` `query_text`, `matched_anti_patterns` and `fit_breakdown`;
+- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]` (with `unique_query_ids` since `1.2`), `consolidations[]` (with `action` and `queries_retained` since `1.2`), `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines`, `design_note` and, since `1.2`, `table_facts[]` (with `row_count_basis` and `foreign_keys[].avg_children_per_parent` and `basis` since `1.3`);
+- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`, since `1.2` `query_text`, `matched_anti_patterns` and `fit_breakdown`, and since `1.3` `parse_status`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
 - `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
 
@@ -368,6 +368,20 @@ Rows that share a digest are one statement. Their counters are summed, and `quer
 
 The ids are the library's own, the ones `statements[].tables`, `summary.tables[].table_id` and `groups[].tables` use, so you can join on them. The facts are what the library read from the collection, never a model's.
 
+#### Foreign key statistics
+
+Since `1.3`, each `foreign_keys[]` entry also carries two statistics about its two tables, filled from `"analysis"` on, with no model call. **They are statistics, not a design decision: an average cannot show whether a child set is bounded. For any data model, the recommended path is `run_through: "schema_design"`.**
+
+| Field | Meaning |
+|---|---|
+| `avg_children_per_parent` | The table's row count divided by the referenced table's row count, unrounded: how many rows of this table there are per row of `referenced_table`, on average. `null` when `referenced_table` is `null`, when either table's `row_count` is `null`, or when the referenced table has 0 rows |
+| `basis` | Where the counts come from: each table's row count from the source catalogue, as the collection script read it (MySQL and MariaDB `information_schema.tables.table_rows`, PostgreSQL `pg_class.reltuples`, SQL Server `sys.partitions.rows`, Oracle `NUM_ROWS`). `"catalogue_exact"` when both tables' `row_count_basis` is `"exact"`, `"catalogue_estimate"` otherwise. `null` when `avg_children_per_parent` is `null`. A new value is a MINOR change |
+
+- The values belong to one foreign key constraint. A composite key has one entry with one average, and a second foreign key to the same table has its own entry, with the same average as the first, since both divide the same two counts.
+- A self-referencing key (a table that references itself) divides the table's count by itself: `1.0` for a table with rows.
+- A count is unknown when `table_facts[].row_count` is `null` (since `1.3`: the collection has no count for the table). The average is then `null`, never computed from a stand-in. It is `0.0` only when both counts are known and the table has no rows.
+- There is no maximum or distribution: no collection script counts the rows per parent, and the library does not read table rows. An average of 3 fits both a table where every parent has 3 rows and one where one parent has thousands.
+
 Why a separate list, and not new fields on `summary.tables[]`: `summary.tables[]` is the ownership view. It is empty at `"analysis"`, and it lists only the tables the placement (or, at `"synthesis"`, the report) gives an owner line. Facts on it would either change what it holds at `"analysis"` or leave out the tables no statement touches. `summary.table_facts[]` covers every collected table at every phase, and `summary.tables[]` keeps its meaning.
 
 ### From 1.1 to 1.2
@@ -384,9 +398,35 @@ Contract `1.2` (#1603) is a MINOR version. It only adds fields, each exposing a 
 
 `ruleset_hash` changes in this release, although no score and no engine placement changes: the hash covers the scorer's source code, and the scorer now also writes `fit_breakdown`. For this change only, a `1.2` result's `fit` compares with the previous release's `1.1` result for the same collection, although the two hashes differ.
 
+### From 1.2 to 1.3
+
+Contract `1.3` (#1632) is a MINOR version. It adds optional fields: on each `summary.table_facts[].foreign_keys[]` entry, `avg_children_per_parent` and `basis` ([Foreign key statistics](#foreign-key-statistics)); on each `summary.table_facts[]` entry, `row_count_basis` (`"exact"` where the catalogue keeps an exact count, MySQL-family MyISAM and Aria; `"estimate"` for PostgreSQL `reltuples`, Oracle `NUM_ROWS`, InnoDB `TABLE_ROWS` and SQL Server `sys.partitions.rows`; `null` when `row_count` is `null`, or when the collection does not say how its counts were recorded); and on each statement, `parse_status`: `"parsed"` when the library's SQL parser read the statement, `"fallback"` when it could not, so its `query_type`, `join_count` and `tables` are a pattern-based estimate (`null` for a statement with no text). They are statistics from the collection, not a design decision: an average cannot show whether a child set is bounded, and the recommended path for any data model stays `run_through: "schema_design"`.
+
+Unknown is `null` from `1.3`: where the collection gives no value, the fields below are `null` in a `1.3` result, where `1.2` wrote the collector's default for it. A `1.2` result keeps the `1.2` value, so in `1.2` these defaults can mean unknown:
+
+| Field | Unknown in the collection | `1.2` value | `1.3` value |
+|---|---|---|---|
+| `summary.table_facts[].row_count` | no count for the table (the collector output's `row_count` is `null`) | `0` | `null` |
+| `summary.table_facts[].size_mb` | no size for the table | `0.0` | `null` |
+| `summary.table_facts[].columns[].nullable` | no `is_nullable`, `NULL`, or a value no collection script writes, in a raw collection | `true` (none given), `false` (the others) | `null` |
+| `statements[].calls_per_second` | no `execution_count`, or `NULL`, in a raw collection | `1/86400` (one call a day) | `null` |
+| `statements[].calls_per_second` | an `execution_count` of `0` (a real zero) | `1/86400` | `0.0` |
+| `statements[].query_text` | the row has no text | `""` | `null` |
+
+A known value is the same in both, so in `1.3` a `row_count` of `0` is an empty table. `nullable` and `calls_per_second` are `null` only for a raw collection: a collector output passed as the collection records no unknown for them, so it carries the collector's values (`true` or `false`, one call a day). `row_count` and `size_mb` follow the collector output's own `null`. The routing still reads the parser's figure, so a statement with no execution count, or a count of 0, is scored as one call a day. This change moves no score or engine placement.
+
+Some values keep their meaning, and can still stand for "not known":
+
+- `statements[].calls_per_second` is the execution count over a 24-hour window: the collection scripts read cumulative counters, and the library divides by one day.
+- An empty `primary_key` or `foreign_keys` list means the table has none, or that the collection did not collect them.
+- `columns[].data_type` is `""` when the collection gives no type.
+- On a design entry, `ttl_seconds: null` means no expiry, or that the design did not state one; a missing `validation_passed` reads as `false`.
+
+No field was renamed, removed or retyped. The published schema lists the new fields as optional, so a `1.0`, `1.1` or `1.2` result still validates against it. A result written for `1.2` loads with the library's models and is written back as it was read, without the new fields. A request pinned to `1.0`, `1.1` or `1.2` gets the same result, byte for byte, as before this version for the same collection.
+
 ### The result's version
 
-The result follows the request's `contract_version`. A request for `"1.1"` gets a `1.1` result: the library writes it as `1.1` wrote it, without any field `1.2` added, and it validates against the `1.1` schema file. A request for `"1.0"` gets a `1.0` result, without the `1.2` fields and without the design entries `1.1` added (OpenSearch). A request for `"1.2"`, or one that names no version, gets a `1.2` result. As Python objects, the models still hold every field: the version decides what is written as JSON (`model_dump_json`, `model_dump`) and which rules a result is checked by.
+The result follows the request's `contract_version`. A request for `"1.1"` gets a `1.1` result: the library writes it as `1.1` wrote it, without any field `1.2` added, and it validates against the `1.1` schema file. A request for `"1.0"` gets a `1.0` result, without the `1.2` fields and without the design entries `1.1` added (OpenSearch). A request for `"1.2"` gets a `1.2` result, without the fields `1.3` added. A request for `"1.3"`, or one that names no version, gets a `1.3` result. As Python objects, the models still hold every field: the version decides what is written as JSON (`model_dump_json`, `model_dump`) and which rules a result is checked by.
 
 Pin `contract_version` in every request. A request that leaves it out gets the latest version, and each version's schema file refuses fields it does not know, so after an upgrade a newer result fails a validator built on an older schema file.
 
@@ -408,7 +448,7 @@ The request and the result are published as JSON Schemas (draft 2020-12) in [`do
 - [`assess_request.v1.schema.json`](schemas/assess_request.v1.schema.json): `AssessmentRequest`;
 - [`assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json): `AssessmentResult`, as `model_dump_json` writes it.
 
-`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id, a `label` that does not match `summary.run_through_reached`, from contract `1.1` on, `designs` that are not one entry per engine of `summary.designed_engines`, in that order, and, from contract `1.2` on, a `fit_breakdown` that does not have an entry with the same `fit` for every engine in `fit` ([schemas/README.md](schemas/README.md)). The fields contract `1.2` added are optional in the schema, so a `1.0` or `1.1` result validates against it.
+`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id, a `label` that does not match `summary.run_through_reached`, from contract `1.1` on, `designs` that are not one entry per engine of `summary.designed_engines`, in that order, and, from contract `1.2` on, a `fit_breakdown` that does not have an entry with the same `fit` for every engine in `fit` ([schemas/README.md](schemas/README.md)). The fields contracts `1.2` and `1.3` added are optional in the schema, so a result of an earlier `1.x` validates against it.
 
 ## Sample
 
@@ -418,7 +458,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.2",
+  "contract_version": "1.3",
   "database_name": "shop",
   "collection": {
     "...": "the collection scripts' output"
@@ -440,7 +480,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.2",
+  "contract_version": "1.3",
   "label": "recommendation",
   "library_version": "0.3.0",
   "ruleset_version": "0.3.0",
@@ -528,6 +568,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       {
         "table_id": "sales.Carts",
         "row_count": 120000,
+        "row_count_basis": "estimate",
         "size_mb": 48.5,
         "columns": [
           {
@@ -554,6 +595,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       {
         "table_id": "sales.OrderLines",
         "row_count": 2400000,
+        "row_count_basis": "estimate",
         "size_mb": 310.0,
         "columns": [
           {
@@ -590,13 +632,16 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
             "referenced_table": "sales.Orders",
             "referenced_columns": [
               "OrderID"
-            ]
+            ],
+            "avg_children_per_parent": 4.0,
+            "basis": "catalogue_estimate"
           }
         ]
       },
       {
         "table_id": "sales.Orders",
         "row_count": 600000,
+        "row_count_basis": "estimate",
         "size_mb": 95.25,
         "columns": [
           {
@@ -655,6 +700,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       "reason_text": "highest fit for Aurora PostgreSQL",
       "post_schema_terminal": null,
       "query_text": "SELECT o.OrderID, l.Sku, l.Quantity FROM sales.Orders o JOIN sales.OrderLines l ON l.OrderID = o.OrderID WHERE o.OrderID = @OrderID",
+      "parse_status": "parsed",
       "matched_anti_patterns": [
         {
           "id": "frequent-full-scan",
@@ -803,6 +849,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       "reason_text": "highest fit for DynamoDB",
       "post_schema_terminal": null,
       "query_text": "/* endpoint: CartController.Get */ SELECT CartID, CustomerID, UpdatedAt FROM sales.Carts WHERE CartID = @CartID",
+      "parse_status": "parsed",
       "matched_anti_patterns": [],
       "fit_breakdown": {
         "aurora_postgresql": {

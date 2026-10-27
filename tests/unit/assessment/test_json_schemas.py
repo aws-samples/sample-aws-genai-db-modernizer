@@ -52,7 +52,7 @@ def test_the_committed_schemas_are_current() -> None:
 
 
 def test_one_file_per_model_named_by_the_major_version() -> None:
-    assert CONTRACT_VERSION == "1.2"
+    assert CONTRACT_VERSION == "1.3"
     assert [p.name for p, _ in rcs.render()] == [
         "assess_request.v1.schema.json",
         "assess_result.v1.schema.json",
@@ -287,18 +287,18 @@ def test_the_request_schema_refuses(request_: dict[str, Any], what: str) -> None
 
 def test_every_always_written_result_field_is_required() -> None:
     """``model_dump_json`` writes every field, so the result schema requires each one
-    (generated types are not all-optional), except the fields contract 1.2 added: a 1.0
-    or 1.1 document has none of them, so the schema lists them as optional (#1603). The
-    request keeps its defaults optional."""
-    from src.assessment.models import ADDED_IN_1_2, StatementResult
+    (generated types are not all-optional), except the fields contracts 1.2 and 1.3
+    added: an earlier document has none of them, so the schema lists them as optional
+    (#1603, #1632). The request keeps its defaults optional."""
+    from src.assessment.models import ADDED_IN_1_2, ADDED_IN_1_3, StatementResult
 
     result = _schema("assess_result")
     statement = result["$defs"]["StatementResult"]
-    assert len(StatementResult.model_fields) == 22
-    added = set(ADDED_IN_1_2["StatementResult"])
+    assert len(StatementResult.model_fields) == 23
+    added = set(ADDED_IN_1_2["StatementResult"]) | set(ADDED_IN_1_3["StatementResult"])
     assert set(statement["required"]) == set(StatementResult.model_fields) - added
     for name, model in result["$defs"].items():
-        optional = set(ADDED_IN_1_2.get(name, ()))
+        optional = set(ADDED_IN_1_2.get(name, ())) | set(ADDED_IN_1_3.get(name, ()))
         assert optional <= set(model["properties"]), name
         assert set(model.get("required", [])) == set(model["properties"]) - optional, name
     assert set(result["required"]) == set(AssessmentResult.model_fields)

@@ -324,7 +324,7 @@
       ]
     },
     "trailgear_contract_1_2": {
-      "why": "Contract 1.2 (#1603) on a SQL Server source with foreign keys: each statement's text, anti-patterns and per-engine fit breakdown (gated engines, the unclassified rules and penalties included), the table facts with foreign keys, the consolidations' action and the engines' unique-value ids",
+      "why": "Contract 1.2 (#1603) on a SQL Server source with foreign keys: each statement's text, anti-patterns and per-engine fit breakdown (gated engines, the unclassified rules and penalties included), the table facts with foreign keys (and, since 1.3 (#1632), each foreign key's average of its two tables' row counts, each row count's basis and each statement's parse status), the consolidations' action and the engines' unique-value ids",
       "sample": "trailgear",
       "database_name": "trailgear",
       "options": {},
@@ -376,6 +376,10 @@
         "summary.table_facts[].foreign_keys[].columns",
         "summary.table_facts[].foreign_keys[].referenced_table",
         "summary.table_facts[].foreign_keys[].referenced_columns",
+        "summary.table_facts[].foreign_keys[].avg_children_per_parent",
+        "summary.table_facts[].foreign_keys[].basis",
+        "summary.table_facts[].row_count_basis",
+        "statements[].parse_status",
         "summary.consolidations[].action",
         "summary.consolidations[].queries_retained",
         "summary.engines[].unique_query_ids"

@@ -1,4 +1,4 @@
-"""The typed request and result of :func:`src.assessment.assess` (contract 1.2).
+"""The typed request and result of :func:`src.assessment.assess` (contract 1.3).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,
 ``statements[]`` and ``groups[]``. It is versioned on its own (``contract_version``,
@@ -26,6 +26,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -36,12 +37,13 @@ from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_na
 from src.shared.target_databases import normalize_target_databases
 
 #: The version of this public surface (not of any internal contract).
-CONTRACT_VERSION: Literal["1.2"] = "1.2"
+CONTRACT_VERSION: Literal["1.3"] = "1.3"
 
 #: The ``contract_version`` values of this MAJOR the models read: a request or a result
 #: written for an earlier MINOR version still validates. 1.1 added the OpenSearch entry
-#: of the design block (#1513); 1.2 the fields of :data:`ADDED_IN_1_2` (#1603).
-ContractVersion = Literal["1.0", "1.1", "1.2"]
+#: of the design block (#1513); 1.2 the fields of :data:`ADDED_IN_1_2` (#1603); 1.3 the
+#: fields of :data:`ADDED_IN_1_3` (#1632).
+ContractVersion = Literal["1.0", "1.1", "1.2", "1.3"]
 
 #: The fields contract 1.2 added, by model (#1603). Each has a default, so a 1.0 or 1.1
 #: document (which has none of them) still loads, and the published result schema lists
@@ -58,6 +60,18 @@ ADDED_IN_1_2: dict[str, tuple[str, ...]] = {
 #: The contract versions before 1.2: a result of one is read exactly as it was.
 BEFORE_1_2: frozenset[str] = frozenset({"1.0", "1.1"})
 
+#: The fields contract 1.3 added, by model (#1632): the average of the row counts of each
+#: foreign key's two tables, a row count's basis and a statement's parse status. Optional in the published schema, as 1.2's are, so an
+#: earlier document still loads.
+ADDED_IN_1_3: dict[str, tuple[str, ...]] = {
+    "TableForeignKey": ("avg_children_per_parent", "basis"),
+    "TableFacts": ("row_count_basis",),
+    "StatementResult": ("parse_status",),
+}
+
+#: The contract versions before 1.3: a result of one is written without 1.3's fields.
+BEFORE_1_3: frozenset[str] = frozenset({"1.0", "1.1", "1.2"})
+
 #: The engines with an entry in the design block, by the contract version that defines
 #: them: a result of that version has an entry for each of its designed engines in the
 #: set, in ``summary.designed_engines`` order. A ``1.0`` result is not checked: it is
@@ -70,8 +84,9 @@ DESIGN_ENTRY_ENGINES: dict[str, frozenset[str]] = {
 }
 #: The engines whose design entry contract 1.1 added: a 1.0 result is written without them.
 DESIGN_ENGINES_ADDED_IN_1_1: frozenset[str] = frozenset({"opensearch"})
-# 1.2 added no design engine.
+# 1.2 and 1.3 added no design engine.
 DESIGN_ENTRY_ENGINES["1.2"] = DESIGN_ENTRY_ENGINES["1.1"]
+DESIGN_ENTRY_ENGINES["1.3"] = DESIGN_ENTRY_ENGINES["1.1"]
 
 RunThrough = Literal["analysis", "reality_check", "schema_design", "synthesis"]
 
@@ -148,6 +163,11 @@ def result_label(run_through_reached: str, designed_engines: list[str]) -> str:
 #: ``not_selected`` (analysed, but no statement was placed on it).
 EngineRole = Literal["owner", "cache_layer", "consolidated", "not_selected"]
 
+#: How a statement's facts were read (``StatementResult.parse_status``): ``parsed`` (the
+#: SQL parser read it) or ``fallback`` (a pattern-based estimate). Adding a value is a
+#: MINOR change of this contract.
+ParseStatus = Literal["parsed", "fallback"]
+
 #: A statement's type, as the library's parser reads it.
 StatementType = Literal["SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "OTHER"]
 
@@ -167,7 +187,21 @@ class _Strict(BaseModel):
 def _added_in_1_2(model: str) -> ConfigDict:
     """``_Strict``'s config, with the fields 1.2 added to ``model`` (:data:`ADDED_IN_1_2`)
     left out of the schema's ``required``: an earlier version's document has none."""
-    added = ADDED_IN_1_2[model]
+    return _optional_in_schema(ADDED_IN_1_2[model])
+
+
+def _added_in_1_3(model: str) -> ConfigDict:
+    """As :func:`_added_in_1_2`, for the fields 1.3 added (:data:`ADDED_IN_1_3`)."""
+    return _optional_in_schema(ADDED_IN_1_3[model])
+
+
+def _added_in_1_2_and_1_3(model: str) -> ConfigDict:
+    """As :func:`_added_in_1_2`, for a model both 1.2 and 1.3 added fields to."""
+    return _optional_in_schema(ADDED_IN_1_2[model] + ADDED_IN_1_3[model])
+
+
+def _optional_in_schema(added: tuple[str, ...]) -> ConfigDict:
+    """``_Strict``'s config, with ``added`` left out of the schema's ``required``."""
 
     def optional(schema: dict[str, Any]) -> None:
         required = [name for name in schema.get("required", []) if name not in added]
@@ -431,16 +465,61 @@ class TableLine(_Strict):
     )
 
 
-class TableColumn(_Strict):
+class _WrittenBefore13(_Strict):
+    """A model whose 1.3 result writes None for a value the collection does not know,
+    where 1.0 to 1.2 wrote the collector's default for it (0, 1 call a day, True, an
+    empty string; #1632). The library records those earlier values when it builds the
+    result, so a result pinned to 1.0-1.2 is written as before; a document read from
+    JSON records none, so it is written back as it was read."""
+
+    _written_before_1_3: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    def set_written_before_1_3(self, values: dict[str, Any]) -> None:
+        self._written_before_1_3 = dict(values)
+
+    def written_before_1_3(self) -> dict[str, Any]:
+        return dict(self._written_before_1_3)
+
+
+class TableColumn(_WrittenBefore13):
     """One column of a source table, as the collection describes it."""
 
     name: str
     data_type: str = Field(..., description="Its type in the source engine, as collected")
-    nullable: bool | None = Field(None, description="Whether it allows NULL; None when unknown")
+    nullable: bool | None = Field(
+        None,
+        description=(
+            "Whether it allows NULL; None when unknown. Since 1.3 also None when a raw "
+            "collection gives no `is_nullable`, NULL or a value no collection script writes "
+            "(a 1.2 result shows true for a missing value, false for the others); a "
+            "collector output carries the collector's value"
+        ),
+    )
+
+
+#: Where a foreign key's average comes from (``TableForeignKey.basis``): the source
+#: catalogue's row counts, as the collection read them: ``catalogue_exact`` when both are
+#: exact counts (``row_count_basis`` exact), else ``catalogue_estimate``. Adding a value
+#: is a MINOR change of this contract.
+ForeignKeyRowsBasis = Literal["catalogue_estimate", "catalogue_exact"]
+
+#: What the foreign key row counts are, in the schema and in docs/contracts/assess.md.
+FOREIGN_KEY_ROWS_NOTE = (
+    "These are statistics, not a design decision: an average cannot show whether a "
+    "child set is bounded. For any data model, the recommended path is "
+    'run_through="schema_design".'
+)
 
 
 class TableForeignKey(_Strict):
-    """One foreign key constraint of a source table (its columns in constraint order)."""
+    """One foreign key constraint of a source table (its columns in constraint order).
+
+    Since 1.3 it carries the average of its two tables' row counts, read from the
+    collection with no model call. These are statistics, not a design decision: an
+    average cannot show whether a child set is bounded. For any data model, the
+    recommended path is run_through="schema_design"."""
+
+    model_config = _added_in_1_3("TableForeignKey")
 
     constraint_name: str
     columns: list[str] = Field(default_factory=list, description="The referencing columns")
@@ -455,16 +534,69 @@ class TableForeignKey(_Strict):
     referenced_columns: list[str] = Field(
         default_factory=list, description="The referenced columns, paired with `columns`"
     )
+    avg_children_per_parent: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Since 1.3. The table's row count divided by the referenced table's, unrounded: "
+            "rows of this table per row of `referenced_table`, on average. None when "
+            "`referenced_table` is None, either table's `row_count` is None (unknown), or "
+            "the referenced table has 0 rows; 0 only when both counts are known. "
+            + FOREIGN_KEY_ROWS_NOTE
+        ),
+    )
+    basis: ForeignKeyRowsBasis | None = Field(
+        None,
+        description=(
+            "Since 1.3. Where `avg_children_per_parent` comes from: the source catalogue's "
+            "row counts, as the collection read them; catalogue_exact when both tables' "
+            "`row_count_basis` is exact, catalogue_estimate otherwise. None when the average "
+            "is None"
+        ),
+    )
 
 
-class TableFacts(_Strict):
+#: How a table's row count was recorded (``TableFacts.row_count_basis``): ``exact`` (the
+#: catalogue keeps an exact count: MySQL-family MyISAM and Aria) or ``estimate``
+#: (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL Server
+#: sys.partitions.rows). Adding a value is a MINOR change of this contract.
+RowCountBasis = Literal["exact", "estimate"]
+
+
+class TableFacts(_WrittenBefore13):
     """One collected source table's facts, as the library read them from the collection."""
+
+    model_config = _added_in_1_3("TableFacts")
 
     table_id: str = Field(
         ..., description="The source table, as `statements[].tables` and `summary.tables` name it"
     )
-    row_count: int | None = Field(None, ge=0, description="Approximate rows, as collected")
-    size_mb: float | None = Field(None, ge=0, description="Size in megabytes, as collected")
+    row_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Rows, as the source's catalogue records them. Since 1.3 None when the "
+            "collection has no count for the table, so 0 is an empty table; a 1.2 result "
+            "shows an unknown count as 0"
+        ),
+    )
+    row_count_basis: RowCountBasis | None = Field(
+        None,
+        description=(
+            "Since 1.3. How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) "
+            "or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL "
+            "Server sys.partitions.rows). None when `row_count` is None or the collection "
+            "does not say"
+        ),
+    )
+    size_mb: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Size in megabytes, data and indexes, as collected. Since 1.3 None when the "
+            "collection reports no size for the table; a 1.2 result shows it as 0"
+        ),
+    )
     columns: list[TableColumn] = Field(
         default_factory=list, description="Its columns, in the table's column order"
     )
@@ -700,8 +832,8 @@ class FitBreakdown(_Strict):
     )
 
 
-class StatementResult(_Strict):
-    model_config = _added_in_1_2("StatementResult")
+class StatementResult(_WrittenBefore13):
+    model_config = _added_in_1_2_and_1_3("StatementResult")
 
     query_id: str
     query_tags: list[str] = Field(
@@ -712,7 +844,16 @@ class StatementResult(_Strict):
     tables: list[str] = Field(
         default_factory=list, description="The tables it touches, as the parser reads them"
     )
-    calls_per_second: float | None = Field(None, ge=0)
+    calls_per_second: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Its execution count over the day the collection covers, per second. Since 1.3 "
+            "None when a raw collection gives no execution count, and 0.0 for a count of 0 "
+            "(a 1.2 result shows one call a day, 1/86400, for both); a collector output "
+            "carries its own figure"
+        ),
+    )
     rewritten_by_caller: bool = False
     engine: str | None = Field(None, description="None before 'reality_check', or when unservable")
     confidence: int | None = Field(
@@ -773,7 +914,18 @@ class StatementResult(_Strict):
         None,
         description=(
             "Since 1.2. The statement text the parser read: when rows sharing a digest "
-            "merged, the costliest variant's. Collection text: escape it when rendering"
+            "merged, the costliest variant's. Collection text: escape it when rendering. "
+            "Since 1.3 None when the collection gives the row no text (a 1.2 result shows "
+            "an empty string)"
+        ),
+    )
+    parse_status: ParseStatus | None = Field(
+        None,
+        description=(
+            "Since 1.3. How its facts (`query_type`, `join_count`, `tables`) were read: "
+            "parsed (the SQL parser read the statement) or fallback (the parser could not, "
+            "so they are a pattern-based estimate). None when the collection gives no "
+            "statement text"
         ),
     )
     matched_anti_patterns: list[AntiPatternRef] = Field(
@@ -1140,6 +1292,9 @@ class AssessmentResult(_Strict):
     def _as_its_version(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
         # No return annotation: the published schema stays the fields' own.
         data = handler(self)
+        if self.contract_version in BEFORE_1_3 and isinstance(data, dict):
+            _drop_fields_added_in_1_3(data)
+            _restore_values_before_1_3(data, self)
         if self.contract_version in BEFORE_1_2 and isinstance(data, dict):
             _drop_fields_added_in_1_2(data)
             if self.contract_version == "1.0" and isinstance(data.get("designs"), list):
@@ -1240,3 +1395,45 @@ def _drop_fields_added_in_1_2(data: dict[str, Any]) -> None:
     for design in data.get("designs") or []:
         if isinstance(design, dict) and design.get("engine") == "dynamodb":
             drop(design.get("tables"), "DynamoDBTable")
+
+
+def _drop_fields_added_in_1_3(data: dict[str, Any]) -> None:
+    """A result written for 1.0, 1.1 or 1.2, as that version writes it: without the
+    fields 1.3 added (:data:`ADDED_IN_1_3`), so reading one and writing it back gives the
+    same document. (A 1.0 or 1.1 result then loses ``table_facts`` with 1.2's fields.)"""
+    summary = data.get("summary")
+    facts = summary.get("table_facts") if isinstance(summary, dict) else None
+    for statement in data.get("statements") or []:
+        if isinstance(statement, dict):
+            for name in ADDED_IN_1_3["StatementResult"]:
+                statement.pop(name, None)
+    for table in facts if isinstance(facts, list) else []:
+        if isinstance(table, dict):
+            for name in ADDED_IN_1_3["TableFacts"]:
+                table.pop(name, None)
+        keys = table.get("foreign_keys") if isinstance(table, dict) else None
+        for fk in keys if isinstance(keys, list) else []:
+            if isinstance(fk, dict):
+                for name in ADDED_IN_1_3["TableForeignKey"]:
+                    fk.pop(name, None)
+
+
+def _restore_values_before_1_3(data: dict[str, Any], result: AssessmentResult) -> None:
+    """A result written for 1.0 to 1.2: each value 1.3 writes as None because the
+    collection does not know it, as that version wrote it
+    (:class:`_WrittenBefore13`)."""
+
+    def restore(written: Any, models: list[Any]) -> list[tuple[dict[str, Any], Any]]:
+        if not isinstance(written, list) or len(written) != len(models):
+            return []
+        pairs = [(item, model) for item, model in zip(written, models, strict=True)]
+        for item, model in pairs:
+            if isinstance(item, dict):
+                item.update(model.written_before_1_3())
+        return [(item, model) for item, model in pairs if isinstance(item, dict)]
+
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        for item, model in restore(summary.get("table_facts"), result.summary.table_facts):
+            restore(item.get("columns"), model.columns)
+    restore(data.get("statements"), result.statements)

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_result.v1.schema.json",
   "title": "AssessmentResult",
-  "x-contract-version": "1.2",
+  "x-contract-version": "1.3",
   "$defs": {
     "AntiPatternRef": {
       "additionalProperties": false,
@@ -1502,6 +1502,7 @@
             }
           ],
           "default": null,
+          "description": "Its execution count over the day the collection covers, per second. Since 1.3 None when a raw collection gives no execution count, and 0.0 for a count of 0 (a 1.2 result shows one call a day, 1/86400, for both); a collector output carries its own figure",
           "title": "Calls Per Second"
         },
         "rewritten_by_caller": {
@@ -1663,8 +1664,25 @@
             }
           ],
           "default": null,
-          "description": "Since 1.2. The statement text the parser read: when rows sharing a digest merged, the costliest variant's. Collection text: escape it when rendering",
+          "description": "Since 1.2. The statement text the parser read: when rows sharing a digest merged, the costliest variant's. Collection text: escape it when rendering. Since 1.3 None when the collection gives the row no text (a 1.2 result shows an empty string)",
           "title": "Query Text"
+        },
+        "parse_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "parsed",
+                "fallback"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.3. How its facts (`query_type`, `join_count`, `tables`) were read: parsed (the SQL parser read the statement) or fallback (the parser could not, so they are a pattern-based estimate). None when the collection gives no statement text",
+          "title": "Parse Status"
         },
         "matched_anti_patterns": {
           "description": "Since 1.2. The penalised anti-patterns found on it against any analysed engine, each once, by id; each engine's points are in `fit_breakdown`",
@@ -1880,7 +1898,7 @@
             }
           ],
           "default": null,
-          "description": "Whether it allows NULL; None when unknown",
+          "description": "Whether it allows NULL; None when unknown. Since 1.3 also None when a raw collection gives no `is_nullable`, NULL or a value no collection script writes (a 1.2 result shows true for a missing value, false for the others); a collector output carries the collector's value",
           "title": "Nullable"
         }
       },
@@ -1912,8 +1930,25 @@
             }
           ],
           "default": null,
-          "description": "Approximate rows, as collected",
+          "description": "Rows, as the source's catalogue records them. Since 1.3 None when the collection has no count for the table, so 0 is an empty table; a 1.2 result shows an unknown count as 0",
           "title": "Row Count"
+        },
+        "row_count_basis": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact",
+                "estimate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.3. How `row_count` was recorded: exact (MySQL-family MyISAM and Aria) or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL Server sys.partitions.rows). None when `row_count` is None or the collection does not say",
+          "title": "Row Count Basis"
         },
         "size_mb": {
           "anyOf": [
@@ -1926,7 +1961,7 @@
             }
           ],
           "default": null,
-          "description": "Size in megabytes, as collected",
+          "description": "Size in megabytes, data and indexes, as collected. Since 1.3 None when the collection reports no size for the table; a 1.2 result shows it as 0",
           "title": "Size Mb"
         },
         "columns": {
@@ -1967,7 +2002,7 @@
     },
     "TableForeignKey": {
       "additionalProperties": false,
-      "description": "One foreign key constraint of a source table (its columns in constraint order).",
+      "description": "One foreign key constraint of a source table (its columns in constraint order).\n\nSince 1.3 it carries the average of its two tables' row counts, read from the\ncollection with no model call. These are statistics, not a design decision: an\naverage cannot show whether a child set is bounded. For any data model, the\nrecommended path is run_through=\"schema_design\".",
       "properties": {
         "constraint_name": {
           "title": "Constraint Name",
@@ -2000,6 +2035,37 @@
           },
           "title": "Referenced Columns",
           "type": "array"
+        },
+        "avg_children_per_parent": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.3. The table's row count divided by the referenced table's, unrounded: rows of this table per row of `referenced_table`, on average. None when `referenced_table` is None, either table's `row_count` is None (unknown), or the referenced table has 0 rows; 0 only when both counts are known. These are statistics, not a design decision: an average cannot show whether a child set is bounded. For any data model, the recommended path is run_through=\"schema_design\".",
+          "title": "Avg Children Per Parent"
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "enum": [
+                "catalogue_estimate",
+                "catalogue_exact"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.3. Where `avg_children_per_parent` comes from: the source catalogue's row counts, as the collection read them; catalogue_exact when both tables' `row_count_basis` is exact, catalogue_estimate otherwise. None when the average is None",
+          "title": "Basis"
         }
       },
       "required": [
@@ -2152,12 +2218,13 @@
   "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
-      "default": "1.2",
+      "default": "1.3",
       "description": "The contract version the result was written for: the request's contract_version (CONTRACT_VERSION when the request names none), written as that version writes it; any 1.x is read",
       "enum": [
         "1.0",
         "1.1",
-        "1.2"
+        "1.2",
+        "1.3"
       ],
       "title": "Contract Version",
       "type": "string"
