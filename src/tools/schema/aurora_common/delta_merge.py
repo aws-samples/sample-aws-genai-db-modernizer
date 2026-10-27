@@ -55,6 +55,7 @@ from src.tools.schema.aurora_common.ddl_generator import (
     generate_mysql_ddl,
     generate_pg_ddl,
     render_index,
+    rendered_method,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
 from src.tools.schema.aurora_common.sql_safety import (
@@ -695,8 +696,9 @@ def full_contract_to_delta(
     (draft name, different definition). Draft indexes the response does not
     list are kept. Unknown tables or columns, and indexes that do not parse,
     are errors, never dropped. Returns ``(delta, errors)``; conversions worth
-    a look (a modify that drops a draft partial-index predicate, since the
-    legacy grammar has no WHERE) are appended to ``warnings``.
+    a look (a modify that names no method for a draft index that has one, or
+    drops a draft partial-index predicate since the legacy grammar has no
+    WHERE) are appended to ``warnings``.
     """
     errors: list[str] = []
     by_key = {_table_key(t.table_name): t for t in base.tables}
@@ -705,6 +707,14 @@ def full_contract_to_delta(
     draft_indexes = {
         t.table_name: dict(zip(draft_index_names(src, base.dialect), t.index_sql, strict=True))
         for src, t in zip(base.tables, draft.tables, strict=True)
+    }
+    # The USING method each draft index renders (None: a B-tree). Only an Aurora PostgreSQL
+    # delta can name a method to keep, so only there does leaving it out warn.
+    draft_methods = {
+        (t.table_name, i.index_name): rendered_method(i, base.dialect, t.columns)
+        for src, t in zip(base.tables, draft.tables, strict=True)
+        for i in carried_indexes(src, base.dialect)
+        if base.dialect is POSTGRES
     }
     tables: list[dict] = []
     for i, table_def in enumerate(response.get("table_definitions") or []):
@@ -770,6 +780,13 @@ def full_contract_to_delta(
                         "without the draft's partial-index predicate (WHERE ...), so it now "
                         "covers every row; write a delta with modify_indexes and 'where' to "
                         "keep it"
+                    )
+                draft_method = draft_methods.get((table.table_name, draft_name))
+                if draft_method and parsed.method is None and warnings is not None:
+                    warnings.append(
+                        f"{where}: index '{draft_name}' on '{table.table_name}' is redefined "
+                        f"without the draft's USING {draft_method}, so it is now a B-tree; "
+                        "write a delta with modify_indexes and 'method' to keep it"
                     )
         if change["column_types"] or change["add_indexes"] or change["modify_indexes"]:
             tables.append(change)  # only tables that differ from the draft are changes

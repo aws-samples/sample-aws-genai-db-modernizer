@@ -886,3 +886,99 @@ def test_a_legacy_response_naming_an_unknown_method_is_an_error_not_a_crash():
 
     assert delta is None
     assert errors == ["table_definitions[0].indexes[0]: unknown index method 'bloom'"]
+
+
+def _pg_base_with_gin_indexes() -> AuroraDesignBase:
+    """``idx_body`` keeps USING gin (jsonb has a default operator class); ``idx_slug`` is
+    carried as a B-tree with a note (text has none)."""
+    return AuroraDesignBase(
+        engine="aurora_postgresql",
+        job_id="j",
+        source_database="db",
+        source_engine="postgresql",
+        tables=[
+            _typed_table(
+                [
+                    _method_index("gin", name="idx_body", columns=("body",)),
+                    _method_index("gin", name="idx_slug", columns=("slug",)),
+                ]
+            )
+        ],
+    )
+
+
+def _legacy_response_listing(base: AuroraDesignBase, statement: str) -> dict:
+    draft = merge_design_delta(base, {"delta_version": "1.0"}).output
+    table = dict(draft["table_definitions"][0])
+    table["indexes"] = [statement]
+    return {**draft, "table_definitions": [table]}
+
+
+def test_legacy_modify_that_drops_a_draft_method_warns():
+    """A legacy response that re-lists the draft's GIN index without USING turns it into a
+    B-tree, which serves none of the queries the index exists for; say so, as for a
+    dropped partial-index predicate."""
+    base = _pg_base_with_gin_indexes()
+    response = _legacy_response_listing(base, 'CREATE INDEX "idx_body" ON "topics" ("body");')
+    warnings: list[str] = []
+
+    delta, errors = full_contract_to_delta(base, response, warnings)
+
+    assert errors == []
+    assert delta["tables"][0]["modify_indexes"] == [
+        {"index_name": "idx_body", "columns": ["body"], "unique": False}
+    ]
+    assert warnings == [
+        "table_definitions[0].indexes[0]: index 'idx_body' on 'topics' is redefined without "
+        "the draft's USING gin, so it is now a B-tree; write a delta with modify_indexes "
+        "and 'method' to keep it"
+    ]
+
+
+@pytest.mark.passes_on_main  # a negative case: no warning before or after
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # the draft's method kept, on more columns
+        'CREATE INDEX "idx_body" ON "topics" USING gin ("body", "tags");',
+        # a method named explicitly is the response's choice, not an omission
+        'CREATE INDEX "idx_body" ON "topics" USING btree ("body");',
+        # a GIN source index the draft already carries as a B-tree
+        'CREATE INDEX "idx_slug" ON "topics" ("slug", "id");',
+    ],
+)
+def test_legacy_modify_that_keeps_or_names_the_method_does_not_warn(statement):
+    base = _pg_base_with_gin_indexes()
+    response = _legacy_response_listing(base, statement)
+    warnings: list[str] = []
+
+    delta, errors = full_contract_to_delta(base, response, warnings)
+
+    assert errors == []
+    [change] = delta["tables"]
+    assert len(change["modify_indexes"]) == 1  # each case reaches the modify path
+    assert warnings == []
+
+
+@pytest.mark.passes_on_main  # Aurora MySQL renders no method, so it never warns
+def test_a_legacy_modify_on_aurora_mysql_never_warns_about_a_method():
+    """The Aurora MySQL draft renders a BRIN source index as a plain B-tree, so a legacy
+    response that re-lists it without USING drops nothing the draft had."""
+    base = AuroraDesignBase(
+        engine="aurora_mysql",
+        job_id="j",
+        source_database="db",
+        source_engine="postgresql",
+        tables=[_table([_method_index("brin")])],
+    )
+    response = _legacy_response_listing(
+        base, "CREATE INDEX `idx_search` ON `topics` (`slug`, `status`);"
+    )
+    warnings: list[str] = []
+
+    delta, errors = full_contract_to_delta(base, response, warnings)
+
+    assert errors == []
+    [change] = delta["tables"]
+    assert len(change["modify_indexes"]) == 1
+    assert warnings == []
