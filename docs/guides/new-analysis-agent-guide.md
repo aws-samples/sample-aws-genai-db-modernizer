@@ -1,299 +1,136 @@
-# Building a New Analysis Agent: Practical Walkthrough
+# Adding or Changing an Analysis Engine
 
-**Audience:** Engineers and LLMs implementing new analysis agents
-**Reference implementation:** DynamoDB agent (primary), ElastiCache/Redis agent (legacy)
-**Last updated:** March 2026
+**Audience:** Engineers and AI assistants adding an engine to the pipeline or changing how one is analysed
+**Reference implementations:** DynamoDB (the most complete), OpenSearch (a search read model, the smallest), ElastiCache (a cache that owns no query)
+**Routing model:** [ADR-031](../architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md). Read it before touching anything that scores or places a query; AGENTS.md "Routing changes" lists the rules a change must keep.
 
 ---
 
 ## Overview
 
-An analysis agent evaluates a source database workload (collected by a Collector agent) and recommends whether queries and tables are suitable for migration to a specific AWS target database. This guide walks through the architecture decisions, data flow, and implementation steps.
+An analysis agent reads the collector's output and reports how well one target engine fits the workload: patterns found, anti-patterns, a per-table recommendation, a cost estimate and a decision trace. It is deterministic. An optional model advisor (`--llm-mode bedrock`, `src/tools/analysis/llm_advisor_base.py`) can comment on queries the patterns did not match, but it never changes a score.
 
-### Core Principles
+The analysis does not decide where a query goes. Routing does, in the Assignment phase, with one scorer (`query_scoring.score_query_for_engine`) that reads the **rule catalog**, and the move ledger records every engine change (ADR-031). So adding an engine is mostly catalog data plus the engine's own detection code:
 
-1. **Queries are the atomic unit.** Pattern matching happens per-query, not per-table. Tables are a derived view.
-2. **Specialist-curated catalogs drive scoring.** Pattern confidence comes from domain experts.
-3. **Decision traces are required.** Every agent writes a `decision-trace.json` alongside `analysis.json` for calibration and transparency.
-4. **Deterministic detection first.** Regex, keywords, query structure. LLM is optional Phase 1 enhancement for unmatched queries.
+> **Adding an engine** means one engine file, one entry per pattern file (the completeness check lists exactly which), and the engine's own detection code where a pattern has no existing detector. (ADR-031 Decision 8)
 
-### What you'll build
+### Core principles
 
-```
-src/tools/analysis/<target>_pattern_catalog.py    # Specialist-curated patterns
-src/tools/analysis/<target>_analysis_tools.py     # Detection + scoring + costs
-src/agents/analysis/<target>_analysis_agent.py    # Entry point
-tests/fixtures/<target>_pattern_fixtures.py       # Per-pattern test fixtures
-tests/unit/agents/analysis/test_<target>_analysis_agent.py
-```
+1. **The query is the unit.** Pattern matching, scoring and routing work per query. Table-level recommendations are a derived summary.
+2. **The catalog is the source of rules.** Scores, supports, penalties, weights, prices and thresholds are TOML under `src/catalog/`. The Python catalog modules are thin loaders ("Edit the TOML file, not this module"). Never add a private fit function or an engine literal to routing code; `tests/unit/shared/test_rule_catalog_complete.py` fails on one.
+3. **Detection is engine-neutral and stays in code.** A detector reports a fact about a query (a wildcard position, a transaction's entity count). The catalog turns the fact into each engine's support and score, so one fact reads the same whichever engine is scored. SQL facts come from the declared fact modules (`src/tools/sql/query_facts.py`, `facade.py`, `regex_facts.py`), read in the source engine's dialect.
+4. **A model may explain routing, never decide it.** Assignment is deterministic.
+5. **A decision trace is required.** Every engine writes `decision-trace.json` next to `analysis.json`, for calibration and review.
+
+### Engine kinds
+
+The engine file's `status` and `role` say what the engine is for:
+
+- `status = "active"` is a routing target. `future` is a named placeholder (Neptune, Keyspaces) that is never analysed, designed or routed (ADR-031 Decision 9). `legacy` is an id only older reports carry (the generic `aurora`).
+- `system_of_record` says whether the engine can durably own a table. DynamoDB, DocumentDB and the Aurora engines do. OpenSearch is a search read model and ElastiCache is a cache; neither owns a query or a write.
 
 ### Data flow
 
-```
+```text
 CollectorOutputContract (dict)
-        │
-        ▼
+        |
+        v
 AnalysisInput(collector_output=..., target_database=...)
-        │
-        ▼
-analyze_for_<target>(analysis_input)
-        │
-        ├── 1. Per-query pattern matching against catalog
-        │       → list[QueryMatch] (query_id, pattern_id, signals, score)
-        │
-        ├── 2. (Optional) Target-specific structural detection
-        │       → Varies by target. Examples:
-        │         DynamoDB: PK classification, GSI candidates, denorm sub-types,
-        │                   secondary index dominance
-        │         DocumentDB: schema complexity, embedding candidates
-        │         OpenSearch: index mapping analysis, field type detection
-        │
-        ├── 3. Aggregate identification (shared, engine-agnostic)
-        │       → Groups related tables by FK + co-access patterns
-        │       → list[AggregateRecommendation] (optional, in output contract v2.1)
-        │
-        ├── 4. Aggregate into workload segments (per-pattern grouping)
-        │       → list[WorkloadSegment] (pattern, queries, tables, score)
-        │
-        ├── 5. Derive per-table recommendations from segments
-        │       → list[TableRecommendation]
-        │
-        ├── 6. Estimate costs
-        │       → CostEstimate
-        │
-        ├── 7. (Optional) LLM advisor second pass
-        │       → Target-specific recommendations (Phase 1, DynamoDB first)
-        │
-        └── 8. Build decision trace
-                → decision-trace.json (all detection internals recorded here)
-        │
-        ▼
-AnalysisOutputContract v2.1 + decision-trace.json
+        |
+        v
+analyze_for_<engine>(analysis_input)
+        |-- per-query pattern matching against the catalog     -> WorkloadAnalysis
+        |-- table profiles and scoring (scoring.py + adjustments) -> TableRecommendation[]
+        |-- engine-specific structural detection (optional)    -> decision trace
+        |-- aggregate identification (optional, shared)        -> aggregate_recommendations
+        |-- cost estimate from the price table                 -> CostEstimate
+        '-- decision trace                                     -> decision-trace.json
+        |
+        v
+AnalysisOutputContract + decision trace   (analysis-<engine>/ in the artifact store)
+        |
+        v
+Assignment: the one scorer, write groups, tie-break, move ledger (ADR-031)
 ```
 
 ---
 
-## Step 1: Define your pattern catalog
+## Step 1: Add the engine file
 
-Start here — before writing any detection code. The catalog is the specialist's knowledge encoded as data.
-
-**Reference:** `src/tools/analysis/dynamodb_pattern_catalog.py`
-
-Each catalog pattern includes:
+Create `src/catalog/engines/<engine>.toml`. The fields and what each means are documented at the top of `src/shared/catalog/engines.py` (a missing, unknown or mistyped field fails at import). The essentials:
 
 | Field | Purpose |
-|-------|---------|
-| `pattern_id` | Unique ID (e.g., `dynamodb-01`) |
-| `pattern_type` | Human-readable type (e.g., `key-value-lookup`) |
-| `description` | Specialist-written explanation of the pattern |
-| `base_score` | Specialist-assigned confidence (0-100) — this is the expert prior |
-| `detection_signals` | List of signals that indicate this pattern |
-| `concerns` | Known caveats or migration considerations |
+|---|---|
+| `id` | The engine id the pipeline emits; must equal the file name |
+| `display_name`, `display_order`, `ui_picker_order` | The AWS-branded name and the order in the display table and the review gate's picker |
+| `status`, `role`, `system_of_record` | What the engine is (see above) |
+| `[colors] ui` | The engine's one colour in every view |
+| `[pricing]` | `base_monthly`, burden fields and `list_prices = "<engine>.<configuration>"`, the price-table configuration the engine is priced on |
+| `[score_weights.<profile>]` | Pattern match, complexity, performance and cost weights, summing to 1; the first profile is the default |
+| `[justification_floor]`, `[thresholds.*]` | What a standing engine must earn, each with its reason (optional) |
+| `source_engines` | For a relational target, the source dialects it is native to |
 
-### Pattern examples by target
+Cost carries the same 10% weight for every engine (ADR-031 Decision 5, #1002); the loader rejects a file that differs.
 
-| Target | Patterns |
-|--------|----------|
-| DynamoDB | key-value-lookup (100), range-query (90), write-heavy-ingestion (85), time-series-event-log (85), metadata-config-store (90), session-store (90), bounded-parent-child (75), many-to-many-junction (65), co-accessed-tables (70), adjacency-list (60) |
-| Redis | caching-layer (95), session-store (90), rate-limiter (85), leaderboard (85), pub-sub (80) |
-| DocumentDB | variant-attributes (80), nested-document (85), extended-reference (85), json-document-query (80) |
-| OpenSearch | full-text-search (95), log-analytics (90), faceted-navigation (85) |
-| Neptune | social-graph (95), fraud-detection (90), knowledge-graph (85), recommendation-engine (80) |
+Never write a price in an engine file or an estimator. List prices come from the one dated price table, `src/catalog/prices.toml` (us-east-1, on-demand), written by `uv run python scripts/refresh_prices.py` from the public AWS Price List files. A new engine adds its section to that script's `SPECS` and runs it.
 
-### Anti-patterns
+## Step 2: Add the pattern entries and the gates
 
-Anti-patterns are concerns, not blockers. Each has a severity and guidance:
+1. **Pattern files.** `src/catalog/patterns/<pattern_type>.toml` has one `[engines.<id>]` entry per engine: whether it supports the pattern, its `kind` (a `fit` with a `score`, an `anti_pattern`, `native`, `scan`, `redesign`, `penalized`, `unscored` or `future`), and a `why` that feeds the decision trace. The completeness check fails with the exact list of missing entries, so run it and fill what it names:
 
-- `CRITICAL` — likely not suitable for this target without significant redesign
-- `HIGH` — needs attention, may reduce confidence significantly
-- `MEDIUM` — manageable with design changes
-- `LOW` — minor concern, document and move on
+   ```bash
+   uv run pytest tests/unit/shared/test_rule_catalog_complete.py tests/unit/shared/test_pattern_catalog.py tests/unit/shared/test_engine_catalog.py -q
+   ```
 
-**Important:** A full table scan is not automatically an anti-pattern. A scan at 1/hour is fine. A scan at 1/second is a problem. Frequency matters. Similarly, JOINs are not anti-patterns for DynamoDB — they're signals for denormalization design.
+   A penalty names a `penalty_basis` and the points are fixed by the basis, the same for every engine (ADR-031 Amendment 6); the loader rejects any other number. A fit pattern's detector must test the access pattern its reason describes.
+2. **Hard gates.** `src/catalog/gates.toml` lists, per capability, the engines that have it, and the exclusions that bar an engine from a query. A capability the new engine lacks or has changes which queries it can serve at all. The gate and the pattern files' `supported` flags must agree (the loader checks).
+3. **Triage signals.** `src/catalog/triage_signals.toml` names, per signal, the engines the signal is evidence for. Triage selects every active, query-owning engine whatever the signals say; only a cache overlay engine depends on a signal (`src/agents/referee/triage.py`). The list of analysed engines comes from the catalog (`catalog.engine_ids(status="active")`), so no triage code change is needed.
+4. **Access classes.** `src/catalog/access_classes.toml` says which pattern files describe each access-pattern class. A class's score on an engine is the highest rating the listed pattern files give it, so the class needs no engine-specific entry. A write is rated only on a system of record.
+5. **Regenerate the generated files.** `uv run python scripts/render_catalog.py` rewrites `docs/architecture/rule-catalog.md` and the UI's `engineCatalog.generated.js`; `--check` runs in lint. Never hand-edit them.
 
-### Score weights (per-target configurable)
+## Step 3: Write the detection
 
-Each engine's score dimension weights are catalog data: its engine file's `[score_weights.<profile>]` tables (`src/catalog/engines/<engine>.toml`), the first profile the engine's default. An engine with none uses the 40/30/20/10 default. The current values are in the generated [rule catalog](../architecture/rule-catalog.md#score-weights).
-
-Every engine gives cost the same weight, 10% (ADR-031 Decision 5, #1002); the catalog loader rejects a file that differs. A new engine may balance the other three dimensions its own way, as long as the four sum to 1.
-
-The analysis module reads its weights from the catalog (`src.shared.catalog.score_weights("<engine>")`) and passes them to the scoring layer. They are not hardcoded in `scoring.py`.
-
----
-
-## Step 2: Implement per-query pattern detection
-
-This is the core of your agent. For each query in the collector output, match it against your catalog patterns.
-
-**Reference:** `src/tools/analysis/dynamodb_analysis_tools.py` → `analyze_dynamodb_use_cases()`
-
-### Per-query matching
+Create the engine's analysis tools in `src/tools/analysis/<engine>_analysis_tools.py` and a thin catalog loader `<engine>_pattern_catalog.py`, modelled on the OpenSearch pair:
 
 ```python
-def analyze_<target>_use_cases(collector_output: dict) -> WorkloadAnalysis:
-    queries = collector_output.get("queries", {}).get("query_patterns", [])
-    tables = collector_output.get("database_schema", {}).get("tables", [])
+# src/tools/analysis/<engine>_pattern_catalog.py
+from src.shared.catalog import score_weights
+from src.tools.analysis.pattern_catalog_base import catalog_anti_patterns, catalog_patterns
 
-    # Build lookup structures (PK columns, table sizes, etc.)
-    # ...
-
-    # Per-pattern accumulators
-    pattern_a_queries: list[dict] = []
-    pattern_b_queries: list[dict] = []
-
-    for q in queries:
-        text_lower = q.get("query_text", "").lower()
-
-        # Use if (not elif) — a query can match multiple patterns
-        if <condition_for_pattern_a>:
-            pattern_a_queries.append(q)
-        if <condition_for_pattern_b>:
-            pattern_b_queries.append(q)
-
-    # Build Pattern objects from non-empty accumulators
-    patterns = _build_patterns_from_matches([
-        (CATALOG_PATTERNS[0], pattern_a_queries),
-        (CATALOG_PATTERNS[1], pattern_b_queries),
-    ])
-
-    return WorkloadAnalysis(patterns_detected=patterns, anti_patterns_detected=anti_patterns)
+<ENGINE>_PATTERNS = catalog_patterns("<engine>")
+<ENGINE>_ANTI_PATTERNS = catalog_anti_patterns("<engine>")
+<ENGINE>_WEIGHTS = score_weights("<engine>")
 ```
 
-### Detection techniques (ordered by preference)
+`analyze_<engine>_use_cases(collector_output)` walks the queries and tables and returns a `WorkloadAnalysis`. Rules of thumb that hold for every engine:
 
-1. **Structural signals** — query type, row counts, PK usage, join count, frequency. Most reliable.
-2. **Text matching** — keywords in query text (`session`, `created_at`, `ORDER BY ... LIMIT`). Fast but prone to false positives.
-3. **Combined** — structural + text together for higher confidence.
-4. **LLM (Phase 1)** — for unmatched queries only. Not implemented in Phase 0.
+- A query can match several patterns: use independent `if`s, not `elif`.
+- Prefer structural signals (query type, key usage, join count, frequency) over text matching, and combine them for confidence. Text-only matches are `MEDIUM` at best.
+- A scan once an hour is fine; one a second is not. Frequency matters for an anti-pattern.
+- Use the `Confidence` enum to say how certain a match is, and validate each rule against real collector output: track false positives (`"user_id" in text` matches any user-table query).
+- A new SQL fact belongs in the declared fact modules, not in the engine's tools, so every engine reads it the same way. The guard `tests/unit/shared/test_rule_catalog_complete.py` flags SQL keywords and engine literals outside them.
+- Engine-specific structural detection (DynamoDB's key classification, GSI candidates and denormalisation sub-types; DocumentDB's embedding candidates) goes to the decision trace, not the output contract.
 
-### Pattern validation guidance
+## Step 4: Score tables with the shared layer
 
-Heuristics are a starting point. Every detection rule needs validation against real collector outputs:
-
-- Track false positives: `"user_id" in text` matches any user-table query, not just session queries. Combine with structural signals (TTL columns, high frequency) to improve precision.
-- Use the `Confidence` enum to signal certainty: `HIGH` for structural matches, `MEDIUM` for text-only, `LOW` for weak signals.
-- The decision trace captures every match decision — use it for calibration.
-
----
-
-## Step 3: Aggregate into workload segments
-
-A workload segment = all queries matching a single catalog pattern. This is the unit customers think about: "my session management workload" not "query q-014."
-
-**Decision:** Workload segments are per-pattern groupings. One pattern = one segment. A segment contains all queries that matched that pattern, the tables they touch, and the catalog base score.
-
-```
-Segment: "session-store"
-  Pattern: dynamodb-06 (base_score=90)
-  Queries: [q-003, q-017, q-042] (12 calls/sec total)
-  Tables: [mydb.sessions, mydb.user_tokens]
-  Adjusted score: 88 (minor penalty: no TTL column detected)
-```
-
-### From segments to table recommendations
-
-Tables are a derived view from segments. A table's recommendation is driven by the segments it participates in:
-
-1. For each table, collect all segments that reference it
-2. The table's `pattern_match_score` = weighted average of segment scores (weighted by query frequency)
-3. Complexity, performance, and cost scores come from the shared scoring layer (`scoring.py`)
-
-### Table grouping and Aggregate identification
-
-Tables connected by foreign keys and co-access patterns can be grouped into **aggregates** — units that should migrate together. This is useful for any target where related tables need coordinated migration (DynamoDB, DocumentDB, etc.).
-
-The shared module `scoring.py` provides engine-agnostic aggregate identification:
-
-- `detect_co_access()` — finds pairs of tables co-accessed by the same query
-- `identify_aggregates()` — combines FK adjacency graphs with co-access patterns to find connected components
-
-When a table is part of an aggregate:
-
-- The output contract includes `aggregate_recommendations` with the root table, member tables, co-access confidence, and combined migration complexity
-- The decision trace includes the full aggregate membership and co-access evidence
-- Downstream consumers (Referee-Synthesis) use aggregates to plan migrations around domain boundaries
-
-Not all agents need aggregates. For targets like OpenSearch or ElastiCache where tables typically migrate independently, you can skip aggregate identification and leave `aggregate_recommendations` as `None`.
-
-### Target-specific structural detection (optional)
-
-Beyond pattern matching and aggregates, some targets benefit from additional structural analysis. This is entirely target-specific — implement what makes sense for your target's data model.
-
-**DynamoDB examples** (in `dynamodb_analysis_tools.py`):
-
-- PK classification — maps relational PKs to partition/sort key candidates
-- GSI candidate detection — identifies columns needing Global Secondary Indexes
-- Denormalization sub-type classification — bounded-parent-child, junction tables, co-accessed tables, adjacency lists
-- Secondary index dominance — flags tables where queries mostly use a secondary index
-
-**DocumentDB might add:**
-
-- Embedding candidate detection — parent-child relationships suitable for nested documents
-- Schema polymorphism detection — tables with sparse columns suggesting flexible schemas
-
-**OpenSearch might add:**
-
-- Full-text field detection — text columns with search-like query patterns
-- Aggregation pipeline analysis — GROUP BY patterns mapping to OpenSearch aggregations
-
-These detection results go into the decision trace, not the output contract (except `aggregate_recommendations` which is shared).
-
-- The specialist can evaluate the aggregate as a migration unit
-- Downstream consumers (Referee-Synthesis) use aggregates to plan migrations around domain boundaries
-
-Aggregate identification is implemented in `scoring.py` (engine-agnostic) and available for other agents to reuse. The DynamoDB-specific detection functions (PK classification, GSI candidates, denormalization sub-types, secondary index dominance) live in `dynamodb_analysis_tools.py`.
-
----
-
-## Step 4: Use the shared scoring layer
-
-All agents share generic scoring in `src/tools/analysis/scoring.py`. You reuse everything except the target-specific adjustment function.
-
-**Reference:** `src/tools/analysis/scoring.py`
-
-### Pipeline
-
-```python
-from src.tools.analysis.scoring import (
-    build_table_profiles,    # Generic — reuse as-is
-    compute_base_scores,     # Generic — reuse as-is
-    compute_confidence,      # Generic — accepts custom weights
-)
-
-def analyze_<target>_patterns(collector_output, workload_analysis):
-    profiles = build_table_profiles(collector_output, workload_analysis)
-
-    recommendations = []
-    for table_id, profile in profiles.items():
-        scores = compute_base_scores(profile)
-        scores = _apply_<target>_adjustments(scores, profile)
-        confidence = compute_confidence(scores, weights=TARGET_WEIGHTS)
-        # ... build TableRecommendation with confidence_score=confidence
-```
-
-### Writing your adjustment function
-
-Pattern match bonuses come from the catalog base scores. A bonus for a pattern the target excels at is catalog data too: the pattern file's fit entry for the engine carries `table_bonus` (and `complexity_bonus`, `bonus_group`, `complexity_feature`; see `src/shared/catalog/patterns.py`), and the adjustment function reads it with `table_bonuses`. The function itself adds only the structural bonuses/penalties that no one pattern explains:
+`src/tools/analysis/scoring.py` is the engine-agnostic scoring layer for the per-table recommendations the deliverables summarise. Reuse it; do not fork it.
 
 ```python
 from src.shared.catalog import patterns as catalog_patterns
+from src.tools.analysis.scoring import (
+    build_table_profiles,   # aggregate per-table schema, query and pattern stats
+    compute_base_scores,    # evidence-based 0..100 scores, four dimensions
+    compute_confidence,     # weighted confidence, accepts the engine's weights
+)
 
-
-def _apply_<target>_adjustments(scores, profile):
-    # Bonuses for patterns this target excels at: the pattern files' table_bonus
-    bonus, complexity_bonus = catalog_patterns.table_bonuses("<target>", profile.pattern_types)
-    scores.pattern_match_score += bonus
-    scores.complexity_score += complexity_bonus
-
-    # Structural adjustments
-    if profile.foreign_key_count > 3:
-        scores.complexity_score -= 15
-
-    # Clamp all to [0, 100]
-    return ScoreBreakdown(...)
+profiles = build_table_profiles(collector_output, workload_analysis)
+for table_id, profile in profiles.items():
+    scores = compute_base_scores(profile)
+    scores = _apply_<engine>_adjustments(scores, profile)
+    confidence = compute_confidence(scores, weights=<ENGINE>_WEIGHTS)
 ```
 
-### Recommendation thresholds
+All four dimensions (`pattern_match`, `complexity`, `performance`, `cost`) start at 0 and earn points from evidence, so a table with no queries and no patterns scores near zero. The adjustment function adds only the structural bonuses and penalties no single pattern explains. A bonus for a pattern the engine excels at is catalog data: the pattern file's fit entry carries `table_bonus` (and `complexity_bonus`, `bonus_group`, `complexity_feature`), read with `catalog_patterns.table_bonuses("<engine>", profile.pattern_types)`.
 
 | Confidence | Recommendation |
 |------------|---------------|
@@ -302,150 +139,52 @@ def _apply_<target>_adjustments(scores, profile):
 | >= 40 | MARGINAL |
 | < 40 | NOT_SUITABLE |
 
----
+**These table scores do not route queries.** Routing scores each query with `query_scoring.score_query_for_engine`: the query's pattern dimension is its own access-pattern class's score on the engine (ADR-031 Decision 14, Amendments 5 and 7, `query_pattern.QueryPatternModel`), its cost dimension is its own estimated monthly cost from the engine file's `[pricing]`, and only complexity and performance come from the query's tables. A change to routing behaviour is a change to the catalog or to that scorer, reviewed against ADR-031.
+
+For engines where related tables should migrate together, `scoring.detect_co_access()` and `scoring.identify_aggregates()` group tables by foreign keys and query co-access into `aggregate_recommendations`. They are optional: leave the field `None` for an engine whose tables migrate independently.
 
 ## Step 5: Write the decision trace
 
-**Required.** Every analysis agent must produce a `decision-trace.json` as a separate S3 artifact alongside `analysis.json`.
+Every engine's trace is a versioned contract in `src/contracts/`: `DynamoDBDecisionTrace`, `OpenSearchDecisionTrace`, `AuroraDecisionTrace` and so on. A trace that shares the core sections (`trace_version`, `agent`, `summary`, `query_matches`, `pattern_summaries`, `recommendation_derivations`) extends `DecisionTraceBase` (`src/contracts/decision_trace_base.py`); read the OpenSearch one for a small example.
 
-```
-<database-name>/<job_id>/analysis-<target>/analysis.json        ← contract output (agent-to-agent)
-<database-name>/<job_id>/analysis-<target>/decision-trace.json  ← feedback artifact (human review)
-```
+1. Add `src/contracts/<engine>_decision_trace.py`.
+2. Register its path in `src/shared/contract_versioning.py` (`analysis-<engine>/decision-trace\.json`). `write_decision_trace` (`src/agents/analysis/decision_trace.py`) refuses a trace with no registered contract, and `tests/contract/test_declared_artifacts.py` fails on an unregistered written file.
+3. A new contract starts at its own version; `docs/contracts/agent-contracts-spec.md` and CONTRIBUTING.md "Contract Changes" cover bumps to existing ones.
 
-The agent writes both. Referee-Synthesis only reads `analysis.json`. Specialists read `decision-trace.json` for calibration. No contract change needed.
+The trace records, per query, which patterns matched and the signals behind each match; per pattern, the catalog base score, the adjusted score and the reasons; and per table, how the segments combined into the recommendation, with the weights used. Specialists read it to calibrate: run the agent on real collector outputs, classify each pattern's matches as true positive, false positive or false negative, adjust the catalog scores and detection, and repeat.
 
-Write the trace with `write_decision_trace` (`src/agents/analysis/decision_trace.py`). Every engine's trace is a versioned contract in `src/contracts/` (for example `DynamoDBDecisionTrace` in `dynamodb_decision_trace.py`, #973): it is written through its model, carries a `contract_version`, and is checked on read like every stored contract. The writer refuses a trace with no contract registered for its path in `src/shared/contract_versioning.py`, so a new engine types its trace (on `DecisionTraceBase` if it shares the core sections) and registers the path. The example below is the DynamoDB shape.
+## Step 6: Write the entry point and register it
 
-### Trace structure
-
-```json
-{
-  "trace_version": "1.0",
-  "agent": "dynamodb-analysis-agent",
-  "summary": {
-    "queries_analyzed": 142,
-    "queries_matched": 87,
-    "queries_unmatched": 55,
-    "patterns_detected": 5,
-    "anti_patterns_detected": 2
-  },
-  "query_matches": [
-    {
-      "query_id": "q-001",
-      "query_text_preview": "SELECT * FROM users WHERE id = ?",
-      "matched_patterns": ["dynamodb-01"],
-      "matched_anti_patterns": [],
-      "signals": ["single_row_select", "primary_key_equality", "high_frequency"]
-    }
-  ],
-  "pattern_summaries": [
-    {
-      "pattern_id": "dynamodb-01",
-      "catalog_base_score": 95,
-      "queries_matched_count": 23,
-      "tables_involved": ["mydb.users", "mydb.sessions"],
-      "total_calls_per_second": 45.2,
-      "adjusted_score": 92,
-      "adjustment_reasons": ["minor penalty: nullable columns in result set"]
-    }
-  ],
-  "recommendation_derivations": [
-    {
-      "table_id": "mydb.users",
-      "segments_contributing": ["dynamodb-01", "dynamodb-06"],
-      "score_breakdown": {
-        "pattern_match": 88,
-        "complexity": 72,
-        "performance": 65,
-        "cost": 80
-      },
-      "weights_used": {"pattern_match": 0.5, "complexity": 0.25, "performance": 0.15, "cost": 0.1},
-      "weighted_confidence": 79,
-      "final_recommendation": "SUITABLE"
-    }
-  ]
-}
-```
-
-### Calibration loop (Phase 0)
-
-1. Specialist assigns initial catalog scores
-2. Run agent against real collector outputs
-3. Specialist reviews `decision-trace.json`, writes assessment (can be a `.md` file)
-4. Classify deltas: true positive, false positive, false negative per pattern
-5. Adjust catalog scores and detection rules
-6. Repeat
-
-Track per agent: pattern precision, pattern recall, recommendation agreement rate, average confidence delta.
-
----
-
-## Step 6: Write the agent entry point
-
-The agent is a thin orchestrator.
-
-**Reference:** `src/agents/analysis/dynamodb_analysis_agent.py`
+The agent is a thin orchestrator. Model it on `src/agents/analysis/opensearch_analysis_agent.py`:
 
 ```python
-def analyze_for_<target>(analysis_input: AnalysisInput) -> AnalysisOutputContract:
-    collector_output = analysis_input.collector_output
-
-    workload_analysis = analyze_<target>_use_cases(collector_output)
-    table_recommendations = analyze_<target>_patterns(collector_output, workload_analysis)
-    cost_estimate = estimate_<target>_costs(collector_output, ...)
-
-    # Optional: aggregate identification (shared, engine-agnostic)
-    # Skip if your target doesn't benefit from table grouping.
-    # aggregates = identify_aggregates(collector_output, workload_analysis)
-
-    # Optional: target-specific structural detection
-    # Add detection functions relevant to your target's data model.
-    # Results go to the decision trace, not the output contract.
-
-    decision_trace = build_decision_trace(collector_output, workload_analysis, table_recommendations)
-
-    return AnalysisOutputContract(
-        contract_version="2.1",
-        agent_metadata=AgentMetadata(
-            agent_name="<target>-analysis-agent",
-            agent_version="1.0.0",
-            target_database=TargetDatabase.<TARGET>,
-            analysis_timestamp=datetime.now(),
-        ),
-        table_recommendations=table_recommendations,
-        workload_analysis=workload_analysis,
-        cost_estimate=cost_estimate,
-        aggregate_recommendations=None,  # Populate from identify_aggregates() if applicable
-    ), decision_trace  # Agent handler writes both to S3
-```         agent_version="1.0.0",
-            target_database=TargetDatabase.<TARGET>,
-            analysis_timestamp=datetime.now(),
-        ),
-        table_recommendations=table_recommendations,
-        workload_analysis=workload_analysis,
-        cost_estimate=cost_estimate,
-        aggregate_recommendations=None,  # Optional — populate if aggregates are detected
-    ), decision_trace  # Agent handler writes both to S3
+def analyze_for_<engine>(analysis_input: AnalysisInput) -> tuple[AnalysisOutputContract, dict, str]:
+    workload = analyze_<engine>_use_cases(collector_output)
+    recommendations, classifications, weights = analyze_<engine>_patterns(collector_output, workload)
+    cost = estimate_<engine>_costs(collector_output, ...)
+    trace = build_<engine>_decision_trace(...)
+    return AnalysisOutputContract(..., agent_metadata=AgentMetadata(
+        target_database=TargetDatabase.<ENGINE>, ...)), trace, ""   # "" = no ER diagram
 ```
 
----
+`AnalysisOutputContract` takes its `contract_version` from the model's default (`tests/unit/agents/analysis/test_analysis_writes_the_model_version.py`); never write a literal.
+
+Registration points, found by following an existing engine (`git grep -l opensearch -- src scripts .claude` lists every site for the smallest one):
+
+| Where | What |
+|---|---|
+| `src/contracts/analysis_output.py` | Add the id to `TargetDatabase`. A new enum value is a MINOR bump, declared with `scripts/bump_contract.py` (CONTRIBUTING.md) |
+| `src/agents/analysis/handler.py` | A `case "<engine>":` that runs the agent and writes `analysis.json`, `decision-trace.json` and the ER diagram if any |
+| `scripts/run_analysis.py` | The engine list, the `TargetDatabase` map and the dispatch |
+| `src/agents/entrypoint.py` | `ANALYSIS_AGENTS`. It serves the `agent-load-test` image's dispatch only, not the local pipeline |
+| `src/orchestrator/local_orchestrator.py` | The artifact path list `_infer_progression` uses to tell that analysis ran |
+| `.claude/commands/analyze-<engine>.md` | The analysis command (carries the shared tool-use paragraph; see `/add-modernizer-skill`) |
 
 ## Step 7: Cost estimation
 
-Each target has different pricing models. The cost estimation function should:
+Each engine prices differently. The estimator should use the simplest pricing model as the default, derive throughput from the collector's query patterns (`calls_per_second`, read/write ratio) and storage from table sizes, list every assumption in `pricing_assumptions`, and leave optional features (DAX, global tables, backups) out unless asked. It reads figures through `catalog.pricing(engine)`; bill a month as `HOURS_PER_MONTH` (730) and request volumes over `SECONDS_PER_MONTH` (`src.shared.catalog.prices`), and record the table's date in the estimate (`cost_components["price_list"] = price_basis()`) so the deliverables can state it.
 
-- Use the simplest pricing model as default (e.g., DynamoDB on-demand, Aurora I/O-optimized)
-- Derive throughput from collector query patterns (calls_per_second, read/write ratio)
-- Derive storage from table sizes
-- Document all assumptions in `pricing_assumptions`
-- Not include optional features (DAX, global tables, backups) unless explicitly requested
-
-### Target-specific guidance
-
-Never write a price in the estimator. Every list price comes from the one dated price table, `src/catalog/prices.toml` (us-east-1, on-demand), written by `uv run python scripts/refresh_prices.py` from the public AWS Price List files. The engine file names the configuration it is priced on (`[pricing] list_prices = "<engine>.<configuration>"`), and the estimator reads the figures through `catalog.pricing(engine)`. A new engine adds its section to the script's `SPECS` and runs the script. Bill a month as `HOURS_PER_MONTH` (730) and request volumes over `SECONDS_PER_MONTH` (`src.shared.catalog.prices`), and record the table's date in the estimate (`cost_components["price_list"] = price_basis()`), so the deliverables can state it.
-
-| Target | Default pricing (price table section) | Key inputs |
+| Engine | Default pricing (price table section) | Key inputs |
 |--------|----------------|------------|
 | DynamoDB | On-demand request units and storage (`dynamodb.on_demand`) | calls_per_second, read/write ratio, total size |
 | ElastiCache | Node-based Valkey (`elasticache.valkey`) | working set size, connections |
@@ -453,116 +192,62 @@ Never write a price in the estimator. Every list price comes from the one dated 
 | OpenSearch | Managed domain on gp3 EBS (`opensearch.managed`) | index size, query rate |
 | Aurora | I/O-Optimized instance, ACU and storage (`aurora_<engine>.io_optimized`) | calls_per_second, total size |
 
----
+## Step 8: Error handling
 
-## Step 8: Error handling and graceful degradation
+Handle partial or missing collector output without crashing:
 
-Agents must handle partial or missing collector output gracefully:
+- **Zero queries:** recommend from schema structure only; set `pattern_match_score = 0` for all tables and say so in the trace.
+- **Zero tables:** return an empty recommendation list and log a warning.
+- **Missing metrics:** skip performance scoring and set `performance_score = 0`.
+- **Partial output:** process what is there; never fail on a missing optional field.
 
-- **Zero queries:** Produce recommendations based on schema structure only (complexity, size). Set `pattern_match_score = 0` for all tables. Note in decision trace.
-- **Zero tables:** Return empty recommendations list. Log warning.
-- **Missing metrics:** Skip performance scoring. Set `performance_score = 0`.
-- **Partial collector output:** Process what's available. Never crash on missing optional fields.
+The minimum viable input is one table with one column.
 
-Minimum viable input: at least one table with at least one column. Everything else is optional enrichment.
+## Step 9: The rest of the engine
 
----
+The analysis is the first half. An engine that routes queries also needs:
 
-## Step 9: Build test fixtures
+- **A schema designer** (`src/tools/schema/<engine>_schema_agent.py`, built on the shared `base_schema_agent.py`; read `opensearch_schema_agent.py` for the smallest), its model-output contract (`src/contracts/<engine>_model_output.py`), a `case` in `src/agents/schema_design/handler.py`, the engine in `scripts/run_schema_design.py` (engine list, skill path, contract class), a data-modelling prompt in `src/skills/`, and `.claude/commands/design-schema-<engine>.md` with its `Skill(design-schema-<engine>)` rule in `.claude/settings.ci.json`. See [strands-agent-development-guide.md](strands-agent-development-guide.md) for the seam pattern and the PE-review loop.
+- **The AWS Transform fleet**, if the engine should be designed there (`src/atx_orchestrator/subagents/schema.py` and `tools.py`). See [aws-transform-integration.md](aws-transform-integration.md).
+- **A load test**, optionally: [load-testing-new-engine.md](load-testing-new-engine.md).
+- **The library contract:** a designed engine appears in `assess()`'s design block, which is a MINOR change to that contract ([assess-design-block.md](../contracts/assess-design-block.md)).
 
-Three layers, same as before:
+## Step 10: Tests and fixtures
 
-### Layer 1: Per-pattern fixtures (agent-specific)
+Write tests first. Three fixture layers:
 
-Small dicts triggering exactly ONE pattern. Used for isolation tests.
+1. **Per-pattern fixtures (engine-specific):** small dicts that trigger exactly one pattern, for isolation tests. Reference: `tests/fixtures/dynamodb_pattern_fixtures.py`, `documentdb_pattern_fixtures.py`, `opensearch_pattern_fixtures.py`.
+2. **Vertical fixtures (shared):** realistic collector outputs several engines analyse. Reference: `tests/fixtures/ecommerce_collector_output.py`, `gaming_collector_output.py`.
+3. **Synthetic generator (shared):** for benchmarks, `tests/fixtures/generate_synthetic_collector_output.py`.
 
-**Reference:** `tests/fixtures/dynamodb_pattern_fixtures.py`
+Then: per-pattern isolation tests and a vertical integration test under `tests/unit/agents/analysis/test_<engine>_analysis_agent.py`; a contract test that the output and the trace validate against their models; the catalog completeness tests above; and the routing snapshot. A new engine changes routing results, so regenerate `tests/e2e/routing_snapshot.py`'s baseline on top of main and explain each query that moved (AGENTS.md "Routing changes"); never bend a fixture to keep a result.
 
-### Layer 2: Vertical fixtures (shared across agents)
+## Checklist for a new engine
 
-Realistic production-like fixtures. Shared — the same e-commerce fixture can be analyzed by DynamoDB, Redis, and DocumentDB agents.
-
-**Reference:** `tests/fixtures/ecommerce_collector_output.py`
-
-### Layer 3: Synthetic generator (shared)
-
-For benchmarking. Already exists at `tests/fixtures/generate_synthetic_collector_output.py`.
-
----
-
-## Step 10: Register with Referee-Triage
-
-After your agent is working:
-
-1. Add the target to the `ANALYSIS_AGENTS` set in `src/agents/entrypoint.py`
-2. Add the agent type to the Referee-Triage selection logic
-3. `LocalOrchestrator`'s `ThreadPoolExecutor` already sizes itself to the triage-selected agent list — no orchestration changes needed
-
----
-
-## Checklist for a new agent
-
-- [ ] Define pattern catalog with specialist-assigned base scores
-- [ ] Define anti-pattern catalog with severity and guidance
-- [ ] Add the engine's `[score_weights]` to its engine file (cost at the common 10%)
-- [ ] Implement per-query pattern detection (`analyze_<target>_use_cases()`)
-- [ ] Implement scoring adjustments (`_apply_<target>_adjustments()`)
-- [ ] Implement cost estimation (`estimate_<target>_costs()`)
-- [ ] Implement decision trace builder
-- [ ] Wire up agent entry point
-- [ ] Wire into `handler.py` dispatch
-- [ ] Create per-pattern isolation fixtures
-- [ ] Reuse or create vertical fixture
-- [ ] Add fixture validation tests
-- [ ] Add per-pattern isolation tests + vertical integration test
-- [ ] Verify: `pytest tests/ -v` — all green
-- [ ] Run against real collector output, review decision trace with specialist
-
----
-
-## Decisions log
-
-Decisions made for the analysis agent framework (March 2026):
-
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Workload segment definition | Per-pattern grouping | Simple, deterministic. One pattern = one segment. Can add human-defined templates later. |
-| Table grouping (aggregates) | Implemented in Phase 1 | `identify_aggregates()` in `scoring.py` is engine-agnostic (FK + co-access). Optional per agent — skip for targets where tables migrate independently. |
-| Score weights | Per-target configurable | Superseded: the weights are catalog data in each engine file, with cost at 10% for every engine (#1002); current values in the [rule catalog](../architecture/rule-catalog.md#score-weights). |
-| Fixture reuse | Vertical fixtures shared, per-pattern fixtures agent-specific | Reduces duplication. Synthetic generator for initial development. |
-| LLM detection | Phase 1 (in progress) | Deterministic first. LLM advisor as optional second pass via Strands SDK. DynamoDB is the first target; pattern is reusable. |
-| Decision trace | Required for all agents | Separate S3 artifact, not part of agent contract. Target-specific detection internals recorded here. |
-| Pattern composition | Deferred to Phase 1 | Start with independent pattern matching. Composite rules add complexity without proven value yet. |
-
----
+- [ ] `src/catalog/engines/<engine>.toml`, with weights, pricing and `list_prices`; prices added via `scripts/refresh_prices.py`
+- [ ] An `[engines.<engine>]` entry in every pattern file; completeness tests green
+- [ ] Gates, triage signals and access classes reviewed; `scripts/render_catalog.py` run
+- [ ] Detection in `<engine>_analysis_tools.py`; new SQL facts in the fact modules
+- [ ] Scoring adjustments, with pattern bonuses as `table_bonus` data
+- [ ] Cost estimate from the price table, with the price-list date recorded
+- [ ] Decision trace contract, registered in `contract_versioning.py`
+- [ ] Entry point, `TargetDatabase` value (contract bump declared), handler case, `run_analysis.py`
+- [ ] Commands, skills and `.claude/settings.ci.json` rules
+- [ ] Schema designer and its contract, if the engine routes queries
+- [ ] Fixtures and tests; routing snapshot regenerated and every moved query explained
+- [ ] Checked against ADR-031 and every decision it touches (AGENTS.md "Before asking for review", item 7)
+- [ ] `make lint` and `make test`; `./ci/pre_merge.sh` before pushing
 
 ## File reference
 
-### Contracts (read-only — do not modify)
-
 | File | Purpose |
-|------|---------|
-| `src/contracts/collector_output.py` | CollectorOutputContract v3.0 — your input |
-| `src/contracts/analysis_input.py` | AnalysisInput — wraps collector output |
-| `src/contracts/analysis_output.py` | AnalysisOutputContract v2.1 — your output (includes optional `aggregate_recommendations`) |
-
-### Shared scoring (reuse, do not fork)
-
-| File | Purpose |
-|------|---------|
-| `src/tools/analysis/scoring.py` | `build_table_profiles()`, `compute_base_scores()`, `compute_confidence()` |
-
-### DynamoDB reference implementation
-
-| File | Purpose |
-|------|---------|
-| `src/tools/analysis/dynamodb_pattern_catalog.py` | Specialist-curated pattern catalog |
-| `src/tools/analysis/dynamodb_analysis_tools.py` | Detection, scoring, cost estimation |
-| `src/agents/analysis/dynamodb_analysis_agent.py` | Agent entry point |
-
-### ElastiCache implementation
-
-| File | Purpose |
-|------|---------|
-| `src/agents/analysis/elasticache_analysis_agent.py` | Agent entry point |
-| `src/tools/analysis/redis_analysis_tools.py` | Detection, scoring, cost estimation |
+|---|---|
+| `src/catalog/engines/`, `patterns/`, `gates.toml`, `triage_signals.toml`, `access_classes.toml`, `prices.toml` | The rule catalog: the source of every engine fact and score |
+| `src/shared/catalog/` | Typed loaders for the catalog |
+| `docs/architecture/rule-catalog.md` | Generated pattern-by-engine matrix |
+| `src/contracts/collector_output.py`, `analysis_input.py`, `analysis_output.py` | The input and output contracts (read-only for an engine author, except the `TargetDatabase` value) |
+| `src/tools/analysis/scoring.py` | Shared table scoring and aggregate identification |
+| `src/agents/referee/query_scoring.py` | The one query scorer routing uses |
+| `src/tools/analysis/dynamodb_*`, `src/agents/analysis/dynamodb_analysis_agent.py` | DynamoDB reference implementation |
+| `src/tools/analysis/opensearch_*`, `src/agents/analysis/opensearch_analysis_agent.py` | OpenSearch (search read model) |
+| `src/tools/analysis/redis_analysis_tools.py`, `src/agents/analysis/elasticache_analysis_agent.py` | ElastiCache (cache overlay) |
