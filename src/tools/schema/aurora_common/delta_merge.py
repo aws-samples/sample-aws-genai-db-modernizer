@@ -45,6 +45,7 @@ from src.tools.schema.aurora_common.access_patterns import derive_access_pattern
 from src.tools.schema.aurora_common.ddl_generator import (
     MYSQL,
     POSTGRES,
+    ColumnDDL,
     DdlResult,
     Dialect,
     TableDDL,
@@ -54,6 +55,7 @@ from src.tools.schema.aurora_common.ddl_generator import (
     carried_indexes,
     generate_mysql_ddl,
     generate_pg_ddl,
+    pg_method_conflict,
     render_index,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
@@ -261,8 +263,11 @@ class _Index:
     where_sql: str | None
 
 
-def _structured_index(base: AuroraDesignBase, table: AgentTable, entry: IndexSpec | str) -> _Index:
-    """Validate one delta index entry against the table and dialect. Raises SqlFragmentError."""
+def _structured_index(
+    base: AuroraDesignBase, table: AgentTable, entry: IndexSpec | str, column_ddls: list[ColumnDDL]
+) -> _Index:
+    """Validate one delta index entry against the table, its merged column types
+    (``column_ddls``) and the dialect. Raises SqlFragmentError."""
     engine = base.engine
     columns = [c.column_name for c in table.columns]
     if isinstance(entry, str):
@@ -304,12 +309,25 @@ def _structured_index(base: AuroraDesignBase, table: AgentTable, entry: IndexSpe
         if column is None:
             raise SqlFragmentError(f"table '{table.table_name}' has no column '{name}'")
         resolved.append(column)
+    index_columns = resolved[: len(spec.columns)]
+    if spec.method:  # Aurora PostgreSQL only: refused above on Aurora MySQL
+        why = pg_method_conflict(
+            spec.method,
+            spec.unique,
+            index_columns,
+            column_ddls,
+            no_opclass_because="the design delta cannot name one",
+        )
+        if not why and spec.include and spec.method not in ("btree", "gist", "spgist"):
+            why = "only a B-tree, GiST or SP-GiST index takes INCLUDE columns in PostgreSQL"
+        if why:
+            raise SqlFragmentError(f"index '{spec.index_name}' cannot use {spec.method}: {why}")
     where_sql = (
         render_predicate(spec.where, columns, base.dialect.q) if spec.where is not None else None
     )
     return _Index(
         name=spec.index_name,
-        columns=resolved[: len(spec.columns)],
+        columns=index_columns,
         unique=spec.unique,
         method=spec.method,
         include=resolved[len(spec.columns) :],
@@ -369,7 +387,7 @@ def _apply_index_changes(
         for j, entry in enumerate(change.modify_indexes):
             where = f"tables[{i}].modify_indexes[{j}]"
             try:
-                index = _structured_index(base, table, entry)
+                index = _structured_index(base, table, entry, ddl.columns)
             except (SqlFragmentError, ValidationError) as exc:
                 errors.append(f"{where}: {exc}")
                 continue
@@ -386,7 +404,7 @@ def _apply_index_changes(
         for j, entry in enumerate(change.add_indexes):
             where = f"tables[{i}].add_indexes[{j}]"
             try:
-                index = _structured_index(base, table, entry)
+                index = _structured_index(base, table, entry, ddl.columns)
             except (SqlFragmentError, ValidationError) as exc:
                 errors.append(f"{where}: {exc}")
                 continue

@@ -397,30 +397,54 @@ def _has_default_opclass(method: str, aurora_type: str) -> bool:
     return base in _PG_DEFAULT_OPCLASS_TYPES[method]
 
 
+def pg_method_conflict(
+    method: str,
+    unique: bool,
+    index_columns: list[str],
+    column_ddls: list[ColumnDDL],
+    *,
+    no_opclass_because: str,
+) -> str:
+    """Why Aurora PostgreSQL cannot build a ``method`` index on ``index_columns`` (UNIQUE when
+    ``unique``) with these column types, or "" when it can. The draft checks a source index
+    with it and the merge checks the model's delta, so both follow one rule;
+    ``no_opclass_because`` says why a GIN or GiST index names no other operator class."""
+    if method not in _PG_INDEX_METHODS:
+        return ""  # a B-tree takes any columns and can be UNIQUE
+    why = ""
+    if unique:
+        why = "only a B-tree index can be UNIQUE in PostgreSQL"
+    elif method in _PG_ONE_COLUMN_METHODS and len(index_columns) > 1:
+        why = f"a PostgreSQL {method} index takes one column, and this one has {len(index_columns)}"
+    elif method in _PG_DEFAULT_OPCLASS_TYPES:
+        types = {c.name.lower(): c.aurora_type for c in column_ddls}
+        lacking = [
+            f"{name} ({types.get(name.lower(), 'unknown type')})"
+            for name in index_columns
+            if not _has_default_opclass(method, types.get(name.lower(), ""))
+        ]
+        if lacking:
+            why = (
+                f"no default {method} operator class covers {', '.join(lacking)}, and "
+                f"{no_opclass_because} (such as {method}_trgm_ops from pg_trgm on text, or "
+                f"btree_{method} on a scalar)"
+            )
+    return why
+
+
 def _pg_index_method(index: AgentIndex, columns: list[ColumnDDL]) -> tuple[str | None, str]:
     """The method an Aurora PostgreSQL draft keeps for ``index`` (None: a plain B-tree) and,
     when it cannot keep the source's, the index note that says why ("" otherwise)."""
     method = index_method(index)
     if method is None or method not in _PG_INDEX_METHODS:
         return None, ""
-    why = ""
-    if index.is_unique:  # nosemgrep: is-function-without-parentheses
-        why = "only a B-tree index can be UNIQUE in PostgreSQL"
-    elif method in _PG_ONE_COLUMN_METHODS and len(index.columns) > 1:
-        why = f"a PostgreSQL {method} index takes one column, and this one has {len(index.columns)}"
-    elif method in _PG_DEFAULT_OPCLASS_TYPES:
-        types = {c.name.lower(): c.aurora_type for c in columns}
-        lacking = [
-            f"{name} ({types.get(name.lower(), 'unknown type')})"
-            for name in index.columns
-            if not _has_default_opclass(method, types.get(name.lower(), ""))
-        ]
-        if lacking:
-            why = (
-                f"no default {method} operator class covers {', '.join(lacking)}, and the "
-                "collector does not record the one the source index used (such as "
-                f"{method}_trgm_ops from pg_trgm on text, or btree_{method} on a scalar)"
-            )
+    why = pg_method_conflict(
+        method,
+        index.is_unique,
+        index.columns,
+        columns,
+        no_opclass_because="the collector does not record the one the source index used",
+    )
     if why:
         return None, f"{method.upper()} index carried over as a B-tree: {why}."
     return method, ""

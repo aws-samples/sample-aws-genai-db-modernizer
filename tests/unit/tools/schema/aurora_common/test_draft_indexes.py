@@ -857,6 +857,135 @@ def test_pg_merge_accepts_spgist_in_both_index_forms():
         assert result.output["table_definitions"][0]["indexes"] == [statement]
 
 
+# ---------------------------------------------------------------------------
+# The model's index delta follows the draft's PostgreSQL rule
+# ---------------------------------------------------------------------------
+
+
+def _merge_add_index(entry, **change):
+    base = AuroraDesignBase(
+        engine="aurora_postgresql",
+        job_id="j",
+        source_database="db",
+        source_engine="postgresql",
+        tables=[_typed_table([])],
+    )
+    return merge_design_delta(
+        base,
+        {
+            "delta_version": "1.0",
+            "tables": [{"table_name": "topics", "add_indexes": [entry], **change}],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("structured", "statement", "error"),
+    [
+        (
+            {"index_name": "ux_slug", "columns": ["slug"], "unique": True, "method": "hash"},
+            'CREATE UNIQUE INDEX "ux_slug" ON "topics" USING hash ("slug");',
+            "index 'ux_slug' cannot use hash: only a B-tree index can be UNIQUE in PostgreSQL",
+        ),
+        (
+            {"index_name": "idx_pair", "columns": ["status", "slug"], "method": "hash"},
+            'CREATE INDEX "idx_pair" ON "topics" USING hash ("status", "slug");',
+            "index 'idx_pair' cannot use hash: a PostgreSQL hash index takes one column, and "
+            "this one has 2",
+        ),
+        (
+            {"index_name": "idx_room", "columns": ["room_id"], "method": "gin"},
+            'CREATE INDEX "idx_room" ON "topics" USING gin ("room_id");',
+            "index 'idx_room' cannot use gin: no default gin operator class covers room_id "
+            "(INTEGER), and the design delta cannot name one (such as gin_trgm_ops from pg_trgm "
+            "on text, or btree_gin on a scalar)",
+        ),
+        (
+            {"index_name": "ux_during", "columns": ["during"], "unique": True, "method": "gist"},
+            'CREATE UNIQUE INDEX "ux_during" ON "topics" USING gist ("during");',
+            "index 'ux_during' cannot use gist: only a B-tree index can be UNIQUE in PostgreSQL",
+        ),
+        (
+            {"index_name": "ux_slug", "columns": ["slug"], "unique": True, "method": "brin"},
+            'CREATE UNIQUE INDEX "ux_slug" ON "topics" USING brin ("slug");',
+            "index 'ux_slug' cannot use brin: only a B-tree index can be UNIQUE in PostgreSQL",
+        ),
+    ],
+)
+def test_pg_merge_refuses_an_index_method_postgresql_cannot_build(structured, statement, error):
+    """A delta index meets the rule the draft applies to a source index (only a B-tree is
+    UNIQUE, a hash index takes one column, GIN needs a default operator class), in both
+    forms, instead of reaching DDL that Aurora PostgreSQL rejects."""
+    for entry in (structured, statement):
+        result = _merge_add_index(entry)
+
+        assert result.output is None
+        assert result.errors == [f"tables[0].add_indexes[0]: {error}"]
+
+
+@pytest.mark.parametrize(
+    ("method", "column"), [("gin", "body"), ("hash", "slug"), ("brin", "slug")]
+)
+def test_pg_merge_refuses_include_on_an_index_method_without_it(method, column):
+    """Only the structured form can carry INCLUDE, so this has no statement case."""
+    result = _merge_add_index(
+        {"index_name": "idx_cover", "columns": [column], "method": method, "include": ["id"]}
+    )
+
+    assert result.output is None
+    assert result.errors == [
+        f"tables[0].add_indexes[0]: index 'idx_cover' cannot use {method}: only a B-tree, GiST "
+        "or SP-GiST index takes INCLUDE columns in PostgreSQL"
+    ]
+
+
+@pytest.mark.passes_on_main  # guards the delta indexes the merge already accepts
+@pytest.mark.parametrize(
+    ("structured", "statement"),
+    [
+        (
+            {"index_name": "idx_body", "columns": ["body"], "method": "gin"},
+            'CREATE INDEX "idx_body" ON "topics" USING gin ("body");',
+        ),
+        (
+            {"index_name": "idx_slug", "columns": ["slug"], "method": "hash"},
+            'CREATE INDEX "idx_slug" ON "topics" USING hash ("slug");',
+        ),
+        (
+            {"index_name": "ux_slug", "columns": ["slug"], "unique": True, "method": "btree"},
+            'CREATE UNIQUE INDEX "ux_slug" ON "topics" USING btree ("slug");',
+        ),
+    ],
+)
+def test_pg_merge_keeps_an_index_method_postgresql_can_build(structured, statement):
+    for entry in (structured, statement):
+        result = _merge_add_index(entry)
+
+        assert result.errors == []
+        assert result.output["table_definitions"][0]["indexes"] == [statement]
+
+
+def test_pg_merge_checks_an_index_method_against_the_merged_column_types():
+    """The rule reads each column's type after the delta's own ``column_types``: GIN is kept
+    on an INTEGER column the delta makes an array, and refused on a JSONB one it makes TEXT."""
+    gin = {"index_name": "idx_gin", "columns": ["room_id"], "method": "gin"}
+
+    kept = _merge_add_index(gin, column_types=[{"column": "room_id", "aurora_type": "INTEGER[]"}])
+    refused = _merge_add_index(
+        {**gin, "columns": ["body"]}, column_types=[{"column": "body", "aurora_type": "TEXT"}]
+    )
+
+    assert kept.errors == []
+    assert kept.output["table_definitions"][0]["indexes"] == [
+        'CREATE INDEX "idx_gin" ON "topics" USING gin ("room_id");'
+    ]
+    [error] = refused.errors
+    assert error.startswith(
+        "tables[0].add_indexes[0]: index 'idx_gin' cannot use gin: no default gin operator "
+        "class covers body (TEXT), and"
+    )
+
+
 @pytest.mark.parametrize("method", ["gin; DROP TABLE topics", "bloom", "BTREE"])
 def test_render_index_refuses_a_method_outside_the_one_list(method):
     """Review of #1506: ``render_index`` itself keeps any text outside ``INDEX_METHODS``
