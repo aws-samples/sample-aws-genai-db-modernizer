@@ -299,8 +299,36 @@ def write_aurora_postgresql_design(
 #: ``wordpress_terminal``: in an engine scope with no other owner, it stays terminal).
 FLAGGED_DATABASE = "wordpress_terminal"
 
+#: A database the fake designer designs as wordpress, with the first DynamoDB table an
+#: item collection of its source table's entity (``assess_consumer_fixtures.json``'s
+#: ``wordpress_dynamodb_entities``, contract 1.2's ``aggregate_pattern`` and
+#: ``entities``).
+ENTITIES_DATABASE = "wordpress_entities"
+
 #: The databases the fake designer writes the designed wordpress job's designs for.
-DESIGNED_DATABASES = ("wordpress", FLAGGED_DATABASE)
+DESIGNED_DATABASES = ("wordpress", FLAGGED_DATABASE, ENTITIES_DATABASE)
+
+
+def make_item_collection(store: Any, database_name: str, job_id: str, version: int) -> None:
+    """Turn the first table of the DynamoDB design at ``version`` into an item
+    collection: its attributes move to one entity of its first source table, with key
+    templates from its own keys (the design contract's item-collection shape)."""
+    key = f"{database_name}/{job_id}/schema-dynamodb/v{version}/schema_output.json"
+    design = store.read_json(key)
+    table = design["table_definitions"][0]
+    source = table["source_tables"][0]
+    partition = table["partition_key"]["attribute_name"]
+    table["aggregate_pattern"] = "item_collection"
+    table["entities"] = [
+        {
+            "entity_type": _bare(source).upper(),
+            "source_table": source,
+            "pk_template": f"{_bare(source).upper()}#{{{partition}}}",
+            "sk_template": "PROFILE",
+            "attributes": table.pop("attributes"),
+        }
+    ]
+    store.write_json(key, design)
 
 
 def report_unsupported(
@@ -359,6 +387,8 @@ def write_fake_design(
         writers[target_type](store, database_name, job_id, assignment_version)
         if database_name == FLAGGED_DATABASE and target_type == "dynamodb":
             report_unsupported(store, database_name, job_id, assignment_version)
+        if database_name == ENTITIES_DATABASE and target_type == "dynamodb":
+            make_item_collection(store, database_name, job_id, assignment_version)
         return
     placeholder = SkippedSchemaOutput(
         target_type=target_type,

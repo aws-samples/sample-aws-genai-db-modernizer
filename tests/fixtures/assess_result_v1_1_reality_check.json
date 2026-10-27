@@ -1,0 +1,533 @@
+{
+  "contract_version": "1.1",
+  "label": "recommendation",
+  "library_version": "0.3.0b2.dev217+gb043d3894",
+  "ruleset_version": "0.3.0b2.dev217+gb043d3894",
+  "ruleset_hash": "sha256:ae575e19d12de9af3e4a1386e5450e00e9dac4609d6688b15e4b92601f842fc3",
+  "options": {
+    "target_engines": null,
+    "run_through": "reality_check",
+    "deterministic": true,
+    "include_artifacts": false
+  },
+  "scope": null,
+  "summary": {
+    "run_through_reached": "reality_check",
+    "source_engine": "mysql",
+    "assignment_version": 2,
+    "statement_count": 107,
+    "statements_per_engine": {
+      "aurora_mysql": 67,
+      "dynamodb": 40
+    },
+    "unservable_count": 0,
+    "post_schema_terminal_count": 0,
+    "unique_delta_threshold": 15,
+    "relational_engine": {
+      "engine": "aurora_mysql",
+      "reason": "Aurora MySQL is the Aurora engine compatible with the source (mysql)"
+    },
+    "engines": [
+      {
+        "engine": "aurora_mysql",
+        "role": "owner",
+        "statement_count": 67,
+        "consolidated_into": null,
+        "unique_queries": 5,
+        "avg_delta": 8.2,
+        "reason": "74% mean fit across 54 queries (13 rated tables; 1 query without table-level evidence), kept relational by aggregation, full-text or pattern search and multi-table joins (23 of all 67 routed); 13 more queries are pinned (utility), not in the mean."
+      },
+      {
+        "engine": "documentdb",
+        "role": "consolidated",
+        "statement_count": 0,
+        "consolidated_into": "aurora_mysql",
+        "unique_queries": 0,
+        "avg_delta": 3.5,
+        "reason": "DocumentDB provides no unique capabilities over Aurora MySQL"
+      },
+      {
+        "engine": "dynamodb",
+        "role": "owner",
+        "statement_count": 40,
+        "consolidated_into": null,
+        "unique_queries": 18,
+        "avg_delta": 20.0,
+        "reason": "86% mean fit across 40 queries (18 rated tables), led by key-value lookups (14 of 40)."
+      },
+      {
+        "engine": "elasticache",
+        "role": "cache_layer",
+        "statement_count": 0,
+        "consolidated_into": null,
+        "unique_queries": null,
+        "avg_delta": null,
+        "reason": "Cache layer for 20 designed cached reads (83.4% of calls), mostly point lookups, cache-aside in front of Aurora MySQL in wave 2, then DynamoDB once wave 3 moves these reads; it owns no queries; 37% mean cache fit across 20 cached reads (12 rated tables). These reads total 185.07 calls/s, above the 1 calls/s hot-read floor."
+      },
+      {
+        "engine": "opensearch",
+        "role": "consolidated",
+        "statement_count": 0,
+        "consolidated_into": "aurora_mysql",
+        "unique_queries": 0,
+        "avg_delta": 3.0,
+        "reason": "OpenSearch provides no unique capabilities over Aurora MySQL"
+      }
+    ],
+    "consolidations": [
+      {
+        "from_engine": "documentdb",
+        "to_engine": "aurora_mysql",
+        "query_count": 7,
+        "reason": "DocumentDB provides no unique capabilities over Aurora MySQL"
+      },
+      {
+        "from_engine": "documentdb",
+        "to_engine": "dynamodb",
+        "query_count": 3,
+        "reason": "DocumentDB provides no unique capabilities over DynamoDB"
+      },
+      {
+        "from_engine": "opensearch",
+        "to_engine": "aurora_mysql",
+        "query_count": 1,
+        "reason": "OpenSearch provides no unique capabilities over Aurora MySQL"
+      }
+    ],
+    "tables": [
+      {
+        "table_id": "wordpress.wp_actionscheduler_actions",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_groups",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": "elasticache",
+        "reason": "No statement writes it; Aurora MySQL serves all 3 of its queries."
+      },
+      {
+        "table_id": "wordpress.wp_actionscheduler_logs",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_commentmeta",
+        "owner": "dynamodb",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": null,
+        "reason": "No statement writes it; DynamoDB serves its only query."
+      },
+      {
+        "table_id": "wordpress.wp_comments",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_options",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (3 statements); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_postmeta",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (4 statements); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_posts",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (5 statements); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_term_relationships",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [
+          "dynamodb"
+        ],
+        "cached_by": "elasticache",
+        "reason": "No statement writes it; Aurora MySQL serves 7 of its 8 queries, more than any other engine that can own a table; DynamoDB reads a copy kept in sync from Aurora MySQL via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_term_taxonomy",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": "elasticache",
+        "reason": "No statement writes it; Aurora MySQL serves all 12 of its queries."
+      },
+      {
+        "table_id": "wordpress.wp_termmeta",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_terms",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": "elasticache",
+        "reason": "No statement writes it; Aurora MySQL serves all 10 of its queries."
+      },
+      {
+        "table_id": "wordpress.wp_usermeta",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [
+          "dynamodb"
+        ],
+        "cached_by": null,
+        "reason": "No statement writes it; Aurora MySQL serves 3 of its 4 queries, more than any other engine that can own a table; DynamoDB reads a copy kept in sync from Aurora MySQL via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_users",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [
+          "dynamodb"
+        ],
+        "cached_by": null,
+        "reason": "No statement writes it; Aurora MySQL serves 3 of its 5 queries, more than any other engine that can own a table; DynamoDB reads a copy kept in sync from Aurora MySQL via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_wc_admin_notes",
+        "owner": "aurora_mysql",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": null,
+        "reason": "No statement writes it; Aurora MySQL serves its only query."
+      },
+      {
+        "table_id": "wordpress.wp_wc_product_meta_lookup",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_wc_reserved_stock",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_wc_tax_rate_classes",
+        "owner": "dynamodb",
+        "owner_basis": "most_queries",
+        "also_read_by": [],
+        "cached_by": "elasticache",
+        "reason": "No statement writes it; DynamoDB serves its only query."
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_api_keys",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_downloadable_product_permissions",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": null,
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_itemmeta",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (2 statements); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      },
+      {
+        "table_id": "wordpress.wp_woocommerce_order_items",
+        "owner": "dynamodb",
+        "owner_basis": "writes",
+        "also_read_by": [
+          "aurora_mysql"
+        ],
+        "cached_by": "elasticache",
+        "reason": "DynamoDB takes every statement that writes it (1 statement); Aurora MySQL reads a copy kept in sync from DynamoDB via CDC."
+      }
+    ],
+    "designed_engines": [],
+    "design_note": null
+  },
+  "statements": [
+    {
+      "query_id": "0452bed28b31e64ae9294ddef1d5e82c3166557fd4c02b6e7d4140a11170af82",
+      "query_tags": [],
+      "query_type": "UPDATE",
+      "join_count": 0,
+      "tables": [
+        "wordpress.wp_woocommerce_api_keys"
+      ],
+      "calls_per_second": 8.276493055555555,
+      "rewritten_by_caller": false,
+      "engine": "dynamodb",
+      "confidence": 95,
+      "reason_code": "highest_score",
+      "consolidated_from": null,
+      "excluded": [
+        "elasticache",
+        "opensearch"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 63,
+        "documentdb": 79,
+        "dynamodb": 95,
+        "elasticache": 51,
+        "opensearch": 0
+      },
+      "signals": [
+        "write_heavy"
+      ],
+      "matched_patterns": [
+        {
+          "id": "write-heavy-ingestion",
+          "name": "Write-heavy ingestion"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "highest fit for DynamoDB",
+      "post_schema_terminal": null
+    },
+    {
+      "query_id": "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+      "query_tags": [],
+      "query_type": "INSERT",
+      "join_count": 0,
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "calls_per_second": 3.429895833333333,
+      "rewritten_by_caller": false,
+      "engine": "dynamodb",
+      "confidence": 89,
+      "reason_code": "write_group",
+      "consolidated_from": null,
+      "excluded": [
+        "elasticache",
+        "opensearch"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 82,
+        "documentdb": 70,
+        "dynamodb": 89,
+        "elasticache": 43,
+        "opensearch": 0
+      },
+      "signals": [
+        "low_frequency_writes"
+      ],
+      "matched_patterns": [
+        {
+          "id": "write-heavy-ingestion",
+          "name": "Write-heavy ingestion"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "write group: one source of truth \u2192 DynamoDB",
+      "post_schema_terminal": null
+    },
+    {
+      "query_id": "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+      "query_tags": [],
+      "query_type": "SELECT",
+      "join_count": 4,
+      "tables": [
+        "wordpress.wp_posts",
+        "wordpress.wp_postmeta"
+      ],
+      "calls_per_second": 0.03019675925925926,
+      "rewritten_by_caller": false,
+      "engine": "aurora_mysql",
+      "confidence": 81,
+      "reason_code": "co_dependency",
+      "consolidated_from": null,
+      "excluded": [
+        "documentdb",
+        "dynamodb",
+        "elasticache",
+        "opensearch"
+      ],
+      "unservable_reason": null,
+      "fit": {
+        "aurora_mysql": 81
+      },
+      "signals": [
+        "low_frequency_reads",
+        "complex_joins",
+        "aggregations"
+      ],
+      "matched_patterns": [
+        {
+          "id": "complex-join",
+          "name": "Complex join"
+        },
+        {
+          "id": "aggregation-analytics",
+          "name": "Aggregation analytics"
+        },
+        {
+          "id": "batch-in-list",
+          "name": "Batch IN list"
+        }
+      ],
+      "tied_engines": [],
+      "reason_text": "co-dependency group \u2192 Aurora MySQL | DocumentDB lacks required capability: aggregation, multi-table joins; DynamoDB lacks required capability: aggregation, multi-table joins; excluded from ElastiCache: it joins more than one table, and a key-value store can't serve joins; OpenSearch lacks required capability: aggregation, multi-table joins",
+      "post_schema_terminal": null
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "cd-1",
+      "kind": "co_dependency",
+      "query_ids": [
+        "a0b655ea2f80c5bc688a142e3e03956031de6a491787f4e8a847ae67c65fbef0",
+        "fc99562bfa4be32418b08a3ab1ce8b7763f2bd698ff428782e9428a8fd6e3a98",
+        "cb3300c6fc11f0dd851bbee427ed58a930926ea9b925a271e1699f5bc09814ee",
+        "97834e68ad8550b0db33ca13d5b4d2f5ee6d56b1acbcd3374a1fefad234ca8ca",
+        "3f9f6bab31e30e6cab0f93d7153b166e0e1a509e72b8099434729aae955182c8",
+        "4b79d7a8be865f8758729140de11cba4dff2b0262c6b258523f6dac6e496720a",
+        "f7de9a8110453cdec99eca2a5338e3bb03d437b409b8b22d7d02da54d9614915",
+        "119b7fbf3a2efd757e864dc02fa2b5a1b682049fe3a552f8f95d320c20b4de1e",
+        "a355b7403b1d39d90f3ff59ece2a00e0225bbbc7c3a9d3d755d3f0e8d001e077",
+        "d5ae7abb4fb5271f15a4193c025bb6c2bd745ff7e0806d140f89069876cd7ee7",
+        "4481cc0ca988374076baa83caa074ab5f9197db98fae7072c2cc068e0bdba8ba",
+        "bdb34acbf7457475074e149471fdc6bc72e5b6a072bfb25d9b1bf564db9bacc9",
+        "f37cfe518f83669067b5e9c57f68ced43ba9175a37b7b64f1122a20a46d6bf2e",
+        "25e3c7550c3775ca1f60248bfbaefc90e027c17f4c54084860dccd6776fb8a16",
+        "2a4b1b61361bc6b0f94452f62a10c9930991e0944a4f1b87498d061ed9052263"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta",
+        "wordpress.wp_posts",
+        "wordpress.wp_term_relationships",
+        "wordpress.wp_term_taxonomy",
+        "wordpress.wp_termmeta",
+        "wordpress.wp_terms",
+        "wordpress.wp_woocommerce_order_itemmeta",
+        "wordpress.wp_woocommerce_order_items"
+      ],
+      "engine": "aurora_mysql",
+      "reason": "These statements join the same tables, so they stay on one engine."
+    },
+    {
+      "group_id": "wg-wordpress.wp_options",
+      "kind": "write_group",
+      "query_ids": [
+        "ac34da34fb23498bd1392f02403e9dbdd0d28d3cfef236e6d3c4c6ffe6e82ad2",
+        "a13f5749057b0212d61aea04e432898093305463ae027b79826082006cda7715",
+        "216d92b3f4e7091a2aa00b97ff8d389edbc5c148efcbed8cd6a1c3e408206051"
+      ],
+      "tables": [
+        "wordpress.wp_options"
+      ],
+      "engine": "dynamodb",
+      "reason": "Every statement that writes wordpress.wp_options: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-wordpress.wp_postmeta",
+      "kind": "write_group",
+      "query_ids": [
+        "126679dc6aaed0c3c05926ea8c60b79f6b00a518389064878c17fe74a60bef8e",
+        "ea7778dba09d12bdf18da33ac8afa62a59569bdad219b4bc65fa1a767c01de40",
+        "2c0093ed0c4d5d818ba11723dd9b3f1b7f82cccf1a6f099e191073c0fd7af2dd",
+        "33dfdb12166d9ed52a1196e6675d56c3462693b24a7dbb80463d3ce7d501152b"
+      ],
+      "tables": [
+        "wordpress.wp_postmeta"
+      ],
+      "engine": "dynamodb",
+      "reason": "Every statement that writes wordpress.wp_postmeta: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-wordpress.wp_posts",
+      "kind": "write_group",
+      "query_ids": [
+        "214edb87c83db8545897614b3831eeab765103dccd023b451a3dd971dee4036a",
+        "f2a4e87e8f0ff10c09fe3286e6f8e830af809b48c7d5e57d4a4061299d0d022d",
+        "a783694619352b153b690ccc07f9dae79c9caa43ecefcceae3d486fe49c7c1c8",
+        "445ec39b67db991f5f7d8f3a00a4873af0d9ae5186f32ced941f9a683399799e",
+        "72da3cb4f3c62e94f7de1c8210fbcf51de33edae08ff72757575835a5df6b4a9"
+      ],
+      "tables": [
+        "wordpress.wp_posts"
+      ],
+      "engine": "dynamodb",
+      "reason": "Every statement that writes wordpress.wp_posts: a table has one writer, so they share an engine."
+    },
+    {
+      "group_id": "wg-wordpress.wp_woocommerce_order_itemmeta",
+      "kind": "write_group",
+      "query_ids": [
+        "2caa2be1b7b5d3ef7d5dc9a6aba0f82df0e9b01383258d373dc93ee23147ba8a",
+        "4b856e296129b8dcca701ba2561310f1d1f1768eb5986cc43d1edde63f937226"
+      ],
+      "tables": [
+        "wordpress.wp_woocommerce_order_itemmeta"
+      ],
+      "engine": "dynamodb",
+      "reason": "Every statement that writes wordpress.wp_woocommerce_order_itemmeta: a table has one writer, so they share an engine."
+    }
+  ],
+  "designs": null,
+  "artifacts": null
+}

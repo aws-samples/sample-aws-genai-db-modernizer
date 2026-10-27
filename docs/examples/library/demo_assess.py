@@ -38,6 +38,7 @@ from src.assessment import (  # noqa: E402
     AssessmentRequest,
     AssessmentResult,
     CollectionLoadError,
+    StatementResult,
     assess,
     load_collection,
 )
@@ -149,6 +150,34 @@ def show_analysis(sample: str, collection: dict[str, Any], engines: list[str] | 
     line(f"statement {qid(statement.query_id)} ({statement.query_type}): fit {fit}")
     same = first.model_dump_json() == again.model_dump_json()
     line(f"A repeat run gives a byte-identical result: {'yes' if same else 'NO'}")
+    # Contract 1.2: the text the parser read, and how the scorer reached its best score.
+    line(f"query_text: {short(statement.query_text, 80)}")
+    show_breakdown(statement)
+
+
+def show_breakdown(statement: StatementResult) -> None:
+    """The fit breakdown of the statement's best-scoring engine: the scorer's own
+    arithmetic, from the same call that produced ``fit`` (it never decides the engine)."""
+    engine = max(sorted(statement.fit), key=lambda e: statement.fit[e])
+    entry = statement.fit_breakdown[engine]
+    if entry.pattern is not None and entry.cost is not None:
+        dims = f"pattern {entry.pattern.score} ({entry.pattern.class_}), cost {entry.cost.score}"
+    else:  # an unclassified statement reads its tables' confidence only
+        dims = "no pattern or cost dimension"
+    penalties = ", ".join(f"{p.id} -{p.points}" for p in entry.penalties) or "none"
+    line(
+        f"fit_breakdown on {engine}: {entry.method}; {dims}; "
+        f"{count(len(entry.tables), 'table')}, base {entry.base}; penalties {penalties}; "
+        f"fit {entry.fit}"
+    )
+    for table in entry.tables[:2]:
+        if table.weights is None:
+            line(f"  {table.table_id}: confidence {table.score}")
+            continue
+        line(
+            f"  {table.table_id}: complexity {table.complexity}, performance "
+            f"{table.performance}, score {table.score}"
+        )
 
 
 def show_placement(result: AssessmentResult) -> None:
@@ -166,7 +195,11 @@ def show_placement(result: AssessmentResult) -> None:
         into = f" into {engine.consolidated_into}" if engine.consolidated_into else ""
         line(f"  {engine.engine:<18} {engine.role:<13} {engine.statement_count:>4}{into}")
     for move in summary.consolidations:
-        line(f"consolidated: {move.from_engine} -> {move.to_engine} ({move.query_count})")
+        retained = f", {len(move.queries_retained)} retained" if move.queries_retained else ""
+        line(
+            f"consolidated: {move.from_engine} -> {move.to_engine} ({move.query_count}), "
+            f"{move.action}{retained}"
+        )
     kinds = Counter(group.kind for group in result.groups)
     line(f"groups that move together: {', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}")
     owned = [t for t in summary.tables if t.owner]
@@ -179,6 +212,12 @@ def show_placement(result: AssessmentResult) -> None:
             ]
         )
         line(f"  {table.table_id}: {table.owner} ({table.owner_basis}){extra}")
+    # Contract 1.2: every collected table's facts, from "analysis" on.
+    facts = summary.table_facts
+    line(
+        f"table facts: {count(len(facts), 'table')}, "
+        f"{count(sum(len(t.foreign_keys) for t in facts), 'foreign key')}"
+    )
 
 
 def show_reasons(result: AssessmentResult) -> None:

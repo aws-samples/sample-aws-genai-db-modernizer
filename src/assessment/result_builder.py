@@ -29,7 +29,13 @@ routing did not already decide:
 - a statement's ``post_schema_terminal`` is the post-schema router's terminal record
   for it (``post-schema-router/router_output.json`` ``terminal``), while the effective
   assignment keeps it in scope on the flagged engine, the rule synthesis applies to the
-  same records (``src.agents.referee.flagged_unservable``).
+  same records (``src.agents.referee.flagged_unservable``);
+- a statement's ``fit_breakdown`` (contract 1.2) is the routing scorer's own account of
+  each score in ``fit`` (``score_query_for_engine(..., explain=True)``, the same
+  arithmetic), and its ``matched_anti_patterns`` the scorer's labelled findings
+  (``ScoringContext.anti_pattern_findings``);
+- ``summary.table_facts`` (contract 1.2) are the collector output's tables, as the
+  library read them from the collection.
 
 The builder is pure over :class:`RunState`, so the next phases and fields are each a
 small addition: a field reads one more input here, a phase loads one more artifact.
@@ -37,11 +43,12 @@ small addition: a field reads one more input here, a phase loads one more artifa
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any, get_args
 
 from src.assessment.models import (
+    AntiPatternRef,
     Artifacts,
     AssessmentRequest,
     AssessmentResult,
@@ -55,12 +62,14 @@ from src.assessment.models import (
     DocumentDBIndex,
     DocumentDBIndexKey,
     DynamoDBDesign,
+    DynamoDBEntity,
     DynamoDBIndex,
     DynamoDBKey,
     DynamoDBTable,
     ElastiCacheDesign,
     EngineDesign,
     EngineLine,
+    FitBreakdown,
     FlagReasonCode,
     Group,
     OpenSearchDataStream,
@@ -73,6 +82,9 @@ from src.assessment.models import (
     RelationalEngine,
     StatementResult,
     Summary,
+    TableColumn,
+    TableFacts,
+    TableForeignKey,
     TableLine,
     result_label,
 )
@@ -267,29 +279,106 @@ def _ladder_fit(moves: list[Move]) -> tuple[dict[str, int], set[str]]:
     return fit, gated
 
 
-def _scorer_fit(state: RunState) -> Callable[[Mapping[str, Any]], tuple[dict[str, int], set[str]]]:
-    """Score a statement on every analysed engine with the routing scorer, set up the
-    way the assignment resolver sets it up (used before anything is placed)."""
-    from src.agents.referee.query_scoring import ScoringContext, score_query_for_engine
-    from src.shared.engine_names import without_placeholder_engines
-    from src.tools.sql.query_facts import remember_collected_facts
+def _first_ladder(moves: list[Move]) -> dict[str, str | None]:
+    """``{engine: gate kind or None}`` of the first Move that carries a candidate ladder
+    (the one ``fit`` is read from)."""
+    first = next((m for m in moves if m.evidence.candidates), None)
+    return {c.engine: c.gate for c in first.evidence.candidates} if first else {}
 
-    analyses = without_placeholder_engines(state.analyses)
-    remember_collected_facts(state.collector)
-    ctx = ScoringContext.from_pipeline(analyses, state.triage, state.collector)
 
-    def score(query: Mapping[str, Any]) -> tuple[dict[str, int], set[str]]:
+#: A statement's scores: ``(fit, gated engines, fit_breakdown)``.
+Scored = tuple[dict[str, int], set[str], dict[str, FitBreakdown]]
+
+
+class _Scorer:
+    """The routing scorer set up the way the assignment resolver sets it up
+    (``ScoringContext.from_pipeline`` over the analysed engines), for the scores before
+    anything is placed and for every statement's fit breakdown and anti-patterns."""
+
+    def __init__(self, state: RunState) -> None:
+        from src.agents.referee.query_scoring import ScoringContext
+        from src.shared.engine_names import without_placeholder_engines
+        from src.tools.sql.query_facts import remember_collected_facts
+
+        self.analyses = without_placeholder_engines(state.analyses)
+        remember_collected_facts(state.collector)
+        self.ctx = ScoringContext.from_pipeline(self.analyses, state.triage, state.collector)
+        self.queries = {q["query_id"]: q for q in state.query_patterns}
+
+    def score(self, query: Mapping[str, Any]) -> Scored:
+        """Every analysed engine's score or gate, and its breakdown, from one scorer
+        call per engine (before anything is placed)."""
+        from src.agents.referee.query_scoring import score_query_for_engine
+
         fit: dict[str, int] = {}
         gated: set[str] = set()
-        for engine in analyses:
-            result = score_query_for_engine(query, engine, ctx)
+        breakdown: dict[str, FitBreakdown] = {}
+        for engine in self.analyses:
+            result = score_query_for_engine(query, engine, self.ctx, explain=True)
             if result.score is None:
                 gated.add(engine)
             else:
                 fit[engine] = int(result.score)
-        return fit, gated
+            breakdown[engine] = FitBreakdown.model_validate(result.breakdown)
+        return fit, gated, breakdown
 
-    return score
+    def explain(
+        self, qid: str, ladder: Mapping[str, str | None], fit: Mapping[str, int]
+    ) -> dict[str, FitBreakdown]:
+        """The breakdown of each engine on a placed statement's candidate ladder
+        (``{engine: gate kind or None}``, its first Move's). An engine with a score in
+        ``fit`` is explained past the gates: routing scored it (a capability waiver,
+        or the guarantee for a homogeneous source's own Aurora engine, can lift a gate
+        the plain scorer applies), so its breakdown has its ``fit``. A gated one has
+        the gate the ladder records, with the scorer's reason for it. A rung with neither
+        a score nor a gate has nothing to explain."""
+        from src.agents.referee.query_scoring import (
+            GATE_KIND_MODEL_FLAG,
+            score_query_for_engine,
+        )
+
+        query = self.queries.get(qid)
+        if query is None:
+            return {}
+        out: dict[str, FitBreakdown] = {}
+        for engine in sorted({e for e, gate in ladder.items() if gate} | set(fit)):
+            if engine in fit:
+                result = score_query_for_engine(
+                    query, engine, self.ctx, explain=True, apply_gates=False
+                )
+                out[engine] = FitBreakdown.model_validate(result.breakdown)
+                continue
+            kind = str(ladder[engine])
+            ctx = (
+                self.ctx.with_flag_gaps({qid: [engine]})
+                if kind == GATE_KIND_MODEL_FLAG
+                else self.ctx
+            )
+            result = score_query_for_engine(query, engine, ctx, explain=True)
+            reason = (
+                result.gate_reason
+                if result.gate_kind == kind and result.gate_reason
+                else f"{display_engine(engine)} was ruled out for this statement."
+            )
+            out[engine] = FitBreakdown.model_validate({"gate": {"kind": kind, "reason": reason}})
+        return out
+
+    def anti_patterns(self) -> dict[str, list[AntiPatternRef]]:
+        """``{query_id: [anti-pattern, ...]}``: each statement's penalised findings, one
+        entry per pattern (a finding's kind is the statement's, whatever the engine),
+        in catalog id order."""
+        from src.shared.catalog.patterns import penalty_pattern
+
+        out: dict[str, dict[str, AntiPatternRef]] = {}
+        for finding in self.ctx.anti_pattern_findings:
+            entry = penalty_pattern(finding.pattern)
+            pid = entry.id if entry else finding.pattern
+            found = out.setdefault(finding.query_id, {})
+            if pid not in found:
+                found[pid] = AntiPatternRef(
+                    id=pid, name=entry.name if entry else pid, intrinsic=not finding.fixable
+                )
+        return {qid: [found[p] for p in sorted(found)] for qid, found in out.items()}
 
 
 def _signals_by_query(triage: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -444,15 +533,17 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
     scope_out = _scope_excluded(state.triage)
     rewritten = _rewritten(request)
     terminal = post_schema_terminals(state)
+    scorer = _Scorer(state)
+    anti_patterns = scorer.anti_patterns()
 
     def statement(
         qid: str,
         tables: list[Any],
-        scored: tuple[dict[str, int], set[str]],
+        scored: Scored,
         placed: _Placement | None = None,
     ) -> StatementResult:
         q = patterns.get(qid) or {}
-        fit, gated = scored
+        fit, gated, breakdown = scored
         engine = placed.engine if placed else None
         return StatementResult(
             query_id=qid,
@@ -476,13 +567,20 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
             tied_engines=placed.tied_engines if placed else [],
             reason_text=placed.reason_text if placed else None,
             post_schema_terminal=terminal.get(qid) if placed and engine else None,
+            query_text=q.get("query_text"),
+            matched_anti_patterns=anti_patterns.get(qid, []),
+            fit_breakdown=breakdown,
         )
+
+    def from_ladder(qid: str, history: list[Move], extra_gates: Collection[str] = ()) -> Scored:
+        fit, gated = _ladder_fit(history)
+        return fit, gated | set(extra_gates), scorer.explain(qid, _first_ladder(history), fit)
 
     assignment = state.assignment
     if assignment is None:
-        score = _scorer_fit(state)
         return [
-            statement(qid, q.get("tables_accessed") or [], score(q)) for qid, q in patterns.items()
+            statement(qid, q.get("tables_accessed") or [], scorer.score(q))
+            for qid, q in patterns.items()
         ]
 
     moves = _moves_by_query(state)
@@ -494,7 +592,10 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
         history = moves.get(qid, [])
         out.append(
             statement(
-                qid, qa.get("source_tables") or [], _ladder_fit(history), _placement(qa, history)
+                qid,
+                qa.get("source_tables") or [],
+                from_ladder(qid, history),
+                _placement(qa, history),
             )
         )
     # Statements no engine in the engine scope can serve: placed nowhere, never counted
@@ -503,9 +604,9 @@ def build_statements(state: RunState, request: AssessmentRequest) -> list[Statem
         if not isinstance(uq, dict) or not uq.get("query_id"):
             continue
         qid = str(uq["query_id"])
-        fit, gated = _ladder_fit(moves.get(qid, []))
-        gated |= {str(g["engine"]) for g in uq.get("gates") or [] if g.get("engine")}
-        out.append(statement(qid, uq.get("source_tables") or [], (fit, gated), _unservable(uq)))
+        gates = {str(g["engine"]) for g in uq.get("gates") or [] if g.get("engine")}
+        scored = from_ladder(qid, moves.get(qid, []), gates)
+        out.append(statement(qid, uq.get("source_tables") or [], scored, _unservable(uq)))
     return out
 
 
@@ -611,6 +712,9 @@ def build_consolidations(state: RunState) -> list[Consolidation]:
             to_engine=str(c["to_engine"]),
             query_count=int(c.get("query_count") or 0),
             reason=str(c.get("reason") or ""),
+            # The record's own default: a record with no action is a full one.
+            action=c.get("action") or "full",
+            queries_retained=[str(q) for q in c.get("queries_retained") or []],
         )
         for c in (state.reality_check or {}).get("consolidations") or []
         if isinstance(c, dict) and c.get("from_engine") and c.get("to_engine")
@@ -697,6 +801,7 @@ def build_engine_lines(
                 statement_count=count,
                 consolidated_into=into,
                 unique_queries=len(uva.get("unique_queries") or []) if uva else None,
+                unique_query_ids=[str(q) for q in uva.get("unique_queries") or []] if uva else None,
                 avg_delta=(
                     float(uva["avg_delta"]) if uva and uva.get("avg_delta") is not None else None
                 ),
@@ -733,7 +838,74 @@ def build_summary(state: RunState, statements: list[StatementResult]) -> Summary
         consolidations=consolidations,
         tables=build_table_lines(state, relational.engine if relational else None),
         **_design_lines(state),
+        table_facts=build_table_facts(state),
     )
+
+
+def _referenced_table_id(
+    fk: Mapping[str, Any], schema: str | None, tables: list[Mapping[str, Any]]
+) -> str | None:
+    """The ``table_id`` a foreign key's ``referenced_table`` names: a table id as is; else
+    the table of that name in the referencing table's schema; else the one collected
+    table of that name. None when the collection holds no such table, or several."""
+    ref = str(fk.get("referenced_table") or "")
+    ids = {str(t.get("table_id")) for t in tables}
+    if ref in ids:
+        return ref
+    named = [t for t in tables if str(t.get("table_name") or "") == ref]
+    same_schema = [t for t in named if schema and t.get("schema_name") == schema]
+    for found in (same_schema, named):
+        if len(found) == 1:
+            return str(found[0]["table_id"])
+    return None
+
+
+def build_table_facts(state: RunState) -> list[TableFacts]:
+    """One entry per collected source table (``database_schema.tables``), by table id:
+    the facts the collector read from the collection, with each foreign key's
+    referenced table resolved to its table id. Available from ``analysis`` on."""
+    tables = [
+        t
+        for t in (state.collector.get("database_schema") or {}).get("tables") or []
+        if isinstance(t, Mapping) and t.get("table_id")
+    ]
+    out: list[TableFacts] = []
+    for t in sorted(tables, key=lambda t: str(t["table_id"])):
+        columns = sorted(
+            (c for c in t.get("columns") or [] if isinstance(c, Mapping) and c.get("column_name")),
+            key=lambda c: (
+                c.get("ordinal_position") is None,
+                c.get("ordinal_position") or 0,
+                str(c["column_name"]),
+            ),
+        )
+        out.append(
+            TableFacts(
+                table_id=str(t["table_id"]),
+                row_count=t.get("row_count"),
+                size_mb=t.get("size_mb"),
+                columns=[
+                    TableColumn(
+                        name=str(c["column_name"]),
+                        data_type=str(c.get("data_type") or ""),
+                        nullable=c.get("nullable"),
+                    )
+                    for c in columns
+                ],
+                primary_key=_strs(t.get("primary_key")),
+                foreign_keys=[
+                    TableForeignKey(
+                        constraint_name=str(fk.get("constraint_name") or ""),
+                        columns=_strs(fk.get("columns")),
+                        referenced_table=_referenced_table_id(fk, t.get("schema_name"), tables),
+                        referenced_columns=_strs(fk.get("referenced_columns")),
+                    )
+                    for fk in t.get("foreign_keys") or []
+                    if isinstance(fk, Mapping)
+                ],
+            )
+        )
+    return out
 
 
 NO_DESIGN_NOTE = (
@@ -873,6 +1045,10 @@ def _dynamodb_keys(keys: Any) -> list[DynamoDBKey]:
     return [k for k in (_dynamodb_key(key) for key in keys or []) if k is not None]
 
 
+#: The aggregate patterns the stable entry names (the DynamoDB design contract's).
+_AGGREGATE_PATTERNS = frozenset({"identifying_relationship", "item_collection", "separate"})
+
+
 def _dynamodb_design(design: Mapping[str, Any]) -> DynamoDBDesign:
     patterns = _in_scope(design)
 
@@ -910,6 +1086,20 @@ def _dynamodb_design(design: Mapping[str, Any]) -> DynamoDBDesign:
                 sort_key=_dynamodb_key(t.get("sort_key")),
                 gsis=gsis,
                 query_ids=served(name, None),
+                aggregate_pattern=(
+                    t["aggregate_pattern"]
+                    if t.get("aggregate_pattern") in _AGGREGATE_PATTERNS
+                    else None
+                ),
+                entities=[
+                    DynamoDBEntity(
+                        source_table=str(e["source_table"]),
+                        pk_template=str(e.get("pk_template") or ""),
+                        sk_template=str(e.get("sk_template") or ""),
+                    )
+                    for e in t.get("entities") or []
+                    if isinstance(e, Mapping) and e.get("source_table")
+                ],
             )
         )
     return DynamoDBDesign(

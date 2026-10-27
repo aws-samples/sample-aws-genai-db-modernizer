@@ -52,7 +52,7 @@ def test_the_committed_schemas_are_current() -> None:
 
 
 def test_one_file_per_model_named_by_the_major_version() -> None:
-    assert CONTRACT_VERSION == "1.1"
+    assert CONTRACT_VERSION == "1.2"
     assert [p.name for p, _ in rcs.render()] == [
         "assess_request.v1.schema.json",
         "assess_result.v1.schema.json",
@@ -161,7 +161,10 @@ def test_the_documented_design_block_validates() -> None:
         sample
     )
     adapter: TypeAdapter[list[EngineDesign]] = TypeAdapter(list[EngineDesign])
-    assert adapter.dump_python(adapter.validate_python(sample), mode="json") == sample
+    assert (
+        _without_1_2_fields(adapter.dump_python(adapter.validate_python(sample), mode="json"))
+        == sample
+    )
     assert {d["engine"] for d in sample} == {"aurora_mysql", "dynamodb", "elasticache"}
     # And the standard's examples (docs/contracts/assess-design-block.md): the run's
     # list, then one entry per engine it did not design, so every engine has one.
@@ -172,10 +175,41 @@ def test_the_documented_design_block_validates() -> None:
         Draft202012Validator(
             {"$defs": schema["$defs"], **schema["properties"]["designs"]}
         ).validate(designs)
-        assert adapter.dump_python(adapter.validate_python(designs), mode="json") == designs
-    assert sorted(d["engine"] for designs in examples for d in designs) == sorted(
-        {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "opensearch", "elasticache"}
+        dumped = adapter.dump_python(adapter.validate_python(designs), mode="json")
+        # The real run's DynamoDB table predates 1.2 (#1603): it has no 1.2 fields.
+        assert dumped == designs or _without_1_2_fields(dumped) == designs
+    assert {d["engine"] for designs in examples for d in designs} == {
+        "dynamodb",
+        "aurora_mysql",
+        "aurora_postgresql",
+        "documentdb",
+        "opensearch",
+        "elasticache",
+    }
+    # The DynamoDB item collection example carries the 1.2 fields.
+    assert any(
+        t.get("entities") for designs in examples for d in designs for t in d.get("tables", [])
     )
+
+
+def _without_1_2_fields(designs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``designs`` without the DynamoDB table fields contract 1.2 added (#1603)."""
+    from src.assessment.models import ADDED_IN_1_2
+
+    added = ADDED_IN_1_2["DynamoDBTable"]
+    return [
+        (
+            {
+                **d,
+                "tables": [
+                    {k: v for k, v in t.items() if k not in added} for t in d.get("tables", [])
+                ],
+            }
+            if d.get("engine") == "dynamodb"
+            else d
+        )
+        for d in designs
+    ]
 
 
 def test_the_request_schema_accepts_the_minimal_request() -> None:
@@ -253,15 +287,20 @@ def test_the_request_schema_refuses(request_: dict[str, Any], what: str) -> None
 
 def test_every_always_written_result_field_is_required() -> None:
     """``model_dump_json`` writes every field, so the result schema requires each one
-    (generated types are not all-optional); the request keeps its defaults optional."""
-    from src.assessment.models import StatementResult
+    (generated types are not all-optional), except the fields contract 1.2 added: a 1.0
+    or 1.1 document has none of them, so the schema lists them as optional (#1603). The
+    request keeps its defaults optional."""
+    from src.assessment.models import ADDED_IN_1_2, StatementResult
 
     result = _schema("assess_result")
     statement = result["$defs"]["StatementResult"]
-    assert len(StatementResult.model_fields) == 19
-    assert set(statement["required"]) == set(StatementResult.model_fields)
+    assert len(StatementResult.model_fields) == 22
+    added = set(ADDED_IN_1_2["StatementResult"])
+    assert set(statement["required"]) == set(StatementResult.model_fields) - added
     for name, model in result["$defs"].items():
-        assert set(model.get("required", [])) == set(model["properties"]), name
+        optional = set(ADDED_IN_1_2.get(name, ()))
+        assert optional <= set(model["properties"]), name
+        assert set(model.get("required", [])) == set(model["properties"]) - optional, name
     assert set(result["required"]) == set(AssessmentResult.model_fields)
     request = _schema("assess_request")
     assert request["required"] == ["database_name", "collection"]

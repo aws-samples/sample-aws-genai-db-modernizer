@@ -94,6 +94,16 @@ def check_analysis(out: dict[int, list[str]], scope: tuple[str, ...] | None) -> 
     fit = ", ".join(f"{e} {n}" for e, n in sorted(best.fit.items()))
     assert out[2][1] == f"statement {best.query_id[:12]} ({best.query_type}): fit {fit}"
     assert out[2][2] == "A repeat run gives a byte-identical result: yes"
+    # Contract 1.2 (#1603): the parsed text and the best engine's fit breakdown.
+    assert out[2][3].startswith("query_text: ")
+    assert out[2][3].removeprefix("query_text: ").rstrip(" .") in (best.query_text or "")
+    engine = max(sorted(best.fit), key=lambda e: best.fit[e])
+    entry = best.fit_breakdown[engine]
+    assert out[2][4].startswith(f"fit_breakdown on {engine}: {entry.method}; ")
+    penalties = ", ".join(f"{p.id} -{p.points}" for p in entry.penalties) or "none"
+    assert out[2][4].endswith(f"base {entry.base}; penalties {penalties}; fit {best.fit[engine]}")
+    for line, table in zip(out[2][5:], entry.tables, strict=False):
+        assert line.startswith(f"{table.table_id}: ") and line.endswith(f"score {table.score}")
 
 
 def check_placement(out: dict[int, list[str]], placed: AssessmentResult) -> None:
@@ -110,12 +120,17 @@ def check_placement(out: dict[int, list[str]], placed: AssessmentResult) -> None
         ), engine.engine
     for move in summary.consolidations:
         assert f"consolidated: {move.from_engine} -> {move.to_engine} ({move.query_count})" in body
+        assert (
+            f"consolidated: {move.from_engine} -> {move.to_engine} ({move.query_count}), "
+            f"{move.action}"
+        ) in body
     kinds = Counter(g.kind for g in placed.groups)
     assert (
         f"groups that move together: {', '.join(f'{n} {k}' for k, n in sorted(kinds.items()))}"
         in body
     )
     assert f"tables with an owner: {sum(1 for t in summary.tables if t.owner)}" in body
+    assert f"table facts: {len(summary.table_facts)} tables, 0 foreign keys" in body
 
 
 def check_reasons(out: dict[int, list[str]], placed: AssessmentResult) -> None:

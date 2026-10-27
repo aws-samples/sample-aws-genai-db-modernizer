@@ -1,6 +1,6 @@
 # The stable design block of `assess()`
 
-Status: **the published standard** of contract `1.1` for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
+Status: **the published standard** of contract `1.2` for the design block of a designed `assess()` result, for every engine the pipeline designs: DynamoDB, Aurora MySQL, Aurora PostgreSQL, DocumentDB, OpenSearch and ElastiCache ([#1493](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1493), [#1513](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1513), [#1603](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1603)). We define it and library callers follow it. The reference is [assess.md, The design block](assess.md#the-design-block); the result's JSON Schema is [`schemas/assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json).
 
 ## What it is for
 
@@ -19,13 +19,22 @@ A caller that needs a data model runs `assess()` with `run_through: "schema_desi
 
 | `engine` | Per entry | Per item |
 |---|---|---|
-| `dynamodb` | `tables[]` | `name`, `source_tables`, `partition_key` `{name, type}`, `sort_key` (or `null`), `gsis[]` (`name`, ordered `partition_key[]` and `sort_key[]`, `projection`, `projected_attributes`, `query_ids`), `query_ids` (served from the table itself) |
+| `dynamodb` | `tables[]` | `name`, `source_tables`, `partition_key` `{name, type}`, `sort_key` (or `null`), `gsis[]` (`name`, ordered `partition_key[]` and `sort_key[]`, `projection`, `projected_attributes`, `query_ids`), `query_ids` (served from the table itself); since `1.2`, `aggregate_pattern` and `entities[]` (`source_table`, `pk_template`, `sk_template`) |
 | `aurora_mysql`, `aurora_postgresql` | `tables[]`, `ddl_artifact_path` | `name`, `primary_key`, `indexes` (the design's `CREATE INDEX` statements) |
 | `documentdb` | `collections[]` | `name`, `source_tables`, `embedded[]` (`source_table`, `path`, `strategy` `embed`, `reference` or `hybrid`), `referenced_collections`, `indexes[]` (`name`, ordered `keys[]` `{field, direction}`, `type`, `query_ids`), `query_ids` |
 | `elasticache` | `keys[]` | `pattern`, `data_type`, `ttl_seconds` (or `null`), `source_tables`, `query_ids` |
 | `opensearch` | `indexes[]`, `data_streams[]` | indexes: `name`, `source_tables`, `fields[]` (`name`, `type`), `aliases`, `query_ids`; data streams: `name`, `source_tables`, `fields[]` (its index template's), `query_ids` |
 
 Every entry also has `engine` and `validation_passed`.
+
+### DynamoDB
+
+The DynamoDB entry copies the designer's `table_definitions`, each table's GSIs, and the access patterns that name each table or index. Since contract `1.2` it also says how each table holds its source tables, copied from the same table definition:
+
+- `aggregate_pattern`: the design's aggregate pattern for the table. `identifying_relationship` means a child table keyed under its parent, `item_collection` means several source tables' items share the table's partition keys, and `separate` means one source table on its own. It is `null` when the design does not say, or names a value the contract does not list.
+- `entities[]`: an item collection's entity types, one per source table it holds: `source_table`, and `pk_template` and `sk_template`, the partition and sort key value templates, with source columns in braces (`USER#{id}`, `ORDER#{order_id}`). It is empty for a table that is not an item collection. An entity's attributes stay in `artifacts.schema_designs.dynamodb`.
+
+How `source_tables` share one table was not on the stable surface before `1.2`: you had to read it from `artifacts`, which has no compatibility promise. See [the item collection example](#a-dynamodb-item-collection).
 
 ### OpenSearch
 
@@ -53,13 +62,13 @@ Not guaranteed:
 - that a design with `validation_passed: false` is complete or consistent: check it before you build on it;
 - any field of `artifacts`.
 
-A new engine, or a new optional field in an entry, is a MINOR change: read `designs` with a default branch on `engine`, and ignore fields you do not know. A schema file refuses an engine it does not know, so validate a result against the schema of its own `contract_version` (the OpenSearch entry needs `1.1`).
+A new engine, or a new optional field in an entry, is a MINOR change: read `designs` with a default branch on `engine`, and ignore fields you do not know. A schema file refuses an engine it does not know, so validate a result against the schema of its own `contract_version` (the OpenSearch entry needs `1.1`, a DynamoDB table's `aggregate_pattern` and `entities` need `1.2`). A result written for `1.0` or `1.1` has neither field, and the library writes it back without them.
 
 ## Examples
 
 ### A designed WordPress run
 
-A designed WordPress run (no engine scope) designed Aurora MySQL (20 tables), DynamoDB (19 tables, 11 with a sort key, 3 global secondary indexes) and ElastiCache (17 key patterns), all with `validation_passed: true`. One item of each, from its `designs`:
+A designed WordPress run (no engine scope) designed Aurora MySQL (20 tables), DynamoDB (19 tables, 11 with a sort key, 3 global secondary indexes) and ElastiCache (17 key patterns), all with `validation_passed: true`. One item of each, from its `designs`. The run predates contract `1.2`, so its DynamoDB table shows no `aggregate_pattern` or `entities` ([the item collection example](#a-dynamodb-item-collection) has them):
 
 ```json
 [
@@ -215,6 +224,32 @@ The runs above placed nothing on DocumentDB. A DocumentDB entry has the same for
         }
       ],
       "query_ids": ["Q01", "Q02"]
+    }
+  ]
+}
+```
+
+### A DynamoDB item collection
+
+No bundled run has designed an item collection yet. A DynamoDB entry with one has this form (illustrative, the shape the test fixtures write):
+
+```json
+{
+  "engine": "dynamodb",
+  "validation_passed": true,
+  "tables": [
+    {
+      "name": "Shop",
+      "source_tables": ["shop.users", "shop.orders"],
+      "partition_key": {"name": "PK", "type": "S"},
+      "sort_key": {"name": "SK", "type": "S"},
+      "gsis": [],
+      "query_ids": ["Q01", "Q02"],
+      "aggregate_pattern": "item_collection",
+      "entities": [
+        {"source_table": "shop.users", "pk_template": "USER#{id}", "sk_template": "PROFILE"},
+        {"source_table": "shop.orders", "pk_template": "USER#{user_id}", "sk_template": "ORDER#{id}"}
+      ]
     }
   ]
 }

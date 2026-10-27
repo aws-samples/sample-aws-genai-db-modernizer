@@ -1,4 +1,4 @@
-"""The typed request and result of :func:`src.assessment.assess` (contract 1.1).
+"""The typed request and result of :func:`src.assessment.assess` (contract 1.2).
 
 The stable surface is ``AssessmentRequest`` -> ``AssessmentResult`` with ``summary``,
 ``statements[]`` and ``groups[]``. It is versioned on its own (``contract_version``,
@@ -22,18 +22,41 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from src.shared.database_name import DATABASE_NAME_PATTERN, validate_database_name
 from src.shared.target_databases import normalize_target_databases
 
 #: The version of this public surface (not of any internal contract).
-CONTRACT_VERSION: Literal["1.1"] = "1.1"
+CONTRACT_VERSION: Literal["1.2"] = "1.2"
 
 #: The ``contract_version`` values of this MAJOR the models read: a request or a result
 #: written for an earlier MINOR version still validates. 1.1 added the OpenSearch entry
-#: of the design block (#1513).
-ContractVersion = Literal["1.0", "1.1"]
+#: of the design block (#1513); 1.2 the fields of :data:`ADDED_IN_1_2` (#1603).
+ContractVersion = Literal["1.0", "1.1", "1.2"]
+
+#: The fields contract 1.2 added, by model (#1603). Each has a default, so a 1.0 or 1.1
+#: document (which has none of them) still loads, and the published result schema lists
+#: them as optional for the same reason, although the library always writes them. A
+#: 1.2 result is checked by the rules that start with 1.2 (``AssessmentResult``).
+ADDED_IN_1_2: dict[str, tuple[str, ...]] = {
+    "StatementResult": ("query_text", "matched_anti_patterns", "fit_breakdown"),
+    "Summary": ("table_facts",),
+    "EngineLine": ("unique_query_ids",),
+    "Consolidation": ("action", "queries_retained"),
+    "DynamoDBTable": ("aggregate_pattern", "entities"),
+}
+
+#: The contract versions before 1.2: a result of one is read exactly as it was.
+BEFORE_1_2: frozenset[str] = frozenset({"1.0", "1.1"})
 
 #: The engines with an entry in the design block, by the contract version that defines
 #: them: a result of that version has an entry for each of its designed engines in the
@@ -45,6 +68,8 @@ DESIGN_ENTRY_ENGINES: dict[str, frozenset[str]] = {
         {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
     ),
 }
+# 1.2 added no design engine.
+DESIGN_ENTRY_ENGINES["1.2"] = DESIGN_ENTRY_ENGINES["1.1"]
 
 RunThrough = Literal["analysis", "reality_check", "schema_design", "synthesis"]
 
@@ -82,6 +107,10 @@ PostSchemaTerminalCause = Literal["no_kept_engine", "depth_limit"]
 #: design or its reviewer found the engine unable to serve the statement. Adding a value
 #: is a MINOR change of this contract.
 FlagReasonCode = Literal["full_scan", "client_side_join", "missing_feature", "other"]
+
+#: A reality-check consolidation's kind: every statement moved off the engine
+#: (``full``), or some stayed (``partial``). Adding a value is a MINOR change.
+ConsolidationAction = Literal["full", "partial"]
 
 #: How a table's owner was chosen (the facts layer's owner basis, ``src.shared.report_facts``).
 OwnerBasis = Literal["writes", "split_writes", "most_queries", "retained", "design"]
@@ -131,6 +160,21 @@ class _Strict(BaseModel):
     # the published result schema says so (#1183). The request schema is the validation
     # schema, where a default still makes a field optional.
     model_config = ConfigDict(extra="forbid", json_schema_serialization_defaults_required=True)
+
+
+def _added_in_1_2(model: str) -> ConfigDict:
+    """``_Strict``'s config, with the fields 1.2 added to ``model`` (:data:`ADDED_IN_1_2`)
+    left out of the schema's ``required``: an earlier version's document has none."""
+    added = ADDED_IN_1_2[model]
+
+    def optional(schema: dict[str, Any]) -> None:
+        required = [name for name in schema.get("required", []) if name not in added]
+        if required:
+            schema["required"] = required
+        else:
+            schema.pop("required", None)
+
+    return ConfigDict(**_Strict.model_config, json_schema_extra=optional)
 
 
 # --------------------------------------------------------------------------- request
@@ -273,6 +317,8 @@ class RelationalEngine(_Strict):
 class EngineLine(_Strict):
     """One analysed engine, as the run left it."""
 
+    model_config = _added_in_1_2("EngineLine")
+
     engine: str
     role: EngineRole
     statement_count: int = Field(
@@ -309,16 +355,40 @@ class EngineLine(_Strict):
             "reality check's reason"
         ),
     )
+    unique_query_ids: list[str] | None = Field(
+        None,
+        description=(
+            "Since 1.2. The statements `unique_queries` counts, by query id, in the "
+            "reality check's order: its first-pass unique-value set for the engine. "
+            "None when the reality check did not assess it"
+        ),
+    )
 
 
 class Consolidation(_Strict):
     """One reality-check consolidation: statements moved off an engine that added no
     unique value."""
 
+    model_config = _added_in_1_2("Consolidation")
+
     from_engine: str
     to_engine: str
     query_count: int = Field(..., ge=0, description="Statements it moved")
     reason: str = Field(..., description="Customer-facing sentence; do not parse")
+    action: ConsolidationAction | None = Field(
+        None,
+        description=(
+            "Since 1.2. full: every statement it held moved off from_engine; partial: "
+            "some stayed (`queries_retained`). None only in a result written before 1.2"
+        ),
+    )
+    queries_retained: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Since 1.2. A partial consolidation's statements that stayed on from_engine, "
+            "by query id; empty for a full one"
+        ),
+    )
 
 
 class TableLine(_Strict):
@@ -356,7 +426,53 @@ class TableLine(_Strict):
     )
 
 
+class TableColumn(_Strict):
+    """One column of a source table, as the collection describes it."""
+
+    name: str
+    data_type: str = Field(..., description="Its type in the source engine, as collected")
+    nullable: bool | None = Field(None, description="Whether it allows NULL; None when unknown")
+
+
+class TableForeignKey(_Strict):
+    """One foreign key constraint of a source table (its columns in constraint order)."""
+
+    constraint_name: str
+    columns: list[str] = Field(default_factory=list, description="The referencing columns")
+    referenced_table: str | None = Field(
+        ...,
+        description=(
+            "The referenced table, as a `table_id` of this result; None when the "
+            "collection does not hold that table"
+        ),
+    )
+    referenced_columns: list[str] = Field(
+        default_factory=list, description="The referenced columns, paired with `columns`"
+    )
+
+
+class TableFacts(_Strict):
+    """One collected source table's facts, as the library read them from the collection."""
+
+    table_id: str = Field(
+        ..., description="The source table, as `statements[].tables` and `summary.tables` name it"
+    )
+    row_count: int | None = Field(None, ge=0, description="Approximate rows, as collected")
+    size_mb: float | None = Field(None, ge=0, description="Size in megabytes, as collected")
+    columns: list[TableColumn] = Field(
+        default_factory=list, description="Its columns, in the table's column order"
+    )
+    primary_key: list[str] = Field(
+        default_factory=list, description="Its primary key columns, in order; empty for none"
+    )
+    foreign_keys: list[TableForeignKey] = Field(
+        default_factory=list, description="Its foreign keys, one entry per constraint"
+    )
+
+
 class Summary(_Strict):
+    model_config = _added_in_1_2("Summary")
+
     run_through_reached: RunThrough
     source_engine: str = Field(
         ..., description="The source database engine, as the collection states it"
@@ -424,6 +540,13 @@ class Summary(_Strict):
             "and no engine could be designed (the result is then a 'recommendation')"
         ),
     )
+    table_facts: list[TableFacts] = Field(
+        default_factory=list,
+        description=(
+            "Since 1.2. One entry per collected source table, by table_id, from "
+            "'analysis' on: its row count, size, columns, primary key and foreign keys"
+        ),
+    )
 
 
 class PatternRef(_Strict):
@@ -458,7 +581,122 @@ class PostSchemaTerminal(_Strict):
     reason: str = Field(..., description="Customer-facing sentence; do not parse")
 
 
+class AntiPatternRef(_Strict):
+    """A penalised anti-pattern finding on a statement (``src/catalog/patterns``)."""
+
+    id: str = Field(..., description="The catalog's pattern id")
+    name: str = Field(..., description="The catalog's display name for it")
+    intrinsic: bool = Field(
+        ...,
+        description=(
+            "True: it costs the engines it is found against points. False: fixable, a "
+            "redesign removes it, so it costs nothing (#1231)"
+        ),
+    )
+
+
+class FitGate(_Strict):
+    """Why an engine could not be scored for a statement."""
+
+    kind: str = Field(
+        ...,
+        description=(
+            "The gate, for example hard_exclusion, capability or model_flag (an open "
+            "list: read it with a default branch)"
+        ),
+    )
+    reason: str = Field(..., description="Customer-facing sentence; do not parse")
+
+
+class FitPattern(_Strict):
+    """The statement's pattern dimension on one engine."""
+
+    model_config = ConfigDict(
+        **_Strict.model_config, serialize_by_alias=True, validate_by_name=True
+    )
+
+    score: int = Field(..., ge=0, le=100)
+    source: str = Field(..., description="Where it comes from: 'statement' (its own class)")
+    class_: str = Field(
+        ...,
+        alias="class",
+        description="The access-pattern class whose score it is (after a redesign, if one applies)",
+    )
+
+
+class FitCost(_Strict):
+    """The statement's cost dimension on one engine."""
+
+    score: int = Field(..., ge=0, le=100)
+    source: str = Field(..., description="Where it comes from: 'statement' (its own cost)")
+
+
+class FitTable(_Strict):
+    """One of the statement's rated tables, as the base score read it."""
+
+    table_id: str
+    complexity: int | None = Field(
+        None, description="The table's complexity dimension; None under an unclassified method"
+    )
+    performance: int | None = Field(
+        None, description="The table's performance dimension; None under an unclassified method"
+    )
+    weights: dict[str, float] | None = Field(
+        None,
+        description=(
+            "The weight of each dimension (pattern, complexity, performance, cost) for "
+            "this table; None under an unclassified method"
+        ),
+    )
+    score: int = Field(
+        ...,
+        description=(
+            "per_table_weighted_mean: the weighted sum of the four dimensions, its "
+            "fraction dropped; an unclassified method: the table's confidence"
+        ),
+    )
+
+
+class FitPenalty(_Strict):
+    """One anti-pattern finding on the statement for one engine."""
+
+    id: str = Field(..., description="The catalog's pattern id")
+    name: str = Field(..., description="The catalog's display name for it")
+    points: int = Field(..., ge=0, description="What it costs the engine; 0 when fixable")
+    intrinsic: bool
+
+
+class FitBreakdown(_Strict):
+    """How the routing scorer reached one engine's `fit` for a statement, written by the
+    scorer from the same arithmetic. It explains `fit`; it never decides the engine."""
+
+    gate: FitGate | None = Field(
+        None,
+        description="Set when the engine is gated: it then has no score and every other field is empty",
+    )
+    method: str | None = Field(
+        None,
+        description=(
+            "The base score's rule: per_table_weighted_mean, pattern_only_no_class_score, "
+            "unclassified_own_tables, unclassified_all_tables or "
+            "unclassified_pattern_tables (an open list)"
+        ),
+    )
+    pattern: FitPattern | None = None
+    cost: FitCost | None = None
+    tables: list[FitTable] = Field(default_factory=list)
+    base: int | None = Field(
+        None, description="The mean of the tables' scores, its fraction dropped (0 for none)"
+    )
+    penalties: list[FitPenalty] = Field(default_factory=list)
+    fit: int | None = Field(
+        None, ge=0, le=100, description="max(0, base minus the largest penalty points)"
+    )
+
+
 class StatementResult(_Strict):
+    model_config = _added_in_1_2("StatementResult")
+
     query_id: str
     query_tags: list[str] = Field(
         default_factory=list, description="Leading or trailing comment tags; never read by routing"
@@ -525,6 +763,27 @@ class StatementResult(_Strict):
             "None otherwise and before 'schema_design'"
         ),
     )
+    query_text: str | None = Field(
+        None,
+        description=(
+            "Since 1.2. The statement text the parser read: when rows sharing a digest "
+            "merged, the costliest variant's. Collection text: escape it when rendering"
+        ),
+    )
+    matched_anti_patterns: list[AntiPatternRef] = Field(
+        default_factory=list,
+        description=(
+            "Since 1.2. The penalised anti-patterns found on it against any analysed "
+            "engine, each once, by id; each engine's points are in `fit_breakdown`"
+        ),
+    )
+    fit_breakdown: dict[str, FitBreakdown] = Field(
+        default_factory=dict,
+        description=(
+            "Since 1.2. Per engine the scorer saw: how it reached `fit` (every engine in "
+            "`fit` has one, with the same `fit`), or the gate that left it unscored"
+        ),
+    )
 
 
 class Group(_Strict):
@@ -587,8 +846,22 @@ class DynamoDBIndex(_Strict):
     )
 
 
+class DynamoDBEntity(_Strict):
+    """One entity type an item-collection table holds."""
+
+    source_table: str = Field(..., description="The source table it holds, as the design names it")
+    pk_template: str = Field(
+        ..., description="Its partition key value template, for example 'USER#{id}'"
+    )
+    sk_template: str = Field(
+        ..., description="Its sort key value template, for example 'ORDER#{order_id}'"
+    )
+
+
 class DynamoDBTable(_Strict):
     """One target table."""
+
+    model_config = _added_in_1_2("DynamoDBTable")
 
     name: str
     source_tables: list[str] = Field(
@@ -600,6 +873,22 @@ class DynamoDBTable(_Strict):
     query_ids: list[str] = Field(
         default_factory=list,
         description="The statements the design serves from the table itself (not an index)",
+    )
+    aggregate_pattern: Literal["identifying_relationship", "item_collection", "separate"] | None = (
+        Field(
+            None,
+            description=(
+                "Since 1.2. How the design shares the table among its source tables; None when "
+                "the design does not say"
+            ),
+        )
+    )
+    entities: list[DynamoDBEntity] = Field(
+        default_factory=list,
+        description=(
+            "Since 1.2. An item collection's entity types, each with its key templates; "
+            "empty for any other table"
+        ),
     )
 
 
@@ -840,6 +1129,14 @@ class AssessmentResult(_Strict):
     )
     artifacts: Artifacts | None = None
 
+    @model_serializer(mode="wrap")
+    def _as_its_version(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
+        # No return annotation: the published schema stays the fields' own.
+        data = handler(self)
+        if self.contract_version in BEFORE_1_2 and isinstance(data, dict):
+            _drop_fields_added_in_1_2(data)
+        return data
+
     @model_validator(mode="after")
     def _label_matches_the_phase(self) -> AssessmentResult:
         reached = self.summary.run_through_reached
@@ -856,6 +1153,9 @@ class AssessmentResult(_Strict):
             )
         if (self.designs is not None) != (self.label == "designed"):
             raise ValueError("designs is set exactly when label is 'designed'")
+        if self.contract_version not in BEFORE_1_2:
+            for statement in self.statements:
+                _check_fit_breakdown(statement)
         # 1.0 results keep exactly 1.0's checks; the entry rule starts with 1.1.
         if self.designs is not None and self.contract_version != "1.0":
             with_entry = DESIGN_ENTRY_ENGINES[self.contract_version]
@@ -868,3 +1168,44 @@ class AssessmentResult(_Strict):
                     f"expected {expected_engines}, got {listed}"
                 )
         return self
+
+
+def _check_fit_breakdown(statement: StatementResult) -> None:
+    """From contract 1.2 on: every engine in ``fit`` has an ungated breakdown with the same
+    ``fit``, and a gated one names an engine with no ``fit`` that ``excluded`` lists."""
+    for engine, score in statement.fit.items():
+        entry = statement.fit_breakdown.get(engine)
+        if entry is None or entry.gate is not None or entry.fit != score:
+            raise ValueError(
+                f"statement {statement.query_id}: fit[{engine!r}] is {score}, but its "
+                f"fit_breakdown entry is {entry.fit if entry else 'missing'}"
+                f"{' (gated)' if entry and entry.gate else ''}"
+            )
+    for engine, entry in statement.fit_breakdown.items():
+        if entry.gate is not None and (engine in statement.fit or engine not in statement.excluded):
+            raise ValueError(
+                f"statement {statement.query_id}: {engine!r} is gated in fit_breakdown "
+                "but scored in fit, or not in excluded"
+            )
+
+
+def _drop_fields_added_in_1_2(data: dict[str, Any]) -> None:
+    """A result written for 1.0 or 1.1, as that version writes it: without the fields
+    1.2 added (:data:`ADDED_IN_1_2`), so reading one and writing it back gives the same
+    document."""
+
+    def drop(items: Any, model: str) -> None:
+        for item in items if isinstance(items, list) else [items]:
+            if isinstance(item, dict):
+                for name in ADDED_IN_1_2[model]:
+                    item.pop(name, None)
+
+    summary = data.get("summary")
+    drop(summary, "Summary")
+    if isinstance(summary, dict):
+        drop(summary.get("engines"), "EngineLine")
+        drop(summary.get("consolidations"), "Consolidation")
+    drop(data.get("statements"), "StatementResult")
+    for design in data.get("designs") or []:
+        if isinstance(design, dict) and design.get("engine") == "dynamodb":
+            drop(design.get("tables"), "DynamoDBTable")

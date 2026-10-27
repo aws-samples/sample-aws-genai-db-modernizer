@@ -149,7 +149,17 @@ def test_an_aurora_engine_not_chosen_names_the_choice() -> None:
 def test_consolidations_are_the_reality_checks(placed: Any) -> None:
     _, result, state, _ = placed
     expected = [
-        {k: c[k] for k in ("from_engine", "to_engine", "query_count", "reason")}
+        {
+            k: c[k]
+            for k in (
+                "from_engine",
+                "to_engine",
+                "query_count",
+                "reason",
+                "action",
+                "queries_retained",
+            )
+        }
         for c in state.reality_check["consolidations"]
     ]
     assert [c.model_dump() for c in result.summary.consolidations] == expected

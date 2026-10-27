@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_request.v1.schema.json",
   "title": "AssessmentRequest",
-  "x-contract-version": "1.1",
+  "x-contract-version": "1.2",
   "$defs": {
     "AssessmentOptions": {
       "additionalProperties": false,
@@ -123,11 +123,12 @@
   "description": "One assessment: a database's raw collection and the options to run it with.",
   "properties": {
     "contract_version": {
-      "default": "1.1",
+      "default": "1.2",
       "description": "The contract version the caller wrote the request for; any 1.x is read",
       "enum": [
         "1.0",
-        "1.1"
+        "1.1",
+        "1.2"
       ],
       "title": "Contract Version",
       "type": "string"

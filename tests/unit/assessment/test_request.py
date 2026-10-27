@@ -18,7 +18,7 @@ def _request(**overrides: Any) -> dict[str, Any]:
 
 def test_defaults() -> None:
     req = AssessmentRequest.model_validate(_request())
-    assert req.contract_version == "1.1"
+    assert req.contract_version == "1.2"
     assert req.options == AssessmentOptions(
         target_engines=None,
         run_through="reality_check",

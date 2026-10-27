@@ -65,7 +65,7 @@ Each value runs the phases before it too. From `"reality_check"` on, a later val
 
 `"schema_design"` and `"synthesis"` with `deterministic: true` (the default) are refused when the request is validated, with a message that says the phase needs a model, before anything runs. Model access is configured as for the pipeline's `--llm-mode bedrock` ([Other ways to run it](../other-ways-to-run-it.md)): schema design uses the schema-design model role (Claude Opus by default), the summaries the summary role.
 
-**How long the deterministic phases take.** Measured on a laptop with nothing else running, three runs each, in a fresh process: the WordPress sample (107 statements) 0.8 seconds through `"analysis"` and 1.0 through `"reality_check"`; the TrailGear sample (95) 0.8 and 0.9; the Discourse sample (1,654) 6.3 to 6.4 and 9.1 to 9.2. A busy machine is slower: a run of Discourse next to the test suite took 11 to 15.5 seconds.
+**How long the deterministic phases take.** Measured on a laptop with nothing else running, three runs each, in a fresh process: the WordPress sample (107 statements) 0.8 seconds through `"analysis"` and 1.0 through `"reality_check"`; the TrailGear sample (95) 0.8 and 0.9; the Discourse sample (1,654) 6.3 to 6.4 and 9.1 to 9.2. A busy machine is slower: a run of Discourse next to the test suite took 11 to 15.5 seconds. Contract `1.2`'s per-statement fit breakdown adds about 5% through `"reality_check"` and under 2% through `"analysis"` (Discourse, measured side by side with the code before it on another machine: 9.8 to 9.9 seconds before, 10.2 to 10.4 after, and 7.1 to 7.3 seconds through `"analysis"` either way).
 
 **What schema design costs.** It calls a model for every engine it designs, in parallel, and, for the engines that split a large workload, once per group of up to 20 statements, and a reviewer model reads the designs. So its time and spend grow with the number of statements and engines, not with the database's size. Measured on the WordPress sample (107 statements, three designed engines) on Amazon Bedrock in `us-east-1` with the default model roles: two runs through `"synthesis"` took 17 and 18 minutes (one through `"schema_design"` took 20), and the run with token accounting cost $12.49 at Bedrock list prices (40 model calls, 99% of the cost in schema design). Two runs of the [library demo](../examples/library/README.md) took 18 minutes and $13.51, and 34 minutes and $22.14 for one with a post-schema reroute (two engines designed again). A designed run records its token usage per phase and model in `_logs/model_usage.json` under the job (with `include_artifacts: true`, also `artifacts.model_usage`), and `uv run python scripts/usage_cost.py <model_usage.json>` prices it. Like the pipeline, `assess()` designs again each engine a post-schema reroute touches (see below), so a design that cannot serve a statement adds one more design call for the engine it left and the one it joined. Use `"analysis"` or `"reality_check"` (no model, seconds) for engine placement, and `"schema_design"` only when you need a data model.
 
@@ -114,7 +114,7 @@ A designed result always carries the [design block](#the-design-block) (`designs
 
 | Field | Meaning |
 |---|---|
-| `contract_version` | `"1.1"` (the default). A request written for `"1.0"` is read the same way |
+| `contract_version` | `"1.2"` (the default). A request written for `"1.0"` or `"1.1"` is read the same way |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. It names the run; it need not match the collection's own database name (see below) |
 | `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
@@ -129,17 +129,17 @@ Unknown fields are refused, so a misspelt option never runs silently with a defa
 
 ## The stable surface
 
-The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` adds the OpenSearch entry of the design block (#1513), the one change since `1.0`; neither has been released yet. The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
+The result's stable surface follows semantic versioning (`contract_version`, separate from the internal contracts' versions). Contract `1.1` added the OpenSearch entry of the design block (#1513), and contract `1.2` the fields listed in [From 1.1 to 1.2](#from-11-to-12) (#1603). The rest of the fields below are part of `1.0`: the additions since its first draft (`label`, `summary.source_engine`, `assignment_version`, `engines[]`, `consolidations[]`, `tables[].reason`, `designed_engines`, `design_note`, `post_schema_terminal_count`, `statements[].query_type`, `join_count`, `matched_patterns` as a list of named patterns and `post_schema_terminal`, and the design block `designs`) did not bump it.
 
 - `contract_version`, `label`, `library_version`, `ruleset_version` and `ruleset_hash`, `options` (as applied, engine ids normalised) and `scope` (echoed);
-- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]`, `consolidations[]`, `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines` and `design_note`;
-- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`;
+- `summary`: `run_through_reached`, `source_engine`, `assignment_version`, `statement_count`, `statements_per_engine`, `unservable_count`, `post_schema_terminal_count`, `unique_delta_threshold`, `relational_engine`, `engines[]` (with `unique_query_ids` since `1.2`), `consolidations[]` (with `action` and `queries_retained` since `1.2`), `tables[]` (per source table: `owner`, `owner_basis`, `also_read_by`, `cached_by`, `reason`), `designed_engines`, `design_note` and, since `1.2`, `table_facts[]`;
+- `statements[]`: per statement, `query_id`, `query_tags`, `query_type`, `join_count`, `tables`, `calls_per_second`, `rewritten_by_caller`, `engine`, `confidence`, `reason_code`, `consolidated_from`, `excluded`, `unservable_reason`, `fit`, `signals`, `matched_patterns`, `tied_engines`, `reason_text` and `post_schema_terminal`, and since `1.2` `query_text`, `matched_anti_patterns` and `fit_breakdown`;
 - `groups[]`: statements that move together, `kind` `"co_dependency"` (they join the same tables) or `"write_group"` (every write of one table: a table has one writer);
 - `designs`: a designed result's data model per designed engine ([The design block](#the-design-block)); `null` unless `label` is `designed`.
 
 Consumer contract tests keep this surface (`tests/contract/test_assess_consumer_contract.py`, on the fixtures in `tests/contract/fixtures/assess_consumer_fixtures.json`, each with the fields it guards), and a removed or renamed field, a changed type or a removed or changed enum value fails the build without a MAJOR bump of `contract_version` against the shape the last release shipped (`tests/contract/test_assess_released_contract.py`). A new enum value in the result (a new `reason_code` or `role`, for example) is a MINOR change: read enums with a default branch, since an exhaustive match on today's values can meet a new one in a MINOR release. Each release lists the routing changes since the previous one (CONTRIBUTING.md's Releases section).
 
-Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`. Before `"schema_design"`, and when a model phase had no engine to design, `designs` is `null`.
+Fields that come from a later phase are `null` (or empty) when `run_through` stops earlier: at `"analysis"`, nothing is placed, so `engine`, `confidence` and `reason_code` are `null`, `summary.assignment_version` is `null`, `summary.engines`, `summary.consolidations`, `summary.tables` and every statement's `matched_patterns` are empty, and every group's `engine` is `null`. Before `"schema_design"`, and when a model phase had no engine to design, `designs` is `null`. `summary.table_facts` and each statement's `query_text`, `matched_anti_patterns` and `fit_breakdown` are filled from `"analysis"` on.
 
 ### The label
 
@@ -159,7 +159,7 @@ Every entry has `engine` and `validation_passed`: `false` for a design that fail
 
 | `engine` | Fields |
 |---|---|
-| `dynamodb` | `tables[]`: `name`, `source_tables`, `partition_key` and `sort_key` (`{"name", "type"}`, `type` `S`, `N` or `B`; `sort_key` `null` for none), `gsis[]` (`name`, `partition_key[]` and `sort_key[]` as ordered key attributes, `projection` `ALL`, `KEYS_ONLY` or `INCLUDE`, `projected_attributes` for `INCLUDE`, `query_ids`) and `query_ids` (the statements the design serves from the table itself; those served from an index are on the index) |
+| `dynamodb` | `tables[]`: `name`, `source_tables`, `partition_key` and `sort_key` (`{"name", "type"}`, `type` `S`, `N` or `B`; `sort_key` `null` for none), `gsis[]` (`name`, `partition_key[]` and `sort_key[]` as ordered key attributes, `projection` `ALL`, `KEYS_ONLY` or `INCLUDE`, `projected_attributes` for `INCLUDE`, `query_ids`) and `query_ids` (the statements the design serves from the table itself; those served from an index are on the index); since `1.2`, `aggregate_pattern` (how the design shares the table among its source tables: `identifying_relationship`, `item_collection` or `separate`; `null` when the design does not say) and `entities[]` (an item collection's entity types: `source_table`, `pk_template` and `sk_template`, the key value templates, for example `USER#{id}` and `ORDER#{order_id}`; empty for any other table) |
 | `aurora_mysql`, `aurora_postgresql` | `tables[]`: `name`, `primary_key` (columns) and `indexes` (the design's `CREATE INDEX` statements, verbatim); `ddl_artifact_path`, where the full generated DDL is in the result with `include_artifacts: true` (`artifacts.schema_designs.<engine>.generated_ddl`) |
 | `documentdb` | `collections[]`: `name`, `source_tables`, `embedded[]` (per child table: `source_table`, `path` in the parent document, `strategy` `embed`, `reference` or `hybrid`), `referenced_collections`, `indexes[]` (`name`, `keys[]` as ordered `{"field", "direction"}`, `type` `compound`, `single`, `text`, `partial` or `unique`, `query_ids`) and `query_ids` |
 | `elasticache` | `keys[]`: `pattern` (the key pattern), `data_type`, `ttl_seconds` (`null` for no expiry), `source_tables` and `query_ids` (what the key caches: the source tables and the statements whose reads it serves) |
@@ -169,7 +169,7 @@ The OpenSearch entry was added in contract `1.1` (#1513). From `1.1` on, every e
 
 ### Sample design block
 
-`designs` of a designed WordPress run (`run_through: "schema_design"`, no engine scope), trimmed to one or two entries per list:
+`designs` of a designed WordPress run (`run_through: "schema_design"`, no engine scope), trimmed to one or two entries per list. The run predates contract `1.2`, so its DynamoDB tables do not show `aggregate_pattern` and `entities`; the [design block standard](assess-design-block.md#dynamodb) has an item collection with them.
 
 ```json
 [
@@ -279,14 +279,17 @@ The OpenSearch entry was added in contract `1.1` (#1513). From `1.1` on, every e
 
 - **`source_engine`**: the source database engine, as the collection states it (`mysql`, `postgresql`, `sqlserver`, ...).
 - **`assignment_version`**: the assignment version the result reflects. It rises when the reality check, a customer edit or the post-schema routing (from `"schema_design"` on) writes a new version.
-- **`engines[]`**: one line per analysed engine, in analysis order: `engine`, `role`, `statement_count` (statements placed on it), `consolidated_into`, `unique_queries`, `avg_delta` and `reason`. `role` is `owner` (statements are placed on it), `cache_layer` (a cache in front of other engines' reads; it owns no statement), `consolidated` (the reality check moved its statements to other engines; `consolidated_into` is the one that took most of them, the first in the reality check's `consolidations` order on a tie) or `not_selected` (analysed, but no statement was placed on it). `unique_queries` and `avg_delta` are the reality check's unique-value figures for the engine (the statements it held whose score leads the best other engine by at least `unique_delta_threshold` points, and its mean lead), `null` for an engine the check did not assess. `reason` is the executive report's "why this engine" text for an owner or the cache, and the reality check's reason for a consolidated engine.
-- **`consolidations[]`**: one line per reality-check consolidation: `from_engine`, `to_engine`, `query_count` and `reason`. Each moved statement names its `from_engine` in `statements[].consolidated_from`.
+- **`engines[]`**: one line per analysed engine, in analysis order: `engine`, `role`, `statement_count` (statements placed on it), `consolidated_into`, `unique_queries`, `avg_delta` and `reason`. `role` is `owner` (statements are placed on it), `cache_layer` (a cache in front of other engines' reads; it owns no statement), `consolidated` (the reality check moved its statements to other engines; `consolidated_into` is the one that took most of them, the first in the reality check's `consolidations` order on a tie) or `not_selected` (analysed, but no statement was placed on it). `unique_queries` and `avg_delta` are the reality check's unique-value figures for the engine (the statements it held whose score leads the best other engine by at least `unique_delta_threshold` points, and its mean lead), `null` for an engine the check did not assess. Since `1.2`, `unique_query_ids` names the statements `unique_queries` counts, by `query_id`, in the reality check's order: the library's own first-pass unique-value set for the engine (so `unique_queries` is its length), `null` when `unique_queries` is. `reason` is the executive report's "why this engine" text for an owner or the cache, and the reality check's reason for a consolidated engine.
+- **`consolidations[]`**: one line per reality-check consolidation: `from_engine`, `to_engine`, `query_count` and `reason`, and since `1.2` `action` (`full`: every statement the engine held moved; `partial`: some stayed) and `queries_retained` (a partial consolidation's statements that stayed on `from_engine`, by `query_id`; empty for a full one). Each moved statement names its `from_engine` in `statements[].consolidated_from`.
 - **`tables[].reason`**: one sentence on why the owner is the owner: the writes it takes, or the share of the table's queries it serves (and how a tie was settled), and the engines that read a copy.
 
 ### Statement additions
 
 - **`query_type`** and **`join_count`**: the statement's type (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` or `OTHER`) and its number of joins, as the library's parser reads them.
 - **`matched_patterns`**: the pattern catalog's patterns the statement matches on its assigned engine, as `{"id", "name"}` (for example `{"id": "key-value-lookup", "name": "Key-value lookup"}`). Only the assigned engine's: read another engine's fit from `fit`. Empty at `"analysis"` and for an unservable statement.
+- **`query_text`** (since `1.2`): the statement text the library's parser read. When rows sharing a digest merged into one statement (see [Statement ids](#statement-ids-query_id)), it is the costliest variant's text (the highest total time). It is collection text: it can hold literal values the collector kept, and you should escape it when you render it.
+- **`matched_anti_patterns`** (since `1.2`): the penalised anti-patterns found on the statement against any analysed engine, once each, in catalog id order, as `{"id", "name", "intrinsic"}` (for example `{"id": "frequent-full-scan", "name": "Frequent full scan", "intrinsic": false}`). `intrinsic` follows [#1231](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1231): `true` means it costs the engines it is found against points; `false` means it is fixable, because a redesign of the target removes it, so it costs nothing. Which engines it costs, and how much, is in `fit_breakdown[engine].penalties`.
+- **`fit_breakdown`** (since `1.2`): per engine, how the scorer reached `fit` ([The fit breakdown](#the-fit-breakdown)).
 - **`post_schema_terminal`**: set when a schema design flagged the statement and the post-schema routing could not move it (see [Post-schema terminal statements](#post-schema-terminal-statements)); `null` otherwise, and always `null` before `"schema_design"`.
 - **`query_tags`** are read from the statement text the collection holds, so which sources fill them depends on the collector. PostgreSQL (`pg_stat_statements` text) keeps every leading comment and every sqlcommenter trailing comment. SQL Server and Oracle collections keep block-comment tags (a `--` comment runs into the statement there, because the collectors replace newlines with spaces), which is what sqlcommenter writes. MySQL and MariaDB collections carry no tags at all: both collectors read `DIGEST_TEXT` from `performance_schema.events_statements_summary_by_digest`, and the server removes comments when it normalizes a digest, so a tag a customer prepends to a statement never reaches the collection. For a MySQL or MariaDB source, `query_tags` is always empty, and the library does not read `QUERY_SAMPLE_TEXT` (it holds literal values; [#1314](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1314)). The join key that works there is `query_id`, which for these sources is the statement's `DIGEST`: it hashes the normalized text, so it does not change with a comment. Keep your own map from the digest to the code that issues the statement (on MySQL 8.0, `SELECT STATEMENT_DIGEST('<your statement>')` returns the digest the server will record for it) and join `statements[].query_id` to that map.
 
@@ -297,7 +300,7 @@ How to read it:
 - **Unservable statements.** With `target_engines` set, a statement no engine in the scope can serve is never forced onto one: its `engine` is `null`, its `reason_code` is `unservable` and `unservable_reason` says why (and which engine outside the scope could serve it). It counts in `statement_count` and `unservable_count`, never in `statements_per_engine`.
 - **`excluded`** lists the engines ruled out for a statement: a hard or capability gate, and the engine scope. From `"reality_check"` on it also lists the engines that cannot own the statement's writes (a cache or search engine for a write); routing still scored those, so they appear in `fit` too. An engine in both is scored but cannot take the statement.
 - **`confidence`** is the score the statement was placed with, as the assignment stores it. Until [#1373](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/1373) is fixed, a statement the reality check consolidated keeps the removed engine's score there; read `fit[engine]` for its score on the engine it is on.
-- **`fit`** is the routing scorer's score for the statement on each engine it can be scored on: the same number routing compared. At `"analysis"` it is the score before anything is placed, so a capability that routing allows only once a table's writes are placed is not applied yet.
+- **`fit`** is the routing scorer's score for the statement on each engine it can be scored on: the same number routing compared. At `"analysis"` it is the score before anything is placed, so a capability that routing allows only once a table's writes are placed is not applied yet. `fit_breakdown` shows how each score was reached ([The fit breakdown](#the-fit-breakdown)).
 - **`reason_text`** and every `reason` (including `summary.engines[].reason`, `summary.consolidations[].reason` and `summary.tables[].reason`) are customer-facing sentences. Show them or word your own from them; do not parse them. They can quote collection text (table names, for example), so escape them for the format you render them in.
 - **`ruleset_hash`** names the rules that produced the result. Scores compare only within one hash. Asking for an older ruleset is not supported: pin the library version to reproduce a result.
 
@@ -321,6 +324,64 @@ From `"schema_design"` on, a statement whose engine's design reports it unsuppor
 
 `summary.post_schema_terminal_count` is the number of marked statements; it is `0` when nothing is terminal and before `"schema_design"`. A marker holds only while the statement is on the flagged engine in the result's assignment version. The marker reports what the routing did; it changes no placement.
 
+### The fit breakdown
+
+`statements[].fit_breakdown` says, per engine, how the routing scorer reached the statement's `fit` on that engine. The scorer writes it while it scores (`score_query_for_engine`, the same call and the same arithmetic routing compares), so it explains `fit`. It never decides the engine: read that from `engine` and `reason_code`. It has one entry per engine the scorer saw for the statement. At `"analysis"`, that is every analysed engine. From `"reality_check"` on, it is every engine on the statement's candidate ladder (the scores `fit` is read from). Every engine in `fit` has an entry with the same `fit`, and an engine with no score has an entry with only its `gate`. From contract `1.2` on, the result model refuses a result where this does not hold.
+
+| Field | Meaning |
+|---|---|
+| `gate` | `{"kind", "reason"}`, set only when the engine is gated: it then has no score, and every other field is `null` or empty. `kind` is `hard_exclusion`, `capability` or `model_flag` (a model's flag the reality check accepted); `reason` is a customer-facing sentence |
+| `method` | The rule the base score followed: `per_table_weighted_mean` (a statement with an access-pattern class); `pattern_only_no_class_score` (a pattern-only engine, such as OpenSearch, whose catalog gives the statement's class no score: the base is 0); or, for a statement with no access-pattern class (`utility` or `unparsed`), `unclassified_own_tables` (its own rated tables' confidence), `unclassified_all_tables` (every rated table's, when it has none of its own) or `unclassified_pattern_tables` (on a pattern-only engine, the tables of the patterns that matched it) |
+| `pattern` | `{"score", "source", "class"}`: the statement's own pattern dimension on the engine (`source` `"statement"`), the score of its access-pattern `class`. When a redesign scores higher and routing relies on it (#1231), `class` is the redesigned class. `null` under an `unclassified_*` method |
+| `cost` | `{"score", "source"}`: the statement's own cost dimension on the engine (`source` `"statement"`). `null` under an `unclassified_*` method |
+| `tables[]` | Each of the statement's tables the engine's analysis rated: `table_id`, `complexity` and `performance` (the table's own dimensions in that analysis), `weights` (the weight of each dimension for the table: `pattern`, `complexity`, `performance`, `cost`) and `score`. Under an `unclassified_*` method, `score` is the table's confidence and the other three are `null` |
+| `base` | The base score: the mean of `tables[].score` |
+| `penalties[]` | Each anti-pattern finding on the statement for the engine: `id`, `name`, `points` (what it costs the engine: the catalog's penalty, after its capability scoping, when `intrinsic`; 0 when fixable) and `intrinsic` |
+| `fit` | The score: the same number as `fit[engine]` |
+
+How the numbers fit together (a test recomputes it this way for every statement and engine of the three bundled samples, before and after placement):
+
+- under `per_table_weighted_mean`, a table's `score` is `floor(pattern.score × weights.pattern + complexity × weights.complexity + performance × weights.performance + cost.score × weights.cost)`, summed in that order in double precision;
+- `base` is `floor(mean(tables[].score))`, and 0 when `tables` is empty;
+- `fit` is `max(0, base − p)`, where `p` is the largest `points` in `penalties` (0 when there is none). Penalties do not add up: the largest one applies.
+
+A gate that routing lifts does not show. A capability waiver, or the guarantee that a homogeneous source's own Aurora engine can serve every statement, lets routing score an engine the plain gates would exclude. That engine has a score, and its entry is the arithmetic past the gate. The ownership gate (an engine that is not a system of record cannot take a write) keeps the score too: such an engine has a normal entry and is listed in `excluded`. The `gate` kinds, the `method` values and the dimension names (`pattern`, `cost`, the keys of `weights`) are open lists: read them with a default branch.
+
+The table-level analysis ratings are not exposed on their own. A statement's `fit` takes the complexity and performance dimensions from its own tables (`tables[]` above), but its pattern and cost dimensions are its own, so a table's combined analysis score shows pattern and cost values routing replaced. For a per-table view on an engine, read the statements that touch the table (`statements[].tables`): their `fit[engine]` and, in each `fit_breakdown[engine].tables[]` entry for the table, its `complexity` and `performance`.
+
+### Statement ids (`query_id`)
+
+A statement's `query_id` is the `digest` of its row in the collection. A row with no `digest` gets the first 16 hexadecimal characters of the SHA-256 of its text (UTF-8). Each collection script writes the digest its engine computes for a query shape:
+
+| Source engine | `digest`, and so `query_id` |
+|---|---|
+| MySQL, MariaDB | `DIGEST` from `performance_schema.events_statements_summary_by_digest` (64 hexadecimal characters on MySQL 8.0) |
+| PostgreSQL | `queryid` from `pg_stat_statements`, as text (a signed 64-bit integer, for example `-3141592653589793238`) |
+| SQL Server | `query_hash` as hexadecimal, as `CONVERT(VARCHAR(40), query_hash, 1)` writes it: `0x` and 16 hexadecimal digits, for example `0x1A2B3C4D5E6F7081` |
+| Oracle | `fms_` and the `FORCE_MATCHING_SIGNATURE`, or the `SQL_ID` when the signature is 0 |
+
+Rows that share a digest are one statement. Their counters are summed, and `query_text` is the costliest variant's text. On an Oracle source, rows whose texts differ only in their literals are one statement too, even with different digests (a collection made without `FORCE_MATCHING_SIGNATURE`), and it takes the digest of its costliest variant. Statements are listed in order of first appearance. A collector output passed as the collection keeps the `query_id`s it carries. A test per source engine pins this rule.
+
+### Table facts
+
+`summary.table_facts[]` (since `1.2`) has one entry per table in the collection, in `table_id` order, from `"analysis"` on: `table_id`, `row_count`, `size_mb`, `columns[]` (`name`, `data_type` as the source engine names it, `nullable`; in the table's column order), `primary_key` (its columns, in order; empty for none) and `foreign_keys[]`, one entry per constraint: `constraint_name`, `columns`, `referenced_table` and `referenced_columns` (paired with `columns`). `referenced_table` is the referenced table's `table_id` in this result: the table of that name in the referencing table's schema, else the only collected table of that name. It is `null` when the collection holds no such table, or more than one.
+
+The ids are the library's own, the ones `statements[].tables`, `summary.tables[].table_id` and `groups[].tables` use, so you can join on them. The facts are what the library read from the collection, never a model's.
+
+Why a separate list, and not new fields on `summary.tables[]`: `summary.tables[]` is the ownership view. It is empty at `"analysis"`, and it lists only the tables the placement (or, at `"synthesis"`, the report) gives an owner line. Facts on it would either change what it holds at `"analysis"` or leave out the tables no statement touches. `summary.table_facts[]` covers every collected table at every phase, and `summary.tables[]` keeps its meaning.
+
+### From 1.1 to 1.2
+
+Contract `1.2` (#1603) is a MINOR version. It only adds fields, each exposing a result the library already computes:
+
+- `statements[].query_text`, `matched_anti_patterns[]` and `fit_breakdown`;
+- `summary.table_facts[]`;
+- `summary.consolidations[].action` and `queries_retained`;
+- `summary.engines[].unique_query_ids`;
+- on a DynamoDB design entry, `tables[].aggregate_pattern` and `entities[]`.
+
+`statements[].query_tags` is unchanged: it has been in the result since `1.0`. No field was renamed, removed, retyped or given a new meaning. The published schema lists the new fields as optional, so a `1.0` or `1.1` result still validates against it, although the library always writes them. A result written for `1.0` or `1.1` loads with the library's models, is not checked by the `1.2` rule on `fit_breakdown`, and is written back as it was read, without the new fields. To read the new fields, check `contract_version` first, or treat a missing field as not stated.
+
 ## Determinism
 
 - **`run_through: "analysis"`** (no model): the same collection, library version and engine scope give an identical result, byte for byte once serialized with sorted keys, in any process and under any `PYTHONHASHSEED`. The result carries no run timestamp; only the opt-in `artifacts` block records run times. A test runs every bundled sample in separate processes under different hash seeds and compares the results.
@@ -339,7 +400,7 @@ The request and the result are published as JSON Schemas (draft 2020-12) in [`do
 - [`assess_request.v1.schema.json`](schemas/assess_request.v1.schema.json): `AssessmentRequest`;
 - [`assess_result.v1.schema.json`](schemas/assess_result.v1.schema.json): `AssessmentResult`, as `model_dump_json` writes it.
 
-`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id, a `label` that does not match `summary.run_through_reached`, and, from contract `1.1` on, `designs` that are not one entry per engine of `summary.designed_engines`, in that order ([schemas/README.md](schemas/README.md)).
+`v1` is the contract's MAJOR version: the file covers every `contract_version` `1.x`, and each states the exact version it was rendered from in `x-contract-version`. The files are generated from the models (`uv run python scripts/render_contract_schemas.py --write`), never edited by hand, and lint fails when they are out of date. A schema describes the shape (including that `"schema_design"` and `"synthesis"` need `deterministic: false`); the library also refuses an unknown engine id, a `label` that does not match `summary.run_through_reached`, from contract `1.1` on, `designs` that are not one entry per engine of `summary.designed_engines`, in that order, and, from contract `1.2` on, a `fit_breakdown` that does not have an entry with the same `fit` for every engine in `fit` ([schemas/README.md](schemas/README.md)). The fields contract `1.2` added are optional in the schema, so a `1.0` or `1.1` result validates against it.
 
 ## Sample
 
@@ -349,7 +410,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.1",
+  "contract_version": "1.2",
   "database_name": "shop",
   "collection": {
     "...": "the collection scripts' output"
@@ -371,7 +432,7 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
 
 ```json
 {
-  "contract_version": "1.1",
+  "contract_version": "1.2",
   "label": "recommendation",
   "library_version": "0.3.0",
   "ruleset_version": "0.3.0",
@@ -410,7 +471,10 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
         "consolidated_into": null,
         "unique_queries": 1,
         "avg_delta": 18.0,
-        "reason": "84% mean fit across 1 query (2 rated tables), pinned by multi-table joins (1 of 1)."
+        "reason": "84% mean fit across 1 query (2 rated tables), pinned by multi-table joins (1 of 1).",
+        "unique_query_ids": [
+          "Q01"
+        ]
       },
       {
         "engine": "dynamodb",
@@ -419,7 +483,8 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
         "consolidated_into": null,
         "unique_queries": 0,
         "avg_delta": 4.0,
-        "reason": "81% mean fit across 1 query (1 rated table), led by key-value lookups (1 of 1)."
+        "reason": "81% mean fit across 1 query (1 rated table), led by key-value lookups (1 of 1).",
+        "unique_query_ids": []
       }
     ],
     "consolidations": [],
@@ -450,7 +515,104 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       }
     ],
     "designed_engines": [],
-    "design_note": null
+    "design_note": null,
+    "table_facts": [
+      {
+        "table_id": "sales.Carts",
+        "row_count": 120000,
+        "size_mb": 48.5,
+        "columns": [
+          {
+            "name": "CartID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "UpdatedAt",
+            "data_type": "datetime2",
+            "nullable": true
+          }
+        ],
+        "primary_key": [
+          "CartID"
+        ],
+        "foreign_keys": []
+      },
+      {
+        "table_id": "sales.OrderLines",
+        "row_count": 2400000,
+        "size_mb": 310.0,
+        "columns": [
+          {
+            "name": "OrderID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "LineNo",
+            "data_type": "smallint",
+            "nullable": false
+          },
+          {
+            "name": "Sku",
+            "data_type": "nvarchar(40)",
+            "nullable": false
+          },
+          {
+            "name": "Quantity",
+            "data_type": "int",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "OrderID",
+          "LineNo"
+        ],
+        "foreign_keys": [
+          {
+            "constraint_name": "FK_OrderLines_Orders",
+            "columns": [
+              "OrderID"
+            ],
+            "referenced_table": "sales.Orders",
+            "referenced_columns": [
+              "OrderID"
+            ]
+          }
+        ]
+      },
+      {
+        "table_id": "sales.Orders",
+        "row_count": 600000,
+        "size_mb": 95.25,
+        "columns": [
+          {
+            "name": "OrderID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "CustomerID",
+            "data_type": "int",
+            "nullable": false
+          },
+          {
+            "name": "PlacedAt",
+            "data_type": "datetime2",
+            "nullable": false
+          }
+        ],
+        "primary_key": [
+          "OrderID"
+        ],
+        "foreign_keys": []
+      }
+    ]
   },
   "statements": [
     {
@@ -483,7 +645,120 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       ],
       "tied_engines": [],
       "reason_text": "highest fit for Aurora PostgreSQL",
-      "post_schema_terminal": null
+      "post_schema_terminal": null,
+      "query_text": "SELECT o.OrderID, l.Sku, l.Quantity FROM sales.Orders o JOIN sales.OrderLines l ON l.OrderID = o.OrderID WHERE o.OrderID = @OrderID",
+      "matched_anti_patterns": [
+        {
+          "id": "frequent-full-scan",
+          "name": "Frequent full scan",
+          "intrinsic": false
+        },
+        {
+          "id": "large-result-sets",
+          "name": "Large result sets",
+          "intrinsic": true
+        }
+      ],
+      "fit_breakdown": {
+        "aurora_postgresql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 85,
+            "source": "statement",
+            "class": "key_scoped"
+          },
+          "cost": {
+            "score": 90,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "sales.Orders",
+              "complexity": 90,
+              "performance": 75,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 85
+            },
+            {
+              "table_id": "sales.OrderLines",
+              "complexity": 85,
+              "performance": 75,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 83
+            }
+          ],
+          "base": 84,
+          "penalties": [
+            {
+              "id": "frequent-full-scan",
+              "name": "Frequent full scan",
+              "points": 0,
+              "intrinsic": false
+            }
+          ],
+          "fit": 84
+        },
+        "dynamodb": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 75,
+            "source": "statement",
+            "class": "key_scoped"
+          },
+          "cost": {
+            "score": 80,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "sales.Orders",
+              "complexity": 80,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 76
+            },
+            {
+              "table_id": "sales.OrderLines",
+              "complexity": 80,
+              "performance": 70,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 76
+            }
+          ],
+          "base": 76,
+          "penalties": [
+            {
+              "id": "large-result-sets",
+              "name": "Large result sets",
+              "points": 10,
+              "intrinsic": true
+            }
+          ],
+          "fit": 66
+        }
+      }
     },
     {
       "query_id": "Q02",
@@ -518,7 +793,71 @@ A request for a SQL Server collection with two reads, scoped to Aurora PostgreSQ
       ],
       "tied_engines": [],
       "reason_text": "highest fit for DynamoDB",
-      "post_schema_terminal": null
+      "post_schema_terminal": null,
+      "query_text": "/* endpoint: CartController.Get */ SELECT CartID, CustomerID, UpdatedAt FROM sales.Carts WHERE CartID = @CartID",
+      "matched_anti_patterns": [],
+      "fit_breakdown": {
+        "aurora_postgresql": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 80,
+            "source": "statement",
+            "class": "key_lookup"
+          },
+          "cost": {
+            "score": 85,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "sales.Carts",
+              "complexity": 80,
+              "performance": 65,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 77
+            }
+          ],
+          "base": 77,
+          "penalties": [],
+          "fit": 77
+        },
+        "dynamodb": {
+          "gate": null,
+          "method": "per_table_weighted_mean",
+          "pattern": {
+            "score": 100,
+            "source": "statement",
+            "class": "key_lookup"
+          },
+          "cost": {
+            "score": 70,
+            "source": "statement"
+          },
+          "tables": [
+            {
+              "table_id": "sales.Carts",
+              "complexity": 75,
+              "performance": 60,
+              "weights": {
+                "pattern": 0.4,
+                "complexity": 0.3,
+                "performance": 0.2,
+                "cost": 0.1
+              },
+              "score": 81
+            }
+          ],
+          "base": 81,
+          "penalties": [],
+          "fit": 81
+        }
+      }
     }
   ],
   "groups": [],

@@ -233,7 +233,7 @@ def test_versions_are_reported(placed: Any) -> None:
     from src.shared.package_version import get_package_version
 
     _, result, _ = placed
-    assert result.contract_version == "1.1"
+    assert result.contract_version == "1.2"
     assert result.library_version == get_package_version()
     assert result.ruleset_version == result.library_version
     assert result.ruleset_hash.startswith("sha256:") and len(result.ruleset_hash) == 71

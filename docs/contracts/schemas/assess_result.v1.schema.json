@@ -2,8 +2,36 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_result.v1.schema.json",
   "title": "AssessmentResult",
-  "x-contract-version": "1.1",
+  "x-contract-version": "1.2",
   "$defs": {
+    "AntiPatternRef": {
+      "additionalProperties": false,
+      "description": "A penalised anti-pattern finding on a statement (``src/catalog/patterns``).",
+      "properties": {
+        "id": {
+          "description": "The catalog's pattern id",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "The catalog's display name for it",
+          "title": "Name",
+          "type": "string"
+        },
+        "intrinsic": {
+          "description": "True: it costs the engines it is found against points. False: fixable, a redesign removes it, so it costs nothing (#1231)",
+          "title": "Intrinsic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "intrinsic"
+      ],
+      "title": "AntiPatternRef",
+      "type": "object"
+    },
     "Artifacts": {
       "additionalProperties": true,
       "description": "Internal contracts, verbatim. No compatibility promise; each keeps its own version.\n\nFrom ``schema_design`` on: ``schema_designs`` (each designed engine's schema output,\nthe data model) and, at ``synthesis``, ``synthesis_report`` (the report every\ndeliverable renders). ``artifact_keys`` names the store key each was read from\n(under ``<database_name>/<job_id>/``), for a caller that passed its own store.",
@@ -247,6 +275,31 @@
           "description": "Customer-facing sentence; do not parse",
           "title": "Reason",
           "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "enum": [
+                "full",
+                "partial"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.2. full: every statement it held moved off from_engine; partial: some stayed (`queries_retained`). None only in a result written before 1.2",
+          "title": "Action"
+        },
+        "queries_retained": {
+          "description": "Since 1.2. A partial consolidation's statements that stayed on from_engine, by query id; empty for a full one",
+          "items": {
+            "type": "string"
+          },
+          "title": "Queries Retained",
+          "type": "array"
         }
       },
       "required": [
@@ -472,6 +525,34 @@
       "title": "DynamoDBDesign",
       "type": "object"
     },
+    "DynamoDBEntity": {
+      "additionalProperties": false,
+      "description": "One entity type an item-collection table holds.",
+      "properties": {
+        "source_table": {
+          "description": "The source table it holds, as the design names it",
+          "title": "Source Table",
+          "type": "string"
+        },
+        "pk_template": {
+          "description": "Its partition key value template, for example 'USER#{id}'",
+          "title": "Pk Template",
+          "type": "string"
+        },
+        "sk_template": {
+          "description": "Its sort key value template, for example 'ORDER#{order_id}'",
+          "title": "Sk Template",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_table",
+        "pk_template",
+        "sk_template"
+      ],
+      "title": "DynamoDBEntity",
+      "type": "object"
+    },
     "DynamoDBIndex": {
       "additionalProperties": false,
       "description": "One global secondary index.",
@@ -603,6 +684,32 @@
           },
           "title": "Query Ids",
           "type": "array"
+        },
+        "aggregate_pattern": {
+          "anyOf": [
+            {
+              "enum": [
+                "identifying_relationship",
+                "item_collection",
+                "separate"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.2. How the design shares the table among its source tables; None when the design does not say",
+          "title": "Aggregate Pattern"
+        },
+        "entities": {
+          "description": "Since 1.2. An item collection's entity types, each with its key templates; empty for any other table",
+          "items": {
+            "$ref": "#/$defs/DynamoDBEntity"
+          },
+          "title": "Entities",
+          "type": "array"
         }
       },
       "required": [
@@ -715,6 +822,22 @@
           "description": "Customer-facing sentence; do not parse. For an owner or the cache, the executive report's 'why this engine' text; for a consolidated engine, the reality check's reason",
           "title": "Reason",
           "type": "string"
+        },
+        "unique_query_ids": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.2. The statements `unique_queries` counts, by query id, in the reality check's order: its first-pass unique-value set for the engine. None when the reality check did not assess it",
+          "title": "Unique Query Ids"
         }
       },
       "required": [
@@ -727,6 +850,287 @@
         "reason"
       ],
       "title": "EngineLine",
+      "type": "object"
+    },
+    "FitBreakdown": {
+      "additionalProperties": false,
+      "description": "How the routing scorer reached one engine's `fit` for a statement, written by the\nscorer from the same arithmetic. It explains `fit`; it never decides the engine.",
+      "properties": {
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitGate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set when the engine is gated: it then has no score and every other field is empty"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The base score's rule: per_table_weighted_mean, pattern_only_no_class_score, unclassified_own_tables, unclassified_all_tables or unclassified_pattern_tables (an open list)",
+          "title": "Method"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitPattern"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FitCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/FitTable"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "base": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The mean of the tables' scores, its fraction dropped (0 for none)",
+          "title": "Base"
+        },
+        "penalties": {
+          "items": {
+            "$ref": "#/$defs/FitPenalty"
+          },
+          "title": "Penalties",
+          "type": "array"
+        },
+        "fit": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "max(0, base minus the largest penalty points)",
+          "title": "Fit"
+        }
+      },
+      "required": [
+        "gate",
+        "method",
+        "pattern",
+        "cost",
+        "tables",
+        "base",
+        "penalties",
+        "fit"
+      ],
+      "title": "FitBreakdown",
+      "type": "object"
+    },
+    "FitCost": {
+      "additionalProperties": false,
+      "description": "The statement's cost dimension on one engine.",
+      "properties": {
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        },
+        "source": {
+          "description": "Where it comes from: 'statement' (its own cost)",
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "score",
+        "source"
+      ],
+      "title": "FitCost",
+      "type": "object"
+    },
+    "FitGate": {
+      "additionalProperties": false,
+      "description": "Why an engine could not be scored for a statement.",
+      "properties": {
+        "kind": {
+          "description": "The gate, for example hard_exclusion, capability or model_flag (an open list: read it with a default branch)",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "title": "FitGate",
+      "type": "object"
+    },
+    "FitPattern": {
+      "additionalProperties": false,
+      "description": "The statement's pattern dimension on one engine.",
+      "properties": {
+        "score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        },
+        "source": {
+          "description": "Where it comes from: 'statement' (its own class)",
+          "title": "Source",
+          "type": "string"
+        },
+        "class": {
+          "description": "The access-pattern class whose score it is (after a redesign, if one applies)",
+          "title": "Class",
+          "type": "string"
+        }
+      },
+      "required": [
+        "score",
+        "source",
+        "class"
+      ],
+      "title": "FitPattern",
+      "type": "object"
+    },
+    "FitPenalty": {
+      "additionalProperties": false,
+      "description": "One anti-pattern finding on the statement for one engine.",
+      "properties": {
+        "id": {
+          "description": "The catalog's pattern id",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "The catalog's display name for it",
+          "title": "Name",
+          "type": "string"
+        },
+        "points": {
+          "description": "What it costs the engine; 0 when fixable",
+          "minimum": 0,
+          "title": "Points",
+          "type": "integer"
+        },
+        "intrinsic": {
+          "title": "Intrinsic",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "points",
+        "intrinsic"
+      ],
+      "title": "FitPenalty",
+      "type": "object"
+    },
+    "FitTable": {
+      "additionalProperties": false,
+      "description": "One of the statement's rated tables, as the base score read it.",
+      "properties": {
+        "table_id": {
+          "title": "Table Id",
+          "type": "string"
+        },
+        "complexity": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The table's complexity dimension; None under an unclassified method",
+          "title": "Complexity"
+        },
+        "performance": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The table's performance dimension; None under an unclassified method",
+          "title": "Performance"
+        },
+        "weights": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The weight of each dimension (pattern, complexity, performance, cost) for this table; None under an unclassified method",
+          "title": "Weights"
+        },
+        "score": {
+          "description": "per_table_weighted_mean: the weighted sum of the four dimensions, its fraction dropped; an unclassified method: the table's confidence",
+          "title": "Score",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "table_id",
+        "complexity",
+        "performance",
+        "weights",
+        "score"
+      ],
+      "title": "FitTable",
       "type": "object"
     },
     "Group": {
@@ -1248,6 +1652,35 @@
           ],
           "default": null,
           "description": "Set when a schema design flagged the statement on its engine and the post-schema routing could not move it (it keeps its engine and reason_code); None otherwise and before 'schema_design'"
+        },
+        "query_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Since 1.2. The statement text the parser read: when rows sharing a digest merged, the costliest variant's. Collection text: escape it when rendering",
+          "title": "Query Text"
+        },
+        "matched_anti_patterns": {
+          "description": "Since 1.2. The penalised anti-patterns found on it against any analysed engine, each once, by id; each engine's points are in `fit_breakdown`",
+          "items": {
+            "$ref": "#/$defs/AntiPatternRef"
+          },
+          "title": "Matched Anti Patterns",
+          "type": "array"
+        },
+        "fit_breakdown": {
+          "additionalProperties": {
+            "$ref": "#/$defs/FitBreakdown"
+          },
+          "description": "Since 1.2. Per engine the scorer saw: how it reached `fit` (every engine in `fit` has one, with the same `fit`), or the gate that left it unscored",
+          "title": "Fit Breakdown",
+          "type": "object"
         }
       },
       "required": [
@@ -1395,6 +1828,14 @@
           "default": null,
           "description": "Customer-facing sentence; do not parse. Set only when 'schema_design' ran and no engine could be designed (the result is then a 'recommendation')",
           "title": "Design Note"
+        },
+        "table_facts": {
+          "description": "Since 1.2. One entry per collected source table, by table_id, from 'analysis' on: its row count, size, columns, primary key and foreign keys",
+          "items": {
+            "$ref": "#/$defs/TableFacts"
+          },
+          "title": "Table Facts",
+          "type": "array"
         }
       },
       "required": [
@@ -1414,6 +1855,160 @@
         "design_note"
       ],
       "title": "Summary",
+      "type": "object"
+    },
+    "TableColumn": {
+      "additionalProperties": false,
+      "description": "One column of a source table, as the collection describes it.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "data_type": {
+          "description": "Its type in the source engine, as collected",
+          "title": "Data Type",
+          "type": "string"
+        },
+        "nullable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether it allows NULL; None when unknown",
+          "title": "Nullable"
+        }
+      },
+      "required": [
+        "name",
+        "data_type",
+        "nullable"
+      ],
+      "title": "TableColumn",
+      "type": "object"
+    },
+    "TableFacts": {
+      "additionalProperties": false,
+      "description": "One collected source table's facts, as the library read them from the collection.",
+      "properties": {
+        "table_id": {
+          "description": "The source table, as `statements[].tables` and `summary.tables` name it",
+          "title": "Table Id",
+          "type": "string"
+        },
+        "row_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Approximate rows, as collected",
+          "title": "Row Count"
+        },
+        "size_mb": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Size in megabytes, as collected",
+          "title": "Size Mb"
+        },
+        "columns": {
+          "description": "Its columns, in the table's column order",
+          "items": {
+            "$ref": "#/$defs/TableColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "primary_key": {
+          "description": "Its primary key columns, in order; empty for none",
+          "items": {
+            "type": "string"
+          },
+          "title": "Primary Key",
+          "type": "array"
+        },
+        "foreign_keys": {
+          "description": "Its foreign keys, one entry per constraint",
+          "items": {
+            "$ref": "#/$defs/TableForeignKey"
+          },
+          "title": "Foreign Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "table_id",
+        "row_count",
+        "size_mb",
+        "columns",
+        "primary_key",
+        "foreign_keys"
+      ],
+      "title": "TableFacts",
+      "type": "object"
+    },
+    "TableForeignKey": {
+      "additionalProperties": false,
+      "description": "One foreign key constraint of a source table (its columns in constraint order).",
+      "properties": {
+        "constraint_name": {
+          "title": "Constraint Name",
+          "type": "string"
+        },
+        "columns": {
+          "description": "The referencing columns",
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "referenced_table": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The referenced table, as a `table_id` of this result; None when the collection does not hold that table",
+          "title": "Referenced Table"
+        },
+        "referenced_columns": {
+          "description": "The referenced columns, paired with `columns`",
+          "items": {
+            "type": "string"
+          },
+          "title": "Referenced Columns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "constraint_name",
+        "columns",
+        "referenced_table",
+        "referenced_columns"
+      ],
+      "title": "TableForeignKey",
       "type": "object"
     },
     "TableLine": {
@@ -1557,11 +2152,12 @@
   "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
   "properties": {
     "contract_version": {
-      "default": "1.1",
+      "default": "1.2",
       "description": "The contract version the result was written for; this library writes CONTRACT_VERSION and reads any 1.x",
       "enum": [
         "1.0",
-        "1.1"
+        "1.1",
+        "1.2"
       ],
       "title": "Contract Version",
       "type": "string"

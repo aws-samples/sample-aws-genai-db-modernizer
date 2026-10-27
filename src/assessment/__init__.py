@@ -21,12 +21,14 @@ the report are in ``artifacts`` (with ``include_artifacts=True``). The
 deterministic analysis's own data-model guesses are inputs to that design, not
 results, and are never part of the stable surface.
 
-Stable surface (contract ``1.1``, semantic versioning): ``contract_version``,
+Stable surface (contract ``1.2``, semantic versioning): ``contract_version``,
 ``label`` (``analysis_only``, ``recommendation`` or ``designed``: only a designed
 result carries a data model), ``library_version``, ``ruleset_version``/``ruleset_hash``, ``options`` (as applied),
 ``scope`` (echoed), ``summary``, ``statements[]``, ``groups[]`` and ``designs``. Read a statement's
 engine from ``statements[].engine`` and a table's owner from ``summary.tables[].owner``;
-both are final for the run. ``reason_text`` and every ``reason`` (an engine's, a
+both are final for the run. A statement's ``fit_breakdown`` (contract 1.2) says how
+the scorer reached each score in ``fit``; it explains a score and never decides an
+engine. ``reason_text`` and every ``reason`` (an engine's, a
 consolidation's, a table's) are customer-facing sentences: use ``reason_code`` and
 ``role`` rather than parsing them.
 

@@ -390,6 +390,8 @@ def test_a_partial_design_reads_its_missing_optional_fields_as_empty() -> None:
                     "sort_key": None,
                     "gsis": [],
                     "query_ids": [],
+                    "aggregate_pattern": None,
+                    "entities": [],
                 }
             ],
         },
@@ -564,12 +566,15 @@ def test_a_result_written_before_the_opensearch_entry_still_loads() -> None:
 # --------------------------------------------------------------------------- the entry guard
 
 
+@pytest.mark.passes_on_main
 def test_a_designed_engine_with_an_entry_in_its_version_cannot_lose_it() -> None:
-    """A 1.1 result lists one entry per designed engine, in order: dropping the
-    OpenSearch entry, or any other, or reordering them, is refused."""
+    """A result of the current version (1.1 on) lists one entry per designed engine, in
+    order: dropping the OpenSearch entry, or any other, or reordering them, is refused."""
+    from src.assessment.models import CONTRACT_VERSION
+
     result, _ = designed("design04", OPENSEARCH_SCOPE)
     document = json.loads(result.model_dump_json())
-    assert document["contract_version"] == "1.1"
+    assert document["contract_version"] == CONTRACT_VERSION
     assert [d["engine"] for d in document["designs"]] == ["dynamodb", "opensearch"]
     for change in (
         lambda d: d["designs"].pop(),
@@ -606,11 +611,14 @@ _ENTRY_SHAPES = {
 }
 
 
+@pytest.mark.passes_on_main
 @pytest.mark.parametrize("shape", sorted(_ENTRY_SHAPES))
 def test_the_entry_rule_applies_from_1_1_and_1_0_keeps_its_checks(shape: str) -> None:
+    from src.assessment.models import CONTRACT_VERSION
+
     result, _ = designed()
     document = json.loads(result.model_dump_json())
-    assert document["contract_version"] == "1.1"
+    assert document["contract_version"] == CONTRACT_VERSION
     assert len(document["designs"]) == 3
     document["designs"] = _ENTRY_SHAPES[shape](document["designs"])
     with pytest.raises(ValidationError, match="one entry per designed engine"):
