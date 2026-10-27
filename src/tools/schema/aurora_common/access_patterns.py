@@ -333,6 +333,7 @@ def derive_access_patterns(
     tables: list[AgentTable],
     engine: str = "aurora_mysql",
     source_engine: str | None = None,
+    dropped_indexes: frozenset[tuple[str, str]] = frozenset(),
 ) -> DerivedPatterns:
     """Project observed queries onto Aurora access patterns.
 
@@ -351,6 +352,9 @@ def derive_access_patterns(
 
     ``source_engine`` (the collector's source dialect) lets a query with no recorded
     ``filter_columns`` take its predicate from its own text (:func:`_read_predicate`).
+
+    ``dropped_indexes`` holds the ``(table, index)`` source indexes the target draft
+    does not create: a pattern one of them serves needs judgment (#1597).
     """
     tables_by_name = {_norm(t.table_name): t for t in tables}
     result = DerivedPatterns()
@@ -399,6 +403,17 @@ def derive_access_patterns(
         index_used, needs_judgment, reason = _resolve_index(
             candidates, has_predicate=has_predicate, predicate_known=predicate_known
         )
+        dropped = [
+            f"{c.table_name}.{c.index_name}"
+            for c in candidates
+            if c.index_name == index_used and (c.table_name, c.index_name) in dropped_indexes
+        ]
+        if dropped:
+            needs_judgment = True
+            reason = (
+                f"The draft does not create {dropped[0]}, the source index that serves this "
+                "query; confirm which index should serve this pattern."
+            )
         if not reads_rows:
             reason = (
                 "No filter predicate: the statement reads no table rows, so no index serves it."

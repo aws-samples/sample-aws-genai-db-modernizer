@@ -56,6 +56,7 @@ from src.tools.schema.aurora_common.ddl_generator import (
     generate_pg_ddl,
     render_index,
     rendered_method,
+    secondary_indexes,
 )
 from src.tools.schema.aurora_common.source_family import migration_strategy
 from src.tools.schema.aurora_common.sql_safety import (
@@ -343,6 +344,7 @@ def _apply_index_changes(
     delta: AuroraDesignDeltaContract,
     by_key: dict[str, AgentTable],
     table_ddls: dict[str, TableDDL],
+    draft_indexes: dict[str, list[str]],
     errors: list[str],
 ) -> dict[str, int]:
     counts = {"added": 0, "modified": 0, "removed": 0}
@@ -353,7 +355,7 @@ def _apply_index_changes(
         ddl = table_ddls[table.table_name]
         # name -> statement, in draft order (names come from the source, not the model)
         current: dict[str, str] = dict(
-            zip(draft_index_names(table, base.dialect), ddl.index_sql, strict=True)
+            zip(draft_indexes[table.table_name], ddl.index_sql, strict=True)
         )
 
         for j, name in enumerate(change.remove_indexes):
@@ -400,6 +402,7 @@ def _apply_index_changes(
             counts["added"] += 1
 
         ddl.index_sql = list(current.values())
+        draft_indexes[table.table_name] = list(current)
     return counts
 
 
@@ -448,12 +451,13 @@ _FILTER_UNKNOWN = (
 )
 _NO_LEADING_INDEX = "no index leads with the filtered column(s)"
 _AMBIGUOUS_INDEX = "ambiguous index choice"
+_NOT_IN_DRAFT = "the draft does not create the source index that serves it"
 
 
 def _residual_category(reason: str) -> str:
     """A short, stable label for one access-pattern residual's reason.
 
-    Matches ``access_patterns._resolve_index``'s three residual shapes by
+    Matches ``access_patterns``' four residual shapes by
     their fixed opening clause, not the full sentence (which carries
     per-pattern detail -- table/index names -- that would defeat grouping).
     """
@@ -461,6 +465,8 @@ def _residual_category(reason: str) -> str:
         return _FILTER_UNKNOWN
     if reason.startswith("No index leads with any filtered column"):
         return _NO_LEADING_INDEX
+    if reason.startswith("The draft does not create"):
+        return _NOT_IN_DRAFT
     return _AMBIGUOUS_INDEX
 
 
@@ -558,7 +564,8 @@ def merge_design_delta(
     overrides, by_rule = _type_overrides(base, contract, by_key, draft.residuals, errors, warnings)
     ddl = base.generate(overrides)
     table_ddls = {t.table_name: t for t in ddl.tables}
-    index_counts = _apply_index_changes(base, contract, by_key, table_ddls, errors)
+    draft_indexes = {t.table_name: draft_index_names(t, base.dialect) for t in base.tables}
+    index_counts = _apply_index_changes(base, contract, by_key, table_ddls, draft_indexes, errors)
 
     for note in ddl.index_notes:
         warnings.append(f"index {note['table']}.{note['index']}: {note['reason']}")
@@ -606,12 +613,22 @@ def merge_design_delta(
     #
     # Derived from ``base.tables``, which is the source index set the observed
     # queries actually ran against, so ``index_used`` describes the measured
-    # baseline. Index add/modify entries in the delta are deliberately not
+    # baseline; a pattern whose index the draft does not create (not carried
+    # onto this engine, or removed by the delta) needs judgment (#1597).
+    # Index add/modify entries in the delta are deliberately not
     # reflected: re-deriving against the post-merge index set would describe the
     # proposed design instead, which is a different (and also useful) question,
     # but it needs an _Index -> AgentTable adaptation that belongs in its own
     # change rather than riding along here.
-    derived = derive_access_patterns(base.queries, base.tables, base.engine, base.source_engine)
+    dropped = frozenset(
+        (t.table_name, i.index_name)
+        for t in base.tables
+        for i in secondary_indexes(t)
+        if i.index_name not in draft_indexes[t.table_name]
+    )
+    derived = derive_access_patterns(
+        base.queries, base.tables, base.engine, base.source_engine, dropped
+    )
     warnings.extend(_access_pattern_residual_warnings(derived.residuals))
     output = {
         "contract_version": _OUTPUT_CONTRACTS[base.engine].model_fields["contract_version"].default,

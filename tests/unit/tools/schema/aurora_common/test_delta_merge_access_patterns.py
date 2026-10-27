@@ -19,6 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.contracts.aurora_design_delta import AuroraDesignDeltaContract
+from src.contracts.collector_output import IndexType
 from src.contracts.schema_design_input import (
     AgentColumn,
     AgentIndex,
@@ -160,3 +161,51 @@ def test_an_empty_query_log_yields_no_patterns():
     assert merged.errors == []
     assert merged.output is not None
     assert merged.output["access_patterns"] == []
+
+
+@pytest.mark.parametrize("method", ["gin", "gist", "spgist"])
+def test_a_pattern_on_an_index_the_aurora_mysql_draft_does_not_create_needs_judgment(method):
+    """``index_used`` keeps naming the measured source index (#1597). The Aurora MySQL
+    draft notes a GIN, GiST or SP-GiST index instead of creating it, so the pattern needs
+    judgment there; the Aurora PostgreSQL draft keeps the index."""
+    table = _orders()
+    table.indexes[0].index_type = IndexType(method)
+
+    mysql, postgres = (
+        merge_design_delta(
+            AuroraDesignBase(
+                engine=engine,
+                job_id="j",
+                source_database="shop",
+                source_engine="postgresql",
+                tables=[table],
+                queries=[_query("q", ["status"])],
+            ),
+            _EMPTY_DELTA,
+        ).output["access_patterns"][0]
+        for engine in ("aurora_mysql", "aurora_postgresql")
+    )
+    assert mysql["index_used"] == "idx_orders_status"
+    assert mysql["needs_judgment"] is True
+    assert mysql["judgment_reason"].startswith("The draft does not create orders.idx_orders_status")
+    assert postgres["index_used"] == "idx_orders_status"
+    assert postgres["needs_judgment"] is False
+
+
+def test_a_pattern_on_an_index_the_delta_removes_needs_judgment():
+    delta = {
+        "delta_version": "1.0",
+        "tables": [{"table_name": "orders", "remove_indexes": ["idx_orders_status"]}],
+    }
+
+    merged = merge_design_delta(_base([_query("q", ["status"])]), delta)
+
+    [pattern] = merged.output["access_patterns"]
+    assert pattern["index_used"] == "idx_orders_status"
+    assert pattern["judgment_reason"].startswith(
+        "The draft does not create orders.idx_orders_status"
+    )
+    assert (
+        "1 access pattern: the draft does not create the source index that serves it"
+        in merged.warnings
+    )
