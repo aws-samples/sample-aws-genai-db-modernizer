@@ -26,6 +26,13 @@ still cut into chunks of that size, filling the chunk before it and leaving its 
 part open for the next pattern. Keeping patterns whole never takes more chunks or
 halved parts than the plain cut would: when it would, the plain cut is kept.
 
+DynamoDB (``pattern_input.PATTERN_ENGINES``, #1602) is split per query pattern instead:
+each pattern is one unit, so the sizes above count patterns (a part holds at most
+``MAX_GROUP_SIZE`` of them, however many statements they have) and a part's input lists
+one entry per pattern. Clustering, table ownership, context tables and naming still read
+every member statement. A single pattern too large for one part's input is cut between
+its members (:func:`fit_units_to_budget`).
+
 Works with ArtifactStore for both local and S3 backends.
 """
 
@@ -42,6 +49,13 @@ from src.agents.schema_design.group_input import (
     read_pages,
     render_group_input,
 )
+from src.agents.schema_design.pattern_input import (
+    PATTERN_ENGINES,
+    expand,
+    members,
+    pattern_units,
+    split_unit,
+)
 from src.contracts.schema_design_input import (
     ExcludedQuery,
     SchemaDesignGroupEntry,
@@ -57,7 +71,8 @@ NO_SOURCE_TABLE_REASON = "not designed: no source table"
 
 # Groups with fewer queries than this get batched together
 SMALL_GROUP_THRESHOLD = 5
-# Maximum queries per group — larger groups get sub-split by primary table
+# Maximum queries per group — larger groups get sub-split by primary table. For the
+# engines split per query pattern (DynamoDB, #1602) it counts patterns, not statements.
 MAX_GROUP_SIZE = 20
 # Maximum size of one group's input file: three Read pages (see
 # group_input.READ_PAGE_CHARS), both in characters and in the whole-line pages
@@ -264,7 +279,8 @@ def build_groups(
             collector_output or {},
             analysis_output,
             db_name,
-            queries=queries,
+            # Every statement, a query pattern unit's members too (#1602).
+            queries=expand(queries),
             co_dependency_groups=co_dependency_groups,
             resolver=resolver,
         )
@@ -386,7 +402,7 @@ def assign_table_owners(
     for group in groups:
         primary: Counter[str] = Counter()
         touched: Counter[str] = Counter()
-        for q in group["queries"]:
+        for q in expand(group["queries"]):
             primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
             for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
                 touched[t] += 1
@@ -434,7 +450,7 @@ def name_groups(
     for group in groups:
         primary: Counter[str] = Counter()
         touched: Counter[str] = Counter()
-        for q in group["queries"]:
+        for q in expand(group["queries"]):
             primary[_canon(get_primary_table(q, db_name), db_name, resolver)] += 1
             for t in {_canon(t, db_name, resolver) for t in q.get("tables_accessed") or []}:
                 touched[t] += 1
@@ -667,6 +683,54 @@ def _halve_to_fit(
     )
 
 
+def fit_units_to_budget(
+    groups: list[dict],
+    measure: Callable[[dict], int],
+    max_chars: int = MAX_GROUP_INPUT_CHARS,
+) -> list[dict]:
+    """:func:`fit_groups_to_budget` for groups of query pattern units (#1602).
+
+    A group whose input is over ``max_chars`` is halved between units until every part
+    fits. A part that is one unit and still over is cut between its members
+    (``pattern_input.split_unit``: the first half of its members, then the rest), so
+    even one pattern too large for a part's input is designed in deterministic parts;
+    a one-statement unit is kept whatever its size. Parts are named as
+    :func:`fit_groups_to_budget` names them."""
+    fitted: list[dict] = []
+    for group in groups:
+        longest_base = max(
+            [group["group_name"], *(_short_name(t) for t in group["primary_tables"])], key=len
+        )
+        longest_name = f"{longest_base}_part{len(expand(group['queries']))}"
+
+        def measure_part(units: list[dict], base: dict = group, name: str = longest_name) -> int:
+            return measure({**base, "group_name": name, "queries": units})
+
+        parts = _halve_units_to_fit(group["queries"], measure_part, max_chars)
+        if len(parts) == 1:
+            fitted.append(group)
+            continue
+        for n, part in enumerate(parts, start=1):
+            fitted.append({**group, "group_name": f"{group['group_name']}_s{n}", "queries": part})
+    return fitted
+
+
+def _halve_units_to_fit(
+    units: list[dict], measure: Callable[[list[dict]], int], max_chars: int
+) -> list[list[dict]]:
+    if measure(units) <= max_chars:
+        return [units]
+    if len(units) == 1:
+        halves = split_unit(units[0])
+        if len(halves) == 1:
+            return [units]
+        return [part for half in halves for part in _halve_units_to_fit([half], measure, max_chars)]
+    mid = (len(units) + 1) // 2
+    return _halve_units_to_fit(units[:mid], measure, max_chars) + _halve_units_to_fit(
+        units[mid:], measure, max_chars
+    )
+
+
 def _group_input(
     job_id: str,
     database_name: str,
@@ -683,7 +747,9 @@ def _group_input(
     # The group subagent reads this file: it says its content is data, not
     # instructions (#1317). The Bedrock group designer reads only its
     # collector_output and analysis_output, and frames them in its prompt
-    # (with its context tables, #1243).
+    # (with its context tables, #1243). A group of query pattern units (#1602) lists
+    # one entry per pattern, and every member everywhere else.
+    by_pattern = engine in PATTERN_ENGINES
     return with_untrusted_notice(
         build_group_input(
             job_id=job_id,
@@ -692,7 +758,8 @@ def _group_input(
             group_index=idx,
             group_name=group["group_name"],
             primary_tables=group["primary_tables"],
-            group_queries=group["queries"],
+            group_queries=expand(group["queries"]) if by_pattern else group["queries"],
+            pattern_units=[members(u) for u in group["queries"]] if by_pattern else None,
             group_tables=group_tables,
             collector_output=collector_output,
             analysis_output=analysis_output,
@@ -759,8 +826,15 @@ def split_schema_input(
         for q in queries
         if has_no_source_table(q) and q.get("query_id") is not None
     ]
+    # #1602: the engine's parts are built from query patterns, one unit each, capped at
+    # MAX_GROUP_SIZE patterns; ownership and context still count every statement.
+    by_pattern = engine in PATTERN_ENGINES
     groups = build_groups(
-        design_queries,
+        (
+            pattern_units(design_queries, source_engine_of(collector_output))
+            if by_pattern
+            else design_queries
+        ),
         database_name,
         collector_output,
         analysis_output,
@@ -769,7 +843,7 @@ def split_schema_input(
     base_key = f"{database_name}/{job_id}/schema-{engine}/v{schema_version}"
 
     def measure(group: dict) -> int:
-        tables = tables_for_queries(group["queries"], all_tables, resolver)
+        tables = tables_for_queries(expand(group["queries"]), all_tables, resolver)
         data = _group_input(
             job_id,
             database_name,
@@ -796,17 +870,19 @@ def split_schema_input(
 
     manifest_groups: list[SchemaDesignGroupEntry] = []
 
-    pattern_of = query_pattern_index(design_queries, collector_output)
+    if by_pattern:
+        sized = fit_units_to_budget(groups, measure)
+    else:
+        pattern_of = query_pattern_index(design_queries, collector_output)
+        sized = fit_groups_to_budget(groups, measure, pattern_of=pattern_of)
     # Halved parts copy their group's tables: give each table one owner again (#1243).
     fitted = name_groups(
-        assign_table_owners(
-            fit_groups_to_budget(groups, measure, pattern_of=pattern_of), database_name, resolver
-        ),
+        assign_table_owners(sized, database_name, resolver),
         database_name,
         resolver,
     )
     for idx, group in enumerate(fitted):
-        group_queries = group["queries"]
+        group_queries = expand(group["queries"]) if by_pattern else group["queries"]
         group_tables = tables_for_queries(group_queries, all_tables, resolver)
         text = render_group_input(
             _group_input(
@@ -832,6 +908,7 @@ def split_schema_input(
                 primary_tables=group["primary_tables"],
                 context_tables=group["context_tables"],
                 query_count=len(group_queries),
+                pattern_count=len(group["queries"]) if by_pattern else None,
                 table_count=len(group_tables),
                 input_file=input_file,
                 input_pages=read_pages(text),

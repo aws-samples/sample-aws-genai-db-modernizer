@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import importlib.util
 
+import pytest
+
 from src.agents.referee import capability_registry
 from src.contracts import analysis_input, analysis_output
 from src.shared.engine_names import ENGINE_DISPLAY_NAMES
@@ -52,6 +54,7 @@ def _callers(name: str) -> set[str]:
     return found
 
 
+@pytest.mark.passes_on_main  # the one grouping; #1602's caller goes through it
 def test_group_by_query_pattern_is_the_only_statement_grouping() -> None:
     """#1146: one grouping of queries into query patterns. Only
     ``src.tools.sql.query_pattern_groups`` reads a whole statement's signature; every
@@ -66,4 +69,6 @@ def test_group_by_query_pattern_is_the_only_statement_grouping() -> None:
         "src/tools/sql/query_pattern_groups.py",
         "src/agents/referee/synthesis_handler.py",
         "src/agents/schema_design/group_splitter.py",
+        # #1602: a design part's units and their listing, through the one grouping.
+        "src/agents/schema_design/pattern_input.py",
     }

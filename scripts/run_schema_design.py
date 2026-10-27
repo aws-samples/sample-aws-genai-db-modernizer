@@ -276,6 +276,8 @@ def run_split(store, job_id: str, db: str, engine: str, assignment_version: int)
             "groups": _public(_group_entries(store, base_key, manifest)),
             # The "of {total}" in a part's query range: the queries in the groups.
             "query_total": sum(g.get("query_count") or 0 for g in manifest.get("groups", [])),
+            # The access patterns the parts design, one input entry each (#1602).
+            "pattern_total": sum(g.get("pattern_count") or 0 for g in manifest.get("groups", [])),
             # Queries with no source table (#276/#369): left out of every
             # group, so their count would otherwise be invisible here.
             "excluded_count": len(excluded_queries),
@@ -359,6 +361,8 @@ def _group_entries(store, base_key: str, manifest: dict) -> list[dict]:
                 # Tables another group owns (#1243): designed there, never redesigned here.
                 "context_tables": group.get("context_tables", []),
                 "query_count": group.get("query_count"),
+                # The query patterns among them, one input entry each (#1602).
+                "pattern_count": group.get("pattern_count"),
                 "query_first": first,
                 "query_last": last,
                 "input_file": _local_path(store, f"{base_key}/input_group_{idx}.json"),

@@ -210,6 +210,14 @@ class AgentQueryPattern(BaseModel):
     warnings: int | None = Field(None, ge=0)
     first_seen: datetime | None = None
     last_seen: datetime | None = None
+    query_pattern_id: str | None = Field(
+        None,
+        description=(
+            "Set when this entry stands for a whole query pattern (#1602): the "
+            "query_pattern_groups entry listing its member query ids. Its traffic "
+            "fields are the members' totals"
+        ),
+    )
 
 
 class AgentQueryPatternGroup(BaseModel):
@@ -448,6 +456,14 @@ class SchemaDesignGroupEntry(BaseModel):
         ),
     )
     query_count: int = Field(..., ge=0)
+    pattern_count: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The query patterns among query_count, one input entry each (#1602); none in "
+            "a manifest written before, or for an engine designed per statement"
+        ),
+    )
     table_count: int = Field(..., ge=0)
     input_file: str = Field(..., description="Filename relative to the schema version dir")
     input_pages: list[dict[str, int]] = Field(
@@ -520,13 +536,22 @@ class SchemaDesignGroupsManifest(BaseModel):
 
 
 def _writes_in_scope(
-    analysis_output: AnalysisOutputContract, collector_output: CollectorOutputContract
+    analysis_output: AnalysisOutputContract, ids: set[str]
 ) -> list[KeyScopedWrite]:
     """The key-scoped writes of this design call's queries (``KeyScopedWrite.in_scope``):
-    the collector given here is already filtered to the call's engine or group."""
-    ids = {q.query_id for q in collector_output.queries.query_patterns}
+    ``ids`` are the statements of the collector given here, already filtered to the
+    call's engine or group (with each query pattern's members, #1602)."""
     scoped = (w.in_scope(ids) for w in analysis_output.key_scoped_writes or [])
     return [w for w in scoped if w is not None]
+
+
+def _group_of_entries(group: dict, entries: set[str]) -> bool:
+    """``group`` (a ``query_pattern_groups`` entry) belongs to an input whose entries are
+    ``entries``: every member is an entry, or exactly one is (#1602, the entry stands for
+    the pattern)."""
+    ids = [str(i) for i in group.get("query_ids") or []]
+    shown = sum(1 for i in ids if i in entries)
+    return bool(ids) and (shown == len(ids) or shown == 1)
 
 
 def project_schema_design_input(
@@ -657,11 +682,21 @@ def project_schema_design_input(
         )
 
     projected_ids = {q.query_id for q in query_patterns}
+    # A group of the projected queries: all its members are entries, or (#1602) one is,
+    # standing for the whole pattern, and the others are not entries at all.
     groups = [
         AgentQueryPatternGroup.model_validate(g)
         for g in query_pattern_groups or []
-        if isinstance(g, dict) and set(g.get("query_ids") or []) <= projected_ids
+        if isinstance(g, dict) and _group_of_entries(g, projected_ids)
     ]
+    for g in groups:
+        shown = [i for i in g.query_ids if i in projected_ids]
+        if len(shown) == 1 and len(g.query_ids) > 1:
+            for entry in query_patterns:
+                if entry.query_id == shown[0]:
+                    entry.query_pattern_id = g.pattern_id
+    # Every statement the input covers: the entries and their patterns' members.
+    design_ids = projected_ids | {i for g in groups for i in g.query_ids}
     queries = collector_output.queries
     agent_collector = AgentCollectorInput(
         contract_version=collector_output.contract_version,
@@ -750,7 +785,7 @@ def project_schema_design_input(
                     for a in w.anchors
                 ],
             )
-            for w in _writes_in_scope(analysis_output, collector_output)
+            for w in _writes_in_scope(analysis_output, design_ids)
         ]
         or None,
         key_scoped_counts=[
@@ -765,7 +800,7 @@ def project_schema_design_input(
                 schema_note=c.schema_note,
             )
             for c in analysis_output.key_scoped_counts or []
-            if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
+            if c.query_id in design_ids
         ]
         or None,
         redesign_requirements=[
@@ -782,7 +817,7 @@ def project_schema_design_input(
                 evidence=r.evidence,
             )
             for r in analysis_output.redesign_requirements or []
-            if r.query_id in {q.query_id for q in collector_output.queries.query_patterns}
+            if r.query_id in design_ids
         ]
         or None,
         carried_writes=[
@@ -797,7 +832,7 @@ def project_schema_design_input(
                 approach=c.approach,
             )
             for c in analysis_output.carried_writes or []
-            if c.query_id in {q.query_id for q in collector_output.queries.query_patterns}
+            if c.query_id in design_ids
         ]
         or None,
         effective_architecture=(

@@ -15,6 +15,11 @@ contract shape but holds only what the group's design uses (issue #272):
 - ``queries.query_pattern_groups``: the query patterns more than one of the
   group's queries makes, each once with its member query ids, combined frequency
   and the union of the columns they return (#1146);
+- for DynamoDB (#1602), one ``query_patterns`` entry per query pattern: a representative
+  statement with the pattern's summed traffic and a ``query_pattern_id`` naming its
+  ``query_pattern_groups`` entry, which lists every member; everything else below still
+  reads every member statement, and ``design_metrics`` gives the pattern one row with
+  its ``member_query_ids``;
 - the tables those queries touch, with the projected table, column, index and
   foreign-key fields (plus the native ``data_type``), the triggers on those
   tables (the skill writes ``migration_notes`` for them), and no procedures,
@@ -48,12 +53,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel
 
 from src.agents.referee.table_resolution import TableNameResolver
 from src.agents.schema_design.group_trace import scope_decision_trace
+from src.agents.schema_design.pattern_input import listed_members, pattern_entry, pattern_listing
 from src.contracts.analysis_output import (
     AggregateRecommendation,
     AntiPattern,
@@ -78,7 +85,7 @@ from src.contracts.schema_design_input import (
 from src.tools.schema.design_metrics import METRIC_ENGINES, build_design_metrics
 from src.tools.sql.query_facts import source_engine_of
 from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
-from src.tools.sql.query_pattern_groups import repeated_query_patterns
+from src.tools.sql.query_pattern_groups import PATTERN_ID_PREFIX, repeated_query_patterns
 
 # Read returns at most 2000 lines per call and cuts lines longer than 2000
 # characters, so records are inlined only up to this width.
@@ -306,12 +313,21 @@ def build_group_input(
     total_queries: int,
     decision_trace: dict | None = None,
     context_owners: dict[str, int] | None = None,
+    pattern_units: Sequence[Sequence[dict]] | None = None,
 ) -> dict:
     """The compact input for one group (see the module docstring).
 
     ``context_owners``: each table the group's queries touch that another group owns
     (#1243), with that group's index. Listed as ``group_context_tables``: the owner
-    designs the table, this group never gives it a key schema of its own."""
+    designs the table, this group never gives it a key schema of its own.
+
+    ``pattern_units`` (#1602): the group's statements as query patterns, each a list of
+    member statements (``group_queries`` is every member). ``queries.query_patterns``
+    then lists one entry per pattern (``pattern_input.pattern_entry``: a representative
+    statement with the pattern's summed traffic) and ``queries.query_pattern_groups``
+    every pattern of more than one member, with all their query ids;
+    ``design_metrics`` gives each pattern one row with its ``member_query_ids``.
+    Everything keyed by query id still reads every member. None lists every statement."""
     table_ids = {t["table_id"] for t in group_tables if t.get("table_id")}
     table_keys = table_ids | {t["table_name"] for t in group_tables if t.get("table_name")}
     query_ids = {q.get("query_id", "") for q in group_queries}
@@ -334,7 +350,14 @@ def build_group_input(
         group_schema["triggers"] = triggers
     group_queries_section: dict[str, Any] = {
         **queries_header,
-        "query_patterns": [_slim_query(q) for q in group_queries],
+        "query_patterns": (
+            [_slim_query(q) for q in group_queries]
+            if pattern_units is None
+            else [
+                _slim_query(pattern_entry(unit, f"{PATTERN_ID_PREFIX}{n}"))
+                for n, unit in enumerate(pattern_units, start=1)
+            ]
+        ),
         "_filtered": True,
         "_filter_engine": engine,
         "_group_index": group_index,
@@ -342,8 +365,13 @@ def build_group_input(
         "_original_count": total_queries,
         "_filtered_count": len(group_queries),
     }
-    # #1146: the query patterns several of the group's queries make, each listed once.
-    repeated = repeated_query_patterns(group_queries, source_engine_of(collector_output))
+    # #1146: the query patterns several of the group's queries make, each listed once
+    # (#1602: with every member's query id, when the entries are one per pattern).
+    repeated = (
+        repeated_query_patterns(group_queries, source_engine_of(collector_output))
+        if pattern_units is None
+        else pattern_listing(pattern_units, source_engine_of(collector_output))
+    )
     if repeated:
         group_queries_section[QUERY_PATTERNS_KEY] = repeated
     group_collector = {
@@ -436,8 +464,12 @@ def build_group_input(
         "analysis_output": group_analysis,
     }
     if engine in METRIC_ENGINES:
+        # One row per entry: a pattern's row has its summed rate and its members (#1602).
         group_input["design_metrics"] = build_design_metrics(
-            engine, group_tables, group_queries
+            engine,
+            group_tables,
+            group_queries if pattern_units is None else group_queries_section["query_patterns"],
+            members=None if pattern_units is None else listed_members(group_collector),
         ).model_dump(mode="json")
     if decision_trace is not None:
         group_input["decision_trace"] = scope_decision_trace(decision_trace, group_collector)

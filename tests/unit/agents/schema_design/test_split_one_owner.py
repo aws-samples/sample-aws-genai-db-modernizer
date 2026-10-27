@@ -210,24 +210,35 @@ def test_no_sample_table_is_primary_in_two_groups(sample_split) -> None:
         assert counts["wordpress.wp_posts"] == counts["wordpress.wp_users"] == 1
 
 
+def _statements(data: dict) -> list[str]:
+    """Every statement a group input covers: an entry, or every member of the query
+    pattern an entry stands for (#1602)."""
+    queries = data["collector_output"]["queries"]
+    members = {
+        i: g["query_ids"] for g in queries.get("query_pattern_groups") or [] for i in g["query_ids"]
+    }
+    entries = [q["query_id"] for q in queries["query_patterns"]]
+    return [m for qid in entries for m in members.get(qid, [qid])]
+
+
 @pytest.mark.passes_on_main  # the regrouping must keep it
 def test_every_sample_query_is_in_exactly_one_group(sample_split) -> None:
     sample, manifest, inputs, assigned = sample_split
-    placed = Counter(
-        q["query_id"]
-        for data in inputs.values()
-        for q in data["collector_output"]["queries"]["query_patterns"]
-    )
+    placed = Counter(qid for data in inputs.values() for qid in _statements(data))
     assert all(n == 1 for n in placed.values()), sample
     excluded = {q["query_id"] for q in manifest.get("excluded_queries") or []}
     assert set(placed) | excluded == assigned, sample
     assert not set(placed) & excluded
 
 
-@pytest.mark.passes_on_main  # the regrouping must keep it
 def test_every_sample_group_holds_at_most_the_cap(sample_split) -> None:
-    sample, manifest, _, _ = sample_split
-    assert max(g["query_count"] for g in manifest["groups"]) <= MAX_GROUP_SIZE, sample
+    """#1602: the cap counts query patterns, one input entry each."""
+    sample, manifest, inputs, _ = sample_split
+    assert max(g["pattern_count"] for g in manifest["groups"]) <= MAX_GROUP_SIZE, sample
+    for g in manifest["groups"]:
+        entries = inputs[g["group_index"]]["collector_output"]["queries"]["query_patterns"]
+        assert len(entries) == g["pattern_count"], (sample, g["group_index"])
+        assert len(_statements(inputs[g["group_index"]])) == g["query_count"], sample
 
 
 def test_a_sample_table_read_in_another_group_is_marked_context(sample_split) -> None:
@@ -366,16 +377,18 @@ class _Stop(Exception):
     pass
 
 
+@pytest.mark.passes_on_main  # main hands them too; #1602 must keep it
 def test_the_bedrock_group_design_hands_the_designer_its_context_tables(tmp_path_factory) -> None:
-    """On trailgear, the group that reads ``Shipment`` from its owner gets its context
-    tables file; a group with none gets no such file."""
+    """On discourse, a group that reads a table another group owns gets its context
+    tables file; a group with none gets no such file. (Since #1602 trailgear's parts read
+    no table another part owns.)"""
     import shutil
     from unittest.mock import patch
 
     from src.agents.referee.assignment_overrides import mark_assignment_customer_approved
     from src.agents.schema_design.handler import run_schema_design_auto
 
-    sample, job_id = "trailgear", "job-split-trailgear"
+    sample, job_id = "discourse", "job-split-discourse"
     cached = cached_run(
         tmp_path_factory,
         f"pipeline-{sample}-{job_id}",

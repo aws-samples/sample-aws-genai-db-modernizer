@@ -519,7 +519,10 @@ def _rule_drafts(inputs: dict[int, dict], manifest: dict, collections: bool) -> 
 
 
 @pytest.mark.parametrize("collections", [False, True], ids=["single-owners", "collection-owners"])
-@pytest.mark.parametrize("sample", ["trailgear", "discourse"])
+@pytest.mark.passes_on_main  # main merges these drafts too; #1602 must keep it
+# Discourse only: since #1602 trailgear's and wordpress's DynamoDB parts read no table
+# another part owns, so they have no context table to merge.
+@pytest.mark.parametrize("sample", ["discourse"])
 def test_drafts_written_to_the_rule_merge_onto_their_owners(
     sample: str, collections: bool, tmp_path_factory
 ) -> None:

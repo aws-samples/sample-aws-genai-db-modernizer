@@ -36,6 +36,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.agents.prompt_framing import with_untrusted_notice
 from src.agents.schema_design.design_trace import DesignTraceShapeError, write_design_trace
+from src.agents.schema_design.pattern_input import input_query_ids
 from src.contracts.model_flag import parse_model_flags
 from src.storage.artifact_store import ArtifactStore
 
@@ -153,6 +154,12 @@ def _group_queries(group_input: dict) -> list[dict]:
     return list((collector.get("queries") or {}).get("query_patterns") or [])
 
 
+def _group_query_ids(group_input: dict) -> list[str]:
+    """Every statement the group's design serves: an entry that stands for a query
+    pattern names all its members (#1602)."""
+    return sorted(input_query_ids(group_input.get("collector_output") or {}))
+
+
 def _design_targets(
     store: ArtifactStore, db: str, job_id: str, version: int, engine: str
 ) -> tuple[list[dict], str | None]:
@@ -180,7 +187,7 @@ def _design_targets(
                     "group": idx,
                     "design_key": f"{base}/schema_draft_group_{idx}.json",
                     "design": draft,
-                    "query_ids": sorted(q["query_id"] for q in queries if q.get("query_id")),
+                    "query_ids": _group_query_ids(group_input),
                     "table_count": len(
                         (group_input.get("collector_output") or {}).get("tables") or []
                     )

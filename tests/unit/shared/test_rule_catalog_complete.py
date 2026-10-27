@@ -220,6 +220,10 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/agents/schema_design/group_merger.py": (frozenset({"ENGINE_LIST_FIELDS"}), _PLUMBING),
     "src/agents/schema_design/handler.py": (frozenset({"_NON_GROUPED_ENGINES"}), _PLUMBING),
+    "src/agents/schema_design/pattern_input.py": (
+        frozenset({"PATTERN_ENGINES"}),
+        _PLUMBING + ": the engines whose design groups are built per query pattern (#1602)",
+    ),
     "src/agents/schema_design/scope.py": (
         frozenset({"_ENGINE_FIELDS", "_WARNING_FIELDS"}),
         _PLUMBING,

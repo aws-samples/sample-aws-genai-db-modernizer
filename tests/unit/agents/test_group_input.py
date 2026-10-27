@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.agents.schema_design.group_input import (
     LINE_WIDTH,
     QUERY_TEXT_LINE,
@@ -330,16 +332,18 @@ def test_fit_groups_to_budget_halves_oversized_groups() -> None:
     assert fit_groups_to_budget([one], measure, max_chars=10) == [one]
 
 
+@pytest.mark.passes_on_main  # main's budget halving; per-pattern parts must keep it
 def test_split_writes_bounded_inputs_with_read_pages(tmp_path) -> None:
     collector = get_ecommerce_collector_output()
-    # Inflate the workload: many wide queries on one table.
+    # Inflate the workload: many wide queries on one table, each its own access
+    # pattern (a filter column of its own), so none is folded into another (#1602).
     base = collector["queries"]["query_patterns"][0]
     collector["queries"]["query_patterns"] = [
         {
             **base,
             "query_id": f"q{i}",
             "tables_accessed": [PRODUCTS],
-            "query_text": f"SELECT /* {i} */ " + "x, " * 1500 + "y FROM products",
+            "query_text": f"SELECT /* {i} */ " + "x, " * 1500 + f"y FROM products WHERE c{i} = 1",
         }
         for i in range(20)
     ]
@@ -364,6 +368,7 @@ def test_split_writes_bounded_inputs_with_read_pages(tmp_path) -> None:
         assert 1 <= len(g.input_pages) <= MAX_GROUP_INPUT_PAGES
 
 
+@pytest.mark.passes_on_main  # main resolves it; per-pattern parts must keep it
 def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> None:
     """#367 review finding 1: ``filter_collector_for_assignment`` resolves the
     #116 qualifier mismatch, but ``tables_for_queries`` in group_splitter.py
@@ -383,7 +388,8 @@ def test_split_resolves_qualifier_mismatch_above_max_group_size(tmp_path) -> Non
     queries = [
         {
             "query_id": f"q-prod-{i}",
-            "query_text": "SELECT product_id FROM products WHERE product_id = ?",
+            # Each its own access pattern (#1602), so 25 of them still sub-split.
+            "query_text": f"SELECT product_id FROM products WHERE product_id = ? AND c{i} = ?",
             "query_type": "SELECT",
             "frequency_per_hour": 10.0,
             "calls_per_second": 1.0,

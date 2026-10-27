@@ -29,6 +29,7 @@ from src.agents.schema_design.dynamodb_merge import (
     rewrite_pattern_ids,
 )
 from src.agents.schema_design.output_contract import write_schema_output
+from src.agents.schema_design.pattern_input import PATTERN_ENGINES, complete_pattern_members
 from src.agents.schema_design.scope import normalize_table_name
 from src.contracts.schema_design_input import ExcludedQuery
 from src.contracts.skipped_placeholders import SkippedSchemaOutput
@@ -36,6 +37,7 @@ from src.shared.contract_versioning import ContractVersionError
 from src.shared.progress import say
 from src.storage.artifact_store import ArtifactStore
 from src.storage.collector_for_models import read_collector_for_models
+from src.tools.sql.query_pattern_groups import INPUT_KEY as QUERY_PATTERNS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +305,24 @@ def _consolidate_design_traces(
         write_design_trace(store, f"{base_key}/design_trace.json", combined)
 
 
+def _input_patterns(store: ArtifactStore, base_key: str, manifest: dict) -> list[list[str]]:
+    """The member query ids of every query pattern the groups' inputs list
+    (``queries.query_pattern_groups``, #1146/#1602), in group order. An input that
+    cannot be read lists none."""
+    patterns: list[list[str]] = []
+    for group in manifest.get("groups") or []:
+        try:
+            data = store.read_json(f"{base_key}/input_group_{group['group_index']}.json")
+        except Exception:  # an unreadable input only skips its completion
+            logger.debug("No input for group %s", group.get("group_index"))
+            continue
+        queries = ((data or {}).get("collector_output") or {}).get("queries") or {}
+        for entry in queries.get(QUERY_PATTERNS_KEY) or []:
+            if isinstance(entry, dict) and entry.get("query_ids"):
+                patterns.append([str(q) for q in entry["query_ids"]])
+    return patterns
+
+
 def merge_schema_groups(
     job_id: str,
     database_name: str,
@@ -414,6 +434,13 @@ def merge_schema_groups(
         column_types=column_types,
         owners=table_owners(manifest) if engine == "dynamodb" else None,
     )
+
+    if engine in PATTERN_ENGINES:
+        # Every member of a query pattern on the access pattern that serves it (#1602).
+        merged, member_notes = complete_pattern_members(
+            merged, _input_patterns(store, base_key, manifest)
+        )
+        notes.extend(member_notes)
 
     # Carry the manifest's excluded_queries (--split's "not designed: no source
     # table" list, #276/#369) into the final output, so a query that never

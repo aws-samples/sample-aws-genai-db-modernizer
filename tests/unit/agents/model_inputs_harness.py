@@ -63,6 +63,12 @@ NOT_RUN: dict[str, str] = {
     "src/tools/schema/elasticache_schema_agent.py::_invoke_pe_reviewer": _PE_REVIEW,
     "src/tools/schema/opensearch_schema_agent.py::_invoke_pe_reviewer": _PE_REVIEW,
     "src/tools/analysis/llm_advisor_base.py::_build_prompt": "abstract; each advisor's own runs",
+    "src/tools/schema/dynamodb_schema_agent.py::context_tables_prompt": (
+        "runs only for a design group that reads a table another group owns; since #1602 "
+        "the sample's DynamoDB parts read none. Its framing of the table names is checked "
+        "by test_split_one_owner.py::test_the_bedrock_designer_is_told_which_tables_are_"
+        "context_only"
+    ),
     "src/agents/analysis/aurora_pg_analysis_agent.py::prepare_aurora_pg_llm_input": (
         "no caller (test_the_unused_builders_have_no_caller); its AnalysisInput would come "
         "from read_collector_for_models"
