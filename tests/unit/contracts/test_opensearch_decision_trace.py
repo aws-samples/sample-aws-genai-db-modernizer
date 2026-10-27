@@ -32,6 +32,7 @@ from src.storage.local_store import LocalArtifactStore
 from src.tools.schema.base_schema_agent import AgentInputPaths
 from src.tools.schema.opensearch_schema_agent import _project_input
 from tests.fixtures.ecommerce_collector_output import get_ecommerce_collector_output
+from tests.fixtures.pii_collections import keep_literals
 
 DB, JOB = "mydb", "job-1"
 TRACE_KEY = f"{DB}/{JOB}/analysis-opensearch/decision-trace.json"
@@ -120,8 +121,14 @@ def test_the_builder_writes_the_current_contract_version(tmp_path: Path) -> None
     assert OpenSearchDecisionTrace.model_validate(written).model_dump(mode="json") == written
 
 
-def test_the_written_trace_is_the_pre_contract_trace_plus_the_version(tmp_path: Path) -> None:
+def test_the_written_trace_is_the_pre_contract_trace_plus_the_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Typing it changed nothing but the version field (same fixture as the legacy file)."""
+    # The legacy trace was captured from the fixture's text as collected: #1625 redacts
+    # that text when the collector output is read, which this test does not pin
+    # (tests/unit/tools/database/test_literal_redaction_ingest.py does).
+    keep_literals(monkeypatch)
     run_analysis(JOB, DB, "opensearch", _store(tmp_path), llm_mode="none")
     written = _raw_file(tmp_path, TRACE_KEY)
     assert written == {"contract_version": CURRENT, **_legacy()}

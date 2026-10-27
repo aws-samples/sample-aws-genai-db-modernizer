@@ -32,7 +32,9 @@ access-pattern step reads them (``tests/unit/tools/sql/test_query_tags.py`` scan
 for readers), and every model-facing step reads the collector output through
 :func:`src.storage.collector_for_models.read_collector_for_models`, which removes them
 with :func:`without_query_tags`. ``query_text`` itself is unchanged (#1180), so the
-representative row's leading comment still reaches prompts inside it.
+representative row's leading comment still reaches prompts inside it. Both are
+redacted (#1625): tags are read from the text with its literals redacted, and a tag
+is redacted as the comment it came from (:func:`src.tools.sql.redact.redact_comment`).
 
 Which sources produce tags depends on the text each collector reads: PostgreSQL keeps
 every leading comment and every sqlcommenter trailing comment; MySQL and MariaDB read

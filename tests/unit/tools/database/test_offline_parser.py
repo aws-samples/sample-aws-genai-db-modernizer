@@ -297,16 +297,18 @@ class TestMergeQueryVariants:
         assert patterns[0]["first_seen"] == "2026-01-15 00:00:00"
         assert patterns[0]["last_seen"] == "2026-06-01 00:00:00"
 
+    @pytest.mark.passes_on_main
     def test_keeps_representative_text_from_costliest_variant(self) -> None:
         from src.tools.database.offline_parser import _transform_queries
 
+        # Texts that differ in a bind name, not a literal: a literal is redacted (#1625).
         raw = [
-            self._variant(query_text="... CountryRegionCode = 'FR'", total_time_ms=50.0),
-            self._variant(query_text="... CountryRegionCode = 'US'", total_time_ms=900.0),
-            self._variant(query_text="... CountryRegionCode = 'DE'", total_time_ms=10.0),
+            self._variant(query_text="... CountryRegionCode = @fr", total_time_ms=50.0),
+            self._variant(query_text="... CountryRegionCode = @us", total_time_ms=900.0),
+            self._variant(query_text="... CountryRegionCode = @de", total_time_ms=10.0),
         ]
         patterns = _transform_queries(raw, "db", set())
-        assert patterns[0]["query_text"] == "... CountryRegionCode = 'US'"
+        assert patterns[0]["query_text"] == "... CountryRegionCode = @us"
 
     def test_pattern_order_is_deterministic_by_first_appearance(self) -> None:
         from src.tools.database.offline_parser import _transform_queries

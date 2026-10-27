@@ -55,15 +55,22 @@ _UPLOAD = (
     "stamped"
 )
 _UPLOADS = "1/1/uploads/collector-output.json"
+# The scripts' copy of a raw collection, with its literal values redacted (#1625).
+_REDACTED_UPLOAD = "dict(redact_raw_collection(input_data))"
+_SCRIPT_UPLOAD = (
+    "the scripts' copy of the user's upload, less any table rows and with its literal "
+    "values redacted (#387, #1625): a raw collection, which is not a contract and carries "
+    "no contract_version; the collector output written from it is stamped"
+)
 
 # (file, function, data expression, the path shapes written, " | "-joined) -> why
 # this contract-file write does not go through the model. Keyed on the path too, so
 # another raw write of the same name to another file is not covered. An entry that
 # no longer matches such a write fails ``test_no_stale_entries``.
 NOT_THROUGH_MODEL: dict[tuple[str, str, str, str], str] = {
-    ("scripts/run_assessment.py", "phase_collect", "input_data", _UPLOADS): _UPLOAD,
-    ("scripts/run_collect.py", "main", "input_data", _UPLOADS): _UPLOAD,
-    ("scripts/test_local_phased.py", "main", "input_data", _UPLOADS): _UPLOAD,
+    ("scripts/run_assessment.py", "phase_collect", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
+    ("scripts/run_collect.py", "main", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
+    ("scripts/test_local_phased.py", "main", _REDACTED_UPLOAD, _UPLOADS): _SCRIPT_UPLOAD,
     ("src/atx_orchestrator/core.py", "_discover_uploaded_input", "collection", _UPLOADS): (_UPLOAD),
     (
         "scripts/atx_subagent_test.py",

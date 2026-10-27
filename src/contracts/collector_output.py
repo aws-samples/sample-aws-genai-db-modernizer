@@ -39,6 +39,10 @@ Version History:
   ``index_def`` to ``Index``; ``columns`` may now be empty, for an index whose every key
   is an expression (PostgreSQL expression keys, MySQL 8 functional key parts, Oracle
   function-based keys).
+- 4.3 (2026-10-27, #1625): QueryPattern.query_text, query_tags and the view, procedure
+  and trigger definitions hold no literal value: each is redacted in the source dialect
+  when built, ingested or read (#1625). No field is added or removed; an older output
+  loads with its text redacted.
 """
 
 import re
@@ -458,7 +462,9 @@ class View(BaseModel):
     )
     view_name: str = Field(..., description="View name")
     schema_name: str | None = Field(None, description="Schema or database name")
-    definition: str = Field(..., description="View SQL definition")
+    definition: str = Field(
+        ..., description="View SQL definition, with string literals redacted (#1625)"
+    )
     is_updatable: bool | None = Field(
         None, description="Whether the view supports INSERT/UPDATE/DELETE operations"
     )
@@ -476,7 +482,11 @@ class Procedure(BaseModel):
     schema_name: str | None = Field(None, description="Schema or database name")
     procedure_type: ProcedureType = Field(..., description="Type of database routine")
     definition: str | None = Field(
-        None, description="Procedure/function SQL definition, as the source reports it"
+        None,
+        description=(
+            "Procedure/function SQL definition, as the source reports it with string "
+            "literals redacted (#1625)"
+        ),
     )
     language: str | None = Field(None, description="Language (e.g., SQL, PL/pgSQL, T-SQL)")
     return_type: str | None = Field(
@@ -509,7 +519,11 @@ class Trigger(BaseModel):
         None, description="Whether trigger fires per row or per statement"
     )
     definition: str | None = Field(
-        None, description="Trigger SQL definition, as the source reports it"
+        None,
+        description=(
+            "Trigger SQL definition, as the source reports it with string literals "
+            "redacted (#1625)"
+        ),
     )
     is_enabled: bool | None = Field(None, description="Whether the trigger is currently enabled")
     execution_stats: TriggerExecutionStats | None = Field(
@@ -544,8 +558,9 @@ class QueryPattern(BaseModel):
     query_text: str = Field(
         ...,
         description=(
-            "Query text as the source reports it: normalized (literals replaced) where the "
-            "source normalizes it"
+            "Query text as the source reports it, with its literal values replaced by "
+            "placeholders in the source dialect (src.tools.sql.redact, #1625): the "
+            "source's own where it normalizes the text, ?, :n or $n where it does not"
         ),
     )
     query_type: QueryType | None = Field(None, description="Primary operation type")
@@ -569,7 +584,8 @@ class QueryPattern(BaseModel):
             "comments removed); SQL Server and Oracle block comments only, leading or "
             "sqlcommenter trailing (their collectors replace newlines with spaces, so a -- "
             "comment runs into the statement); RDS Performance Insights what its statement "
-            "text keeps"
+            "text keeps. Quoted values (outside sqlcommenter key='value' pairs), e-mail "
+            "addresses and runs of nine or more digits are redacted (#1625)"
         ),
     )
     query_tags_dropped: int = Field(
@@ -821,7 +837,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="4.2",
+        default="4.3",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
@@ -837,3 +853,24 @@ class CollectorOutputContract(BaseModel):
     metrics: Metrics = Field(..., description="Performance and CloudWatch metrics")
 
     model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat()})
+
+    @model_validator(mode="after")
+    def _redact_literals(self) -> "CollectorOutputContract":
+        """No literal value is kept (#1625): every query text, tag and definition is
+        redacted in the source dialect however the contract was built (a live
+        collector, an offline collection, a stored or uploaded output).
+        Idempotent, so a redacted output loads unchanged."""
+        from src.tools.sql.redact import redact_comment, redact_definition, redact_literals
+
+        engine = self.metadata.source_database.engine.value
+        for pattern in self.queries.query_patterns:
+            pattern.query_text = redact_literals(pattern.query_text, engine)
+            if pattern.query_tags:
+                tags = [redact_comment(tag, engine) for tag in pattern.query_tags]
+                pattern.query_tags = list(dict.fromkeys(tags))
+        schema = self.database_schema
+        for items in (schema.views, schema.procedures, schema.triggers):
+            for item in items or []:
+                if item.definition:
+                    item.definition = redact_definition(item.definition, engine)
+        return self

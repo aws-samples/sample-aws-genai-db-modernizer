@@ -8559,7 +8559,7 @@
       }
     },
     "schema_hash": "f913373e81ba09c589e5f4ccce0d627315cc2b0e631e7bd5d730d283af4ff2f7",
-    "version": "4.2"
+    "version": "4.3"
   },
   "data_movement_plan.DataMovementPlan": {
     "fields": {

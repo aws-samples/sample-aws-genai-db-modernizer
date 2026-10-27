@@ -97,6 +97,10 @@ OTHER_SQL_MODULES: dict[str, str] = {
         "the one query_type rule: a statement's first verb after its leading comments (#1178)"
     ),
     "src/tools/database/ddl_parser.py": "DDL, not a workload query",
+    "src/tools/sql/redact.py": (
+        "the literal redaction of collected text (#1625): it rewrites values and decides "
+        "no query fact"
+    ),
     "src/tools/database/sql_cte.py": "the collectors' CTE-name reading for table references",
     "src/tools/schema/aurora_common/sql_safety.py": "the safety check on generated DDL",
     "src/agents/schema_design/dynamodb_key_reconcile.py": "key templates and column types",

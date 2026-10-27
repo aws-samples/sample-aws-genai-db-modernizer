@@ -212,6 +212,10 @@ def main() -> None:
         from src.shared.sample_rows import collector_output_without_sample_rows
 
         collector_data, sample_rows_dropped = collector_output_without_sample_rows(input_data)
+        # #1625: no literal value is kept in its query text, tags or definitions.
+        from src.tools.sql.redact import redact_collector_output
+
+        collector_data = dict(redact_collector_output(collector_data))
     else:
         # Raw collection script output — parse with offline parser
         # Keep a copy of the raw file, less any table rows (#387)
@@ -219,7 +223,11 @@ def main() -> None:
 
         input_data, sample_rows_dropped = raw_collection_without_sample_rows(input_data)
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
-        store.write_json(upload_path, input_data)
+        # ... and with its literal values redacted (#1625); the parser reads the
+        # collection as given and redacts what it keeps.
+        from src.tools.sql.redact import redact_raw_collection
+
+        store.write_json(upload_path, dict(redact_raw_collection(input_data)))
 
         # Parse using offline parser
         from src.tools.database.offline_parser import (

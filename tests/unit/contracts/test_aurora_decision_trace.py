@@ -35,6 +35,7 @@ from src.storage.local_store import LocalArtifactStore
 from src.tools.schema import aurora_mysql_schema_agent, aurora_postgresql_schema_agent
 from src.tools.schema.base_schema_agent import AgentInputPaths
 from tests.fixtures.ecommerce_collector_output import get_ecommerce_collector_output
+from tests.fixtures.pii_collections import keep_literals
 
 DB, JOB = "mydb", "job-1"
 CURRENT = current_version(AuroraDecisionTrace)
@@ -149,9 +150,13 @@ def test_the_builder_writes_the_current_contract_version(engine: str, tmp_path: 
 
 @engines
 def test_the_written_trace_is_the_pre_contract_trace_plus_the_version(
-    engine: str, tmp_path: Path
+    engine: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Typing it changed nothing but the version field (same fixture as the legacy file)."""
+    # The legacy trace was captured from the fixture's text as collected: #1625 redacts
+    # that text when the collector output is read, which this test does not pin
+    # (tests/unit/tools/database/test_literal_redaction_ingest.py does).
+    keep_literals(monkeypatch)
     run_analysis(JOB, DB, engine, _store(tmp_path), llm_mode="none")
     written = _raw_file(tmp_path, _key(engine))
     assert written == {"contract_version": CURRENT, **_legacy(engine)}

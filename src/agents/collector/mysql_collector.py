@@ -69,6 +69,7 @@ from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.ddl_parser import fetch_ddl_from_s3, parse_ddl
 from src.tools.database.mysql_tools import MySQLRemoteCollector
 from src.tools.sql.query_tags import QueryTags
+from src.tools.sql.redact import redact_values
 
 logger = logging.getLogger(__name__)
 
@@ -219,12 +220,25 @@ def _normalize_datetime_str(val):
 
 
 class CheckpointStore:
-    """Read/write stage checkpoints to S3."""
+    """Read/write stage checkpoints to S3.
 
-    def __init__(self, cred_mgr: AWSCredentialManager | None, bucket: str, prefix: str):
+    Every stage is saved, and read back, with its literal values redacted in
+    ``source_engine``'s dialect (:func:`src.tools.sql.redact.redact_values`, #1625): a
+    live collector's schema, query and AWS metric stages hold the text it read, and no
+    literal value may be stored, even before the contract is built.
+    """
+
+    def __init__(
+        self,
+        cred_mgr: AWSCredentialManager | None,
+        bucket: str,
+        prefix: str,
+        source_engine: str | None = None,
+    ):
         self._cred_mgr = cred_mgr
         self._bucket = bucket
         self._prefix = prefix  # e.g. "mydb/collector/"
+        self._engine = source_engine
 
     def _key(self, stage: str) -> str:
         return f"{self._prefix}{stage}.json"
@@ -241,11 +255,13 @@ class CheckpointStore:
 
     def load(self, stage: str):
         assert self._cred_mgr is not None  # nosec B101 — type narrowing for mypy
-        return load_json(self._cred_mgr, self._bucket, self._key(stage))
+        return redact_values(
+            load_json(self._cred_mgr, self._bucket, self._key(stage)), self._engine
+        )
 
     def save(self, stage: str, data):
         assert self._cred_mgr is not None  # nosec B101 — type narrowing for mypy
-        save_json(self._cred_mgr, self._bucket, self._key(stage), data)
+        save_json(self._cred_mgr, self._bucket, self._key(stage), redact_values(data, self._engine))
         logger.info("Checkpoint saved: %s", stage)
 
     def load_or_run(self, stage: str, fn):
@@ -253,7 +269,7 @@ class CheckpointStore:
         if self.exists(stage):
             logger.info("Resuming from checkpoint: %s", stage)
             return self.load(stage)
-        result = fn()
+        result = redact_values(fn(), self._engine)
         self.save(stage, result)
         return result
 
@@ -311,7 +327,9 @@ def _init_checkpoint_store(inp: CollectorInput) -> CheckpointStore | NoopCheckpo
         return NoopCheckpointStore()
     try:
         storage = init_storage(cred_mgr, inp.cluster_endpoint, inp.database_name, inp.job_id)
-        return CheckpointStore(cred_mgr, storage["bucket"], storage["collector_prefix"])
+        return CheckpointStore(
+            cred_mgr, storage["bucket"], storage["collector_prefix"], inp.engine.value
+        )
     except Exception:
         logger.warning("Failed to init S3 storage, running without checkpoints")
         return NoopCheckpointStore()

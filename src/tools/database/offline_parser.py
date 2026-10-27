@@ -22,6 +22,11 @@ from src.shared.sql_spans import span_dialect
 from src.tools.database.collection_text import extract_json_object
 from src.tools.database.index_keys import add_index_key, expression_key_fields
 from src.tools.sql.query_type import statement_query_type
+from src.tools.sql.redact import (
+    redact_collector_output,
+    redact_definition,
+    redact_literals,
+)
 from src.tools.validation.ingestion_limits import check_collection_counts, check_file_size
 
 if TYPE_CHECKING:
@@ -275,15 +280,17 @@ def parse_offline_collection(
         )
         sample_rows_note = {"sample_rows_dropped": sample_rows_dropped}
 
+    source_engine = detect_source_engine(metadata if isinstance(metadata, dict) else None)[0]
     return {
         **other_db_note,
         **sample_rows_note,
         "metadata": metadata,
         "collected_database_name": collected,
         "tables": tables,
-        "views": data.get("views", []),
-        "procedures": data.get("procedures", []),
-        "triggers": data.get("triggers", []),
+        # #1625: string literals in stored definitions are redacted too.
+        "views": _redacted_definitions(data.get("views", []), source_engine),
+        "procedures": _redacted_definitions(data.get("procedures", []), source_engine),
+        "triggers": _redacted_definitions(data.get("triggers", []), source_engine),
         "queries": _transform_queries(
             raw_queries,
             db_name,
@@ -297,6 +304,21 @@ def parse_offline_collection(
         "wait_events": data.get("wait_events", []),
         "os_stats": data.get("os_stats", {}),
     }
+
+
+def _redacted_definitions(items: object, source_engine: str) -> object:
+    """View, procedure or trigger rows with each ``definition``'s string literals
+    redacted (:func:`src.tools.sql.redact.redact_definition`, #1625)."""
+    if not isinstance(items, list):
+        return items
+    return [
+        (
+            {**item, "definition": redact_definition(item["definition"], source_engine)}
+            if isinstance(item, dict) and isinstance(item.get("definition"), str)
+            else item
+        )
+        for item in items
+    ]
 
 
 def _drop_other_database_queries(raw: list[dict], db_name: str) -> tuple[list[dict], int]:
@@ -351,6 +373,11 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
     comment tags of all its variants' texts, in row order, read in the
     ``source_engine`` dialect (:class:`src.tools.sql.query_tags.QueryTags`, #1180),
     so the tags of a variant whose text is not the representative are kept too.
+    The tags are read from each text with its literals redacted
+    (:func:`src.tools.sql.redact.redact_literals`, #1625); everything else here reads
+    the texts as collected: the ``digest`` of a row with none is the SHA-256 of its
+    text as collected, so redaction never changes a ``query_id``, and Oracle's shapes
+    and cut-off texts are compared as collected.
     """
     import hashlib
 
@@ -396,7 +423,8 @@ def _merge_query_variants(raw: list[dict], source_engine: str) -> list[dict]:
     for key in order:
         variants = groups[key]
         tags = QueryTags.of(
-            (str(v.get("query_text") or "") for v in variants), source_engine
+            (redact_literals(str(v.get("query_text") or ""), source_engine) for v in variants),
+            source_engine,
         ).fields()
         if len(variants) == 1:
             row = dict(variants[0])
@@ -881,13 +909,15 @@ def rederive_query_facts(collector_output: dict, source_engine: str) -> dict:
     reference resolves to the collector output's own table id for that table name
     (or the name as written, when no single table has it); a field this parser
     never fills from a raw collection (``_UNDERIVED_QUERY_FIELDS``) is cleared.
-    The input is not changed.
+    Every query text, tag and definition is redacted first
+    (:func:`src.tools.sql.redact.redact_collector_output`, #1625), so the facts are
+    read from the text that is kept. The input is not changed.
     """
     import copy
 
     from src.tools.sql.query_tags import QueryTags
 
-    out = copy.deepcopy(collector_output)
+    out = copy.deepcopy(dict(redact_collector_output(collector_output)))
     metadata = (out.get("metadata") or {}).get("source_database") or {}
     db_name = str(metadata.get("database_name") or "")
     tables = [
@@ -975,21 +1005,25 @@ def _transform_queries(
     A PostgreSQL sequence-state read of a relation the schema does not hold
     (``SELECT last_value FROM public.badges_id_seq``) has no source table, so
     its ``tables_accessed`` is ``["unknown"]`` (``is_unlisted_sequence_read``, #783).
-    """
-    import hashlib
 
+    Each ``query_text`` is stored, and parsed, with its literal values redacted in the
+    ``source_engine`` dialect (:func:`src.tools.sql.redact.redact_literals`, #1625),
+    after the rows are merged; the ``query_id`` is the merged row's ``digest``.
+    """
     patterns = []
     fallbacks: Counter[str] = Counter()
     case_folded = _case_folded_names(known_table_names, source_engine)
     for r in _merge_query_variants(raw, source_engine):
-        query_text = str(r.get("query_text") or "")
+        query_text = redact_literals(str(r.get("query_text") or ""), source_engine)
         exec_count = r.get("execution_count") or 1
         total_rows_sent = r.get("total_rows_sent") or 0
         total_rows_examined = r.get("total_rows_examined") or 0
         total_rows_affected = r.get("total_rows_affected") or 0
         total_time_ms = float(r.get("total_time_ms") or 0)
 
-        digest = r.get("digest") or hashlib.sha256(query_text.encode()).hexdigest()[:16]
+        # Every merged row has its digest: the collection's, else the SHA-256 of its
+        # text as collected (``_merge_query_variants``, the one place the id rule holds).
+        digest = r["digest"]
 
         facts, refs = _parsed_query_facts(
             str(digest),

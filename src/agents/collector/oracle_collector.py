@@ -132,7 +132,9 @@ def _init_checkpoint_store(inp: CollectorInput) -> CheckpointStore | NoopCheckpo
         return NoopCheckpointStore()
     try:
         storage = init_storage(cred_mgr, inp.cluster_endpoint, inp.database_name, inp.job_id)
-        return CheckpointStore(cred_mgr, storage["bucket"], storage["collector_prefix"])
+        return CheckpointStore(
+            cred_mgr, storage["bucket"], storage["collector_prefix"], inp.engine.value
+        )
     except Exception:
         logger.warning("Failed to init S3 storage, running without checkpoints")
         return NoopCheckpointStore()

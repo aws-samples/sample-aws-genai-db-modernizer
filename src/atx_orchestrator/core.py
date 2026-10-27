@@ -247,6 +247,16 @@ def _discover_uploaded_input(store, job_id: str = "", database_name: str = "") -
         check_file_size(os.path.getsize(tmp_path), source=f"artifact {artifact_id}")
         with open(tmp_path, encoding="utf-8") as fh:
             collection = json.load(fh)
+        # The staged copy holds no literal value (#1625): a collector output's text,
+        # tags and definitions, or a raw collection's (which keeps its query ids).
+        from src.tools.sql.redact import redact_collector_output, redact_raw_collection
+
+        if isinstance(collection, dict):
+            collection = dict(
+                redact_collector_output(collection)
+                if "contract_version" in collection
+                else redact_raw_collection(collection)
+            )
         store.write_json(seed_key, collection)
     finally:
         with contextlib.suppress(OSError):
@@ -318,6 +328,7 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     from src.shared.contract_versioning import carries_contract, stamp_artifact_version
     from src.shared.sample_rows import collector_output_without_sample_rows
     from src.tools.database.offline_parser import parse_offline_collection
+    from src.tools.sql.redact import redact_collector_output
     from src.tools.validation.ingestion_limits import check_collection_counts
 
     # A stored collector output carries a contract_version (ADR-008 Decision 4: a
@@ -336,6 +347,8 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
         )
         # #387: an older collector output may carry table rows; none are kept.
         collector_data, sample_rows_dropped = collector_output_without_sample_rows(raw_input)
+        # #1625: no literal value is kept in its query text, tags or definitions.
+        collector_data = dict(redact_collector_output(collector_data))
         if sample_rows_dropped:
             logger.warning(
                 "ingest: dropped %d sample row(s) the collector output carried (#387)",

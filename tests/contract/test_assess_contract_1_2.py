@@ -201,6 +201,10 @@ ENGINES: dict[str, tuple[str, dict[str, Any], list[str | None]]] = {
 }
 
 
+#: The placeholder a redacted literal takes, per source engine (#1625).
+PLACEHOLDERS = {"mysql": "?", "mariadb": "?", "postgresql": "$1", "sqlserver": "?", "oracle": ":1"}
+
+
 @pytest.mark.parametrize("engine", sorted(ENGINES))
 def test_query_id_is_the_digest_else_a_text_hash(engine: str) -> None:
     sample, metadata, digests = ENGINES[engine]
@@ -217,11 +221,14 @@ def test_query_id_is_the_digest_else_a_text_hash(engine: str) -> None:
     alone, merged = str(digests[0]), str(digests[1])
     # One statement per digest, in order of first appearance; a row with none is named
     # by the first 16 hex characters of SHA-256 of its text.
+    # The hash is of the text as collected, before its literals are redacted (#1625).
     assert list(by_id) == [alone, merged, hashlib.sha256(text.encode()).hexdigest()[:16]]
-    # Rows sharing a digest merge; the text kept is the costliest variant's.
-    assert by_id[merged].query_text == "SELECT * FROM customers WHERE id = 2"
-    assert by_id[alone].query_text == "SELECT * FROM orders WHERE id = 1"
-    assert list(by_id.values())[-1].query_text == text
+    # Rows sharing a digest merge; the text kept is the costliest variant's, with its
+    # literals redacted in the engine's own placeholder form (#1625).
+    mark = PLACEHOLDERS[engine]
+    assert by_id[merged].query_text == f"SELECT * FROM customers WHERE id = {mark}"
+    assert by_id[alone].query_text == f"SELECT * FROM orders WHERE id = {mark}"
+    assert list(by_id.values())[-1].query_text == f"SELECT * FROM products WHERE sku = {mark}"
 
 
 def test_oracle_literal_variants_merge_under_the_costliest_digest() -> None:
@@ -235,7 +242,7 @@ def test_oracle_literal_variants_merge_under_the_costliest_digest() -> None:
     )
     by_id = {s.query_id: s for s in result.statements}
     assert list(by_id) == ["sqlid_a", "sqlid_c", "sqlid_d"]
-    assert by_id["sqlid_c"].query_text == "SELECT * FROM customers WHERE id = 2"
+    assert by_id["sqlid_c"].query_text == "SELECT * FROM customers WHERE id = :1"
 
 
 # --------------------------------------------------------------------------- earlier versions

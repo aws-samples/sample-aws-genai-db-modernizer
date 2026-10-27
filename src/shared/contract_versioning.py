@@ -18,7 +18,8 @@ gave every contract one; it is read as legacy, with a debug log.
 - :func:`check_artifact` checks a raw dict by its artifact path, through the
   contract file registry below, and returns it (through its adapter for an
   older MAJOR). Every ``ArtifactStore.read_json`` returns what it returns, so
-  the raw-dict reads of contract files are checked in one place.
+  the raw-dict reads of contract files are checked in one place. A collector output
+  also comes back with its literal values redacted (``_READ_TRANSFORMS``, #1625).
 - :func:`carries_contract` tells a stored contract from a raw upload (a
   collection has no ``contract_version``) and checks the contract's version.
 
@@ -618,4 +619,23 @@ def check_artifact[T](path: str, data: T) -> T:
     model = contract_for_payload(path, data)
     if model is None:
         return data
-    return read_payload(data, model, artifact=path)  # type: ignore[return-value]
+    payload = read_payload(data, model, artifact=path)
+    transform = _READ_TRANSFORMS.get(f"{model.__module__}:{model.__qualname__}")
+    return transform(payload) if transform is not None else payload  # type: ignore[return-value]
+
+
+def _redacted_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A collector output's text as no older file may show it (#1625): its literal
+    values redacted (:func:`src.tools.sql.redact.redact_collector_output`). A file
+    written since then comes back as it is."""
+    from src.tools.sql.redact import redact_collector_output
+
+    return redact_collector_output(payload)
+
+
+# Applied to every read of the contract, whatever its version, after the version check:
+# a stored collector output from before #1625 can hold literal values in its query
+# text, and none may reach an output.
+_READ_TRANSFORMS: dict[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
+    _COLLECTOR: _redacted_collector_output,
+}

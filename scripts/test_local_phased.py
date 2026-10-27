@@ -112,6 +112,10 @@ def main():
         from src.shared.sample_rows import collector_output_without_sample_rows
 
         collector_data, _ = collector_output_without_sample_rows(input_data)
+        # #1625: no literal value is kept in its query text, tags or definitions.
+        from src.tools.sql.redact import redact_collector_output
+
+        collector_data = dict(redact_collector_output(collector_data))
         db_name = db_name_override or (
             collector_data.get("metadata", {})
             .get("source_database", {})
@@ -149,7 +153,10 @@ def main():
 
         input_data, _ = raw_collection_without_sample_rows(input_data)
         upload_path = f"{db_name}/{job_id}/uploads/collector-output.json"
-        store.write_json(upload_path, input_data)
+        # ... and with its literal values redacted (#1625).
+        from src.tools.sql.redact import redact_raw_collection
+
+        store.write_json(upload_path, dict(redact_raw_collection(input_data)))
         print(f"[prepare] Raw collection uploaded to {upload_path}")
 
         # Step 2: Parse offline collection locally (same as collector agent offline mode)

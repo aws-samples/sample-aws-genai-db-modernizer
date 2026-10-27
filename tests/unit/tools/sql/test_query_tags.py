@@ -342,6 +342,7 @@ _ALLOWED = {
     "src/tools/sql/query_tags.py",
     "src/storage/collector_for_models.py",
     "src/shared/sql_comments.py",  # defines leading_comments, the comment rule itself
+    "src/tools/sql/redact.py",  # redacts the tags' values (#1625); routes on nothing
 }
 _TAG_RE = re.compile(
     r"\b(?:query_tags|query_tags_dropped|without_query_tags|statement_tags|QueryTags"
