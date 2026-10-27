@@ -325,10 +325,13 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
     """
     from src.agents.collector.offline_ingest import build_offline_collector_output
     from src.contracts.collector_output import CollectorOutputContract
-    from src.shared.contract_versioning import carries_contract, stamp_artifact_version
+    from src.shared.contract_versioning import (
+        carries_contract,
+        read_contract_payload,
+        stamp_artifact_version,
+    )
     from src.shared.sample_rows import collector_output_without_sample_rows
     from src.tools.database.offline_parser import parse_offline_collection
-    from src.tools.sql.redact import redact_collector_output
     from src.tools.validation.ingestion_limits import check_collection_counts
 
     # A stored collector output carries a contract_version (ADR-008 Decision 4: a
@@ -347,8 +350,15 @@ def ingest_offline_collection(store, job_id: str, database_name: str, raw_input:
         )
         # #387: an older collector output may carry table rows; none are kept.
         collector_data, sample_rows_dropped = collector_output_without_sample_rows(raw_input)
-        # #1625: no literal value is kept in its query text, tags or definitions.
-        collector_data = dict(redact_collector_output(collector_data))
+        # Read as a stored one is, before it is stamped with today's version: through the
+        # adapter of an older MAJOR and every read's transforms, so no literal value is
+        # kept in its text (#1625) and an older 0 for an unknown row count is unknown
+        # (#1636).
+        collector_data = dict(
+            read_contract_payload(
+                collector_data, CollectorOutputContract, artifact=f"{database_name}/{job_id} upload"
+            )
+        )
         if sample_rows_dropped:
             logger.warning(
                 "ingest: dropped %d sample row(s) the collector output carried (#387)",

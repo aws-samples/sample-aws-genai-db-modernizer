@@ -1136,6 +1136,10 @@ def render_engineering_report_md(
         # #1328: the customer's engine scope, stated once near the top; each name is
         # escaped, since a loaded report.json may hold any string there.
         out += [engine_scope_statement(facts["engine_scope"], escaping.md_text) + ".", ""]
+    # #1636: the tables the source has no row count for, and the sizing assumption.
+    row_counts = (facts.get("row_counts") or {}).get("statement")
+    if row_counts:
+        out += [f"Row counts: {escaping.md_text(row_counts)}.", ""]
     trust = summary_trusted(report) if trust_generated_summary is None else trust_generated_summary
     out += _summary_md(report, trust)
     out += _target_engines_md(report)

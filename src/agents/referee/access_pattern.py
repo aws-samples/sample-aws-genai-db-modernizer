@@ -88,6 +88,8 @@ from dataclasses import dataclass, field, replace
 
 from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.routing import threshold
+from src.shared.row_counts import is_unmeasured_ddl_table
+from src.tools.schema.design_metrics import row_count_or_assumed
 from src.tools.sql.access_signature import AccessSignature, scope_signature
 from src.tools.sql.facade import AccessFacts, ColumnFact, ScopeFacts, ScopeSource
 from src.tools.sql.query_facts import is_timestamp_type, query_facts, source_engine_of
@@ -163,8 +165,15 @@ class TableKeys:
     # Keys that only a non-unique index's leading column makes keys, with no
     # cardinality statistics to confirm them (the reason text says so).
     unconfirmed_keys: frozenset[str] = frozenset()
-    # The collector's row count, when it reports one.
+    # The row count the small-table rule reads: the collector's, or, when the source has
+    # none (#1636), the stated assumption from its collected size
+    # (``design_metrics.row_count_or_assumed``); for a DDL-only table, the interim rule
+    # ``row_counts.DDL_TABLE_THRESHOLD_ROWS`` (small, #1646, ``no_count_or_size``); None
+    # for any other table with neither.
+    # ``row_count_assumed`` says it is not collected, and the reason text says so.
     row_count: int | None = None
+    row_count_assumed: bool = False
+    no_count_or_size: bool = False
     # Keys only because the workload looks the table up by them (``_workload_keys``,
     # #1061): no primary key, foreign key or index makes them keys. Part of
     # ``key_columns``; the reason text says so.
@@ -298,7 +307,9 @@ def _table_keys(table: Mapping) -> TableKeys:
         key_columns=frozenset(key_columns | index_keys),
         columns=frozenset(n for n in by_name if n),
         unconfirmed_keys=frozenset(unconfirmed - key_columns),
-        row_count=rows if isinstance(rows := table.get("row_count"), int) else None,
+        row_count=(sized := row_count_or_assumed(table))[0],
+        row_count_assumed=sized[1],
+        no_count_or_size=is_unmeasured_ddl_table(table),
     )
 
 
@@ -658,10 +669,13 @@ def _scope_class(
         and table_keys.row_count <= SMALL_TABLE_MAX_ROWS
     )
     if small and not facts.limit and not facts.skip_locked:
-        return REFERENCE_READ, (
-            f"reads all of {table}, a small table ({table_keys.row_count} rows), "  # type: ignore[union-attr]
-            "with no predicate"
-        )
+        if table_keys.no_count_or_size:  # type: ignore[union-attr]
+            rows = "no row count or size in a DDL upload, so routing treats it as small"
+        elif table_keys.row_count_assumed:  # type: ignore[union-attr]
+            rows = f"about {table_keys.row_count} rows by its size; the source has no row count"  # type: ignore[union-attr]
+        else:
+            rows = f"{table_keys.row_count} rows"  # type: ignore[union-attr]
+        return REFERENCE_READ, f"reads all of {table}, a small table ({rows}), with no predicate"
     return KEY_RANGE, f"reads all of {table} (no predicate)"
 
 

@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from src.shared.source_cache import collection_hit_ratio_pct
+from src.tools.schema.design_metrics import sizing_row_count
 
 # =============================================================================
 # Constants — see ADR-022 for the rationale behind each value
@@ -483,7 +484,7 @@ def estimate_index_size_gb(
 
     collections = _safe_get(schema_output, "collections", default=[])
     source_tables = _safe_get(collector_output, "schema", "tables", default=[])
-    table_rows = {t.get("table_name"): t.get("row_count", 0) for t in source_tables}
+    table_rows = {t.get("table_name"): sizing_row_count(t)[0] for t in source_tables}
 
     for collection in collections:
         source_tables_list = _safe_get(collection, "source_tables", default=[])
@@ -528,7 +529,7 @@ def estimate_target_data_size_gb(
 
     if has_estimates:
         source_tables = _safe_get(collector_output, "schema", "tables", default=[])
-        table_rows = {t.get("table_name"): t.get("row_count", 0) for t in source_tables}
+        table_rows = {t.get("table_name"): sizing_row_count(t)[0] for t in source_tables}
         total_bytes = 0.0
         for collection in collections:
             source_list = _safe_get(collection, "source_tables", default=[])

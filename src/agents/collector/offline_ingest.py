@@ -118,7 +118,12 @@ def build_offline_contract(
     # One name for the table ids and the source database (#1572): the system-schema
     # check (#835) and schema design read the latter to tell the database from a schema.
     collected_name = table_database_name(parsed, inp.database_name)
-    tables = _build_tables(parsed["tables"], collected_name)
+    tables = _build_tables(
+        parsed["tables"],
+        collected_name,
+        source_engine=inp.engine.value,
+        source_version=str(offline_meta.get("version") or offline_meta.get("version_full") or ""),
+    )
     views = _build_views(parsed.get("views", []))
     procedures = _build_procedures(parsed.get("procedures", []))
     triggers = _build_triggers(parsed.get("triggers", []))

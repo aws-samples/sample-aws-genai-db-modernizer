@@ -51,6 +51,8 @@ from src.agents.referee.table_resolution import TableNameResolver
 from src.shared.catalog.engines import CatalogError
 from src.shared.catalog.patterns import EngineSupport, PatternEntry, ScanThreshold, pattern
 from src.shared.engine_names import display_engine
+from src.shared.row_counts import is_unmeasured_ddl_table
+from src.tools.schema.design_metrics import row_count_or_assumed
 from src.tools.sql.query_facts import (
     RegexMatch,
     WildcardLike,
@@ -79,7 +81,9 @@ class SubstringMatch:
     ``table_rows``: the row count of the table the scanned column (of a ``LIKE`` or a
     regular expression) is in (the
     largest, when several are scanned); the largest table the query reads for a column
-    that could not be traced to one; None when none is known.
+    that could not be traced to one; None when none is known. When the source has no
+    row count for that table, its count is the stated assumption from its collected size
+    (``design_metrics.row_count_or_assumed``, #1636) and ``table_rows_assumed`` is True.
     ``scan_matters``: not a word search, and both ``scan_threshold`` values reached.
     ``approximations``: why a predicate was read the older way (the column could not be
     traced to one collected table, or its type was not collected), one sentence each;
@@ -96,6 +100,7 @@ class SubstringMatch:
     approximations: tuple[str, ...] = ()
     regex_only: bool = False
     prefix_regex: bool = False
+    table_rows_assumed: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,7 @@ class _LikeReading:
     word_search: bool
     rows: int | None
     approximations: tuple[str, ...] = ()
+    rows_assumed: bool = False
 
 
 def _pattern() -> PatternEntry:
@@ -172,14 +178,31 @@ def _is_text(column: Mapping, engine: str) -> bool:
     return not _has_type(column) or is_text_type(column, engine)
 
 
-def _rows(tables: list[Mapping]) -> int | None:
-    counts = [r for t in tables if (r := _row_count(t)) is not None]
-    return max(counts) if counts else None
+def _larger(
+    best: tuple[int | None, bool], rows: int | None, assumed: bool
+) -> tuple[int | None, bool]:
+    """``(rows, assumed)`` when it is more rows than ``best`` (a collected count over an
+    assumed one of the same size), else ``best``."""
+    if rows is None:
+        return best
+    if best[0] is None or rows > best[0] or (rows == best[0] and best[1] and not assumed):
+        return rows, assumed
+    return best
 
 
-def _row_count(table: Mapping) -> int | None:
-    count = table.get("row_count")
-    return int(count) if isinstance(count, int | float) and not isinstance(count, bool) else None
+def _largest(tables: list[Mapping]) -> tuple[int | None, bool]:
+    """The largest row count of ``tables`` and whether it is the stated assumption."""
+    best: tuple[int | None, bool] = (None, False)
+    for table in tables:
+        if not is_unmeasured_ddl_table(table):  # a DDL table has no size to compare
+            best = _larger(best, *row_count_or_assumed(table))
+    return best
+
+
+def _largest_noted(tables: list[Mapping], note: str) -> tuple[int | None, tuple[str, ...], bool]:
+    """``_largest(tables)`` as a reading's rows, its one note and the assumed flag."""
+    rows, assumed = _largest(tables)
+    return rows, (note,), assumed
 
 
 class _Schema:
@@ -235,8 +258,9 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
     if table_id is None:
         if word:
             word = _is_text_column(like.column, query_tables, schema.engine)
-        return _LikeReading(word, _rows(query_tables), tuple(notes))
-    rows, unsized = _table_rows(schema, table_id)
+        rows, assumed = _largest(query_tables)
+        return _LikeReading(word, rows, tuple(notes), assumed)
+    rows, assumed, unsized = _table_rows(schema, table_id)
     notes.extend(unsized)
     if word and like.column is not None:
         column = schema.column(table_id, like.column) or {}
@@ -248,18 +272,36 @@ def _read_like(like: WildcardLike, schema: _Schema, query_tables: list[Mapping])
             f"the tested expression wraps column {like.use.name if like.use else '?'}, whose "
             "type is not the expression's, so it is read as text"
         )
-    return _LikeReading(word, rows, tuple(notes))
+    return _LikeReading(word, rows, tuple(notes), assumed)
 
 
-def _table_rows(schema: _Schema, table_id: str) -> tuple[int | None, tuple[str, ...]]:
-    """The collected row count of ``table_id``, and the note when there is none."""
-    rows = _row_count(schema.by_id[table_id])
+def _table_rows(schema: _Schema, table_id: str) -> tuple[int | None, bool, tuple[str, ...]]:
+    """The row count of ``table_id`` (the collector's, else the stated assumption from
+    its collected size, #1636), whether it is the assumption, and the note when there is
+    neither."""
+    table = schema.by_id[table_id]
+    name = table.get("table_name") or table_id
+    if is_unmeasured_ddl_table(table):
+        # The interim rule (row_counts.DDL_TABLE_THRESHOLD_ROWS, #1646): a DDL-only table
+        # is small, so its scan is below the threshold.
+        return (
+            None,
+            False,
+            (
+                f"table {name} has no row count or size in a DDL upload, so routing treats it "
+                "as small and its scan is not penalised",
+            ),
+        )
+    rows, assumed = row_count_or_assumed(table)
     if rows is not None:
-        return rows, ()
-    name = schema.by_id[table_id].get("table_name") or table_id
-    return None, (
-        f"table {name} has no collected row count, so the scan cannot be sized and is not "
-        "penalised",
+        return rows, assumed, ()
+    return (
+        None,
+        False,
+        (
+            f"table {name} has no collected row count, so the scan cannot be sized and is not "
+            "penalised",
+        ),
     )
 
 
@@ -272,7 +314,7 @@ def _read_regex(match: RegexMatch, schema: _Schema, query_tables: list[Mapping])
             if match.column_pattern
             else f"a regular expression's tested expression names no single column{_LARGEST_TABLE}"
         )
-        return _LikeReading(False, _rows(query_tables), (note,))
+        return _LikeReading(False, *_largest_noted(query_tables, note))
     table_id, why = locate_column(
         match.use,
         schema.table_id,
@@ -283,9 +325,9 @@ def _read_regex(match: RegexMatch, schema: _Schema, query_tables: list[Mapping])
             f"column {match.use.name} of a regular expression was not traced to one collected "
             f"table ({why}){_LARGEST_TABLE}"
         )
-        return _LikeReading(False, _rows(query_tables), (note,))
-    rows, unsized = _table_rows(schema, table_id)
-    return _LikeReading(False, rows, unsized)
+        return _LikeReading(False, *_largest_noted(query_tables, note))
+    rows, assumed, unsized = _table_rows(schema, table_id)
+    return _LikeReading(False, rows, unsized, assumed)
 
 
 def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
@@ -309,11 +351,15 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
         if facts.regex_matches:
             readings.extend(_read_regex(m, schema, query_tables) for m in facts.regex_matches)
         elif facts.pattern_match:  # the regex fallback names no column
-            readings.append(_LikeReading(False, _rows(query_tables), (_UNPARSED_REGEX_READING,)))
+            readings.append(
+                _LikeReading(False, *_largest_noted(query_tables, _UNPARSED_REGEX_READING))
+            )
         word = all(r.word_search for r in readings)
         cps = float(query.get("calls_per_second") or 0.0)
         scanned = [r.rows for r in readings if not r.word_search]
-        known = [r for r in (scanned or [r.rows for r in readings]) if r is not None]
+        largest: tuple[int | None, bool] = (None, False)
+        for reading in [r for r in readings if not r.word_search] or readings:
+            largest = _larger(largest, reading.rows, reading.rows_assumed)
         matters = cps >= threshold.min_calls_per_second and any(
             r is not None and r >= threshold.min_table_rows for r in scanned
         )
@@ -322,11 +368,12 @@ def substring_matches(collector: Mapping | None) -> dict[str, SubstringMatch]:
             qid,
             word,
             cps,
-            max(known) if known else None,
+            largest[0],
             matters,
             notes,
             regex_only=regex_only,
             prefix_regex=regex_only and facts.prefix_regex,
+            table_rows_assumed=largest[1],
         )
     return out
 
@@ -348,7 +395,12 @@ def _threshold_text() -> str:
 
 
 def _load_text(match: SubstringMatch) -> str:
-    rows = f"{match.table_rows:,} rows" if match.table_rows is not None else "an unmeasured table"
+    if match.table_rows is None:
+        rows = "an unmeasured table"
+    elif match.table_rows_assumed:
+        rows = f"about {match.table_rows:,} rows by its size (the source has no row count)"
+    else:
+        rows = f"{match.table_rows:,} rows"
     return f"{match.calls_per_second:g} call(s) per second on {rows}"
 
 

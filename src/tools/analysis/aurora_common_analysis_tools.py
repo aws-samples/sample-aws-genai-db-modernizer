@@ -30,6 +30,7 @@ from src.contracts.analysis_output import (
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_basis
+from src.shared.row_counts import collected_storage_mb, unknown_size_line
 from src.tools.analysis.aurora_common_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     CACHE_READ_CPS_THRESHOLD,
@@ -822,7 +823,8 @@ def estimate_aurora_costs(
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
 
-    total_size_gb = sum((t.get("size_mb") or 0.0) for t in tables) / 1024.0
+    # #1636: priced on the collected sizes; the tables with none are stated, never 0 unsaid.
+    total_size_gb = collected_storage_mb(tables)[0] / 1024.0
     total_cps = sum(float(q.get("calls_per_second") or 0.0) for q in queries)
     query_count = len(queries)
 
@@ -883,6 +885,7 @@ def estimate_aurora_costs(
             "price_list": price_basis(),
         },
         pricing_assumptions=[
+            *unknown_size_line(tables),
             f"Aurora {engine.title()} — {target_region}",
             f"Serverless v2: ${acu_price}/ACU-hr, {min_acu}-{max_acu} ACU range",
             f"Provisioned: {instance_type} at ${instance_price}/hr",

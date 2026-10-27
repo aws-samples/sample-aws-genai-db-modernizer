@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -73,12 +73,9 @@ from src.shared.migration_wave_engines import cache_front_description
 from src.shared.models import Role, build_bedrock_model, resolve_model_id
 from src.shared.progress import say
 from src.shared.ranking import PARTIAL_NOTE, SIGNAL_ONLY_NOTE, evidence_note, fit_text
-from src.shared.report_facts import (
-    analysis_overview_facts,
-    mean_table_fit,
-    table_fit_score,
-)
+from src.shared.report_facts import analysis_overview_facts, mean_table_fit, table_fit_score
 from src.shared.risk_severity import overall_risk_level
+from src.shared.row_counts import unknown_size_assumption
 from src.shared.signal_labels import signal_noun
 from src.shared.skill_sections import skill_sections, skill_subsections
 from src.shared.source_cache import cost_basis_fields
@@ -1015,6 +1012,12 @@ def _list_each_query_once(groups: dict[tuple[str, bool], dict], assignment: dict
                     kept["linked_patterns"].append(ap.get("pattern_id"))
 
 
+def _unknown_size_count(collector: Mapping[str, Any] | None) -> int:
+    """The collected tables with no size (``size_mb`` None, #1636)."""
+    tables = ((collector or {}).get("database_schema") or {}).get("tables") or []
+    return sum(1 for t in tables if isinstance(t, Mapping) and t.get("size_mb") is None)
+
+
 def build_tco_analysis(
     data: SynthesisData,
     retired_costs: dict[str, float] | None = None,
@@ -1149,6 +1152,12 @@ def build_tco_analysis(
             ),
             # #1378: which engine stores the tables no in-scope query reads.
             *([unqueried_assumption(unqueried_summary)] if unqueried_summary else []),
+            # #1636: the tables with no collected size, whose storage is not priced.
+            *(
+                [line]
+                if (line := unknown_size_assumption(_unknown_size_count(data.collector)))
+                else []
+            ),
             *footnotes,
         ],
     }

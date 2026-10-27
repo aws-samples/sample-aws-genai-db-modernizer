@@ -51,6 +51,7 @@ from src.report.formatting import price_list_text
 from src.shared.catalog.prices import estimates_price_basis
 from src.shared.engine_names import display_engine
 from src.shared.report_facts import compute_report_facts, wave_one_moved_by_later_waves
+from src.shared.row_counts import row_count_facts
 from src.tools.analysis.relational_gaps import detect_relational_gaps
 from tests.e2e.deliverable_figures import (
     SEVERITIES,
@@ -228,6 +229,12 @@ def test_report_json_facts_are_the_facts_layer_output(run: PipelineResult) -> No
         relational_gaps=_relational_gaps_from_the_job(run, report),
         # #1196: synthesis passes the price dates its TCO rows recorded, as it does the gaps.
         price_list=_price_list_from_the_job(report),
+        # #1636: the row counts are read from the collection, as synthesis does.
+        row_counts=row_count_facts(
+            json.loads((run.job_dir() / "collector" / "output.json").read_text())[
+                "database_schema"
+            ]["tables"]
+        ),
     )
     assert stored == recomputed
 

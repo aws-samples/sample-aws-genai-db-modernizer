@@ -8,7 +8,8 @@ version and the version this code reads, unless ``_ADAPTERS`` below holds an
 adapter from that MAJOR (one should ship in the same change as the bump, per the
 amendment to Decision 4): RealityCheckOutputContract 1.x, a retrofit in #971 for
 the 2.0 bump of #790, and CollectorOutputContract 3.x, whose table rows it drops
-(#387). A payload with no ``contract_version`` was written before #972
+(#387), and 4.x, whose row counts it reads again so an unknown one is None (#1636). A
+payload with no ``contract_version`` was written before #972
 gave every contract one; it is read as legacy, with a debug log.
 
 - :func:`load_contract` checks the version and parses the model. The loaded
@@ -124,12 +125,58 @@ def _collector_output_from_3(payload: dict[str, Any]) -> dict[str, Any]:
             "collector output: dropped %d sample row(s) an older collection carried (#387)",
             dropped,
         )
-    return out
+    return _collector_output_from_4(out)
+
+
+def _collector_output_from_4(payload: dict[str, Any]) -> dict[str, Any]:
+    """CollectorOutputContract's MAJOR bump for #1636 lets ``Table.row_count`` be None (no
+    count) and adds its basis and statistics time. An older output wrote 0 for a table
+    the source has no count for, so each table's count is read again by the one
+    per-engine rule (``src.shared.row_counts.read_row_count``): a 0 from a source that
+    cannot tell an empty table from an unknown one becomes None, a 0 the source's own
+    rule keeps (SQL Server, Db2, the MySQL family) stays 0, and every known count gains
+    its basis. A PostgreSQL 0 is unknown whatever the server's version: the collector
+    clamped 14+'s -1 to 0 too (``max(row_count or 0, 0)``), so in a collector output,
+    unlike a raw collection (whose -1 survives), no 0 is known to be real. An Oracle table's 0
+    size (no segment found) becomes None the same way (``legacy_size_is_unknown``). A
+    table that already carries a basis (written since #1636) is kept as it is, so the
+    function can run on any read; every other field reads as it was."""
+    from src.shared.row_counts import (
+        BASIS_KEY,
+        DDL_KEY,
+        legacy_size_is_unknown,
+        read_row_count,
+    )
+
+    source = (payload.get("metadata") or {}).get("source_database") or {}
+    engine = str(source.get("engine") or "") if isinstance(source, Mapping) else ""
+    schema = payload.get("database_schema")
+    if not isinstance(schema, Mapping) or not isinstance(schema.get("tables"), list):
+        return payload
+    tables: list[Any] = []
+    for table in schema["tables"]:
+        if isinstance(table, Mapping) and BASIS_KEY not in table:
+            # No engine_major: the clamp made every PostgreSQL 0 ambiguous (see above).
+            read = read_row_count(table, engine)
+            old_ddl = table.get("row_count") == 0 and table.get("size_mb") == 0
+            table = {**table, "row_count": read.row_count, BASIS_KEY: read.basis}
+            if old_ddl and read.row_count is None:
+                # A 4.x DDL upload wrote 0 rows and 0 MB for every table: it is a table read
+                # from DDL alone, which keeps its routing (row_counts.DDL_TABLE_THRESHOLD_ROWS).
+                table = {**table, "size_mb": None, DDL_KEY: True}
+            size = table.get("size_mb")
+            if isinstance(size, int | float) and legacy_size_is_unknown(float(size), engine):
+                table["size_mb"] = None
+        tables.append(table)
+    return {**payload, "database_schema": {**schema, "tables": tables}}
 
 
 _ADAPTERS: dict[str, dict[int, Adapter]] = {
     "src.contracts.reality_check_output:RealityCheckOutputContract": {1: _reality_check_from_1},
-    "src.contracts.collector_output:CollectorOutputContract": {3: _collector_output_from_3},
+    "src.contracts.collector_output:CollectorOutputContract": {
+        3: _collector_output_from_3,
+        4: _collector_output_from_4,
+    },
 }
 
 
@@ -619,9 +666,21 @@ def check_artifact[T](path: str, data: T) -> T:
     model = contract_for_payload(path, data)
     if model is None:
         return data
-    payload = read_payload(data, model, artifact=path)
+    return read_contract_payload(data, model, artifact=path)  # type: ignore[return-value]
+
+
+def read_contract_payload(
+    payload: Mapping[str, Any], model: type[BaseModel], *, artifact: str
+) -> Mapping[str, Any]:
+    """What every read of ``model``'s contract returns for ``payload``: checked, through
+    the adapter of an older MAJOR (:func:`read_payload`), then through the transforms
+    every read applies whatever the version (``_READ_TRANSFORMS``). A store read gets it
+    through :func:`check_artifact`; an uploaded contract (the CLI, the API, ``assess()``)
+    is read through it before it is stamped with today's version (#1636), so an upload
+    and a stored file read the same."""
+    data = read_payload(payload, model, artifact=artifact)
     transform = _READ_TRANSFORMS.get(f"{model.__module__}:{model.__qualname__}")
-    return transform(payload) if transform is not None else payload  # type: ignore[return-value]
+    return transform(data) if transform is not None else data
 
 
 def _redacted_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -633,9 +692,18 @@ def _redacted_collector_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     return redact_collector_output(payload)
 
 
+def _collector_output_on_read(payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A collector output as every read returns it: its literal values redacted (#1625)
+    and its row counts read by the per-engine rule (#1636, ``_collector_output_from_4``,
+    which keeps a table written since then as it is), so a file with no version, or one
+    at the current MAJOR saved before #1636, reads like an adapted one."""
+    return _collector_output_from_4(dict(_redacted_collector_output(payload)))
+
+
 # Applied to every read of the contract, whatever its version, after the version check:
 # a stored collector output from before #1625 can hold literal values in its query
-# text, and none may reach an output.
+# text, and none may reach an output; one from before #1636 can hold a 0 for an unknown
+# row count, and none may read as an empty table.
 _READ_TRANSFORMS: dict[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
-    _COLLECTOR: _redacted_collector_output,
+    _COLLECTOR: _collector_output_on_read,
 }

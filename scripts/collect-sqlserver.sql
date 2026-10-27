@@ -204,18 +204,29 @@ SET @tables = (
         s.name AS schema_name,
         t.name AS table_name,
         s.name + '.' + t.name AS table_id,
-        ISNULL(p.rows, 0) AS row_count,
+        -- sys.partitions.rows, summed over the table's partitions (heap or
+        -- clustered index, index_id 0 or 1) in r: the count the engine keeps (no
+        -- table is read), never NULL, so 0 is an empty table. Microsoft documents
+        -- it as approximate, so its basis is an estimate.
+        r.row_total AS row_count,
+        'estimate' AS row_count_basis,
         CAST(SUM(a.total_pages) * 8.0 / 1024 AS DECIMAL(15, 2)) AS data_size_mb,
         CAST(SUM(CASE WHEN i.index_id > 1 THEN a.total_pages ELSE 0 END)
              * 8.0 / 1024 AS DECIMAL(15, 2)) AS index_size_mb
     FROM sys.tables t
     INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+    INNER JOIN (
+        SELECT object_id, SUM(rows) AS row_total
+        FROM sys.partitions
+        WHERE index_id IN (0, 1)
+        GROUP BY object_id
+    ) r ON r.object_id = t.object_id
     INNER JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
     INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
     LEFT JOIN sys.indexes i ON t.object_id = i.object_id AND p.index_id = i.index_id
     WHERE s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest')
       AND s.name NOT LIKE 'db[_]%' ESCAPE '['
-    GROUP BY s.name, t.name, p.rows
+    GROUP BY s.name, t.name, r.row_total
     ORDER BY s.name, t.name
     FOR JSON PATH
 );

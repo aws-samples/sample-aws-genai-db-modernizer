@@ -142,12 +142,15 @@ class OracleRemoteCollector:
                 t.OWNER AS schema_name,
                 t.TABLE_NAME AS table_name,
                 t.NUM_ROWS AS row_count,
-                ROUND(s.bytes/1024/1024, 2) AS data_size_mb
+                'estimate' AS row_count_basis,
+                TO_CHAR(t.LAST_ANALYZED, 'YYYY-MM-DD"T"HH24:MI:SS') AS stats_analyzed_at,
+                CASE WHEN t.SEGMENT_CREATED = 'NO' THEN 0
+                     ELSE ROUND(s.bytes/1024/1024, 2) END AS data_size_mb
             FROM ALL_TABLES t
             LEFT JOIN (
                 SELECT OWNER, SEGMENT_NAME, SUM(BYTES) AS bytes
                 FROM DBA_SEGMENTS
-                WHERE SEGMENT_TYPE = 'TABLE'
+                WHERE SEGMENT_TYPE IN ('TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION')
                 GROUP BY OWNER, SEGMENT_NAME
             ) s ON s.OWNER = t.OWNER AND s.SEGMENT_NAME = t.TABLE_NAME
             WHERE t.OWNER = '{owner}'

@@ -65,6 +65,7 @@ from src.contracts.dynamodb_decision_trace import (
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import SECONDS_PER_MONTH, price_basis
+from src.shared.row_counts import collected_storage_mb, known_row_count, unknown_size_line
 from src.tools.analysis.dynamodb_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     DYNAMODB_ANTI_PATTERNS,
@@ -82,6 +83,7 @@ from src.tools.analysis.scoring import (
     compute_base_scores,
     compute_confidence,
 )
+from src.tools.schema.design_metrics import row_count_or_assumed
 from src.tools.sql.query_facts import (
     ColumnTypes,
     query_facts,
@@ -424,7 +426,8 @@ def detect_gsi_candidates(
     column_info: dict[str, dict[str, dict]] = {}
     for t in tables:
         tid = t.get("table_id", "")
-        row_count = t.get("row_count", 0)
+        # #1636: None when the source has no count (no population rate then).
+        row_count = known_row_count(t)
         col_map: dict[str, dict] = {}
         for col in t.get("columns") or []:
             cname = col.get("column_name", "").lower()
@@ -547,8 +550,9 @@ def _estimate_sparsity(
         if not info:
             continue
         cardinality = info.get("cardinality")
-        row_count = info.get("row_count", 0)
-        if cardinality is not None and row_count and row_count > 0:
+        # #1636: no population rate from a table whose row count is unknown.
+        row_count = info.get("row_count")
+        if cardinality is not None and isinstance(row_count, int) and row_count > 0:
             rate = min(cardinality / row_count, 1.0)
             rates.append(rate)
 
@@ -631,7 +635,11 @@ def detect_denormalization_subtypes(
         table_by_id[t.get("table_id", "")] = t
         table_by_name[t.get("table_name", "")] = t
 
-    row_counts: dict[str, int] = {t.get("table_id", ""): t.get("row_count", 0) for t in tables}
+    # #1636: when the source has no count, the stated assumption from the table's size,
+    # never 0; a table with neither is left out (a ratio needs both counts).
+    row_counts: dict[str, int] = {
+        t.get("table_id", ""): n for t in tables if (n := row_count_or_assumed(t)[0]) is not None
+    }
 
     opportunities: list[DenormalizationOpportunity] = []
     seen_pairs: set[frozenset[str]] = set()
@@ -702,7 +710,7 @@ def detect_denormalization_subtypes(
         parent_ref = rel.get("to_table", "")
         parent_tid = _resolve_table_id(parent_ref, tables) or parent_ref
 
-        # Skip if either table is unknown
+        # Skip if either table, or both its count and its size, is unknown
         if child_tid not in row_counts or parent_tid not in row_counts:
             continue
 
@@ -936,8 +944,10 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         # No queries — return empty patterns. Scoring will rely on structural signals only.
         return WorkloadAnalysis(patterns_detected=[], anti_patterns_detected=None)
 
-    table_row_counts: dict[str, int] = {
-        t.get("table_id", ""): t.get("row_count", 0) or 0 for t in tables
+    # #1636: when the source has no count, the stated assumption from the table's size,
+    # never 0; None (not known small) when no size is collected either.
+    table_row_counts: dict[str, int | None] = {
+        t.get("table_id", ""): row_count_or_assumed(t)[0] for t in tables
     }
     # How each query reaches its rows by key, from the SQL facts (#920): the
     # collector's filter_columns is empty on every bundled sample query.
@@ -1008,7 +1018,9 @@ def analyze_dynamodb_use_cases(collector_output: dict) -> WorkloadAnalysis:
             and cps >= 0.1
             and tables_accessed
             and all(
-                table_row_counts.get(t, 0) <= SMALL_TABLE_MAX_ROWS and reader.read_mostly(t)
+                (n := table_row_counts.get(t, 0)) is not None
+                and n <= SMALL_TABLE_MAX_ROWS
+                and reader.read_mostly(t)
                 for t in tables_accessed
             )
         ):
@@ -1460,7 +1472,8 @@ def estimate_dynamodb_costs(
     queries = collector_output.get("queries", {}).get("query_patterns", [])
 
     # Aggregate storage
-    total_size_gb = sum(t.get("size_mb", 0) for t in tables) / 1024
+    # #1636: priced on the collected sizes; the tables with none are stated, never 0 unsaid.
+    total_size_gb = collected_storage_mb(tables)[0] / 1024
 
     # On-demand pricing: the request unit and storage prices are the price table's
     # (``src/catalog/prices.toml``, #1196), through the engine file's configuration.
@@ -1555,6 +1568,7 @@ def estimate_dynamodb_costs(
             "footnotes": [CONSISTENCY_FOOTNOTE] if reads[EVENTUAL] else [],
         },
         pricing_assumptions=[
+            *unknown_size_line(tables),
             "On-demand capacity mode (no provisioned throughput), on average load",
             f"Region: {target_region}",
             f"Reads billed on the bytes each call returns (rows times the table's average "

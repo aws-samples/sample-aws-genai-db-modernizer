@@ -94,6 +94,7 @@ from src.contracts.move_ledger import Move
 from src.shared.engine_names import display_engine
 from src.shared.model_usage import USAGE_KEY
 from src.shared.package_version import get_package_version
+from src.shared.row_counts import known_row_count
 
 # --------------------------------------------------------------------------- inputs
 
@@ -332,10 +333,7 @@ class _Scorer:
         the plain scorer applies), so its breakdown has its ``fit``. A gated one has
         the gate the ladder records, with the scorer's reason for it. A rung with neither
         a score nor a gate has nothing to explain."""
-        from src.agents.referee.query_scoring import (
-            GATE_KIND_MODEL_FLAG,
-            score_query_for_engine,
-        )
+        from src.agents.referee.query_scoring import GATE_KIND_MODEL_FLAG, score_query_for_engine
 
         query = self.queries.get(qid)
         if query is None:
@@ -646,11 +644,7 @@ def build_table_lines(state: RunState, retained_engine: str | None) -> list[Tabl
     """Each source table the effective assignment derives a row for, with its owner
     line from the facts layer (``assignment_table_usage`` and ``table_owner_line``).
     Empty before ``reality_check``."""
-    from src.shared.report_facts import (
-        assignment_table_usage,
-        table_owner_line,
-        table_owner_reason,
-    )
+    from src.shared.report_facts import assignment_table_usage, table_owner_line, table_owner_reason
 
     assignment = state.assignment
     if assignment is None:
@@ -860,6 +854,26 @@ def _referenced_table_id(
     return None
 
 
+def _row_count_through_1_2(table: Mapping[str, Any]) -> int | None:
+    """``summary.table_facts[].row_count`` as contracts 1.0 to 1.2 state it: the
+    collector's count, and 0 for one the source does not have (#1636: the collector
+    output keeps that as None, and the release notes state the limitation)."""
+    if "row_count" not in table:
+        return None
+    count = known_row_count(table)
+    return 0 if count is None else count
+
+
+def _size_through_1_2(table: Mapping[str, Any]) -> float | None:
+    """``summary.table_facts[].size_mb`` as contracts 1.0 to 1.2 state it: the collector's
+    size, and 0 for one the source does not report (an Oracle table with no segment
+    found, a DDL-only collection), as every collector wrote it before #1636."""
+    if "size_mb" not in table:
+        return None
+    size = table.get("size_mb")
+    return 0.0 if size is None else size
+
+
 def build_table_facts(state: RunState) -> list[TableFacts]:
     """One entry per collected source table (``database_schema.tables``), by table id:
     the facts the collector read from the collection, with each foreign key's
@@ -882,8 +896,11 @@ def build_table_facts(state: RunState) -> list[TableFacts]:
         out.append(
             TableFacts(
                 table_id=str(t["table_id"]),
-                row_count=t.get("row_count"),
-                size_mb=t.get("size_mb"),
+                # Contracts 1.0-1.2 state an unknown count as 0, as they always have; the
+                # collector output says which counts are unknown (row_count None) and
+                # their basis (row_count_basis), #1636.
+                row_count=_row_count_through_1_2(t),
+                size_mb=_size_through_1_2(t),
                 columns=[
                     TableColumn(
                         name=str(c["column_name"]),

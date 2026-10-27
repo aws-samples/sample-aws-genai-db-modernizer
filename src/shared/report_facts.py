@@ -3111,6 +3111,7 @@ def compute_report_facts(
     engine_scope: Iterable[str] | None = None,
     price_list: Mapping[str, Any] | None = None,
     derived_copy_sync: Mapping[str, Any] | None = None,
+    row_counts: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every customer-facing figure, computed once (``SynthesisOutputContract.facts``).
 
@@ -3133,6 +3134,9 @@ def compute_report_facts(
     (``src.agents.referee.derived_copy_sync.derived_copy_sync_facts``, #1527), which needs
     the schema design and the price table: synthesis passes it, and a report rebuilt
     later has None.
+    ``row_counts`` is the collection's row counts by basis and the sizing assumption for
+    the unknown ones (``src.shared.row_counts.row_count_facts``, #1636), which needs the
+    collection: synthesis passes it, and a report rebuilt without the collection has None.
     """
     if waves is None:
         waves = [w for w in (report.get("migration_waves") or []) if isinstance(w, dict)]
@@ -3278,6 +3282,8 @@ def compute_report_facts(
         "cache_layer": cache_layer_facts(report),
         # #1527: the DynamoDB derived copies' stream sync, listed and priced.
         "derived_copy_sync": dict(derived_copy_sync) if derived_copy_sync is not None else None,
+        # #1636: the row counts by basis, and the sizing assumption for the unknown ones.
+        "row_counts": dict(row_counts) if row_counts is not None else None,
     }
 
 

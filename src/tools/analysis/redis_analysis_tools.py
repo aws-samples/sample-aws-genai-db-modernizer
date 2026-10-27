@@ -17,6 +17,7 @@ from src.contracts.analysis_output import (
 from src.shared import catalog
 from src.shared.cache_engines import HOT_READ_MIN_CALLS_PER_SECOND
 from src.shared.catalog.prices import HOURS_PER_MONTH, SECONDS_PER_MONTH, price_basis
+from src.shared.row_counts import collected_storage_mb, unknown_size_line
 from src.tools.analysis.scoring import (
     TableProfile,
     build_table_profiles,
@@ -376,7 +377,8 @@ def estimate_redis_costs(
     queries = collector_output.get("queries", {}).get("query_patterns", [])
 
     # --- Estimate cache data size ---
-    total_source_size_mb = sum(t.get("size_mb", 0) for t in tables)
+    # #1636: sized on the collected sizes; the tables with none are stated, never 0 unsaid.
+    total_source_size_mb = collected_storage_mb(tables)[0]
     # Cache typically holds 10-20% of source data; use 15% as baseline
     cache_size_gb = max((total_source_size_mb * 0.15) / 1024, 0.5)
 
@@ -461,6 +463,7 @@ def estimate_redis_costs(
             "price_list": price_basis(),
         },
         pricing_assumptions=[
+            *unknown_size_line(tables),
             f"Instance: Valkey {inst_type} ({inst_memory} GiB, ${hourly_rate}/hr) in {target_region}",
             f"Estimated cache size: {cache_size_gb:.1f} GB (15% of {total_source_size_mb:.0f} MB source)",
             f"Estimated throughput: {total_ops_per_sec:.0f} ops/sec ({total_read_cps:.0f} reads + {total_write_cps:.0f} writes)",

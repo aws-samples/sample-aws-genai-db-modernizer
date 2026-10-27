@@ -177,6 +177,7 @@ L_NO_DECISIONS = "No pending engine choices."
 L_DECISIONS_REALITY = "Reality-check decisions"
 L_COST_BREAKDOWN = "Cost by engine"
 L_ASSUMPTIONS = "Assumptions"
+L_ROW_COUNTS = "Row counts"
 L_TIED_BETWEEN = "Tied between"
 L_PLACED_ON = "Placed on"
 L_NOT_REVIEWED = "Not reviewed"
@@ -996,6 +997,10 @@ def _numbers(report: dict[str, Any], st: dict[str, ParagraphStyle], names: Any) 
             _gap(8),
             _para(f"{L_ASSUMPTIONS}: " + "; ".join(assumptions) + ".", st["small"]),
         ]
+    # #1636: the tables the source has no row count for, and the sizing assumption.
+    row_counts = (facts.get("row_counts") or {}).get("statement")
+    if row_counts:
+        flow += [_gap(6), _para(f"{L_ROW_COUNTS}: {row_counts}.", st["small"])]
     # #1474: the one caveat where the costs are stated.
     flow += [_gap(6), _para(cost_caveat_text(facts), st["small"])]
     return flow

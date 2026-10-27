@@ -66,7 +66,10 @@ def _number(value: object) -> float:
 
 
 def row_widths(collector_output: Mapping | None) -> dict[str, float]:
-    """``table_id -> average bytes a row`` for every collected table with a size and rows."""
+    """``table_id -> average bytes a row`` for every collected table with a size and rows.
+
+    A table the source has no row count for (#1636), like an empty one, has no width:
+    each call on it is billed one unit (``variable_monthly``)."""
     tables = ((collector_output or {}).get("database_schema") or {}).get("tables") or []
     widths: dict[str, float] = {}
     for table in tables:

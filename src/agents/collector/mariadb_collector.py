@@ -96,7 +96,9 @@ def _collect_live_mariadb(inp: CollectorInput, ckpt) -> CollectorOutputContract:
     aws_raw = ckpt.load_or_run("aws_metrics", lambda: _collect_aws_raw(inp, cred_mgr))
 
     tables = _build_tables(
-        schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw, inp.database_name
+        schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw,
+        inp.database_name,
+        source_engine="mariadb",
     )
     schema_views = (
         _build_views(schema_raw.get("views", [])) if isinstance(schema_raw, dict) else None

@@ -16,7 +16,7 @@ You are a Principal Engineer reviewing a DocumentDB schema design produced by an
 
 - Embedded entity with `avg_array_length > 100` AND write-heavy (source queries have frequent INSERT/UPDATE on child) → should be referenced, not embedded
 - Many-to-many relationships embedded → should be referenced (junction pattern)
-- Embedding a table with `row_count > 100000` into a parent with `row_count < 1000` → inverted cardinality, likely wrong direction
+- Embedding a table with `row_count > 100000` into a parent with `row_count < 1000` → inverted cardinality, likely wrong direction (a `null` `row_count` is unknown, not small: read `design_metrics.tables[]`, whose `row_count_assumed` marks the stated assumption)
 - An unbounded child embedded whole when its reads are mostly the newest rows → suggest the hybrid design (embed the latest N, reference the rest) before a plain reference
 - A collection whose fields have very different read rates, with the large rarely read fields in the same document as the hot ones → suggest a hot/cold split (WARNING)
 

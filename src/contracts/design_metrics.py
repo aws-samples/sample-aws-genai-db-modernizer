@@ -17,6 +17,10 @@ Version History:
 - 1.2 (2026-10-27, #1602): Added optional queries[].member_query_ids: a row for an input
   entry that stands for a query pattern lists every member statement, and its rates are
   the members' total; a row written before has none, and still loads.
+- 1.3 (2026-10-28, #1636): Added optional TableDesignMetrics.row_count_assumed and
+  EmbeddingSizeMetrics.counts_assumed (#1636): when the source has no row count for a
+  table, row_count is the stated assumption (size over declared row width) instead of 0,
+  and these flags say so. Backward compatible: both default to False.
 """
 
 from __future__ import annotations
@@ -63,9 +67,28 @@ class TableDesignMetrics(BaseModel):
     """Sizes for one source table."""
 
     table_id: str = Field(..., description="Collector table_id")
-    row_count: int = Field(..., ge=0, description="Collector row_count")
+    row_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Collector row_count; when the source has none (row_count_assumed), the stated "
+            "assumption: size_mb × 1,048,576 / schema_item_size_bytes (#1636)"
+        ),
+    )
+    row_count_assumed: bool = Field(
+        False,
+        description=(
+            "True when the source has no row count for the table, so row_count is the stated "
+            "assumption and avg_row_size_bytes is schema_item_size_bytes (#1636)"
+        ),
+    )
     avg_row_size_bytes: int = Field(
-        ..., ge=0, description="Measured: size_mb × 1,048,576 / max(row_count, 1)"
+        ...,
+        ge=0,
+        description=(
+            "Measured: size_mb × 1,048,576 / max(row_count, 1); schema_item_size_bytes when "
+            "row_count_assumed"
+        ),
     )
     avg_row_size_kb: float = Field(..., ge=0, description="avg_row_size_bytes / 1024, 3 decimals")
     size_estimated: bool = Field(
@@ -131,6 +154,13 @@ class EmbeddingSizeMetrics(BaseModel):
     avg_children_per_parent: float = Field(
         ..., ge=0, description="child row_count / max(parent row_count, 1), 2 decimals"
     )
+    counts_assumed: bool = Field(
+        False,
+        description=(
+            "True when either table's row_count is the stated assumption (row_count_assumed), "
+            "so avg_children_per_parent is too (#1636)"
+        ),
+    )
     parent_row_size_kb: float = Field(..., ge=0, description="Parent avg_row_size_kb")
     child_row_size_kb: float = Field(..., ge=0, description="Child avg_row_size_kb")
     embedded_avg_kb: float = Field(
@@ -180,7 +210,7 @@ class DesignMetricsContract(BaseModel):
     """Every number the schema designer reads instead of computing (#626)."""
 
     contract_version: str = Field(
-        default="1.2", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
+        default="1.3", pattern=r"^\d+\.\d+$", description="Contract version (MAJOR.MINOR)"
     )
     engine: str = Field(..., description="Target engine the metrics are for")
     growth_multiplier: float = Field(

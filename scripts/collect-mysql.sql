@@ -32,10 +32,15 @@ SELECT JSON_OBJECT(
 ) INTO @metadata;
 
 -- ===================== 2. Tables =====================
+-- row_count is TABLE_ROWS as the server records it (no table is read): exact for
+-- MyISAM and Aria, an estimate for InnoDB and the rest, and null when there is
+-- none, never 0 in its place. information_schema.TABLES records no statistics
+-- time, so none is reported.
 SELECT JSON_ARRAYAGG(t_obj) INTO @tables FROM (
   SELECT JSON_OBJECT(
     'table_name', table_name,
-    'row_count', IFNULL(table_rows, 0),
+    'row_count', table_rows,
+    'row_count_basis', IF(engine IN ('MyISAM', 'Aria'), 'exact', 'estimate'),
     'data_size_mb', ROUND(data_length / 1024 / 1024, 2),
     'index_size_mb', ROUND(index_length / 1024 / 1024, 2),
     'engine', engine,

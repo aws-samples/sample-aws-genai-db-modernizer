@@ -15,6 +15,7 @@ from src.agents.referee.table_resolution import SourceScope
 from src.agents.referee.write_groups import inserted_tables, written_tables
 from src.contracts.analysis_output import MigrationComplexity, ScoreBreakdown, WorkloadAnalysis
 from src.shared.catalog import default_score_weights
+from src.tools.schema.design_metrics import UNKNOWN_SIZE_MB, sizing_row_count
 from src.tools.sql.query_facts import source_engine_of
 
 
@@ -23,6 +24,8 @@ class TableProfile:
     """Aggregated per-table stats built from collector_output + workload_analysis."""
 
     table_id: str
+    # The row count the cost band sizes the table by: the collector's, or, when the
+    # source has none, the stated assumption (``design_metrics.sizing_row_count``, #1636).
     row_count: int
     size_mb: float
     column_count: int
@@ -115,8 +118,9 @@ def build_table_profiles(
 
         profile = TableProfile(
             table_id=tid,
-            row_count=table.get("row_count") or 0,
-            size_mb=table.get("size_mb") or 0.0,
+            row_count=sizing_row_count(table)[0],
+            # #1636: a table with no collected size takes the design metrics' stand-in.
+            size_mb=UNKNOWN_SIZE_MB if table.get("size_mb") is None else table["size_mb"],
             column_count=len(columns),
             has_primary_key=bool(pk),
             foreign_key_count=len(fks),
