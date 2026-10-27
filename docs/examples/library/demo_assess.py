@@ -152,6 +152,11 @@ def show_analysis(sample: str, collection: dict[str, Any], engines: list[str] | 
     line(f"A repeat run gives a byte-identical result: {'yes' if same else 'NO'}")
     # Contract 1.2: the text the parser read, and how the scorer reached its best score.
     line(f"query_text: {short(statement.query_text, 80)}")
+    found = ", ".join(
+        f"{p.id} ({'intrinsic' if p.intrinsic else 'fixable'})"
+        for p in statement.matched_anti_patterns
+    )
+    line(f"matched_anti_patterns: {short(found or 'none', 90)}")
     show_breakdown(statement)
 
 
@@ -193,7 +198,13 @@ def show_placement(result: AssessmentResult) -> None:
     line("engines:")
     for engine in summary.engines:
         into = f" into {engine.consolidated_into}" if engine.consolidated_into else ""
-        line(f"  {engine.engine:<18} {engine.role:<13} {engine.statement_count:>4}{into}")
+        unique = (
+            f", unique_query_ids {len(engine.unique_query_ids)}"
+            + (f" (e.g. {qid(engine.unique_query_ids[0])})" if engine.unique_query_ids else "")
+            if engine.unique_query_ids is not None
+            else ""
+        )
+        line(f"  {engine.engine:<18} {engine.role:<13} {engine.statement_count:>4}{into}{unique}")
     for move in summary.consolidations:
         retained = f", {len(move.queries_retained)} retained" if move.queries_retained else ""
         line(

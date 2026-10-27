@@ -97,12 +97,17 @@ def check_analysis(out: dict[int, list[str]], scope: tuple[str, ...] | None) -> 
     # Contract 1.2 (#1603): the parsed text and the best engine's fit breakdown.
     assert out[2][3].startswith("query_text: ")
     assert out[2][3].removeprefix("query_text: ").rstrip(" .") in (best.query_text or "")
+    found = ", ".join(
+        f"{p.id} ({'intrinsic' if p.intrinsic else 'fixable'})" for p in best.matched_anti_patterns
+    )
+    assert out[2][4].startswith("matched_anti_patterns: ")
+    assert out[2][4].removeprefix("matched_anti_patterns: ").rstrip(" .") in (found or "none")
     engine = max(sorted(best.fit), key=lambda e: best.fit[e])
     entry = best.fit_breakdown[engine]
-    assert out[2][4].startswith(f"fit_breakdown on {engine}: {entry.method}; ")
+    assert out[2][5].startswith(f"fit_breakdown on {engine}: {entry.method}; ")
     penalties = ", ".join(f"{p.id} -{p.points}" for p in entry.penalties) or "none"
-    assert out[2][4].endswith(f"base {entry.base}; penalties {penalties}; fit {best.fit[engine]}")
-    for line, table in zip(out[2][5:], entry.tables, strict=False):
+    assert out[2][5].endswith(f"base {entry.base}; penalties {penalties}; fit {best.fit[engine]}")
+    for line, table in zip(out[2][6:], entry.tables, strict=False):
         assert line.startswith(f"{table.table_id}: ") and line.endswith(f"score {table.score}")
 
 
@@ -118,6 +123,12 @@ def check_placement(out: dict[int, list[str]], placed: AssessmentResult) -> None
         assert re.search(
             rf"^{engine.engine} +{engine.role} +{engine.statement_count}\b", body, re.M
         ), engine.engine
+        if engine.unique_query_ids is not None:
+            assert re.search(
+                rf"^{engine.engine} .*, unique_query_ids {len(engine.unique_query_ids)}\b",
+                body,
+                re.M,
+            ), engine.engine
     for move in summary.consolidations:
         assert f"consolidated: {move.from_engine} -> {move.to_engine} ({move.query_count})" in body
         assert (

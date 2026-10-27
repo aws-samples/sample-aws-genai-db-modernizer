@@ -68,6 +68,8 @@ DESIGN_ENTRY_ENGINES: dict[str, frozenset[str]] = {
         {"dynamodb", "aurora_mysql", "aurora_postgresql", "documentdb", "elasticache", "opensearch"}
     ),
 }
+#: The engines whose design entry contract 1.1 added: a 1.0 result is written without them.
+DESIGN_ENGINES_ADDED_IN_1_1: frozenset[str] = frozenset({"opensearch"})
 # 1.2 added no design engine.
 DESIGN_ENTRY_ENGINES["1.2"] = DESIGN_ENTRY_ENGINES["1.1"]
 
@@ -267,7 +269,10 @@ class AssessmentRequest(_Strict):
 
     contract_version: ContractVersion = Field(
         CONTRACT_VERSION,
-        description="The contract version the caller wrote the request for; any 1.x is read",
+        description=(
+            "The contract version the caller builds on; any 1.x is read, and the result is "
+            "written for the same version. Pin it: with none, the latest"
+        ),
     )
     database_name: str = Field(
         ...,
@@ -442,8 +447,9 @@ class TableForeignKey(_Strict):
     referenced_table: str | None = Field(
         ...,
         description=(
-            "The referenced table, as a `table_id` of this result; None when the "
-            "collection does not hold that table"
+            "The referenced table, as a `table_id` of this result (the referencing "
+            "table's schema first, since collectors keep only the bare name); None when the "
+            "collection does not hold that table, or the name is ambiguous"
         ),
     )
     referenced_columns: list[str] = Field(
@@ -1096,8 +1102,9 @@ class AssessmentResult(_Strict):
     contract_version: ContractVersion = Field(
         CONTRACT_VERSION,
         description=(
-            "The contract version the result was written for; this library writes "
-            "CONTRACT_VERSION and reads any 1.x"
+            "The contract version the result was written for: the request's "
+            "contract_version (CONTRACT_VERSION when the request names none), written as "
+            "that version writes it; any 1.x is read"
         ),
     )
     label: ResultLabel = Field(
@@ -1135,6 +1142,13 @@ class AssessmentResult(_Strict):
         data = handler(self)
         if self.contract_version in BEFORE_1_2 and isinstance(data, dict):
             _drop_fields_added_in_1_2(data)
+            if self.contract_version == "1.0" and isinstance(data.get("designs"), list):
+                # 1.0 had no entry for the engines 1.1 added (OpenSearch, #1513).
+                data["designs"] = [
+                    d
+                    for d in data["designs"]
+                    if not (isinstance(d, dict) and d.get("engine") in DESIGN_ENGINES_ADDED_IN_1_1)
+                ]
         return data
 
     @model_validator(mode="after")
@@ -1172,7 +1186,8 @@ class AssessmentResult(_Strict):
 
 def _check_fit_breakdown(statement: StatementResult) -> None:
     """From contract 1.2 on: every engine in ``fit`` has an ungated breakdown with the same
-    ``fit``, and a gated one names an engine with no ``fit`` that ``excluded`` lists."""
+    ``fit``; every other entry is a gate only (no score, nothing else set), for an engine
+    with no ``fit`` that ``excluded`` lists."""
     for engine, score in statement.fit.items():
         entry = statement.fit_breakdown.get(engine)
         if entry is None or entry.gate is not None or entry.fit != score:
@@ -1182,10 +1197,26 @@ def _check_fit_breakdown(statement: StatementResult) -> None:
                 f"{' (gated)' if entry and entry.gate else ''}"
             )
     for engine, entry in statement.fit_breakdown.items():
-        if entry.gate is not None and (engine in statement.fit or engine not in statement.excluded):
+        if engine in statement.fit:
+            continue
+        if entry.gate is None:
             raise ValueError(
-                f"statement {statement.query_id}: {engine!r} is gated in fit_breakdown "
-                "but scored in fit, or not in excluded"
+                f"statement {statement.query_id}: {engine!r} has no fit, so its "
+                "fit_breakdown entry must be a gate"
+            )
+        only_a_gate = (
+            entry.fit is None
+            and entry.base is None
+            and entry.method is None
+            and entry.pattern is None
+            and entry.cost is None
+            and not entry.tables
+            and not entry.penalties
+        )
+        if not only_a_gate or engine not in statement.excluded:
+            raise ValueError(
+                f"statement {statement.query_id}: {engine!r} is gated in fit_breakdown, so "
+                "its entry must hold only the gate, and excluded must list it"
             )
 
 

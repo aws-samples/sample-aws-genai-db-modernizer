@@ -114,7 +114,7 @@ A designed result always carries the [design block](#the-design-block) (`designs
 
 | Field | Meaning |
 |---|---|
-| `contract_version` | `"1.2"` (the default). A request written for `"1.0"` or `"1.1"` is read the same way |
+| `contract_version` | The contract version you build on: `"1.0"`, `"1.1"` or `"1.2"`; the result is written for the same version ([The result's version](#the-results-version)). Leave it out and you get the latest (`"1.2"` in this release). **Pin it in every request**, so a library upgrade never changes the shape you validate |
 | `database_name` | 1 to 128 ASCII letters, digits, underscores or hyphens. It names the run; it need not match the collection's own database name (see below) |
 | `collection` | A raw collection: the unmodified output of the collection scripts. A collector output (contract 3.x) is accepted too, but every derived per-statement fact (tables, statement type, joins, tags) is read again from the statement text by the library's parser, and derived fields it carries are ignored |
 | `options.run_through` | `"analysis"`, `"reality_check"` (default), `"schema_design"` or `"synthesis"` ([How far to run](#how-far-to-run-run_through)) |
@@ -330,7 +330,7 @@ From `"schema_design"` on, a statement whose engine's design reports it unsuppor
 
 | Field | Meaning |
 |---|---|
-| `gate` | `{"kind", "reason"}`, set only when the engine is gated: it then has no score, and every other field is `null` or empty. `kind` is `hard_exclusion`, `capability` or `model_flag` (a model's flag the reality check accepted); `reason` is a customer-facing sentence |
+| `gate` | `{"kind", "reason"}`, set only when the engine is gated: it then has no score, and every other field is `null` or empty. `kind` is, for example, `hard_exclusion`, `capability`, `model_flag` (a model's flag the reality check accepted) or `write_gate` (an engine that cannot own the statement's write, on a ladder rung routing recorded with no score); `reason` is a customer-facing sentence |
 | `method` | The rule the base score followed: `per_table_weighted_mean` (a statement with an access-pattern class); `pattern_only_no_class_score` (a pattern-only engine, such as OpenSearch, whose catalog gives the statement's class no score: the base is 0); or, for a statement with no access-pattern class (`utility` or `unparsed`), `unclassified_own_tables` (its own rated tables' confidence), `unclassified_all_tables` (every rated table's, when it has none of its own) or `unclassified_pattern_tables` (on a pattern-only engine, the tables of the patterns that matched it) |
 | `pattern` | `{"score", "source", "class"}`: the statement's own pattern dimension on the engine (`source` `"statement"`), the score of its access-pattern `class`. When a redesign scores higher and routing relies on it (#1231), `class` is the redesigned class. `null` under an `unclassified_*` method |
 | `cost` | `{"score", "source"}`: the statement's own cost dimension on the engine (`source` `"statement"`). `null` under an `unclassified_*` method |
@@ -364,7 +364,7 @@ Rows that share a digest are one statement. Their counters are summed, and `quer
 
 ### Table facts
 
-`summary.table_facts[]` (since `1.2`) has one entry per table in the collection, in `table_id` order, from `"analysis"` on: `table_id`, `row_count`, `size_mb`, `columns[]` (`name`, `data_type` as the source engine names it, `nullable`; in the table's column order), `primary_key` (its columns, in order; empty for none) and `foreign_keys[]`, one entry per constraint: `constraint_name`, `columns`, `referenced_table` and `referenced_columns` (paired with `columns`). `referenced_table` is the referenced table's `table_id` in this result: the table of that name in the referencing table's schema, else the only collected table of that name. It is `null` when the collection holds no such table, or more than one.
+`summary.table_facts[]` (since `1.2`) has one entry per table in the collection, in `table_id` order, from `"analysis"` on: `table_id`, `row_count`, `size_mb`, `columns[]` (`name`, `data_type` as the source engine names it, `nullable`; in the table's column order), `primary_key` (its columns, in order; empty for none) and `foreign_keys[]`, one entry per constraint: `constraint_name`, `columns`, `referenced_table` and `referenced_columns` (paired with `columns`). `referenced_table` is the referenced table's `table_id` in this result: the table of that name in the referencing table's schema, else the only collected table of that name. It is `null` when the collection holds no such table, or when several schemas hold one and none is the referencing table's. The collectors keep only the referenced table's bare name, not its schema, so a foreign key to another schema's table can resolve to the wrong one: when both `sales.Customers` and `hr.Customers` exist, a key from `sales.Orders` to `hr.Customers` resolves to `sales.Customers`, the referencing table's own schema.
 
 The ids are the library's own, the ones `statements[].tables`, `summary.tables[].table_id` and `groups[].tables` use, so you can join on them. The facts are what the library read from the collection, never a model's.
 
@@ -381,6 +381,14 @@ Contract `1.2` (#1603) is a MINOR version. It only adds fields, each exposing a 
 - on a DynamoDB design entry, `tables[].aggregate_pattern` and `entities[]`.
 
 `statements[].query_tags` is unchanged: it has been in the result since `1.0`. No field was renamed, removed, retyped or given a new meaning. The published schema lists the new fields as optional, so a `1.0` or `1.1` result still validates against it, although the library always writes them. A result written for `1.0` or `1.1` loads with the library's models, is not checked by the `1.2` rule on `fit_breakdown`, and is written back as it was read, without the new fields. To read the new fields, check `contract_version` first, or treat a missing field as not stated.
+
+`ruleset_hash` changes in this release, although no score and no engine placement changes: the hash covers the scorer's source code, and the scorer now also writes `fit_breakdown`. For this change only, a `1.2` result's `fit` compares with the previous release's `1.1` result for the same collection, although the two hashes differ.
+
+### The result's version
+
+The result follows the request's `contract_version`. A request for `"1.1"` gets a `1.1` result: the library writes it as `1.1` wrote it, without any field `1.2` added, and it validates against the `1.1` schema file. A request for `"1.0"` gets a `1.0` result, without the `1.2` fields and without the design entries `1.1` added (OpenSearch). A request for `"1.2"`, or one that names no version, gets a `1.2` result. As Python objects, the models still hold every field: the version decides what is written as JSON (`model_dump_json`, `model_dump`) and which rules a result is checked by.
+
+Pin `contract_version` in every request. A request that leaves it out gets the latest version, and each version's schema file refuses fields it does not know, so after an upgrade a newer result fails a validator built on an older schema file.
 
 ## Determinism
 

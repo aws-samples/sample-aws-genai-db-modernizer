@@ -1,0 +1,1531 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/aws-samples/sample-aws-genai-db-modernizer/main/docs/contracts/schemas/assess_result.v1.schema.json",
+  "title": "AssessmentResult",
+  "x-contract-version": "1.0",
+  "$defs": {
+    "Artifacts": {
+      "additionalProperties": true,
+      "description": "Internal contracts, verbatim. No compatibility promise; each keeps its own version.\n\nFrom ``schema_design`` on: ``schema_designs`` (each designed engine's schema output,\nthe data model) and, at ``synthesis``, ``synthesis_report`` (the report every\ndeliverable renders). ``artifact_keys`` names the store key each was read from\n(under ``<database_name>/<job_id>/``), for a caller that passed its own store.",
+      "properties": {
+        "compatibility": {
+          "const": "none: internal contracts, may change in any release",
+          "default": "none: internal contracts, may change in any release",
+          "title": "Compatibility",
+          "type": "string"
+        }
+      },
+      "required": [
+        "compatibility"
+      ],
+      "title": "Artifacts",
+      "type": "object"
+    },
+    "AssessmentOptions": {
+      "additionalProperties": false,
+      "description": "How far to run and over which engines. Echoed in the result as applied.",
+      "if": {
+        "properties": {
+          "run_through": {
+            "enum": [
+              "schema_design",
+              "synthesis"
+            ]
+          }
+        },
+        "required": [
+          "run_through"
+        ]
+      },
+      "properties": {
+        "target_engines": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Engine scope: the engine catalog ids to consider. None means every engine the workload warrants. Ids are lower-cased, trimmed, de-duplicated and sorted; an empty list, a legacy id, a planned engine or an unknown id is refused.",
+          "title": "Target Engines"
+        },
+        "run_through": {
+          "default": "reality_check",
+          "description": "Last phase to run. 'analysis' scores every statement and assigns nothing; 'reality_check' adds the final engine placement; 'schema_design' designs the data model of every engine the placement keeps; 'synthesis' adds the report. 'schema_design' and 'synthesis' need a model (deterministic=False); their designs and report are in `artifacts`.",
+          "enum": [
+            "analysis",
+            "reality_check",
+            "schema_design",
+            "synthesis"
+          ],
+          "title": "Run Through",
+          "type": "string"
+        },
+        "deterministic": {
+          "default": true,
+          "description": "Run with no model. Analysis never uses one; with False the reality check has a model review its consolidations and write its summary, schema design designs with a model and synthesis writes its executive summary with one. Must be False for 'schema_design' and 'synthesis'.",
+          "title": "Deterministic",
+          "type": "boolean"
+        },
+        "include_artifacts": {
+          "default": false,
+          "description": "Include the internal contracts in `artifacts` (no compatibility promise).",
+          "title": "Include Artifacts",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "target_engines",
+        "run_through",
+        "deterministic",
+        "include_artifacts"
+      ],
+      "then": {
+        "properties": {
+          "deterministic": {
+            "const": false
+          }
+        },
+        "required": [
+          "deterministic"
+        ]
+      },
+      "title": "AssessmentOptions",
+      "type": "object"
+    },
+    "AuroraDesign": {
+      "additionalProperties": false,
+      "description": "An Aurora MySQL or Aurora PostgreSQL design: its target tables and indexes.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "enum": [
+            "aurora_mysql",
+            "aurora_postgresql"
+          ],
+          "title": "Engine",
+          "type": "string"
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/AuroraTable"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "ddl_artifact_path": {
+          "description": "Where the full generated DDL is: a dotted path in the result (with include_artifacts=True), for example 'artifacts.schema_designs.aurora_mysql.generated_ddl'",
+          "title": "Ddl Artifact Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "tables",
+        "ddl_artifact_path"
+      ],
+      "title": "AuroraDesign",
+      "type": "object"
+    },
+    "AuroraTable": {
+      "additionalProperties": false,
+      "description": "One target table.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_key": {
+          "description": "Its primary key columns",
+          "items": {
+            "type": "string"
+          },
+          "title": "Primary Key",
+          "type": "array"
+        },
+        "indexes": {
+          "description": "Its secondary indexes, as the design's CREATE INDEX DDL",
+          "items": {
+            "type": "string"
+          },
+          "title": "Indexes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "primary_key",
+        "indexes"
+      ],
+      "title": "AuroraTable",
+      "type": "object"
+    },
+    "CacheKey": {
+      "additionalProperties": false,
+      "description": "One cache key pattern and what it caches.",
+      "properties": {
+        "pattern": {
+          "description": "The key pattern, for example 'wp_options:{option_name}'",
+          "title": "Pattern",
+          "type": "string"
+        },
+        "data_type": {
+          "description": "The Valkey data type, for example 'string' or 'hash'",
+          "title": "Data Type",
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its TTL; None means no expiry",
+          "title": "Ttl Seconds"
+        },
+        "source_tables": {
+          "description": "The source tables whose rows it caches",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements whose reads it serves",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "pattern",
+        "data_type",
+        "ttl_seconds",
+        "source_tables",
+        "query_ids"
+      ],
+      "title": "CacheKey",
+      "type": "object"
+    },
+    "Consolidation": {
+      "additionalProperties": false,
+      "description": "One reality-check consolidation: statements moved off an engine that added no\nunique value.",
+      "properties": {
+        "from_engine": {
+          "title": "From Engine",
+          "type": "string"
+        },
+        "to_engine": {
+          "title": "To Engine",
+          "type": "string"
+        },
+        "query_count": {
+          "description": "Statements it moved",
+          "minimum": 0,
+          "title": "Query Count",
+          "type": "integer"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_engine",
+        "to_engine",
+        "query_count",
+        "reason"
+      ],
+      "title": "Consolidation",
+      "type": "object"
+    },
+    "DocumentDBCollection": {
+      "additionalProperties": false,
+      "description": "One target collection.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "embedded": {
+          "description": "The embed or reference choice per child table",
+          "items": {
+            "$ref": "#/$defs/DocumentDBEmbed"
+          },
+          "title": "Embedded",
+          "type": "array"
+        },
+        "referenced_collections": {
+          "description": "Other collections its documents reference by id",
+          "items": {
+            "type": "string"
+          },
+          "title": "Referenced Collections",
+          "type": "array"
+        },
+        "indexes": {
+          "items": {
+            "$ref": "#/$defs/DocumentDBIndex"
+          },
+          "title": "Indexes",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from it",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "embedded",
+        "referenced_collections",
+        "indexes",
+        "query_ids"
+      ],
+      "title": "DocumentDBCollection",
+      "type": "object"
+    },
+    "DocumentDBDesign": {
+      "additionalProperties": false,
+      "description": "A DocumentDB design: its collections, their indexes and embed choices.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "documentdb",
+          "title": "Engine",
+          "type": "string"
+        },
+        "collections": {
+          "items": {
+            "$ref": "#/$defs/DocumentDBCollection"
+          },
+          "title": "Collections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "collections"
+      ],
+      "title": "DocumentDBDesign",
+      "type": "object"
+    },
+    "DocumentDBEmbed": {
+      "additionalProperties": false,
+      "description": "How one source table is kept in a collection's documents.",
+      "properties": {
+        "source_table": {
+          "title": "Source Table",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where in the parent document it is kept",
+          "title": "Path",
+          "type": "string"
+        },
+        "strategy": {
+          "description": "embed: kept inside the parent document; reference: kept apart and referenced by id; hybrid: some fields embedded, the rest referenced",
+          "enum": [
+            "embed",
+            "reference",
+            "hybrid"
+          ],
+          "title": "Strategy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_table",
+        "path",
+        "strategy"
+      ],
+      "title": "DocumentDBEmbed",
+      "type": "object"
+    },
+    "DocumentDBIndex": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "keys": {
+          "description": "Its key fields, in order",
+          "items": {
+            "$ref": "#/$defs/DocumentDBIndexKey"
+          },
+          "title": "Keys",
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "compound",
+            "single",
+            "text",
+            "partial",
+            "unique"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "query_ids": {
+          "description": "The statements the design names for this index",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "keys",
+        "type",
+        "query_ids"
+      ],
+      "title": "DocumentDBIndex",
+      "type": "object"
+    },
+    "DocumentDBIndexKey": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "direction": {
+          "description": "1 ascending, -1 descending",
+          "title": "Direction",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "field",
+        "direction"
+      ],
+      "title": "DocumentDBIndexKey",
+      "type": "object"
+    },
+    "DynamoDBDesign": {
+      "additionalProperties": false,
+      "description": "A DynamoDB design: its target tables, their keys and indexes.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "dynamodb",
+          "title": "Engine",
+          "type": "string"
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/DynamoDBTable"
+          },
+          "title": "Tables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "tables"
+      ],
+      "title": "DynamoDBDesign",
+      "type": "object"
+    },
+    "DynamoDBIndex": {
+      "additionalProperties": false,
+      "description": "One global secondary index.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "partition_key": {
+          "description": "Its partition key attributes, in order (1 to 4)",
+          "items": {
+            "$ref": "#/$defs/DynamoDBKey"
+          },
+          "title": "Partition Key",
+          "type": "array"
+        },
+        "sort_key": {
+          "description": "Its sort key attributes, in order; empty for none",
+          "items": {
+            "$ref": "#/$defs/DynamoDBKey"
+          },
+          "title": "Sort Key",
+          "type": "array"
+        },
+        "projection": {
+          "enum": [
+            "ALL",
+            "KEYS_ONLY",
+            "INCLUDE"
+          ],
+          "title": "Projection",
+          "type": "string"
+        },
+        "projected_attributes": {
+          "description": "The non-key attributes it projects when projection is INCLUDE; else empty",
+          "items": {
+            "type": "string"
+          },
+          "title": "Projected Attributes",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from this index",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "partition_key",
+        "sort_key",
+        "projection",
+        "projected_attributes",
+        "query_ids"
+      ],
+      "title": "DynamoDBIndex",
+      "type": "object"
+    },
+    "DynamoDBKey": {
+      "additionalProperties": false,
+      "description": "One key attribute.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "description": "DynamoDB attribute type",
+          "enum": [
+            "S",
+            "N",
+            "B"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "DynamoDBKey",
+      "type": "object"
+    },
+    "DynamoDBTable": {
+      "additionalProperties": false,
+      "description": "One target table.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "source_tables": {
+          "description": "The source tables it holds, as the design names them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Tables",
+          "type": "array"
+        },
+        "partition_key": {
+          "$ref": "#/$defs/DynamoDBKey"
+        },
+        "sort_key": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DynamoDBKey"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gsis": {
+          "items": {
+            "$ref": "#/$defs/DynamoDBIndex"
+          },
+          "title": "Gsis",
+          "type": "array"
+        },
+        "query_ids": {
+          "description": "The statements the design serves from the table itself (not an index)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "source_tables",
+        "partition_key",
+        "sort_key",
+        "gsis",
+        "query_ids"
+      ],
+      "title": "DynamoDBTable",
+      "type": "object"
+    },
+    "ElastiCacheDesign": {
+      "additionalProperties": false,
+      "description": "An ElastiCache design: its key patterns, TTLs and what each key caches.",
+      "properties": {
+        "validation_passed": {
+          "description": "The design's own checks passed. False for a design that failed them (the reasons are in `artifacts.schema_designs.<engine>.validation_failures`) or that records no result: check it before you build on the design",
+          "title": "Validation Passed",
+          "type": "boolean"
+        },
+        "engine": {
+          "const": "elasticache",
+          "title": "Engine",
+          "type": "string"
+        },
+        "keys": {
+          "items": {
+            "$ref": "#/$defs/CacheKey"
+          },
+          "title": "Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "validation_passed",
+        "engine",
+        "keys"
+      ],
+      "title": "ElastiCacheDesign",
+      "type": "object"
+    },
+    "EngineLine": {
+      "additionalProperties": false,
+      "description": "One analysed engine, as the run left it.",
+      "properties": {
+        "engine": {
+          "title": "Engine",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "owner",
+            "cache_layer",
+            "consolidated",
+            "not_selected"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "statement_count": {
+          "default": 0,
+          "description": "Statements placed on it (`statements_per_engine`); 0 for a cache",
+          "minimum": 0,
+          "title": "Statement Count",
+          "type": "integer"
+        },
+        "consolidated_into": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set when role is 'consolidated': the engine that took most of its statements (`consolidations` lists every move)",
+          "title": "Consolidated Into"
+        },
+        "unique_queries": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reality check: of the statements it held when the check ran, those whose score on it leads the best other engine by at least `unique_delta_threshold` points; None when the reality check did not assess it",
+          "title": "Unique Queries"
+        },
+        "avg_delta": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reality check: its mean score lead over the best other engine on the statements it held; None when the reality check did not assess it",
+          "title": "Avg Delta"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse. For an owner or the cache, the executive report's 'why this engine' text; for a consolidated engine, the reality check's reason",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "role",
+        "statement_count",
+        "consolidated_into",
+        "unique_queries",
+        "avg_delta",
+        "reason"
+      ],
+      "title": "EngineLine",
+      "type": "object"
+    },
+    "Group": {
+      "additionalProperties": false,
+      "description": "Statements that move together.",
+      "properties": {
+        "group_id": {
+          "description": "Stable within a result",
+          "title": "Group Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "co_dependency",
+            "write_group"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "query_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Ids",
+          "type": "array"
+        },
+        "tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the group lands; None before 'reality_check' or when unservable",
+          "title": "Engine"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_id",
+        "kind",
+        "query_ids",
+        "tables",
+        "engine",
+        "reason"
+      ],
+      "title": "Group",
+      "type": "object"
+    },
+    "PatternRef": {
+      "additionalProperties": false,
+      "description": "A pattern from the pattern catalog (``src/catalog/patterns``).",
+      "properties": {
+        "id": {
+          "description": "The catalog's pattern id",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "description": "The catalog's display name for it",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "title": "PatternRef",
+      "type": "object"
+    },
+    "PostSchemaTerminal": {
+      "additionalProperties": false,
+      "description": "A statement a schema design flagged that the post-schema routing could not move:\nit stays on the flagging engine, and the pipeline's deliverables show it as\napplication-layer work there.",
+      "properties": {
+        "engine": {
+          "description": "The engine whose design flagged it, by id; the statement stays on it",
+          "title": "Engine",
+          "type": "string"
+        },
+        "flag_reason": {
+          "description": "The flag's reason category: full_scan, client_side_join, missing_feature or other",
+          "enum": [
+            "full_scan",
+            "client_side_join",
+            "missing_feature",
+            "other"
+          ],
+          "title": "Flag Reason",
+          "type": "string"
+        },
+        "cause": {
+          "description": "no_kept_engine: no other engine the placement keeps, in the engine scope, can take it; depth_limit: the post-schema routing reached its last pass",
+          "enum": [
+            "no_kept_engine",
+            "depth_limit"
+          ],
+          "title": "Cause",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "flag_reason",
+        "cause",
+        "reason"
+      ],
+      "title": "PostSchemaTerminal",
+      "type": "object"
+    },
+    "RelationalEngine": {
+      "additionalProperties": false,
+      "description": "The Aurora engine chosen for the source, and why.",
+      "properties": {
+        "engine": {
+          "title": "Engine",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Customer-facing sentence; do not parse",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "reason"
+      ],
+      "title": "RelationalEngine",
+      "type": "object"
+    },
+    "StatementResult": {
+      "additionalProperties": false,
+      "properties": {
+        "query_id": {
+          "title": "Query Id",
+          "type": "string"
+        },
+        "query_tags": {
+          "description": "Leading or trailing comment tags; never read by routing",
+          "items": {
+            "type": "string"
+          },
+          "title": "Query Tags",
+          "type": "array"
+        },
+        "query_type": {
+          "anyOf": [
+            {
+              "enum": [
+                "SELECT",
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "MERGE",
+                "OTHER"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "As the parser reads it",
+          "title": "Query Type"
+        },
+        "join_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "As the parser reads it",
+          "title": "Join Count"
+        },
+        "tables": {
+          "description": "The tables it touches, as the parser reads them",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "calls_per_second": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Calls Per Second"
+        },
+        "rewritten_by_caller": {
+          "default": false,
+          "title": "Rewritten By Caller",
+          "type": "boolean"
+        },
+        "engine": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "None before 'reality_check', or when unservable",
+          "title": "Engine"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The score it was placed with, as the assignment stores it. Until #1373 is fixed, a consolidated statement keeps the removed engine's score here; its `fit` for `engine` is the score on the engine it is on",
+          "title": "Confidence"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "enum": [
+                "highest_score",
+                "tie_rule",
+                "co_dependency",
+                "write_group",
+                "override",
+                "fallback",
+                "consolidated",
+                "engine_floor",
+                "sweep",
+                "capability_flag",
+                "customer_choice",
+                "post_schema_reroute",
+                "unservable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "consolidated_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The engine the reality check moved it from",
+          "title": "Consolidated From"
+        },
+        "excluded": {
+          "description": "Engines ruled out for it, by id, sorted: a hard or capability gate, the engine scope, and from 'reality_check' on also engines that cannot own its writes (those keep their score in `fit`)",
+          "items": {
+            "type": "string"
+          },
+          "title": "Excluded",
+          "type": "array"
+        },
+        "unservable_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unservable Reason"
+        },
+        "fit": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "The routing scorer's score per analysed engine it can be scored on (valid for ruleset_hash only)",
+          "title": "Fit",
+          "type": "object"
+        },
+        "signals": {
+          "description": "Workload signals that name it",
+          "items": {
+            "type": "string"
+          },
+          "title": "Signals",
+          "type": "array"
+        },
+        "matched_patterns": {
+          "description": "The catalog patterns it matches on its assigned engine, as that engine's analysis found them; empty before 'reality_check' and when unservable",
+          "items": {
+            "$ref": "#/$defs/PatternRef"
+          },
+          "title": "Matched Patterns",
+          "type": "array"
+        },
+        "tied_engines": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tied Engines",
+          "type": "array"
+        },
+        "reason_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Customer-facing sentence; do not parse. It can quote collection text (table names): escape it when rendering",
+          "title": "Reason Text"
+        },
+        "post_schema_terminal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PostSchemaTerminal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set when a schema design flagged the statement on its engine and the post-schema routing could not move it (it keeps its engine and reason_code); None otherwise and before 'schema_design'"
+        }
+      },
+      "required": [
+        "query_id",
+        "query_tags",
+        "query_type",
+        "join_count",
+        "tables",
+        "calls_per_second",
+        "rewritten_by_caller",
+        "engine",
+        "confidence",
+        "reason_code",
+        "consolidated_from",
+        "excluded",
+        "unservable_reason",
+        "fit",
+        "signals",
+        "matched_patterns",
+        "tied_engines",
+        "reason_text",
+        "post_schema_terminal"
+      ],
+      "title": "StatementResult",
+      "type": "object"
+    },
+    "Summary": {
+      "additionalProperties": false,
+      "properties": {
+        "run_through_reached": {
+          "enum": [
+            "analysis",
+            "reality_check",
+            "schema_design",
+            "synthesis"
+          ],
+          "title": "Run Through Reached",
+          "type": "string"
+        },
+        "source_engine": {
+          "description": "The source database engine, as the collection states it",
+          "title": "Source Engine",
+          "type": "string"
+        },
+        "assignment_version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The assignment version the result reflects (it rises when the reality check, a customer edit or the post-schema routing writes a new one); None at 'analysis'",
+          "title": "Assignment Version"
+        },
+        "statement_count": {
+          "description": "Placed statements plus unservable ones",
+          "minimum": 0,
+          "title": "Statement Count",
+          "type": "integer"
+        },
+        "statements_per_engine": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Placed statements per engine; empty at 'analysis'",
+          "title": "Statements Per Engine",
+          "type": "object"
+        },
+        "unservable_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Unservable Count",
+          "type": "integer"
+        },
+        "post_schema_terminal_count": {
+          "default": 0,
+          "description": "Statements with `post_schema_terminal` set: a design flagged them and the post-schema routing could not move them; 0 before 'schema_design'",
+          "minimum": 0,
+          "title": "Post Schema Terminal Count",
+          "type": "integer"
+        },
+        "unique_delta_threshold": {
+          "description": "The score lead (points) a statement needs on an engine for the reality check to count it as that engine's unique value",
+          "minimum": 0,
+          "title": "Unique Delta Threshold",
+          "type": "integer"
+        },
+        "relational_engine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RelationalEngine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The Aurora engine for the source. At 'analysis', None for a source with no Aurora engine of its own (the choice is made when statements are placed)"
+        },
+        "engines": {
+          "description": "One line per analysed engine, in analysis order; empty at 'analysis'",
+          "items": {
+            "$ref": "#/$defs/EngineLine"
+          },
+          "title": "Engines",
+          "type": "array"
+        },
+        "consolidations": {
+          "description": "The reality check's consolidations, in its order; empty at 'analysis'",
+          "items": {
+            "$ref": "#/$defs/Consolidation"
+          },
+          "title": "Consolidations",
+          "type": "array"
+        },
+        "tables": {
+          "description": "One line per source table; empty at 'analysis'",
+          "items": {
+            "$ref": "#/$defs/TableLine"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "designed_engines": {
+          "description": "The engines with a schema design (in `designs` and `artifacts.schema_designs`), in triage's order; empty before 'schema_design', and when no engine could be designed",
+          "items": {
+            "type": "string"
+          },
+          "title": "Designed Engines",
+          "type": "array"
+        },
+        "design_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Customer-facing sentence; do not parse. Set only when 'schema_design' ran and no engine could be designed (the result is then a 'recommendation')",
+          "title": "Design Note"
+        }
+      },
+      "required": [
+        "run_through_reached",
+        "source_engine",
+        "assignment_version",
+        "statement_count",
+        "statements_per_engine",
+        "unservable_count",
+        "post_schema_terminal_count",
+        "unique_delta_threshold",
+        "relational_engine",
+        "engines",
+        "consolidations",
+        "tables",
+        "designed_engines",
+        "design_note"
+      ],
+      "title": "Summary",
+      "type": "object"
+    },
+    "TableLine": {
+      "additionalProperties": false,
+      "description": "One source table: the engine that owns it and the engines that read copies of it.",
+      "properties": {
+        "table_id": {
+          "description": "The source table, as in the collection",
+          "title": "Table Id",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The engine that takes the table's writes; never a cache-only engine. None only when a cache is the only engine that maps the table",
+          "title": "Owner"
+        },
+        "owner_basis": {
+          "anyOf": [
+            {
+              "enum": [
+                "writes",
+                "split_writes",
+                "most_queries",
+                "retained",
+                "design"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "writes: the engine of its writes; split_writes: writes on several engines, the owner serves most of its queries; most_queries: no writes, the engine serving most of its queries; retained: no owner engine queries it, the retained relational engine; design: no queries, from the schema design",
+          "title": "Owner Basis"
+        },
+        "also_read_by": {
+          "description": "Other engines whose statements read it (each needs a replica), most first",
+          "items": {
+            "type": "string"
+          },
+          "title": "Also Read By",
+          "type": "array"
+        },
+        "cached_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The cache in front of its reads, if any",
+          "title": "Cached By"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Customer-facing sentence on why the owner is the owner; do not parse. None only when the table has no owner basis",
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "table_id",
+        "owner",
+        "owner_basis",
+        "also_read_by",
+        "cached_by",
+        "reason"
+      ],
+      "title": "TableLine",
+      "type": "object"
+    },
+    "WorkloadScope": {
+      "additionalProperties": false,
+      "description": "Informational: what a cut workload left out. Echoed back unchanged; no rule reads it.",
+      "properties": {
+        "tables": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "derived_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Derived From"
+        },
+        "rewritten_query_ids": {
+          "description": "Statements the caller rewrote; marked rewritten_by_caller in the result.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Rewritten Query Ids",
+          "type": "array"
+        },
+        "dropped_foreign_keys": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Dropped Foreign Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tables",
+        "derived_from",
+        "rewritten_query_ids",
+        "dropped_foreign_keys"
+      ],
+      "title": "WorkloadScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One assessment's result: where each statement runs, which statements move\ntogether and which engine owns each table, and, for a designed result, each\ndesigned engine's data model (``designs``).\n\nDeterminism: for run_through=\"analysis\" (no model), the same collection, library\nversion and engine scope give an identical result, in any process and under any\nPYTHONHASHSEED. For run_through=\"reality_check\" this is not guaranteed: everything\nup to the reality check's model review is deterministic, but the review (with\ndeterministic=False) can differ between runs and change consolidations. Each change\nit makes is recorded in the assignment's moves with actor \"model_flag\"\n(artifacts.assignment.moves, with include_artifacts=True), and the statement it\nmoved has reason_code \"capability_flag\". run_through=\"schema_design\" and\n\"synthesis\" always use a model: the placement is the reality check's (the same\nguarantee) plus the post-schema routing's moves of the statements a design cannot\nserve (each a \"post_schema_flag\" Move, reason_code \"post_schema_reroute\"), and the\ndesigns and the report's executive summary can differ between runs. Results are\nnever stored or reused: a repeat call is a new run.",
+  "properties": {
+    "contract_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "label": {
+      "description": "analysis_only: scores, nothing placed; recommendation: engine placement, not a data model (also a 'schema_design' or 'synthesis' run with no engine to design: see summary.design_note); designed: engine placement and a schema design's data model for summary.designed_engines (in `designs`; the full designs are in `artifacts`)",
+      "enum": [
+        "analysis_only",
+        "recommendation",
+        "designed"
+      ],
+      "title": "Label",
+      "type": "string"
+    },
+    "library_version": {
+      "title": "Library Version",
+      "type": "string"
+    },
+    "ruleset_version": {
+      "title": "Ruleset Version",
+      "type": "string"
+    },
+    "ruleset_hash": {
+      "title": "Ruleset Hash",
+      "type": "string"
+    },
+    "options": {
+      "$ref": "#/$defs/AssessmentOptions"
+    },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkloadScope"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "statements": {
+      "items": {
+        "$ref": "#/$defs/StatementResult"
+      },
+      "title": "Statements",
+      "type": "array"
+    },
+    "groups": {
+      "items": {
+        "$ref": "#/$defs/Group"
+      },
+      "title": "Groups",
+      "type": "array"
+    },
+    "designs": {
+      "anyOf": [
+        {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "aurora_mysql": "#/$defs/AuroraDesign",
+                "aurora_postgresql": "#/$defs/AuroraDesign",
+                "documentdb": "#/$defs/DocumentDBDesign",
+                "dynamodb": "#/$defs/DynamoDBDesign",
+                "elasticache": "#/$defs/ElastiCacheDesign"
+              },
+              "propertyName": "engine"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/DynamoDBDesign"
+              },
+              {
+                "$ref": "#/$defs/AuroraDesign"
+              },
+              {
+                "$ref": "#/$defs/DocumentDBDesign"
+              },
+              {
+                "$ref": "#/$defs/ElastiCacheDesign"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set only when label is 'designed' (None otherwise): one entry per engine in summary.designed_engines with a stable design shape, in that order, each copied from the engine's schema design. An engine with no stable shape yet (OpenSearch) has its design in `artifacts` only",
+      "title": "Designs"
+    },
+    "artifacts": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Artifacts"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "contract_version",
+    "label",
+    "library_version",
+    "ruleset_version",
+    "ruleset_hash",
+    "options",
+    "scope",
+    "summary",
+    "statements",
+    "groups",
+    "designs",
+    "artifacts"
+  ],
+  "type": "object"
+}

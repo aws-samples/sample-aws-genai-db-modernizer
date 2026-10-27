@@ -124,7 +124,7 @@
   "properties": {
     "contract_version": {
       "default": "1.2",
-      "description": "The contract version the caller wrote the request for; any 1.x is read",
+      "description": "The contract version the caller builds on; any 1.x is read, and the result is written for the same version. Pin it: with none, the latest",
       "enum": [
         "1.0",
         "1.1",

@@ -32,8 +32,8 @@ uv run python docs/examples/library/demo_assess.py --llm-mode bedrock --run-thro
 | Section | Feature | Needs a model |
 |---|---|---|
 | 1 | `load_collection()` reads a sample zip; text that is not a collection raises `CollectionLoadError` | No |
-| 2 | `run_through="analysis"`: a score per statement on every engine, nothing placed, and a repeat run that is byte-identical; a statement's `query_text` and the `fit_breakdown` of its best engine (how the scorer reached the score) | No |
-| 3 | `run_through="reality_check"`: each engine's role and statement count, consolidations (full or partial), the groups that move together, table owners, and the table facts (`summary.table_facts`) | No |
+| 2 | `run_through="analysis"`: a score per statement on every engine, nothing placed, and a repeat run that is byte-identical; a statement's `query_text`, its `matched_anti_patterns` and the `fit_breakdown` of its best engine (how the scorer reached the score) | No |
+| 3 | `run_through="reality_check"`: each engine's role, statement count and `unique_query_ids`, consolidations (full or partial), the groups that move together, table owners, and the table facts (`summary.table_facts`) | No |
 | 4 | `statements[]`: reason codes, the matched patterns and the reason text; with a model, the statements its consolidation review moved | No |
 | 5 | `options.target_engines`: the scope as applied, and the unservable statements with their reason | No |
 | 6 | `run_through="schema_design"`: the designed engines and the stable design block (`designs`: tables and keys, indexes, collections, cache keys, OpenSearch indexes and data streams); without a model, the library's refusal | Yes |

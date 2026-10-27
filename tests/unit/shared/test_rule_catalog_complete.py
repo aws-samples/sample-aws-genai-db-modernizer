@@ -210,8 +210,9 @@ ENGINE_OR_PATTERN_TABLES: dict[str, tuple[frozenset[str], str]] = {
     "src/atx_orchestrator/tools.py": (frozenset({"_SCHEMA_ENGINES"}), _PLUMBING),
     "src/api/routes/agent_interaction.py": (frozenset({"_KNOWN_AGENT_FOLDERS"}), _PLUMBING),
     "src/assessment/models.py": (
-        frozenset({"DESIGN_ENTRY_ENGINES"}),
-        _CONTRACT + ": the engines each assess() contract version gives a design entry (#1513)",
+        frozenset({"DESIGN_ENTRY_ENGINES", "DESIGN_ENGINES_ADDED_IN_1_1"}),
+        _CONTRACT + ": the engines each assess() contract version gives a design entry (#1513), and"
+        " the ones a 1.0 result is written without (#1603)",
     ),
     "src/assessment/result_builder.py": (
         frozenset({"_DESIGN_READERS"}),

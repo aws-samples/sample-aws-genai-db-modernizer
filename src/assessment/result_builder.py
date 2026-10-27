@@ -1300,6 +1300,9 @@ def build_result(state: RunState, request: AssessmentRequest) -> AssessmentResul
     summary = build_summary(state, statements)
     label = result_label(state.run_through, summary.designed_engines)
     return AssessmentResult(
+        # The version the caller wrote the request for (#1603): a 1.1 request's result is
+        # a 1.1 result, written as 1.1 writes it; with none, the latest.
+        contract_version=request.contract_version,
         label=label,  # type: ignore[arg-type]
         library_version=get_package_version(),
         ruleset_version=ruleset_version(),

@@ -283,3 +283,119 @@ def test_the_documented_sample_breakdown_recomputes() -> None:
         assert statement["fit_breakdown"]
         for engine, entry in statement["fit_breakdown"].items():
             assert recomputed_fit(entry) == statement["fit"][engine] == entry["fit"]
+
+
+# --------------------------------------------------------------------------- the request's version
+
+#: The published result schema of each earlier version, as main shipped it: 1.1 before
+#: #1603, 1.0 before #1513 (``git show <commit>:docs/contracts/schemas/...``).
+EARLIER_SCHEMAS = {
+    "1.0": FIXTURES / "assess_result_v1_0.schema.json",
+    "1.1": FIXTURES / "assess_result_v1_1.schema.json",
+}
+
+
+def _pinned(
+    version: str | None, run_through: str, engines: list[str] | None = None, db: str = "wordpress"
+) -> str:
+    from tests.assess_models import models_patched
+
+    request: dict[str, Any] = {
+        "database_name": db,
+        "collection": load_collection(REPO / "docs" / "examples" / "wordpress" / "wordpress.zip"),
+        "options": {
+            "run_through": run_through,
+            "deterministic": run_through == "reality_check",
+            "target_engines": engines,
+        },
+    }
+    if version is not None:
+        request["contract_version"] = version
+    with models_patched():
+        return assess(request).model_dump_json()
+
+
+def _has_a_1_2_field(document: dict[str, Any]) -> bool:
+    summary = document["summary"]
+    rows = [
+        (summary, "Summary"),
+        *((e, "EngineLine") for e in summary["engines"]),
+        *((c, "Consolidation") for c in summary["consolidations"]),
+        *((s, "StatementResult") for s in document["statements"]),
+        *(
+            (t, "DynamoDBTable")
+            for d in document["designs"] or []
+            if d["engine"] == "dynamodb"
+            for t in d["tables"]
+        ),
+    ]
+    return any(set(ADDED_IN_1_2[model]) & set(row) for row, model in rows)
+
+
+@pytest.mark.parametrize(
+    ("version", "run_through", "engines"),
+    [
+        ("1.1", "reality_check", None),
+        ("1.1", "schema_design", None),
+        ("1.1", "schema_design", ["dynamodb", "opensearch"]),
+        ("1.0", "reality_check", None),
+        ("1.0", "schema_design", None),
+        ("1.0", "schema_design", ["dynamodb", "opensearch"]),
+    ],
+)
+def test_a_request_pinned_to_an_earlier_version_gets_that_versions_result(
+    version: str, run_through: str, engines: list[str] | None
+) -> None:
+    """The result follows the request's contract_version (maintainer decision on #1603):
+    a 1.1 (or 1.0) request's result is written as that version wrote it, with no 1.2
+    field, and validates against the schema file that version shipped."""
+    text = _pinned(version, run_through, engines)
+    document = json.loads(text)
+    assert document["contract_version"] == version
+    assert not _has_a_1_2_field(document)
+    schema = json.loads(EARLIER_SCHEMAS[version].read_text(encoding="utf-8"))
+    assert schema["x-contract-version"] == version
+    Draft202012Validator(schema).validate(document)
+    # It reads back as the same document.
+    assert AssessmentResult.model_validate_json(text).model_dump_json() == text
+    if run_through == "schema_design":
+        engines_designed = [d["engine"] for d in document["designs"]]
+        assert ("opensearch" in engines_designed) == (version == "1.1" and engines is not None)
+
+
+@pytest.mark.parametrize("version", ["1.2", None])
+def test_a_1_2_request_or_one_with_no_version_gets_the_latest(version: str | None) -> None:
+    from src.assessment import CONTRACT_VERSION
+
+    document = json.loads(_pinned(version, "reality_check"))
+    assert document["contract_version"] == CONTRACT_VERSION == "1.2"
+    assert _has_a_1_2_field(document)
+    assert all("fit_breakdown" in s for s in document["statements"])
+    Draft202012Validator(_schema()).validate(document)
+
+
+def test_an_engine_with_no_score_has_only_its_gate() -> None:
+    """From 1.2 on, an entry for an engine with no `fit` holds its gate and nothing else:
+    an ungated, unscored entry, or a gate with a score, is refused."""
+    document = _result("trailgear", "reality_check")
+    statement = next(
+        s for s in document["statements"] if any(e["gate"] for e in s["fit_breakdown"].values())
+    )
+    gated = next(e for e, entry in statement["fit_breakdown"].items() if entry["gate"])
+    AssessmentResult.model_validate(document)
+    for change in (
+        lambda entry: entry.update(gate=None),  # the reviewer's counterexample
+        lambda entry: entry.update(fit=0),
+        lambda entry: entry.update(base=0, method="per_table_weighted_mean"),
+    ):
+        changed = copy.deepcopy(document)
+        target = next(s for s in changed["statements"] if s["query_id"] == statement["query_id"])
+        change(target["fit_breakdown"][gated])
+        with pytest.raises(ValidationError, match="fit_breakdown"):
+            AssessmentResult.model_validate(changed)
+    # An entry for an engine the scorer never saw is refused the same way.
+    changed = copy.deepcopy(document)
+    target = next(s for s in changed["statements"] if s["query_id"] == statement["query_id"])
+    target["fit_breakdown"]["no_such_engine"] = {"gate": None}
+    with pytest.raises(ValidationError, match="must be a gate"):
+        AssessmentResult.model_validate(changed)

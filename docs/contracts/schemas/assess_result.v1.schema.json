@@ -1990,7 +1990,7 @@
               "type": "null"
             }
           ],
-          "description": "The referenced table, as a `table_id` of this result; None when the collection does not hold that table",
+          "description": "The referenced table, as a `table_id` of this result (the referencing table's schema first, since collectors keep only the bare name); None when the collection does not hold that table, or the name is ambiguous",
           "title": "Referenced Table"
         },
         "referenced_columns": {
@@ -2153,7 +2153,7 @@
   "properties": {
     "contract_version": {
       "default": "1.2",
-      "description": "The contract version the result was written for; this library writes CONTRACT_VERSION and reads any 1.x",
+      "description": "The contract version the result was written for: the request's contract_version (CONTRACT_VERSION when the request names none), written as that version writes it; any 1.x is read",
       "enum": [
         "1.0",
         "1.1",
