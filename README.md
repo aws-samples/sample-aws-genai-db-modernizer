@@ -10,9 +10,9 @@ Database Modernizer Assessment reads the schema and query statistics of a relati
 
 > **Disclaimer:** This is a sample project intended for educational and evaluation purposes. It requires proper review, testing, and modification before use in production environments. Use at your own risk.
 
-![A time-lapsed /modernize run on the WordPress sample in Claude Code with its approval gate, then the job's results page in the local UI and the executive report PDF](docs/assets/modernizer-demo.gif)
+![A time-lapsed /modernize run on the WordPress sample in a terminal, with the approval gate and the final summary held on screen, then the job's results and summary pages in the local UI and four pages of the executive report PDF](docs/assets/modernizer-demo.gif)
 
-*A full `/modernize` run on the WordPress sample (about 8 minutes, time-lapsed) with its one approval gate, then the job's results page in the local UI and the executive report PDF.*
+*A full `/modernize` run on the WordPress sample (about 7.5 minutes, time-lapsed to 78 seconds) with its one approval gate and final summary, then the job's results and summary pages in the local UI and four pages of the executive report PDF.*
 
 ## Quick start
 

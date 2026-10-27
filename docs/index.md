@@ -20,9 +20,9 @@ Run this command in [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 
 ## Demo
 
-![A time-lapsed /modernize run on the WordPress sample in Claude Code with its approval gate, then the job's results page in the local UI and the executive report PDF](assets/modernizer-demo.gif)
+![A time-lapsed /modernize run on the WordPress sample in a terminal, with the approval gate and the final summary held on screen, then the job's results and summary pages in the local UI and four pages of the executive report PDF](assets/modernizer-demo.gif)
 
-*A full `/modernize` run on the WordPress sample (about 8 minutes, time-lapsed) with its one approval gate, then the job's results page in the local UI: the headline and the three deliverable downloads, the query flow, the cost per engine, the migration roadmap and the close calls; then the executive report PDF.*
+*A full `/modernize` run on the WordPress sample (about 7.5 minutes, time-lapsed to 78 seconds) with its one approval gate and final summary, then the job's results and summary pages in the local UI and four pages of the executive report PDF.*
 
 ## What it answers
 
