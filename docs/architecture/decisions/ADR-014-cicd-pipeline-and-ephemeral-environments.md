@@ -1,8 +1,10 @@
 # ADR-014: CI/CD Pipeline Architecture and Ephemeral Environments
 
+> **Retired with the hosted setup.** Ephemeral environments, `deploy-feature` and promotion to production were removed ([#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)). CI is the CI-agnostic `ci/*.sh` entry points, with no deploy; see [ci/README.md](../../../ci/README.md).
+>
 > Note: This ADR documents CI/CD architecture decisions. Implementation details were sanitized before open-source release — the original pipeline was internal.
 
-**Status:** Accepted
+**Status:** Superseded: retired with the hosted setup
 **Date:** 2026-02-16
 **Decision Makers:** Database Modernizer Assessment Engineering Team
 

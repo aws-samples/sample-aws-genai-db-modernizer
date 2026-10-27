@@ -1,6 +1,8 @@
 # ADR-003: Progress Reporting Architecture
 
-**Status:** Accepted
+> **Retired with the hosted setup.** The EventBridge and WebSocket progress reporting described here was removed with the hosted deployment ([#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)). Progress is polled from artifact presence (`GET /api/v1/assessments/{job_id}`); see the [high-level design](../high-level-design.md).
+
+**Status:** Superseded: retired with the hosted setup
 **Date:** 2026-02-01
 **Updated:** 2026-02-06
 **Deciders:** Architecture Team
@@ -691,7 +693,6 @@ def test_end_to_end_progress():
 - [ADR-001: State Management and Checkpoints](ADR-001-state-management-and-checkpoints.md)
 - [ADR-002: Structured Output and Validation](ADR-002-structured-output-and-validation.md)
 - [High-Level Design](../high-level-design.md)
-- [Architecture Review](../ARCHITECTURE_REVIEW.md) - Point #3
 
 ---
 

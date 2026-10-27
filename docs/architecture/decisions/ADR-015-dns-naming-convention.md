@@ -1,8 +1,10 @@
 # ADR-015: DNS Naming Convention for Multi-Environment Subdomains
 
+> **Retired with the hosted setup.** The hosted API and UI subdomains described here no longer exist ([#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)); nothing is hosted.
+>
 > Note: Domain names in this ADR use example.com as a placeholder. Actual deployment domains were sanitized before open-source release.
 
-**Status:** Accepted
+**Status:** Superseded: retired with the hosted setup
 **Date:** 2026-02-17
 **Decision Makers:** Database Modernizer Assessment Engineering Team
 

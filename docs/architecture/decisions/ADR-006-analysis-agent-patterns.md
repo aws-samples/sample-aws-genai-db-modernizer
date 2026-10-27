@@ -1,6 +1,8 @@
 # ADR-006: Analysis Agent Architecture (Multi-Agent Pattern)
 
-**Status:** Accepted
+> **Partially superseded by ADR-024 and ADR-031 Decision 8.** The schema, performance and target-specific agent categories and the Analysis Orchestrator were never built; ADR-024 consolidated the analysis fleet, and ADR-031 replaced per-engine pattern catalogs with the rule catalog.
+
+**Status:** Partially superseded by [ADR-024](ADR-024-consolidate-deterministic-analysis-fleet.md) and [ADR-031](ADR-031-query-first-routing-and-engine-rule-catalog.md) Decision 8
 **Date:** 2026-02-02
 **Deciders:** Architecture Team
 **Related ADRs:** ADR-001 (State Management), ADR-002 (Pydantic Output), ADR-005 (Mini-Collectors)

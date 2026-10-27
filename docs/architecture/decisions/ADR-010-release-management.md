@@ -1,6 +1,8 @@
 # ADR-010: Release Management and Version Control Strategy
 
-**Status:** Accepted
+> **Partially superseded.** Every release is a tag on `main`, with no release or hotfix branches, and nothing is deployed from a release. The procedure is in [CONTRIBUTING.md](../../../CONTRIBUTING.md#releases).
+
+**Status:** Partially superseded: the release procedure is in CONTRIBUTING.md
 **Date:** 2026-02-02
 **Deciders:** Architecture Team
 **Related ADRs:** ADR-008 (Contract Versioning)
@@ -421,7 +423,6 @@ git log v1.4.0..v1.5.0 --pretty=format:"%s" | \
 ## 🔗 Links
 
 - [Full Changelog](https://github.com/aws-samples/sample-aws-genai-db-modernizer/compare/v1.4.0...v1.5.0)
-- [Migration Guide](docs/migration/v1.4-to-v1.5.md)
 ```
 
 ---

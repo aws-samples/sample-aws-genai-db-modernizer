@@ -1,6 +1,8 @@
 # ADR-020: Load Testing Stage Architecture
 
-**Status:** Approved
+> **Partially superseded.** k6 no longer runs on ECS with a coordinator; it runs locally or in the `agent-load-test` image. The load-test stage itself stands, and DynamoDB, DocumentDB, ElastiCache and OpenSearch are implemented.
+
+**Status:** Partially superseded: the ECS execution model
 **Date:** 2026-05-08
 **Deciders:** Database Modernizer Assessment Architecture Team
 

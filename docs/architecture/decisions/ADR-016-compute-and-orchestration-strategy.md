@@ -1,6 +1,8 @@
 # ADR-016: Compute and Orchestration Strategy
 
-**Status:** Accepted
+> **Partially superseded.** Step Functions, ECS and EventBridge were retired with the hosted setup ([#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175)); `LocalOrchestrator` runs the phases in process. Principle 4 (agents own their parallelism) and the triage and synthesis split stand, refined by ADR-024, ADR-025 and ADR-027. ADR-001 and ADR-007 name this ADR as their successor.
+
+**Status:** Partially superseded: the orchestration mechanism was retired with the hosted setup; the principles stand
 **Date:** 2026-02-18
 **Deciders:** Database Modernizer Assessment Architecture Team
 **Related ADRs:** ADR-001 (State Management), ADR-003 (Progress Reporting), ADR-005 (Mini-Collectors), ADR-007 (Referee Orchestration)

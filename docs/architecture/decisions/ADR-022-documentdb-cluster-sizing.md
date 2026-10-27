@@ -1,6 +1,6 @@
 # ADR-022: DocumentDB Cluster Sizing for Load Tests
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-08
 **Deciders:** Database Modernizer Assessment Architecture Team
 

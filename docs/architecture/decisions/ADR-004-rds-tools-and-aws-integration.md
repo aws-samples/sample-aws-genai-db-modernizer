@@ -1225,7 +1225,6 @@ def test_collector_cross_account():
 - [ADR-002: Structured Output and Validation](ADR-002-structured-output-and-validation.md)
 - [ADR-003: Progress Reporting Architecture](ADR-003-progress-reporting-architecture.md)
 - [High-Level Design](../high-level-design.md)
-- [Architecture Review](../ARCHITECTURE_REVIEW.md) - Point #5
 
 ---
 

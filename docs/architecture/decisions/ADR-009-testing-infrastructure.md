@@ -1,6 +1,8 @@
 # ADR-009: Testing Infrastructure and Strategies
 
-**Status:** Accepted
+> **Partially superseded.** The test tiers, directory layout and commands now live in [ci/README.md](../../../ci/README.md) and [AGENTS.md](../../../AGENTS.md) ("Which test tier for which change"). The mini-collector performance layer (ADR-005) was never built, and the real-model end-to-end layer is the `e2e-llm` job.
+
+**Status:** Partially superseded: the current test tiers are in `ci/README.md` and AGENTS.md
 **Date:** 2026-02-02
 **Deciders:** Architecture Team
 **Related ADRs:** ADR-002 (Pydantic Output), ADR-006 (Analysis Agents), ADR-008 (Contract Versioning)

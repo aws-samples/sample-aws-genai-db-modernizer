@@ -139,4 +139,4 @@ Each decision names the guard test that fails when the code stops following it. 
 - `src/tools/analysis/<target>_analysis_tools.py` — per-query detection, scoring adjustments, decision trace builder
 - `src/tools/analysis/scoring.py` — shared scoring with configurable weights (`compute_confidence(scores, weights=...)`)
 - Reference implementation: DynamoDB agent (`src/agents/analysis/dynamodb_analysis_agent.py`)
-- Implementation guide: `do../guides/new-analysis-agent-guide.md`
+- Implementation guide: `docs/guides/new-analysis-agent-guide.md`

@@ -274,7 +274,7 @@ Each decision names the guard test that fails when the code stops following it. 
   assignment (drop eliminated engines from ranking, table mappings, and report);
   the reality-check consolidation summary carries the "no longer under
   consideration" note (Layer E).
-- **`src/atx_orchestrator/runtime/pptx_report.py`** — replace the raw "target
+- **`pptx_report.py` (replaced by the executive report renderer, `src/report/executive_report.py`)** — replace the raw "target
   engines" count tile with waves-aligned phrasing (drop the total; the deck
   already renders the wave sequencing). This is the one reporting-surface tweak in
   scope; the waves sequencing itself is unchanged.

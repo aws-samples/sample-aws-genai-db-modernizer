@@ -1,6 +1,8 @@
 # ADR-005: Mini-Collectors for Large Database Scalability
 
-**Status:** Accepted
+> **Not implemented.** No mini-collector exists in `src/agents/collector/`, and table row sampling was removed (#387). The decision is kept as history.
+
+**Status:** Not implemented
 **Date:** 2026-02-02
 **Deciders:** Architecture Team
 **Related Issues:** Architecture Review - Large Database Optimization
