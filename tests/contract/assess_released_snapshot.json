@@ -12,8 +12,11 @@
         "contract_version": {
           "required": false,
           "schema": {
-            "kind": "const",
-            "value": "1.0"
+            "kind": "enum",
+            "values": [
+              "1.0",
+              "1.1"
+            ]
           }
         },
         "database_name": {
@@ -141,8 +144,8 @@
           }
         }
       },
-      "schema_hash": "846b1755f4d4aeba6fd788213281c0570efa006969d1909bfc6c9013da35d927",
-      "version": "1.0"
+      "schema_hash": "ce1fb1998ead586ec2c30466a083c273aba73e5714a80e170bd4ade05a06b64f",
+      "version": "1.1"
     },
     "assessment.AssessmentResult": {
       "fields": {
@@ -173,8 +176,728 @@
         "contract_version": {
           "required": false,
           "schema": {
-            "kind": "const",
-            "value": "1.0"
+            "kind": "enum",
+            "values": [
+              "1.0",
+              "1.1"
+            ]
+          }
+        },
+        "designs": {
+          "required": false,
+          "schema": {
+            "kind": "anyOf",
+            "members": [
+              {
+                "items": {
+                  "kind": "oneOf",
+                  "members": [
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "collections": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "embedded": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "path": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "source_table": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "strategy": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "enum",
+                                            "values": [
+                                              "embed",
+                                              "hybrid",
+                                              "reference"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "indexes": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "keys": {
+                                          "required": true,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "object",
+                                              "properties": {
+                                                "direction": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "scalar",
+                                                    "type": "integer"
+                                                  }
+                                                },
+                                                "field": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "scalar",
+                                                    "type": "string"
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "kind": "array"
+                                          }
+                                        },
+                                        "name": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "query_ids": {
+                                          "required": false,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            },
+                                            "kind": "array"
+                                          }
+                                        },
+                                        "type": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "enum",
+                                            "values": [
+                                              "compound",
+                                              "partial",
+                                              "single",
+                                              "text",
+                                              "unique"
+                                            ]
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "query_ids": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "referenced_collections": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "source_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "const",
+                            "value": "documentdb"
+                          }
+                        },
+                        "validation_passed": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "data_streams": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "fields": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "name": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "type": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "query_ids": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "source_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "const",
+                            "value": "opensearch"
+                          }
+                        },
+                        "indexes": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "aliases": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "fields": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "name": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "type": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "query_ids": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "source_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "validation_passed": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "ddl_artifact_path": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "string"
+                          }
+                        },
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "enum",
+                            "values": [
+                              "aurora_mysql",
+                              "aurora_postgresql"
+                            ]
+                          }
+                        },
+                        "tables": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "indexes": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "primary_key": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "validation_passed": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "const",
+                            "value": "dynamodb"
+                          }
+                        },
+                        "tables": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "gsis": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "object",
+                                      "properties": {
+                                        "name": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "scalar",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "partition_key": {
+                                          "required": true,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "object",
+                                              "properties": {
+                                                "name": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "scalar",
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "type": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "enum",
+                                                    "values": [
+                                                      "B",
+                                                      "N",
+                                                      "S"
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "kind": "array"
+                                          }
+                                        },
+                                        "projected_attributes": {
+                                          "required": false,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            },
+                                            "kind": "array"
+                                          }
+                                        },
+                                        "projection": {
+                                          "required": true,
+                                          "schema": {
+                                            "kind": "enum",
+                                            "values": [
+                                              "ALL",
+                                              "INCLUDE",
+                                              "KEYS_ONLY"
+                                            ]
+                                          }
+                                        },
+                                        "query_ids": {
+                                          "required": false,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            },
+                                            "kind": "array"
+                                          }
+                                        },
+                                        "sort_key": {
+                                          "required": false,
+                                          "schema": {
+                                            "items": {
+                                              "kind": "object",
+                                              "properties": {
+                                                "name": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "scalar",
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "type": {
+                                                  "required": true,
+                                                  "schema": {
+                                                    "kind": "enum",
+                                                    "values": [
+                                                      "B",
+                                                      "N",
+                                                      "S"
+                                                    ]
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "kind": "array"
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "name": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "partition_key": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "object",
+                                    "properties": {
+                                      "name": {
+                                        "required": true,
+                                        "schema": {
+                                          "kind": "scalar",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "type": {
+                                        "required": true,
+                                        "schema": {
+                                          "kind": "enum",
+                                          "values": [
+                                            "B",
+                                            "N",
+                                            "S"
+                                          ]
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "query_ids": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "sort_key": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "object",
+                                        "properties": {
+                                          "name": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "scalar",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "type": {
+                                            "required": true,
+                                            "schema": {
+                                              "kind": "enum",
+                                              "values": [
+                                                "B",
+                                                "N",
+                                                "S"
+                                              ]
+                                            }
+                                          }
+                                        }
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "source_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "validation_passed": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "object",
+                      "properties": {
+                        "engine": {
+                          "required": true,
+                          "schema": {
+                            "kind": "const",
+                            "value": "elasticache"
+                          }
+                        },
+                        "keys": {
+                          "required": false,
+                          "schema": {
+                            "items": {
+                              "kind": "object",
+                              "properties": {
+                                "data_type": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "pattern": {
+                                  "required": true,
+                                  "schema": {
+                                    "kind": "scalar",
+                                    "type": "string"
+                                  }
+                                },
+                                "query_ids": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "source_tables": {
+                                  "required": false,
+                                  "schema": {
+                                    "items": {
+                                      "kind": "scalar",
+                                      "type": "string"
+                                    },
+                                    "kind": "array"
+                                  }
+                                },
+                                "ttl_seconds": {
+                                  "required": false,
+                                  "schema": {
+                                    "kind": "anyOf",
+                                    "members": [
+                                      {
+                                        "kind": "scalar",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      {
+                                        "kind": "scalar",
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            "kind": "array"
+                          }
+                        },
+                        "validation_passed": {
+                          "required": true,
+                          "schema": {
+                            "kind": "scalar",
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "kind": "array"
+              },
+              {
+                "kind": "scalar",
+                "type": "null"
+              }
+            ]
           }
         },
         "groups": {
@@ -530,6 +1253,59 @@
                     "kind": "array"
                   }
                 },
+                "post_schema_terminal": {
+                  "required": false,
+                  "schema": {
+                    "kind": "anyOf",
+                    "members": [
+                      {
+                        "kind": "object",
+                        "properties": {
+                          "cause": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "depth_limit",
+                                "no_kept_engine"
+                              ]
+                            }
+                          },
+                          "engine": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          },
+                          "flag_reason": {
+                            "required": true,
+                            "schema": {
+                              "kind": "enum",
+                              "values": [
+                                "client_side_join",
+                                "full_scan",
+                                "missing_feature",
+                                "other"
+                              ]
+                            }
+                          },
+                          "reason": {
+                            "required": true,
+                            "schema": {
+                              "kind": "scalar",
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "scalar",
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
                 "query_id": {
                   "required": true,
                   "schema": {
@@ -736,6 +1512,32 @@
                   "kind": "array"
                 }
               },
+              "design_note": {
+                "required": false,
+                "schema": {
+                  "kind": "anyOf",
+                  "members": [
+                    {
+                      "kind": "scalar",
+                      "type": "null"
+                    },
+                    {
+                      "kind": "scalar",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "designed_engines": {
+                "required": false,
+                "schema": {
+                  "items": {
+                    "kind": "scalar",
+                    "type": "string"
+                  },
+                  "kind": "array"
+                }
+              },
               "engines": {
                 "required": false,
                 "schema": {
@@ -828,6 +1630,14 @@
                     }
                   },
                   "kind": "array"
+                }
+              },
+              "post_schema_terminal_count": {
+                "required": false,
+                "schema": {
+                  "kind": "scalar",
+                  "minimum": 0,
+                  "type": "integer"
                 }
               },
               "relational_engine": {
@@ -1016,9 +1826,9 @@
           }
         }
       },
-      "schema_hash": "61efb27c8e2374e9402e2321cd683e045dbcd38b326933ce501aa1b3c9704b5f",
-      "version": "1.0"
+      "schema_hash": "9b2ad6dfbc8d58f336a94bb82e44cc1e5bb8ead5635a1ff0c49bca3be201dce6",
+      "version": "1.1"
     }
   },
-  "released": null
+  "released": "v0.4.0-beta.1"
 }
