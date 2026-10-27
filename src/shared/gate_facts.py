@@ -22,6 +22,9 @@ def _count(value: Any) -> int:
 # How many cache candidates the gate names; the rest are counted ("and N more").
 CACHE_READS_SHOWN = 5
 
+# How many table names a migration-wave gate sentence lists; a longer list is only counted.
+GATE_TABLES_SHOWN = 5
+
 
 def cache_candidate_reads(
     query_assignments: Iterable[Mapping[str, Any]],

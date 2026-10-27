@@ -426,8 +426,9 @@ NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
     ),
     "src/shared/job_status.py": (frozenset({"_MAX_MESSAGE_LEN"}), _BUDGET),
     "src/shared/gate_facts.py": (
-        frozenset({"CACHE_READS_SHOWN"}),
-        _WORDING + ": how many cache candidates the approval gate names (#462)",
+        frozenset({"CACHE_READS_SHOWN", "GATE_TABLES_SHOWN"}),
+        _WORDING + ": how many cache candidates the approval gate names (#462), and how many "
+        "table names a gate sentence lists (#551); display caps with no routing effect",
     ),
     "src/agents/referee/co_dependency.py": (
         frozenset({"GROUP_SCORE_PLACES"}),

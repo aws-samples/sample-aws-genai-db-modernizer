@@ -6,6 +6,7 @@ from typing import Any
 
 from src.contracts.synthesis_output import join_gate_parts
 from src.shared.engine_names import display_engine
+from src.shared.gate_facts import GATE_TABLES_SHOWN
 from src.shared.migration_wave_engines import (
     KV_ENGINES,
     NON_OWNER_ENGINES,
@@ -285,6 +286,18 @@ def _dynamodb_table_groups(
     ]
 
 
+def _stay_verb(n: int) -> str:
+    return "stays" if n == 1 else "stay"
+
+
+def _moving_tables_phrase(n: int, owned: int, engine: str) -> str:
+    """``n`` dual-read tables as part of the ``owned`` tables ``engine`` moves (#551)."""
+    target = display_engine(engine)
+    if n >= owned:
+        return f"All {n} tables moving to {target}" if n > 1 else f"The 1 table moving to {target}"
+    return f"{n} of the {owned} tables moving to {target}"
+
+
 def _table_group_coverage_note(
     engine_tables: set[str],
     synced_tables: list[dict[str, Any]],
@@ -402,6 +415,7 @@ def _table_group_coverage_parts(
         no_owned_table += 1
 
     clauses: list[list[GatePart]] = []
+    owned_n = len(engine_tables)
     if forward:
         # #324 review (finding 1): group by whether the other engine's own
         # wave is still ahead of this one (temporary -- resolves once it
@@ -433,9 +447,12 @@ def _table_group_coverage_parts(
             other_names = ", ".join(display_engine(o) for o in others)
             clauses.append(
                 [
-                    {"text": f"{n} {_plural(n, 'table')}", "items": sorted(all_tables)},
                     {
-                        "text": " stay dual-read by "
+                        "text": _moving_tables_phrase(n, owned_n, engine),
+                        "items": sorted(all_tables),
+                    },
+                    {
+                        "text": f" {_stay_verb(n)} dual-read by "
                         + ", ".join(parts)
                         + f"; {display_engine(engine)} owns them, so keep the {other_names} "
                         f"copy in sync from {display_engine(engine)} via CDC until then.",
@@ -458,12 +475,40 @@ def _table_group_coverage_parts(
             other_names = ", ".join(display_engine(o) for o in others)
             clauses.append(
                 [
-                    {"text": f"{n} {_plural(n, 'table')}", "items": sorted(all_tables)},
                     {
-                        "text": " stay dual-read by "
+                        "text": _moving_tables_phrase(n, owned_n, engine),
+                        "items": sorted(all_tables),
+                    },
+                    {
+                        "text": f" {_stay_verb(n)} dual-read by "
                         + ", ".join(parts)
                         + f"; {display_engine(engine)} owns them, so keep the {other_names} "
                         f"copy in sync from {display_engine(engine)} via CDC.",
+                        "items": [],
+                    },
+                ]
+            )
+    if forward:
+        # #551: the dual-read tables are a subset of the tables this wave moves.
+        # Say what happens to the rest, so the two counts read as one.
+        dual_read = set().union(*forward.values())
+        rest = engine_tables - dual_read
+        if rest:
+            k = len(rest)
+            readers = " or ".join(
+                display_engine(o)
+                for o in sorted(forward, key=lambda e: (engine_wave_number.get(e) or 999, e))
+            )
+            clauses.append(
+                [
+                    {
+                        "text": f"The other {k} tables" if k > 1 else "The other table",
+                        # A long remainder is a count; the tables are in the wave's table list.
+                        "items": sorted(rest) if k <= GATE_TABLES_SHOWN else [],
+                    },
+                    {
+                        "text": f" {'move' if k > 1 else 'moves'} with no further "
+                        f"{readers} reads.",
                         "items": [],
                     },
                 ]
