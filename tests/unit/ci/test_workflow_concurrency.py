@@ -72,3 +72,12 @@ def test_group_is_per_pull_request_and_per_run_otherwise(name):
     # Non-PR events (no number) get a group per run, so two pushes to main
     # never share a group (a shared group drops pending runs).
     assert resolve(None, 100) != resolve(None, 101)
+
+
+def test_validate_contracts_fetches_the_release_tags_before_the_contract_check() -> None:
+    """The released-contract guard needs the recorded tag, and the job's checkout has none."""
+    steps = _load("ci.yml")["jobs"]["validate-contracts"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    fetch = names.index("Fetch release tags")
+    assert fetch < names.index("Check pending contract bumps")
+    assert "refs/tags/*" in steps[fetch]["run"]

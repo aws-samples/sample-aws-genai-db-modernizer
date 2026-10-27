@@ -283,3 +283,31 @@ def test_with_no_copy_on_the_base_the_branch_copy_is_used(toy_repo: Path) -> Non
     head = public_snapshot_at("HEAD", toy_repo)
     [problem] = check_released_against("v1.0.0", toy_repo, path, head)
     assert "enum value removed: 'cache_layer'" in problem
+
+
+def test_a_recorded_tag_is_seen_only_where_the_tag_was_fetched(
+    toy_repo: Path, tmp_path: Path
+) -> None:
+    """CI's validate-contracts checkout has no tags. A recording of an existing tag
+    fails there with the 'existing release tag' problem and passes once the tag is
+    fetched; a tag that does not exist fails either way."""
+    _commit_snapshot(toy_repo, {"released": None, "contracts": {}})
+    write_released("v1.0.0", repo=toy_repo, path=_snapshot_path(toy_repo))
+    _git(toy_repo, "commit", "-qam", "chore: record v1.0.0")
+    clone = tmp_path / "ci-checkout"
+    url = f"file://{toy_repo}"
+    subprocess.run(
+        ["git", "clone", "-q", "--no-tags", "--depth=2", url, str(clone)],
+        check=True,
+        capture_output=True,
+    )
+    path = _snapshot_path(clone)
+    head = public_snapshot_at("HEAD", toy_repo)
+    problems = check_released_against("HEAD^", clone, path, head)
+    assert any("without recording an existing release tag" in p for p in problems)
+    _git(clone, "fetch", "-q", "--no-tags", "--depth=1", url, "refs/tags/*:refs/tags/*")
+    problems = check_released_against("HEAD^", clone, path, head)
+    assert not any("existing release tag" in p or "shape that is not" in p for p in problems)
+    path.write_text(json.dumps({"released": "v9.9.9", "contracts": head}))
+    problems = check_released_against("HEAD^", clone, path, head)
+    assert any("without recording an existing release tag" in p for p in problems)

@@ -352,6 +352,13 @@ jobs:
         # `test` shards; this job runs only the contract validation script,
         # which no test covers (#956).
         run: uv run python scripts/validate_contracts.py src/contracts/*.py
+      - name: Fetch release tags
+        # The checkout above is two commits deep and carries no tags. The released
+        # public-contract guard accepts a changed assess_released_snapshot.json only
+        # when it records an existing tag with that tag's own shape (the release step),
+        # so it must see the tag. Depth 1 fetches each tag commit (and leaves HEAD^ alone), enough for
+        # `git archive` of src/ at the tag.
+        run: git fetch -q --no-tags --depth=1 origin 'refs/tags/*:refs/tags/*'
       - name: Check pending contract bumps
         # A pull request declares a bump kind in src/contracts/pending/ and the number is
         # assigned after its last rebase (ADR-008 Decision 8). Pending files are valid on
