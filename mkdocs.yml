@@ -20,7 +20,7 @@ site_dir: site
 
 # Allowlist, not a denylist: only the nav pages below plus their assets are
 # published. Everything else under docs/ (architecture decision records,
-# design specs, contracts, guides, RELEASE_MANAGEMENT.md,
+# design specs, contracts, guides,
 # the sample zips/results under examples/, and the three guides #343 flags as
 # still describing the retired hosted deployment) stays out of the built
 # site -- it stays as plain Markdown/data in the repo, and is linked from the
