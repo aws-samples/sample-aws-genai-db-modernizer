@@ -11,7 +11,7 @@ The pipeline has already scoped it to this engine and, for large workloads, spli
 **`design_metrics` — numbers computed for you. Read them; never recompute them.** Validation rejects a design whose numbers disagree with these:
 
 - `queries[]`: per `query_id`, `design_rps` (the observed rate with the peak and growth multipliers already applied). A row with `member_query_ids` stands for a whole query pattern: its rates are the members' total, so an access pattern that lists those members counts the row's `design_rps` once
-- `tables[]`: per `table_id`, `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute)
+- `tables[]`: per `table_id`, `row_count` (the collector's; when `row_count_assumed` is true the source has no count for the table and this is the stated assumption, its data size over `schema_item_size_bytes`: where a figure rests on it, say in `trade_offs` that the row count is derived from the table's size), `avg_row_size_bytes` (measured from `size_mb` and `row_count`; `size_estimated: true` means `size_mb` was unknown and the figure is approximate), `schema_item_size_bytes` (the item-size rule below, applied to every source column) and `capped_text_columns` (TEXT/BLOB columns that rule counts at 1 KB: one stored value can still approach the 400 KB item limit, so say in `trade_offs` whether such a column stays inline or moves to S3 with a pointer attribute)
 - `coverage`: `in_scope_patterns`, `total_queries_analyzed` and `coverage_ratio`. Absent in a design group, which holds only its share of the queries: skip the coverage check then
 - `dynamodb_partition_limits`: the per-partition-key-value limits and the at-risk threshold
 
@@ -21,14 +21,14 @@ Read all files. Do not output anything yet.
 
 **Entities** — for each entry in `tables` (`AgentCollectorInput.tables`):
 
-- Columns, data types (`normalized_data_type`), nullability, `primary_key`, `row_count`
+- Columns, data types (`normalized_data_type`), nullability, `primary_key`, `row_count` (`null` means the source has no count for the table, not an empty table; size it with `design_metrics.tables[].row_count`)
 - Avg item size in bytes: `avg_row_size_bytes` from `design_metrics.tables` (approximate when `size_estimated` is true)
 - Unique constraints: `indexes` where `is_unique=true` and `is_primary=false`
 
 **Relationships** — from `foreign_keys` on each table:
 
 - Parent/child direction, referenced table, `on_delete` cascade behavior
-- Cardinality: divide child `row_count` by parent `row_count` to get average children per parent
+- Cardinality: divide child `row_count` by parent `row_count` (the `design_metrics.tables[].row_count` figures) to get average children per parent
 
 **Access Patterns** — from `queries.query_patterns` where `query_type` in (SELECT, INSERT, UPDATE, DELETE). Skip `query_type = OTHER`.
 
@@ -207,7 +207,7 @@ Translate the Phase 2a design into the output, which must validate against `Dyna
 - `source_tables`: all source `table_id`s consolidated into this DynamoDB table
 - `aggregate_pattern`: the pattern used (`identifying_relationship` | `item_collection` | `separate`)
 - `gsis`: multi-attribute keys only; `partition_key` and `sort_key` are `list[KeyDefinition]`
-- `item_count`: sum of `row_count` across all consolidated source tables
+- `item_count`: sum of `design_metrics.tables[].row_count` across all consolidated source tables
 - `item_size_bytes`: weighted average across item types
 - **Single-entity tables** (`aggregate_pattern` is `identifying_relationship` or `separate`): populate `attributes` — one `AttributeDefinition` per DynamoDB attribute — and leave `entities` null. This holds even when the sort key is a composite string such as `ITEM#{order_item_id}`: the key schema lives in `partition_key` and `sort_key`, and the contract rejects `entities` on any table that is not an `item_collection`. If the table really holds several entity types, its `aggregate_pattern` is `item_collection`. Each attribute carries its full ETL lineage: `source_table`, `source_column`, and exactly one of `join`, `calculation`, or plain copy. Add `transformation` when the value needs reformatting. Set `denormalized=true` + `justification` for any attribute copied from a different entity.
 - **Item collection tables** (`aggregate_pattern = item_collection`): populate `entities` instead — one `EntityDefinition` per entity type. Each entity has `pk_template` (e.g. `"DISCUSSION#{id}"`), `sk_template` (e.g. `"POST#{id}"`), and its own `attributes` list. Do not populate `attributes` at the table level.

@@ -210,6 +210,7 @@ def test_engine_sections():
         "parent_table": "db.users",
         "child_table": "db.posts",
         "avg_children_per_parent": 4.0,
+        "counts_assumed": False,
         "parent_row_size_kb": 2.0,
         "child_row_size_kb": 1.0,
         "embedded_avg_kb": 4.0,

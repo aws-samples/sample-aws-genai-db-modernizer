@@ -104,20 +104,27 @@ class SQLServerRemoteCollector:
             SELECT
                 s.name AS schema_name,
                 t.name AS table_name,
-                p.rows AS row_count,
+                r.row_total AS row_count,
+                'estimate' AS row_count_basis,
                 CAST(SUM(a.total_pages) * 8.0 / 1024 AS FLOAT) AS data_size_mb,
                 CAST(SUM(CASE WHEN i.index_id > 1 THEN a.total_pages ELSE 0 END) * 8.0 / 1024 AS FLOAT) AS index_size_mb,
                 MAX(ius.user_scans) AS full_table_scans,
                 MAX(ius.user_seeks + ius.user_lookups) AS index_scans
             FROM sys.tables t
             INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            INNER JOIN (
+                SELECT object_id, SUM(rows) AS row_total
+                FROM sys.partitions
+                WHERE index_id IN (0, 1)
+                GROUP BY object_id
+            ) r ON r.object_id = t.object_id
             INNER JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
             INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
             LEFT JOIN sys.indexes i ON t.object_id = i.object_id AND p.index_id = i.index_id
             LEFT JOIN sys.dm_db_index_usage_stats ius
                 ON ius.object_id = t.object_id AND ius.database_id = DB_ID()
             WHERE {_SYSTEM_SCHEMAS_FILTER}
-            GROUP BY s.name, t.name, p.rows
+            GROUP BY s.name, t.name, r.row_total
             ORDER BY s.name, t.name
         """)  # nosec B608 — _SYSTEM_SCHEMAS_FILTER is a module constant, not user input
 

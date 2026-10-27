@@ -329,6 +329,15 @@ export function costAssumptionsOf(synthesis) {
   return (synthesis && synthesis.tco_analysis && synthesis.tco_analysis.assumptions) || [];
 }
 
+// #1636: the sentence every deliverable prints when the source has no row count for
+// some tables (facts.row_counts.statement): how many, and the sizing assumption.
+// Null when every count is known, and for a report written before the fact.
+export function rowCountStatementOf(synthesis) {
+  const fact = factsOf(synthesis) && factsOf(synthesis).row_counts;
+  const statement = fact && fact.statement;
+  return typeof statement === 'string' && statement ? statement : null;
+}
+
 // #1527: the stream sync of a DynamoDB design conflict's derived copies
 // (facts.derived_copy_sync), printed under the risk it belongs to. The sentences are the
 // facts' own; `basis` is the figures' assumptions, carried by the first sync only.

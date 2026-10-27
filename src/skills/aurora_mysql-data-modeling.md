@@ -9,7 +9,7 @@ script's work.
 ## Inputs (provided inline as JSON)
 
 - **design_view**: a compact view of the deterministic **draft**:
-  `tables` (per table: `row_count`, `read_qps`/`write_qps`, `primary_key`,
+  `tables` (per table: `row_count`, `null` when the source has no count, `read_qps`/`write_qps`, `primary_key`,
   `columns` as `name TYPE [NOT NULL] [AI] [DEFAULT x]` lines, residual columns
   marked `(residual; source <data_type>)` and changed types `(source <data_type>)`,
   `indexes` as `name [UNIQUE] (columns)` and `foreign_keys` as `col -> table(col)`),

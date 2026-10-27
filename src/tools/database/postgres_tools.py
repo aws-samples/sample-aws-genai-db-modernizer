@@ -80,18 +80,31 @@ class PostgreSQLRemoteCollector:
     # -------------------------------------------------------------------
 
     def collect_tables(self) -> list[dict]:
+        # #1636: the same catalogue estimate and unknown rule as
+        # scripts/collect-postgresql.sql (pg_class.reltuples; no table is read).
         return self._query("""
             SELECT
-                schemaname AS schema_name,
-                relname AS table_name,
-                n_live_tup AS row_count,
-                pg_relation_size(schemaname || '.' || relname) / 1024.0 / 1024.0 AS data_size_mb,
-                pg_indexes_size(schemaname || '.' || relname) / 1024.0 / 1024.0 AS index_size_mb,
-                seq_scan AS full_table_scans,
-                idx_scan AS index_scans
-            FROM pg_stat_user_tables
-            WHERE schemaname = 'public'
-            ORDER BY relname
+                s.schemaname AS schema_name,
+                s.relname AS table_name,
+                CASE
+                    WHEN c.reltuples < 0 THEN NULL
+                    WHEN c.reltuples = 0 AND c.relpages = 0
+                         AND current_setting('server_version_num')::int < 140000
+                         AND s.last_analyze IS NULL AND s.last_autoanalyze IS NULL
+                         AND s.last_vacuum IS NULL AND s.last_autovacuum IS NULL THEN NULL
+                    ELSE c.reltuples::bigint
+                END AS row_count,
+                'estimate' AS row_count_basis,
+                greatest(s.last_analyze, s.last_autoanalyze, s.last_vacuum, s.last_autovacuum)
+                    AS stats_analyzed_at,
+                pg_relation_size(s.relid) / 1024.0 / 1024.0 AS data_size_mb,
+                pg_indexes_size(s.relid) / 1024.0 / 1024.0 AS index_size_mb,
+                s.seq_scan AS full_table_scans,
+                s.idx_scan AS index_scans
+            FROM pg_stat_user_tables s
+            JOIN pg_class c ON c.oid = s.relid
+            WHERE s.schemaname = 'public'
+            ORDER BY s.relname
         """)
 
     def collect_columns(self, table_name: str) -> list[dict]:

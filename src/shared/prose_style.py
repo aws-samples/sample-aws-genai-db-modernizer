@@ -406,7 +406,14 @@ def replace_dashes(text: str, identifiers: Iterable[str] = ()) -> str:
 _FILLER_RE = re.compile(r"\b(" + "|".join(FILLER_WORDS) + r")\b", re.IGNORECASE)
 # Two-word hedges are kept as word lists and joined here, so no prose pattern
 # holds a SQL keyword as a regex literal (the SQL-detector guard, #893).
-_WORD_HEDGES: tuple[tuple[str, ...], ...] = (("where", "possible"),)
+# #1636: "a rough estimate" and "leans low/high" claim a direction or a looseness the
+# figure does not have; a sentence states the method instead.
+_WORD_HEDGES: tuple[tuple[str, ...], ...] = (
+    ("where", "possible"),
+    ("rough", "estimate"),
+    ("leans", "low"),
+    ("leans", "high"),
+)
 _WORD_HEDGE_PATTERN = "|".join(r"\s+".join(words) for words in _WORD_HEDGES)
 _HEDGE_RE = re.compile(
     r"\b(not\s+the\s+only\s+one|typically|generally(?!\s+available)|might"

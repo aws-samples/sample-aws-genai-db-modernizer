@@ -49,6 +49,7 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.row_counts import read_data_size_mb, read_row_count, read_size_mb
 from src.tools.aws.s3_storage import init_storage
 from src.tools.aws.ssm_executor import SSMExecutor
 from src.tools.database.postgres_tools import PostgreSQLRemoteCollector
@@ -406,8 +407,10 @@ def _build_tables(schema_raw: dict) -> list[Table]:
                 table_id=f"{schema_name}.{name}",
                 table_name=name,
                 schema_name=schema_name,
-                row_count=t.get("row_count") or 0,
-                size_mb=float(t.get("data_size_mb") or 0) + float(t.get("index_size_mb") or 0),
+                # #1636: None when the source has no count, never a 0 standing in for it.
+                **read_row_count(t, "postgresql").fields(),
+                size_mb=read_size_mb(t, "postgresql"),
+                data_size_mb=read_data_size_mb(t, "postgresql"),
                 columns=columns,
                 indexes=indexes,
                 primary_key=t.get("primary_key") or None,

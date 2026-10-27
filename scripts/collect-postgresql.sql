@@ -30,17 +30,33 @@ metadata AS (
 ),
 
 -- ===================== 2. Tables =====================
+-- row_count is the planner's estimate in pg_class.reltuples, never a count of the
+-- table (no table is read). It is null when PostgreSQL has none: reltuples is -1
+-- on PostgreSQL 14+ for a table never vacuumed or analysed; before 14 such a table
+-- has reltuples 0 and relpages 0 and no analyse or vacuum on record in
+-- pg_stat_user_tables. stats_analyzed_at is the latest of those four times.
 tables_data AS (
   SELECT coalesce(json_agg(t ORDER BY t.table_name), '[]'::json) AS data
   FROM (
     SELECT
       c.relname AS table_name,
-      c.reltuples::bigint AS row_count,
+      CASE
+        WHEN c.reltuples < 0 THEN NULL
+        WHEN c.reltuples = 0 AND c.relpages = 0
+             AND current_setting('server_version_num')::int < 140000
+             AND s.last_analyze IS NULL AND s.last_autoanalyze IS NULL
+             AND s.last_vacuum IS NULL AND s.last_autovacuum IS NULL THEN NULL
+        ELSE c.reltuples::bigint
+      END AS row_count,
+      'estimate' AS row_count_basis,
+      greatest(s.last_analyze, s.last_autoanalyze, s.last_vacuum, s.last_autovacuum)
+        AS stats_analyzed_at,
       round(pg_table_size(c.oid) / 1024.0 / 1024.0, 2) AS data_size_mb,
       round(pg_indexes_size(c.oid) / 1024.0 / 1024.0, 2) AS index_size_mb,
       n.nspname AS schema_name
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
     WHERE c.relkind = 'r'
       AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   ) t

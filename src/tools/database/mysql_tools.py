@@ -88,6 +88,7 @@ class MySQLRemoteCollector:
             SELECT
                 table_name,
                 table_rows AS row_count,
+                IF(engine IN ('MyISAM', 'Aria'), 'exact', 'estimate') AS row_count_basis,
                 ROUND(data_length / 1024 / 1024, 2) AS data_size_mb,
                 ROUND(index_length / 1024 / 1024, 2) AS index_size_mb,
                 engine,

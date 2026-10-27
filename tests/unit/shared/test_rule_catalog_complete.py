@@ -308,6 +308,14 @@ _DETECTION = "a detector threshold: detection stays in code (#491 facts module)"
 _BUDGET = "an output or model budget, not a routing rule"
 # Module-level numeric constants in the routing directories.
 NUMERIC_CONSTANTS: dict[str, tuple[frozenset[str], str]] = {
+    "src/shared/row_counts.py": (
+        frozenset({"ONE_PAGE_MB", "UNKNOWN_SIZE_MB", "DDL_TABLE_THRESHOLD_ROWS"}),
+        "a collection fact, not a routing rule: one 16 KB InnoDB page as the scripts round "
+        "it (when a MySQL-family 0 is an empty table, #1636), and the 0.01 MB stand-in for a "
+        "size no source reported (the schema-design skills' rule, moved from design_metrics "
+        "so the deliverables' sentence names the same figure); DDL_TABLE_THRESHOLD_ROWS is the "
+        "maintainer's interim rule for a DDL-only table, small as before #1636, until #1646",
+    ),
     "src/shared/design_text.py": (
         frozenset({"ONCE_MIN_WORDS"}),
         "a prose length, not a routing rule: the words a design sentence needs to be "

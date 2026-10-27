@@ -79,4 +79,9 @@ def test_explicit_null_database_schema_and_queries_do_not_crash(
 
     result = core.ingest_offline_collection(store, "job-1", "testdb", contract)
 
-    assert result == contract
+    # #1636: an upload is read as a stored file is, so an older MAJOR comes back through
+    # its adapter at today's version; the null sections stay null.
+    from src.contracts.collector_output import CollectorOutputContract
+    from src.shared.contract_versioning import current_version
+
+    assert result == {**contract, "contract_version": current_version(CollectorOutputContract)}

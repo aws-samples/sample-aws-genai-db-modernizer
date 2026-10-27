@@ -34,6 +34,7 @@ import structlog
 from src.agents.load_test.base import BaseSeeder
 from src.agents.load_test.documentdb.provisioner import DOCDB_CA_BUNDLE_PATH
 from src.agents.load_test.models import SeedManifest
+from src.tools.schema.design_metrics import sizing_row_count
 
 logger = structlog.get_logger()
 
@@ -209,7 +210,8 @@ class DocumentDBSeeder(BaseSeeder):
         tables = collector_output.get("schema", {}).get("tables", [])
         for table in tables:
             if table.get("table_name") == table_name:
-                return int(table.get("row_count", 0) or 0)
+                # #1636: the stated sizing assumption when the source has no count.
+                return sizing_row_count(table)[0]
         return 0
 
     def _generate_documents(

@@ -232,9 +232,11 @@ def _parse_create_table(stmt: str, database_name: str, dialect: str = "mysql") -
     return {
         "table_name": table_name,
         "table_id": f"{database_name}.{table_name}",
-        "row_count": 0,
-        "data_size_mb": 0,
-        "index_size_mb": 0,
+        # #1636: DDL holds no row counts, so none is known (not an empty table).
+        # #1636: DDL holds no row counts: unknown, not an empty table.
+        "row_count": None,
+        "data_size_mb": None,
+        "index_size_mb": None,
         "columns": columns,
         "indexes": indexes,
         "foreign_keys": foreign_keys,

@@ -555,6 +555,10 @@ Version History:
   sync, listed and priced; None in an older report
 - 1.70 (2026-10-27, #1398): MigrationWave.homogeneity gains the value no_move for a wave
   1 that moves nothing (it stored heterogeneous); BriefWave.kind gains no_move
+- 1.71 (2026-10-28, #1636): Added optional facts.row_counts (RowCountFacts, #1636): the
+  collection's row counts by basis (exact, estimate, unknown), the range of statistics
+  refresh times, and the one sentence every deliverable prints for the sizing assumption
+  that stands in for an unknown count. Backward compatible: None in an older report.
 """
 
 from datetime import datetime
@@ -1841,6 +1845,49 @@ class DerivedCopySyncFacts(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
 
 
+class RowCountFacts(BaseModel):
+    """The collection's row counts by basis, and the sizing assumption for the unknown
+    ones (#1636), from ``src.shared.row_counts.row_count_facts``."""
+
+    table_count: int = Field(0, ge=0, description="The collected source tables")
+    unknown_count: int = Field(
+        0, ge=0, description="Of those, the tables the source has no row count for"
+    )
+    ddl_table_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of the unknown ones, the tables read from DDL alone: routing treats them as "
+            "small, an interim rule (#1646)"
+        ),
+    )
+    no_size_count: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Of the unknown ones, the tables with no collected size either (a DDL-only "
+            "collection): sizing uses the fixed stand-in and no row-count rule reads them"
+        ),
+    )
+    exact_count: int = Field(0, ge=0, description="Of those, the tables with an exact count")
+    estimate_count: int = Field(
+        0, ge=0, description="Of those, the tables whose count is a statistics estimate"
+    )
+    stats_oldest_at: str | None = Field(
+        None, description="The oldest statistics refresh time the source reported (ISO 8601)"
+    )
+    stats_newest_at: str | None = Field(
+        None, description="The newest statistics refresh time the source reported (ISO 8601)"
+    )
+    statement: str | None = Field(
+        None,
+        description=(
+            "The one sentence every deliverable prints when a count is unknown: how many, "
+            "and the sizing assumption that stands in for them; None when every count is known"
+        ),
+    )
+
+
 class RelationalGroupRow(BaseModel):
     """One "Queries on Aurora by table" row (#1410): a relational engine's own queries
     in one query group."""
@@ -2424,6 +2471,13 @@ class ReportFacts(BaseModel):
             "when the report has no cache_overlay"
         ),
     )
+    row_counts: RowCountFacts | None = Field(
+        None,
+        description=(
+            "The collection's row counts by basis and the sizing assumption for the unknown "
+            "ones (#1636); None in a report rebuilt without the collection, or written before"
+        ),
+    )
     derived_copy_sync: DerivedCopySyncFacts | None = Field(
         None,
         description=(
@@ -2564,7 +2618,7 @@ class SynthesisOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="1.70",
+        default="1.71",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )

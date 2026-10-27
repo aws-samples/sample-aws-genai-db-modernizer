@@ -114,6 +114,7 @@ def test_a_gated_engine_on_the_ladder_keeps_the_ladders_gate(placed: Any) -> Non
 # --------------------------------------------------------------------------- table facts
 
 
+@pytest.mark.passes_on_main  # #1636: contracts up to 1.2 keep stating an unknown count as 0
 @pytest.mark.parametrize("sample", SAMPLES)
 def test_table_facts_are_the_collected_tables_at_every_phase(sample: str) -> None:
     _, state, _ = placed_run(sample)
@@ -125,7 +126,9 @@ def test_table_facts_are_the_collected_tables_at_every_phase(sample: str) -> Non
     fks = 0
     for facts in analysis:
         t = tables[facts.table_id]
-        assert (facts.row_count, facts.size_mb) == (t["row_count"], t.get("size_mb"))
+        # #1636: contracts up to 1.2 state a count the source does not have as 0.
+        today = 0 if t["row_count"] is None else t["row_count"]
+        assert (facts.row_count, facts.size_mb) == (today, t.get("size_mb"))
         assert facts.primary_key == list(t.get("primary_key") or [])
         positions = [c.get("ordinal_position") for c in t["columns"]]
         assert sorted(c.name for c in facts.columns) == sorted(

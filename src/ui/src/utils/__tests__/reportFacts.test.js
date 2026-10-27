@@ -17,6 +17,7 @@ import {
   resolvedRisksBySeverityText,
   tradeOffCountOf,
   realityCheckDecisions,
+  rowCountStatementOf,
   tradeOffsByTab,
   tradeOffTabLabel,
   unservableOf,
@@ -348,5 +349,22 @@ describe('derivedCopySyncOf (#1527)', () => {
     expect(derivedCopySyncOf({ facts: { derived_copy_sync: null } }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({ facts: {} }, 'RISK-002')).toBeNull();
     expect(derivedCopySyncOf({}, 'RISK-002')).toBeNull();
+  });
+});
+
+describe('rowCountStatementOf (#1636)', () => {
+  const statement =
+    "265 of 311 source tables have no row count in the source's statistics; sizing takes each one's rows as its collected data size divided by its declared row width (each column at its declared size, each string at its full declared length up to 1 KB), not as 0";
+
+  test('is the facts sentence as it is', () => {
+    expect(rowCountStatementOf({ facts: { row_counts: { unknown_count: 265, statement } } })).toBe(statement);
+  });
+
+  test('is null when every count is known, and for a report without the fact', () => {
+    expect(rowCountStatementOf({ facts: { row_counts: { unknown_count: 0, statement: null } } })).toBeNull();
+    expect(rowCountStatementOf({ facts: { row_counts: null } })).toBeNull();
+    expect(rowCountStatementOf({ facts: {} })).toBeNull();
+    expect(rowCountStatementOf({})).toBeNull();
+    expect(rowCountStatementOf(null)).toBeNull();
   });
 });

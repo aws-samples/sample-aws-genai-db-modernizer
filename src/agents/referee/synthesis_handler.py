@@ -1376,6 +1376,7 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
     # fields above; the deliverables only format it. The collected views let
     # wave 1 state its tables and views apart (#578).
     from src.shared.report_facts import compute_report_facts
+    from src.shared.row_counts import row_count_facts
 
     schema = (data.collector or {}).get("database_schema") or {}
     view_ids = {
@@ -1427,6 +1428,9 @@ def _report_output_data(store: ArtifactStore, result: dict, assignment_version: 
                 if isinstance(row, dict)
             }
         ),
+        # #1636: the collection's row counts by basis, and the one sizing assumption the
+        # deliverables state for the tables the source has no count for.
+        row_counts=row_count_facts(schema.get("tables") or []) if data.collector else None,
     )
 
     return output_data

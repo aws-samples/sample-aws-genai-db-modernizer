@@ -166,19 +166,30 @@ BEGIN
     -- internal metadata tables (SYS_IOT_OVER_*, HS_PARTITION_COL_*, etc.)
     -- which appear in ALL_TABLES but have no rows in ALL_TAB_COLUMNS and
     -- would fail Table.columns min_length=1 validation downstream.
+    -- row_count is ALL_TABLES.NUM_ROWS, the optimizer statistics' estimate (no table
+    -- is read): null when no statistics were gathered, never 0 in its place.
+    -- stats_analyzed_at is LAST_ANALYZED, when they were. data_size_mb sums the
+    -- table's TABLE, TABLE PARTITION and TABLE SUBPARTITION segments (LOB segments
+    -- are not counted): 0 for a table whose segment was never created (deferred,
+    -- so it never held a row), null when none is found (an index-organized table
+    -- keeps its data in an INDEX segment), never 0 in its place.
     -- ===================================================================
     DBMS_OUTPUT.PUT_LINE('"tables": [');
     FOR rec IN (
         SELECT JSON_OBJECT(
             'table_name' VALUE LOWER(t.TABLE_NAME),
             'schema_name' VALUE LOWER(t.OWNER),
-            'row_count' VALUE NVL(t.NUM_ROWS, 0),
-            'data_size_mb' VALUE ROUND(NVL(s.bytes, 0)/1024/1024, 2)
+            'row_count' VALUE t.NUM_ROWS,
+            'row_count_basis' VALUE 'estimate',
+            'stats_analyzed_at' VALUE TO_CHAR(t.LAST_ANALYZED, 'YYYY-MM-DD"T"HH24:MI:SS'),
+            'data_size_mb' VALUE CASE WHEN t.SEGMENT_CREATED = 'NO' THEN 0
+                                      ELSE ROUND(s.bytes/1024/1024, 2) END
         ) AS j
         FROM ALL_TABLES t
         LEFT JOIN (
             SELECT OWNER, SEGMENT_NAME, SUM(BYTES) AS bytes
-            FROM DBA_SEGMENTS WHERE SEGMENT_TYPE = 'TABLE'
+            FROM DBA_SEGMENTS
+            WHERE SEGMENT_TYPE IN ('TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION')
             GROUP BY OWNER, SEGMENT_NAME
         ) s ON s.OWNER = t.OWNER AND s.SEGMENT_NAME = t.TABLE_NAME
         WHERE t.OWNER = v_owner

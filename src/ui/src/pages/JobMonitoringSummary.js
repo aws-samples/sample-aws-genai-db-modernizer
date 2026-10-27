@@ -30,6 +30,7 @@ import ProgressState from "../components/ProgressState";
 import ChartSankey from "../components/ChartSankey";
 import { getCacheOverlay, addCacheOverlayNode } from "../utils/cacheLayer";
 import { engineHex } from "../utils/engineColors";
+import { collectorRowTotals, totalRowsText } from '../utils/collectorRowTotals';
 
 
 
@@ -248,8 +249,11 @@ const JobMonitoringSummaryPage = memo(() => {
               sizeGb: meta.database_size_gb,
               engine: meta.engine,
               version: meta.version,
-              topTablesBySize: [...tables].sort((a, b) => (b.size_mb || 0) - (a.size_mb || 0)).slice(0, 3),
-              totalRows: tables.reduce((sum, t) => sum + (t.row_count || 0), 0),
+              // #1636: only tables with a collected size can be the largest.
+              topTablesBySize: tables.filter(t => typeof t.size_mb === 'number').sort((a, b) => b.size_mb - a.size_mb).slice(0, 3),
+              // #1636: a count the source does not have (null) is left out of the sum
+              // and counted, so the total never treats an unknown table as empty.
+              ...collectorRowTotals(tables),
             });
           }
         });
@@ -739,12 +743,15 @@ const JobMonitoringSummaryPage = memo(() => {
                     <Box>
                       <Box variant="awsui-key-label">{t("job-summary.collector.total-rows")}</Box>
                       <Box fontSize="heading-l" fontWeight="bold">
-                        {collectorInsights.totalRows > 1000000
-                          ? `${(collectorInsights.totalRows / 1000000).toFixed(1)}M`
-                          : collectorInsights.totalRows > 1000
-                            ? `${(collectorInsights.totalRows / 1000).toFixed(1)}K`
-                            : collectorInsights.totalRows.toLocaleString()}
+                        {totalRowsText(collectorInsights) ?? t("job-summary.collector.total-rows-unknown")}
                       </Box>
+                      {collectorInsights.unknownRowTables > 0 && collectorInsights.knownRowTables > 0 && (
+                        <Box fontSize="body-s" color="text-body-secondary">
+                          <span data-figure="unknown-row-tables">
+                            {t("job-summary.collector.unknown-row-tables", { count: collectorInsights.unknownRowTables })}
+                          </span>
+                        </Box>
+                      )}
                     </Box>
                     <Box>
                       <Box variant="awsui-key-label">{t("job-summary.collector.database-size")}</Box>

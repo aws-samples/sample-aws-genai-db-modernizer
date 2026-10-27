@@ -24,6 +24,7 @@ from src.agents.referee.table_resolution import SourceScope, is_engine_system_ob
 from src.contracts.analysis_output import CostEstimate
 from src.shared.catalog.prices import price_basis
 from src.shared.engine_names import display_engine
+from src.shared.row_counts import collected_storage_mb
 from src.shared.source_cache import CollectionCache
 from src.tools.analysis.cost_estimators import COST_ESTIMATORS
 
@@ -121,7 +122,8 @@ def unqueried_assumption(summary: Mapping[str, Any]) -> str:
 
 def storage_gb(tables: Iterable[Mapping[str, Any]]) -> float:
     """The tables' source size, in GB."""
-    return round(sum(float(t.get("size_mb") or 0.0) for t in tables) / 1024, 4)
+    # #1636: the collected sizes; the tables with none are stated in the TCO assumptions.
+    return round(collected_storage_mb(tables)[0] / 1024, 4)
 
 
 def _sizing(

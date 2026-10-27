@@ -14,6 +14,8 @@ import math
 
 import structlog
 
+from src.shared.row_counts import UNKNOWN_SIZE_MB, known_size_mb
+
 logger = structlog.get_logger()
 
 # Instance types by workload
@@ -146,7 +148,10 @@ def _estimate_search_volume(schema_output: dict, collector_output: dict) -> floa
 
     # Look up table sizes from collector
     tables = collector_output.get("database_schema", {}).get("tables", [])
-    table_sizes = {t["table_id"]: t.get("size_mb", 0) or 0 for t in tables}
+    # #1636: a size not collected takes the stated 0.01 MB stand-in, never 0.
+    table_sizes = {
+        t["table_id"]: (UNKNOWN_SIZE_MB if (s := known_size_mb(t)) is None else s) for t in tables
+    }
 
     total_mb = sum(table_sizes.get(t, 0) for t in source_tables)
     if total_mb == 0:

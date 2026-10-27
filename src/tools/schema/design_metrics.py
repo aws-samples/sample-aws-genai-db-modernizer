@@ -41,13 +41,22 @@ from src.contracts.design_metrics import (
     QueryDesignMetrics,
     TableDesignMetrics,
 )
+from src.shared.row_counts import (
+    DDL_TABLE_THRESHOLD_ROWS,
+    UNKNOWN_SIZE_MB,
+    assumption_size_mb,
+    is_unmeasured_ddl_table,
+    known_row_count,
+    rows_from_size,
+)
 
 #: Engines whose designers read ``design_metrics``.
 METRIC_ENGINES = frozenset({"dynamodb", "documentdb", "opensearch"})
 
 BYTES_PER_MB = 1_048_576
-#: Stand-in for an unknown ``size_mb`` (the skills' long-standing rule).
-UNKNOWN_SIZE_MB = 0.01
+# UNKNOWN_SIZE_MB, the stand-in for an unknown ``size_mb`` (the skills' long-standing
+# rule), is defined once in ``src.shared.row_counts`` so the deliverables' sentence names
+# the same figure.
 #: Value size of a string-like column with no ``max_length``.
 DEFAULT_STRING_BYTES = 50
 #: Value size cap for a string-like column whose ``max_length`` is larger
@@ -140,12 +149,54 @@ def capped_text_columns(columns: Iterable[Mapping[str, Any]]) -> list[str]:
     ]
 
 
+def row_count_or_assumed(table: Mapping[str, Any]) -> tuple[int | None, bool]:
+    """The row count a row-count threshold reads for ``table`` (a small table, a large
+    one, a bounded fan-out), and whether it is the stated assumption.
+
+    The collector's count when the source has one (0 for an empty table). When it has
+    none (#1636), not 0: the table's collected data size (``assumption_size_mb``, its
+    indexes left out) over its declared row width (:func:`schema_item_size_bytes`), the
+    assumption ``src.shared.row_counts.UNKNOWN_ROW_COUNT_ASSUMPTION`` states in every
+    deliverable. A declared width counts each string at its declared maximum (up to 1 KB),
+    and the reason text says the count is derived from the table's size. A table read
+    from DDL alone (no count, no size) takes the interim rule
+    ``row_counts.DDL_TABLE_THRESHOLD_ROWS`` (0): every small-table rule treats it as
+    small, as before #1636 (#1646 replaces it). Any other table with no size collected
+    either is None: nothing says how big it is.
+    """
+    known = known_row_count(table)
+    if known is not None:
+        return known, False
+    if is_unmeasured_ddl_table(table):
+        return DDL_TABLE_THRESHOLD_ROWS, True
+    size_mb = assumption_size_mb(table)
+    if size_mb is None:
+        return None, False
+    return rows_from_size(size_mb, schema_item_size_bytes(table.get("columns") or [])), True
+
+
+def sizing_row_count(table: Mapping[str, Any]) -> tuple[int, bool]:
+    """The row count sizing arithmetic uses for ``table`` (it needs a number), and
+    whether it is the stated assumption: :func:`row_count_or_assumed`, and with no
+    collected size either, the 0.01 MB stand-in over the declared row width."""
+    if known_row_count(table) is None and assumption_size_mb(table) is None:
+        width = schema_item_size_bytes(table.get("columns") or [])
+        return rows_from_size(UNKNOWN_SIZE_MB, width), True
+    rows, assumed = row_count_or_assumed(table)
+    return int(rows or 0), assumed
+
+
 def _table_metrics(table: Mapping[str, Any]) -> TableDesignMetrics:
     size_mb = table.get("size_mb")
-    row_bytes, estimated = avg_row_size_bytes(size_mb, table.get("row_count"))
+    rows, assumed = sizing_row_count(table)
+    row_bytes, estimated = avg_row_size_bytes(size_mb, rows)
+    if assumed:
+        # The assumption's own row width: the table's size spread over the assumed rows.
+        row_bytes = schema_item_size_bytes(table.get("columns") or [])
     return TableDesignMetrics(
         table_id=str(table.get("table_id") or table.get("table_name") or ""),
-        row_count=int(table.get("row_count") or 0),
+        row_count=rows,
+        row_count_assumed=assumed,
         avg_row_size_bytes=row_bytes,
         avg_row_size_kb=round(row_bytes / 1024, 3),
         size_estimated=estimated,
@@ -200,9 +251,9 @@ def _embeddings(
             if (parent_id, child_id) in seen:
                 continue
             seen.add((parent_id, child_id))
-            avg_children = round(
-                int(child.get("row_count") or 0) / max(int(parent.get("row_count") or 0), 1), 2
-            )
+            child_rows, child_assumed = sizing_row_count(child)
+            parent_rows, parent_assumed = sizing_row_count(parent)
+            avg_children = round(child_rows / max(parent_rows, 1), 2)
             parent_kb = sizes[parent_id].avg_row_size_kb
             child_kb = sizes[child_id].avg_row_size_kb
             embedded = round(child_kb * avg_children, 3)
@@ -211,6 +262,7 @@ def _embeddings(
                     parent_table=parent_id,
                     child_table=child_id,
                     avg_children_per_parent=avg_children,
+                    counts_assumed=child_assumed or parent_assumed,
                     parent_row_size_kb=parent_kb,
                     child_row_size_kb=child_kb,
                     embedded_avg_kb=embedded,

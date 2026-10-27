@@ -47,6 +47,7 @@ from src.contracts.opensearch_decision_trace import (
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import HOURS_PER_MONTH, price_basis
+from src.shared.row_counts import collected_storage_mb, unknown_size_line
 from src.tools.analysis.opensearch_pattern_catalog import (
     ANTI_PATTERN_BY_ID,
     OPENSEARCH_SEARCH_WEIGHTS,
@@ -824,7 +825,8 @@ def estimate_opensearch_costs(
 
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
 
-    total_size_gb = sum((t.get("size_mb") or 0.0) for t in tables) / 1024.0
+    # #1636: priced on the collected sizes; the tables with none are stated, never 0 unsaid.
+    total_size_gb = collected_storage_mb(tables)[0] / 1024.0
 
     # A managed domain: 2 data nodes on gp3 EBS. Both prices are the price table's
     # (src/catalog/prices.toml, #1196).
@@ -854,6 +856,7 @@ def estimate_opensearch_costs(
             "price_list": price_basis(),
         },
         pricing_assumptions=[
+            *unknown_size_line(tables),
             f"2 {instance_type} data nodes (${instance_hourly}/hr each)",
             f"gp3 EBS storage at ${gp3_price}/GB/month",
             "20% storage overhead for OpenSearch index structures",

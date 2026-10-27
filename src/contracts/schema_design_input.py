@@ -172,7 +172,10 @@ class AgentTable(BaseModel):
     table_id: str
     table_name: str
     schema_name: str | None = None
-    row_count: int
+    # #1636: None when the source has no count (design_metrics carries the stated
+    # assumption for sizing); 0 is an empty table.
+    row_count: int | None
+    row_count_basis: Literal["exact", "estimate"] | None = None
     size_mb: float | None = None
     columns: list[AgentColumn]
     indexes: list[AgentIndex] | None = None
@@ -617,6 +620,7 @@ def project_schema_design_input(
                 table_name=t.table_name,
                 schema_name=t.schema_name,
                 row_count=t.row_count,
+                row_count_basis=t.row_count_basis,
                 size_mb=t.size_mb,
                 columns=[
                     AgentColumn(

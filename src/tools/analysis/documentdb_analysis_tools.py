@@ -42,6 +42,12 @@ from src.contracts.documentdb_decision_trace import (
 from src.shared import catalog
 from src.shared.catalog import patterns as catalog_patterns
 from src.shared.catalog.prices import HOURS_PER_MONTH, SECONDS_PER_MONTH, price_basis
+from src.shared.row_counts import (
+    UNKNOWN_SIZE_MB,
+    collected_storage_mb,
+    known_size_mb,
+    unknown_size_line,
+)
 from src.shared.source_cache import (
     NO_READS_BASIS,
     CollectionCache,
@@ -73,6 +79,7 @@ from src.tools.analysis.variant_attributes import (
     TYPED_DOCUMENT,
     VariantAttributeSchema,
 )
+from src.tools.schema.design_metrics import row_count_or_assumed, sizing_row_count
 from src.tools.sql.query_facts import query_facts, source_engine_of
 
 # ---------------------------------------------------------------------------
@@ -108,6 +115,12 @@ class EmbeddingCandidate:
     exceeds_16mb: bool
 
 
+def _size_or_stand_in(table: dict) -> float:
+    """A table's collected size, or the stated stand-in for one not collected (#1636)."""
+    size = known_size_mb(table)
+    return UNKNOWN_SIZE_MB if size is None else size
+
+
 def detect_embedding_candidates(collector_output: dict) -> list[EmbeddingCandidate]:
     """Analyze FK relationships for embed vs reference decisions."""
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
@@ -139,8 +152,10 @@ def detect_embedding_candidates(collector_output: dict) -> list[EmbeddingCandida
             child_id, real_parent_id = parent_id, ref_id
             child_t, parent_t = t, ref_table
 
-            child_rows = child_t.get("row_count") or 0
-            parent_rows = parent_t.get("row_count") or 1
+            # #1636: a count the source does not have is the stated sizing assumption
+            # (size over declared row width), never 0.
+            child_rows = sizing_row_count(child_t)[0]
+            parent_rows = sizing_row_count(parent_t)[0]
             avg_children = child_rows / max(parent_rows, 1)
 
             # Co-access: % of child queries that also access parent
@@ -166,8 +181,9 @@ def detect_embedding_candidates(collector_output: dict) -> list[EmbeddingCandida
             )
 
             # Size estimate
-            child_size_kb = (child_t.get("size_mb") or 0) * 1024
-            parent_size_kb = (parent_t.get("size_mb") or 0) * 1024
+            # #1636: a size not collected takes the stated 0.01 MB stand-in, never 0.
+            child_size_kb = _size_or_stand_in(child_t) * 1024
+            parent_size_kb = _size_or_stand_in(parent_t) * 1024
             est_doc_kb = (parent_size_kb / max(parent_rows, 1)) + (
                 child_size_kb / max(parent_rows, 1)
             )
@@ -367,13 +383,15 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
         return WorkloadAnalysis(patterns_detected=[], anti_patterns_detected=None)
 
     # Build lookup structures
-    table_row_counts: dict[str, int] = {}
+    # #1636: when the source has no count, the stated assumption from the table's size,
+    # never 0; None (neither small nor large) when no size is collected either.
+    table_row_counts: dict[str, int | None] = {}
     table_fk_count: dict[str, int] = {}
     self_ref_tables: set[str] = set()
 
     for t in tables:
         tid = t.get("table_id", "")
-        table_row_counts[tid] = t.get("row_count") or 0
+        table_row_counts[tid] = row_count_or_assumed(t)[0]
         fks = t.get("foreign_keys") or []
         table_fk_count[tid] = len(fks)
         for fk in fks:
@@ -450,8 +468,9 @@ def analyze_documentdb_use_cases(collector_output: dict) -> WorkloadAnalysis:
 
         # extended-reference: join with small lookup table
         if has_joins and len(accessed) >= 2:
-            has_small = any(table_row_counts.get(tid, 999999) < 1000 for tid in accessed)
-            has_large = any(table_row_counts.get(tid, 0) > 10000 for tid in accessed)
+            counts = [table_row_counts.get(tid) for tid in accessed]
+            has_small = any(n is not None and n < 1000 for n in counts)
+            has_large = any(n is not None and n > 10000 for n in counts)
             if has_small and has_large:
                 extended_ref.append(q)
 
@@ -755,7 +774,8 @@ def estimate_documentdb_costs(
     tables = (collector_output.get("database_schema") or {}).get("tables") or []
     queries = (collector_output.get("queries") or {}).get("query_patterns") or []
 
-    total_size_gb = sum(t.get("size_mb") or 0 for t in tables) / 1024
+    # #1636: priced on the collected sizes; the tables with none are stated, never 0 unsaid.
+    total_size_gb = collected_storage_mb(tables)[0] / 1024
     # A read is billed an I/O only when it misses the buffer cache (the engine file's
     # ``reads_billed_on_cache_miss_only``): each read is estimated with its own hit
     # ratio, else the collection's, scaled down by this instance's memory over the
@@ -825,6 +845,7 @@ def estimate_documentdb_costs(
             **bound,
         },
         pricing_assumptions=[
+            *unknown_size_line(tables),
             f"Single {instance_type} instance (no replicas) at ${instance_hourly}/hr",
             f"Region: {target_region}",
             f"{prices.configuration} storage I/O: ${io_price} per million read/write requests",

@@ -212,10 +212,18 @@ def main() -> None:
         from src.shared.sample_rows import collector_output_without_sample_rows
 
         collector_data, sample_rows_dropped = collector_output_without_sample_rows(input_data)
-        # #1625: no literal value is kept in its query text, tags or definitions.
-        from src.tools.sql.redact import redact_collector_output
+        # Read as a stored one is, before it is stamped with today's version: through the
+        # adapter of an older MAJOR and every read's transforms, so no literal value is
+        # kept in its text (#1625) and an older 0 for an unknown row count is unknown
+        # (#1636).
+        from src.contracts.collector_output import CollectorOutputContract
+        from src.shared.contract_versioning import read_contract_payload
 
-        collector_data = dict(redact_collector_output(collector_data))
+        collector_data = dict(
+            read_contract_payload(
+                collector_data, CollectorOutputContract, artifact=f"{db_name}/{job_id} upload"
+            )
+        )
     else:
         # Raw collection script output — parse with offline parser
         # Keep a copy of the raw file, less any table rows (#387)

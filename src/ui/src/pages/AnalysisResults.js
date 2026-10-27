@@ -70,7 +70,7 @@ import { badgeTextColor, engineHex } from "../utils/engineColors";
 import EngineBadge from "../components/EngineBadge";
 import { WORKLOAD_FIT_DEFINITION } from "../utils/workloadFitLabels";
 import { optimizationLabel } from "../utils/optimizationLabels";
-import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
+import { accessPatternTotals, cacheLayerFactsOf, costAssumptionsOf, rowCountStatementOf, derivedCopySyncOf, costCaveatOf, costScopeLabelOf, costSizingOf, costSizingText, designTableCountOf, noEngineInScopeOf, openRiskCountAt, queryPatternCountsOf, resolvedRiskCountOf, resolvedRisksBySeverityText, routingHistoryRecorded, routingKindsById, tradeOffsByTab, tradeOffTabLabel } from "../utils/reportFacts";
 
 
 // ============================================
@@ -2039,6 +2039,12 @@ const AnalysisResultsPage = memo(() => {
                   {costAssumptionsOf(synthesis).length > 0 && (
                     <Box fontSize="body-s" color="text-body-secondary">
                       <span data-figure="cost-assumptions">{costAssumptionsOf(synthesis).join(' · ')}</span>
+                    </Box>
+                  )}
+                  {/* #1636: the tables with no row count, and the sizing assumption (a report fact) */}
+                  {rowCountStatementOf(synthesis) && (
+                    <Box fontSize="body-s" color="text-body-secondary">
+                      <span data-figure="row-counts">{t('analysis-results.cost-breakdown.row-counts')}: {rowCountStatementOf(synthesis)}.</span>
                     </Box>
                   )}
                   <Box fontSize="body-s" color="text-body-secondary">

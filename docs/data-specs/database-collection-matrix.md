@@ -35,12 +35,16 @@ What each collection script emits. The scripts (`scripts/collect-*.sql`) are the
 | `table_name` | yes | yes | yes | yes |
 | `schema_name` | no | yes | yes | yes |
 | `row_count` | yes | yes | yes | yes |
+| `row_count_basis` | yes | yes | yes | yes |
+| `stats_analyzed_at` | no | yes | no | yes |
 | `data_size_mb` | yes | yes | yes | yes |
 | `index_size_mb` | yes | yes | yes | no |
 | `engine`, `table_collation` | yes | no | no | no |
 | `table_id` | no | no | yes | no |
 
 Oracle skips tables that have no entry in `ALL_TAB_COLUMNS` (internal metadata tables).
+
+`row_count` comes from the catalogue, never from the table (#1555), and is `null` when the source has no count, never 0 in its place (#1636): MySQL `TABLE_ROWS` (NULL only for views and `INFORMATION_SCHEMA` tables; an InnoDB 0 on a table whose data is more than one 16 KB page is statistics not yet refreshed, so unknown), PostgreSQL `pg_class.reltuples` (unknown: -1 on 14+; before 14, 0 with no pages and no analyse or vacuum in `pg_stat_user_tables`), SQL Server `sys.partitions.rows` summed over the table's partitions, Oracle `ALL_TABLES.NUM_ROWS`. `row_count_basis` is `exact` for MySQL MyISAM and Aria and `estimate` for the rest (Microsoft documents `sys.partitions.rows` as approximate), and `stats_analyzed_at` is when the statistics were refreshed (PostgreSQL's latest analyse or vacuum, Oracle `LAST_ANALYZED`). Oracle's `data_size_mb` sums the table's `TABLE`, `TABLE PARTITION` and `TABLE SUBPARTITION` segments: 0 for a table whose segment was never created (`SEGMENT_CREATED` `NO`), `null` when none is found (an index-organized table keeps its data in an `INDEX` segment; LOB segments are not counted). The reading rule, also for collections written before #1636, is `src/shared/row_counts.py`.
 
 ## Query patterns
 

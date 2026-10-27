@@ -54,6 +54,12 @@ from src.contracts.collector_output import (
     View,
 )
 from src.shared.contract_versioning import load_contract
+from src.shared.row_counts import (
+    engine_major_version,
+    read_data_size_mb,
+    read_row_count,
+    read_size_mb,
+)
 from src.shared.source_cache import percent_or_none
 from src.tools.aws.credentials import AWSCredentialManager
 from src.tools.aws.rds_tools import (
@@ -381,7 +387,9 @@ def _collect_live(inp: CollectorInput, ckpt) -> CollectorOutputContract:
 
     # Assemble
     tables = _build_tables(
-        schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw, inp.database_name
+        schema_raw["tables"] if isinstance(schema_raw, dict) else schema_raw,
+        inp.database_name,
+        source_engine="mysql",
     )
     schema_views = (
         _build_views(schema_raw.get("views", [])) if isinstance(schema_raw, dict) else None
@@ -692,7 +700,18 @@ def _text_or_none(value: Any) -> str | None:
     return text or None
 
 
-def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
+def _build_tables(
+    schema_raw: list[dict],
+    db_name: str,
+    *,
+    source_engine: str = "mysql",
+    source_version: str | None = None,
+) -> list[Table]:
+    """The collection's tables, every path's (live MySQL and MariaDB, and every offline
+    collection). ``source_engine`` (and ``source_version``, where known) is the engine the
+    collection was read from: each row count is read by its rule
+    (``src.shared.row_counts``, #1636)."""
+    engine_major = engine_major_version(source_version) if source_version else None
     tables = []
     skipped_empty = 0
     for t in schema_raw:
@@ -750,8 +769,10 @@ def _build_tables(schema_raw: list[dict], db_name: str) -> list[Table]:
                 # collection that reports none fall back to db_name, same as before.
                 # table_id is unaffected -- still f"{db_name}.{name}" (#382 scope).
                 schema_name=t.get("schema_name") or db_name,
-                row_count=max(t.get("row_count") or 0, 0),
-                size_mb=float(t.get("data_size_mb") or 0) + float(t.get("index_size_mb") or 0),
+                # #1636: None when the source has no count, never a 0 standing in for it.
+                **read_row_count(t, source_engine, engine_major=engine_major).fields(),
+                size_mb=read_size_mb(t, source_engine),
+                data_size_mb=read_data_size_mb(t, source_engine),
                 columns=columns,
                 indexes=indexes,
                 primary_key=t.get("primary_key") or None,
@@ -812,8 +833,11 @@ def _build_tables_from_ddl(raw_tables: list[dict], db_name: str) -> list[Table]:
                 # #381: see _build_tables above -- prefer the raw table's own
                 # schema_name when the DDL source reported one.
                 schema_name=t.get("schema_name") or db_name,
-                row_count=0,
-                size_mb=0,
+                # #1636: DDL holds no row counts: unknown, not an empty table (routing
+                # still treats it as small: row_counts.DDL_TABLE_THRESHOLD_ROWS).
+                row_count=None,
+                from_ddl=True,
+                size_mb=None,
                 columns=columns,
                 indexes=indexes,
                 primary_key=t.get("primary_key") or None,

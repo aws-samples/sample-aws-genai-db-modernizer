@@ -45,13 +45,19 @@ Version History:
   loads with its text redacted.
 - 4.4 (2026-10-28, #1623): Added optional Index.prefix_lengths, the per-column key
   prefix length (MySQL SUB_PART).
+- 5.0 (2026-10-28, #1636): Table.row_count may be None: the source has no count for the
+  table (#1636); a 0 is an empty table. Added optional Table.row_count_basis (exact or
+  estimate) and Table.stats_analyzed_at (when the source last refreshed the statistics).
+  Older outputs load through a MAJOR 4 adapter that reads each count again by the
+  per-engine rule (src.shared.row_counts): a 0 from a source that cannot tell empty from
+  unknown becomes None, SQL Server's stays 0.
 """
 
 import re
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -449,8 +455,49 @@ class Table(BaseModel):
     )
     table_name: str = Field(..., description="Table name")
     schema_name: str | None = Field(None, description="Schema or database name")
-    row_count: int = Field(..., ge=0, description="Approximate number of rows")
+    row_count: int | None = Field(
+        ...,
+        ge=0,
+        description=(
+            "Rows, as the source's catalogue records them (no table is read, #1555); 0 for an "
+            "empty table and None when the source has no count for it (no statistics, #1636). "
+            "The per-engine reading rule is src.shared.row_counts"
+        ),
+    )
+    row_count_basis: Literal["exact", "estimate"] | None = Field(
+        None,
+        description=(
+            "How row_count was recorded (#1636): exact (MySQL-family MyISAM and Aria TABLE_ROWS) "
+            "or estimate (PostgreSQL reltuples, Oracle NUM_ROWS, InnoDB TABLE_ROWS, SQL Server "
+            "sys.partitions.rows, Db2 CARD); None when row_count is None or the source is unknown"
+        ),
+    )
+    stats_analyzed_at: datetime | None = Field(
+        None,
+        description=(
+            "When the source last refreshed the statistics row_count comes from, where its "
+            "catalogue records it (Oracle LAST_ANALYZED; PostgreSQL's latest analyse or vacuum "
+            "in pg_stat_user_tables); None otherwise (#1636)"
+        ),
+    )
     size_mb: float | None = Field(None, ge=0, description="Table size in megabytes")
+    from_ddl: bool = Field(
+        False,
+        description=(
+            "True for a table read from DDL alone (no catalogue was read): no row count and "
+            "no size. Routing treats it as small, as before #1636, an interim rule "
+            "(src.shared.row_counts.DDL_TABLE_THRESHOLD_ROWS, #1646)"
+        ),
+    )
+    data_size_mb: float | None = Field(
+        None,
+        ge=0,
+        description=(
+            "The table's data size in megabytes, its indexes left out (size_mb counts both); "
+            "None when the source reports none. The row-count assumption for a table with no "
+            "row count divides it (#1636)"
+        ),
+    )
     columns: list[Column] = Field(..., min_length=1, description="List of table columns")
     indexes: list[Index] | None = Field(None, description="List of table indexes")
     primary_key: list[str] | None = Field(None, description="List of column names in primary key")
@@ -855,7 +902,7 @@ class CollectorOutputContract(BaseModel):
     """
 
     contract_version: str = Field(
-        default="4.4",
+        default="5.0",
         pattern=r"^\d+\.\d+$",
         description="Contract version (MAJOR.MINOR format)",
     )
