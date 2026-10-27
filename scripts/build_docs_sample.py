@@ -91,6 +91,7 @@ _PUBLIC_URL_HOSTS = (
     r"aws-samples\.github\.io/",
     r"docs\.aws\.amazon\.com/",
     r"aws\.amazon\.com/",
+    r"calculator\.aws/",
 )
 _PRIVATE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (

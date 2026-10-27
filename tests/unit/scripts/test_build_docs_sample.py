@@ -415,6 +415,7 @@ def test_private_markers_find_each_kind(text: str, kind: str) -> None:
         "MySQL 8.0.45 on Aurora MySQL 3.08",  # versions are not IP addresses
         "https://aws.amazon.com/dynamodb/ and https://docs.aws.amazon.com/x",  # public
         "https://aws-samples.github.io/sample-aws-genai-db-modernizer/sample/",
+        "AWS Pricing Calculator (https://calculator.aws/).",  # the cost caveat
         "the deliverables folder of the job runner",  # a word, with no user names given
         "",
     ],
