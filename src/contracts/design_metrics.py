@@ -18,7 +18,7 @@ Version History:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
 
 #: Default AgentContextInput multipliers (``design_rps = base_rps × peak × growth``).
 DEFAULT_GROWTH_MULTIPLIER = 10.0
@@ -35,8 +35,25 @@ class QueryDesignMetrics(BaseModel):
     design_rps: float = Field(
         ..., ge=0, description="base_rps × peak_to_avg_ratio × growth_multiplier, 4 decimals"
     )
+    member_query_ids: list[str] | None = Field(
+        None,
+        description=(
+            "For an input entry that stands for a query pattern (#1602): every member "
+            "statement's query_id, this one included. The rates are the members' total; "
+            "an access pattern serving the pattern lists every member and counts the "
+            "rate once"
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
+
+    @model_serializer(mode="wrap")
+    def _without_absent_members(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """A row that stands for no query pattern is written as before #1602."""
+        data: dict = handler(self)
+        if data.get("member_query_ids") is None:
+            data.pop("member_query_ids", None)
+        return data
 
 
 class TableDesignMetrics(BaseModel):

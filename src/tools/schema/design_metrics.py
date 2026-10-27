@@ -228,11 +228,15 @@ def build_design_metrics(
     total_queries_analyzed: int | None = None,
     unfiltered_in_scope_patterns: int | None = None,
     context: Mapping[str, Any] | None = None,
+    members: Mapping[str, Sequence[str]] | None = None,
 ) -> DesignMetricsContract:
     """The metrics for ``engine``'s designer from its (already scoped) tables and queries.
 
     Coverage counts ``unfiltered_in_scope_patterns`` when given (the whole query
     log before the assignment scoped it to ``engine``), else ``queries``.
+    ``members`` (#1602): an entry's query id -> the member query ids of the query
+    pattern it stands for (its rates are already the members' total); its row lists
+    them in ``member_query_ids``.
     """
     context = context or {}
     growth = float(context.get("growth_multiplier") or DEFAULT_GROWTH_MULTIPLIER)
@@ -253,6 +257,7 @@ def build_design_metrics(
                     design_rps=design_rps(
                         q.get("calls_per_second"), q.get("frequency_per_hour"), peak, growth
                     ),
+                    member_query_ids=_members_of(q, members),
                 )
                 for q in queries
             ),
@@ -282,6 +287,34 @@ def build_design_metrics(
         ]
         metrics.opensearch_shards = rules
     return metrics
+
+
+def _members_of(
+    query: Mapping[str, Any], members: Mapping[str, Sequence[str]] | None
+) -> list[str] | None:
+    found = (members or {}).get(str(query.get("query_id") or ""))
+    return [str(m) for m in found] if found and len(found) > 1 else None
+
+
+def projected_members(queries_block: Mapping[str, Any]) -> dict[str, list[str]]:
+    """An entry's query id -> its query pattern's member query ids, for a projected
+    input written per pattern (#1602): an entry of ``query_patterns`` that is the only
+    entry among a ``query_pattern_groups`` entry's members. Empty when every member is
+    an entry (an input that lists every statement)."""
+    entries = {
+        str(q.get("query_id"))
+        for q in queries_block.get("query_patterns") or []
+        if isinstance(q, Mapping) and q.get("query_id")
+    }
+    out: dict[str, list[str]] = {}
+    for group in queries_block.get("query_pattern_groups") or []:
+        if not isinstance(group, Mapping):
+            continue
+        ids = [str(i) for i in group.get("query_ids") or []]
+        shown = [i for i in ids if i in entries]
+        if len(ids) > 1 and len(shown) == 1:
+            out[shown[0]] = ids
+    return out
 
 
 def design_metrics_from_collector(
@@ -316,6 +349,7 @@ def design_metrics_from_projection(
         total_queries_analyzed=queries_block.get("total_queries_analyzed"),
         unfiltered_in_scope_patterns=unfiltered_in_scope_patterns,
         context=agent_input.get("context"),
+        members=projected_members(queries_block),
     ).model_dump(mode="json")
 
 
@@ -329,21 +363,40 @@ def _rps_agrees(actual: float, expected: float) -> bool:
 
 
 def _check_rps(
-    patterns: Iterable[Mapping[str, Any]], ids_key: str, rates: Mapping[str, float]
+    patterns: Iterable[Mapping[str, Any]],
+    ids_key: str,
+    rates: Mapping[str, float],
+    members: Mapping[str, Sequence[str]] | None = None,
 ) -> list[str]:
+    """``design_rps`` against the rows, and (#1602) every member of a query pattern row.
+
+    ``members``: a row's query id -> its pattern's member query ids. A member names its
+    row, so an access pattern serving a pattern counts the row's rate once."""
+    row_of = {m: row for row, ids in (members or {}).items() for m in ids}
     errors = []
     for p in patterns:
         ids = p.get(ids_key) or []
         if isinstance(ids, str):
             ids = [ids]
-        if not ids or any(i not in rates for i in ids) or p.get("design_rps") is None:
+        label = p.get("pattern_id") or ids
+        rows = list(dict.fromkeys(row_of.get(i, i) for i in ids))
+        for row in rows:
+            missing = [m for m in (members or {}).get(row) or [] if m not in ids]
+            if missing:
+                errors.append(
+                    f"access pattern {label}: serves the query pattern of {row} "
+                    f"({len((members or {})[row])} statements) but its {ids_key} miss "
+                    f"{', '.join(missing)}; list every member_query_ids entry of its "
+                    "design_metrics row"
+                )
+        if not ids or any(r not in rates for r in rows) or p.get("design_rps") is None:
             continue  # unknown query IDs are the scope check's business
-        expected = round(sum(rates[i] for i in ids), 4)
+        expected = round(sum(rates[r] for r in rows), 4)
         actual = float(p["design_rps"])
         if not _rps_agrees(actual, expected):
             errors.append(
-                f"access pattern {p.get('pattern_id') or ids}: design_rps {actual:g} disagrees "
-                f"with design_metrics ({expected:g} = sum of design_rps for {', '.join(ids)}); "
+                f"access pattern {label}: design_rps {actual:g} disagrees "
+                f"with design_metrics ({expected:g} = sum of design_rps for {', '.join(rows)}); "
                 "copy it from design_metrics.queries"
             )
     return errors
@@ -563,7 +616,11 @@ def check_design_numbers(
     if engine not in METRIC_ENGINES or not isinstance(design, Mapping):
         return []
     errors: list[str] = []
-    rates = {q["query_id"]: float(q["design_rps"]) for q in (metrics or {}).get("queries") or []}
+    rows = (metrics or {}).get("queries") or []
+    rates = {q["query_id"]: float(q["design_rps"]) for q in rows}
+    members = {
+        q["query_id"]: list(q["member_query_ids"]) for q in rows if q.get("member_query_ids")
+    }
     if engine == "dynamodb":
         errors += _check_hot_partitions(design)
         ids_key = "query_ids"
@@ -572,7 +629,7 @@ def check_design_numbers(
     else:
         ids_key = "query_ids"
     if metrics:
-        errors += _check_rps(design.get("access_patterns") or [], ids_key, rates)
+        errors += _check_rps(design.get("access_patterns") or [], ids_key, rates, members)
         if engine == "documentdb":
             row_kb = {
                 t["table_id"]: float(t["avg_row_size_kb"]) for t in metrics.get("tables") or []
