@@ -63,16 +63,20 @@ mode's row-shaping both go through small, pure `_build_*` helpers
 from the local process.
 
 ```python
-# tests/unit/agents/test_mysql_collector.py (real pattern)
-from src.agents.collector.mysql_collector import _build_columns, _build_tables
+# tests/unit/agents/test_collectors_read_no_rows.py (trimmed)
+from src.agents.collector import mysql_collector
 
-def test_build_tables_skips_empty_columns():
-    """Oracle's SYS_IOT_OVER_* internal tables arrive with columns=[]
-    after the table_name-based join; Table's min_length=1 validator would
-    otherwise reject them, so _build_tables filters them out instead."""
-    raw = [{"table_name": "t", "row_count": 0, "data_size_mb": 0,
-            "columns": [], "indexes": [], "foreign_keys": []}]
-    assert _build_tables(raw, "mydb") == []
+def test_build_tables_drops_rows_from_an_old_checkpoint():
+    """A schema checkpoint written before #387 may hold rows; none reach the output."""
+    table = {
+        "table_name": "orders", "schema_name": "shop", "row_count": 1,
+        "columns": [{"column_name": "id", "data_type": "int",
+                     "is_nullable": "NO", "ordinal_position": 1}],
+        "indexes": [], "foreign_keys": [], "primary_key": ["id"],
+        "sample_data": [{"id": 1, "email": "a@example.com"}],
+    }
+    built = mysql_collector._build_tables([table], "shop")
+    assert "sample_data" not in built[0].model_dump()
 ```
 
 For the LIVE mode path specifically, mock `SSMExecutor` rather than a
@@ -135,8 +139,9 @@ Three fixture layers under `tests/fixtures/`, reused across engines:
 ## End-to-End Testing
 
 - **Deterministic (`make e2e`)**: runs collect → triage → per-engine analysis
-  → assignment → reality check → schema design → synthesis → report with no
-  LLM and no AWS credentials, on both bundled samples
+  → assignment → reality check → synthesis → report with no LLM and no AWS
+  credentials (schema design is skipped with no model:
+  `SCHEMA_DESIGN_SKIP_REASON_NO_LLM` in `src/contracts/phase_models.py`), on both bundled samples
   (`docs/examples/wordpress/`, `docs/examples/discourse/`), then checks the
   rendered HTML in real browsers (Chromium + WebKit), the PDF content, and a
   local-UI smoke test. See `ci/README.md`'s `e2e.sh` section for the exact
@@ -150,6 +155,14 @@ Three fixture layers under `tests/fixtures/`, reused across engines:
   model call for free.
 - **Manual integration (`tests/integration/`)**: exercises a real database
   connection or a manually generated artifact tree; not run in CI.
+
+---
+
+## Markers and the pre-merge check
+
+- A `tests/e2e` test that holds only for the no-model pipeline run needs `@pytest.mark.deterministic`; otherwise `e2e-llm` fails on `--fail-on-skip` (`tests/unit/ci/test_e2e_deterministic_markers.py` enforces it).
+- Every new test should fail on main's code. `./ci/pre_merge.sh` runs the branch's new and changed tests against `origin/main` and lists the ones that pass there; mark a test that guards behaviour main already has `@pytest.mark.passes_on_main`.
+- Run `./ci/pre_merge.sh` before asking for review (AGENTS.md, "Which test tier for which change").
 
 ---
 

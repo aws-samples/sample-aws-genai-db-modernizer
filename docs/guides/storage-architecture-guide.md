@@ -159,28 +159,56 @@ bus or push channel.
 
 ```
 ./artifacts/
+├── .meta/<job_id>.json          # the job's phase progression (PhaseProgression)
 └── <database-name>/
     └── <job_id>/
-        ├── _meta.json      # only for jobs the local API started
+        ├── _meta.json           # only for jobs the local API started
+        ├── _logs/               # script logs (run_assessment.log, model usage)
+        ├── uploads/             # the raw collection you ingested
         ├── collector/
-        │   └── output.json
+        │   ├── output.json
+        │   └── sql_shadow.json
         ├── referee-triage/
         │   └── triage.json
         ├── analysis-<engine>/
         │   ├── analysis.json
         │   ├── decision-trace.json
-        │   └── er-diagram.mmd
+        │   └── er-diagram.json
         ├── assignment/
-        │   └── v<N>/assignment.json
+        │   └── v<N>/
+        │       ├── assignment.json
+        │       └── access_patterns.json
         ├── reality-check/
         │   ├── llm_input.json
         │   └── output.json
+        ├── decisions/           # recorded approvals and the engine scope
         ├── schema-<engine>/
         │   └── v<N>/schema_output.json
-        ├── load-test/
+        ├── load-test-<engine>/
         │   └── v<N>/results/summary.json
-        └── synthesis/
-            └── v<N>/report.json   # or referee-synthesis/report.json when assignment_version is 0
+        ├── synthesis/
+        │   └── v<N>/report.json   # or referee-synthesis/report.json when assignment_version is 0
+        └── deliverables/        # the customer folder: index.md, the reports, assessment-data.json
+```
+
+This is the common shape, not the full list. Every JSON file a run writes, by kind
+(registered contract, model I/O, internal), is in
+[contracts/artifacts.md](../contracts/artifacts.md), and the files of the
+`deliverables/` folder are listed in `src/report/deliverables.py`
+(`FOLDER_ENTRIES`).
+
+Which backend a run uses: the local filesystem for the CLI, Claude Code and the
+local API/UI (`./artifacts/`, or `ARTIFACT_DIR`); S3 for the AWS Transform
+integration (`s3://<bucket>/<db>/<job>/<agent>/...`). Both sit behind the same
+`ArtifactStore` interface:
+
+```mermaid
+graph TB
+    APP[Scripts, agents, local API] --> STORE{ArtifactStore}
+    STORE --> LOCAL[LocalArtifactStore]
+    STORE --> S3_BE[S3ArtifactStore]
+    LOCAL --> FS[./artifacts/]
+    S3_BE --> S3[S3 bucket]
 ```
 
 Job IDs are UUIDs, truncated to 8 hex characters by the local scripts — not
@@ -192,4 +220,4 @@ KSUIDs, despite what older drafts of this guide (and some ADRs) said.
 
 - [Orchestrator README](../../src/orchestrator/README.md) — the full artifact path table per agent
 - [Strands Collector Guide](strands-collector-guide.md) — the collector's own S3-backed checkpoint stages
-- [Storage Architecture Diagram](../architecture/diagrams/07-storage-architecture.md)
+- [Job artifacts](../contracts/artifacts.md) — every JSON file a job writes, by kind

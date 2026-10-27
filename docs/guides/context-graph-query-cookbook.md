@@ -51,8 +51,8 @@ Limits on the raw endpoint:
 The curated endpoints run fixed queries on a read-only handle with the same 10-second timeout (`504`). The handle has a 256 MiB buffer pool (`MODERNIZER_GRAPH_BUFFER_POOL_MB`), runs each statement on 2 engine threads (`MODERNIZER_GRAPH_QUERY_THREADS`) and runs at most 4 statements at once (`MODERNIZER_GRAPH_MAX_CONCURRENT_READS`); further reads wait for a slot. A read that still runs out of buffer pool memory, or waits more than 30 seconds for a slot, returns `503` with `Retry-After: 1`. `GET /query-journeys` reads only the requested page from the graph.
 
 The graph is built lazily on first access (or explicitly via
-`POST /api/v1/assessments/{job_id}/graph/rebuild`) from the assessment's S3
-artifacts, then persisted and reused. If a query returns no rows, the
+`POST /api/v1/assessments/{job_id}/graph/rebuild`) from the assessment's
+artifacts (the artifact store, which is the local `artifacts/` folder by default), then persisted and reused. If a query returns no rows, the
 corresponding pipeline stage may not have produced artifacts yet (see
 [Empty results](#empty-results)).
 
@@ -66,6 +66,8 @@ purpose-shaped JSON, so you don't hand-write Cypher. Prefer these; use raw
 |----------|---------|
 | `GET /api/v1/assessments/{job_id}/graph/tables/{table_id}/impact` | Queries affected if the table changes (blast radius), with destinations, access patterns, anti-patterns |
 | `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/provenance` | Why a query migrated where it did, plus the producing agent/phase |
+| `GET /api/v1/assessments/{job_id}/graph/queries/{query_id}/trace` | Why a query ended on its engine and not another: its first assignment with each engine's score or gate, each later move with its reason, and the runner-up |
+| `GET /api/v1/assessments/{job_id}/query-journeys` and `.../query-journeys/{query_id}` | The query journeys: one page of queries, or one query's journey, read from the graph |
 | `GET /api/v1/assessments/{job_id}/graph/engines/{engine}` | Destinations and source tables migrating to an engine |
 | `GET /api/v1/assessments/{job_id}/graph/risks` | Risk hotspots: tables carrying risk and anti-patterns, weighted by traffic |
 | `GET /api/v1/assessments/{job_id}/load-test-results` | Load-test results grouped by access pattern (filters: `engine`, `version`, `prefix`) |
@@ -83,7 +85,8 @@ function to `src/graph/queries.py` (Cypher + shaping), a Pydantic model to
 
 Node types: `Query`, `SourceTable`, `Destination`, `Engine`, `Signal`,
 `CoDependencyGroup`, `Decision`, `LoadTestRun`, `AntiPattern`, `Risk`,
-`AccessPattern`.
+`AccessPattern`, `Agent` (the producing agent and phase), `GraphMeta` (the schema revision
+and assignment version the graph was built from).
 
 Relationships:
 
@@ -102,7 +105,12 @@ Relationships:
 (AntiPattern)-[:OBSERVED_IN_TABLE]->(SourceTable)
 (Risk)-[:IMPACTS]->(SourceTable)
 (Risk)-[:EVIDENCED_BY]->(Query)
+(Decision)-[:SUPERSEDES]->(Decision)
+(Query)-[:MOVED {version, seq, pass, reason_code, from_engine, score_before, score_after, ...}]->(Engine)
+(Decision|Signal|AntiPattern|AccessPattern|LoadTestRun|Risk)-[:PRODUCED_BY]->(Agent)
 ```
+
+`MOVED` is the move ledger in the graph: one edge per Move for every assignment version in the lineage, so a query's whole routing history stays.
 
 ## Summary queries (reproduce UI views)
 
@@ -171,7 +179,7 @@ Requires `LoadTestRun` nodes (see [Empty results](#empty-results)).
 ## Impact and provenance queries
 
 These multi-hop traversals are the reason for the graph: each one would
-otherwise require loading and joining several S3 artifacts in application code.
+otherwise require loading and joining several artifacts in application code.
 
 ### A. Blast radius — what is affected if I change this table
 
@@ -183,7 +191,7 @@ Replace `topics` with a table from query 3.
 
 ### B. Everything going to a given engine
 
-Change `dynamodb` to `documentdb`, `opensearch`, or `elasticache`.
+Change `dynamodb` to `documentdb`, `opensearch`, `elasticache`, `aurora_mysql` or `aurora_postgresql`.
 
 ```json
 {"cypher":"MATCH (q:Query)-[:MIGRATES_TO]->(d:Destination {engine: 'dynamodb'}) OPTIONAL MATCH (q)-[:PART_OF]->(ap:AccessPattern) OPTIONAL MATCH (q)-[:READS_FROM]->(st:SourceTable) RETURN d.id AS destination, collect(DISTINCT st.id) AS source_tables, collect(DISTINCT ap.id) AS access_patterns, count(DISTINCT q) AS queries ORDER BY queries DESC"}
@@ -221,7 +229,7 @@ Requires `LoadTestRun` nodes (see [Empty results](#empty-results)).
 
 A query that returns `row_count: 0` usually means the pipeline stage that
 produces those nodes has not run for the assessment, not that the query is
-wrong. The graph only contains what the S3 artifacts contain.
+wrong. The graph only contains what the artifacts contain.
 
 | Missing nodes | Stage that produces them |
 |---------------|--------------------------|

@@ -48,30 +48,34 @@ through — doesn't call an engine collector at all. `scripts/run_assessment.py`
 (`phase_collect`) reads the `--file` argument and classifies it into one of
 three cases:
 
-- Already a `CollectorOutputContract` (`contract_version` starts with
-  `"3"`) — writes it directly as `collector/output.json`. This is what the
-  bundled sample fixtures, `docs/examples/wordpress/` and
-  `docs/examples/discourse/`, provide.
+- Already a `CollectorOutputContract` (a stored `collector/output.json` you
+  re-ingest). `carries_contract` (`src/shared/contract_versioning.py`)
+  recognises it by a `contract_version` of the same MAJOR this code reads
+  (ADR-008 Decision 4); a different MAJOR is refused with a clear error. The
+  script checks the table and query counts against the ingestion limits
+  (`MODERNIZER_MAX_UPLOAD_*`), drops any table rows an older collection
+  carried (`collector_output_without_sample_rows`, #387) and writes the
+  contract as `collector/output.json`.
 - A raw collection file (`collection_version` present, or a `queries` list)
-  — calls `parse_offline_collection`, then the shared offline builder
+  — keeps a copy under `uploads/` (less any table rows), calls
+  `parse_offline_collection`, then the shared offline builder
   (`src/agents/collector/offline_ingest.py::build_offline_collector_output`)
   to build the contract from it, with the source engine the file's own
-  metadata names. This is the output of
-  `collect-mysql.sql` / `collect-postgresql.sql` run against a real
-  database.
+  metadata names. This is the output of the `scripts/collect-*.sql` scripts
+  run against a real database, and it is what the bundled samples under
+  `docs/examples/wordpress/` and `docs/examples/discourse/` provide.
 - Neither — the script errors out with "Unrecognized file format."
 
 ```python
 # scripts/run_assessment.py (phase_collect, simplified from the real code)
-is_contract = isinstance(input_data.get("contract_version"), str) and input_data[
-    "contract_version"
-].startswith("3")
+is_contract = carries_contract(input_data, CollectorOutputContract, artifact=collector_file)
 is_raw = "collection_version" in input_data or isinstance(input_data.get("queries"), list)
 
 if is_contract:
-    collector_data = input_data
+    check_collection_counts(...)  # ingestion limits
+    collector_data, _ = collector_output_without_sample_rows(input_data)
 elif is_raw:
-    parsed = parse_offline_collection(input_data)
+    parsed = parse_offline_collection(input_data, shadow=sql_shadow, database_name=db_name)
     # The shared offline builder: the source engine is the one the collection's
     # metadata names (offline_parser.detect_source_engine, #1177)
     collector_data = build_offline_collector_output(

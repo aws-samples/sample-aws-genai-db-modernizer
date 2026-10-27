@@ -7,10 +7,11 @@
 
 ## Overview
 
-"The referee" is three agents, run in this order by `LocalOrchestrator`:
+"The referee" is three agents, run in this order by `LocalOrchestrator`, with the
+deterministic Assignment phase between triage and reality check (section 2):
 
 - **Referee-Triage** (`src/agents/referee/triage.py`) — reads collector output,
-  detects workload signals, and selects which analysis agents run. Pure
+  detects workload signals, and selects the engines to analyse. Pure
   Python, deterministic, no LLM.
 - **Referee-Reality-Check** (`src/agents/referee/reality_check.py`, its
   `reality_check_*.py` step modules and `reality_check_handler.py`) — a deterministic CTO-level consolidation pass
@@ -55,7 +56,7 @@ engine files' `source_engines`):
 
 ```python
 # src/agents/referee/triage.py (real code, trimmed)
-def triage(collector_output: dict) -> TriageResult:
+def triage(collector_output: dict, engine_scope: Iterable[str] | None = None) -> TriageResult:
     """Analyze collector output and decide which analysis agents to run."""
     signals = _detect_schema_signals(collector_output)
     signals.extend(_detect_query_signals(collector_output))
@@ -74,12 +75,17 @@ def triage(collector_output: dict) -> TriageResult:
     return result
 ```
 
-Aurora (the engine matching the source database — `aurora_mysql` or
-`aurora_postgresql`) is always selected as the relational baseline; it
-competes alongside the NoSQL/search/cache candidates for every query rather
-than being an automatic default. `keyspaces` and `neptune` are tracked as
-`deferred` signals for the synthesis report but are not dispatched as
-analysis agents today (Phase 1 scope).
+The Aurora engine matching the source database (`aurora_mysql` or
+`aurora_postgresql`) competes alongside the NoSQL, search and cache
+candidates for every query; it is not an automatic default. `keyspaces` and
+`neptune` are catalog placeholders (`status = "future"`,
+`PLACEHOLDER_ENGINES` in `src/shared/engine_names.py`): they are never
+analysed, designed or routed (ADR-031 Decision 9), and triage reports them
+only as `deferred` signals.
+
+`engine_scope` is the customer's engine scope (`--target-databases`, ADR-031
+Decision 2 Amendment 14): only the engines in it are candidates, and triage
+skips the others with a stated reason. Left out, every engine is a candidate.
 
 ### Output (`triage.json`, `TriageOutputContract` in `src/contracts/triage_output.py`)
 
@@ -90,13 +96,13 @@ contract actually written to `triage.json`, which has different field
 names and list-of-object shapes:
 
 - `selected_agents` — list of `{agent_type, reasons}`. `LocalOrchestrator`
-  dispatches exactly these engines (plus the Aurora baseline) to the
-  analysis phase.
+  dispatches exactly these engines to the analysis phase.
 - `skipped_agents` — list of `{agent_type, reason}`.
 - `baseline` — dict of the Aurora signals accumulated for
   Referee-Synthesis (this one keeps the same shape as the internal result).
-- `deferred_agents` — list of `{agent_type, reasons}` for Phase 1 signals
-  (`keyspaces`, `neptune`), reporting only.
+- `deferred_agents` — list of `{agent_type, reasons}` for the placeholder
+  engines' signals (`keyspaces`, `neptune`), reporting only; nothing routes
+  on it.
 - `signals` — every detected `TriageSignalRecord` (signal, targets,
   evidence, query IDs, table IDs, query count), for the decision trace.
 - `query_capabilities` — per-query hard-capability requirements (detected via
@@ -120,7 +126,34 @@ ElastiCache without one of its signals, are skipped.
 
 ---
 
-## 2. Referee-Reality-Check
+## 2. Assignment and the assignment review
+
+Between triage and reality check, the Assignment phase turns the analyses into a
+query-to-engine plan (`assignment_handler.py`, `assignment_resolver.py`). The
+routing model is [ADR-031](../architecture/decisions/ADR-031-query-first-routing-and-engine-rule-catalog.md);
+AGENTS.md "Routing changes" lists the rules a change must keep:
+
+- The query is the unit. Each query is scored against each engine with the one
+  scorer, `query_scoring.score_query_for_engine`; there is no private fit
+  function.
+- A table has one writer (ADR-031 Amendment 9): its writes and locking reads
+  form a write group, placed as one unit with any co-dependency group it
+  touches (`write_groups.placement_groups`). Its reads stay per query.
+- Ties go through `tie_break.break_tie`, using settled counts only.
+- Every engine change is a Move. Only `move_ledger.apply` and
+  `move_ledger.apply_to_assignment` write `assigned_engine` and `tied_engines`
+  (ADR-031 Amendment 3), and the moves are carried on `Assignment.moves`.
+- Each assignment is a version under `assignment/v<N>/`; reality check and
+  customer edits write a new version and never overwrite one.
+
+After reality check, the one human gate (`Phase.ASSIGNMENT_REVIEW`) shows the
+customer the plan and records the approval under `decisions/`
+(`assignment_review.py`, [ADR-028 (customer assignment review gate)](../architecture/decisions/ADR-028-customer-assignment-review-gate.md)).
+There is no gate after triage.
+
+---
+
+## 3. Referee-Reality-Check
 
 ### Purpose
 
@@ -135,12 +168,16 @@ per-query scores (ADR-031 Decision 7):
    (`unique`) vs. nearly-as-well (`redundant`)? An engine is removed when the
    other committed engines can serve its queries.
 2. **Place** — every query goes to its highest-scoring remaining engine.
-3. **Justification floors** — an engine pinned by a signal override must
-   still earn its fixed cost.
-4. **Architectural pattern detection** — CQRS, materialized views, event
-   sourcing.
-5. **Integration topology** — specific sync mechanisms between the
-   surviving engines.
+3. **Justification floors** — a mandatory engine must still earn its fixed
+   cost.
+4. **Records** — the consolidation records, derived from the move ledger: one
+   per net per-query move.
+5. **Architectural patterns and recommendations** — CQRS, materialized views,
+   event sourcing.
+
+Every engine change these steps make goes through the move ledger
+(`move_ledger.apply_to_assignment`, ADR-031 Amendment 3), so a version holds
+exactly the Moves that produced it.
 
 The deterministic pass writes a **new assignment version**
 (`src/storage/assignment_versioning.py` — reality check and customer edits
@@ -190,7 +227,7 @@ capabilities that no other committed engine can serve.
 
 ---
 
-## 3. Referee-Synthesis
+## 4. Referee-Synthesis
 
 ### Purpose
 
@@ -237,11 +274,9 @@ answers are an `ExecutiveSummaryResponse`
 (`src/contracts/executive_summary_response.py`) that
 `apply_synthesis_llm_output` validates and post-checks the same way.
 
-The output carries a `needs_deeper_analysis` flag (left over from the
-retired Step Functions flow — the `synthesis_handler.py` module docstring
-still lists it as feeding "Step Functions ... for the analysis loop").
-Nothing in `LocalOrchestrator` or anywhere else in the local pipeline reads
-it today; the deterministic builder sets it, and that is where it stops.
+The output also carries a `needs_deeper_analysis` flag that the hosted
+pipeline's loop used. The deterministic builder sets it and nothing in the
+local pipeline reads it; do not build on it.
 
 ### Output (`SynthesisOutputContract`)
 

@@ -1,6 +1,6 @@
 # Load Testing: Adding a New Engine
 
-This guide explains how to add load testing support for a new target engine (OpenSearch, DocumentDB, ElastiCache, Neptune [PLANNED], Keyspaces [PLANNED]). The DynamoDB implementation serves as the reference.
+This guide explains how to add load testing support for a new target engine. DynamoDB, DocumentDB, ElastiCache and OpenSearch are implemented (`src/agents/load_test/{documentdb,dynamodb,elasticache,opensearch}/`, registered in `create_engine_components()` in `handler.py`); the DynamoDB implementation is the reference. The engines without a load test are the two Aurora engines. Neptune and Keyspaces are catalog placeholders that are never routed (ADR-031 Decision 9), so a load test for them has nothing to test.
 
 ## Architecture Overview
 
@@ -8,8 +8,8 @@ The load testing stage uses an engine-agnostic coordinator (`handler.py`) that d
 
 ```
 src/agents/load_test/
-├── base.py                    # Abstract base classes (DO NOT MODIFY)
-├── handler.py                 # Engine-agnostic coordinator (DO NOT MODIFY)
+├── base.py                    # Abstract base classes (do not change)
+├── handler.py                 # Engine-agnostic coordinator (a new engine only edits the factory and SUPPORTED_ENGINES)
 ├── models.py                  # Shared models: SeedManifest, RunResult
 ├── dynamodb/                  # Reference implementation
 │   ├── __init__.py
@@ -232,11 +232,11 @@ def create_engine_components(target_engine: str, region: str):
             raise ValueError(f"Unsupported engine: {target_engine}")
 ```
 
-Also remove the early-return skip in `run_load_test()`:
+Also add the engine to the `SUPPORTED_ENGINES` set in `run_load_test()`. Any engine outside the set is skipped with a `skipped` `result.json`:
 
 ```python
-# Remove this block once your engine is implemented:
-if target_engine != "dynamodb":
+SUPPORTED_ENGINES = {"dynamodb", "documentdb", "elasticache", "opensearch"}
+if target_engine not in SUPPORTED_ENGINES:
     log.info("load_test_skipped", reason=f"not implemented for {target_engine}")
     ...
 ```
@@ -260,17 +260,17 @@ Make sure the active credentials can create and delete your engine's
 
 ### Step 8: Write Tests
 
-Create test files in `tests/agents/load_test/{engine}/`:
+Tests are flat files under `tests/unit/agents/load_test/`, named `test_<engine>_<part>.py`:
 
 ```
-tests/agents/load_test/{engine}/
-├── test_provisioner.py      # Mock boto3, verify table creation/deletion
-├── test_seeder.py           # Mock boto3, verify data generation
-├── test_script_generator.py # Verify generated JS is syntactically valid
-└── test_integration.py      # Optional: real infrastructure test (slow)
+tests/unit/agents/load_test/
+├── test_<engine>_provisioner.py       # Mock boto3, verify resource creation/deletion
+├── test_<engine>_seeder.py            # Mock boto3, verify data generation
+├── test_<engine>_script_generator.py  # Verify generated JS is syntactically valid
+└── test_<engine>_runner.py            # If the engine has its own runner
 ```
 
-Use the DynamoDB tests as reference: `tests/agents/load_test/dynamodb/`
+Use the existing engines' tests as reference, for example `test_opensearch_provisioner.py` and `test_elasticache_runner.py`. The DynamoDB tests have no engine prefix (`test_provisioner.py`, `test_seeder.py`, `test_script_generator.py`, `test_runner.py`).
 
 ## k6 Script Conventions
 
@@ -320,44 +320,13 @@ scenarios: {
 
 ## Engine-Specific Notes
 
-### OpenSearch
+The notes that used to sit here described engines that are now implemented. Read their code instead:
 
-- **k6 module**: Use k6 built-in HTTP module (OpenSearch is REST-native)
-- **Auth**: SigV4 signing via `aws4` or custom JS implementation
-- **Provisioning**: Create serverless collection or managed domain (serverless preferred for cost)
-- **Cost metric**: Track response headers or use CloudWatch billing metrics
-- **Operations**: `_search`, `_bulk`, `_doc`, `_mget`
+- DocumentDB: `src/agents/load_test/documentdb/` (cluster sizing in `sizing.py`, [ADR-022](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-022-documentdb-cluster-sizing.md))
+- ElastiCache: `src/agents/load_test/elasticache/` (its own `ValkeyRunner`)
+- OpenSearch: `src/agents/load_test/opensearch/` (sizing in `sizing.py`, its own `OpenSearchRunner`)
 
-### DocumentDB
-
-- **k6 module**: Use `xk6-mongo` community extension OR HTTP proxy sidecar
-- **Alt approach**: Consider a Python-based runner using `pymongo` if k6 extension is unreliable
-- **Provisioning**: Create DocumentDB cluster (or reuse existing dev cluster with isolated collections)
-- **Cost metric**: Track request count (DocumentDB pricing is per I/O)
-- **Operations**: `find`, `insertOne`, `updateOne`, `aggregate`
-
-### ElastiCache (Redis)
-
-- **k6 module**: Use `xk6-redis` community extension OR HTTP proxy sidecar
-- **Alt approach**: Consider a Python-based runner using `redis-py` if k6 extension is unreliable
-- **Provisioning**: Create ElastiCache Serverless cache (simplest, auto-scaling)
-- **Cost metric**: Track ECPUs via CloudWatch
-- **Operations**: `GET`, `SET`, `HGET`, `HSET`, `ZADD`, `ZRANGE`
-
-### Neptune
-
-- **k6 module**: Use k6 HTTP module (Neptune has HTTP endpoints for Gremlin/SPARQL)
-- **Provisioning**: Create Neptune Serverless cluster
-- **Cost metric**: Track I/O operations via CloudWatch
-- **Operations**: Gremlin traversals, SPARQL queries
-
-### Keyspaces
-
-- **k6 module**: Custom — no native k6 Cassandra client; consider Python runner
-- **Alt approach**: Python-based runner using `cassandra-driver`
-- **Provisioning**: Create Keyspaces tables (serverless, no cluster management)
-- **Cost metric**: Track RCU/WCU (similar to DynamoDB pricing model)
-- **Operations**: CQL queries (SELECT, INSERT, UPDATE)
+Pick the provisioning, auth and cost metric of the engine you add from the same pattern: a provisioner that tags every resource, a seeder that matches the schema output's cardinality, and a runner that reports the per-pattern latency percentiles and the engine's cost metric.
 
 ## Checklist
 
@@ -369,15 +338,14 @@ Before submitting your PR:
 - [ ] Dry-run passes (scripts parse without errors)
 - [ ] Full run produces per-pattern latency percentiles
 - [ ] Cost metrics are captured (engine-specific)
-- [ ] Factory in `handler.py` registers the new engine
-- [ ] IAM permissions added to CloudFormation (scoped to `LoadTest_*`)
+- [ ] Factory and `SUPPORTED_ENGINES` in `handler.py` register the new engine
+- [ ] The active AWS credentials can create and delete the engine's `LoadTest_*` resources (Step 7)
 - [ ] Tests written and passing
-- [ ] Query journeys enriched correctly (handled by coordinator — verify with integration test)
 - [ ] Resource teardown is idempotent (re-run teardown doesn't fail)
 
 ## Reference
 
 - [ADR-020: Load Testing Stage Architecture](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-020-load-testing-stage.md)
-- [ADR-019: Query Journey Materialization](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-019-query-journey-materialization.md)
+- [ADR-023: Context graph layer](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-023-context-graph-layer.md) (query journeys are served from the graph; ADR-023 superseded ADR-019)
 - DynamoDB reference implementation: `src/agents/load_test/dynamodb/`
 - Contracts: `src/contracts/load_test_models.py`
