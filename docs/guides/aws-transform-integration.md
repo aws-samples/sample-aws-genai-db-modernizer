@@ -1,121 +1,67 @@
 # AWS Transform Integration Guide
 
-How the existing deterministic database modernization pipeline runs on AWS
-Transform, and how to work on the integration. The code lives in
-`src/atx_orchestrator/`; this guide is the reader-oriented companion to that
-module's [`README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md).
+A reader's overview of how the database modernization pipeline runs on AWS Transform. The code is in `src/atx_orchestrator/`. This guide explains the shape and the ideas; the fleet, the tools and the files are kept in one place, the module's [`README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md), so they are not listed twice.
 
-**Audience:** developers and solutions architects picking up the AWS Transform
-integration.
+**Audience:** developers and solutions architects picking up the AWS Transform integration.
 
 ## What this is
 
-AWS Transform runs an LLM orchestrator that coordinates a workflow by invoking
-purpose-built subagents. This integration maps the existing pipeline onto that
-model without rewriting it: each pipeline phase becomes a subagent, and the
-orchestrator drives them in order.
+AWS Transform runs an LLM orchestrator that coordinates a workflow by invoking purpose-built subagents. This integration maps the existing pipeline onto that model without rewriting it: the orchestrator drives a small fleet of agents, and each agent calls the same deterministic Python the local pipeline (`LocalOrchestrator`) uses, through shared functions in `core.py`.
 
-The hard constraint is unchanged from the rest of the project: the analysis stays
-deterministic and auditable. The only non-deterministic element is the
-orchestrator LLM deciding which tool to call next (routing). Every engine and
-query recommendation is produced by the same deterministic Python that the Step
-Functions pipeline uses. The wrappers call the existing handlers through shared
-functions in `core.py`; no existing pipeline logic was moved into the LLM.
+The hard constraint is unchanged from the rest of the project: the analysis stays deterministic and auditable. No model decides which engine a table or query goes to (ADR-031). The model-backed steps are the Reality Check consolidation review, the post-gate feasibility reviewer (it advises and can block, but never reroutes) and the synthesis executive summary. Only the orchestrator's own choice of the next tool is non-deterministic.
 
-## Architecture: one image, dispatched by `AGENT_TYPE`
+## The fleet
 
-A single container image (`Dockerfile.atx`) can run any agent. At startup
-`atx_entrypoint.py` reads the `AGENT_TYPE` environment variable and serves the
-matching factory. The AWS Transform runtime provisions one instance per agent,
-and the orchestrator invokes the others over A2A (agent-to-agent).
+One container image (`Dockerfile.atx`) can run any agent. At startup `atx_entrypoint.py` reads `AGENT_TYPE` and serves the matching factory; the AWS Transform runtime provisions one instance per agent, and the orchestrator invokes the others over A2A (agent-to-agent). There are four agents:
 
-```
+| `AGENT_TYPE` | Does |
+|---|---|
+| `orchestrator` | The chat-facing LLM orchestrator. Owns the tools, the progress plan and the assignment-review gate |
+| `assessment-core` | The whole front half in one agent: Collect, Triage, Analyze (every triage-selected engine), Assign and Reality Check (ADR-024, ADR-025, ADR-026) |
+| `schema` | Schema design for any engine, one parametrized agent invoked once per target engine in parallel (ADR-027) |
+| `referee-synthesis` | The synthesis report and the customer deliverables |
+
+```text
 AWS Transform WebApp
      |  MCP / A2A
      v
-orchestrator  (AGENT_TYPE=orchestrator)
-     |  invokes subagents by name over A2A (Agentic API)
-     |
-     +-> collector             -> collector/output.json
-     +-> referee-triage        -> referee-triage/triage.json
-     +-> analysis-<engine>     -> analysis-<target>/analysis.json (+ decision-trace, +er-diagram)
-     +-> assignment-resolver   -> assignment/v1/assignment.json
-     +-> schema-<engine>       -> schema-<engine>/v1/schema_output.json
-     +-> referee-synthesis     -> synthesis/v1/report.json (+ PDF, Engineering report and
-                                  assessment data in deliverables/)
+orchestrator
+     |-> assessment-core      -> collector, triage, analysis-<engine>, assignment, reality check
+     |-> assignment-review gate (orchestrator tools; the one required pause, ADR-028)
+     |-> schema (per engine)  -> schema-<engine>/v<N>/schema_output.json
+     '-> referee-synthesis    -> synthesis/v<N>/report.json and deliverables/
 ```
 
-`<engine>` is one of `dynamodb`, `documentdb`, `elasticache`, `opensearch`,
-`aurora-pg`, `aurora-mysql`. Every agent reads and writes through the
-`ArtifactStore` abstraction: a local directory (`ARTIFACT_DIR`) for testing, or an
-S3 bucket (`S3_BUCKET`) in the cloud. A job started by either `LocalOrchestrator`
-or the AWS Transform path is readable by the other because they share the
-same artifact layout. (A prior hosted Step Functions pipeline shared this layout
-too; it was retired, [#175](https://github.com/aws-samples/sample-aws-genai-db-modernizer/issues/175).)
+Every agent reads and writes through the `ArtifactStore` abstraction: a local directory (`ARTIFACT_DIR`) for testing, or an S3 bucket (`S3_BUCKET`) in the cloud. A job started by `LocalOrchestrator` or by the AWS Transform path has the same artifact layout ([contracts/artifacts.md](../contracts/artifacts.md)), so either can read the other's job.
 
-`AGENT_TYPE` values match the artifact key prefix an operator sees in storage
-(for example `analysis-dynamodb`), which keeps them unambiguous. Two of them map
-to different names in the core pipeline: `analysis-aurora-pg` and
-`analysis-aurora-mysql` correspond to the core pipeline's `aurora_postgresql` and
-`aurora_mysql`.
+## The flow, with its tools
 
-## The pipeline, phase by phase
+The orchestrator has one tool per step. The names below are in `src/atx_orchestrator/tools.py`; the README has the full table.
 
-The orchestrator exposes one tool per phase. It calls `declare_pipeline_plan`
-first to register the plan with the WebApp progress panel, then drives the phases:
+1. **Plan and upload.** `declare_plan_and_request_upload` runs at job start, before any customer turn: it registers the plan with the WebApp progress panel and raises the collection-upload panel. Once the customer has uploaded and named the database, `finalize_collection_upload` records the collection as the assessment's input.
+2. **Front half.** `run_assessment_core_via_a2a` runs `assessment-core`.
+3. **Assignment review (the one gate).** `present_assignment_review` shows the plan, `open_detailed_routing_review` opens the detailed routing table on request, and `finalize_assignment_review` records the decision and runs the feasibility reviewer. A BLOCKING finding loops the gate (status `infeasible`) until it is fixed or explicitly accepted (ADR-028, ADR-029).
+4. **Schema design.** `run_schema_design_<engine>_via_a2a` invokes `schema` once per engine, concurrently.
+5. **Synthesis.** `run_synthesis_via_a2a` produces the report and renders the executive report PDF, the engineering report and the assessment data, publishes them to the WebApp Artifacts panel and keeps a durable copy as the job's `deliverables/` folder. Each file names the code commit it was rendered from; a deployment with no git checkout sets it with `MODERNIZER_BUILD_COMMIT` (otherwise the files say `unknown`).
+6. **Re-entry (ADR-029).** After a report exists, `reopen_assignment_review`, then `finalize_assignment_review` on the edit, then `redispatch_after_reroute` re-runs only the engines whose routing changed (unchanged engines' schema is copied forward from `v<N>` to `v<N+1>`), and synthesis runs again.
 
-| Order | Tool | Subagent (`AGENT_TYPE`) | Primary artifact |
-|---|---|---|---|
-| 1 | `run_collect_via_a2a` | `collector` | `collector/output.json` |
-| 2 | `run_triage_via_a2a` | `referee-triage` | `referee-triage/triage.json` |
-| 3 | `run_analysis_<engine>_via_a2a` (x6) | `analysis-<engine>` | `analysis-<target>/analysis.json` |
-| 4 | `run_assignment_via_a2a` | `assignment-resolver` | `assignment/v1/assignment.json` |
-| 5 | `run_schema_design_<engine>_via_a2a` (x6) | `schema-<engine>` | `schema-<engine>/v1/schema_output.json` |
-| 6 | `run_synthesis_via_a2a` | `referee-synthesis` | `synthesis/v1/report.json` |
-
-Two read-only helper tools round out the set: `get_job_status` reports per-phase
-progression, and `get_synthesis_report` returns the finished report. Reality Check
-has no deployed subagent yet.
-
-Analysis runs six engines from one table-driven core (`run_analysis_core` in
-`core.py`). DynamoDB and DocumentDB run the optional Bedrock LLM advisor and can
-take up to ~90 minutes on a large workload; the other four are purely
-deterministic and finish in minutes. Synthesis renders two audience-shaped
-reports (the executive report PDF and a build-team Engineering Report)
-alongside the raw report JSON, publishes all three to the WebApp Artifacts
-panel, and keeps a durable copy of each as the job's `deliverables/` folder.
-Each file names the code commit it was rendered from; a deployment with no git
-checkout sets it with the `MODERNIZER_BUILD_COMMIT` environment variable
-(otherwise the files say `unknown`).
+`get_job_status` reports per-phase progression and `get_synthesis_report` returns the finished report.
 
 ## How the orchestrator drives a subagent (A2A)
 
-All phase tools go through one primitive: `invoke_and_wait(agent_id, message)` in
-`a2a.py`. Given a registered agent name, it:
+All phase tools go through one primitive, `invoke_and_wait(agent_id, message)` in `a2a.py`. Given a registered agent name, it:
 
-1. **Discovers or spawns** the subagent instance. It first looks for a
-   pre-provisioned instance by name via `list_agent_instances`. If none exists it
-   spawns one with `invoke_agent` and waits for it to reach `RUNNING`/`IDLE`.
-2. **Sends** the work with `send_message`. A `-32603` (JSON-RPC "Internal error")
-   after roughly 25 seconds is normal for a long-running subagent; the container
-   is still processing, so the primitive keeps polling rather than treating it as
-   a failure.
-3. **Polls** `get_agent_instance` until the status is `COMPLETED` or `FAILED`,
-   then parses `agentOutput.serializedPayload` (a JSON string) into a dict.
+1. **Discovers or spawns** the instance: it looks for a pre-provisioned one by name with `list_agent_instances`, and otherwise spawns one with `invoke_agent` and waits for it to be running.
+2. **Sends** the work with `send_message`. A `-32603` ("Internal error") after about 25 seconds is normal for a long-running subagent; the container is still processing, so the primitive keeps polling.
+3. **Polls** `get_agent_instance` until the status is `COMPLETED` or `FAILED`, then parses the result payload into a dict.
 
-The tools in `tools.py` are thin: each builds the message envelope and delegates
-the invoke, progress-marking, and error handling to a shared helper. Failures come
-back as a JSON error dict rather than an exception, so the orchestrator LLM can
-read and relay them. The LLM only ever knows subagent names; instance-id
-resolution happens inside `invoke_and_wait`.
+The tools are thin: each builds the message and delegates the invoke, progress marking and error handling to a shared helper. A failure comes back as a JSON error dict, not an exception, so the orchestrator model can read and relay it. The model only ever knows subagent names; instance resolution happens inside `invoke_and_wait`.
 
-## Determinism and the golden fixture
+## Determinism and the reference job
 
-The reference job `artifacts/discourse/15e6403d/` (311 tables, 1654 queries) is
-the golden fixture. Its committed offline collection input feeds through the AWS
-Transform path, and the output is diffed against the committed reference, ignoring
-only volatile fields (timestamps and the job id). Any change to this integration
-must keep that reproduction byte-identical.
+The integration is checked against a reference job: a Discourse run (311 tables, 1654 queries), `artifacts/discourse/15e6403d/`. The contract and tool scripts feed its offline collection through the AWS Transform code path and diff the result against the reference's collector and triage output, ignoring only volatile fields (timestamps and the job id). A change to this integration must keep that reproduction identical.
+
+`artifacts/` is gitignored, so the reference job is not in the repository. The scripts read it from a local checkout and stop with "Missing reference fixture" when it is absent (`scripts/atx_contract_test.py`). A maintainer holds the reference; without it, `atx_smoke_test.py` still checks imports and tool wiring.
 
 ## Running locally (no AWS, no Docker)
 
@@ -123,10 +69,10 @@ must keep that reproduction byte-identical.
 uv run python scripts/atx_smoke_test.py       # imports + tool wiring
 uv run python scripts/atx_contract_test.py    # raw handlers reproduce the reference
 uv run python scripts/atx_tool_test.py        # orchestrator tool path reproduces the reference
-uv run python scripts/atx_subagent_test.py    # collector | triage split reproduces the reference
+uv run python scripts/atx_subagent_test.py    # assessment-core reproduces the reference
 ```
 
-The unit and contract suites run in a SDK-absent environment that mirrors CI:
+The unit and contract suites run in an environment without the AWS Transform SDK, as CI does:
 
 ```bash
 uv run --no-sync pytest tests/unit/ tests/contract/ --cov=src
@@ -136,19 +82,12 @@ uv run --no-sync pytest tests/unit/ tests/contract/ --cov=src
 
 Adding a phase touches four places, mirroring the existing subagents:
 
-1. A subagent module exposing `SYSTEM_PROMPT`, a `_work(params)` function that
-   calls into `core.py`, and `agent_factory = make_subagent_factory(...)`.
+1. A subagent module exposing `SYSTEM_PROMPT`, a `_work(params)` function that calls into `core.py`, and `agent_factory = make_subagent_factory(...)`.
 2. A row in `_AGENTS` and a dispatch branch in `atx_entrypoint.py`.
-3. A storage directory created and owned in `Dockerfile.atx` (the entrypoint row
-   and the Dockerfile directory have no compile-time guard; keep them in sync).
-4. An orchestrator tool in `tools.py` that calls `invoke_and_wait`, plus its
-   registration in `orchestrator.py`.
+3. A storage directory created and owned in `Dockerfile.atx` (the entrypoint row and the Dockerfile directory have no compile-time guard; keep them in sync).
+4. An orchestrator tool in `tools.py` that calls `invoke_and_wait`, plus its registration in `orchestrator.py`.
 
-Schema design is a single `schema` agent (ADR-027) that takes `target_type` from
-the invocation payload, rather than six near-identical per-engine runtimes; the
-orchestrator invokes it once per engine, concurrently. The analysis engines
-similarly share `run_analysis_core` driven by a per-engine table. Prefer that
-pattern over copy-paste when a phase has per-engine variants.
+Prefer a parametrized agent over copy-paste when a phase has per-engine variants: `schema` takes `target_type` from the invocation payload (ADR-027), and `assessment-core` drives every analysis from one table-driven core.
 
 ## Environment variables
 
@@ -157,13 +96,12 @@ pattern over copy-paste when a phase has per-engine variants.
 | `AGENT_TYPE` | (required) | Which agent this container serves; no default |
 | `ARTIFACT_DIR` | `/app/artifacts` | Local artifact directory (used when `S3_BUCKET` is unset) |
 | `S3_BUCKET` | (unset) | Set to use S3 instead of the local filesystem |
-| `MODEL_ID` | the `ATX_AGENT` role default in `src/shared/models.py` | Orchestrator/subagent LLM (cross-region inference profile). `pipeline/atx_deploy.py` sets it on every runtime from the same role default unless `ATX_MODEL_ID` or `--model` overrides it. The analysis LLM advisor reads `ANALYSIS_MODEL_ID` instead, which the deploy does not set. |
+| `MODEL_ID` | the `ATX_AGENT` role default in `src/shared/models.py` | Orchestrator and subagent model (a cross-region inference profile) |
 | `AWS_REGION` | `us-east-1` | AWS region |
 
-## Build
+## Build and deploy
 
-The image must be `linux/arm64` (Bedrock AgentCore runs on Graviton); an x86 image
-fails at runtime with `exec format error`.
+The image must be `linux/arm64` (Bedrock AgentCore runs on Graviton); an x86 image fails at runtime with `exec format error`.
 
 ```bash
 finch build --platform linux/arm64 \
@@ -171,13 +109,11 @@ finch build --platform linux/arm64 \
   -f src/atx_orchestrator/Dockerfile.atx .
 ```
 
-`AGENT_TYPE` is set per AgentCore runtime, so this one image backs every agent.
-Deployment (image build/push, AgentCore runtime, and AWS Transform registration)
-uses the AWS Transform Agent Toolkit; account-specific deploy steps are kept in
-the team's operational handoff rather than in this repo.
+`AGENT_TYPE` is set per AgentCore runtime, so this one image backs every agent. Deployment is driven by `pipeline/atx_deploy.py` (verbs `build`, `apply`, `destroy`, `status`; run it with `--help`); the module README describes a personal fleet and the AgentCore requirements.
 
 ## Related documentation
 
-- Module reference: [`src/atx_orchestrator/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md)
-- Compute and orchestration strategy: [ADR-016](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/docs/architecture/decisions/ADR-016-compute-and-orchestration-strategy.md)
+- Module reference (the fleet, the files, the tools): [`src/atx_orchestrator/README.md`](https://github.com/aws-samples/sample-aws-genai-db-modernizer/blob/main/src/atx_orchestrator/README.md)
+- The decisions: ADR-024 to ADR-029 in the [ADR index](../architecture/decisions/README.md)
+- Artifact layout: [contracts/artifacts.md](../contracts/artifacts.md)
 - Agent contracts: [../contracts/agent-contracts-spec.md](../contracts/agent-contracts-spec.md)

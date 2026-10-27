@@ -4,7 +4,7 @@ Wraps the existing deterministic DB modernization pipeline so it can run on
 AWS Transform: an LLM orchestrator coordinates each pipeline phase as a subagent
 over A2A, while the analysis stays deterministic and auditable.
 
-- **Owner / contact:** `wwso-database-modernizer`
+- **Maintainers:** Database Modernizer maintainers
 
 ## Architecture
 
